@@ -2422,7 +2422,7 @@ public class CycleRoundsTests
     /// <summary>Üye düzeyi atlamanın girdileri TEK yerde: yüzey kanıtı (<see cref="HashModePlan"/>'ın çıktı haritası),
     /// bileşik imza (bir üyenin terimi değişince gerçek planlayıcıda da değişir), üye terimleri ve her üyenin sağlam
     /// çıktı kanıtı. Testler tek bir girdiyi bozar (<see cref="WithCheck"/>, <c>with</c>).</summary>
-    private static RunPlan MemberSkipPlan(RunPlan plan, string signature, params (string Name, string Term)[] members)
+    internal static RunPlan MemberSkipPlan(RunPlan plan, string signature, params (string Name, string Term)[] members)
     {
         string[] names = [.. members.Select(m => m.Name)];
         var hashMode = HashModePlan(plan, names);

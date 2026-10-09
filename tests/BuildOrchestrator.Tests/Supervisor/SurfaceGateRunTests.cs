@@ -8,7 +8,8 @@ using static BuildOrchestrator.Tests.Supervisor.RunCoordinatorTests;
 
 namespace BuildOrchestrator.Tests.Supervisor;
 
-/// <summary>[D7] Yüzey kapısının koşu içi davranışı. Fixture: U → D (D aday). Yüzeyler <see cref="CycleRoundsTests.SurfaceDisk"/>'ten
+/// <summary>[D7] Yüzey kapısının koşu içi davranışı. Fixture: U → D (D aday; isteğe bağlı kök R → U → D, Cycles koşusu için
+/// U → D → A ↔ B). Yüzeyler <see cref="CycleRoundsTests.SurfaceDisk"/>'ten
 /// (apiSurface seam), kanıt yolları <see cref="CycleRoundsTests.HashModePlan"/> ile — döngü testleriyle AYNI sahte disk (kopya YASAK).
 /// <para><b>Ölçüm (gerçek OSYS, 2026-10-09, paralellik 1):</b> <c>OSYS.Types.General</c>'da gövde değişikliği sonrası Build'de plan
 /// 143 projeyi kirli gördü; 7'si derlendi (1 asıl, 5'i SDK-style <c>Types.PRM</c>'in okunamayan yüzeyinden, 1'i patlayan bağımlılıktan),
@@ -19,18 +20,32 @@ public class SurfaceGateRunTests : IDisposable
     private readonly string _cacheRoot = NewCacheRoot();
     public void Dispose() { if (Directory.Exists(_cacheRoot)) Directory.Delete(_cacheRoot, recursive: true); }
 
-    /// <summary>U → D, ikisi de "imza değişti" ile kirli; <paramref name="candidate"/> D'yi kapı adayı yapar.</summary>
-    private static RunPlan UpDown(bool candidate = true)
+    /// <summary>U → D, ikisi de "imza değişti" ile kirli; <paramref name="candidate"/> D'yi kapı adayı yapar. <paramref name="root"/>
+    /// zincirin başına aynı biçimde kirli bir kök koyar: R → U → D.</summary>
+    private static RunPlan UpDown(bool candidate = true, bool root = false)
     {
+        string[] chain = root ? ["R", "U", "D"] : ["U", "D"];
         var plan = new RunPlan(new BuildPlan(
-            [Node("U", willBuild: true) with { BuildOrder = 0, WillBuildReason = WillBuildReason.SignatureChanged },
-             Node("D", deps: ["U"], willBuild: true) with { BuildOrder = 1, WillBuildReason = WillBuildReason.SignatureChanged }],
+            [.. chain.Select((name, i) => Node(name, deps: i == 0 ? null : [chain[i - 1]], willBuild: true)
+                with { BuildOrder = i, WillBuildReason = WillBuildReason.SignatureChanged })],
             Cycles: [], Configuration: "Debug"), EmptyRefs());
-        plan = CycleRoundsTests.HashModePlan(plan, "U", "D");
-        return candidate
-            ? plan with { Incremental = plan.Incremental! with { SurfaceCandidateIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { Id("D") } } }
-            : plan;
+        plan = CycleRoundsTests.HashModePlan(plan, chain);
+        return candidate ? AsCandidate(plan) : plan;
     }
+
+    /// <summary>D'yi kapı adayı yapar (planlayıcının Safe/Fast karşılaştırmasının sonucu).</summary>
+    private static RunPlan AsCandidate(RunPlan plan) =>
+        plan with { Incremental = plan.Incremental! with { SurfaceCandidateIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { Id("D") } } };
+
+    /// <summary>Plandaki her düğüme yeni planlama imzası: kaynak koşular arasında değişti (sonraki koşunun girdisi).</summary>
+    private static RunPlan Resigned(RunPlan plan, string signature) =>
+        plan with
+        {
+            Incremental = plan.Incremental! with
+            {
+                SignatureById = plan.Plan.Nodes.ToDictionary(n => n.Id, _ => signature, StringComparer.OrdinalIgnoreCase),
+            },
+        };
 
     /// <summary>Aynı defter ve sahte disk üzerinde bir Build koşusu — döngü testlerinin koşturucusu (<see cref="CycleRoundsTests.ResolveAsync"/>)
     /// mod parametresiyle; ikinci bir koşturucu yazılmaz.</summary>
@@ -64,14 +79,7 @@ public class SurfaceGateRunTests : IDisposable
         Assert.Equal([new CycleReadSurface(Id("U"), CycleRoundsTests.SurfaceDisk.PathOf("U"), "u1")], dBefore.DependencySurfaces);
 
         var second = AllSucceed();
-        var plan = UpDown() with
-        {
-            Incremental = UpDown().Incremental! with
-            {
-                SignatureById = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [Id("U")] = "sig2", [Id("D")] = "sig2" },
-            },
-        };
-        using var run = await BuildAsync(store, disk, plan, second);
+        using var run = await BuildAsync(store, disk, Resigned(UpDown(), "sig2"), second);
         Assert.Equal([Id("U")], second.Requests.Select(r => r.ProjectId));
         var skipped = Assert.Single(run.Events.OfType<ProjectSkippedEvent>());
         Assert.Equal((Id("D"), SkipReasons.UpToDate), (skipped.ProjectId, skipped.Reason));
@@ -157,7 +165,9 @@ public class SurfaceGateRunTests : IDisposable
         Assert.Equal([Id("D")], invoker.Requests.Select(r => r.ProjectId));
     }
 
-    [Fact] // Rebuild kapıyı uygulamaz; kapı yalnız defteri dinleyen koşularda
+    /// <summary>Rebuild kapıyı uygulamaz; kapı yalnız defteri dinleyen koşularda. Rebuild'in başarısı yine bağımlılık yüzeylerini
+    /// yazar: bir sonraki Build'in kapı tabanıdır (kaydın yeni imzası onu bu derlemenin yazdığını gösterir).</summary>
+    [Fact]
     public async Task a_rebuild_ignores_the_gate()
     {
         var store = new BuildStateStore(_cacheRoot);
@@ -165,7 +175,82 @@ public class SurfaceGateRunTests : IDisposable
         disk.Set("U", "u1");
         using (await BuildAsync(store, disk, UpDown(candidate: false), AllSucceed())) { }
         var invoker = AllSucceed();
-        using var run = await BuildAsync(store, disk, UpDown(), invoker, RunMode.Rebuild);
+        using var run = await BuildAsync(store, disk, Resigned(UpDown(), "sig2"), invoker, RunMode.Rebuild);
         Assert.Equal([Id("U"), Id("D")], invoker.Requests.Select(r => r.ProjectId));
+        var d = store.Load()[Id("D")];
+        Assert.Equal("sig2", d.BuiltSignature);
+        Assert.Equal([new CycleReadSurface(Id("U"), CycleRoundsTests.SurfaceDisk.PathOf("U"), "u1")], d.DependencySurfaces);
+    }
+
+    /// <summary>Kapıdan atlanan proje bağımlılık notunu miras alır: kök R bu koşuda patladı, U derlendi (R'ye link'li, notlu) ve
+    /// yüzeyi değişmedi ⇒ D atlanır ama kaydı notu ve R kökünü taşır — D hâlâ R'nin bayat çıktısına dolaylı link'lidir, R
+    /// düzelince yeniden derlenmeli. Koşu 1'de herkes temiz derlendi: notu yazan atlamanın kendisidir.</summary>
+    [Fact]
+    public async Task a_gate_skip_records_the_inherited_dependency_issue()
+    {
+        var store = new BuildStateStore(_cacheRoot);
+        var disk = new CycleRoundsTests.SurfaceDisk();
+        disk.Set("U", "u1");
+        using (await BuildAsync(store, disk, UpDown(candidate: false, root: true), AllSucceed())) { }
+        Assert.False(store.Load()[Id("D")].DepIssue);
+
+        var invoker = new FakeInvoker((req, _, _) => Task.FromResult(NameOf(req.ProjectId) == "R" ? Exit(1) : Ok()));
+        using var run = await BuildAsync(store, disk, Resigned(UpDown(root: true), "sig2"), invoker);
+        Assert.Equal([Id("R"), Id("U")], invoker.Requests.Select(r => r.ProjectId));
+        Assert.Contains($"D: skipped — {SkipReasons.UpToDate} ({SurfaceGate.UnchangedDetail})", run.DecisionLog, StringComparison.Ordinal);
+        var d = store.Load()[Id("D")];
+        Assert.Equal(("sig2", BuildResult.Succeeded, true), (d.BuiltSignature, d.LastResult, d.DepIssue));
+        Assert.Equal([Id("R")], d.DepIssueRoots);
+    }
+
+    /// <summary>Bağımlılığın yüzeyi listelenemezse (kanıt yolu türetilemedi) kayıt <c>null</c> taşır, boş liste DEĞİL — eski kayıtla
+    /// aynı "yüzey kanıtı yok" hâli.</summary>
+    [Fact]
+    public async Task a_dependency_without_a_surface_leaves_the_record_without_surfaces()
+    {
+        var store = new BuildStateStore(_cacheRoot);
+        var disk = new CycleRoundsTests.SurfaceDisk();
+        disk.Set("U", "u1");
+        var plan = UpDown(candidate: false);
+        plan = plan with { Incremental = plan.Incremental! with { OutputsById = CycleRoundsTests.SurfaceDisk.OutputsFor("D") } };
+        var invoker = AllSucceed();
+        using (await BuildAsync(store, disk, plan, invoker)) { }
+        Assert.Equal([Id("U"), Id("D")], invoker.Requests.Select(r => r.ProjectId));
+        var d = store.Load()[Id("D")];
+        Assert.Equal(BuildResult.Succeeded, d.LastResult);
+        Assert.Null(d.DependencySurfaces);
+    }
+
+    /// <summary>U → D → A ↔ B (A, D'yi okur): U ve D "imza değişti" ile kirli; grubun terimleri A = <paramref name="termA"/>, B = b1.
+    /// Cycles kapsamı grup + transitif upstream'idir: U ve D kapsamdadır.</summary>
+    private static RunPlan UpDownIntoCycle(string signature, string termA)
+    {
+        var plan = CycleRoundsTests.MemberSkipPlan(CyclePlanOf(["A", "B"],
+                Node("U", willBuild: true) with { WillBuildReason = WillBuildReason.SignatureChanged },
+                Node("D", deps: ["U"], willBuild: true) with { WillBuildReason = WillBuildReason.SignatureChanged },
+                Node("A", deps: ["B", "D"], inCycle: true), Node("B", deps: ["A"], inCycle: true)),
+            signature, ("A", termA), ("B", "b1"));
+        plan = plan with { Incremental = plan.Incremental! with { OutputsById = CycleRoundsTests.SurfaceDisk.OutputsFor("U", "D", "A", "B") } };
+        return Resigned(plan, signature);
+    }
+
+    /// <summary>Kapı Cycles koşusunda da uygulanır (defteri dinleyen tam koşu). Koşu 1 Build: herkes derlenir. Koşu 2 Cycles: U yeniden
+    /// derlenir ve yüzeyi aynı kalır ⇒ aday D sırası gelince atlanır; grup turunu koşar (A'nın kendi terimi değişti, B taşınır).</summary>
+    [Fact]
+    public async Task the_gate_applies_in_a_cycles_run()
+    {
+        var store = new BuildStateStore(_cacheRoot);
+        var disk = new CycleRoundsTests.SurfaceDisk();
+        foreach (string name in new[] { "U", "D", "A", "B" }) disk.Set(name, name.ToLowerInvariant() + "1");
+        var first = AllSucceed();
+        using (await BuildAsync(store, disk, UpDownIntoCycle("sig1", "a1"), first)) { }
+        Assert.Equal([Id("U"), Id("D"), Id("A"), Id("B")], first.Requests.Select(r => r.ProjectId));
+
+        var invoker = AllSucceed();
+        using var run = await BuildAsync(store, disk, AsCandidate(UpDownIntoCycle("sig2", "a2")), invoker, RunMode.Cycles);
+        Assert.Equal([Id("U"), Id("A")], invoker.Requests.Select(r => r.ProjectId));
+        Assert.Equal(SkipReasons.UpToDate, Assert.Single(run.Events.OfType<ProjectSkippedEvent>(), e => e.ProjectId == Id("D")).Reason);
+        Assert.Contains($"D: skipped — {SkipReasons.UpToDate} ({SurfaceGate.UnchangedDetail})", run.DecisionLog, StringComparison.Ordinal);
+        Assert.Equal(CycleOutcome.Converged, Assert.Single(run.Events.OfType<CycleCompletedEvent>()).Outcome);
     }
 }
