@@ -1097,7 +1097,12 @@ public sealed class RunCoordinator(
                 // [WPF geçici assembly] Motorun açılışta yazdığı targets dosyası: her derleme isteğine taşınır.
                 CustomBeforeTargetsPath: toolset.CustomBeforeTargetsPath,
                 // [PERF E3] Restore kararı koşunun modunu okur (Rebuild her zaman restore eder).
-                Mode: cmd.Mode);
+                Mode: cmd.Mode,
+                // [D7] Kapı yalnız defteri dinleyen tam koşuda uygulanır — kural TEK yerde (SurfaceGate.AppliesTo); planın
+                // adaylarını üreten Program da aynı fonksiyonu sorar.
+                SurfaceCandidateIds: SurfaceGate.AppliesTo(cmd.Mode, scopedRun: cmd.ScopeProjectId is not null)
+                    ? runPlan.Incremental?.SurfaceCandidateIds
+                    : null);
 
             var workers = Enumerable.Range(0, parallelism)
                 .Select(_ => Task.Run(() => WorkerAsync(run, ct), CancellationToken.None))
@@ -1237,6 +1242,8 @@ public sealed class RunCoordinator(
         // hata) yalnız aşağıdaki yerel değişkenleri doldurur.
         // [koşullu yeniden derleme] Sıra geldi: tüm bağımlılıklar (ve üstlerindeki kökler) bu koşuda terminal.
         if (run.ConditionalIds.Contains(projectId) && TrySkipWhileDependencyStillFails(run, projectId)) return;
+        // [D7] Yüzey kapısı: aday projenin hiçbir doğrudan bağımlılığının API yüzeyi değişmediyse derlenmez.
+        if (run.SurfaceCandidateIds?.Contains(projectId) == true && TrySkipWhileDependencySurfacesUnchanged(run, projectId)) return;
 
         var result = BuildResult.Failed;
         long durationMs = 0;
@@ -1245,6 +1252,9 @@ public sealed class RunCoordinator(
 
         // [T54] depIssues invoke'tan ÖNCE hesaplanır — gerekçe ComputeDepIssues'ın XML doc'undadır.
         var depIssues = ComputeDepIssues(run, projectId);
+        // [D6] Bağımlılık yüzeyleri de invoke'tan ÖNCE: bağımlılıklar şu an terminaldir ve derleme bu yüzeylere karşı
+        // yapılır; başarı deftere bunları yazar (yüzey kapısının bir sonraki koşudaki tabanı).
+        var dependencySurfaces = DependencySurfacesOf(run, projectId);
 
         try
         {
@@ -1276,7 +1286,7 @@ public sealed class RunCoordinator(
         finally
         {
             ReportProjectResult(run, projectId, result, durationMs, failReason, depIssues,
-                trustedResult: true, cycleUnsettled: false, failLogTail);
+                trustedResult: true, cycleUnsettled: false, failLogTail, dependencySurfaces: dependencySurfaces);
         }
     }
 
@@ -1339,6 +1349,78 @@ public sealed class RunCoordinator(
     }
 
     /// <summary>
+    /// [D7] Yüzey kapısını UYGULAR (karar <see cref="SurfaceGate.Decide"/>'da): hiçbir doğrudan bağımlılığın yüzeyi değişmediyse
+    /// proje derlenmeden <see cref="SkipReasons.UpToDate"/> + <see cref="SurfaceGate.UnchangedDetail"/> ile atlanır, defteri
+    /// yenilenir (<see cref="RefreshBuildStateOnSkip"/> — taşınan döngü üyesiyle AYNI gövde) ve <c>true</c> döner; aksi hâlde
+    /// <c>false</c>. Dep-issue'lar atlanan projede de hesaplanır: bağımlılarına miras kalır, nota yazılır. Beklenmedik hata ⇒
+    /// derlenir. Complete <c>finally</c>'de.
+    /// </summary>
+    private bool TrySkipWhileDependencySurfacesUnchanged(RunContext run, string projectId)
+    {
+        try
+        {
+            var deps = run.NodeById.GetValueOrDefault(projectId)?.Dependencies ?? [];
+            var recorded = run.LedgerAtStart?.GetValueOrDefault(projectId)?.DependencySurfaces;
+            if (SurfaceGate.Decide(deps, run.Scheduler.Completed, recorded, d => SurfaceOf(run, d)) != SurfaceGateVerdict.Unchanged)
+                return false;
+        }
+        catch (Exception ex)
+        {
+            console("warning: surface gate check failed (" + NameOf(run, projectId) + ") — building: " + ex.Message);
+            return false;
+        }
+        try
+        {
+            var depIssues = ComputeDepIssues(run, projectId);
+            ReportSkipped(run.Events, run.Logs, run.RunId, projectId, NameOf(run, projectId), SkipReasons.UpToDate,
+                cycleUnconverged: false, detail: SurfaceGate.UnchangedDetail);
+            bool interrupted;
+            lock (_gate) interrupted = _interrupted;
+            if (!interrupted) RefreshBuildStateOnSkip(run, projectId, depIssues);
+        }
+        finally
+        {
+            run.Scheduler.Complete(projectId, BuildResult.Skipped);
+        }
+        return true;
+    }
+
+    /// <summary>[D9] Bir projenin ŞİMDİKİ çıktı yüzeyi: kanıt dosyası (IncrementalPlan.OutputsById) + yüzey özeti; koşu başına
+    /// bir okuma (RunContext.SurfaceById). Kanıt yolu türetilemiyorsa null.</summary>
+    private (string File, string? Hash)? SurfaceOf(RunContext run, string projectId)
+    {
+        if (run.Incremental?.OutputsById?.GetValueOrDefault(projectId) is not { } outputs) return null;
+        return (outputs.Evidence, run.SurfaceById.GetOrAdd(projectId, _ => _apiSurface(outputs.Evidence)));
+    }
+
+    /// <summary>[D6] Bu projenin doğrudan bağımlılıklarının (döngü üyesinde grup DIŞI olanların) şimdiki yüzeyleri, defterin
+    /// kanonik listesi olarak; yüzeyi olmayan/okunamayan bağımlılık listeye girmez (SurfaceGate.Persistable). Hiçbiri
+    /// listelenemezse (bağımlılık yok, kanıt yok) <c>null</c> — eski kayıtla aynı "yüzey kanıtı yok" hâli; kapı ikisini de
+    /// derler. HİÇ FIRLATMAZ (warn-only, null): çağıranlar sonuç raporlamasının hemen yanındadır ve buradan kaçan bir istisna
+    /// Complete'i atlatıp koşuyu asardı — üretimdeki ApiSurfaceHash.OfFile zaten fırlatmaz, bu kapı sahte seam'ler ve
+    /// gelecekteki yazımlar içindir.</summary>
+    private IReadOnlyList<CycleReadSurface>? DependencySurfacesOf(RunContext run, string projectId,
+        IReadOnlyCollection<string>? excludedDeps = null)
+    {
+        try
+        {
+            var list = new List<CycleReadSurface>();
+            foreach (string dep in run.NodeById.GetValueOrDefault(projectId)?.Dependencies ?? [])
+            {
+                if (excludedDeps is not null && excludedDeps.Contains(dep, StringComparer.OrdinalIgnoreCase)) continue;
+                if (SurfaceOf(run, dep) is { } s && SurfaceGate.Persistable(s.Hash) is { } hash)
+                    list.Add(new CycleReadSurface(dep, s.File, hash));
+            }
+            return list.Count == 0 ? null : [.. list.OrderBy(s => s.Producer, StringComparer.OrdinalIgnoreCase)];
+        }
+        catch (Exception ex)
+        {
+            console("warning: dependency surfaces could not be read (" + NameOf(run, projectId) + "): " + ex.Message);
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Bir skip'i raporlayan TEK gövde: <see cref="ProjectSkippedEvent"/> + <c>decision.log</c> satırı
     /// (<c>"&lt;ad&gt;: skipped — &lt;gerekçe&gt;"</c>, varsa <paramref name="detail"/> parantez içinde). Koşu başındaki
     /// pre-skip'ler ile sırası gelince atlanan koşullu proje aynı cümleyi kurar (kopya YASAK).
@@ -1378,7 +1460,7 @@ public sealed class RunCoordinator(
     /// null geçer (persist döngü alanlarını null yazar).</param>
     private void ReportProjectResult(RunContext run, string projectId, BuildResult result, long durationMs,
         string? failReason, DepIssueResult depIssues, bool trustedResult, bool cycleUnsettled, string? failLogTail,
-        CycleMemberRecord? cycle = null)
+        CycleMemberRecord? cycle = null, IReadOnlyList<CycleReadSurface>? dependencySurfaces = null)
     {
         string name = NameOf(run, projectId);
         // [spec 2026-09-18 §6.1 · karar 10 · P4] Branch kesmesinden SONRA biten hiçbir sonucun arkasında durulmaz:
@@ -1421,7 +1503,7 @@ public sealed class RunCoordinator(
                 if (run.MsBuildTarget == MsBuildTarget.Clean) ForgetBuildStateOnClean(run, projectId);
                 else if (trustedResult)
                     PersistBuildStateOnSuccess(run, projectId, durationMs,
-                        depIssueRoots: depIssueRoots, cycle: cycle);
+                        depIssueRoots: depIssueRoots, cycle: cycle, dependencySurfaces: dependencySurfaces);
                 // [final review I1] Trusted = defter bu başarıyı başarı olarak tuttu mu (invalidates'in tersi);
                 // tutmadıysa App satırı, bir sonraki Sync'in okuyacağı "kanıtsız hata" hâliyle çizer.
                 run.Events.TryWrite(new ProjectSucceededEvent(run.RunId, projectId, durationMs, depIssuesForEvent,
@@ -2282,7 +2364,7 @@ public sealed class RunCoordinator(
     /// [RESOLVE 3.4] Yakınsayan grubun hiç derlenmemiş (TAŞINAN) üyesini raporlar: tur 1'de gerekmedi (karar 2) ve tur
     /// sonlarında okuduğu hiçbir kardeş yüzeyi değişmedi (karar 3). <c>skipped — up to date</c> olayı ve decision.log
     /// satırı (ayrıntı <see cref="CycleDecisionLines.CarriedDetail"/>), defter yenilemesi
-    /// (<see cref="PersistBuildStateOnCarriedMember"/>) ve <see cref="ReadySetScheduler.Complete"/> — Complete
+    /// (<see cref="RefreshBuildStateOnSkip"/>) ve <see cref="ReadySetScheduler.Complete"/> — Complete
     /// <c>finally</c> içinde TAM BİR KEZ (<see cref="ReportProjectResult"/>'ın sözleşmesi). Üye bu koşuda hiç invoke
     /// edilmediği için in-flight kaydı yoktur. Bin'deki kardeş kopyaları TAZELENMEZ (karar 5 — OutDir'e dokunulmaz).
     /// </summary>
@@ -2296,7 +2378,7 @@ public sealed class RunCoordinator(
             // koşu taşınan üyenin kaydını da yenilemez — kayıt son güvenilir derlemenin olarak kalır.
             bool interrupted;
             lock (_gate) interrupted = _interrupted;
-            if (!interrupted) PersistBuildStateOnCarriedMember(run, projectId, depIssues);
+            if (!interrupted) RefreshBuildStateOnSkip(run, projectId, depIssues);
         }
         finally
         {
@@ -2305,16 +2387,18 @@ public sealed class RunCoordinator(
     }
 
     /// <summary>
-    /// [RESOLVE 3.4 · karar 2] Taşınan üyenin defter kaydını yeniler: koşu başındaki kayıt (<see cref="CycleMemberNeed.Decide"/>
-    /// onu güvenilir buldu) <c>with</c> ile kopyalanır; YENİ bileşik imza, koşu zamanı, revizyon (<see cref="BuiltRevisionOf"/>)
-    /// ve bu koşunun bağımlılık notu yazılır. Süre, içerik özeti, beslenen kopyalar ve üç döngü alanı AYNEN kalır: üye
-    /// derlenmedi, kanıtı son güvenilir derlemenindir. Bağımlılık notu başarı persist'iyle aynı kuraldır (en az bir sorun
-    /// ⇔ not + kökler); notlu kayıt bir sonraki koşuda güvenilmez. Persist I/O hatası koşuyu ÖLDÜRMEZ (warn-only).
+    /// [RESOLVE 3.4 · karar 2 · D7] Derlenmeden "up to date" atlanan projenin defter kaydını yeniler — taşınan döngü üyesi
+    /// ve yüzey kapısıyla atlanan proje AYNI gövdeden geçer: koşu başındaki kayıt (karar onu güvenilir buldu —
+    /// <see cref="CycleMemberNeed.Decide"/> ya da <see cref="SurfaceGate.Decide"/>) <c>with</c> ile kopyalanır; YENİ bileşik
+    /// imza, koşu zamanı, revizyon (<see cref="BuiltRevisionOf"/>) ve bu koşunun bağımlılık notu yazılır. Süre, içerik özeti,
+    /// beslenen kopyalar, üç döngü alanı ve bağımlılık yüzeyleri AYNEN kalır: proje derlenmedi, kanıtı son güvenilir
+    /// derlemenindir. Bağımlılık notu başarı persist'iyle aynı kuraldır (en az bir sorun ⇔ not + kökler); notlu kayıt bir
+    /// sonraki koşuda güvenilmez. Persist I/O hatası koşuyu ÖLDÜRMEZ (warn-only).
     /// </summary>
-    private void PersistBuildStateOnCarriedMember(RunContext run, string projectId, DepIssueResult depIssues) =>
+    private void RefreshBuildStateOnSkip(RunContext run, string projectId, DepIssueResult depIssues) =>
         UpsertBuildState(run, projectId, (inc, signature) =>
         {
-            // Kaydı koşu başında yoksa yenilenecek bir şey yok (taşınan üye güvenilir kayıtla taşınır).
+            // Kaydı koşu başında yoksa yenilenecek bir şey yok (atlanan proje güvenilir kayıtla atlanır).
             if (run.LedgerAtStart?.GetValueOrDefault(projectId) is not { } recorded) return null;
             var (builtCommit, branch) = BuiltRevisionOf(run, inc, projectId);
             IReadOnlyList<string>? depIssueRoots = DepIssueRootsOf(depIssues);
@@ -2327,7 +2411,7 @@ public sealed class RunCoordinator(
 
     /// <summary>
     /// [R3 final] Defter yazımının ORTAK gövdesi: başarı persist'i (<see cref="PersistBuildStateOnSuccess"/>) ve taşınan
-    /// üyenin defter yenilemesi (<see cref="PersistBuildStateOnCarriedMember"/>) buradan geçer — ön koşul ve warn-only
+    /// üyenin ve yüzey kapısıyla atlanan projenin defter yenilemesi (<see cref="RefreshBuildStateOnSkip"/>) buradan geçer — ön koşul ve warn-only
     /// <c>Upsert</c> (uyarı metni dahil) TEK yerde. Ön koşul: defter (<see cref="RunContext.StateStore"/>) ve bu proje
     /// için planlama imzası (<see cref="IncrementalPlan"/>) yoksa YAZILMAZ (testlerdeki basit planner → Incremental null →
     /// persist YOK, davranış nötr). <paramref name="create"/> yazılacak kaydı kurar (<c>null</c> ⇒ yazılacak bir şey
@@ -2505,9 +2589,12 @@ public sealed class RunCoordinator(
     /// o KÖKLERİN proje kimlikleri; değilse <c>null</c>. Kayda not + kökler olarak yazılır;
     /// <see cref="Core.Planning.WillBuildEvaluator"/> onu görünce projeyi koşullu sayar
     /// (<see cref="WillBuildReason.WaitingForDependency"/>).</param>
-    /// <param name="cycle">[RESOLVE 3.4] Yakınsayan grupta derlenen üyenin döngü kanıtı; null ⇒ üç döngü alanı NULL yazılır.</param>
+    /// <param name="cycle">[RESOLVE 3.4] Güvenilir başarının (oturmuş üye) döngü kanıtı; null ⇒ üç döngü alanı NULL yazılır.</param>
+    /// <param name="dependencySurfaces">[D6] Derlemenin bağlandığı doğrudan bağımlılık yüzeyleri (invoke'tan önce okunan,
+    /// <see cref="DependencySurfacesOf"/>) — yüzey kapısının bir sonraki koşudaki tabanı; null ⇒ yüzey kanıtı yok.</param>
     private void PersistBuildStateOnSuccess(RunContext run, string projectId, long durationMs,
-        IReadOnlyList<string>? depIssueRoots, CycleMemberRecord? cycle = null) =>
+        IReadOnlyList<string>? depIssueRoots, CycleMemberRecord? cycle = null,
+        IReadOnlyList<CycleReadSurface>? dependencySurfaces = null) =>
         UpsertBuildState(run, projectId, (inc, signature) =>
         {
             // [design v1.14.0 §9] HEAD ve branch ANA REPOYU anlatır. Harici bir proje kendi çalışma kopyasının
@@ -2525,10 +2612,12 @@ public sealed class RunCoordinator(
                 // [PERF E3] Restore'u koşan ya da kanıtla atlanan projenin karar anındaki packages.config özeti — bir
                 // sonraki Build/Cycles koşusunun restore kanıtı. Kayıt yoksa (packages.config yok, özet okunamadı) null.
                 PackagesConfigHash: run.PackagesConfigHashById.GetValueOrDefault(projectId),
-                // [RESOLVE 3.4] Döngü kanıtı yalnız yakınsayan grupta derlenen üyeye yazılır. Döngü dışı her başarı (Build,
+                // [RESOLVE 3.4 · D3] Döngü kanıtı yalnız güvenilir (oturmuş) döngü üyesine yazılır. Döngü dışı her başarı (Build,
                 // Rebuild, tek proje) taze kayıtla alanları NULL yazar — "mevcudu koru" DEĞİL: eski kanıt silinir, bir
                 // sonraki Resolve üyeyi gerekli sayar (güvenli taraf).
-                CycleMemberTerm: cycle?.Term, CycleReadSurfaces: cycle?.ReadSurfaces, CycleEngineFingerprint: cycle?.EngineFingerprint);
+                CycleMemberTerm: cycle?.Term, CycleReadSurfaces: cycle?.ReadSurfaces, CycleEngineFingerprint: cycle?.EngineFingerprint,
+                // [D6] Bu derlemenin bağlandığı doğrudan bağımlılık yüzeyleri — yüzey kapısının karşılaştırma tabanı.
+                DependencySurfaces: dependencySurfaces);
         });
 
     /// <summary>[tek proje · Clean] Başarılı bir <c>Clean</c>'den sonra projenin defter kaydını siler —
@@ -2783,8 +2872,16 @@ public sealed class RunCoordinator(
         // packages.config projesini restore eder; Build ve Cycles kanıt tatmin edildiyse atlar. Tek kuruluş yeri
         // (Mode: cmd.Mode) modu her zaman geçer; varsayılan GÜVENLİ yöndedir (kanıta bakılmaz, restore koşar) —
         // yalnız Mode'u unutan gelecekteki bir kuruluş yerini güvenli tarafta tutar.
-        RunMode Mode = RunMode.Rebuild)
+        RunMode Mode = RunMode.Rebuild,
+        // [D7] Sırası gelince yüzey kapısından geçecek projeler (IncrementalPlan.SurfaceCandidateIds) — yalnız kapının
+        // uygulandığı koşuda dolu (SurfaceGate.AppliesTo: defteri dinleyen tam koşu); null ⇒ kapı yok. Mode gibi SONDA ve
+        // default'lu: eski kuruluş yerleri (testler) değişmez.
+        IReadOnlySet<string>? SurfaceCandidateIds = null)
     {
+        /// <summary>[D9] Bağımlılık → bu koşuda okunan ŞİMDİKİ yüzey özeti (kanıt dosyasından, ApiSurfaceHash); tembel ve koşu
+        /// boyunca sabit: bağımlılık dispatch anında terminaldir, çıktısı diskte nihaidir. Yüzey yoksa/okunamıyorsa null.</summary>
+        public ConcurrentDictionary<string, string?> SurfaceById { get; } = new(StringComparer.OrdinalIgnoreCase);
+
         /// <summary>[PERF E3] projectId → bu koşuda restore'u koşan ya da kanıtla atlanan projenin, karar ANINDA
         /// okunan packages.config özeti. Başarı persist'i (<c>PersistBuildStateOnSuccess</c>) onu deftere yazar:
         /// derleme sürerken dosya değişse bile defter restore kararının gördüğü içeriği anlatır.</summary>

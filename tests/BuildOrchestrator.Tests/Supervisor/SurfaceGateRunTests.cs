@@ -1,6 +1,7 @@
 using System.IO;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Core.State;
 using BuildOrchestrator.Supervisor;
 using static BuildOrchestrator.Tests.Supervisor.RunCoordinatorTests;
@@ -42,5 +43,101 @@ public class SurfaceGateRunTests : IDisposable
         using var h = await BuildAsync(new BuildStateStore(_cacheRoot), disk, UpDown(), AllSucceed());
         var d = Assert.Single(h.Events.OfType<BuildPreviewEvent>()).Items.Single(i => i.ProjectId == Id("D"));
         Assert.Equal((true, false), (d.WillBuild, d.Conditional));
+    }
+
+    /// <summary>Koşu 1: ikisi de derlenir, D'nin kaydı U'nun yüzeyini taşır. Koşu 2 (U yine kirli, yüzeyi AYNI): U derlenir, D sırası
+    /// gelince atlanır — "skipped — up to date (no dependency surface changed)", kaydı yeni imzayla yenilenir, yüzeyler aynen.</summary>
+    [Fact]
+    public async Task a_dependent_is_skipped_when_its_dependency_recompiled_with_the_same_surface()
+    {
+        var store = new BuildStateStore(_cacheRoot);
+        var disk = new CycleRoundsTests.SurfaceDisk();
+        disk.Set("U", "u1");
+        var first = AllSucceed();
+        using (var h = await BuildAsync(store, disk, UpDown(candidate: false), first))
+            Assert.Equal([Id("U"), Id("D")], first.Requests.Select(r => r.ProjectId));
+        var dBefore = store.Load()[Id("D")];
+        Assert.Equal([new CycleReadSurface(Id("U"), CycleRoundsTests.SurfaceDisk.PathOf("U"), "u1")], dBefore.DependencySurfaces);
+
+        var second = AllSucceed();
+        var plan = UpDown() with
+        {
+            Incremental = UpDown().Incremental! with
+            {
+                SignatureById = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [Id("U")] = "sig2", [Id("D")] = "sig2" },
+            },
+        };
+        using var run = await BuildAsync(store, disk, plan, second);
+        Assert.Equal([Id("U")], second.Requests.Select(r => r.ProjectId));
+        var skipped = Assert.Single(run.Events.OfType<ProjectSkippedEvent>());
+        Assert.Equal((Id("D"), SkipReasons.UpToDate), (skipped.ProjectId, skipped.Reason));
+        Assert.Contains($"D: skipped — {SkipReasons.UpToDate} ({SurfaceGate.UnchangedDetail})", run.DecisionLog, StringComparison.Ordinal);
+        var d = store.Load()[Id("D")];
+        Assert.Equal(("sig2", BuildResult.Succeeded, dBefore.LastDurationMs), (d.BuiltSignature, d.LastResult, d.LastDurationMs));
+        Assert.Equal(dBefore.DependencySurfaces, d.DependencySurfaces);
+        Assert.Equal(1, Assert.Single(run.Events.OfType<RunCompletedEvent>()).Skipped);
+    }
+
+    [Fact] // yüzey oynadı ⇒ D derlenir, kaydı yeni yüzeyi taşır
+    public async Task a_dependent_is_built_when_its_dependency_surface_moved()
+    {
+        var store = new BuildStateStore(_cacheRoot);
+        var disk = new CycleRoundsTests.SurfaceDisk();
+        disk.Set("U", "u1");
+        using (await BuildAsync(store, disk, UpDown(candidate: false), AllSucceed())) { }
+        var invoker = new FakeInvoker((req, _, _) =>
+        {
+            if (NameOf(req.ProjectId) == "U") disk.Set("U", "u2");
+            return Task.FromResult(Ok());
+        });
+        using var run = await BuildAsync(store, disk, UpDown(), invoker);
+        Assert.Equal([Id("U"), Id("D")], invoker.Requests.Select(r => r.ProjectId));
+        Assert.Empty(run.Events.OfType<ProjectSkippedEvent>());
+        Assert.Equal("u2", Assert.Single(store.Load()[Id("D")].DependencySurfaces!).Hash);
+    }
+
+    [Fact] // bağımlılık bu koşuda patladı ⇒ D derlenir (dep-issue yolu, bugünkü gibi)
+    public async Task a_dependent_is_built_with_a_dependency_issue_when_its_dependency_failed()
+    {
+        var store = new BuildStateStore(_cacheRoot);
+        var disk = new CycleRoundsTests.SurfaceDisk();
+        disk.Set("U", "u1");
+        using (await BuildAsync(store, disk, UpDown(candidate: false), AllSucceed())) { }
+        var invoker = new FakeInvoker((req, _, _) => Task.FromResult(NameOf(req.ProjectId) == "U" ? Exit(1) : Ok()));
+        using var run = await BuildAsync(store, disk, UpDown(), invoker);
+        Assert.Equal([Id("U"), Id("D")], invoker.Requests.Select(r => r.ProjectId));
+        Assert.NotNull(Assert.Single(run.Events.OfType<ProjectSucceededEvent>()).DepIssues);
+    }
+
+    [Fact] // bağımlılık güncel diye pre-skip edildi ama satırdan derlenip yüzeyi değişmişti ⇒ diskten okunur ⇒ D derlenir
+    public async Task a_skipped_dependency_surface_is_read_from_disk_not_assumed_unchanged()
+    {
+        var store = new BuildStateStore(_cacheRoot);
+        var disk = new CycleRoundsTests.SurfaceDisk();
+        disk.Set("U", "u1");
+        using (await BuildAsync(store, disk, UpDown(candidate: false), AllSucceed())) { }
+        disk.Set("U", "u2"); // koşular arasında U'nun çıktısı değişti (satırdan derlendi)
+        var plan = UpDown() with
+        {
+            Plan = UpDown().Plan with
+            {
+                Nodes = [.. UpDown().Plan.Nodes.Select(n => n.Name == "U" ? n with { WillBuild = false, WillBuildReason = WillBuildReason.UpToDate } : n)],
+            },
+        };
+        var invoker = AllSucceed();
+        using var run = await BuildAsync(store, disk, plan, invoker);
+        Assert.Equal([Id("D")], invoker.Requests.Select(r => r.ProjectId));
+    }
+
+    [Fact] // Rebuild kapıyı uygulamaz; kapı yalnız defteri dinleyen koşularda
+    public async Task a_rebuild_ignores_the_gate()
+    {
+        var store = new BuildStateStore(_cacheRoot);
+        var disk = new CycleRoundsTests.SurfaceDisk();
+        disk.Set("U", "u1");
+        using (await BuildAsync(store, disk, UpDown(candidate: false), AllSucceed())) { }
+        var invoker = AllSucceed();
+        using var run = await BuildAsync(store, disk, UpDown(), invoker, RunMode.Rebuild);
+        Assert.Equal([Id("U"), Id("D")], invoker.Requests.Select(r => r.ProjectId));
     }
 }

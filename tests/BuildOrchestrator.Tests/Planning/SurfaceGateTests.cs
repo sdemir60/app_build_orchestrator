@@ -60,4 +60,60 @@ public class SurfaceGateTests
 
         Assert.Empty(SurfaceGate.CandidateIds(safe, fast));
     }
+
+    // ---------------------------------------------------------------- karar (sırası gelince) [D7]
+
+    private static CycleReadSurface Rec(string dep, string hash) => new(dep, dep + ".dll", hash);
+
+    private static readonly IReadOnlyDictionary<string, BuildResult> Done = new Dictionary<string, BuildResult>(StringComparer.OrdinalIgnoreCase)
+        { ["U"] = BuildResult.Succeeded, ["S"] = BuildResult.Skipped, ["F"] = BuildResult.Failed };
+
+    private static (string, string?)? Disk(string dep) => dep switch
+    {
+        "U" => ("U.dll", "u1"), "S" => ("S.dll", "s1"), "F" => ("F.dll", "f1"), "L" => ("L.dll", null), _ => null,
+    };
+
+    [Fact]
+    public void unchanged_when_every_direct_dependency_surface_matches_the_record()
+        => Assert.Equal(SurfaceGateVerdict.Unchanged, SurfaceGate.Decide(["U", "S"], Done, [Rec("S", "s1"), Rec("U", "u1")], Disk));
+
+    [Fact]
+    public void a_dependency_that_failed_this_run_builds()
+        => Assert.Equal(SurfaceGateVerdict.Build, SurfaceGate.Decide(["U", "F"], Done, [Rec("F", "f1"), Rec("U", "u1")], Disk));
+
+    [Fact]
+    public void a_moved_surface_builds()
+        => Assert.Equal(SurfaceGateVerdict.Build, SurfaceGate.Decide(["U"], Done, [Rec("U", "u0")], Disk));
+
+    [Fact] // Review Focus 5
+    public void a_dependency_missing_from_the_record_builds()
+        => Assert.Equal(SurfaceGateVerdict.Build, SurfaceGate.Decide(["U", "S"], Done, [Rec("U", "u1")], Disk));
+
+    [Fact]
+    public void no_record_builds()
+    {
+        Assert.Equal(SurfaceGateVerdict.Build, SurfaceGate.Decide(["U"], Done, null, Disk));
+        Assert.Equal(SurfaceGateVerdict.Build, SurfaceGate.Decide(["U"], Done, [], Disk));
+    }
+
+    [Fact] // Review Focus 5
+    public void an_unreadable_or_absent_surface_builds()
+    {
+        Assert.Equal(SurfaceGateVerdict.Build, SurfaceGate.Decide(["L"],
+            new Dictionary<string, BuildResult> { ["L"] = BuildResult.Succeeded }, [Rec("L", "l1")], Disk));
+        Assert.Equal(SurfaceGateVerdict.Build, SurfaceGate.Decide(["U"], Done, [Rec("U", ApiSurfaceHash.Absent)],
+            _ => ("U.dll", ApiSurfaceHash.Absent)));
+    }
+
+    [Fact]
+    public void a_dependency_not_completed_builds()
+        => Assert.Equal(SurfaceGateVerdict.Build, SurfaceGate.Decide(["Z"], Done, [Rec("Z", "z1")], Disk));
+
+    [Fact]
+    public void persistable_drops_null_and_absent()
+    {
+        Assert.Null(SurfaceGate.Persistable(null));
+        Assert.Null(SurfaceGate.Persistable(ApiSurfaceHash.Absent));
+        Assert.Equal("h", SurfaceGate.Persistable("h"));
+    }
 }
