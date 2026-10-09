@@ -2405,6 +2405,25 @@ public class RunViewModelStateTests
         Assert.Equal(1, vm.FinishedOfWillBuild); // terminal: n ilerler, çubuk hareket eder
     }
 
+    /// <summary>[D8 · Resolve cycles] Resolve koşusunda taşınan üye (ya da kapsamdaki bir upstream'in kapı atlaması) da AYNI cevabı
+    /// hemen verir: motor defteri Cycles koşusunda da yeniler (RefreshBuildStateOnSkip) ve satırın plan bayrağı Sync'ten gelen
+    /// "bir sonraki düz Build"ün cevabıdır. Başarı yolu (OnProjectDone → NextPreview.AfterSuccess) bu cevabı Resolve'da da yazar;
+    /// atlama yolu ondan ayrışmaz. Resolve'un ÖNİZLEMESİ bayrağa yazmaz (PreviewWritesPlanFlag) — canlı geçiş yazar, yalnız Clean hariç.</summary>
+    [Fact]
+    public void A_member_carried_in_a_resolve_cycles_run_turns_up_to_date_at_once()
+    {
+        var vm = T5Vm();
+        SyncWith(vm, Item("M", true, WillBuildReason.SignatureChanged));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, 1, 4, "Debug"));
+        vm.OnEvent(new BuildPreviewEvent([Item("M", true, WillBuildReason.SignatureChanged)]));
+
+        vm.OnEvent(new ProjectSkippedEvent("r1", P("M"), SkipReasons.UpToDate));
+
+        var row = RowOf(vm, "M");
+        Assert.Equal((ProjectRowState.Skipped, false, WillBuildReason.UpToDate, false, false),
+            (row.State, row.WillBuild, row.WillBuildReason, row.Conditional, row.OwnFilesChanged));
+    }
+
     /// <summary>Pre-skip satırı (koşu başında "up to date", gerekçesi "built outside this tool") dokunulmaz: planın derleyecek
     /// demediği satırın gerekçesi UpToDate'e ezilmez — ezilseydi satır ile bir sonraki Sync ayrışırdı.</summary>
     [Fact]

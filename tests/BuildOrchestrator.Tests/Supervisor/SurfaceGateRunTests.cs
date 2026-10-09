@@ -78,6 +78,30 @@ public class SurfaceGateRunTests : IDisposable
         Assert.Equal(1, Assert.Single(run.Events.OfType<RunCompletedEvent>()).Skipped);
     }
 
+    /// <summary>Son sonucu başarı olmayan kayıt kapıdan geçmez (CycleMemberNeed kural iii'nin aynası). Senaryo: D başarılı (U'nun u1
+    /// yüzeyiyle) → D düzenlenir, kanıtlı derleyici hatası (FailedSignature) → kaynak geri alınır → U yine kirli, yüzeyi AYNI.
+    /// Defterin "kaynak geri alındı" kuralı Fast planda D'yi "güncel" okuduğu için D aday olabilir; kapı atlasaydı kayıt
+    /// LastResult=Failed + FailedSignature ile yenilenir, D'yi kök bekleyen bağımlılar bir basış daha "still failing" okurdu.</summary>
+    [Fact]
+    public async Task a_dependent_whose_last_result_is_not_a_success_is_built()
+    {
+        var store = new BuildStateStore(_cacheRoot);
+        var disk = new CycleRoundsTests.SurfaceDisk();
+        disk.Set("U", "u1");
+        using (await BuildAsync(store, disk, UpDown(candidate: false), AllSucceed())) { }
+        store.Upsert(store.Load()[Id("D")] with
+        {
+            LastResult = BuildResult.Failed, FailedSignature = "sig-broken", FailedAt = DateTimeOffset.UtcNow,
+        });
+
+        var invoker = AllSucceed();
+        using var run = await BuildAsync(store, disk, UpDown(), invoker);
+        Assert.Equal([Id("U"), Id("D")], invoker.Requests.Select(r => r.ProjectId));
+        Assert.Empty(run.Events.OfType<ProjectSkippedEvent>());
+        var d = store.Load()[Id("D")];
+        Assert.Equal((BuildResult.Succeeded, (string?)null), (d.LastResult, d.FailedSignature));
+    }
+
     [Fact] // yüzey oynadı ⇒ D derlenir, kaydı yeni yüzeyi taşır
     public async Task a_dependent_is_built_when_its_dependency_surface_moved()
     {

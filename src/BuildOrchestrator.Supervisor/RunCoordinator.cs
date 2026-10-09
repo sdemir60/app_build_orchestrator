@@ -1360,7 +1360,7 @@ public sealed class RunCoordinator(
         try
         {
             var deps = run.NodeById.GetValueOrDefault(projectId)?.Dependencies ?? [];
-            var recorded = run.LedgerAtStart?.GetValueOrDefault(projectId)?.DependencySurfaces;
+            var recorded = run.LedgerAtStart?.GetValueOrDefault(projectId);
             if (SurfaceGate.Decide(deps, run.Scheduler.Completed, recorded, d => SurfaceOf(run, d)) != SurfaceGateVerdict.Unchanged)
                 return false;
         }

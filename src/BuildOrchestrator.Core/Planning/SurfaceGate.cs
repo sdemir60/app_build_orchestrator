@@ -15,15 +15,18 @@ public enum SurfaceGateVerdict { Build, Unchanged }
 ///
 /// <para><b>Aday.</b> Safe plan projeyi "imza değişti" ile kirli görür, Fast plan (frozen-upstream: upstream'lerin
 /// defterdeki imzası, cascade yok — <c>IncrementalPlanner</c>) ise "güncel" der: kendi terimi (içerik + configuration)
-/// değişmemiş, kanıtı yerinde, beslenen kopyası sağlam, son sonucu başarı; kirlilik yalnız bir upstream'den gelir.
-/// Configuration değişimi Fast imzasını da değiştirdiği için aday olmaz. Doğrudan bağımlılığı olmayan proje ve döngü
-/// üyesi aday değildir. <b>Bilinen sınır:</b> upstream daha önceki bir koşuda derlenmişse (Stop sonrası, satırdan Build)
-/// Fast imzası defterdeki yeni upstream imzasını görür ve "değişti" der — bağımlı bir kez koşulsuz derlenir (güvenli yön).</para>
+/// değişmemiş, kanıtı yerinde, beslenen kopyası sağlam; kirlilik yalnız bir upstream'den gelir. Configuration değişimi
+/// Fast imzasını da değiştirdiği için aday olmaz. Doğrudan bağımlılığı olmayan proje ve döngü üyesi aday değildir.
+/// Fast'in "güncel"i son sonucun başarı olduğunu GARANTİ ETMEZ: defterin "kaynak geri alındı" kuralı kanıtlı bir
+/// hatadan sonra geri alınan kaynağı da güncel okur — bu yüzden son sonuç kararda ayrıca sorulur. <b>Bilinen sınır:</b>
+/// upstream daha önceki bir koşuda derlenmişse (Stop sonrası, satırdan Build) Fast imzası defterdeki yeni upstream
+/// imzasını görür ve "değişti" der — bağımlı bir kez koşulsuz derlenir (güvenli yön).</para>
 ///
-/// <para><b>Karar (sırası gelince).</b> Her doğrudan bağımlılık için: bu koşuda patladıysa, kayıtta yüzeyi yoksa,
-/// şimdiki yüzeyi okunamıyorsa ya da kayıttakinden farklıysa DERLENİR; hepsi aynıysa atlanır. Atlanan ya da güncel
-/// bağımlılığın yüzeyi de DİSKTEN okunur — "atlandı ⇒ değişmedi" varsayımı yoktur: bağımlılık satırdan derlenmiş ya da
-/// kesilmiş bir koşuda yenilenmiş olabilir.</para>
+/// <para><b>Karar (sırası gelince).</b> Kaydın son sonucu başarı değilse ya da kayıtta yüzey yoksa DERLENİR
+/// (<see cref="CycleMemberNeed"/> kural iii'nin aynası: başarısız sonuç hiçbir zaman güvenilmez). Sonra her doğrudan
+/// bağımlılık için: bu koşuda patladıysa, kayıtta yüzeyi yoksa, şimdiki yüzeyi okunamıyorsa ya da kayıttakinden farklıysa
+/// DERLENİR; hepsi aynıysa atlanır. Atlanan ya da güncel bağımlılığın yüzeyi de DİSKTEN okunur — "atlandı ⇒ değişmedi"
+/// varsayımı yoktur: bağımlılık satırdan derlenmiş ya da kesilmiş bir koşuda yenilenmiş olabilir.</para>
 /// </summary>
 public static class SurfaceGate
 {
@@ -38,21 +41,23 @@ public static class SurfaceGate
     /// "yok == yok" eşleşip çıktı yokken bağımlıyı atlatırdı. TEK normalizasyon yeri.</summary>
     public static string? Persistable(string? hash) => hash is null || hash == ApiSurfaceHash.Absent ? null : hash;
 
-    /// <summary>Sırası gelen adayın hükmü (bkz. sınıf özeti "Karar"). Her doğrudan bağımlılık bu koşuda terminal olmalı
-    /// (Failed ⇒ derle), kayıtta yüzeyi bulunmalı ve şimdiki yüzeyi kayıttakiyle aynı olmalı; biri tutmazsa derlenir.
-    /// Kayıt bozuksa (null üretici/özet, aynı üretici iki kez) güvenilmez ⇒ derlenir.</summary>
+    /// <summary>Sırası gelen adayın hükmü (bkz. sınıf özeti "Karar"). Kaydın son sonucu başarı olmalı; her doğrudan bağımlılık
+    /// bu koşuda terminal olmalı (Failed ⇒ derle), kayıtta yüzeyi bulunmalı ve şimdiki yüzeyi kayıttakiyle aynı olmalı; biri
+    /// tutmazsa derlenir. Kayıt bozuksa (null üretici/özet, aynı üretici iki kez) güvenilmez ⇒ derlenir.</summary>
     /// <param name="completed">Bu koşuda terminal olan projeler ve sonuçları (scheduler'ın Completed'ı).</param>
-    /// <param name="recorded">Projenin kaydındaki bağımlılık yüzeyleri (<see cref="BuildState.DependencySurfaces"/>).</param>
+    /// <param name="record">Projenin koşu başındaki kaydı; bağımlılık yüzeyleri <see cref="BuildState.DependencySurfaces"/>'tadır.</param>
     /// <param name="surfaceOf">Bağımlılık → (kanıt dosyası, ŞİMDİKİ yüzey özeti); dosya türetilemiyorsa null, okunamıyorsa
     /// hash null. Çağıran diskten okur ve koşu boyunca önbellekler.</param>
     public static SurfaceGateVerdict Decide(IReadOnlyList<string> directDependencies,
-        IReadOnlyDictionary<string, BuildResult> completed, IReadOnlyList<CycleReadSurface>? recorded,
+        IReadOnlyDictionary<string, BuildResult> completed, BuildState? record,
         Func<string, (string File, string? Hash)?> surfaceOf)
     {
         ArgumentNullException.ThrowIfNull(directDependencies);
         ArgumentNullException.ThrowIfNull(completed);
         ArgumentNullException.ThrowIfNull(surfaceOf);
-        if (recorded is not { Count: > 0 }) return SurfaceGateVerdict.Build;
+        if (record is not { LastResult: BuildResult.Succeeded, DependencySurfaces: { Count: > 0 } recorded })
+            return SurfaceGateVerdict.Build;
+        if (directDependencies.Count == 0) return SurfaceGateVerdict.Build; // "hiçbiri değişmedi" vakum doğruluğuyla atlatmaz
         var recordedByDep = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var r in recorded)
         {
