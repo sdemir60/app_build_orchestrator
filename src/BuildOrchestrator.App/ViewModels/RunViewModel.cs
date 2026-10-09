@@ -490,6 +490,12 @@ public sealed partial class RunViewModel : ObservableObject
     // oldu.)
     private readonly HashSet<string> _willBuildIds = new(StringComparer.OrdinalIgnoreCase);
 
+    // [D4] Turdaki derlemesi bitip grubunu bekleyen KESİN kümedeki üyeler — ara tur sonucu yayılmadığı için satır
+    // terminal olmaz, ama kullanıcı için o üyenin işi bu tur için bitmiştir: n/m ve çubuk onu sayar. Sonraki turda
+    // yeniden derlenmeye başlayan üye düşer (çubuk yeniden derlenen üyeler kadar geri adım atar); hüküm gelince
+    // terminal sayım devralır (bir satır ya terminal ya held sayılır — çift sayım yok). Koşu başına sıfırlanır.
+    private readonly HashSet<string> _heldCycleMembers = new(StringComparer.OrdinalIgnoreCase);
+
     // [final review — C1] Önizlemenin KİRLİ gördüğü her proje (WillBuild==true), KOŞULLU olanlar DAHİL —
     // _willBuildIds'in üst kümesi. İki soru Task 4'ten beri ayrıdır ve ayrı kaynak isterler: "bu koşuda KESİN
     // ne derlenecek" (payda/kuyruk/dalga → _willBuildIds, koşullu HARİÇ) ile "ortada derlenecek bir şey var mı"
@@ -507,6 +513,7 @@ public sealed partial class RunViewModel : ObservableObject
     {
         _willBuildIds.Clear();
         _dirtyIds.Clear();
+        _heldCycleMembers.Clear(); // [D4] held sayımı kesin kümeye bağlıdır: küme tazelenince sayım da sıfırlanır
     }
 
     /// <summary>Bir kararı iki kümeye yazmanın TEK yeri — önizleme (<see cref="OnBuildPreview"/>) ve
@@ -1846,9 +1853,12 @@ public sealed partial class RunViewModel : ObservableObject
         WillBuildCount = _willBuildIds.Count;
         AllClean = _dirtyIds.Count == 0;
         int fin = 0;
+        // [D4] Bitmiş = terminal ∪ turdaki derlemesini bitirip grubunu bekleyen (held) üye; bir satır ikisinden yalnız
+        // birine girer, n bu yüzden m'yi aşmaz.
         foreach (var row in Projects)
             if (_willBuildIds.Contains(row.Id) &&
-                row.State is ProjectRowState.Succeeded or ProjectRowState.Failed or ProjectRowState.Skipped)
+                (row.State is ProjectRowState.Succeeded or ProjectRowState.Failed or ProjectRowState.Skipped
+                 || _heldCycleMembers.Contains(row.Id)))
                 fin++;
         FinishedOfWillBuild = fin;
     }
@@ -2221,6 +2231,7 @@ public sealed partial class RunViewModel : ObservableObject
         row.State = ProjectRowState.Started;
         row.SkipReason = null;    // Savunmacı: NeutralizeRows tıklamada zaten temizler; bir koşuda proje ya atlanır ya derlenir
         row.CycleWaiting = false; // motor onu şimdi derliyor: bu event'in anlamı tam olarak budur
+        _heldCycleMembers.Remove(e.ProjectId); // [D4] tur ≥2: yeniden derlenen üye sayımdan düşer (çubuk geri adım atar)
         _projectStartedAtMs[e.ProjectId] = _nowMs();
         RefreshRunSurface();
     }
@@ -2240,6 +2251,7 @@ public sealed partial class RunViewModel : ObservableObject
         // Savunmacı: sonucunu almış (terminal) bir satır grubunu beklemez — geç gelen bir ilan onu geri çevirmez.
         if (FindRow(e.ProjectId) is not { State: ProjectRowState.Started } row) return;
         row.CycleWaiting = true;
+        if (_willBuildIds.Contains(e.ProjectId)) _heldCycleMembers.Add(e.ProjectId); // [D4] bu turun işi bitti: n sayar
         RefreshRunSurface();
     }
 
