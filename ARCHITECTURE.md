@@ -639,24 +639,46 @@ neither followed deliberately nor detected — an accepted risk, since the repos
 Project files are read as **raw XML**. MSBuild is never evaluated for discovery. The evaluator extracts the
 assembly name, the target framework moniker, `Compile` items (including recursive `**` globs), raw `Reference`
 `HintPath`s and `ProjectReference`s — and, for the output evidence of §7.6, the `OutputType`, the default
-`Platform` and every `<OutputPath>` with its condition.
+`Platform`, every `<OutputPath>` with its condition and, for an SDK-style project, whether its output layout is the
+SDK's default.
 
 **The output path is read, never guessed.** `OutputFileFor(configuration)` derives the full path of the
-project's own build output: `<OutputPath>\<AssemblyName>` with `.dll` for a `Library` and `.exe` for an `Exe`
-or `WinExe`. Two condition shapes are recognised — `'$(Configuration)|$(Platform)' == 'C|P'` and
-`'$(Configuration)' == 'C'` — and an unconditional `<OutputPath>` matches every configuration; the platform is
+project's own build output. For a legacy project it is `<OutputPath>\<AssemblyName>` with `.dll` for a `Library`
+and `.exe` for an `Exe` or `WinExe`. Two condition shapes are recognised — `'$(Configuration)|$(Platform)' == 'C|P'`
+and `'$(Configuration)' == 'C'` — and an unconditional `<OutputPath>` matches every configuration; the platform is
 the project's declared default (`'$(Platform)' == ''`), otherwise `AnyCPU`. As in MSBuild the last matching
-entry in document order wins, and with no match the path is `bin\<configuration>\`. Where the path cannot be
-derived with confidence the answer is *none*, never an approximation: an SDK-style project, a missing or
-unrecognised `OutputType`, an `AssemblyName` or chosen path that still contains `$(`, or an `<OutputPath>` under
-any other condition shape — that last one makes the whole project undecidable, whatever configuration is asked,
+entry in document order wins, and with no match the path is `bin\<configuration>\`.
+
+An SDK-style project gets the .NET SDK's default layout, `bin\<configuration>\<TargetFramework>\<AssemblyName>.dll`
+— the framework folder lowercased as the SDK writes it, the file named after the project file when no `AssemblyName`
+is given — but only while nothing the evaluator can see moves that layout. The project is on the .NET SDK
+(`Microsoft.NET.Sdk` or one of its `Microsoft.NET.Sdk.*` variants; another SDK, a version-pinned one or a second
+one is not), it is a library (no `OutputType`, or `Library`; an `Exe` or `WinExe` gets none), it targets one known
+framework, and no `PropertyGroup` of the project file — conditional or inside `Choose` — sets `OutputPath`,
+`OutDir`, `BaseOutputPath`, `AppendTargetFrameworkToOutputPath`, `AppendRuntimeIdentifierToOutputPath`,
+`RuntimeIdentifier`, `RuntimeIdentifiers`, `UseArtifactsOutput`, `ArtifactsPath`, `TargetFrameworks`, `Platform`,
+`TargetName`, `TargetExt` or `TargetFrameworkVersion`, nor does it import a file or another SDK. The nearest
+`Directory.Build.props` and the nearest `Directory.Build.targets` — found as MSBuild finds them, walking up from the
+project's folder to the drive root and stopping at the first of each name — are read the same way, and there
+`AssemblyName`, `OutputType` and `TargetFramework` count as well, because a props file stands in for what the project
+file leaves out and a targets file overrides it; an import in either, or a file that cannot be read, leaves the
+layout unknown.
+
+Where the path cannot be derived with confidence the answer is *none*, never an approximation: an SDK-style project
+whose layout is moved or unknown, a legacy project with a missing or unrecognised `OutputType`, an `AssemblyName`, a
+framework or a chosen path that still contains `$(`, or an `<OutputPath>` under any other condition shape — that
+last one makes the whole project undecidable, whatever configuration is asked,
 because picking among entries the evaluator cannot read would produce inconsistent evidence. `HintPathTargets()`
 resolves the raw `HintPath`s the same way: absolute paths as they are, relative ones against the project's
 folder, and any path containing `$(` skipped.
 
 Results are cached in `evaluation-cache.json`, keyed by path with an mtime **and file-length** fingerprint. The
 length term is not decoration: an edit that preserves the modification timestamp is otherwise invisible, and
-the cache would serve a stale evaluation. Each entry also carries the cache **schema** it was written under; an
+the cache would serve a stale evaluation. An SDK-style entry also records the length and time of every
+`Directory.Build.*` candidate its layout decision looked at, absent ones included: when one of them changed or
+appeared, the entry is not a hit although the project file is the same — otherwise a props file that moved the
+output later would leave the old path in place, and a gate would keep reading a file no build refreshes any more.
+Each entry also carries the cache **schema** it was written under; an
 entry from an older schema is never a hit, so a field the evaluator learned to extract is never served empty
 from a record that predates it — the project is simply evaluated again the first time it is met. The cache is
 written back only when an entry changed — a project evaluated, or a fingerprint refreshed after a touch — so a run
@@ -1179,7 +1201,7 @@ what the last Sync said.
 Two things follow from "the outputs are gone". The project's **build-state row is deleted**, not invalidated:
 the project did not fail, this tool simply no longer knows any output of it. The output evidence (§7.6) would
 notice the deleted output only for a
-project whose output path it can derive — for an SDK-style project it cannot — so a row left behind would let
+project whose output path it can derive — for a project whose output layout cannot be derived it cannot — so a row left behind would let
 the next `Build` skip such a project as up to date and report a green run over deleted outputs. With the row
 gone, a project whose output path is known is in time mode, and its deleted output reads output missing. And the
 row **reads `never built`, in its to-build grey**, after the clean succeeds: elsewhere a
@@ -1421,7 +1443,7 @@ Until its turn a candidate is a plain dirty project: it lights in the wave, sits
 build* and in the progress denominator. The decision comes at its turn, every dependency already finished. A record
 whose last result is not a success is not trusted, as in round one (§8.8), and the project compiles. Otherwise, for each
 direct dependency, a failure in this run, a dependency missing from the record, a surface that cannot be read — a
-dependency without a derivable output path, an SDK-style project (§7.6), has none — or one that differs from the recorded
+dependency without a derivable output path, an SDK-style project with an overridden layout (§6.2), has none — or one that differs from the recorded
 hash means the project compiles; when every one matches it is skipped as `skipped — up to date (no dependency surface
 changed)` (`SurfaceGate.Decide`). The current surface is read from the dependency's
 evidence file on disk, once per run (`ApiSurfaceHash`, the hash the cycle rounds use: declarations, not bodies) —
@@ -5668,7 +5690,7 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 |---|---|---|
 | `logs\run-<timestamp>\` | per-run and per-project logs; a run's folder is removed at the first engine start more than three days after the run, except the newest run's, which always stays (§8.5) | — |
 | `build-state.json` | per-project signature, commit, result, duration, dependency-issue note with its root project ids, non-convergent cycle signature, the fed outputs learned from the last success (§7.6), the `packages.config` content hash behind the restore decision (§9.3), a cycle member's term, the sibling surfaces it read and the engine fingerprint behind round one's compile decision (§7.5, §8.8); projects from external roots share the file under the same key shape, without a commit or branch (§7.5). A record written before a field existed loads with that field empty | falls back to empty |
-| `evaluation-cache.json` | csproj evaluation cache; each entry records the schema it was written under, and an entry written under another schema is re-evaluated rather than served (§6.2); Optimize removes such entries outright, whatever root they belong to | falls back to empty |
+| `evaluation-cache.json` | csproj evaluation cache; each entry records the schema it was written under, and an entry written under another schema is re-evaluated rather than served (§6.2); an SDK-style entry also records the `Directory.Build.*` files its layout decision read, and is re-evaluated when one of them changes or appears; Optimize removes such entries outright, whatever root they belong to | falls back to empty |
 | `source-hash-cache.json` | source content hashes keyed by path, size and modification time (§7.1) — this is what turns the content decision into one stat pass per run | falls back to empty (the next run re-reads and rebuilds it) |
 | `run-inflight.json` | the ids of the projects the engine has dispatched and not yet reported — written at dispatch, erased at the result, emptied at the end of every run; left non-empty only by an engine that died mid-run, and read once at the next engine start (§8.7). Absent while no run is in flight | an unparsable file is deleted and nothing is recovered; an unreadable one stays for the next start |
 | `msbuild\wpf-temporary-assembly.targets`, `msbuild\wpf-temporary-assembly-friend.cs` | the two files behind `-p:CustomBeforeMicrosoftCommonTargets` (§9.2). An engine writes them the first time it resolves `MSBuild.exe` — on its first run or its first Optimize — and only when the content on disk differs from its own; both files carry a fixed, old modification time however they were written (§9.2); the path carries no version, and a missing or edited file is repaired the next time a new engine resolves MSBuild | rewritten from the engine's own copy the next time a new engine resolves MSBuild; if they cannot be written or pinned, builds run without the argument |
@@ -6182,7 +6204,7 @@ do, and how the interface works around each — useful to know before attempting
   event carries no roots, and the record is right in the meantime.
 - **A dependent of an upstream without an evidence path compiles whenever it is dirty.** The surface gate (§8.3) and
   round one (§8.8) compare an upstream's evidence file with the dependent's record; an upstream with no derivable
-  output path (an SDK-style project, §7.6) has nothing to compare, so its direct dependents never pass the gate and
+  output path (an SDK-style project with an overridden layout, §6.2) has nothing to compare, so its direct dependents never pass the gate and
   the cycle members that read it from outside their group never count as carried.
 - **The surface gate reads a dependency's own output, not the copy its dependents link against.** A dependent's
   record names the surface of the dependency's evidence file (§7.6). Where dependents link against copies in a shared
@@ -6403,8 +6425,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Workspace scan, ignore list | `Core/Discovery/WorkspaceScanner.cs` |
-| Raw csproj XML evaluation; the output path (`OutputFileFor`) and resolved `HintPath` targets | `Core/Discovery/CsprojEvaluator.cs` |
-| Evaluation cache (mtime + length fingerprint, schema; written only when dirty, as a stream) | `Core/Discovery/EvaluationCache.cs` |
+| Raw csproj XML evaluation; the output path (`OutputFileFor` — the legacy `OutputPath` reading and an SDK-style project's default layout, with the settings and the nearest `Directory.Build.*` files that move it) and resolved `HintPath` targets | `Core/Discovery/CsprojEvaluator.cs` |
+| Evaluation cache (mtime + length fingerprint, schema, the `Directory.Build.*` files an SDK-style layout decision read; written only when dirty, as a stream) | `Core/Discovery/EvaluationCache.cs` |
 | `.sln` parsing, project↔solution map | `Core/Discovery/SolutionMapper.cs` |
 | Stale-`obj` diagnosis (warn-only, two consumers: the run-start warner and Optimize's removal step), TFM derivation | `Core/Discovery/StaleObjDetector.cs`, `TargetFrameworkMonikerDeriver.cs`, `Supervisor/StaleObjRunStartWarner.cs` |
 | DLL name → producing project | `Core/Graph/ProducerMap.cs` |

@@ -93,7 +93,7 @@ public enum DependentMode { Safe, Fast }
 /// yalnız o projenin derleme çıktıları silinir, cache'lere dokunulmaz. Hiçbir şey DERLEMEZ, dolayısıyla
 /// incremental karar da sorulmaz. Çıktılar gittiği için temizlenen projenin build-state kaydı SİLİNİR —
 /// Çıktı kanıtı (ARCHITECTURE §7.6) silinen çıktıyı yalnız çıktı yolu türetilebilen projede görür
-/// (SDK-style'da göremez); kayıt kalsaydı bir sonraki Build böyle bir projeyi "güncel" sayıp atlardı. Kayıt
+/// (düzeni oynatılmış bir SDK-style projede göremez); kayıt kalsaydı bir sonraki Build böyle bir projeyi "güncel" sayıp atlardı. Kayıt
 /// silinince yolu bilinen proje zaman kipine düşer ve silinmiş çıktısı <c>OutputMissing</c> okunur. İki
 /// yerden gönderilir: Build menüsünden <see cref="ScopeProjectId"/> OLMADAN — grafın TÜM projeleri, harici
 /// projeler ve döngü üyeleri dahil (Visual Studio'nun <i>Clean Solution</i>'ı) — ve satır menüsünden

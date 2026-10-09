@@ -44,8 +44,16 @@ public sealed class EvaluationCache(string cachePath)
     /// [Faz 3/Task 1] Güncel önbellek şeması. Eski (şemasız/daha düşük şemalı) kayıtlar isabet SAYILMAZ —
     /// <see cref="EvaluatedProject"/>'e eklenen yeni alanlar (OutputType, OutputPaths, ...) eski kayıtta boş
     /// kalmasın diye proje her karşılaşıldığında bir kez yeniden değerlendirilir.
+    /// <para>[A3] Şema 2: <see cref="EvaluatedProject.SdkOutputLayoutIsDefault"/>. Alan şema 1 kaydında yoktur (false ⇒ yol
+    /// yok) ve csproj değişmediği sürece girdi yeniden değerlendirilmezdi — SDK-style projenin kör noktası sonsuza dek kalırdı.</para>
     /// </summary>
-    internal const int CurrentSchema = 1;
+    internal const int CurrentSchema = 2;
+
+    /// <summary>[Ruling · A2] Kaydın csproj DIŞINDAKİ girdileri — SDK-style yol kararının baktığı Directory.Build.props/targets
+    /// adayları (<see cref="EvaluatedProject.LayoutInputs"/>) — hâlâ kaydedildiği gibi mi. Değilse csproj aynı olsa da kayıt
+    /// isabet SAYILMAZ: çıktıyı sonradan taşıyan bir props'a rağmen eski yol kalırdı. Legacy kayıtta liste boştur (maliyet yok);
+    /// SDK-style projede birkaç ucuz dosya bilgisi okunur.</summary>
+    private static bool LayoutInputsCurrent(EvaluatedProject project) => project.LayoutInputs.All(stamp => stamp.IsCurrent());
 
     /// <summary>
     /// Canlı build ↔ scan yarışı [Task 0/It-4a]: scanner bir .csproj'u bulduktan sonra bu çağrı
@@ -74,7 +82,7 @@ public sealed class EvaluationCache(string cachePath)
             long mtime = info.LastWriteTimeUtc.Ticks;
             long length = info.Length;
 
-            if (_entries.TryGetValue(csprojPath, out var e) && e.Schema == CurrentSchema)
+            if (_entries.TryGetValue(csprojPath, out var e) && e.Schema == CurrentSchema && LayoutInputsCurrent(e.Project))
             {
                 if (e.MtimeTicks == mtime && e.Length == length) return e.Project; // hızlı yol: mtime+size eşit
                 if (Hash(csprojPath) is var h && h == e.Hash)                      // mtime/size farklı ama içerik aynı
