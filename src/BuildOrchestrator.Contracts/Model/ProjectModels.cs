@@ -195,8 +195,9 @@ public sealed record BuildState(
     // bakmaz (toparlanma yolu). Alan SONA ve default'lu: eski build-state.json kayıtları alansızdır ve null çözülür —
     // proje restore eder (güvenli yön).
     string? PackagesConfigHash = null,
-    // [RESOLVE Faz 3 — karar 2/4] Bu döngü üyesinin son GÜVENİLİR derlemesindeki KENDİ terimi (IncrementalPlan.
-    // MemberTermById: SCC-içi kenarlar sabit işaret, grup dışı upstream'ler taze imzalarıyla). Bileşik imzadan
+    // [RESOLVE Faz 3 — karar 2/4 · D7-b] Bu döngü üyesinin son GÜVENİLİR derlemesindeki KENDİ terimi (IncrementalPlan.
+    // MemberTermById: içerik + configuration, her upstream sabit işaret; grup dışı upstream'in değişimi DependencySurfaces
+    // ile denetlenir). Bileşik imzadan
     // (BuiltSignature) AYRI durur: bileşik kardeşlerin içeriğini de taşır, üyenin kendi girdilerinin değişip
     // değişmediğini söyleyemez. Üç döngü alanını yalnız güvenilir başarı yazar: grup yakınsadı ya da hükümsüz durduğunda
     // üye oturmuştu (D3); bayat üye ile kesilen koşu hiçbirini yazmaz. Alanlar SONA ve default'lu: eski kayıtlar ve

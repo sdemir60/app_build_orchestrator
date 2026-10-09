@@ -3209,4 +3209,40 @@ public class CycleRoundsTests
             Assert.Contains(CycleDecisionLines.EvidenceUnavailable("A", "A", SurfaceDisk.PathOf("A"), CycleDecisionLines.UnreadableReason),
                 h.DecisionLog, StringComparison.Ordinal);
     });
+
+    // ---------------------------------------------------------------- 16) [D7-b] grup dışı upstream'in yüzeyi
+
+    /// <summary>U (grup dışı, güncel — pre-skip) → A ↔ B; yalnız A, U'yu okur.</summary>
+    private static RunPlan UpstreamCycle() => CyclePlanOf(["A", "B"],
+        Node("U", willBuild: false), Node("A", deps: ["B", "U"], inCycle: true), Node("B", deps: ["A"], inCycle: true));
+
+    private static Dictionary<string, string> SigOf(string signature, params string[] names) =>
+        names.ToDictionary(Id, _ => signature, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>[D7-b] Grup dışı upstream U'nun yüzeyi değişmedi (gövde değişikliği): üyelerin kendi terimi aynı, U'nun yüzeyi
+    /// kayıttakiyle aynı ⇒ herkes taşınır, grup 0 derlemeyle yakınsar. U'nun yüzeyi oynadıysa yalnız U'yu okuyan A derlenir.</summary>
+    [Theory]
+    [InlineData(false, new string[0])]
+    [InlineData(true, new[] { "A#1" })]
+    public Task an_outside_upstream_change_compiles_only_the_members_whose_read_surface_moved(bool surfaceMoved, string[] expectedCalls) => InCacheRootAsync(async cacheRoot =>
+    {
+        var store = new BuildStateStore(cacheRoot);
+        var disk = new SurfaceDisk();
+        foreach (string n in new[] { "U", "A", "B" }) disk.Set(n, n.ToLowerInvariant() + "1");
+        var plan = MemberSkipPlan(UpstreamCycle(), "sig1", ("A", "a1"), ("B", "b1"));
+        plan = plan with { Incremental = plan.Incremental! with { OutputsById = SurfaceDisk.OutputsFor("U", "A", "B") } };
+        await ConvergeOnceAsync(store, disk, plan); // U pre-skip (willBuild false), A ve B derlenir; A'nın kaydı U'nun yüzeyini taşır
+        Assert.Equal("u1", Assert.Single(store.Load()[Id("A")].DependencySurfaces!).Hash);
+
+        if (surfaceMoved) disk.Set("U", "u2"); // U koşular arasında (satırdan / VS'de) derlendi ve API'si değişti
+        var rec = new RoundRecorder();
+        using var h = await ResolveAsync(store, disk, plan with { Incremental = plan.Incremental! with { SignatureById = SigOf("sig2", "A", "B") } },
+            rec.Invoker((_, _) => Ok()));
+
+        Assert.Equal(expectedCalls, rec.Calls);
+        Assert.Equal(CycleOutcome.Converged, Assert.Single(h.Events.OfType<CycleCompletedEvent>()).Outcome);
+        if (surfaceMoved)
+            Assert.Contains(CycleDecisionLines.RoundOneNeed("A", CycleMemberNeed.DependencySurfaceMovedPrefix + SurfaceDisk.PathOf("U")),
+                h.DecisionLog, StringComparison.Ordinal);
+    });
 }

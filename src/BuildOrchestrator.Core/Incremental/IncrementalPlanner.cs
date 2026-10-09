@@ -9,11 +9,12 @@ using BuildOrchestrator.Core.Planning;
 /// [RESOLVE Faz 3/Task 3.1] <see cref="IncrementalPlanner.ComputeWillBuildWithSignatures"/>'ın dönüşü: kararı
 /// doldurulmuş plan, düğüm başına bileşik imza ve SCC üyelerinin KENDİ terimleri.
 ///
-/// <para><see cref="MemberTermById"/> yalnız SCC üyeleri için doludur: üyenin bileşik imzaya giren terimi —
-/// SCC-içi kenarlar sabit <see cref="BuildSignature.NullMarker"/>'a düşer, SCC-dışı upstream'ler taze imzalarıyla
-/// girer. Kardeşin içeriği bu terime girmez; üyenin kendi dosyaları, configuration ya da grup dışı bir upstream'i
-/// değişince değişir. Bileşik imza DOWNSTREAM ve "grup kirli mi" için kalır; grubun İÇİNDE kimin derleneceğini
-/// (Resolve tur 1) üye terimi söyler. Fast geçişinde kompozit kurulmadığı için boştur.</para>
+/// <para><see cref="MemberTermById"/> yalnız SCC üyeleri için doludur: üyenin KENDİ terimi — her upstream (grup içi
+/// ve dışı) sabit <see cref="BuildSignature.NullMarker"/>'a düşer, yalnız içerik ve configuration girer. Kardeşin içeriği
+/// de grup dışı bir upstream'in imzası da bu terime girmez; grup dışı upstream'in değişimi kayıttaki bağımlılık
+/// yüzeyleriyle denetlenir (<see cref="Planning.CycleMemberNeed"/> kural i-b). Bileşik imza (SCC-içi kenarlar sabit
+/// işaret, grup dışı upstream'ler taze imzalarıyla) DOWNSTREAM ve "grup kirli mi" için kalır; grubun İÇİNDE kimin
+/// derleneceğini (tur 1) üye terimi söyler. Fast geçişinde kompozit kurulmadığı için boştur.</para>
 ///
 /// <para>İki öğeli ayrıştırma (<c>var (plan, signatures) = ...</c>) korunur: üye terimini okumayan çağıranlar
 /// (Sync'in iki geçişi, testler) değişmeden derlenir.</para>
@@ -122,9 +123,9 @@ public static class IncrementalPlanner
     /// (topological memoize edilmiş) imzayı da döner. Supervisor'ın kompozisyon kökü, bir proje
     /// <c>projectSucceeded</c> olduğunda <see cref="BuildState.BuiltSignature"/>'ı bu haritadan persist eder —
     /// böylece BİR SONRAKİ <c>Build</c> koşusu incremental olur (temiz projeler skip).
-    /// <para>[RESOLVE Faz 3/Task 3.1] Dönüş SCC üyelerinin KENDİ terimlerini de taşır
-    /// (<see cref="IncrementalSignatures.MemberTermById"/>): <c>ComputeComponent</c>'in bileşiğe kattığı terimlerin
-    /// kendisi — ikinci bir hesap yoktur.</para>
+    /// <para>[RESOLVE Faz 3/Task 3.1 · D7-b] Dönüş SCC üyelerinin KENDİ terimlerini de taşır
+    /// (<see cref="IncrementalSignatures.MemberTermById"/>): <c>ComputeComponent</c> her üye için hem bileşiğe giren
+    /// (upstream'li) girdiyi hem de upstream'siz kendi terimi aynı içerik özetinden hesaplar.</para>
     /// </summary>
     public static IncrementalSignatures ComputeWillBuildWithSignatures(
         BuildPlan plan,
@@ -229,11 +230,15 @@ public static class IncrementalPlanner
             foreach (string id in members)
             {
                 var member = byId[id]; // members yalnız byId'de BULUNAN id'lerle kuruldu
-                // [RESOLVE Faz 3/Task 3.1] Bileşiğe giren AYNI değer üyenin kendi terimi olarak plana da taşınır.
+                string? content = contentFingerprintForNode(member);
+                // Bileşiğin girdisi: SCC-içi kenarlar sabit işaret, grup dışı upstream'ler taze imzalarıyla — grup dışı bir
+                // upstream değişince grup kirli olur ve downstream cascade alır.
                 string term = BuildSignature.Compute(
-                    member, plan.Configuration, contentFingerprintForNode(member),
+                    member, plan.Configuration, content,
                     depId => membersSet.Contains(depId) ? BuildSignature.NullMarker : Upstream(depId));
-                memberTerm[id] = term;
+                // [D7-b] Üyenin KENDİ terimi: her upstream (grup içi ve dışı) sabit işaret — yalnız içerik + cfg. Grup dışı
+                // upstream'in etkisi kayıttaki bağımlılık yüzeyleriyle denetlenir (CycleMemberNeed kural i-b).
+                memberTerm[id] = BuildSignature.Compute(member, plan.Configuration, content, _ => BuildSignature.NullMarker);
                 sb.Append(term);
                 sb.Append(BuildSignature.ItemSeparator);
             }

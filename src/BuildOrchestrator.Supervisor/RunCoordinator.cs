@@ -53,12 +53,12 @@ public sealed record RunPlan(BuildPlan Plan, IReadOnlyDictionary<string, IReadOn
 /// (<see cref="IncrementalRunBinder.ChecksFor"/>) — koşu önizlemesi <c>OwnFilesChanged</c>'ı ve
 /// <c>OutputBuiltAt</c>'ı Sync ile AYNI yardımcılardan (<see cref="OutputEvidence.OwnFilesChanged(OutputCheck?, IReadOnlyDictionary{string, BuildState}?, string, string?)"/>,
 /// <see cref="OutputEvidence.OutputBuiltAt"/>) bundan yazar. <c>null</c> (testlerdeki basit planner) ⇒ kanıtsız.</param>
-/// <param name="MemberTermById">[RESOLVE Faz 3/Task 3.1] SCC üyesi → kendi terimi
-/// (<see cref="Core.Incremental.IncrementalSignatures.MemberTermById"/>): bileşik imzanın girdisi olan, kardeşlerin
-/// içeriğini değil yalnız üyenin kendi girdilerini ve grup dışı upstream'lerini anlatan terim. Resolve'un tur 1'i grubun
-/// İÇİNDE kimin derleneceğini bununla seçer; bileşik imza (<c>SignatureById</c>) DOWNSTREAM ve "grup kirli mi" için
-/// kalır. Yalnız SCC üyeleri için dolu (Fast geçişinde boş); <c>null</c> (testlerdeki basit planner) ⇒ üye terimi
-/// bilinmiyor.</param>
+/// <param name="MemberTermById">[RESOLVE Faz 3/Task 3.1 · D7-b] SCC üyesi → kendi terimi
+/// (<see cref="Core.Incremental.IncrementalSignatures.MemberTermById"/>): kardeşlerin içeriğini de grup dışı upstream'lerin
+/// imzasını da değil, yalnız üyenin kendi girdilerini (içerik + configuration) anlatan terim — her upstream sabit
+/// işarettir; grup dışı upstream'in değişimi kayıttaki bağımlılık yüzeyleriyle denetlenir. Tur 1 grubun İÇİNDE kimin
+/// derleneceğini bununla seçer; bileşik imza (<c>SignatureById</c>) DOWNSTREAM ve "grup kirli mi" için kalır. Yalnız SCC
+/// üyeleri için dolu (Fast geçişinde boş); <c>null</c> (testlerdeki basit planner) ⇒ üye terimi bilinmiyor.</param>
 public sealed record IncrementalPlan(
     IReadOnlyDictionary<string, string> SignatureById,
     string? HeadCommit,
@@ -1678,10 +1678,15 @@ public sealed class RunCoordinator(
         // okunduğunu üyenin derleyici satırı söyler (CycleReadFiles) — bilinmiyorsa hepsi izlenir.
         var memberSet = new HashSet<string>(allMembers, StringComparer.OrdinalIgnoreCase);
         var siblingDeps = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+        // [D7-b] Grup DIŞI doğrudan bağımlılıklar: üye terimi onları taşımaz; tur 1 kararı (kural i-b) kayıttaki bağımlılık
+        // yüzeyini grup başında okunan diskle karşılaştırır.
+        var outsideDeps = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
         foreach (string id in members)
-            siblingDeps[id] = run.NodeById.TryGetValue(id, out var node)
-                ? [.. node.Dependencies.Where(memberSet.Contains)]
-                : [];
+        {
+            var dependencies = run.NodeById.TryGetValue(id, out var node) ? node.Dependencies : [];
+            siblingDeps[id] = [.. dependencies.Where(memberSet.Contains)];
+            outsideDeps[id] = [.. dependencies.Where(dep => !memberSet.Contains(dep))];
+        }
 
         // [paylaşılan kopya çakışması] Kenar olmadan da aynı dalgada derlenemeyecek üyeler: adları üzerinden
         // birbirinin (ya da okuduğu projelerin) paylaşılan kopyasını yazabilenler. Adlar ve TÜM bağımlılıklar
@@ -1803,6 +1808,20 @@ public sealed class RunCoordinator(
                         }
                     });
                 hashMode = lost == 0;
+                // [D7-b] Grup DIŞI üreticiler: yalnız kanıt dosyası okunur (SurfaceOf — koşu önbelleği; DependencySurfaces ile
+                // AYNI dosya, beslenen kopyalar DEĞİL). Okunamayan ya da kanıt yolu türetilemeyen üretici kanıtı düşürmez ve
+                // surfaceState'e girmez ⇒ onu okuyan üye kural (i-b) ile gerekli (güvenli yön). Başlıktaki üretici sayısı grup
+                // içidir.
+                if (hashMode)
+                {
+                    string[] outsideProducers = [.. outsideDeps.Values.SelectMany(deps => deps).Distinct(StringComparer.OrdinalIgnoreCase)];
+                    Parallel.ForEach(outsideProducers, new ParallelOptions { MaxDegreeOfParallelism = IoParallelism.Degree }, dep =>
+                    {
+                        if (SurfaceOf(run, dep) is { } surface && SurfaceGate.Persistable(surface.Hash) is { } hash)
+                            lock (surfaceState)
+                                surfaceState[dep] = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [surface.File] = hash };
+                    });
+                }
             }
             Decide(run.Logs, CycleDecisionLines.GroupStarted(group, members.Count, producers.Count, hashMode,
                 groupHashClock.ElapsedMilliseconds));
@@ -1830,7 +1849,7 @@ public sealed class RunCoordinator(
                     id => new CycleMemberNeed.MemberEvidence(run.LedgerAtStart?.GetValueOrDefault(id),
                         memberTerms.GetValueOrDefault(id), incremental.ChecksById?.GetValueOrDefault(id),
                         // grup içi bağımlılıklar: okuma durumunu besleyen AYNI kardeş haritası (ikinci hesap yok)
-                        siblingDeps[id]),
+                        siblingDeps[id], OutsideDependencies: outsideDeps[id]),
                     surfaceState, run.EngineFingerprint);
                 toBuild = need.ToBuild;
                 roundOneCarried = need.CarriedReadStates.Count > 0;
@@ -2112,7 +2131,12 @@ public sealed class RunCoordinator(
                             cycleUnsettled: decision == CycleRoundDecision.CapReached
                                 && member.Result == BuildResult.Succeeded && !settled,
                             // Döngü kanıtı güvenilir her başarıya yazılır (oturmuş üye dahil); hashMode düşmüşse yüzeyler null.
-                            cycle: settled ? CycleRecordOf(run, id, hashMode ? member.ReadStates : null) : null);
+                            cycle: settled ? CycleRecordOf(run, id, hashMode ? member.ReadStates : null) : null,
+                            // [D7-b] Güvenilir başarı grup DIŞI bağımlılıklarının yüzeyini de yazar (grup içi CycleReadSurfaces'ta):
+                            // bir sonraki tur 1 kararının (i-b) tabanı. Taşınan üyenin yenilemesi bunlara dokunmaz.
+                            dependencySurfaces: settled && member.Result == BuildResult.Succeeded
+                                ? DependencySurfacesOf(run, id, excludedDeps: allMembers)
+                                : null);
                 }
                 catch (Exception ex) { reportFailure ??= ex; }
             }
@@ -2350,15 +2374,18 @@ public sealed class RunCoordinator(
     /// kuşak geride OLABİLİR. Dep-issue listesine sahte isim enjekte EDİLMEZ — ayrı bir bayrak taşınır.</param>
     /// <param name="cycle">[RESOLVE 3.4 · D3] Güvenilir başarının (oturmuş üye) döngü kanıtı (başarı persist'i yazar); diğer
     /// her yolda null.</param>
+    /// <param name="dependencySurfaces">[D7-b] Güvenilir başarının grup DIŞI doğrudan bağımlılık yüzeyleri
+    /// (<see cref="BuildState.DependencySurfaces"/>); diğer her yolda null.</param>
     private void ReportCycleMember(RunContext run, string projectId, BuildResult result, long totalDurationMs,
                                    string? failReason, DepIssueResult depIssues, bool successIsTrusted,
-                                   bool failureIsEvidence, bool cycleUnsettled, CycleMemberRecord? cycle) =>
+                                   bool failureIsEvidence, bool cycleUnsettled, CycleMemberRecord? cycle,
+                                   IReadOnlyList<CycleReadSurface>? dependencySurfaces) =>
         ReportProjectResult(run, projectId, result, totalDurationMs, failReason, depIssues,
             // [D3] Güven sonuca göre AYRIŞIR: başarı yalnız oturmuşsa (Converged, ya da yakınsamayan grupta son turda
             // bayat olmayan üye), hata yalnız kanıtlı-umutsuzsa. İkisi tek ifadeden okunsaydı bayat yüzeyle patlayan
             // üye kanıtlı sayılır ya da oturmuş yeşil üye geçersizlenirdi.
             trustedResult: result == BuildResult.Succeeded ? successIsTrusted : failureIsEvidence,
-            cycleUnsettled, failLogTail: null, cycle: cycle);
+            cycleUnsettled, failLogTail: null, cycle: cycle, dependencySurfaces: dependencySurfaces);
 
     /// <summary>
     /// [RESOLVE 3.4] Yakınsayan grubun hiç derlenmemiş (TAŞINAN) üyesini raporlar: tur 1'de gerekmedi (karar 2) ve tur
