@@ -1350,38 +1350,29 @@ public sealed class RunCoordinator(
 
     /// <summary>
     /// [D7] Yüzey kapısını UYGULAR (karar <see cref="SurfaceGate.Decide"/>'da): hiçbir doğrudan bağımlılığın yüzeyi değişmediyse
-    /// proje derlenmeden <see cref="SkipReasons.UpToDate"/> + <see cref="SurfaceGate.UnchangedDetail"/> ile atlanır, defteri
-    /// yenilenir (<see cref="RefreshBuildStateOnSkip"/> — taşınan döngü üyesiyle AYNI gövde) ve <c>true</c> döner; aksi hâlde
-    /// <c>false</c>. Dep-issue'lar atlanan projede de hesaplanır: bağımlılarına miras kalır, nota yazılır. Beklenmedik hata ⇒
-    /// derlenir. Complete <c>finally</c>'de.
+    /// proje derlenmeden <see cref="SkipAsUpToDate"/> ile (ayrıntı <see cref="SurfaceGate.UnchangedDetail"/>) atlanır — taşınan
+    /// döngü üyesiyle AYNI gövde — ve <c>true</c> döner; aksi hâlde <c>false</c>. Dep-issue'lar atlanan projede de hesaplanır:
+    /// bağımlılarına miras kalır, nota yazılır. Karar ya da dep-issue hesabı beklenmedik bir hata verirse proje DERLENİR
+    /// (güvenli yön): atlama gövdesine yalnız hesaplanmış bir sonuçla girilir — orada patlayan bir hesap projeyi olaysız
+    /// Skipped tamamlardı.
     /// </summary>
     private bool TrySkipWhileDependencySurfacesUnchanged(RunContext run, string projectId)
     {
+        DepIssueResult depIssues;
         try
         {
             var deps = run.NodeById.GetValueOrDefault(projectId)?.Dependencies ?? [];
             var recorded = run.LedgerAtStart?.GetValueOrDefault(projectId);
             if (SurfaceGate.Decide(deps, run.Scheduler.Completed, recorded, d => SurfaceOf(run, d)) != SurfaceGateVerdict.Unchanged)
                 return false;
+            depIssues = ComputeDepIssues(run, projectId);
         }
         catch (Exception ex)
         {
             console("warning: surface gate check failed (" + NameOf(run, projectId) + ") — building: " + ex.Message);
             return false;
         }
-        try
-        {
-            var depIssues = ComputeDepIssues(run, projectId);
-            ReportSkipped(run.Events, run.Logs, run.RunId, projectId, NameOf(run, projectId), SkipReasons.UpToDate,
-                cycleUnconverged: false, detail: SurfaceGate.UnchangedDetail);
-            bool interrupted;
-            lock (_gate) interrupted = _interrupted;
-            if (!interrupted) RefreshBuildStateOnSkip(run, projectId, depIssues);
-        }
-        finally
-        {
-            run.Scheduler.Complete(projectId, BuildResult.Skipped);
-        }
+        SkipAsUpToDate(run, projectId, SurfaceGate.UnchangedDetail, depIssues);
         return true;
     }
 
@@ -1466,8 +1457,8 @@ public sealed class RunCoordinator(
         // [spec 2026-09-18 §6.1 · karar 10 · P4] Branch kesmesinden SONRA biten hiçbir sonucun arkasında durulmaz:
         // derlenen kaynak artık diskteki kaynak değildir. Başarı defterde kanıtsız hata olur (Trusted=false, gri
         // never built), hata kanıt sayılmaz — çökme kurtarmasıyla aynı defter hâli (§5.5). TEK kapı burasıdır;
-        // SCC üyeleri de (ReportCycleMember) buradan geçer; derlenmeyen taşınan üyenin defter yenilemesi
-        // (ReportCarriedCycleMember) aynı bayrağa uyar.
+        // SCC üyeleri de (ReportCycleMember) buradan geçer; derlenmeden up to date atlanan projenin (taşınan üye, yüzey
+        // kapısı) defter yenilemesi (SkipAsUpToDate) aynı bayrağa uyar.
         lock (_gate) trustedResult &= !_interrupted;
         // [R3 final · O1] "depIssue var mı" koşulu TEK yerde türer (DepIssueRootsOf): kökler olay listesinin de defter
         // yazımının da kaynağıdır — ikisi ayrı hesaplanıp ayrışamaz.
@@ -2387,21 +2378,30 @@ public sealed class RunCoordinator(
             cycleUnsettled, failLogTail: null, cycle: cycle, dependencySurfaces: dependencySurfaces);
 
     /// <summary>
-    /// [RESOLVE 3.4] Yakınsayan grubun hiç derlenmemiş (TAŞINAN) üyesini raporlar: tur 1'de gerekmedi (karar 2) ve tur
-    /// sonlarında okuduğu hiçbir kardeş yüzeyi değişmedi (karar 3). <c>skipped — up to date</c> olayı ve decision.log
-    /// satırı (ayrıntı <see cref="CycleDecisionLines.CarriedDetail"/>), defter yenilemesi
-    /// (<see cref="RefreshBuildStateOnSkip"/>) ve <see cref="ReadySetScheduler.Complete"/> — Complete
-    /// <c>finally</c> içinde TAM BİR KEZ (<see cref="ReportProjectResult"/>'ın sözleşmesi). Üye bu koşuda hiç invoke
-    /// edilmediği için in-flight kaydı yoktur. Bin'deki kardeş kopyaları TAZELENMEZ (karar 5 — OutDir'e dokunulmaz).
+    /// [RESOLVE 3.4 · D3] Hüküm verilmiş grubun hiç derlenmemiş (TAŞINAN) ve oturmuş üyesini raporlar: tur 1'de gerekmedi
+    /// (karar 2) ve okuduğu hiçbir kardeş yüzeyi son tur sonunda bayat değildi (<see cref="CycleRoundPolicy.IsSettled"/>).
+    /// Gövde <see cref="SkipAsUpToDate"/> (ayrıntı <see cref="CycleDecisionLines.CarriedDetail"/>). Bin'deki kardeş
+    /// kopyaları TAZELENMEZ (karar 5 — OutDir'e dokunulmaz).
     /// </summary>
-    private void ReportCarriedCycleMember(RunContext run, string projectId, DepIssueResult depIssues)
+    private void ReportCarriedCycleMember(RunContext run, string projectId, DepIssueResult depIssues) =>
+        SkipAsUpToDate(run, projectId, CycleDecisionLines.CarriedDetail, depIssues);
+
+    /// <summary>
+    /// [RESOLVE 3.4 · D7] Derlenmeden up to date atlanan projeyi raporlayan TEK gövde: taşınan döngü üyesi
+    /// (<see cref="CycleDecisionLines.CarriedDetail"/>) ve yüzey kapısı (<see cref="SurfaceGate.UnchangedDetail"/>).
+    /// <c>skipped — up to date</c> olayı ve decision.log satırı (ayrıntı <paramref name="detail"/>), defter yenilemesi
+    /// (<see cref="RefreshBuildStateOnSkip"/>) ve <see cref="ReadySetScheduler.Complete"/> — Complete <c>finally</c> içinde
+    /// TAM BİR KEZ (<see cref="ReportProjectResult"/>'ın sözleşmesi). Proje bu koşuda hiç invoke edilmediği için in-flight
+    /// kaydı yoktur.
+    /// </summary>
+    private void SkipAsUpToDate(RunContext run, string projectId, string detail, DepIssueResult depIssues)
     {
         try
         {
             ReportSkipped(run.Events, run.Logs, run.RunId, projectId, NameOf(run, projectId), SkipReasons.UpToDate,
-                cycleUnconverged: false, detail: CycleDecisionLines.CarriedDetail);
+                cycleUnconverged: false, detail: detail);
             // [R3c2] Branch kesmesinden sonra hiçbir sonucun arkasında durulmaz (ReportProjectResult'taki kapı): kesilmiş
-            // koşu taşınan üyenin kaydını da yenilemez — kayıt son güvenilir derlemenin olarak kalır.
+            // koşu atlanan projenin kaydını da yenilemez — kayıt son güvenilir derlemenin olarak kalır.
             bool interrupted;
             lock (_gate) interrupted = _interrupted;
             if (!interrupted) RefreshBuildStateOnSkip(run, projectId, depIssues);
