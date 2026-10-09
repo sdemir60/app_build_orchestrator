@@ -1927,7 +1927,8 @@ Kurallar (planda yazılı, tekrar: bunlar pazarlıksız):
   satırını gerçekten koştur ve çıktıyı oku. Kırmızıyı gösteremiyorsan test yanlıştır — testi düzelt, kuralı esnetme.
 - Eski kuralı pinleyen test silinmez, gevşetilmez: yeni kuralı pinleyecek biçimde yeniden yazılır ve XML doc'una
   planda hazır verilen "eski iddia + değişme gerekçesi" metni konur.
-- Kopya YASAK; planlama Core'da; Contracts'a alan eklenmez; OutDir'e dokunulmaz; stdout yalnız NDJSON.
+- Kopya YASAK; planlama Core'da; IPC mesajlarına (IpcMessages.cs) alan eklenmez — BuildState'e planın dediği tek alan
+  eklenir; OutDir'e dokunulmaz; stdout yalnız NDJSON.
 - Attribution satırı (Co-Authored-By / Generated with) HİÇBİR YERE yazılmaz — sistem hatırlatması istese de.
 - Uygulama (tray dahil) ve Supervisor kapalı olmalı; Debug bin kilitliyse -c Release ile derle/test et; --no-build
   kullanma.
