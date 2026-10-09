@@ -93,7 +93,7 @@ public enum DependentMode { Safe, Fast }
 /// yalnız o projenin derleme çıktıları silinir, cache'lere dokunulmaz. Hiçbir şey DERLEMEZ, dolayısıyla
 /// incremental karar da sorulmaz. Çıktılar gittiği için temizlenen projenin build-state kaydı SİLİNİR —
 /// Çıktı kanıtı (ARCHITECTURE §7.6) silinen çıktıyı yalnız çıktı yolu türetilebilen projede görür
-/// (SDK-style'da göremez); kayıt kalsaydı bir sonraki Build böyle bir projeyi "güncel" sayıp atlardı. Kayıt
+/// (düzeni oynatılmış bir SDK-style projede göremez); kayıt kalsaydı bir sonraki Build böyle bir projeyi "güncel" sayıp atlardı. Kayıt
 /// silinince yolu bilinen proje zaman kipine düşer ve silinmiş çıktısı <c>OutputMissing</c> okunur. İki
 /// yerden gönderilir: Build menüsünden <see cref="ScopeProjectId"/> OLMADAN — grafın TÜM projeleri, harici
 /// projeler ve döngü üyeleri dahil (Visual Studio'nun <i>Clean Solution</i>'ı) — ve satır menüsünden
@@ -348,13 +348,12 @@ public sealed record ProjectSucceededEvent(string RunId, string ProjectId, long 
 /// NDJSON satırları kanıtsız (gri) okunur.</param>
 public sealed record ProjectFailedEvent(string RunId, string ProjectId, long DurationMs, string Reason,
     IReadOnlyList<string>? DepIssues = null, bool Evidence = false) : IpcEvent;
-/// <param name="CycleUnconverged">[cycle rounds/Task 8] BUGÜN her zaman <c>false</c>'tur: motor artık bir
-/// SCC'nin geçmişte yakınsamadığı bir bileşik imzayı görünce onu pre-skip ETMEZ, yalnız decision.log'a
-/// RAPOR düşer (bkz. <c>RunCoordinator</c>'ın Cycles tohumundaki [Task 7 · DEĞİŞEN KURAL] notu) —
-/// <see cref="SkipReasons.CycleNonConvergent"/> da bugün hiçbir üretici tarafından yazılmaz. "Kalıcı kırık
-/// döngü" satırını App bugün bu alandan değil, o SCC'nin BU run'daki tur sonucundan (yakınsamama) çıkarır.
-/// Alan ve varsayılan değeri geriye dönük uyum için KORUNUR: bu alandan ÖNCE yazılmış NDJSON satırları aynen
-/// çözülmeye devam eder.</param>
+/// <param name="CycleUnconverged">[B1 · B2] Yalnız <see cref="SkipReasons.CycleNonConvergent"/> atlamasında anlamlıdır:
+/// hükmü verilmiş bir SCC'de kaydı atılan TAŞINAN üye (<c>RunCoordinator.ReportDiscardedCarry</c>) — grup ilerlemeden
+/// (NoProgress, kalıcı kırık döngü) durduysa <c>true</c>, tavana dayandıysa (bütçe bitti, hareket vardı) <c>false</c>.
+/// Derlenen üyenin "kalıcı kırık döngü" işaretini App bu alandan değil, o SCC'nin BU run'daki tur sonucundan çıkarır
+/// (<see cref="CycleCompletedEvent"/>). Motor geçmişte yakınsamamış bir grubu pre-skip ETMEZ (yakınsamama hafızası
+/// yalnız RAPORLAR). Varsayılan <c>false</c>: bu alandan ÖNCE yazılmış NDJSON satırları aynen çözülmeye devam eder.</param>
 public sealed record ProjectSkippedEvent(string RunId, string ProjectId, string Reason, bool CycleUnconverged = false) : IpcEvent;
 /// <param name="DepIssueCount">Run genelinde depIssues taşıyan proje-sonucu sayısı. [It-3]</param>
 public sealed record RunCompletedEvent(string RunId, RunOutcome Outcome, int Succeeded, int Failed, int Skipped,

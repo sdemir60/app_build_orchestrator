@@ -531,7 +531,10 @@ a later run deserves a real attempt rather than one that starts from a false ver
 
 Two per-project results carry a cycle flag of their own, as typed fields rather than as text the App would
 have to match: `projectSucceeded.cycleUnsettled` marks a green member of a group that ran out of rounds while its
-read surfaces were still stale, and `projectSkipped.cycleUnconverged` is the wire form of the same idea for a skip. The `depIssues` list is
+read surfaces were still stale, and `projectSkipped.cycleUnconverged` marks a carried member whose record the engine
+discarded (`skipped — cycle did not converge at this signature`, §8.8) in a group that stopped with no progress — the
+permanently broken cycle. At the round ceiling the same skip carries the flag as false: the budget ran out while the
+group was still moving. The `depIssues` list is
 not reused for either — it answers "which dependency failed", and a second meaning would make the `▲ N`
 counter and its filter chip count the wrong rows.
 
@@ -636,24 +639,50 @@ neither followed deliberately nor detected — an accepted risk, since the repos
 Project files are read as **raw XML**. MSBuild is never evaluated for discovery. The evaluator extracts the
 assembly name, the target framework moniker, `Compile` items (including recursive `**` globs), raw `Reference`
 `HintPath`s and `ProjectReference`s — and, for the output evidence of §7.6, the `OutputType`, the default
-`Platform` and every `<OutputPath>` with its condition.
+`Platform`, every `<OutputPath>` with its condition and, for an SDK-style project, whether its output layout is the
+SDK's default.
 
 **The output path is read, never guessed.** `OutputFileFor(configuration)` derives the full path of the
-project's own build output: `<OutputPath>\<AssemblyName>` with `.dll` for a `Library` and `.exe` for an `Exe`
-or `WinExe`. Two condition shapes are recognised — `'$(Configuration)|$(Platform)' == 'C|P'` and
-`'$(Configuration)' == 'C'` — and an unconditional `<OutputPath>` matches every configuration; the platform is
+project's own build output. For a legacy project it is `<OutputPath>\<AssemblyName>` with `.dll` for a `Library`
+and `.exe` for an `Exe` or `WinExe`. Two condition shapes are recognised — `'$(Configuration)|$(Platform)' == 'C|P'`
+and `'$(Configuration)' == 'C'` — and an unconditional `<OutputPath>` matches every configuration; the platform is
 the project's declared default (`'$(Platform)' == ''`), otherwise `AnyCPU`. As in MSBuild the last matching
-entry in document order wins, and with no match the path is `bin\<configuration>\`. Where the path cannot be
-derived with confidence the answer is *none*, never an approximation: an SDK-style project, a missing or
-unrecognised `OutputType`, an `AssemblyName` or chosen path that still contains `$(`, or an `<OutputPath>` under
-any other condition shape — that last one makes the whole project undecidable, whatever configuration is asked,
+entry in document order wins, and with no match the path is `bin\<configuration>\`.
+
+An SDK-style project gets the .NET SDK's default layout, `bin\<configuration>\<TargetFramework>\<AssemblyName>.dll`
+— the framework folder lowercased as the SDK writes it, the file named after the project file when no `AssemblyName`
+is given — but only while nothing the evaluator can see moves that layout. The project is on the .NET SDK
+(`Microsoft.NET.Sdk` or one of its `Microsoft.NET.Sdk.*` variants; another SDK, a version-pinned one or a second
+one is not), it is a library (no `OutputType`, or `Library`; an `Exe` or `WinExe` gets none), it targets one known
+framework, and no `PropertyGroup` of the project file — conditional or inside `Choose` — sets `OutputPath`,
+`OutDir`, `BaseOutputPath`, `AppendTargetFrameworkToOutputPath`, `AppendRuntimeIdentifierToOutputPath`,
+`RuntimeIdentifier`, `RuntimeIdentifiers`, `UseArtifactsOutput`, `ArtifactsPath`, `TargetFrameworks`, `Platform`,
+`PlatformName`, `AppendPlatformToOutputPath`, `TargetName`, `TargetExt`, `TargetFrameworkVersion`,
+`DirectoryBuildPropsPath` or `DirectoryBuildTargetsPath`, nor does it import a file or another SDK. The three values
+the path is built from — `AssemblyName`, `TargetFramework` and `OutputType` — are each written at most once,
+unconditionally, in a top-level `PropertyGroup` and in MSBuild's spelling: the evaluator takes the first value it
+finds while MSBuild weighs conditions and keeps the last, so any other shape could name a file no build writes. The nearest
+`Directory.Build.props` and the nearest `Directory.Build.targets` — found as MSBuild finds them, walking up from the
+project's folder to the drive root and stopping at the first of each name — are read the same way, and there
+`AssemblyName`, `OutputType` and `TargetFramework` count as well, because a props file stands in for what the project
+file leaves out and a targets file overrides it; an import in either, or a file that cannot be read, leaves the
+layout unknown.
+
+Where the path cannot be derived with confidence the answer is *none*, never an approximation: an SDK-style project
+whose layout is moved or unknown, a legacy project with a missing or unrecognised `OutputType`, an `AssemblyName`, a
+framework or a chosen path that still contains `$(`, or an `<OutputPath>` under any other condition shape — that
+last one makes the whole project undecidable, whatever configuration is asked,
 because picking among entries the evaluator cannot read would produce inconsistent evidence. `HintPathTargets()`
 resolves the raw `HintPath`s the same way: absolute paths as they are, relative ones against the project's
 folder, and any path containing `$(` skipped.
 
 Results are cached in `evaluation-cache.json`, keyed by path with an mtime **and file-length** fingerprint. The
 length term is not decoration: an edit that preserves the modification timestamp is otherwise invisible, and
-the cache would serve a stale evaluation. Each entry also carries the cache **schema** it was written under; an
+the cache would serve a stale evaluation. An SDK-style entry also records the length and time of every
+`Directory.Build.*` candidate its layout decision looked at, absent ones included: when one of them changed or
+appeared, the entry is not a hit although the project file is the same — otherwise a props file that moved the
+output later would leave the old path in place, and a gate would keep reading a file no build refreshes any more.
+Each entry also carries the cache **schema** it was written under; an
 entry from an older schema is never a hit, so a field the evaluator learned to extract is never served empty
 from a record that predates it — the project is simply evaluated again the first time it is met. The cache is
 written back only when an entry changed — a project evaluated, or a fingerprint refreshed after a touch — so a run
@@ -1176,7 +1205,7 @@ what the last Sync said.
 Two things follow from "the outputs are gone". The project's **build-state row is deleted**, not invalidated:
 the project did not fail, this tool simply no longer knows any output of it. The output evidence (§7.6) would
 notice the deleted output only for a
-project whose output path it can derive — for an SDK-style project it cannot — so a row left behind would let
+project whose output path it can derive — for a project whose output layout cannot be derived it cannot — so a row left behind would let
 the next `Build` skip such a project as up to date and report a green run over deleted outputs. With the row
 gone, a project whose output path is known is in time mode, and its deleted output reads output missing. And the
 row **reads `never built`, in its to-build grey**, after the clean succeeds: elsewhere a
@@ -1418,7 +1447,7 @@ Until its turn a candidate is a plain dirty project: it lights in the wave, sits
 build* and in the progress denominator. The decision comes at its turn, every dependency already finished. A record
 whose last result is not a success is not trusted, as in round one (§8.8), and the project compiles. Otherwise, for each
 direct dependency, a failure in this run, a dependency missing from the record, a surface that cannot be read — a
-dependency without a derivable output path, an SDK-style project (§7.6), has none — or one that differs from the recorded
+dependency without a derivable output path, an SDK-style project with an overridden layout (§6.2), has none — or one that differs from the recorded
 hash means the project compiles; when every one matches it is skipped as `skipped — up to date (no dependency surface
 changed)` (`SurfaceGate.Decide`). The current surface is read from the dependency's
 evidence file on disk, once per run (`ApiSurfaceHash`, the hash the cycle rounds use: declarations, not bodies) —
@@ -1608,9 +1637,13 @@ take slots of their own. A project is therefore never dispatched just to queue f
 always means a compiler child is starting, and a stop never finds a dispatched project still waiting for its
 turn. Nobody holds one slot while waiting for another, so the ordering cannot deadlock.
 
-**Exactly-once completion.** Everything between dispatch and `Complete` sits inside a `try`/`finally`. An
-exception escaping that region would leave the project in flight forever, `IsDone` would never become true and
-the run would hang — so even the display-name lookup is written not to throw.
+**Exactly-once completion.** Everything between dispatch and `Complete` sits inside a `try`/`finally`, except two
+reads that precede it, and neither can throw. The dependency-issue computation — a project's own, or each member's as a
+group starts — turns a failure into a console warning and builds the project with no dependency issue, the safe
+direction (`DepIssuesForCompile`); the dependency-surface read beside it (`DependencySurfacesOf`) swallows its own
+errors the same way and records no surfaces. An exception escaping the region would leave the project in flight forever:
+with one worker the project would vanish from the run, counted only as queued; with several, the workers waiting on
+its dependents would park for good and the run would hang — so even the display-name lookup is written not to throw.
 
 **Event ordering.** All events go through a single unbounded FIFO channel drained by one pump task. MSBuild's
 output callback is invoked *synchronously* from its stdout/stderr pump threads while IPC writing is
@@ -1657,8 +1690,9 @@ reads as no evidence. A success is handled the same way:
 whether the ledger keeps it as a success travels on the `projectSucceeded` event as `trusted`, decided where
 the invalidation is. A green member of a cycle group that did not converge (no progress, or the round ceiling)
 arrives with `trusted: false` only when its read surfaces were still stale at the end — it is then invalidated like a
-failure without evidence; a settled one is trusted. A group cut short reports every member as failed instead (§8.8,
-cycle rounds). An event without the field reads as trusted.
+failure without evidence; a settled one is trusted. A carried member left stale in such a group never compiled, so it
+is no success at all: it is reported as a skip and invalidated the same way (§8.8). A group cut short reports every
+member as failed instead (§8.8, cycle rounds). An event without the field reads as trusted.
 
 **Cycle rounds.** These run in every compiling mode — `Build`, `Rebuild` and `Cycles` (§8.1); a `Rebuild` compiles
 every member in round one. While a group is in rounds the ribbon reads `▸ Resolving cycles · round R/K · n/m ·
@@ -1746,9 +1780,10 @@ outputs, the three cycle fields and its dependency surfaces stay as its last com
 the same body the surface gate's skip goes through, §8.3). The refresh is the same when the output was
 compiled outside this tool: the member's record is refreshed like any carried member's, and the next run judges it by
 its term and surfaces, not by the output's time. Having never compiled, the member has no
-project log in the run. When a group is cut short a carried member is invalidated with the rest; when it stops
-without converging, a carried member whose recorded surfaces were still final is refreshed exactly as on
-convergence, and one whose surfaces had moved is invalidated (below).
+project log in the run. When a group is cut short a carried member is invalidated with the rest and reported as failed
+like them; when it stops without converging, a carried member whose recorded surfaces were still final is refreshed
+exactly as on convergence, and one whose surfaces had moved is invalidated and, never having compiled, reported as
+skipped — `cycle did not converge at this signature` (below).
 
 A round one that carried members was clean only for the members that compiled, so the engine hands the stopping rule
 below no previous failure set after it: such a round never counts as the first of the two consecutive clean rounds
@@ -1765,7 +1800,8 @@ computed once per run. A record written under another fingerprint — another to
 contract — vouches for no one, so every member of every group compiles once.
 
 `decision.log` carries the outcome: a line per member that needs a compile, a `skipped — up to date (carried …)` line
-per carried member, and a verdict line that gives a converged group's compiled count beside its member count
+per carried member that settled, a `skipped — cycle did not converge at this signature (carried record discarded: …)`
+line per carried member a group without convergence left stale, and a verdict line that gives a converged group's compiled count beside its member count
 (`cycle {leader}: converged (N members, K compiled)`). The event stream carries the same count (§5.3).
 
 **A known limit.** A carried member is not compiled, so the copies of its siblings' outputs that a compile would have
@@ -1843,7 +1879,10 @@ four-worker run.
 came back green — or was carried — with none of its read surfaces stale at the end of the last round compiled against
 final APIs, and its record is written exactly as a converged member's, cycle fields included; a green member that
 was stale at the end is invalidated, which keeps the group dirty so that the next run's round one compiles only the
-members that did not settle. Without surface evidence nothing is trusted. A settled green member carries no dependency note for a
+members that did not settle. A carried member that was stale at the end was never compiled: it is reported as skipped
+— `cycle did not converge at this signature`, with `carried record discarded: the group did not converge` as the
+`decision.log` detail and `cycleUnconverged` set on no progress only (§5.3) — and invalidated the same way, so the run
+counts it as skipped rather than succeeded (`RunCoordinator.ReportDiscardedCarry`). Without surface evidence nothing is trusted. A settled green member carries no dependency note for a
 failed sibling: a sibling that later compiles with a changed surface is caught by the read-surface rule, and one
 whose surface did not change leaves the member's output correct. A stop, a cancellation and an unexpected exception
 invalidate everyone, and a group cut short reports every member as failed rather than carrying an intermediate
@@ -3178,6 +3217,13 @@ converge and whose read surfaces were still stale at the end is different: the e
 green round, the ledger records it as a failure
 without evidence, and the success event says so (`trusted: false`, §8.8). Its row reads `never built` in the
 to-build grey at once — what the next Sync will say — rather than a green tick the next Sync would take back.
+A carried member in the same position never compiled: the engine discards its record the same way and reports it as
+skipped — `cycle did not converge at this signature` — so the run counts it as skipped rather than succeeded, its row
+turns to the same `never built` grey at once (`NextPreview.AfterUntrustedResult`, the one answer both paths read),
+and its project page says the project was not compiled and its record was discarded. On no progress the skip carries
+the stuck flag (§5.3) and the row the *did not converge* warning; at the round ceiling it carries no badge — the skip
+event has no field for the *did not fully settle* mark a compiled member at the ceiling gets, and that is an accepted
+cost.
 A cleaned project reads the same `never built`, because its ledger row is gone (§8.1), and so does a project
 whose output file is missing from disk (§7.6).
 
@@ -5114,8 +5160,9 @@ failure (§7.5). Over it lies the **run**: `marked`
 (this operation's scope), `queued`, `building`, and the results `succeeded` (the same green as `current`, kept
 apart so the run can still say "just built") and `failed`. A result does not outrank the standing it wrote:
 `succeeded` shows only over a current standing (or where there is no decision at all); a success that leaves
-the output to build — a Clean, or a cycle member whose group did not converge while its read surfaces were still
-stale, so the engine does not keep its success (`trusted: false`) — shows that grey. Red is evidence and nothing else, and on a state
+the output to build — a Clean, or a cycle member that compiled in a group that did not converge while its read surfaces
+were still stale, so the engine does not keep its success (`trusted: false`) — shows that grey; a carried member in that
+position never compiled and is reported as a skip, which falls back to the same grey standing. Red is evidence and nothing else, and on a state
 surface it comes only from the standing: a failure the engine counts as evidence writes `LastFailed` into the
 standing, while one it does not — a timeout, a stop, an invoke error, a failed Clean, a compiler failure inside
 a cycle group that did not converge while the surfaces that member read were still stale (§8.8) — writes
@@ -5245,10 +5292,11 @@ Four facts share the warning slot, and only the strongest is shown, because the 
 | A dependency failed or was not rebuilt | `Dependency issue: Sales.Core +2` |
 
 The order runs from the most specific claim to the most general. The first two are about how much a result can
-be trusted rather than about what the result was; the convergence verdict comes from the run's own
-`cycleCompleted` rather than a memory of an earlier one, so it appears in the very run that proved it, on the
-members the engine did not stand behind — one that failed, or that went green while still bound to a stale sibling
-surface, is holding a stale output. A settled member is not marked: its green was trusted and its record kept, and a
+be trusted rather than about what the result was; the convergence verdict comes from the run itself rather than a
+memory of an earlier one — the group's `cycleCompleted`, or for a carried member whose record was discarded its own
+skip (§5.3) — so it appears in the very run that proved it, on the members the engine did not stand behind — one that
+failed, one that went green while still bound to a stale sibling surface, or a carried one whose record was discarded,
+is holding a stale output. A settled member is not marked: its green was trusted and its record kept, and a settled
 carried one was reported `up to date`. The counter then reads the marks themselves, whatever the row's status. Membership is
 the weakest and loses to all of them: it asserts nothing about the output, only about the graph. Dependency
 issues come last because they are about someone else's output: they last as long as the ledger's note, but a
@@ -5650,7 +5698,7 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 |---|---|---|
 | `logs\run-<timestamp>\` | per-run and per-project logs; a run's folder is removed at the first engine start more than three days after the run, except the newest run's, which always stays (§8.5) | — |
 | `build-state.json` | per-project signature, commit, result, duration, dependency-issue note with its root project ids, non-convergent cycle signature, the fed outputs learned from the last success (§7.6), the `packages.config` content hash behind the restore decision (§9.3), a cycle member's term, the sibling surfaces it read and the engine fingerprint behind round one's compile decision (§7.5, §8.8); projects from external roots share the file under the same key shape, without a commit or branch (§7.5). A record written before a field existed loads with that field empty | falls back to empty |
-| `evaluation-cache.json` | csproj evaluation cache; each entry records the schema it was written under, and an entry written under another schema is re-evaluated rather than served (§6.2); Optimize removes such entries outright, whatever root they belong to | falls back to empty |
+| `evaluation-cache.json` | csproj evaluation cache; each entry records the schema it was written under, and an entry written under another schema is re-evaluated rather than served (§6.2); an SDK-style entry also records the `Directory.Build.*` files its layout decision read, and is re-evaluated when one of them changes or appears; Optimize removes such entries outright, whatever root they belong to | falls back to empty |
 | `source-hash-cache.json` | source content hashes keyed by path, size and modification time (§7.1) — this is what turns the content decision into one stat pass per run | falls back to empty (the next run re-reads and rebuilds it) |
 | `run-inflight.json` | the ids of the projects the engine has dispatched and not yet reported — written at dispatch, erased at the result, emptied at the end of every run; left non-empty only by an engine that died mid-run, and read once at the next engine start (§8.7). Absent while no run is in flight | an unparsable file is deleted and nothing is recovered; an unreadable one stays for the next start |
 | `msbuild\wpf-temporary-assembly.targets`, `msbuild\wpf-temporary-assembly-friend.cs` | the two files behind `-p:CustomBeforeMicrosoftCommonTargets` (§9.2). An engine writes them the first time it resolves `MSBuild.exe` — on its first run or its first Optimize — and only when the content on disk differs from its own; both files carry a fixed, old modification time however they were written (§9.2); the path carries no version, and a missing or edited file is repaired the next time a new engine resolves MSBuild | rewritten from the engine's own copy the next time a new engine resolves MSBuild; if they cannot be written or pinned, builds run without the argument |
@@ -6164,8 +6212,15 @@ do, and how the interface works around each — useful to know before attempting
   event carries no roots, and the record is right in the meantime.
 - **A dependent of an upstream without an evidence path compiles whenever it is dirty.** The surface gate (§8.3) and
   round one (§8.8) compare an upstream's evidence file with the dependent's record; an upstream with no derivable
-  output path (an SDK-style project, §7.6) has nothing to compare, so its direct dependents never pass the gate and
+  output path (an SDK-style project with an overridden layout, §6.2) has nothing to compare, so its direct dependents never pass the gate and
   the cycle members that read it from outside their group never count as carried.
+- **An SDK-style layout moved by something the evaluator cannot read keeps the default path.** The evaluator reads the
+  project file and the nearest `Directory.Build.props`/`.targets` as raw XML (§6.2). A layout moved from anywhere else —
+  a NuGet package's build props, a `Directory.Build.rsp`, a global property — goes unseen, and the derived path keeps
+  pointing at `bin\<configuration>\<framework>\`. Where nothing was built there the project merely reads output
+  missing and compiles every time; where an earlier build left its output there, that file is never refreshed again,
+  and the surface gate (§8.3) and round one (§8.8) compare against a frozen surface, so a dependent of a project whose
+  API changed can be skipped. Deleting the old `bin` folder after moving an output this way removes the stale file.
 - **The surface gate reads a dependency's own output, not the copy its dependents link against.** A dependent's
   record names the surface of the dependency's evidence file (§7.6). Where dependents link against copies in a shared
   folder (§9.4), a post-build copy that fails without failing the build leaves the copy behind that file: a dependent
@@ -6385,8 +6440,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Workspace scan, ignore list | `Core/Discovery/WorkspaceScanner.cs` |
-| Raw csproj XML evaluation; the output path (`OutputFileFor`) and resolved `HintPath` targets | `Core/Discovery/CsprojEvaluator.cs` |
-| Evaluation cache (mtime + length fingerprint, schema; written only when dirty, as a stream) | `Core/Discovery/EvaluationCache.cs` |
+| Raw csproj XML evaluation; the output path (`OutputFileFor` — the legacy `OutputPath` reading and an SDK-style project's default layout, with the settings and the nearest `Directory.Build.*` files that move it) and resolved `HintPath` targets | `Core/Discovery/CsprojEvaluator.cs` |
+| Evaluation cache (mtime + length fingerprint, schema, the `Directory.Build.*` files an SDK-style layout decision read; written only when dirty, as a stream) | `Core/Discovery/EvaluationCache.cs` |
 | `.sln` parsing, project↔solution map | `Core/Discovery/SolutionMapper.cs` |
 | Stale-`obj` diagnosis (warn-only, two consumers: the run-start warner and Optimize's removal step), TFM derivation | `Core/Discovery/StaleObjDetector.cs`, `TargetFrameworkMonikerDeriver.cs`, `Supervisor/StaleObjRunStartWarner.cs` |
 | DLL name → producing project | `Core/Graph/ProducerMap.cs` |
@@ -6426,17 +6481,17 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Scope of a `Cycles` run (members + transitive upstream) | `Core/Planning/CycleRunScope.cs` |
 | Barriered level plan inside a cycle round (most-read-first placement, any-direction neighbor separation, shared-copy collisions by name) | `Core/Planning/CycleRoundLevels.cs` |
 | Which files of a sibling a cycle member is judged on (the copy its compiler read; every copy when unsure), and which of them moved since the member read them | `Core/Planning/CycleReadFiles.cs` |
-| Which members round one compiles and which it carries (rule chain, reason per member, the read states a carried member keeps, the outside dependencies' surfaces); fed by the member terms the planner returns (`MemberTermById`, own content and configuration only), by the evidence files of the group's outside dependencies hashed as it starts and by the engine fingerprint (path, file version and build argument contract of `MSBuild.exe`); the engine applies the decision once as a group starts, reports a carried member as `skipped — up to date`, refreshes its ledger record and writes the cycle fields and outside dependency surfaces of the compiled members when the member's result is trusted (the group converged, or the member was settled when the group stopped without a verdict) | `Core/Planning/CycleMemberNeed.cs`, `Core/Incremental/IncrementalPlanner.cs`, `Core/MsBuild/EngineFingerprint.cs`, `Supervisor/RunCoordinator.cs` (`BuildCycleGroupAsync`, `ReportCarriedCycleMember`, `RefreshBuildStateOnSkip`, `PersistBuildStateOnSuccess`) |
+| Which members round one compiles and which it carries (rule chain, reason per member, the read states a carried member keeps, the outside dependencies' surfaces); fed by the member terms the planner returns (`MemberTermById`, own content and configuration only), by the evidence files of the group's outside dependencies hashed as it starts and by the engine fingerprint (path, file version and build argument contract of `MSBuild.exe`); the engine applies the decision once as a group starts, reports a settled carried member as `skipped — up to date` and refreshes its ledger record, reports a carried member a group without convergence left stale as `skipped — cycle did not converge at this signature` and invalidates its record, and writes the cycle fields and outside dependency surfaces of the compiled members when the member's result is trusted (the group converged, or the member was settled when the group stopped without a verdict) | `Core/Planning/CycleMemberNeed.cs`, `Core/Incremental/IncrementalPlanner.cs`, `Core/MsBuild/EngineFingerprint.cs`, `Supervisor/RunCoordinator.cs` (`BuildCycleGroupAsync`, `ReportCarriedCycleMember`, `ReportDiscardedCarry`, `RefreshBuildStateOnSkip`, `PersistBuildStateOnSuccess`) |
 | Surface gate: which projects are candidates (dirty only through an upstream — the Safe plan against the frozen-upstream one), which runs apply it, the verdict at a candidate's turn and the one place a surface becomes persistable; the engine reads each dependency's current surface once per run, skips an unchanged candidate as `skipped — up to date (no dependency surface changed)` and refreshes its record | `Core/Planning/SurfaceGate.cs`, `Supervisor/Program.cs` (`ComputeIncremental`), `Supervisor/RunCoordinator.cs` (`TrySkipWhileDependencySurfacesUnchanged`, `SurfaceOf`, `SkipAsUpToDate`, `RefreshBuildStateOnSkip`) |
 | Cycle round trail in decision.log (group header, evidence loss, round-one need lines or the Rebuild line, carried detail, round line, verdict with the compiled count, retry) | `Core/Planning/CycleDecisionLines.cs` |
 | Scope of a single-project run (plan cut to one node, stale inputs) | `Core/Planning/ProjectRunScope.cs` |
 | Plan of a Clean run (no edges, no cycle marks, every project this run's work) | `Core/Planning/CleanRunScope.cs` |
 | Dependency-issue propagation (failed roots, stale inputs of a scoped run; names and root ids) | `Core/Scheduling/DepIssueTracker.cs` |
 | Conditional rebuild of a project waiting for a failed dependency (which runs apply it, to a project and to a cycle group; the set a run evaluates, `ConditionalIds`; the verdict at its turn, root names) | `Core/Planning/ConditionalRebuild.cs` |
-| What a row reads the moment a result lands, before the next preview (success, trusted or not · failure · Clean · a skip as up to date at its turn) | `Core/Planning/NextPreview.cs` |
+| What a row reads the moment a result lands, before the next preview (success, trusted or not · failure · Clean · a skip as up to date at its turn · a carried member's discarded record) | `Core/Planning/NextPreview.cs` |
 | Run elapsed clock | `Core/Scheduling/RunClock.cs` |
 | Bounded synchronous retry (used by state store and clipboard) | `Core/Scheduling/SyncRetry.cs` |
-| Worker loop, event pump, stop bookkeeping, perf lifecycle, cycle round loop (it applies the settled rule as it reports the members: a settled member's success is trusted, a settled carried member is reported up to date, every other success is invalidated) and non-convergence memory; the build-slot budget and who holds it (a worker from dispatch to result, a cycle member from `projectStarted` to `cycleMemberHeld`); the interrupt flag and the one reporting gate that stops trusting results after it; in-flight ledger calls | `Supervisor/RunCoordinator.cs` |
+| Worker loop, event pump, stop bookkeeping, perf lifecycle, cycle round loop (it applies the settled rule as it reports the members: a settled member's success is trusted, a settled carried member is reported up to date, an unsettled carried member of a group with a verdict is reported skipped with its record discarded (`ReportDiscardedCarry`), every other success is invalidated) and non-convergence memory; the build-slot budget and who holds it (a worker from dispatch to result, a cycle member from `projectStarted` to `cycleMemberHeld`); the interrupt flag and the one reporting gate that stops trusting results after it; the dependency-issue computation that precedes every compile and cannot throw (`DepIssuesForCompile`); in-flight ledger calls | `Supervisor/RunCoordinator.cs` |
 | Failure-evidence classification (compiler exit vs. timeout/stop/invoke error) — the one clause the evidence gate reads | `Core/State/FailureClassification.cs` |
 | Per-run and per-project logs, decision log | `Core/Logs/RunLogWriter.cs`, `RunLogPaths.cs`, `ProjectLogNaming.cs` |
 | Run-log retention: the three-day window, the newest run kept, the bounded sweep and its one stderr line; the sweep started in the background at engine start | `Core/Logs/RunLogRetention.cs`, `Core/Logs/RunLogPaths.cs` (`TryParseRunDirName`), `Supervisor/Program.cs` |

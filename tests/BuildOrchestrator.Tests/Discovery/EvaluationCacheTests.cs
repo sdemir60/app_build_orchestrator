@@ -678,4 +678,78 @@ public class EvaluationCacheTests
         }
         finally { Directory.Delete(root, recursive: true); }
     }
+
+    /// <summary>[A3] Şema 1 kaydı (SDK-style varsayılan çıktı yolundan önce yazılmış) isabet SAYILMAZ: o kayıtta
+    /// <c>SdkOutputLayoutIsDefault</c> yoktur (false ⇒ yol yok) ve csproj değişmediği sürece proje yeniden değerlendirilmez,
+    /// SDK-style projenin kör noktası sonsuza dek kalırdı. Kayıt bir kez yeniden değerlendirilir ve yolu alır.</summary>
+    [Fact]
+    public void An_entry_written_before_sdk_output_layouts_is_evaluated_again()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "evcache-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            SdkFixture.WriteSearchStoppers(root);
+            string dir = Path.Combine(root, "S");
+            Directory.CreateDirectory(dir);
+            string proj = Path.Combine(dir, "S.csproj");
+            File.WriteAllText(proj, "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net46</TargetFramework></PropertyGroup></Project>");
+            var info = new FileInfo(proj);
+            string cachePath = Path.Combine(root, "cache.json");
+            EvaluationCacheFile.WriteEntries(cachePath,
+                new EvaluationCacheFile.Entry(proj, Schema: 1, MtimeTicks: info.LastWriteTimeUtc.Ticks, Length: info.Length));
+
+            var cache = new EvaluationCache(cachePath);
+            int calls = 0;
+            var evaluator = new CsprojEvaluator();
+            var result = cache.GetOrEvaluate(proj, p => { calls++; return evaluator.Evaluate(p); });
+
+            Assert.Equal(1, calls);
+            Assert.Equal(Path.Combine(dir, "bin", "Debug", "net46", "S.dll"), result!.OutputFileFor("Debug"));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    /// <summary>[Ruling · A2] SDK-style projenin yol kararı csproj'un DIŞINDAKİ dosyalara da bağlıdır: en yakın
+    /// Directory.Build.props/targets. Önbellek csproj'a göre anahtarlıdır; o dosyalar değişince ya da daha yakın biri belirince
+    /// csproj aynı kalsa da kayıt isabet SAYILMAZ — aksi hâlde çıktıyı sonradan taşıyan bir props'a rağmen eski yol kalır ve
+    /// yüzey kapısı artık hiç güncellenmeyen bir dosyanın yüzeyini okurdu. Girdiler değişmedikçe isabet sürer; girdi durumları
+    /// diske yazılır, yeniden açılan önbellek de değişikliği görür.</summary>
+    [Theory]
+    [InlineData(false)] // kökteki props değişir
+    [InlineData(true)]  // proje klasöründe yeni, daha yakın bir props belirir
+    public void A_cached_sdk_evaluation_is_redone_when_a_directory_build_file_above_it_changes(bool appearsCloser)
+    {
+        string root = Path.Combine(Path.GetTempPath(), "evcache-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            SdkFixture.WriteSearchStoppers(root);
+            string dir = Path.Combine(root, "S");
+            Directory.CreateDirectory(dir);
+            string proj = Path.Combine(dir, "S.csproj");
+            File.WriteAllText(proj, "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net46</TargetFramework></PropertyGroup></Project>");
+            string cachePath = Path.Combine(root, "cache.json");
+            var cache = new EvaluationCache(cachePath);
+            int calls = 0;
+            var evaluator = new CsprojEvaluator();
+            EvaluatedProject Get() => cache.GetOrEvaluate(proj, p => { calls++; return evaluator.Evaluate(p); })!;
+
+            Assert.NotNull(Get().OutputFileFor("Debug"));
+            Get();
+            Assert.Equal(1, calls); // girdiler değişmedi: isabet
+            cache.Flush();
+            cache = new EvaluationCache(cachePath); // yeniden açılan önbellek: girdi durumları diskten gelir
+            Get();
+            Assert.Equal(1, calls);
+
+            string moved = Path.Combine(appearsCloser ? dir : root, "Directory.Build.props");
+            File.WriteAllText(moved, @"<Project><PropertyGroup><OutputPath>out\</OutputPath></PropertyGroup></Project>");
+            File.SetLastWriteTimeUtc(moved, DateTime.UtcNow.AddMinutes(5));
+
+            Assert.Null(Get().OutputFileFor("Debug"));
+            Assert.Equal(2, calls);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
 }

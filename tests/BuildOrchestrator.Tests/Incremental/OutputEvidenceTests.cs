@@ -333,7 +333,8 @@ public sealed class OutputEvidenceTests : IDisposable
         Assert.Equal(new OutputCheck(EvidenceMode.Time, true, true, TimeVerdict.Missing, null), time);
     }
 
-    /// <summary>§5.1: kanıt yolu türetilemiyor (SDK-style) ⇒ kanıtsız: hiçbir veto yok, cevap defterden.</summary>
+    /// <summary>§5.1: kanıt yolu türetilemiyor (düzeni varsayılan sayılmayan SDK-style — alansız eski kayıt ya da oynatılmış
+    /// düzen) ⇒ kanıtsız: hiçbir veto yok, cevap defterden.</summary>
     [Fact]
     public void An_unknown_evidence_path_is_mode_none()
     {
@@ -482,6 +483,23 @@ public sealed class OutputEvidenceTests : IDisposable
         Assert.NotNull(outputs);
         Assert.Equal(Full(EvidenceRel), outputs.Evidence);
         Assert.Equal(new[] { Full(FedRel), Full(@"shared\P.dll") }, outputs.FedCandidates);
+    }
+
+    /// <summary>[A4] Düzeni SDK'nın varsayılanı olan SDK-style proje sıradan projedir: derleme kanıtı SDK'nın varsayılan yolu
+    /// (<c>P\bin\Debug\net46\P.dll</c>), beslenen adaylar bağımlıların aynı dosya adlı HintPath hedefleri — kanıt mekanizmasının
+    /// tamamı (silinmiş çıktı, dışarıda derlenmiş çıktı, beslenen kopyalar) ona da uygulanır.</summary>
+    [Fact]
+    public void An_sdk_style_project_with_the_default_layout_has_evidence_and_fed_candidates()
+    {
+        var p = new EvaluatedProject(Full(@"P\P.csproj"), "P", [], [], [], IsSdkStyle: true, TargetFrameworkMoniker: "net46")
+        { SdkOutputLayoutIsDefault = true };
+        var q = Project("Q", @"..\lib\P.dll", @"..\lib\Other.dll");
+
+        var outputs = OutputEvidence.Locate(p, "Debug", [q]);
+
+        Assert.NotNull(outputs);
+        Assert.Equal(Full(@"P\bin\Debug\net46\P.dll"), outputs.Evidence);
+        Assert.Equal(new[] { Full(FedRel) }, outputs.FedCandidates);
     }
 
     /// <summary>§7-44: aynı DLL adını iki proje üretiyor — graf kenarı düşer, dolayısıyla bağımlı yoktur ve aday

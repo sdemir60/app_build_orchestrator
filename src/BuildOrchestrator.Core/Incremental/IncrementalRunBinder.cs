@@ -216,7 +216,7 @@ public sealed class IncrementalRunBinder
     /// [Faz 3/Task 4 — spec 2026-09-18 §5.1] Her düğüm için çıktı kanıtı + beslenen aday kopyalar (<see
     /// cref="OutputEvidence.Locate"/>) — ikinci bir hesap YOK, Supervisor başarılı bir derlemeden sonra bunu
     /// okuyup <see cref="OutputEvidence.LearnFedOutputs"/> ile <see cref="Contracts.Model.BuildState.FedOutputs"/>'a
-    /// yazar. Kanıt yolu türetilemeyen (SDK-style, belirsiz OutputPath) düğümler haritada YOKTUR — <see
+    /// yazar. Kanıt yolu türetilemeyen (düzeni oynatılmış SDK-style, belirsiz OutputPath) düğümler haritada YOKTUR — <see
     /// cref="OutputEvidence.Locate"/>'in <c>null</c> dönüşü.
     /// </summary>
     public IReadOnlyDictionary<string, ProjectOutputs> OutputsById => _outputsById ??= ComputeOutputsById();

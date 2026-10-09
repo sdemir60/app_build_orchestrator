@@ -80,6 +80,12 @@ public static class CycleDecisionLines
     /// <c>B: skipped — up to date (carried: own inputs and read surfaces unchanged)</c>.</summary>
     public const string CarriedDetail = "carried: own inputs and read surfaces unchanged";
 
+    /// <summary>[B1] Hükmü verilmiş (NoProgress, CapReached) grupta son turda okuduğu yüzeyi bayat kalan TAŞINAN üyenin
+    /// atlama satırındaki ayrıntı. Üye bu koşuda hiç derlenmedi, taşıdığı kayıt atıldı (kanıtsız geçersizlenir). Satırın
+    /// kendisi ortak atlama biçimidir (gerekçe <c>SkipReasons.CycleNonConvergent</c>):
+    /// <c>X: skipped — cycle did not converge at this signature (carried record discarded: the group did not converge)</c>.</summary>
+    public const string DiscardedCarryDetail = "carried record discarded: the group did not converge";
+
     /// <summary>Kararın kullanıcıya dönük açıklaması — baş terimi <see cref="DecisionTerm"/>'dür (enum→metin eşlemesi
     /// tek yerde); tavan sayısı literal DEĞİL, tek kaynak <see cref="CycleRoundPolicy.RoundCap"/>.</summary>
     public static string OutcomeText(CycleRoundDecision decision) => decision switch

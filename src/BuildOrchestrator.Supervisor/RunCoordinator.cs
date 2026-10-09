@@ -1250,8 +1250,9 @@ public sealed class RunCoordinator(
         string? failReason = null;
         string? failLogTail = null;
 
-        // [T54] depIssues invoke'tan ÖNCE hesaplanır — gerekçe ComputeDepIssues'ın XML doc'undadır.
-        var depIssues = ComputeDepIssues(run, projectId);
+        // [T54] depIssues invoke'tan ÖNCE hesaplanır — gerekçe ComputeDepIssues'ın XML doc'undadır. [D1] Aşağıdaki
+        // try/finally'nin dışındadır: hesap fırlatırsa proje boş dep-issue ile derlenir (DepIssuesForCompile).
+        var depIssues = DepIssuesForCompile(run, projectId);
         // [D6] Bağımlılık yüzeyleri de invoke'tan ÖNCE: bağımlılıklar şu an terminaldir ve derleme bu yüzeylere karşı
         // yapılır; başarı deftere bunları yazar (yüzey kapısının bir sonraki koşudaki tabanı).
         var dependencySurfaces = DependencySurfacesOf(run, projectId);
@@ -1659,8 +1660,9 @@ public sealed class RunCoordinator(
         // Üyenin turlar boyunca biriken durumu TEK kayıtta (bkz. CycleMemberState) — paralel sözlükler kilit
         // adım kalmak zorundaydı ve ikisi seyrek dolduğu için "kayıt yok" ile "değer yok" karışırdı.
         var state = new Dictionary<string, CycleMemberState>(StringComparer.OrdinalIgnoreCase);
+        // [D1] Grubun raporlama garantisinden (aşağıdaki try/finally) ÖNCE: hesap fırlatırsa üye boş dep-issue ile derlenir.
         foreach (string id in members)
-            state[id] = new CycleMemberState(ComputeDepIssues(run, id, excludedDeps: allMembers)); // grup-içi kenarlar hariç
+            state[id] = new CycleMemberState(DepIssuesForCompile(run, id, excludedDeps: allMembers)); // grup-içi kenarlar hariç
 
         // [API kısa devresi] Grup-içi kenarların YÜZEY takibi. Kaynak turlar arasında değişmez; bir üyenin
         // sonucunu yalnız OKUDUĞU grup-içi çıktı yüzeyinin değişmesi değiştirebilir. Kimin kimi okuduğu plan
@@ -2109,10 +2111,13 @@ public sealed class RunCoordinator(
                 try
                 {
                     // [RESOLVE 3.4 · D3] Hiç derlenmemiş ve oturmuş taşınan üye "up to date (carried)" raporlanır, defteri
-                    // yenilenir. Kesilen grupta ya da bayatken taşınan üye ReportCycleMember'dan geçer: sonucu ya
-                    // FailEveryMember'la Failed'dır ya da güvenilmez başarıdır — geçersizlenir.
+                    // yenilenir. [B1] Hükmü verilmiş grupta bayat kalan taşınan üye de derlenmedi: "succeeded" değil, kaydı
+                    // atılan atlamadır (ReportDiscardedCarry). Kesilen grup (Continue) bir hüküm DEĞİLDİR: taşınan üyesi
+                    // FailEveryMember'la Failed'dır ve derlenen üyeler gibi ReportCycleMember'dan geçer — geçersizlenir.
                     if (member.Carried && settled)
                         ReportCarriedCycleMember(run, id, member.DepIssues);
+                    else if (member.Carried && decision != CycleRoundDecision.Continue)
+                        ReportDiscardedCarry(run, id, decision);
                     else
                         ReportCycleMember(run, id, member.Result, member.DurationMs, member.FailReason, member.DepIssues,
                             successIsTrusted: settled,
@@ -2387,6 +2392,29 @@ public sealed class RunCoordinator(
         SkipAsUpToDate(run, projectId, CycleDecisionLines.CarriedDetail, depIssues);
 
     /// <summary>
+    /// [B1] Hüküm verilmiş (NoProgress, CapReached) grubun hiç derlenmemiş (TAŞINAN) ama OTURMAMIŞ üyesini raporlar: tur 1'de
+    /// gerekmedi (karar 2), son turda okuduğu bir kardeş yüzeyi bayat kaldı. Bu koşuda derlenmediği için "succeeded" DEĞİLDİR:
+    /// taşıdığı kayıt atılır — <c>skipped — cycle did not converge at this signature</c> (ayrıntı
+    /// <see cref="CycleDecisionLines.DiscardedCarryDetail"/>) — ve defteri güvenilmez başarıyla aynı biçimde kanıtsız
+    /// geçersizlenir. <c>CycleUnconverged</c> yalnız NoProgress'te true: kalıcı kırık döngü odur, tavan "bütçe bitti"dir.
+    /// Complete <c>finally</c> içinde TAM BİR KEZ (<see cref="SkipAsUpToDate"/> ile aynı sözleşme); proje bu koşuda invoke
+    /// edilmediği için in-flight kaydı yoktur.
+    /// </summary>
+    private void ReportDiscardedCarry(RunContext run, string projectId, CycleRoundDecision decision)
+    {
+        try
+        {
+            ReportSkipped(run.Events, run.Logs, run.RunId, projectId, NameOf(run, projectId), SkipReasons.CycleNonConvergent,
+                cycleUnconverged: decision == CycleRoundDecision.NoProgress, detail: CycleDecisionLines.DiscardedCarryDetail);
+            InvalidateBuildStateOnFailure(run, projectId, evidenceSignature: null);
+        }
+        finally
+        {
+            run.Scheduler.Complete(projectId, BuildResult.Skipped);
+        }
+    }
+
+    /// <summary>
     /// [RESOLVE 3.4 · D7] Derlenmeden up to date atlanan projeyi raporlayan TEK gövde: taşınan döngü üyesi
     /// (<see cref="CycleDecisionLines.CarriedDetail"/>) ve yüzey kapısı (<see cref="SurfaceGate.UnchangedDetail"/>).
     /// <c>skipped — up to date</c> olayı ve decision.log satırı (ayrıntı <paramref name="detail"/>), defter yenilemesi
@@ -2540,6 +2568,23 @@ public sealed class RunCoordinator(
     /// kardeş üyeler henüz Completed'ta DEĞİLDİR, dolayısıyla dep-issue hesabına girmemelidirler — aksi halde
     /// her üye kardeşlerini "çözülmemiş" sayıp yanlış uyarı üretirdi. Tekil projede null geçilir.
     /// </summary>
+    /// <summary>
+    /// [D1] Derlenecek projenin dep-issue hesabı, raporlama garantisinin (sonuç + <see cref="ReadySetScheduler.Complete"/>)
+    /// DIŞINDAN çağrılanı: hesap fırlatırsa uyarı yazılır ve proje boş dep-issue ile DERLENİR (güvenli yön). Kaçan bir istisna
+    /// projeyi sonuçsuz bırakırdı: işçi düşer, proje hiç Complete edilmez — tek işçide sessizce kaybolur (yalnız Queued
+    /// sayılır), birden çok işçide ona bağlı işi bekleyen işçiler sonsuza dek park eder ve koşu asılır. Yüzey kapısı bu
+    /// yardımcıyı KULLANMAZ: orada fırlayan hesap atlamayı iptal eder ve proje zaten derlenir.
+    /// </summary>
+    private DepIssueResult DepIssuesForCompile(RunContext run, string projectId, IReadOnlyList<string>? excludedDeps = null)
+    {
+        try { return ComputeDepIssues(run, projectId, excludedDeps); }
+        catch (Exception ex)
+        {
+            console("warning: dependency issue check failed (" + NameOf(run, projectId) + ") — building: " + ex.Message);
+            return DepIssueResult.Empty;
+        }
+    }
+
     private DepIssueResult ComputeDepIssues(RunContext run, string projectId,
                                             IReadOnlyList<string>? excludedDeps = null)
     {
