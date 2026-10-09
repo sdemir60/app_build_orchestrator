@@ -1115,9 +1115,15 @@ public partial class GraphView : UserControl
 
     /// <summary>
     /// [quiet] v1.18.0 "Beads bir tık kalın + hücreye kelepçeli yörünge": derlenen düğümün, hücre pitch'inden
-    /// geriye çözülen (0.8–2.8px) mesafede dışında dolanan sık amber noktalar. Yörünge DOM'da sürekli durur,
-    /// yalnız OPAKLIĞI değişir — girişte 420ms, çıkışta 640ms ease-out; noktalar DÖNERKEN söner, donup
-    /// kaybolmaz.
+    /// geriye çözülen (0.8–2.8px) mesafede dışında dolanan sık amber noktalar. Girişte opaklık 420ms, çıkışta 640ms
+    /// ease-out; noktalar DÖNERKEN söner, donup kaybolmaz. Çıkış bitince yörünge emekliye ayrılır
+    /// (<see cref="RetireBeads"/>): paylaşımlı saatten sökülür ve çizimden çıkar; düğüm yeniden derlenirse AYNI yörünge
+    /// geri gelir.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eskiden yörünge "DOM'da sürekli durur, yalnız OPAKLIĞI değişir"di ve paylaşımlı saate
+    /// bağlı kalırdı: saat koşu boyunca döndüğünden biten her düğümün görünmez yörüngesi her karede yeni bir kalem kurup
+    /// yeniden çiziliyordu. Ölçüm (görünür Rebuild, 187 proje): App tahsislerinin %15'i bu yoldan, render thread'i
+    /// 1,07 G döngü/s; maliyet derlenmiş düğüm sayısıyla büyüyordu. Pin: <c>GraphBeadsLifecycleTests</c>.</para>
     ///
     /// <para>Zaten doğru durumdaki bir yörünge YENİDEN kurulmaz (<see cref="GraphNodeVisual.BeadsVisible"/>):
     /// koşarken statü itişi saniyede birkaç kez gelir ve her çağrıda animasyonu baştan başlatmak yörüngeyi
@@ -1139,21 +1145,37 @@ public partial class GraphView : UserControl
         }
 
         if (visual.Beads is null) return;
-        FadeBeads(visual, 0.0, GraphBeads.FadeOutMs);
+        FadeBeads(visual, 0.0, GraphBeads.FadeOutMs, faded: () => RetireBeads(visual));
         ArmBeadsSpindown();
     }
 
-    private void FadeBeads(GraphNodeVisual visual, double target, double durationMs)
+    private void FadeBeads(GraphNodeVisual visual, double target, double durationMs, Action? faded = null)
     {
-        visual.Beads!.BeginAnimation(OpacityProperty,
-            MotionTokens.SplineTo(target, TimeSpan.FromMilliseconds(durationMs), EaseOut),
-            HandoffBehavior.SnapshotAndReplace);
+        var fade = MotionTokens.SplineTo(target, TimeSpan.FromMilliseconds(durationMs), EaseOut);
+        if (faded is not null) fade.Completed += (_, _) => faded();
+        visual.Beads!.BeginAnimation(OpacityProperty, fade, HandoffBehavior.SnapshotAndReplace);
     }
 
-    /// <summary>Yörüngeyi TALEP ÜZERİNE kurar (bir kez) — düğümlerin çoğu bir koşuda hiç derlenmez.</summary>
+    /// <summary>Çıkış animasyonu bitti: yörünge saatten sökülür ve çizimden çıkar (<see cref="Visibility.Collapsed"/> — ne
+    /// yeniden çizilir ne yerleşime ne hit-test'e girer). Bu arada düğüm yeniden derlenmeye başladıysa hiçbir şey yapılmaz.
+    /// Hücrenin boyu açıkça yazıldığı için (bkz. <see cref="ApplySizes"/>) yörüngenin çıkması düğümü kaydırmaz.</summary>
+    private void RetireBeads(GraphNodeVisual visual)
+    {
+        if (visual.BeadsVisible || visual.Beads is not { } orbit) return;
+        _beads.Detach(orbit, Shape.StrokeDashOffsetProperty);
+        orbit.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>Yörüngeyi TALEP ÜZERİNE kurar (bir kez) — düğümlerin çoğu bir koşuda hiç derlenmez. Emekliye ayrılmış bir
+    /// yörünge yeniden kurulmaz: görünür olur ve dönen saate yeniden bağlanır.</summary>
     private void EnsureBeads(GraphNodeVisual visual)
     {
-        if (visual.Beads is not null) return;
+        if (visual.Beads is { } existing)
+        {
+            existing.Visibility = Visibility.Visible;
+            _beads.Attach(existing, Shape.StrokeDashOffsetProperty); // saat dönmüyorsa no-op; EnsureBeadsClock bağlar
+            return;
+        }
 
         var orbit = new Rectangle
         {
@@ -1189,7 +1211,8 @@ public partial class GraphView : UserControl
         orbit.StrokeDashArray = _beadsDash;
     }
 
-    /// <summary>Paylaşımlı saati kurar (yoksa) ve mevcut TÜM yörüngelere bağlar.</summary>
+    /// <summary>Paylaşımlı saati kurar (yoksa) ve EKRANDAKİ yörüngelere bağlar — derlenen ya da hâlâ sönen; emekliye ayrılmış
+    /// (Collapsed) yörünge saatsiz kalır.</summary>
     private void EnsureBeadsClock()
     {
         // [perf A7] Başlatıcı aynı zamanda KAPIDIR (ConsoleView.StartBlink deseni): görünmezken ya da motion kapalıyken
@@ -1209,7 +1232,7 @@ public partial class GraphView : UserControl
         Timeline.SetDesiredFrameRate(spin, MotionTokens.DecorativeFrameRate); // dekoratif sonsuz animasyon (feasibility §3.4)
         _beads.Start(spin);
         foreach (var slot in _slotOrder)
-            if (slot.Visual.Beads is { } orbit) _beads.Attach(orbit, Shape.StrokeDashOffsetProperty);
+            if (slot.Visual.Beads is { Visibility: Visibility.Visible } orbit) _beads.Attach(orbit, Shape.StrokeDashOffsetProperty);
     }
 
     /// <summary>§2.3: saat bitişten <see cref="GraphBeads.SpinAfterStopMs"/> sonra bırakılır — çıkış

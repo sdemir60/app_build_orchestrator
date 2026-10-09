@@ -4747,8 +4747,12 @@ the drawn path would fall a whole stroke short of the perimeter the dash pattern
 in the graph hangs off **one** shared animation clock — the node size is graph-wide, so the perimeter is too,
 and N parallel builds would otherwise mean N infinite animations. The orbit fades in over 420 ms and out over
 640 ms, and the clock is released 700 ms after the last node stops building, so the dots fade *while still
-turning* rather than freezing in place. Resizing the panel changes the perimeter, so the pattern and the clock
-are rebuilt.
+turning* rather than freezing in place. An orbit whose fade-out has ended leaves the clock and the render
+(collapsed), and the same orbit comes back when its node builds again: the clock keeps turning for as long as any
+node builds, and a finished node's invisible orbit left on it was redrawn — with a fresh pen for its moving dash
+offset — on every frame for the rest of the run. Measured on a full rebuild of the real workspace, that redraw
+was the largest single source of the interface's allocations during a run and grew with every finished node.
+Resizing the panel changes the perimeter, so the pattern and the clock are rebuilt.
 
 **A skipped project is silent.** No orbit, no bright hold, no wave — it settles into its result colour and
 stays exactly as dim as the queue around it. An earlier version gave skipping the full announcement (a brief

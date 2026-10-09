@@ -105,7 +105,9 @@ internal sealed class GraphNodeVisual
     /// <summary>Lucide <c>box</c> glyph'i — node'un %52'si (§2.3).</summary>
     public required Path Icon { get; init; }
     /// <summary>[quiet] Building yörüngesi (§2.3 "beads") — TALEP ÜZERİNE, düğüm İLK kez derlenmeye
-    /// başladığında kurulur ve bir daha sökülmez (yalnız opaklığı 0'a iner). Reduced-motion'da hiç doğmaz.</summary>
+    /// başladığında kurulur. Derleme bitince söner; çıkış animasyonu bitince saatten sökülür ve
+    /// <see cref="System.Windows.Visibility.Collapsed"/> olur, düğüm yeniden derlenirse AYNI nesne geri gelir
+    /// (<c>GraphView.RetireBeads</c>). Reduced-motion'da hiç doğmaz.</summary>
     public Rectangle? Beads { get; set; }
     /// <summary>Yörünge şu an GÖRÜNÜR mü — her <c>UpdateStatuses</c> tick'inde giriş/çıkış animasyonunun
     /// baştan başlatılmasını (takılmasını) önler.</summary>
