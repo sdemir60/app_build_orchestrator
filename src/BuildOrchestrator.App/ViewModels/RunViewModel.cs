@@ -397,9 +397,10 @@ public enum ConsoleSelection { ShowRun, LoadProjectLog }
 /// için <see cref="OnEvent"/> DOĞRUDAN (marshal YOK) çağrılabilir: o dal yalnız <see cref="ConsoleBatcher.Post"/>
 /// (kilitsiz) + kilitli (<c>_gate</c>) düz arabelleklere yazar, ObservableProperty/ObservableCollection'a ASLA
 /// dokunmaz. DİĞER TÜM event tipleri — <c>ProjectLogChunkEvent</c> DAHİL (proje başına yalnız birkaç adet,
-/// SON'da <see cref="ActiveProjectId"/>'yi mutasyona uğratır) — <c>Dispatcher.InvokeAsync</c> ile UI thread'ine
-/// taşınmalıdır; bu marshal PER-EVENT değil PER-DURUM-DEĞİŞİKLİĞİ'dir (proje/run başına birkaç adet, akan log
-/// satırları GİBİ binlerce DEĞİL), bu yüzden A13.2'nin "satır başına Dispatcher yasak" kuralını ihlal etmez.
+/// SON'da <see cref="ActiveProjectId"/>'yi mutasyona uğratır) — UI thread'ine taşınmalıdır; pencere bunu tek, sıralı ve
+/// zaman dilimli bir pompayla yapar (<see cref="Services.EngineEventPump"/>). Bu marshal PER-DURUM-DEĞİŞİKLİĞİ'dir (proje/run
+/// başına birkaç adet, akan log satırları GİBİ binlerce DEĞİL), bu yüzden A13.2'nin "satır başına Dispatcher yasak" kuralını
+/// ihlal etmez.
 /// İki thread'in ORTAK dokunduğu düz arabellekler (<c>_runText</c>/<c>_projectText</c>/<c>_liveLines</c>)
 /// <c>_gate</c> kilidiyle korunur.</para>
 ///

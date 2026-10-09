@@ -354,12 +354,6 @@ public partial class MainWindow : Window
         // [clean] Bekletmeyi de kabuk sayar: VM "şu kadar bekle" der, süreyi UI thread'indeki timer tutar.
         _vm.OperationHold = _stepHold.HoldAsync;
 
-        _engine.EngineExited += code => Dispatcher.Invoke(() =>
-        {
-            // [Task 16 — It-2 devir §8] VM'in run-state'i (IsStarting/IsRunning) bu sinyale bağlıdır.
-            // Motor durumu görsel şeridi (sticky ribbon) T37'nin işidir — C1'de yalnız VM state'i güncellenir.
-            _vm.OnEngineExited(code);
-        });
         // [A13.2/Kısıt 4] YALNIZ projectLog YÜKSEK frekanslı akan log satırıdır — VM'in o dalı ConsoleBatcher.Post
         // (kilitsiz) kullanır, ObservableProperty'e DOKUNMAZ; marshal OLMADAN doğrudan çağrılabilir. Diğer TÜM
         // event'ler UI thread'ine taşınır — olay başına bir dispatcher işi olarak DEĞİL, zaman dilimli tek bir pompayla
@@ -370,9 +364,23 @@ public partial class MainWindow : Window
             if (ev is ProjectLogEvent) _vm.OnEvent(ev);
             else engineEvents.Post(ev);
         };
-        // [spec 2026-09-18 §6.1 · karar 11] Kendiliğinden Sync: HEAD izleyicisinin thread-pool geri çağrısı motor
-        // olaylarıyla AYNI yoldan (Dispatcher.InvokeAsync) UI thread'ine taşınır; pencereye dönüş (tepsiden dönüş
-        // dahil — ShowFromTray Activate çağırır) koordinatöre gider.
+        _engine.EngineExited += code => Dispatcher.Invoke(() =>
+        {
+            // Çıkış (Send önceliği) pompada bekleyen olayların önüne GEÇMEZ: motorun ölmeden önce gönderdikleri önce uygulanır —
+            // geç uygulanan bir runStarted ölü motorla koşuyu yeniden açıp "engine stopped" satırını silerdi
+            // (EngineEventBurstTests). Bir işleyici fırlatsa bile çıkış yine uygulanır.
+            try { engineEvents.DrainNow(); }
+            finally
+            {
+                // [Task 16 — It-2 devir §8] VM'in run-state'i (IsStarting/IsRunning) bu sinyale bağlıdır.
+                // Motor durumu görsel şeridi (sticky ribbon) T37'nin işidir — C1'de yalnız VM state'i güncellenir.
+                _vm.OnEngineExited(code);
+            }
+        });
+        // [spec 2026-09-18 §6.1 · karar 11] Kendiliğinden Sync: HEAD izleyicisinin thread-pool geri çağrısı
+        // Dispatcher.InvokeAsync (Normal) ile UI thread'ine taşınır — motor olaylarının pompası ayrı bir kuyruktur, iki kaynağın
+        // birbirine göre sırası garanti değildir; pencereye dönüş (tepsiden dönüş dahil — ShowFromTray Activate çağırır)
+        // koordinatöre gider.
         // [spec 2026-09-18 §6.4] Yarıdaki git işleminin yoklaması UI thread'inde tık atar; yalnız işaret dururken çalışır.
         _vm.GitOperationPollTimer = new DispatcherPollTimer(Dispatcher);
         _vm.EnableAutoSync(action => Dispatcher.InvokeAsync(action));
@@ -1036,7 +1044,8 @@ public partial class MainWindow : Window
                     // kuyruk artık InRunQueue'dan gelir (Task 1) ve o YALNIZ bu run'ın kendi buildPreview'inden
                     // yazılır — runStarted ile buildPreview arasında gerçek bir IPC boşluğu vardır (Supervisor
                     // bu ikisi arasında stateStore.Load + proje başına OwnFilesChanged hesaplar,
-                    // RunCoordinator.cs ~885-905), her IPC olayı kendi Dispatcher.InvokeAsync turudur (~293).
+                    // RunCoordinator.cs ~885-905) ve iki olay ayrı dispatcher turlarında uygulanabilir (EngineEventPump
+                    // dilimleri; boşluk sırasında çizim yapılabilir).
                     // Eskiden burada ClearMarks de birlikte çağrılıyordu: WillBuild (genel, koşuyu bilmeyen bayrak)
                     // o boşlukta hâlâ true olduğu için Queued sanki kesintisiz sürüyormuş GİBİ görünürdü — Task 1
                     // WillBuild'i InRunQueue'yla değiştirince (kök neden A'yı kapatırken) bu yanılsama bozuldu ve

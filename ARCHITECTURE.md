@@ -2691,13 +2691,15 @@ their owners have no constructor seam: the reduced-motion settings and the hero-
 
 Engine events reach the view model on the UI thread through one pump. `projectLog` lines go straight from the
 reader thread into the console batcher; every other event joins a single queue that one drain empties in arrival
-order, in time slices of at most 8 ms (`EngineEventPump.SliceBudgetMs`). The first slice runs at once, at the
-priority a single event always had, so one event is never delayed; when a slice is used up with events still
-waiting, the rest is handed to a priority below input and rendering, so a frame is drawn and a key or click is
-handled between slices. The reason is the start of a run: the engine announces it with `runStarted`,
-`buildPreview` and one `projectSkipped` per project it skips — on the real workspace close to two hundred events at
-once — and handled one dispatcher operation each, above rendering and input, they held the interface for a few
-hundred milliseconds in one piece at the start of every run.
+order, in time slices of about 8 ms (`EngineEventPump.SliceBudgetMs`) — a slice closes once its time is up and the
+event in hand is done. An event that finds the queue empty is handled at once, at the priority a single event
+always had; when a slice is used up with events still waiting, the rest is handed to a priority below input and
+rendering, so a frame is drawn and a key or click is handled between slices. The reason is the start of a run: the
+engine announces it with `runStarted`, `buildPreview` and one `projectSkipped` per project it skips — on the real
+workspace close to two hundred events at once — and handled one dispatcher operation each, above rendering and
+input, they held the interface for a few hundred milliseconds in one piece at the start of every run. The
+engine's exit is applied after the events it sent before it: the exit handler first applies whatever the pump
+still holds, so a late `runStarted` can never reopen a run on a dead engine.
 
 The update engine starts only once the window has been shown or put in the tray, so its first check, five seconds
 later, comes after the opening rather than inside it; the view model's *Restart to update* request is wired to it
@@ -6716,7 +6718,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Reduced-motion signal and live zeroing | `App/Services/MotionSettings.cs`, `SystemParametersMotionSignal.cs`, `IMotionSettings.cs`, `IMotionSignal.cs` |
 | One-hero budget | `App/Services/MotionCoordinator.cs`, `App/Controls/MotionGate.cs` |
 | Shared entrance/reveal animations, 120 ms transitions | `App/Controls/PopIn.cs`, `RevealStagger.cs`, `DsTransition.cs`, `MotionTokens.cs`, `PillRadius.cs` |
-| Owner-held infinite clocks: start, attach a further surface, stop by removing from the timing tree (breath, ring, sweep, beads, edge flow) | `App/Controls/DecorativeClock.cs` |
+| Owner-held infinite clocks: start, attach a further surface, detach one surface (a finished node's bead orbit), stop by removing from the timing tree (breath, ring, sweep, beads, edge flow) | `App/Controls/DecorativeClock.cs` |
 | Colour, size, typography tokens · duration and easing tokens | `App/Resources/Tokens.xaml` · `App/Resources/Motion.xaml` |
 | OS actions (Explorer, Visual Studio, folder picker) | `App/Services/OsActions.cs` |
 | Accessibility names | `App/AccessibilityNames.cs` |
