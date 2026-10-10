@@ -54,7 +54,8 @@ public class CleanRunScopeTests
     }
 
     /// <summary>Katman ve belirsiz-üretici uyarıları bir SIRA/kenar uyarısıdır; sırası ve kenarı olmayan bir
-    /// koşunun konsoluna basılmaz (Sync onları zaten gösterir).</summary>
+    /// koşunun konsoluna basılmaz. Belirsiz üretici uyarısını Sync zaten gösterir; katman uyarısı yalnız tüm planın
+    /// sırasını izleyen koşuların başında görünür (<c>runStarted.Warnings</c>), Clean'de görünmez.</summary>
     [Fact]
     public void Ordering_warnings_are_not_carried()
     {

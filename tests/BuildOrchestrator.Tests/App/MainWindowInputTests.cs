@@ -7,6 +7,7 @@ using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.Contracts.Ipc;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -92,17 +93,46 @@ public class MainWindowInputTests
     public void F5_while_a_build_runs_neither_stops_it_nor_starts_another()
     {
         using var temp = new TempDir();
-        var (window, vm) = NewMainWindow(temp);
+        // Topolojili pencere: topoloji yokken kapı koşudan BAĞIMSIZ kapalıdır (WhyRunCannotStart'ın son halkası).
+        var (window, vm, _) = MainWindowHost.NewWithProjects(temp, MainWindowHost.ProjectNames(2));
         MainWindowHost.AcceptSends(vm);
+        var f5 = KeyBindingsOf(window).Single(b => b.Key == Key.F5 && b.Modifiers == ModifierKeys.None);
+        Assert.True(f5.Command.CanExecute(null)); // ön-koşul: koşu yokken F5 Build'i çalıştırır — kapıyı bundan sonra kapatan tek şey koşu
         MainWindowHost.StartBuild(vm);
         var phase = vm.Phase;
 
-        var f5 = KeyBindingsOf(window).Single(b => b.Key == Key.F5 && b.Modifiers == ModifierKeys.None);
         Assert.False(f5.Command.CanExecute(null)); // WPF kapalı bir komutu tuşla ÇALIŞTIRMAZ
         if (f5.Command.CanExecute(null)) f5.Command.Execute(null);
 
         Assert.Equal(phase, vm.Phase);
         Assert.NotEqual(AppPhase.Stopping, vm.Phase);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[kullanıcı kararı 2026-10-02] Bir Sync sürerken F5 HİÇBİR ŞEY yapmaz: koşu başlamaz, konsola satır düşmez,
+    /// faz değişmez. Pencerenin kendi F5 bağlaması kullanılır (Build'in kapısı iş sürerken kapalıdır); pencere TOPOLOJİLİdir —
+    /// topoloji yokken kapı Sync'ten bağımsız kapalı olurdu ve test Sync kapısını ayırt etmezdi. Eski kuralda
+    /// ([kullanıcı bildirimi 2026-09-29]) basış kuyruğa alınırdı: düğme Stop olur, Build Sync bitince başlardı.</summary>
+    [StaFact]
+    public void F5_during_a_sync_does_nothing()
+    {
+        using var temp = new TempDir();
+        // Topolojili pencere: topoloji yokken kapı Sync'ten BAĞIMSIZ kapalıdır (WhyRunCannotStart'ın son halkası).
+        var (window, vm, _) = MainWindowHost.NewWithProjects(temp, MainWindowHost.ProjectNames(2));
+        MainWindowHost.AcceptSends(vm);
+        var f5 = KeyBindingsOf(window).Single(b => b.Key == Key.F5 && b.Modifiers == ModifierKeys.None);
+        Assert.True(f5.Command.CanExecute(null)); // ön-koşul: Sync yokken F5 çalışır — kapıyı bundan sonra kapatan tek şey Sync
+        vm.OnEvent(new SyncStartedEvent(vm.RootPath, "main")); // Sync sürüyor
+        Assert.True(vm.SyncBusy); // ön-koşul: kapı kapalı olmalı
+        string console = vm.GetRunDocumentText();
+        var phase = vm.Phase;
+
+        Assert.False(f5.Command.CanExecute(null)); // WPF kapalı bir komutu tuşla ÇALIŞTIRMAZ
+        if (f5.Command.CanExecute(null)) f5.Command.Execute(null);
+
+        Assert.False(vm.IsStarting);
+        Assert.Equal(phase, vm.Phase);
+        Assert.Equal(console, vm.GetRunDocumentText());
         GC.KeepAlive(window);
     }
 

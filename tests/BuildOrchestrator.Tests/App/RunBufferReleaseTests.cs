@@ -1,0 +1,433 @@
+using System.Windows;
+using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.Contracts.Ipc;
+
+namespace BuildOrchestrator.Tests.App;
+
+/// <summary>
+/// [perf Faz C · C4] <b>Biten koşunun tamponları bırakılır; tepside biten koşunun ardından bellek bir kez toplanır.</b>
+/// OSYS büyüklüğünde bir koşu yüz binlerce satır nesnesini canlı satır tamponunda (<c>RunViewModel</c> <c>_liveLines</c>)
+/// biriktirir; tampon yalnız koşu SÜRERKEN, bir proje logu açılırken diskteki snapshot'ın ötesindeki kuyruğu dikmek için
+/// vardır. Koşu bitince disk tamdır ve tampon ölü yüktür; açık projenin metin tamponu da yalnız ekrandaki sayfa için
+/// yaşar. Bu dosya üç şeyi pinler: (1) bırakma — koşu sonu, bekleyen dikişe saygı, proje değişimi; (2) bırakmanın yeni
+/// işlemin temizliğini DEĞİŞTİRMEDİĞİ; (3) tepside biten koşunun ardından tek seferlik toplama (kapı: pencere gizli +
+/// koşu bitti + gösterge çıkış evresini tamamladı). Ayrıca Faz A2'den ertelenen boşluğu kapatır: gizli konsol
+/// yetişmesinin PROJE LOGU kolu.
+///
+/// <para><b>Test yüzeyleri:</b> motor yoktur (<c>MainWindowHost</c>): <c>LoadProjectLogAsync</c>'in gönderimi senkron düşer
+/// ama dikiş silahlı kalır (gecikmiş bir chunk hâlâ eşleşir) ve motorun yanıtı (<c>ProjectLogChunkEvent</c>) testten
+/// verilir. Tepsi göstergesi headless'ta kurulmaz; çıkış bildirimini test <c>MainWindow.OnTrayIndicatorExitFinished</c>'a
+/// doğrudan verir (<c>OnGlobalHotkey</c> deseni) ve gerçek <c>GC.Collect</c> yerine sayaçlı bir sahte takar
+/// (<c>MainWindow.MemoryCollector</c>). Toplama uygulama boştayken ertelendiği için testler bildirimden sonra dispatcher'ı
+/// boşaltır (<c>DispatcherPump.DrainToIdle</c>). Gerçek toplamayı yalnız üretim toplayıcısının geçerliliğini sınayan test, bir
+/// kez koşturur.</para>
+/// </summary>
+[Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
+public class RunBufferReleaseTests
+{
+    /// <summary>Bir proje logunu açar: kart seçilir, yükleme istenir ve motorun yanıtı gelir. Yanıtı ayrı vermek isteyen test
+    /// <see cref="RequestProjectLog"/> ile <see cref="ReplyWithProjectLog"/>'u ayrı çağırır.</summary>
+    private static void OpenProjectLog(RunViewModel vm, string name, string diskText, int through)
+    {
+        RequestProjectLog(vm, name);
+        ReplyWithProjectLog(vm, name, diskText, through);
+    }
+
+    /// <summary>Kart seçilir ve proje logu istenir; yanıt henüz gelmedi (gönderim düşer, dikiş silahlı kalır).</summary>
+    private static void RequestProjectLog(RunViewModel vm, string name)
+    {
+        string id = MainWindowHost.IdOf(name);
+        vm.SelectProject(id);
+        _ = vm.LoadProjectLogAsync(id);
+    }
+
+    /// <summary>Motorun yanıtı: diskteki snapshot <paramref name="through"/>. satıra kadar <paramref name="diskText"/>'tir.</summary>
+    private static void ReplyWithProjectLog(RunViewModel vm, string name, string diskText, int through) =>
+        vm.OnEvent(new ProjectLogChunkEvent(MainWindowHost.IdOf(name), 0, diskText, IsLast: true, ThroughLineNumber: through));
+
+    [StaFact]
+    public void A_finished_run_releases_its_live_line_buffer()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null), ("B", null));
+        MainWindowHost.StartBuild(vm, "A", "B");
+        MainWindowHost.LogLine(vm, "A", 1, "a line");
+        MainWindowHost.LogLine(vm, "B", 1, "b line");
+        Assert.Equal(2, vm.LiveLineCount);   // ön-koşul: koşu sürerken tampon dolu — açılan bir proje logu kuyruğunu buradan alır
+
+        MainWindowHost.FinishBuild(vm, "A", "B");
+
+        Assert.Equal(0, vm.LiveLineCount);   // KIRMIZI: bugün tampon bir sonraki işleme dek yaşar
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [Review Focus 3] Yükleme uçuştayken koşu biter, motorun yanıtı sonra gelir. Tampon dikişin KUYRUĞUNU taşır
+    /// (snapshot'ın ötesindeki satırlar yalnız orada durur): yanıttan önce bırakılsaydı dikilen belge son satırlardan yoksun
+    /// kalırdı. Bırakma yanıt dikildikten sonra olur. "Uçuşta" ölçütü <c>LoadProjectLogAsync</c>'in dönüşü değil bekleyen
+    /// dikiştir: gönderim düşse bile dikiş silahlı kalır ve kuyruk ona aittir.
+    /// </summary>
+    [StaFact]
+    public void A_run_that_ends_while_a_project_log_is_loading_keeps_its_tail_for_the_stitch_and_releases_it_after_the_reply()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        string a = MainWindowHost.IdOf("A");
+        MainWindowHost.StartBuild(vm, "A");
+        MainWindowHost.LogLine(vm, "A", 1, "on disk");
+        MainWindowHost.LogLine(vm, "A", 2, "tail");      // snapshot'ın ötesinde: yalnız canlı tamponda
+        RequestProjectLog(vm, "A");                      // yükleme istendi, yanıt henüz yok
+
+        MainWindowHost.CompleteRun(vm, 1);               // yanıttan ÖNCE koşu biter
+
+        Assert.Equal(2, vm.LiveLineCount);               // bırakma yanıtı bekler: kuyruk yerinde
+        ReplyWithProjectLog(vm, "A", "on disk\n", through: 1);   // motorun snapshot'ı 1. satıra kadar
+
+        Assert.Equal("on disk\ntail\n", vm.GetProjectDocumentText(a)); // kuyruk dikişe girdi: kayıp yok
+        Assert.Equal(0, vm.LiveLineCount);               // KIRMIZI: yanıt döndü, bırakılmalı
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// Proje tamponu yalnız EKRANDAKİ sayfa için yaşar: konsol başka bir projeye geçince eskinin tamponu düşer ve geri
+    /// seçilince diskten yeniden yüklenir. Bırakma anı seçimin değiştiği an değil gösterimin ayrıldığı andır — yeni projenin
+    /// yanıtı gelene dek eski sayfa ekrandadır.
+    /// </summary>
+    [StaFact]
+    public void Moving_the_console_to_another_project_drops_the_old_buffer_and_reopening_it_reloads_from_disk()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null), ("B", null));
+        string a = MainWindowHost.IdOf("A"), b = MainWindowHost.IdOf("B");
+        OpenProjectLog(vm, "A", "a on disk\n", through: 0);
+        Assert.Equal(a, vm.ActiveProjectId);                        // ön-koşul: A'nın sayfası ekranda
+        Assert.Equal("a on disk\n", vm.GetProjectDocumentText(a));  // ön-koşul: tampon dolu
+
+        OpenProjectLog(vm, "B", "b on disk\n", through: 0);
+
+        Assert.Equal(b, vm.ActiveProjectId);
+        Assert.Equal("", vm.GetProjectDocumentText(a));             // KIRMIZI: bugün A'nın tamponu bir sonraki işleme dek yaşar
+        Assert.Equal("b on disk\n", vm.GetProjectDocumentText(b));  // ekrandaki proje yerinde
+
+        OpenProjectLog(vm, "A", "a changed on disk\n", through: 0); // geri seçildi: diskten yeniden yüklenir
+
+        Assert.Equal("a changed on disk\n", vm.GetProjectDocumentText(a));
+        Assert.Equal("", vm.GetProjectDocumentText(b));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// Pin (davranış DEĞİŞMEZ): yeni işlem tamponların tümünü tek adımda temizler ve <c>ConsoleCleared</c>'i bildirir —
+    /// bırakma bunun yerine geçmez ve onu eksiltmez. Bırakma burada ertelenmiş durumdadır (bekleyen dikiş), yani
+    /// temizlenecek bir şey gerçekten vardır.
+    /// </summary>
+    [StaFact]
+    public void A_new_operation_still_clears_every_console_buffer_in_one_step()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        MainWindowHost.AcceptSends(vm);
+        string a = MainWindowHost.IdOf("A");
+        MainWindowHost.StartBuild(vm, "A");
+        MainWindowHost.LogLine(vm, "A", 1, "old line");
+        // Yetim dikiş: kart seçilir, yükleme istenir, yanıt gelmeden kart bırakılır — gecikmiş yanıt dikişi yine yazar ama sayfa
+        // açılmaz (RunViewModelTests'teki deselect deseni). Bu tamponu yalnız yeni işlemin temizliği boşaltır.
+        RequestProjectLog(vm, "A");
+        vm.SelectProject(null);
+        ReplyWithProjectLog(vm, "A", "old line\n", through: 1);
+        Assert.Equal("old line\n", vm.GetProjectDocumentText(a));   // ön-koşul: proje tamponu dolu (eskiden hiç dolmuyordu — iddia boştu)
+        Assert.Equal(1, vm.GetProjectLineCount(a));                 // ön-koşul: satır sayısı da
+        RequestProjectLog(vm, "A");                                  // yeniden açılıyor: yanıt henüz yok
+        MainWindowHost.CompleteRun(vm, 1);               // dikiş bekliyor: canlı tampon yerinde
+        Assert.Equal(1, vm.LiveLineCount);               // ön-koşul: temizlenecek canlı satır var
+        Assert.Contains("old line", vm.GetRunDocumentText());
+        int cleared = 0; vm.ConsoleCleared += (_, _) => cleared++;
+
+        _ = vm.BuildCommand.ExecuteAsync(null);          // yeni işlem: temizlik ilk await'ten ÖNCE, senkron
+
+        Assert.Equal(0, vm.LiveLineCount);
+        Assert.DoesNotContain("old line", vm.GetRunDocumentText());
+        Assert.Equal("", vm.GetProjectDocumentText(a));
+        Assert.Equal(0, vm.GetProjectLineCount(a));
+        Assert.True(cleared > 0, "ConsoleCleared bildirilmeli: kabuk ekrandaki belgeyi de boşaltır");
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// Gizli + koşu bitti + gösterge çıkış evresini tamamladı → bellek BİR kez toplanır. Koşu sürerken gelen bildirim o anda
+    /// toplamaz (koşu bitince bitiş sinyali toplamayı ister) ve aynı koşunun ikinci bitiş sinyali yeniden toplamaz.
+    /// </summary>
+    [StaFact]
+    public void A_hidden_window_collects_memory_once_when_the_run_has_ended_and_the_indicator_has_left()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        int collections = 0;
+        window.MemoryCollector = () => collections++;
+        window.SetSurfaceHidden(true);
+        MainWindowHost.StartBuild(vm, "A");
+
+        window.OnTrayIndicatorExitFinished(vm.RunSerial);            // koşu sürerken: henüz toplanmaz — sinyal bu koşu için kaydedilir
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(0, collections);
+
+        MainWindowHost.FinishBuild(vm, "A");
+        window.OnTrayIndicatorExitFinished(vm.RunSerial);
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(1, collections);                    // KIRMIZI: bugün hiçbir şey toplamıyor
+
+        window.OnTrayIndicatorExitFinished(vm.RunSerial);            // aynı koşunun ikinci bitiş sinyali
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(1, collections);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>"Bir kez" koşu kimliğine bağlıdır (<c>RunViewModel.RunSerial</c>): her koşunun bitişi kendi toplamasını alır.</summary>
+    [StaFact]
+    public void Each_run_that_ends_while_hidden_gets_its_own_collection()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        int collections = 0;
+        window.MemoryCollector = () => collections++;
+        window.SetSurfaceHidden(true);
+
+        MainWindowHost.RunBuild(vm, "A");
+        window.OnTrayIndicatorExitFinished(vm.RunSerial);
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(1, collections);                    // KIRMIZI: bugün hiçbir şey toplamıyor
+
+        MainWindowHost.RunBuild(vm, "A");                // ikinci koşu: başlangıç bayrağı sıfırlar
+        window.OnTrayIndicatorExitFinished(vm.RunSerial);
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(2, collections);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz C · son toparlama B2] Göstergenin çıkışı, nefes sırasında yeni bir koşu başlasa bile ÖNCEKİ koşuya aittir. Çıkış
+    /// bildirimi nefesten sonra gelir; N'in nefesi içinde N+1 başlarsa bildirimin anındaki koşu kimliği N+1'dir ve çıkış ona
+    /// yazılırdı: N+1 biter bitmez toplama istenir, bloklayan GC N+1'in göstergesinin ekrandaki çıkış animasyonu sırasında koşardı
+    /// ("balondan sonra" kuralının ihlali). Doğrusu: N+1 uçuştayken hiçbir şey toplanmaz, N+1 bitince de ancak N+1'in çıkışı
+    /// bitince — ve o zaman bir kez.
+    /// </summary>
+    [StaFact]
+    public void A_run_that_starts_during_the_indicator_breath_does_not_take_over_the_previous_runs_exit()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        int collections = 0;
+        window.MemoryCollector = () => collections++;
+        window.SetSurfaceHidden(true);
+
+        MainWindowHost.RunBuild(vm, "A");                // N biter; göstergenin çıkışı N için başlar
+        int ended = vm.RunSerial;
+        MainWindowHost.StartBuild(vm, "A");              // N'in nefesi içinde N+1 başladı
+        window.OnTrayIndicatorExitFinished(ended);       // N'in çıkışı (nefesten sonra): kimlik çıkışın başladığı andaki koşu
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(0, collections);                    // N+1 uçuşta: ertelenen toplama atlanır
+        Assert.True(vm.RunSerial > ended, "ön-koşul: N+1 başladı");
+
+        MainWindowHost.FinishBuild(vm, "A");             // N+1 biter; göstergesinin çıkışı henüz bitmedi
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(0, collections);                    // KIRMIZI: N+1'in çıkış animasyonu sürerken bloklayan GC koşuyordu
+
+        window.OnTrayIndicatorExitFinished(vm.RunSerial);            // N+1'in çıkışı bitti
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(1, collections);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Kontrol: pencere görünürken (çıkış sırasında geri gelmiş olabilir) hiç toplanmaz — kullanıcı ekrandadır. Aynı
+    /// bildirim gizliyken toplar: yani sıfır, sayacın ölü olmasından değil görünürlükten gelir.</summary>
+    [StaFact]
+    public void A_visible_window_does_not_collect_after_a_run()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        int collections = 0;
+        window.MemoryCollector = () => collections++;
+        MainWindowHost.RunBuild(vm, "A");
+
+        window.OnTrayIndicatorExitFinished(vm.RunSerial);
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(0, collections);                    // pencere görünür
+
+        window.SetSurfaceHidden(true);
+        window.OnTrayIndicatorExitFinished(vm.RunSerial);
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(1, collections);                    // aynı bildirim gizliyken toplar
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz C · C-1] Üretim toplayıcısı (gerçek <c>GC.Collect</c>, bir kez) fırlatmaz. Agresif kip yalnız bloklayan biçimle
+    /// geçerlidir; <c>blocking: false</c> her çağrıda <see cref="ArgumentException"/> fırlatıyordu ve süit bunu göremedi — diğer
+    /// testler toplayıcıyı sayaçlı bir sahteyle değiştirir. Süitte gerçek toplama yalnız burada koşar.
+    /// </summary>
+    [StaFact]
+    public void The_production_memory_collector_does_not_throw()
+    {
+        using var dir = new TempDir();
+        var (window, _, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+
+        var error = Record.Exception(window.MemoryCollector);   // üretim varsayılanı: sahte takılmadı
+
+        Assert.Null(error);   // KIRMIZI: GC.Collect(2, Aggressive, blocking: false, compacting: true) → ArgumentException
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Tepside süren bir koşu: pencere gizli, A'nın bir satırı canlı tamponda. Toplayıcı sahtedir ve çağrıldığı andaki
+    /// canlı tampon boyunu kaydeder — "bırakma → toplama" sırası böyle gözlenir.</summary>
+    private static (global::BuildOrchestrator.App.MainWindow window, RunViewModel vm, List<int> seen) HiddenRunWithOneLine(TempDir dir)
+    {
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        var seen = new List<int>();
+        window.MemoryCollector = () => seen.Add(vm.LiveLineCount);
+        window.SetSurfaceHidden(true);
+        MainWindowHost.StartBuild(vm, "A");
+        MainWindowHost.LogLine(vm, "A", 1, "a line");
+        Assert.Equal(1, vm.LiveLineCount);   // ön-koşul: koşu sürerken tampon dolu
+        return (window, vm, seen);
+    }
+
+    /// <summary>
+    /// [perf Faz C · M-2] Toplama iki sinyalin birleşimidir — koşu bitti VE gösterge çıkışını bitirdi — ve hangisi sonra gelirse
+    /// toplamayı o ister. Reduced-motion'da tepside Stop'ta gösterge <c>runStopped</c> anında çıkar (faz <c>Stopped</c>) ama koşu
+    /// <c>runCompleted</c>'a dek uçuştadır: bitiş sinyali sonra gelir ve toplamayı o ister — bir kez, bırakılmış tamponla.
+    /// </summary>
+    [StaFact]
+    public void A_run_stopped_in_the_tray_under_reduced_motion_is_collected_once_when_it_completes()
+    {
+        using var dir = new TempDir();
+        var (window, vm, seen) = HiddenRunWithOneLine(dir);
+
+        vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));   // faz Stopped: reduced-motion'da gösterge çıkışı ŞİMDİ biter
+        window.OnTrayIndicatorExitFinished(vm.RunSerial);
+        DispatcherPump.DrainToIdle();
+        Assert.Empty(seen);                                       // koşu hâlâ uçuşta: runCompleted gelmedi
+
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 0, 0, 0, 100));
+        DispatcherPump.DrainToIdle();
+
+        Assert.Equal([0], seen);   // KIRMIZI: runCompleted toplamayı yeniden sormuyordu — o koşu hiç toplanmıyordu
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[perf Faz C · C4] Koşu-bitiren hata (<c>runFailed</c>) da bir koşu bitişidir: <c>runCompleted</c> gelmez, tampon yine
+    /// bırakılır ve tepside toplama bırakılmış tamponla olur.</summary>
+    [StaFact]
+    public void A_run_that_fails_in_the_tray_releases_its_buffer_before_the_collection()
+    {
+        using var dir = new TempDir();
+        var (window, vm, seen) = HiddenRunWithOneLine(dir);
+
+        vm.OnEvent(new ErrorEvent("runFailed", "the build failed"));
+        window.OnTrayIndicatorExitFinished(vm.RunSerial);
+        DispatcherPump.DrainToIdle();
+
+        Assert.Equal(0, vm.LiveLineCount);   // KIRMIZI: hata bitişinde tampon bırakılmıyordu
+        Assert.Equal([0], seen);             // bir kez ve bırakılmış tamponla
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[perf Faz C · C4] Motor kaybı da bir koşu bitişidir: tampon bırakılır ve tepside toplama bırakılmış tamponla
+    /// olur.</summary>
+    [StaFact]
+    public void A_run_whose_engine_dies_in_the_tray_releases_its_buffer_before_the_collection()
+    {
+        using var dir = new TempDir();
+        var (window, vm, seen) = HiddenRunWithOneLine(dir);
+
+        vm.OnEngineExited(1);
+        window.OnTrayIndicatorExitFinished(vm.RunSerial);
+        DispatcherPump.DrainToIdle();
+
+        Assert.Equal(0, vm.LiveLineCount);   // KIRMIZI: motor kaybında tampon bırakılmıyordu
+        Assert.Equal([0], seen);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz C · M-1] Bekleyen yüklemenin "log yok" yanıtı (<c>logNotFound</c>) da yüklemenin sonudur: koşu yanıttan önce
+    /// bittiyse ertelenen bırakma yanıtla yapılır — dikiş yanıtıyla aynı kural (bekleyen yüklemenin sonu tek yerde).
+    /// </summary>
+    [StaFact]
+    public void A_log_not_found_reply_releases_the_buffer_of_a_run_that_ended_while_the_log_was_loading()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        MainWindowHost.StartBuild(vm, "A");
+        MainWindowHost.LogLine(vm, "A", 1, "a line");
+        RequestProjectLog(vm, "A");                      // yükleme istendi, yanıt henüz yok
+        MainWindowHost.CompleteRun(vm, 1);               // yanıttan ÖNCE koşu biter
+        Assert.Equal(1, vm.LiveLineCount);               // ön-koşul: bırakma yanıtı bekliyor
+
+        vm.OnEvent(new ErrorEvent("logNotFound", "no log for A"));
+
+        Assert.Equal(0, vm.LiveLineCount);   // KIRMIZI: logNotFound yanıtı ertelenen bırakmayı sormuyordu
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz C · C4] Konsol anlatıya dönünce (<c>ShowRun</c>) açık projenin tamponu da düşer — proje→proje geçişiyle aynı kural:
+    /// bırakma anı gösterimin ayrıldığı andır; yeniden açılış diskten yükler.
+    /// </summary>
+    [StaFact]
+    public void Returning_the_console_to_the_narrative_drops_the_project_buffer()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        string a = MainWindowHost.IdOf("A");
+        OpenProjectLog(vm, "A", "a on disk\n", through: 0);
+        Assert.Equal(a, vm.ActiveProjectId);                        // ön-koşul: A'nın sayfası ekranda
+        Assert.Equal("a on disk\n", vm.GetProjectDocumentText(a));  // ön-koşul: tampon dolu
+        Assert.Equal(1, vm.GetProjectLineCount(a));
+
+        vm.ShowRun();
+
+        Assert.Null(vm.ActiveProjectId);
+        Assert.Equal("", vm.GetProjectDocumentText(a));
+        Assert.Equal(0, vm.GetProjectLineCount(a));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz A · A2'den ertelenen] Gizli konsol yetişmesinin PROJE LOGU kolu: pencere gizliyken bir projenin logu açıkken
+    /// satırlar gelir ve koşu biter; dönüşte proje belgesi <b>tilt'siz</b> ve <b>kayıpsız</b> modelin tam metninden bir kez
+    /// kurulur. Faz C'de koşu sonu canlı tamponu bırakır — açık projenin metin tamponu (<c>_projectText</c>) bundan etkilenmez
+    /// ve dönüş kurulumunun kaynağı odur; bu test o bağı da korur.
+    /// </summary>
+    [StaFact]
+    public void A_project_log_open_while_a_run_ends_hidden_is_rebuilt_whole_and_without_the_tilt_on_show()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        var console = window.Shell.ConsoleViewControl;
+        console.AnimationsEnabledProvider = () => true;                  // tilt oynayabilsin: tek engel gizli sinyal olsun
+        var row = MainWindowHost.ProjectOf(vm, "A");
+        vm.ActiveProjectId = row.Id;                                     // proje logu açık (motor round-trip'i yok: mod doğrudan kurulur)
+        var documentBefore = console.EditorControl.Document;
+        string textBefore = documentBefore.Text;
+        window.SetSurfaceHidden(true);
+
+        MainWindowHost.StartBuild(vm, "A");
+        MainWindowHost.LogLine(vm, "A", 1, "first");
+        window.AppendConsoleBatch("first\n", window.ConsoleReseedGen);   // pompanın batch'i: gizliyken belgeye basılmaz, "ekran bayat" kalkar
+        MainWindowHost.LogLine(vm, "A", 2, "second");
+        MainWindowHost.FinishBuild(vm, "A");                             // koşu gizliyken biter: canlı tampon bırakılır
+        Assert.Equal(0, vm.LiveLineCount);                               // KIRMIZI: bırakma bugün yok (dönüş kurulumu ondan bağımsız)
+        Assert.Equal(textBefore, console.EditorControl.Document.Text);   // gizliyken belgeye hiçbir satır basılmadı (yerinde ekleme de yok)
+
+        window.SetSurfaceHidden(false);
+        window.ResyncAfterShow();
+
+        string text = console.EditorControl.Document.Text;
+        Assert.NotSame(documentBefore, console.EditorControl.Document);  // proje belgesi dönüşte yeniden kuruldu
+        Assert.Equal(1, MainWindowHost.Occurrences(text, "first"));      // kayıpsız ve çiftsiz: belge == model
+        Assert.Equal(1, MainWindowHost.Occurrences(text, "second"));
+        Assert.True(text.IndexOf("first", StringComparison.Ordinal) < text.IndexOf("second", StringComparison.Ordinal));
+        Assert.Equal(Visibility.Collapsed, console.Tilt3D.Visibility);   // tilt'siz: tilt mod geçişinin işidir
+        GC.KeepAlive(window);
+    }
+}

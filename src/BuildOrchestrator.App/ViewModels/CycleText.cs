@@ -1,22 +1,15 @@
 namespace BuildOrchestrator.App.ViewModels;
 
 /// <summary>
-/// [design v1.7.0 §2.4/§5] Dairesel bağımlılık metinlerinin TEK kaynağı. Döngüyü ANLATAN cümle ile döngünün
-/// YOLUNU gösteren satır burada üretilir; nokta, uyarı üçgeni ve şeridin döngü kümesi hepsi bunu okur —
-/// üç yüzey aynı cümleyi kendi içinde yazsaydı sessizce ayrışırlardı (kopya YASAK).
+/// [design v1.7.0 §2.4/§5] Dairesel bağımlılık metinlerinin TEK kaynağı: döngünün YOLUNU gösteren satır burada
+/// üretilir; satırlar ve şeridin döngü kümesi bunu okur — iki yüzey aynı satırı kendi içinde yazsaydı sessizce
+/// ayrışırlardı (kopya YASAK).
+/// <para>[Build cycle derler] Eskiden burada iki sabit daha vardı (<c>Membership</c>: "standard builds skip it;
+/// Resolve cycles builds it in rounds", <c>ClusterHeadline</c>: "won't be built"). Hiçbir yüzey onları okumuyordu
+/// ve ikisi de düz Build'in döngüyü derlemediği kuralını anlatıyordu; kural değişince silindiler.</para>
 /// </summary>
 public static class CycleText
 {
-    /// <summary>
-    /// Üyeliğin ne demek olduğu. Kaç tur süreceğini SÖYLEMEZ: tur sayısı motorun kararıdır
-    /// (<c>CycleRoundPolicy</c> yakınsamaya göre 2–3 tur koşar) ve arayüz sabit bir sayı vaat edemez.
-    /// </summary>
-    public const string Membership =
-        "In a dependency cycle — standard builds skip it; Resolve cycles builds it in rounds";
-
-    /// <summary>Şeridin döngü kümesinin ilk satırı (§2.2): kümenin ne anlattığı.</summary>
-    public const string ClusterHeadline = "In a dependency cycle — won't be built";
-
     /// <summary>
     /// Döngünün yolu: <c>A → B → C → A</c>. Halka KAPATILIR (ilk üye sona tekrar yazılır) — döngü olduğunu
     /// gösteren şey tam olarak budur; kapatılmazsa okuyan sıradan bir zincir görür.

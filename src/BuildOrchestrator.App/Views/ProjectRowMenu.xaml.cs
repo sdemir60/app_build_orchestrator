@@ -1,3 +1,4 @@
+using System.Windows.Automation.Peers;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -20,6 +21,9 @@ namespace BuildOrchestrator.App.Views;
 /// </summary>
 public partial class ProjectRowMenu : UserControl
 {
+    /// <summary>UIA rolü — gerekçe ve ölçüm <see cref="UserControlRolePeer"/>'de.</summary>
+    protected override AutomationPeer OnCreateAutomationPeer() => new UserControlRolePeer(this, AutomationControlType.Menu);
+
     // design-v1.11.0 BuildApp.jsx:608-613 satır ölçüleri — bileşenin KENDİ değerleri, token DEĞİL.
     private const double RowHeight = 26;
     private const double IconSlot = 13;

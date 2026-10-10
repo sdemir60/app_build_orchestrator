@@ -51,7 +51,7 @@ public static class OutputEvidence
     public static readonly TimeSpan FedOutputWindow = TimeSpan.FromSeconds(2);
 
     /// <summary>
-    /// Projenin kanıt yolları. Proje yoksa ya da kanıt yolu türetilemiyorsa (SDK-style, belirsiz OutputPath)
+    /// Projenin kanıt yolları. Proje yoksa ya da kanıt yolu türetilemiyorsa (düzeni oynatılmış SDK-style, belirsiz OutputPath)
     /// <c>null</c> — kanıtsız. Adaylar: <paramref name="dependents"/>'ın (grafta bu projeye bağlı olanların)
     /// HintPath hedeflerinden dosya adı kanıtınkiyle aynı olanlar (büyük/küçük harf duyarsız), tekil ve sıralı.
     /// Belirsiz üreticide (aynı DLL adını iki proje üretiyor) graf kenarı düşer, dolayısıyla aday da yoktur (§7-44).

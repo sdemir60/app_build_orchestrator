@@ -22,7 +22,7 @@ namespace BuildOrchestrator.Core.Workspace;
 /// <item>eksik NuGet paketleri ve her SDK-style proje → per-proje <c>-t:restore</c>;</item>
 /// <item>restore SONRASI hâlâ eksik HintPath hedefleri → isimli warn (teşhis);</item>
 /// <item>LEGACY projelerdeki stale <c>obj</c> NuGet artıkları → silinir;</item>
-/// <item>dosyası kaybolmuş defter girdileri → üç defterde de budanır;</item>
+/// <item>dosyası kaybolmuş defter girdileri → üç defterde de budanır; eski şemalı değerlendirme girdileri → kökten bağımsız budanır;</item>
 /// <item>öksüz <c>.tmp</c> artıkları → süpürülür.</item>
 /// </list>
 ///
@@ -360,13 +360,17 @@ public sealed class OptimizeWorkspaceService(
 
     // ---------------------------------------------------------------- adım 4-5: defter hijyeni
 
-    /// <summary>Üç defter de aynı ölçütle budanır: anahtarın gösterdiği dosya diskte yoksa girdi ölüdür. İlk
-    /// ikisi csproj yoluyla, üçüncüsü KAYNAK DOSYA yoluyla anahtarlıdır — bu yüzden en hızlı biriken odur ve
-    /// ayrı sayılır. Her kök ayrı süpürülür (harici kök ana kökün öneki ALTINDA değildir).</summary>
+    /// <summary>Üç defter de aynı ölçütle budanır: anahtarın gösterdiği dosya diskte yoksa girdi ölüdür (evaluation cache'in
+    /// bir ölçütü daha var: şeması güncel olmayan girdi de ölüdür — aşağıda). İlk ikisi csproj yoluyla, üçüncüsü KAYNAK
+    /// DOSYA yoluyla anahtarlıdır — bu yüzden en hızlı biriken odur ve ayrı sayılır. Her kök ayrı süpürülür (harici kök ana
+    /// kökün öneki ALTINDA değildir); şema budaması köklerden bağımsızdır.</summary>
     private void PruneDeadCacheEntries(IReadOnlyList<string> roots, Tally tally, Action<IpcEvent> emit)
     {
         tally.PrunedStateEntries = roots.Sum(stateStore.PruneMissingUnderRoot);
-        tally.PrunedCacheEntries = roots.Sum(cache.PruneMissingUnderRoot);
+        // Evaluation cache'in İKİNCİ ölü girdi türü: eski şemalı girdi hiç isabet vermez (bkz. EvaluationCache.PruneStaleSchema) ve
+        // kök başına geçişler onu göremez — onlar yalnız kökün altındaki yolları tarar. Kök listesinden bağımsız, bir kez budanır;
+        // sayı evaluation-cache sayacına girer (üç sayaç ayrı kalır). Ölü girdi önce gittiği için hiçbir girdi iki kez sayılmaz.
+        tally.PrunedCacheEntries = roots.Sum(cache.PruneMissingUnderRoot) + cache.PruneStaleSchema();
         tally.PrunedSourceHashEntries = roots.Sum(sourceHashes.PruneMissingUnderRoot);
         var pruned = new List<string>();
         if (tally.PrunedStateEntries > 0) pruned.Add($"{tally.PrunedStateEntries} build-state");

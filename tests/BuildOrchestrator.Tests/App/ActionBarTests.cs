@@ -337,19 +337,122 @@ public partial class ActionBarTests
         GC.KeepAlive(window);
     }
 
-    // ---------------------------------------------------------------- [kullanıcı bildirimi 2026-09-29] iş sürerken Build
+    // ---------------------------------------------------------------- [kullanıcı kararı 2026-10-02] iş sürerken Build kapalı
+
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-02]</b> Önceki ad ve iddia (<c>The_build_button_stays_live_while_a_visible_sync_runs</c>,
+    /// kullanıcı bildirimi 2026-09-29): Build düğmesi Sync sürerken canlı kalır — basış bekler ve Sync bitince koşar. Kuyruk
+    /// kaldırıldı: iş sürerken koşu komutları kapalıdır, basış kuyruğa alınmaz; asıl kural geri geldi — Build split-button'ı
+    /// bir Sync sürerken (faz <c>Syncing</c>) tümden söner (<c>BuildApp.jsx:1594</c>); komutun kapısı da kapalıdır ve chevron birincil yarıyı izler. Faz <c>Syncing</c>'e
+    /// geçmeyen işler (görünmeyen Sync, Clean, Optimize) için bkz. <see cref="The_build_split_follows_the_run_gate_while_work_runs"/>.
+    /// </summary>
+    [StaFact]
+    public void The_build_button_dims_as_a_whole_while_a_visible_sync_runs()
+    {
+        var vm = NewVm();
+        VmTopology.Seed(vm);
+        var (bar, window) = Realize(vm);
+
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main")); // Sync düğmesinin Sync'i
+        Assert.Equal(AppPhase.Syncing, vm.Phase);             // ön-koşul
+
+        Assert.False(bar.Split.PrimaryHalf!.IsEnabled);
+        Assert.False(bar.Split.MenuToggle!.IsEnabled);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [kullanıcı kararı 2026-10-02 · review B1 I1] İş sürerken — görünmeyen Sync, Clean, Optimize — Build split'inin chevron'u
+    /// açılamaz (menünün Build / Rebuild / Clean satırları tıklanabilir görünüp tıklamayı sessizce yutardı) ve iş bitince
+    /// yeniden açılır. Bu işlerin hiçbiri faz <c>Syncing</c>'e geçmez (ön-koşul), yani split'in kendi <c>IsEnabled</c>'ı
+    /// (<c>hasWs &amp;&amp; !syncing</c>) onları görmez; kapıyı komut kurar: birincil yarı <c>BuildCommand.CanExecute</c>'u
+    /// <c>ButtonBase</c> gibi AND'ler, chevron birincil yarının etkinliğini izler (şablonda <c>PART_Menu.IsEnabled</c> ←
+    /// <c>PART_Primary.IsEnabled</c>; bkz. <c>DsControlTemplateTests</c>). Bar kapıyı yeniden türetmez; kapı bildirimi
+    /// (<c>CanExecuteChanged</c>) düşerse bu test kırılır.
+    /// </summary>
+    [StaTheory]
+    [InlineData("silentSync")]
+    [InlineData("clean")]
+    [InlineData("optimize")]
+    public async Task The_build_split_follows_the_run_gate_while_work_runs(string work)
+    {
+        var vm = NewVm();
+        vm.DebugSendOverride = _ => Task.CompletedTask; // motor canlı: iş gerçekten sürer
+        VmTopology.Seed(vm);
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0));
+        var (bar, window) = Realize(vm);
+        Assert.True(bar.Split.MenuToggle!.IsEnabled);           // ön-koşul: boştayken menü açılabilir
+        Assert.True(bar.Split.PrimaryHalf!.IsEnabled);
+
+        switch (work)
+        {
+            case "silentSync":
+                Assert.True(await vm.SyncSilentlyAsync(SilentSyncReason.Refresh));
+                break;
+            case "clean":
+                Assert.True(CommandPress.Press(vm.CleanCommand));
+                vm.OnEvent(new CleanStartedEvent(@"D:\repo"));
+                break;
+            default:
+                Assert.True(CommandPress.Press(vm.OptimizeCommand));
+                vm.OnEvent(new OptimizeStartedEvent(@"D:\repo"));
+                break;
+        }
+        Assert.NotEqual(AppPhase.Syncing, vm.Phase);            // ön-koşul: faz bu işi görmez
+        Assert.False(vm.BuildCommand.CanExecute(null));         // ön-koşul: koşu kapısı kapalı
+
+        Assert.False(bar.Split.MenuToggle.IsEnabled);           // chevron açılamaz
+        Assert.False(bar.Split.PrimaryHalf.IsEnabled);
+
+        if (work == "clean") vm.OnEvent(new CleanCompletedEvent(1, 2, 1_024, 0, 1));    // devir: zincirli Sync istenir
+        else if (work == "optimize") vm.OnEvent(new OptimizeCompletedEvent(1));         // devir: zincirli Sync istenir
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        VmTopology.Seed(vm);
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0));
+
+        Assert.True(bar.Split.MenuToggle.IsEnabled);            // iş bitti: yeniden açık
+        Assert.True(bar.Split.PrimaryHalf.IsEnabled);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [kullanıcı kararı 2026-10-02 · review B1 I1] Açık duran Build menüsünün satırları (Build / Rebuild / Clean) komutun
+    /// kapısına bakmaz ve chevron'un etkinliği yalnız menüyü AÇMAYI engeller: bir iş menü AÇIKKEN başlarsa (görünmeyen Sync —
+    /// kendiliğinden tetik, faz <c>Syncing</c>'e geçmez) satırlar canlı görünür, tıklanınca menü kapanır ve hiçbir şey olmaz.
+    /// Kapı kapanınca açık menü kapanır: tıklanabilir görünüp tıklamayı sessizce yutan yüzey kalmaz.
+    /// </summary>
+    [StaFact]
+    public async Task An_open_build_menu_closes_when_work_closes_the_run_gate()
+    {
+        var vm = NewVm();
+        vm.DebugSendOverride = _ => Task.CompletedTask; // motor canlı: Sync gerçekten sürer
+        VmTopology.Seed(vm);
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0));
+        var (bar, window) = Realize(vm);
+        bar.Split.IsMenuOpen = true;                         // kullanıcı Build menüsünü açtı
+        Assert.True(bar.Split.IsMenuOpen);                   // ön-koşul
+
+        Assert.True(await vm.SyncSilentlyAsync(SilentSyncReason.Refresh)); // menü açıkken görünmeyen bir Sync başladı
+
+        Assert.False(vm.BuildCommand.CanExecute(null));      // ön-koşul: koşu kapısı kapandı
+        Assert.False(bar.Split.IsMenuOpen);                  // menü kapandı
+        GC.KeepAlive(window);
+    }
 
     private const string WindowReturnSha = "1111111111111111111111111111111111111111";
 
     /// <summary>
-    /// [kullanıcı bildirimi 2026-09-29] Arka plandaki pencereye Build'e tıklayarak dönmek: tıklama önce pencereyi
-    /// etkinleştirir, etkinleşme kendiliğinden bir Sync ister, tıklama ANCAK SONRA işlenir. Ölçülen kusur: o anda
-    /// Build'in komutu kapanmıştı ama düğme bundan habersiz parlak kalıyordu — tıklama iz bırakmadan yutuluyordu;
-    /// Sync sürerken ikinci tık da (düğme sönük) yutuluyor, ancak Sync bitince üçüncü tık çalışıyordu. Tıklama
-    /// gerçek yoldan yapılır: UI Automation Invoke → <c>ButtonBase.OnClick</c> → komutun <c>CanExecute</c>'u.
+    /// <b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-02]</b> Arka plandaki pencereye Build'e tıklayarak dönmek: tıklama önce
+    /// pencereyi etkinleştirir, etkinleşme kendiliğinden bir Sync ister, tıklama ANCAK SONRA işlenir. Önceki ad ve iddia
+    /// (<c>A_click_on_build_that_brings_the_window_back_is_kept_and_builds_after_the_automatic_sync</c>, kullanıcı bildirimi
+    /// 2026-09-29): o tık tutulur, düğme Stop olur ve Build Sync bitince koşar. Kuyruk kaldırıldı; ölçülen kusurun asıl koruması
+    /// kaldı ve burada pinlenir: Sync istendiği ANDA Build'in kapısı kapanır ve düğme bundan haberdar olur — sönük düğmeye
+    /// basılamaz (UI Automation Invoke fırlatır), tık iz bırakmadan yutulan "parlak ama ölü" bir düğmeye inmez. Hiçbir koşu
+    /// başlamaz, düğme Stop olmaz; Sync bitince düğme yeniden açılır. (Kapının kendisi her iş türü için
+    /// <c>RunRequestDuringWorkTests</c>'te pinlidir.)
     /// </summary>
     [StaFact]
-    public void A_click_on_build_that_brings_the_window_back_is_kept_and_builds_after_the_automatic_sync()
+    public void A_click_on_build_that_brings_the_window_back_finds_the_button_already_closed_and_starts_nothing()
     {
         long now = 1_000;
         var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1", () => now)
@@ -361,44 +464,27 @@ public partial class ActionBarTests
         var (bar, window) = Realize(vm);
         var sent = new List<IpcCommand>();
         vm.DebugOnCommandSent = sent.Add;
+        var primary = (Button)bar.Split.PrimaryHalf!;
+        Assert.True(primary.IsEnabled);                      // ön-koşul: pencere arkadayken Build açık
 
         now += 60_000;
         vm.OnWindowActivated();                              // tıklama pencereyi etkinleştirdi…
         Assert.Single(sent.OfType<SyncWorkspaceCommand>());  // …kendiliğinden Sync istendi (ön-koşul)
-        CommandPress.Invoke((Button)bar.Split.PrimaryHalf!); // …ve aynı tıklama Build'e iner
-        DispatcherPump.PumpUntil(() => vm.IsStarting, TimeSpan.FromSeconds(2));
 
-        Assert.True(vm.IsStarting);                          // tık tutuldu
-        Assert.Equal(Visibility.Visible, bar.StopButton.Visibility);
-        Assert.Empty(sent.OfType<StartRunCommand>());        // Sync bitmeden koşu gitmez
+        Assert.False(primary.IsEnabled);                     // Build o anda söndü: düğme bundan haberdar
+        Assert.False(bar.Split.MenuToggle!.IsEnabled);
+        Assert.Throws<ElementNotEnabledException>(() => CommandPress.Invoke(primary)); // …tık kapalı düğmeye iner
+        Assert.False(vm.IsStarting);
+        Assert.Equal(Visibility.Collapsed, bar.StopButton.Visibility);
+        Assert.Empty(sent.OfType<StartRunCommand>());
 
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
         VmTopology.Seed(vm);
         vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0, HeadSha: WindowReturnSha, ActiveBranch: "main"));
 
-        Assert.Equal(RunMode.Build, Assert.Single(sent.OfType<StartRunCommand>()).Mode);
-        GC.KeepAlive(window);
-    }
-
-    /// <summary>
-    /// <b>[DEĞİŞEN KURAL — kullanıcı bildirimi 2026-09-29]</b> Eski kural: Build split-button'ı bir Sync sürerken
-    /// (faz <c>Syncing</c>) tümden sönerdi — <c>hasWs &amp;&amp; !syncing</c> (<c>BuildApp.jsx:1594</c>), komutun kapısı
-    /// da zaten kapalıydı. Değişme gerekçesi (ölçüm): kapalı düğmeye basılan Build kayboluyordu; Clean ya da Optimize'ın
-    /// ardından gelen Sync'te kullanıcı Build'e basıp hiçbir şey olmadığını görüyordu. Artık Sync sürerken basılan Build
-    /// bekler ve Sync bitince koşar, yani düğme basılabilir kalır; kapıyı yalnız komut söyler.
-    /// </summary>
-    [StaFact]
-    public void The_build_button_stays_live_while_a_visible_sync_runs()
-    {
-        var vm = NewVm();
-        VmTopology.Seed(vm);
-        var (bar, window) = Realize(vm);
-
-        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main")); // Sync düğmesinin Sync'i
-        Assert.Equal(AppPhase.Syncing, vm.Phase);             // ön-koşul
-
-        Assert.True(bar.Split.PrimaryHalf!.IsEnabled);
-        Assert.True(bar.Split.MenuToggle!.IsEnabled);
+        Assert.True(primary.IsEnabled);                      // Sync bitti: düğme yeniden açık
+        Assert.True(bar.Split.MenuToggle.IsEnabled);
+        Assert.Empty(sent.OfType<StartRunCommand>());        // …ve hiçbir koşu kendiliğinden başlamadı
         GC.KeepAlive(window);
     }
 
@@ -568,8 +654,13 @@ public partial class ActionBarTests
     private static UIElement ChipIcon(ToggleButton chip) => ((StackPanel)chip.Content).Children[0];
 
     /// <summary>Bir sayaç chip'inin İKİNCİ çocuğu (StackPanel[icon, value]) — <see cref="ChipIcon"/>'ın simetriği,
-    /// değer <see cref="TextBlock"/>'unu okumanın TEK yolu.</summary>
-    private static TextBlock ChipValue(ToggleButton chip) => (TextBlock)((StackPanel)chip.Content).Children[1];
+    /// değer <see cref="TextBlock"/>'unu okumanın TEK yolu. <c>internal</c>: <c>HiddenSurfaceTests</c> de aynı okumayı kullanır.</summary>
+    internal static TextBlock ChipValue(ToggleButton chip) => (TextBlock)((StackPanel)chip.Content).Children[1];
+
+    /// <summary>Building chip'inin spinner'ı: ikon <see cref="Grid"/>'inin ikinci çocuğu (Grid[nokta, spinner]) — spinner'ı okumanın
+    /// TEK yolu. <see cref="ChipValue"/> gibi <c>internal</c>: <c>HiddenSurfaceTests</c> de aynı okumayı kullanır.</summary>
+    internal static BuildingSpinner ChipSpinner(ToggleButton buildingChip) =>
+        Assert.IsType<BuildingSpinner>(Assert.IsType<Grid>(ChipIcon(buildingChip)).Children[1]);
 
     /// <summary>[design v1.20.0 §2.7] ✓ · ✗ rozetleri DURUM kovalarını okur (<see cref="RunCounters.Current"/> ·
     /// <see cref="RunCounters.Broken"/>) — koşu tablosunun succeeded/failed/skipped kovalarını DEĞİL (onlar
@@ -634,7 +725,7 @@ public partial class ActionBarTests
 
         var buildingIcon = Assert.IsType<Grid>(ChipIcon(bar.BuildingChip));
         Assert.IsType<Ellipse>(buildingIcon.Children[0]);
-        Assert.IsType<BuildingSpinner>(buildingIcon.Children[1]);
+        _ = ChipSpinner(bar.BuildingChip); // ikinci çocuk spinner: tür iddiası okuma yolunda (ChipSpinner)
 
         // [DEĞİŞEN KURAL — design v1.20.0 §2.7 · §1.4] Eski glyph'ler Succeeded ✓ · Failed ✗ · Skipped — idi.
         // Chip'ler artık durum yüzeyidir: güncel ✓, derlenecek kesikli daire ○, bozuk ✗. — yalnız run-story
@@ -675,7 +766,7 @@ public partial class ActionBarTests
 
         var icon = Assert.IsType<Grid>(ChipIcon(bar.BuildingChip));
         var dot = Assert.IsType<Ellipse>(icon.Children[0]);
-        var spinner = Assert.IsType<BuildingSpinner>(icon.Children[1]);
+        var spinner = ChipSpinner(bar.BuildingChip);
 
         // Boşken: gri nokta görünür, spinner gizli.
         Assert.Equal(0, vm.Counters.Building); // ön-koşul: gerçekten kimse derlenmiyor
@@ -796,25 +887,38 @@ public partial class ActionBarTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>[Stopping] Graceful stop uçuştaki child'ların bitmesini bekler. O pencerede buton
-    /// <b>görünür kalır</b> (split-button geri gelirse kullanıcı hâlâ koşan bir run'a yeniden Build
-    /// sunulmuş olurdu), etiketi "Stopping…" olur ve <c>StopCommand</c> pasifleştiği için buton disable
-    /// olur — ikinci bir tıklama ikinci bir stopRun üretmez. Faz doğrudan set edilir: buraya NASIL
-    /// girildiği (StopCommand → gerçek Supervisor) kardeş süitte pinli, burada sürülen GÖRÜNÜM.</summary>
+    /// <summary>[Stop now] Graceful stop uçuştaki child'ların bitmesini bekler. O pencerede buton <b>görünür kalır</b>
+    /// (split-button geri gelirse kullanıcı hâlâ koşan bir run'a yeniden Build sunulmuş olurdu) ve ÜÇ hâli vardır: "Stop"
+    /// (istenmedi) → "Stop now" (graceful gitti; buton ETKİN, ikinci basış hard stop'tur) → "Terminating…" (hard gitti;
+    /// buton pasif, başka bir basış gerekmez). Faz ve hard bayrağı doğrudan set edilir: buraya NASIL girildiği (StopCommand →
+    /// gerçek Supervisor) <c>StopNowTests</c>'te pinli, burada sürülen GÖRÜNÜM.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-03]</b> ESKİ İDDİA: Stopping'de etiket "Stopping…" ve buton disable —
+    /// ikinci bir tıklama ikinci bir stopRun üretmez. GEREKÇE: drain, uçuştaki en yavaş projenin kalan süresi kadar sürebilir;
+    /// beklemek istemeyen kullanıcı bunu söyleyebilmelidir. İkinci basış hard stop olur (uçuştakiler öldürülür, sonraki Build
+    /// onları baştan derler); "duyuldu" geri bildirimini düğmenin kendi hâli taşır.</para></summary>
     [StaFact]
-    public void The_stop_button_reads_stopping_and_goes_disabled_while_the_run_drains()
+    public void The_stop_button_reads_Stop_now_and_is_enabled_while_stopping_until_the_hard_stop_is_sent()
     {
         var vm = NewVm();
         var (bar, window) = Realize(vm);
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
-        Assert.Equal("Stop", StopLabel(bar));      // ön-koşul
+        Assert.Equal(StopText.Label(StopStage.Stop), StopLabel(bar));
+        Assert.Equal(StopText.ActionBarName(StopStage.Stop), System.Windows.Automation.AutomationProperties.GetName(bar.StopButton));      // ön-koşul
         Assert.True(bar.StopButton.IsEnabled);
 
-        vm.Phase = AppPhase.Stopping;
+        vm.Phase = AppPhase.Stopping;              // graceful gitti
 
         Assert.Equal(Visibility.Visible, bar.StopButton.Visibility);
         Assert.Equal(Visibility.Collapsed, bar.Split.Visibility);
-        Assert.Equal("Stopping…", StopLabel(bar));
+        Assert.Equal(StopText.Label(StopStage.StopNow), StopLabel(bar));
+        Assert.Equal(StopText.ActionBarName(StopStage.StopNow), System.Windows.Automation.AutomationProperties.GetName(bar.StopButton));
+        Assert.True(bar.StopButton.IsEnabled);
+
+        vm.HardStopRequested = true;               // hard gitti
+
+        Assert.Equal(StopText.Label(StopStage.Terminating), StopLabel(bar));
+        Assert.Equal(StopText.ActionBarName(StopStage.Terminating), System.Windows.Automation.AutomationProperties.GetName(bar.StopButton));
         Assert.False(bar.StopButton.IsEnabled);
         GC.KeepAlive(window);
     }

@@ -890,12 +890,16 @@ public class RunViewModelTests
     }
 
     /// <summary>[Stopping] Graceful stop uçuştaki child'ların bitmesini bekler; o pencerede uygulamanın
-    /// TIKLAMAYI ALDIĞINI göstermesi gerekir. Faz <see cref="AppPhase.Stopping"/>'e geçer ve
-    /// <c>StopCommand</c> pasifleşir (aynı Stop'a ikinci kez basmak yeni bir stopRun ÜRETMEZ) — ama kilit
-    /// (<see cref="RunViewModel.IsMidRunLocked"/>) SÜRER: motor hâlâ koşuyor, branch/configuration
-    /// açılmamalı ve split-button geri gelmemeli.</summary>
+    /// TIKLAMAYI ALDIĞINI göstermesi gerekir. Faz <see cref="AppPhase.Stopping"/>'e geçer ve kilit
+    /// (<see cref="RunViewModel.IsMidRunLocked"/>) SÜRER: motor hâlâ koşuyor, branch/configuration açılmamalı ve
+    /// split-button geri gelmemeli. <c>StopCommand</c> AÇIK kalır: ikinci basış hard stop'tur ("Stop now").
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-03]</b> ESKİ İDDİA: <c>StopCommand</c> Stopping'de pasifleşir
+    /// (aynı Stop'a ikinci kez basmak yeni bir stopRun ÜRETMEZ). GEREKÇE: drain, uçuştaki en yavaş projenin kalan süresi
+    /// kadar sürebilir; ikinci basış beklemek istemediğini söyler ve hard stop gönderir — kapı hard gidince kapanır
+    /// (<c>StopNowTests</c>).</para></summary>
     [Fact]
-    public async Task Stop_moves_the_phase_to_stopping_and_disables_the_stop_command_while_the_lock_holds()
+    public async Task Stop_moves_the_phase_to_stopping_and_keeps_the_stop_command_open_for_the_hard_stop_while_the_lock_holds()
     {
         using var sandbox = new SupervisorSandbox();
         await using var engine = sandbox.IsolatedEngineHost(WideStartupTimeout);
@@ -908,7 +912,7 @@ public class RunViewModelTests
         await vm.StopCommand.ExecuteAsync(null);
 
         Assert.Equal(AppPhase.Stopping, vm.Phase);
-        Assert.False(vm.StopCommand.CanExecute(null));
+        Assert.True(vm.StopCommand.CanExecute(null)); // ikinci basış (hard) için AÇIK
         Assert.True(vm.IsMidRunLocked);
     }
 
@@ -1302,9 +1306,8 @@ public class RunViewModelTests
     public async Task Rebuild_wires_through_the_real_engine_and_populates_rows()
     {
         string root = Directory.CreateTempSubdirectory("bo-vm-rebuild-").FullName;
-        // X ↔ Y cycle fixture (RunCoordinatorTests ile aynı desen): iki üyeli bir SCC — Rebuild onu derlemez;
-        // turlar yalnız Cycles modunda koşar, üyeler "in dependency cycle" ile pre-skip edilir (aşağıdaki
-        // [DEĞİŞEN KURAL]).
+        // X ↔ Y cycle fixture (RunCoordinatorTests ile aynı desen): iki üyeli bir SCC — Rebuild onu turlarla derler
+        // (aşağıdaki [DEĞİŞEN KURAL]).
         foreach (var (self, other) in new[] { ("X", "Y"), ("Y", "X") })
         {
             Directory.CreateDirectory(Path.Combine(root, self));
@@ -1322,29 +1325,44 @@ public class RunViewModelTests
         await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = root };
         var final = new TaskCompletionSource<IpcEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
+        // [teşhis — tam süitte tek seferlik zaman aşımı, 2026-10-08] Hangi olaya kadar gelindiği: bekçi düşerse mesaj söyler.
+        var seen = new System.Collections.Concurrent.ConcurrentQueue<string>();
         engine.EventReceived += e =>
         {
-            vm.OnEvent(e);
+            seen.Enqueue(e.GetType().Name);
+            // İşleyicide fırlayan bir istisna EngineHost'un okuyucusunu SESSİZCE durdurur (sonraki olaylar hiç gelmez) ve
+            // test bekçide yalnız "timed out" diye düşerdi; gerçek neden görünsün diye TCS'ye taşınır.
+            try { vm.OnEvent(e); }
+            catch (Exception ex) { final.TrySetException(ex); return; }
             if (e is RunCompletedEvent or ErrorEvent { Code: "msbuildNotFound" }) final.TrySetResult(e);
         };
 
         await vm.RebuildCommand.ExecuteAsync(null);
         // [cycle rounds] Hang-guard (bütçe değil; iddiaların hiçbiri süreye bakmaz) — sabitin tek sahibi
-        // TestPaths.WideRunTimeout. 15 sn idi; turlar Rebuild'e katlıyken bu fixture gerçekten derleniyordu (2 tur
-        // × 2 üye). Bugün Rebuild üyeleri pre-skip eder ve bu fixture'da hiçbir proje derlenmez.
-        var outcome = await final.Task.WaitAsync(TestPaths.WideRunTimeout);
+        // TestPaths.WideRunTimeout. Rebuild bu fixture'ı gerçekten derler: her üye tur 1'de, kanıtsız grupta ikinci
+        // tur da koşar (2 tur × 2 üye).
+        IpcEvent outcome;
+        try { outcome = await final.Task.WaitAsync(TestPaths.WideRunTimeout); }
+        catch (TimeoutException)
+        {
+            throw new TimeoutException($"the run did not complete within {TestPaths.WideRunTimeout.TotalSeconds:0} s; " +
+                $"{seen.Count} events, last: {string.Join(", ", seen.TakeLast(12))}");
+        }
         if (outcome is ErrorEvent { Code: "msbuildNotFound" } err) Skip.If(true, err.Message);
 
         var done = Assert.IsType<RunCompletedEvent>(outcome);
-        // [DEĞİŞEN KURAL — iki kez] Bu iddia önce "X↔Y pre-skip edilir" (Skipped=2) idi; turlar Build/Rebuild'in
-        // içine katlanınca "gerçekten derlenir" (Skipped=0) oldu; turlar KENDİ moduna (RunMode.Cycles, Sync'in
-        // yanındaki düğme) taşınınca yeniden pre-skip'e döndü. Sebep ölçümdür: katlanmış hâlde iki dakikalık
-        // bir Build on beş dakikaya çıkıyordu. Rebuild bir SCC'ye artık HİÇ dokunmaz.
-        // Testin ASIL iddiası (Rebuild gerçek motora kablolu, satırlar doluyor, IsRunning düşüyor) her üç
-        // sürümde de aynı kaldı.
-        Assert.Equal(2, done.Skipped);
+        // [DEĞİŞEN KURAL — üç kez] Bu iddia önce "X↔Y pre-skip edilir" (Skipped=2) idi; turlar Build/Rebuild'in
+        // içine katlanınca "gerçekten derlenir" (Skipped=0) oldu; turlar KENDİ moduna (RunMode.Cycles) taşınınca
+        // yeniden pre-skip'e döndü (ölçüm: katlanmış hâlde iki dakikalık bir Build on beş dakikaya çıkıyordu). Bugün
+        // yeniden derlenir: tur-öncesi kanıt (CycleMemberNeed) ve yüzey kısa devresi grup maliyetini "bir kez derle +
+        // hash"e indirdi, Build'in döngüyü atlaması ise bağımlıları eski DLL'e karşı derleyip kırıyordu (ölçüm:
+        // 2026-10-07 13:17 koşusu, ARCHITECTURE §8.1). Sonuç kurulu MSBuild'e bağlı olduğu için ŞEKİL pinlenir
+        // (RunCoordinatorTests'in gerçek process testiyle aynı). Testin ASIL iddiası (Rebuild gerçek motora kablolu,
+        // satırlar doluyor, IsRunning düşüyor) her sürümde aynı kaldı.
+        Assert.Equal(0, done.Skipped);
+        Assert.Equal(2, done.Succeeded + done.Failed);
         Assert.Equal(2, vm.Projects.Count);
-        Assert.All(vm.Projects, p => Assert.Equal(ProjectRowState.Skipped, p.State));
+        Assert.All(vm.Projects, p => Assert.True(p.State is ProjectRowState.Succeeded or ProjectRowState.Failed));
         Assert.False(vm.IsRunning);
     }
 
@@ -1446,29 +1464,79 @@ public class RunViewModelTests
     /// bayrağın tek üreticisi de onunla birlikte kalkmıştı. Yeni kaynak hem daha dürüst hem daha erken:
     /// hatırlanan bir geçmiş değil ŞU koşunun kanıtı, ve kullanıcı bunu ikinci bir basışı beklemeden, tam da
     /// denemenin bittiği koşuda görür.</para>
+    /// <para><b>[DEĞİŞEN KURAL — D3-b]</b> Eski iddia (<c>…marks_all_its_members_as_unconverged</c>): NoProgress GRUBU
+    /// sıkıştırır, yeşil biten üyenin çıktısı da bayattır, herkes işaretlenir. Değişme gerekçesi: motor artık oturmuş yeşil
+    /// üyeyi güvenilir persist eder (<c>Trusted=true</c>, satır <c>UpToDate</c>); onu "stuck" saymak yanlış olurdu. İşaret
+    /// yalnız motorun arkasında durmadığı üyelere gider: patlayan ve güvenilmeyen satırlar (gerekçesi NeverBuilt/LastFailed —
+    /// motorun hükmü; önizleme bayrağı değil, bkz. <see cref="A_no_progress_mark_follows_the_engines_verdict_not_the_preview_flag"/>).</para>
     /// </summary>
     [Fact]
-    public async Task A_cycle_that_ends_without_progress_marks_all_its_members_as_unconverged()
+    public async Task A_cycle_that_ends_without_progress_marks_only_its_untrusted_members_as_unconverged()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
-        const string a = @"C:\p\a.csproj", b = @"C:\p\b.csproj";
+        const string a = @"C:\p\a.csproj", b = @"C:\p\b.csproj", c = @"C:\p\c.csproj", d = @"C:\p\d.csproj";
         vm.OnEvent(new WorkspaceTopologyEvent(
             [new ProjectNode(a, "A", a, [], [], 0, null, null, true, null),
-             new ProjectNode(b, "B", b, [], [], 0, null, null, true, null)],
-            [[a, b]], [], []));
+             new ProjectNode(b, "B", b, [], [], 0, null, null, true, null),
+             new ProjectNode(c, "C", c, [], [], 0, null, null, true, null),
+             new ProjectNode(d, "D", d, [], [], 0, null, null, true, null)],
+            [[a, b, c, d]], [], []));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 4, 4, "Debug"));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(a, "A", true), new BuildPreviewItem(b, "B", true),
+            new BuildPreviewItem(c, "C", true), new BuildPreviewItem(d, "D", true)]));
 
-        // Grup turlarını harcadı: A yeşil bitti, B patladı — ve grup YAKINSAMADI.
         vm.OnEvent(new ProjectStartedEvent("r1", a, "A"));
-        vm.OnEvent(new ProjectSucceededEvent("r1", a, 100));
+        vm.OnEvent(new ProjectSucceededEvent("r1", a, 100, null, false, Trusted: true));   // oturmuş
         vm.OnEvent(new ProjectStartedEvent("r1", b, "B"));
-        vm.OnEvent(new ProjectFailedEvent("r1", b, 100, "boom"));
-        vm.OnEvent(new CycleCompletedEvent("r1", a, CycleOutcome.NoProgress, 2, 2, 1, 400));
+        vm.OnEvent(new ProjectFailedEvent("r1", b, 100, "exit 1", null, Evidence: true));
+        vm.OnEvent(new ProjectStartedEvent("r1", c, "C"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", c, 100, null, false, Trusted: false));  // bayat
+        vm.OnEvent(new ProjectSkippedEvent("r1", d, SkipReasons.UpToDate));                 // oturmuş, taşınan
+        vm.OnEvent(new CycleCompletedEvent("r1", a, CycleOutcome.NoProgress, 4, 1, 1, 300));
 
-        // İkisi de işaretli: sıkışan GRUPTUR, tek tek üyeler değil — yeşil biten üyenin çıktısı da bayat.
-        Assert.All(vm.Projects, p => Assert.True(p.CycleUnconverged));
-        // Sayaç statüden bağımsız okur: üyeler Failed/Succeeded, Skipped DEĞİL.
+        Assert.False(vm.Projects.Single(p => p.Id == a).CycleUnconverged);
+        Assert.True(vm.Projects.Single(p => p.Id == b).CycleUnconverged);
+        Assert.True(vm.Projects.Single(p => p.Id == c).CycleUnconverged);
+        Assert.False(vm.Projects.Single(p => p.Id == d).CycleUnconverged);
         Assert.Equal(2, vm.Counters.StuckCycles);
+    }
+
+    /// <summary>
+    /// [D3-b · final review] İşaret ÖNİZLEME bayrağından değil motorun üye başına hükmünden okunur; bayrak bu soruyu
+    /// cevaplamaz. (a) Önizlemenin güncel dediği (WillBuild=false) üye, kardeşinin yüzeyi koşu içinde oynayınca sonraki
+    /// turda derlenip oturmuş yüzeyle patlayabilir — grubu sıkıştıran odur ve işaretlenir. (b) Güvenilir başarı grup DIŞI
+    /// bir bağımlılık sorunu taşıyınca satırın bayrağı yeniden "derlenecek" olur (WaitingForDependency) ama motor kaydını
+    /// tuttu: "stuck" değildir, üçgeni bağımlılık sorununu söyler. Hüküm satırın gerekçesindedir — güvenilmeyen başarı ve
+    /// hata NeverBuilt/LastFailed yazar (NextPreview), güvenilir başarı asla.
+    /// </summary>
+    [Fact]
+    public async Task A_no_progress_mark_follows_the_engines_verdict_not_the_preview_flag()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string a = @"C:\p\a.csproj", b = @"C:\p\b.csproj", c = @"C:\p\c.csproj";
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [new ProjectNode(a, "A", a, [], [], 0, null, null, true, null),
+             new ProjectNode(b, "B", b, [], [], 0, null, null, true, null),
+             new ProjectNode(c, "C", c, [], [], 0, null, null, true, null)],
+            [[a, b, c]], [], []));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 3, 4, "Debug"));
+        // Önizleme: yalnız A derlenecek; B ve C güncel (önceki koşuda oturmuş, güvenilir kayıt).
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(a, "A", true), new BuildPreviewItem(b, "B", false),
+            new BuildPreviewItem(c, "C", false)]));
+
+        vm.OnEvent(new ProjectStartedEvent("r1", a, "A"));                 // tur 1: A derlenir, API yüzeyi oynar
+        vm.OnEvent(new ProjectStartedEvent("r1", b, "B"));                 // tur 2: bayat B ve C derlenir
+        vm.OnEvent(new ProjectStartedEvent("r1", c, "C"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", a, 100, null, false, Trusted: true));
+        vm.OnEvent(new ProjectFailedEvent("r1", b, 100, "exit 1", null, Evidence: true));                   // oturmuş yüzeyle patladı
+        vm.OnEvent(new ProjectSucceededEvent("r1", c, 100, [@"C:\p\x.csproj"], false, Trusted: true));      // grup dışı X patladı
+        vm.OnEvent(new CycleCompletedEvent("r1", a, CycleOutcome.NoProgress, 3, 2, 1, 300));
+
+        bool Marked(string id) => vm.Projects.Single(p => p.Id == id).CycleUnconverged;
+        Assert.Equal((false, true, false), (Marked(a), Marked(b), Marked(c)));
+        Assert.Equal(1, vm.Counters.StuckCycles);
     }
 
     /// <summary>Yakınsayan grup hiçbir üyesini işaretlemez — kontrol grubu.</summary>
@@ -1859,7 +1927,7 @@ public class RunViewModelTests
 
         var row = Assert.Single(vm.Projects);
         RowDecision Label() => DecisionLabel.For(row.WillBuild, row.WillBuildReason, row.OwnFilesChanged,
-            row.LocalEdits, row.InCycle);
+            row.LocalEdits);
         var beforeSync = Label();
         Assert.Equal("up to date", beforeSync.Word);
         Assert.False(beforeSync.Stale);
@@ -1878,20 +1946,32 @@ public class RunViewModelTests
     /// <summary>
     /// [Task 4 review round 1+2 — I1 (i)] Bir SCC üyesi dep-issue'lu bitse bile canlı geçiş onu TEK BAŞINA
     /// koşullu SANMAMALI: <c>ConditionalRebuild.AppliesTo</c>'nun <c>!cycleGroupMember</c> kuralıyla aynı
-    /// gerekçe — üye grubuyla derlenir (Cycles, turlar) ya da bir Build koşusunda hiç dispatch edilmez;
-    /// "rebuilds once that dependency is healthy again" tek başına verilen bir SÖZDÜR ve üye için asla tutulmaz.
+    /// gerekçe — üye grubuyla, turlarla derlenir ve grubun kaderine dispatch anında grup düzeyinde karar verilir
+    /// (<c>ConditionalRebuild.GroupAppliesTo</c>); "rebuilds once that dependency is healthy again" tek başına
+    /// verilen bir SÖZDÜR ve üye için asla tutulmaz.
     ///
     /// <para><b>[DEĞİŞEN KURAL — round 2]</b> Round 1'in iddiası satırın <c>UpToDate</c>'e (Task 4 öncesi
     /// davranış) döndüğüydü. Eksikti: grup YAKINSADIYSA (<c>CycleUnsettled=false</c>) defter GERÇEKTEN not+kök
     /// yazar ve bir sonraki Sync'in <c>WillBuildEvaluator</c>'ı bu üyeyi <c>WaitingForDependency</c> okur
-    /// (<c>WillBuild</c> döngü kapsamı yüzünden yine <c>false</c>'a zorlanır, ama gerekçe bir disk olgusu
-    /// olarak hesaplanmaya devam eder — §13.2). Satır <c>UpToDate</c> yazarsa Sync'ten SONRA
-    /// <c>WaitingForDependency</c>'ye FLİP EDER — round 1'in kapatmadığı boşluk tam buydu. Artık canlı geçiş
-    /// motorun bir sonraki önizlemesiyle BİREBİR AYNI üçlüyü (<c>WillBuild=false</c>, <c>WaitingForDependency</c>,
-    /// <c>Conditional=false</c>) üretir; <c>DependencyRoots</c> de dolar (tooltip roots'u Sync'te de gelir).</para>
+    /// (gerekçe bir disk olgusu olarak hesaplanır — §13.2). Satır <c>UpToDate</c> yazarsa Sync'ten SONRA
+    /// <c>WaitingForDependency</c>'ye FLİP EDER — round 1'in kapatmadığı boşluk tam buydu. Canlı geçiş motorun bir
+    /// sonraki önizlemesiyle BİREBİR AYNI üçlüyü üretir; <c>DependencyRoots</c> de dolar (tooltip roots'u Sync'te
+    /// de gelir).</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — Build cycle derler]</b> Eski iddia: <c>WillBuild=false</c> — "döngü kapsamı yüzünden
+    /// zorlanır, Build bir SCC'yi asla derlemez". Değişme gerekçesi (ölçüm, 2026-10-07 13:17 koşusu, ARCHITECTURE
+    /// §8.1): düz Build kirli grubu da derler; Sync üyeyi Build'in kararıyla değerlendirir ve bekleyen üye
+    /// "derlenecek" okunur (<c>NextPreview.AfterSuccess</c>). Üçlü artık <c>WillBuild=true</c>,
+    /// <c>WaitingForDependency</c>, <c>Conditional=false</c>.</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — final review M-2]</b> Eski iddia: <c>Conditional=false</c> — "TEK BAŞINA asla koşullu
+    /// değil". Üye hâlâ tek başına koşullu değildir; ama yalnız kökünü bekleyen grubun bekleyen üyesi GRUPLA birlikte
+    /// koşulludur (<c>ConditionalRebuild.ConditionalIds</c>): grup dispatch anında bütün olarak atlanabilir. Bir sonraki
+    /// Sync bunu söyleyeceği için canlı geçiş de söyler — aksi hâlde satır dalgaya bir Sync boyunca kesin gibi girerdi.
+    /// "rebuilds once that dependency is healthy again" sözü grup düzeyinde tutulur: kök düzelince grup derlenir.</para>
     /// </summary>
     [Fact]
-    public async Task A_converged_cycle_member_success_with_a_dep_issue_waits_without_being_conditional()
+    public async Task A_converged_cycle_member_success_with_a_dep_issue_waits_conditionally_with_its_group()
     {
         const string id = @"C:\p\a.csproj";
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
@@ -1903,9 +1983,9 @@ public class RunViewModelTests
 
         var row = Assert.Single(vm.Projects);
         Assert.True(row.InCycle); // ön-koşul
-        Assert.False(row.Conditional);   // TEK BAŞINA asla koşullu değil — grup mekanizmasına tabi
-        Assert.False(row.WillBuild);     // döngü kapsamı yüzünden zorlanır (Build bir SCC'yi asla derlemez)
-        Assert.Equal(WillBuildReason.WaitingForDependency, row.WillBuildReason); // ama disk olgusu budur
+        Assert.True(row.Conditional);    // grubuyla birlikte koşullu — kesin derlenecekler kümesine girmez
+        Assert.True(row.WillBuild);      // düz Build kirli grubu derler — bir sonraki Sync'in cevabı
+        Assert.Equal(WillBuildReason.WaitingForDependency, row.WillBuildReason); // disk olgusu
         Assert.Equal(["Up"], row.DependencyRoots);
     }
 
@@ -1932,7 +2012,7 @@ public class RunViewModelTests
 
         var row = Assert.Single(vm.Projects);
         RowDecision Label() => DecisionLabel.For(row.WillBuild, row.WillBuildReason, row.OwnFilesChanged,
-            row.LocalEdits, row.InCycle);
+            row.LocalEdits);
         var beforeSync = Label();
         // Reason bir disk olgusudur; WaitingForDependency artık UpToDate ile birebir okunur — kapsamın
         // zorlayıp zorlamadığı (Conditional=false, üye tek başına asla koşullu değil) etiketi ETKİLEMEZ.
@@ -1941,9 +2021,10 @@ public class RunViewModelTests
 
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
         vm.OnEvent(new WorkspaceTopologyEvent([Node(id, "A", 0) with { InCycle = true }], [[id]], [], []));
-        // Sync'in GERÇEKTEN üreteceği önizleme (WillBuildEvaluator: outOfScope⇒WillBuild=false, gerekçe yine de
-        // WaitingForDependency; AppliesTo: WillBuild==true şartı düşer ⇒ Conditional=false).
-        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(id, "A", false, null, WillBuildReason.WaitingForDependency,
+        // Sync'in GERÇEKTEN üreteceği önizleme (WillBuildEvaluator Build'in kararıyla: WillBuild=true, gerekçe
+        // WaitingForDependency; AppliesTo grup üyesini dışlar ⇒ Conditional=false). [Build cycle derler] Eskiden
+        // fixture WillBuild=false yazardı — Sync üyeyi döngü kapsamı dışında sayardı.
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(id, "A", true, null, WillBuildReason.WaitingForDependency,
             OwnFilesChanged: false, Conditional: false, DependencyRoots: ["Up"])]));
 
         var afterSync = Label();
@@ -1960,6 +2041,10 @@ public class RunViewModelTests
     /// sonraki Sync'in <c>WillBuildEvaluator</c>'ı bunu <c>NeverBuilt</c> okur — satır canlıda yeşil ✓
     /// ("Up to date", ✓ sayacında), Sync'ten sonra gri ○ idi. Karar artık motorundur ve olayla gelir
     /// (<c>ProjectSucceededEvent.Trusted</c>); satır Sync'in diyeceğini şimdiden der: gri, "To build".</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — Build cycle derler]</b> Eski iddia: <c>WillBuild=false</c> — "kapsam dışı üye".
+    /// Değişme gerekçesi (ölçüm, 2026-10-07 13:17 koşusu, ARCHITECTURE §8.1): düz Build kirli grubu da derler; Sync
+    /// kanıtsız hata kaydı taşıyan üyeyi düz proje gibi "derlenecek" okur.</para>
     /// </summary>
     [Fact]
     public async Task An_untrusted_cycle_member_success_reads_never_built_like_the_next_sync()
@@ -1975,9 +2060,9 @@ public class RunViewModelTests
         var row = Assert.Single(vm.Projects);
         Assert.False(row.Conditional);
         Assert.Null(row.DependencyRoots);
-        // Sync'in önizlemesi: defter kanıtsız hata ⇒ NeverBuilt; kapsam dışı üye ⇒ WillBuild=false.
+        // Sync'in önizlemesi: defter kanıtsız hata ⇒ NeverBuilt; Build kirli grubu derler ⇒ WillBuild=true.
         Assert.Equal(WillBuildReason.NeverBuilt, row.WillBuildReason);
-        Assert.False(row.WillBuild);
+        Assert.True(row.WillBuild);
         Assert.Equal(VisualStatus.Stale, row.VisualStatus);                  // gri, yeşil ✓ DEĞİL
         Assert.Equal("To build", StatusGlyph.LabelFor(row.VisualStatus));  // ekran okuyucu da aynı şeyi duyar
         Assert.Equal((0, 1), (vm.Counters.Current, vm.Counters.Stale));    // ✓ değil ○ sayılır
@@ -1986,7 +2071,7 @@ public class RunViewModelTests
         // Bir sonraki Sync'in GERÇEKTEN üreteceği önizleme — satır titremez.
         var before = (row.WillBuild, row.WillBuildReason, row.VisualStatus);
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
-        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(id, "A", false, null, WillBuildReason.NeverBuilt)]));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(id, "A", true, null, WillBuildReason.NeverBuilt)]));
         Assert.Equal(before, (row.WillBuild, row.WillBuildReason, row.VisualStatus));
     }
 
@@ -2495,10 +2580,10 @@ public class RunViewModelTests
         Assert.False(vm.IsStarting);
         // [Fix wave 1, C2 review Finding 1] _syncInFlight BİLEREK true kalır (çakışan pencere — yukarıdaki
         // TryConsumeSyncFailure yorumu), yani VM'e göre bir Sync HÂLÂ uçuşta olabilir.
-        // [DEĞİŞEN KURAL — kullanıcı bildirimi 2026-09-29] Eski iddia: Rebuild bu yüzden KAPALI kalır (mid-Sync başlayan
-        // bir koşu konsolu temizleyip canlı transkripti bozardı). Artık Sync sürerken basılan koşu bekler ve Sync bitince
-        // başlar — transkript bozulmaz, kapı açıktır (RunRequestWaitsForWorkTests).
-        Assert.True(vm.RebuildCommand.CanExecute(null));
+        // Rebuild bu yüzden KAPALI kalır: mid-Sync başlayan bir koşu konsolu temizleyip canlı transkripti bozardı.
+        // [DEĞİŞEN KURAL — kullanıcı kararı 2026-10-02] Bir ara ([kullanıcı bildirimi 2026-09-29]) Sync sürerken basılan
+        // koşu bekliyordu ve kapı açıktı; kuyruk kaldırıldı (RunRequestDuringWorkTests), kapı yine kapalı.
+        Assert.False(vm.RebuildCommand.CanExecute(null));
         Assert.Equal(AppPhase.Boot, vm.Phase); // faz yine de bırakılır
     }
 
@@ -2516,10 +2601,10 @@ public class RunViewModelTests
         vm.OnEvent(new ErrorEvent("runFailed", "beklenmeyen hata"));
 
         Assert.False(vm.IsRunning);
-        // [DEĞİŞEN KURAL — kullanıcı bildirimi 2026-09-29] Eski iddia: Sync HÂLÂ uçuşta olduğu için Rebuild BİLEREK
-        // kapalı kalır — canlı Sync transkripti hâlâ büyüyor olabilir. Artık Sync sürerken basılan koşu bekler ve Sync
-        // bitince başlar (transkripte dokunmaz); kapı açıktır (RunRequestWaitsForWorkTests).
-        Assert.True(vm.RebuildCommand.CanExecute(null));
+        // Sync HÂLÂ uçuşta olduğu için Rebuild BİLEREK kapalı kalır — canlı Sync transkripti hâlâ büyüyor olabilir.
+        // [DEĞİŞEN KURAL — kullanıcı kararı 2026-10-02] Bir ara ([kullanıcı bildirimi 2026-09-29]) Sync sürerken basılan
+        // koşu bekliyordu ve kapı açıktı; kuyruk kaldırıldı (RunRequestDuringWorkTests), kapı yine kapalı.
+        Assert.False(vm.RebuildCommand.CanExecute(null));
         Assert.Equal(AppPhase.Syncing, vm.Phase); // Sync HÂLÂ uçuşta — fazı bu hata bırakmaz
     }
 

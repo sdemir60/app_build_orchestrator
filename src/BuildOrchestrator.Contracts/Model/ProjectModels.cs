@@ -188,7 +188,36 @@ public sealed record BuildState(
     // kanıtına eşit ve zamanı ondan en çok 2 s farklı olanlar (bkz. OutputEvidence.LearnFedOutputs). Hem defter
     // hem zaman kipinde denetlenir: biri yoksa, boyutu farklıysa ya da kanıttan eskiyse çıktı bozuk sayılır.
     // Alan SONA ve default'lu: eski kayıtlar null çözülür — liste yok, yalnız derleme kanıtı konuşur.
-    IReadOnlyList<string>? FedOutputs = null)
+    IReadOnlyList<string>? FedOutputs = null,
+    // [PERF Faz E3] Son başarının restore kararı anında okunan packages.config içerik özeti (SHA-256 hex,
+    // RestoreEvidence.HashOf) — restore koştuysa da, paketler zaten yerinde bulunup atlandıysa da. Build ve Cycles
+    // bir sonraki koşuda özet aynıysa ve paketler kuruluysa (klasör + .nupkg) restore'u atlar; Rebuild ona hiç
+    // bakmaz (toparlanma yolu). Alan SONA ve default'lu: eski build-state.json kayıtları alansızdır ve null çözülür —
+    // proje restore eder (güvenli yön).
+    string? PackagesConfigHash = null,
+    // [RESOLVE Faz 3 — karar 2/4 · D7-b] Bu döngü üyesinin son GÜVENİLİR derlemesindeki KENDİ terimi (IncrementalPlan.
+    // MemberTermById: içerik + configuration, her upstream sabit işaret; grup dışı upstream'in değişimi DependencySurfaces
+    // ile denetlenir). Bileşik imzadan
+    // (BuiltSignature) AYRI durur: bileşik kardeşlerin içeriğini de taşır, üyenin kendi girdilerinin değişip
+    // değişmediğini söyleyemez. Üç döngü alanını yalnız güvenilir başarı yazar: grup yakınsadı ya da hükümsüz durduğunda
+    // üye oturmuştu (D3); bayat üye ile kesilen koşu hiçbirini yazmaz. Alanlar SONA ve default'lu: eski kayıtlar ve
+    // döngü dışı projeler null çözülür — üye "gerekli" sayılır (güvenli yön).
+    string? CycleMemberTerm = null,
+    // Aynı derlemede üyenin okuduğu kardeş yüzeyleri (üretici, dosya, yüzey özeti). Resolve'un tur 1'inde diskteki
+    // yüzey kayıttakinden farklıysa üye derlenir; null ⇒ yüzey kanıtı yok ⇒ üye gerekli. Liste KANONİK sıradadır:
+    // Producer'a, sonra File'a göre (StringComparer.OrdinalIgnoreCase), her (Producer, File) çifti bir kez — yazan
+    // taraf bu sırayı üretir. Eşitlik sıraya duyarlıdır (DepIssueRoots/FedOutputs deseni): aynı okumanın iki kaydı
+    // ancak kanonik sırada eşit okunur ve defter JSON'u koşudan koşuya kararlı kalır.
+    IReadOnlyList<CycleReadSurface>? CycleReadSurfaces = null,
+    // Kaydı yazan koşunun motor parmak izi (EngineFingerprint: MSBuild.exe yolu + dosya sürümü + build argüman
+    // sözleşmesi). Bu koşununkinden farklıysa gruptaki herkes gerekli.
+    string? CycleEngineFingerprint = null,
+    // [D6 — yüzey kapısı] Bu projenin son GÜVENİLİR derlemesinde bağlandığı DOĞRUDAN bağımlılık yüzeyleri: üretici id,
+    // üreticinin kanıt dosyası ve o anki API yüzeyi özeti (ApiSurfaceHash). Sıradan projede her doğrudan bağımlılık,
+    // döngü üyesinde yalnız GRUP DIŞI bağımlılıklar (grup içi CycleReadSurfaces'tadır). Yüzeyi okunamayan ya da dosyası
+    // olmayan bağımlılık listeye GİRMEZ — kapı o projeyi derler (güvenli yön). Kanonik sıra ve eşitlik CycleReadSurfaces
+    // ile aynı. Alan SONA ve default'lu: eski kayıtlar null çözülür.
+    IReadOnlyList<CycleReadSurface>? DependencySurfaces = null)
 {
     // Derleyicinin record eşitliği liste alanında referans eşitliğine düşer (JSON round-trip sonrası her zaman
     // farklı örnek) — ProjectNode ile aynı gerekçe, kökler sıralı içerikle karşılaştırılır.
@@ -211,7 +240,16 @@ public sealed record BuildState(
         && FailedAt == other.FailedAt
         && (FedOutputs is null
             ? other.FedOutputs is null
-            : other.FedOutputs is not null && FedOutputs.SequenceEqual(other.FedOutputs));
+            : other.FedOutputs is not null && FedOutputs.SequenceEqual(other.FedOutputs))
+        && PackagesConfigHash == other.PackagesConfigHash
+        && CycleMemberTerm == other.CycleMemberTerm
+        && (CycleReadSurfaces is null
+            ? other.CycleReadSurfaces is null
+            : other.CycleReadSurfaces is not null && CycleReadSurfaces.SequenceEqual(other.CycleReadSurfaces))
+        && CycleEngineFingerprint == other.CycleEngineFingerprint
+        && (DependencySurfaces is null
+            ? other.DependencySurfaces is null
+            : other.DependencySurfaces is not null && DependencySurfaces.SequenceEqual(other.DependencySurfaces));
 
     public override int GetHashCode()
     {
@@ -230,9 +268,22 @@ public sealed record BuildState(
         hash.Add(FailedSignature);
         hash.Add(FailedAt);
         foreach (string fed in FedOutputs ?? []) hash.Add(fed);
+        hash.Add(PackagesConfigHash);
+        hash.Add(CycleMemberTerm);
+        foreach (var surface in CycleReadSurfaces ?? []) hash.Add(surface);
+        hash.Add(CycleEngineFingerprint);
+        foreach (var surface in DependencySurfaces ?? []) hash.Add(surface);
         return hash.ToHashCode();
     }
 }
+
+/// <summary>
+/// [RESOLVE Faz 3] Bir döngü üyesinin son GÜVENİLİR derlemesinde okuduğu kardeş yüzeyi: üretici id'si
+/// (<c>Producer</c>, tam csproj yolu), okunan dosya (<c>File</c>) ve o dosyanın API yüzeyi özeti (<c>Hash</c>).
+/// <see cref="BuildState.CycleReadSurfaces"/>'ın öğesidir; <see cref="BuildState.DependencySurfaces"/>'ın da öğesidir
+/// (orada üretici bir doğrudan bağımlılık, dosya onun kanıt dosyasıdır). Eşitlik üç alanın değer eşitliğidir.
+/// </summary>
+public sealed record CycleReadSurface(string Producer, string File, string Hash);
 
 /// <summary>
 /// Ana repo DIŞINDA yaşayan, build'den ÖNCE kendi klonundan güncellenip derlenen bir proje (ör. müşteriye

@@ -42,8 +42,9 @@ internal sealed record ShellSwitch(
 /// <para><b>Tablo yalnız DEĞERİ taşır</b>, davranışı kendisi BAĞLAMAZ — okuyucular değeri her soruda kalıcı durumdan
 /// TAZE okur (<see cref="IsOn"/>), arada kopya yok: <see cref="StartWithWindows"/>'u açılışın Windows kaydı hizalaması,
 /// <see cref="StartMinimizedToTray"/>'ı açılış yolu kararı, <see cref="CloseToTray"/>'ı pencere kapanışı
-/// (<c>MainWindow.OnClosing</c> → <see cref="WindowCloseRule"/>), <see cref="ShowNotifications"/>'ı üç tray-balloon
-/// yolu (<c>FirstCloseBalloonGate</c>, <c>TrayBuildIndicatorController</c>, <c>SecondInstanceGate</c>) okur.</para>
+/// (<c>MainWindow.OnClosing</c> → <see cref="WindowCloseRule"/>), <see cref="ShowNotifications"/>'ı dört tray-balloon
+/// yolu (<c>FirstCloseBalloonGate</c>, <c>TrayBuildIndicatorController</c>, <c>SecondInstanceGate</c>,
+/// <c>MainWindow.OnGlobalHotkey</c>) okur.</para>
 /// </summary>
 internal static class ShellSwitches
 {
@@ -91,8 +92,8 @@ internal static class ShellSwitches
     /// tam çıkış.</summary>
     public static bool CloseToTray(UiState state) => IsOn(state, GeneralSetting.CloseToTray);
 
-    /// <summary>[P3] Üç tray-balloon yolunun (ilk-× bilgilendirmesi, koşu bitişi, ikinci-instance uyarısı) TEK kapısı;
-    /// üçü de bunu balonun TAM gösterileceği anda TAZE okur.</summary>
+    /// <summary>[P3] Dört tray-balloon yolunun (ilk-× bilgilendirmesi, koşu bitişi, ikinci-instance uyarısı, yok sayılan
+    /// Build kısayolunun notu) TEK kapısı; dördü de bunu balonun TAM gösterileceği anda TAZE okur.</summary>
     public static bool ShowNotifications(UiState state) => IsOn(state, GeneralSetting.ShowNotifications);
 
     /// <summary>Save: <see cref="All"/>'daki HER anahtarı <paramref name="state"/>'e yazar (değişmemiş olsa bile) ve

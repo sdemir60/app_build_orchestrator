@@ -227,11 +227,14 @@ public class ConsoleModesTests
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
                 willBuildReason: WillBuildReason.NeverBuilt)));
 
-        // Döngü üyeliği plandan ÖNCE gelir: Sync bir SCC üyesine her zaman false verir (ARCHITECTURE §7.4),
-        // o "false"u "güncel" diye okumak yalan olurdu.
+        // [DEĞİŞEN KURAL — Build cycle derler] Döngü üyesi plandan konuşur, düz satır gibi. Eski iddia: döngü üyeliği
+        // plandan ÖNCE gelirdi ("In a dependency cycle — Build never compiles one; use Resolve cycles."), çünkü Sync bir
+        // SCC üyesine her zaman false verirdi ve o "false"u "güncel" diye okumak yalan olurdu. Sync artık üyeye Build'in
+        // kararıyla gerçek bir WillBuild verir (ARCHITECTURE §7.4, §8.1); kirli üye "Will build", güncel üye "Up to date".
         Assert.Equal(
-            ["In a dependency cycle — Build never compiles one; use Resolve cycles.", "Never built by this tool"],
-            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: false, inCycle: true)));
+            ["Will build — this tool has never built it."],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
+                willBuildReason: WillBuildReason.NeverBuilt, inCycle: true)));
 
         // Sync hiç koşmadı: hollow. "Güncel" demek yalan olurdu.
         Assert.Equal(
@@ -243,6 +246,16 @@ public class ConsoleModesTests
             ["No log yet — output streams here once the build starts."],
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Started)));
     }
+
+    /// <summary>[B1] Hükmü verilmiş grupta kaydı atılan taşınan üyenin sayfası: motor onu <c>cycle did not converge at this
+    /// signature</c> ile atladı. Sayfa projenin bu koşuda DERLENMEDİĞİNİ ve kaydının atıldığını da söyler — "did not converge"
+    /// tek başına satırın neden gri (never built) okuduğunu açıklamaz.</summary>
+    [Fact]
+    public void A_discarded_carry_page_says_the_project_was_not_compiled_and_its_record_was_discarded()
+        => Assert.Equal(
+            ["The dependency cycle did not converge at this signature; this project was not compiled and its record was discarded."],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Skipped, skipReason: SkipReasons.CycleNonConvergent,
+                willBuild: true, willBuildReason: WillBuildReason.NeverBuilt, inCycle: true, currentSha: "a3f81c2")));
 
     /// <summary>[Task 7 — Faz 3, spec 2026-09-18 §5.4] BuiltOutside bir DİSK OLGUSUDUR: proje bu araç dışında
     /// derlenmiş ve çıktısı güncel. Sayfa bunu TEK cümlede söyler.

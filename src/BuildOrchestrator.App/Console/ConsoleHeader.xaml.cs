@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Windows.Automation.Peers;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -20,6 +21,9 @@ namespace BuildOrchestrator.App.Console;
 /// 1400ms ✓ + "Copied" tooltip (<see cref="CopyLogFeedback"/>).</para></summary>
 public partial class ConsoleHeader : UserControl
 {
+    /// <summary>UIA rolü — gerekçe ve ölçüm <see cref="UserControlRolePeer"/>'de.</summary>
+    protected override AutomationPeer OnCreateAutomationPeer() => new UserControlRolePeer(this, AutomationControlType.Header);
+
     public enum HeaderMode { Narrative, ProjectLog }
 
     // [T64] Çizilmiş ikonlar (Icons.xaml) — ikon fontu YOK.
@@ -146,12 +150,17 @@ public partial class ConsoleHeader : UserControl
     public void SetHasWorkspace(bool hasWorkspace) =>
         LinesText.Visibility = hasWorkspace ? Visibility.Visible : Visibility.Collapsed;
 
+    /// <summary>[perf Faz A · A6 test yüzeyi] <see cref="SetLineCount"/> çağrı sayacı — gizliyken 200 ms'lik tikin sayacı
+    /// yazmadığını, dönüşte TEK kez yenilediğini pinler.</summary>
+    internal int SetLineCountCalls { get; private set; }
+
     /// <summary>Sağdaki mono "N lines" sayacı — TAM tampon uzunluğu (render dilimi DEĞİL, Ek A #23). [3b M-3]
     /// Proje-log modunda copy-log görünürlüğü de burada (satır sayısıyla birlikte) yeniden değerlendirilir:
     /// seçim anında boş olan bir log akış başlayınca (~200ms sayaç tazelemesi) copy butonu görünür olur — yalnız
     /// <c>ShowProjectLog</c>'ta bir kez değil.</summary>
     public void SetLineCount(int lineCount)
     {
+        SetLineCountCalls++;
         // [M-4] Global Constraint: kullanıcıya gösterilen sayı biçimlemesi InvariantCulture (locale'e göre
         // basamak gruplama/rakam değişmesin).
         //

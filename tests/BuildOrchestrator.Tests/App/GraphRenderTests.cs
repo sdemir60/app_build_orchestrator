@@ -86,8 +86,23 @@ public class GraphRenderTests
         bool animationsEnabled, double width = 600, double height = 400, IMotionSettings? motion = null)
         => GraphTestView.Sized(
             new Size(width, height),
-            () => motion?.AnimationsEnabled ?? animationsEnabled,
+            MotionProvider(animationsEnabled, motion),
             motion);
+
+    /// <summary>[perf A7] <see cref="NewView"/>'ın GÖSTERİLEN-host eşi: sonsuz saat (beads) bekleyen testler görünümü
+    /// gerçek pencerede kurar — eski iddia ve gerekçe <see cref="GraphTestView.Shown"/> dokümanında.</summary>
+    private static GraphView NewShownView(
+        bool animationsEnabled, out Window window, double width = 600, double height = 400, IMotionSettings? motion = null)
+        => GraphTestView.Shown(
+            new Size(width, height),
+            out window,
+            MotionProvider(animationsEnabled, motion),
+            motion);
+
+    /// <summary>Motion sinyalinin taze okuma kapısı: canlı kaynak (<paramref name="motion"/>) varsa onu, yoksa sabit bayrağı
+    /// okur — <see cref="NewView"/> ve <see cref="NewShownView"/> AYNI kapıyı kullanır (kopya YASAK).</summary>
+    private static Func<bool> MotionProvider(bool animationsEnabled, IMotionSettings? motion) =>
+        () => motion?.AnimationsEnabled ?? animationsEnabled;
 
     // ---------------------------------------------------------------- ilk açılış dalgası
 
@@ -247,10 +262,11 @@ public class GraphRenderTests
     /// building düğüm DS <c>ds-node-pulse</c> ile 1.6s'de nefes alıyordu. v1.3.0 §2.3 nabzı kaldırdı ve
     /// yerine düğümün 2.8px dışında dolanan amber noktaları koydu. 30fps tavanı KORUNDU.</para>
     /// </summary>
+    /// <remarks>[perf A7] Eski iddia: saat HWND'siz (gösterilmeyen) görünümde de kurulurdu. Değişme gerekçesi: sonsuz saat yalnız görünürken kurulur (ARCHITECTURE §14.5) — görünüm gösterilen host'ta kurulur, iddialar aynen; ayrıntı <see cref="GraphTestView.Shown"/>.</remarks>
     [StaFact]
     public void Every_beads_orbit_hangs_off_ONE_shared_clock_no_matter_how_many_nodes_build()
     {
-        var view = NewView(true);
+        var view = NewShownView(true, out var window);
         view.SetGraph(Nodes(dataStatus: GraphStatus.Building, apiStatus: GraphStatus.Building), Edges());
 
         Assert.NotNull(view.NodeVisuals["OSYS.Data.Core"].Beads);
@@ -268,6 +284,7 @@ public class GraphRenderTests
         Assert.Equal(RepeatBehavior.Forever, spin.RepeatBehavior);
         // [tray indicator] Sabit beş tipte ayrı ayrı tanımlıydı; tek kaynağa (MotionTokens) taşındı.
         Assert.Equal(MotionTokens.DecorativeFrameRate, Timeline.GetDesiredFrameRate(spin));
+        GC.KeepAlive(window);
     }
 
     /// <summary>
@@ -279,10 +296,11 @@ public class GraphRenderTests
     /// tick beklemeden konumlandırır ve DP'ye yazdırır. Yarım turda yol yarım çevre, bir turdan sonra desen
     /// başa sarar — <c>RepeatBehavior.Forever</c>'ın gözlenebilir hâli.</para>
     /// </summary>
+    /// <remarks>[perf A7] Eski iddia: saat HWND'siz (gösterilmeyen) görünümde de kurulurdu. Değişme gerekçesi: sonsuz saat yalnız görünürken kurulur (ARCHITECTURE §14.5) — görünüm gösterilen host'ta kurulur, iddialar aynen; ayrıntı <see cref="GraphTestView.Shown"/>.</remarks>
     [StaFact]
     public void The_shared_clock_actually_carries_the_dots_around_the_orbit()
     {
-        var view = NewView(true);
+        var view = NewShownView(true, out var window);
         view.SetGraph(Nodes(dataStatus: GraphStatus.Building), Edges());
         var orbit = view.NodeVisuals["OSYS.Data.Core"].Beads!;
         Assert.Equal(0.0, orbit.StrokeDashOffset, 6);
@@ -296,14 +314,16 @@ public class GraphRenderTests
             TimeSpan.FromMilliseconds(GraphBeads.CycleMs * 2.5), TimeSeekOrigin.BeginTime);
         // 2.5 tur → yine yarım.
         Assert.Equal(-view.BeadsGeometry.Perimeter / GraphBeads.StrokeThickness / 2, orbit.StrokeDashOffset, 3);
+        GC.KeepAlive(window);
     }
 
     /// <summary>§2.3: "Animasyon sınıfı bitişten sonra 700ms daha kalır → noktalar DÖNERKEN söner, donup
     /// kaybolmaz." Son building düğüm bittiğinde saat ANINDA bırakılmaz.</summary>
+    /// <remarks>[perf A7] Eski iddia: saat HWND'siz (gösterilmeyen) görünümde de kurulurdu. Değişme gerekçesi: sonsuz saat yalnız görünürken kurulur (ARCHITECTURE §14.5) — görünüm gösterilen host'ta kurulur, iddialar aynen; ayrıntı <see cref="GraphTestView.Shown"/>.</remarks>
     [StaFact]
     public void The_shared_clock_keeps_spinning_after_the_last_node_stops_building_and_is_released_later()
     {
-        var view = NewView(true);
+        var view = NewShownView(true, out var window);
         view.SetGraph(Nodes(dataStatus: GraphStatus.Building), Edges());
         Assert.NotNull(view.BeadsClock);
 
@@ -312,13 +332,15 @@ public class GraphRenderTests
 
         view.HandleBeadsSpindownTick();
         Assert.Null(view.BeadsClock);
+        GC.KeepAlive(window);
     }
 
     /// <summary>Spin-down penceresi içinde YENİ bir cephe doğarsa saat KORUNUR.</summary>
+    /// <remarks>[perf A7] Eski iddia: saat HWND'siz (gösterilmeyen) görünümde de kurulurdu. Değişme gerekçesi: sonsuz saat yalnız görünürken kurulur (ARCHITECTURE §14.5) — görünüm gösterilen host'ta kurulur, iddialar aynen; ayrıntı <see cref="GraphTestView.Shown"/>.</remarks>
     [StaFact]
     public void A_new_build_inside_the_spindown_window_keeps_the_clock_alive()
     {
-        var view = NewView(true);
+        var view = NewShownView(true, out var window);
         view.SetGraph(Nodes(dataStatus: GraphStatus.Building), Edges());
         view.UpdateStatuses(Nodes(dataStatus: GraphStatus.Succeeded));
 
@@ -326,18 +348,21 @@ public class GraphRenderTests
         view.HandleBeadsSpindownTick(); // gecikmiş tetik ateşlense bile
 
         Assert.NotNull(view.BeadsClock);
+        GC.KeepAlive(window);
     }
 
     /// <summary>Panel yeniden boyutlanınca düğüm boyutu → yörünge ÇEVRESİ değişir ⇒ desen ve saat yeniden
     /// kurulur; aksi halde noktalar yeni çevreye tam bölünmez ve ek yerinde bindirirdi.</summary>
+    /// <remarks>[perf A7] Eski iddia: saat HWND'siz (gösterilmeyen) görünümde de kurulurdu. Değişme gerekçesi: sonsuz saat yalnız görünürken kurulur (ARCHITECTURE §14.5) — görünüm gösterilen host'ta kurulur, iddialar aynen; ayrıntı <see cref="GraphTestView.Shown"/>.</remarks>
     [StaFact]
     public void Resizing_the_panel_rebuilds_the_pattern_because_the_orbit_perimeter_changed()
     {
-        var view = NewView(true);
+        var view = NewShownView(true, out var window);
         view.SetGraph(Nodes(dataStatus: GraphStatus.Building), Edges());
         double before = view.BeadsGeometry.Perimeter;
 
-        GraphTestView.Resize(view, new Size(300, 200));
+        view.Width = 300; // gösterilen host'ta boyut görünümün KENDİ Width/Height'ıyla verilir
+        view.Height = 200;
         view.UpdateLayout();
 
         Assert.NotEqual(before, view.BeadsGeometry.Perimeter);
@@ -352,53 +377,61 @@ public class GraphRenderTests
         Assert.Equal(
             -view.BeadsGeometry.Perimeter / GraphBeads.StrokeThickness,
             ((DoubleAnimation)view.BeadsClock!.Timeline).To!.Value, 6);
+        GC.KeepAlive(window);
     }
 
     /// <summary>[M-d] Yeni topoloji eski görselleri atar — paylaşımlı saat onlarla birlikte bırakılır, aksi
     /// halde timing engine 30fps'te uyanık kalırdı.</summary>
+    /// <remarks>[perf A7] Eski iddia: saat HWND'siz (gösterilmeyen) görünümde de kurulurdu. Değişme gerekçesi: sonsuz saat yalnız görünürken kurulur (ARCHITECTURE §14.5) — görünüm gösterilen host'ta kurulur, iddialar aynen; ayrıntı <see cref="GraphTestView.Shown"/>.</remarks>
     [StaFact]
     public void Re_SetGraph_releases_the_shared_beads_clock()
     {
-        var view = NewView(true);
+        var view = NewShownView(true, out var window);
         view.SetGraph(Nodes(dataStatus: GraphStatus.Building), Edges());
         Assert.NotNull(view.BeadsClock);
 
         view.SetGraph(Nodes(), Edges()); // building yok
 
         Assert.Null(view.BeadsClock);
+        GC.KeepAlive(window);
     }
 
+    /// <remarks>[perf A7] Eski iddia: saat HWND'siz (gösterilmeyen) görünümde de kurulurdu. Değişme gerekçesi: sonsuz saat yalnız görünürken kurulur (ARCHITECTURE §14.5) — görünüm gösterilen host'ta kurulur, iddialar aynen; ayrıntı <see cref="GraphTestView.Shown"/>.</remarks>
     [StaFact]
     public void Unloading_the_view_releases_a_running_beads_clock()
     {
-        var view = NewView(true);
+        var view = NewShownView(true, out var window);
         view.SetGraph(Nodes(dataStatus: GraphStatus.Building), Edges());
         Assert.NotNull(view.BeadsClock);
 
         view.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent));
 
         Assert.Null(view.BeadsClock);
+        GC.KeepAlive(window);
     }
 
     /// <summary>§2.3 son madde: <c>prefers-reduced-motion</c>'da beads TAMAMEN kapalı — yörünge hiç kurulmaz.</summary>
+    /// <remarks>[perf A7] Gösterilen host'ta kurulur: HWND'siz görünümde saat görünmezlikten dolayı da null olurdu (vakum) — bu iddia yalnız reduced-motion'ın engellemesini pinler; ayrıntı <see cref="GraphTestView.Shown"/>.</remarks>
     [StaFact]
     public void Reduced_motion_builds_no_beads_at_all()
     {
-        var view = NewView(false);
+        var view = NewShownView(false, out var window);
         view.SetGraph(Nodes(dataStatus: GraphStatus.Building), Edges());
 
         Assert.Null(view.NodeVisuals["OSYS.Data.Core"].Beads);
         Assert.Null(view.BeadsClock);
+        GC.KeepAlive(window);
     }
 
     /// <summary>[M-2] Canlı reduced-motion. <b>Eski iddia:</b> bu test akan kenar dash saatinin
     /// (<c>SharedDashClock</c>) ve building NABZININ durduğunu pinliyordu — kalıcı kenar ağı kalktı, nabzın
     /// yerini beads aldı.</summary>
+    /// <remarks>[perf A7] Eski iddia: saat HWND'siz (gösterilmeyen) görünümde de kurulurdu. Değişme gerekçesi: sonsuz saat yalnız görünürken kurulur (ARCHITECTURE §14.5) — görünüm gösterilen host'ta kurulur, iddialar aynen; ayrıntı <see cref="GraphTestView.Shown"/>.</remarks>
     [StaFact]
     public void Flipping_the_motion_signal_at_runtime_stops_the_building_animation_immediately()
     {
         var motion = new FakeMotionSettings { AnimationsEnabled = true };
-        var view = NewView(true, motion: motion);
+        var view = NewShownView(true, out var window, motion: motion);
         view.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent)); // aboneliği kur
         view.SetGraph(Nodes(dataStatus: GraphStatus.Building), Edges());
         Assert.NotNull(view.BeadsClock);
@@ -411,6 +444,7 @@ public class GraphRenderTests
         view.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent));
         motion.Flip(true); // abonelik bırakıldı → view artık tepki vermez
         Assert.Null(view.BeadsClock);
+        GC.KeepAlive(window);
     }
 
     // ---------------------------------------------------------------- seçim sönmesi

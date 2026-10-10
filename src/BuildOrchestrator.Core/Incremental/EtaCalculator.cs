@@ -25,13 +25,19 @@ namespace BuildOrchestrator.Core.Incremental;
 /// <c>BuildApp.jsx:761-763</c>'ün birebir portu (<c>Math.round(eta/5000)*5 + 's left'</c>, ör. 125000ms →
 /// "~125s left"); dakikaya ASLA çevrilmez — mm:ss formatı (<see cref="DurationFormat.Elapsed"/>) yalnız elapsed/
 /// no-history dalında (bkz. aşağı) kullanılır, ETA'da DEĞİL.</item>
-/// <item><b>İlk koşu / bilinmeyen süre fallback:</b> bir projenin <c>BuildState.LastDurationMs</c>'i yoksa
+/// <item><b>Bilinmeyen süre fallback:</b> bir projenin süre tahmini yoksa
 /// (null) — TÜM projeler (queued+building+queued cycle) arasında bilinen (non-null) sürelerin ORTALAMASI o
 /// proje için temsili tahmin olarak kullanılır [cycle rounds/Task 10]: ortalama artık ÜÇ listeyi BİRLİKTE
 /// kapsar, tek bilinen süre cycle listesinde bile olsa ortalama hesaplanır. Hiçbir yerde bilinen süre YOKSA
 /// (ortalama hesaplanamaz) <see cref="ComputeRawEstimateMs"/> <c>null</c> döner — çağıran bu durumda ETA
 /// NUMARASI GÖSTERMEMELİ, yalnız X/N · elapsed süre (bkz. <see cref="FormatDisplay"/> null-eta dalı).</item>
 /// </list>
+/// <para>
+/// Süre tahminlerinin kaynağı çağırandır: App bu koşuda başarıyla ya da hatayla bitmiş projelerin gözlenen süre
+/// ortalamasını verir (RunViewModel; ARCHITECTURE §8.4). Defterdeki son süre (<c>BuildState.LastDurationMs</c>)
+/// tahmine girmez — yalnız tanı kaydıdır (§7.5). <see cref="BuildingProject.LastDurationMs"/> alanı da bu bilinen
+/// tahmini taşır.
+/// </para>
 /// <para>
 /// Saf/stateless: previousEta (EMA state'i) çağıran tarafından (VM/tick loop) taşınır — burada hiçbir alan/saat
 /// TUTULMAZ [D3 — no internal clock]. Supervisor/App wiring (queued/building listelerinin her tick'te nereden
@@ -62,7 +68,7 @@ public static class EtaCalculator
     /// <summary>
     /// Ham (smoothing UYGULANMAMIŞ) tahmini hesaplar.
     /// </summary>
-    /// <param name="queuedDurationEstimatesMs">Her queued (cycle-DIŞI) projenin <c>BuildState.LastDurationMs</c>'i — bilinmiyorsa <c>null</c>.</param>
+    /// <param name="queuedDurationEstimatesMs">Her queued (cycle-DIŞI) projenin süre tahmini — bilinmiyorsa <c>null</c>.</param>
     /// <param name="building">Şu an building olan projeler (elapsed + varsa bilinen süre).</param>
     /// <param name="parallelism">Eşzamanlı build slotu sayısı; 1'den küçükse 1'e clamp edilir (savunmacı — sıfıra bölme YOK).</param>
     /// <param name="cycleQueuedDurationEstimatesMs">
@@ -74,8 +80,8 @@ public static class EtaCalculator
     /// </param>
     /// <returns>
     /// Ham tahmin (ms), YUVARLANMIŞ (<see cref="Math.Round(double, MidpointRounding)"/>, AwayFromZero). Hiçbir
-    /// queued/building/queued-cycle projenin bilinen bir <c>LastDurationMs</c>'i YOKSA (ortalama hesaplanamaz —
-    /// ilk koşu) <c>null</c> döner.
+    /// queued/building/queued-cycle projenin bilinen bir süre tahmini YOKSA (ortalama hesaplanamaz) <c>null</c>
+    /// döner.
     /// </returns>
     public static long? ComputeRawEstimateMs(
         IReadOnlyList<long?> queuedDurationEstimatesMs,
@@ -95,7 +101,7 @@ public static class EtaCalculator
         foreach (long? d in queuedDurationEstimatesMs) if (d is { } v) known.Add(v);
         foreach (var b in building) if (b.LastDurationMs is { } v) known.Add(v);
         foreach (long? d in cycleQueuedDurationEstimatesMs) if (d is { } v) known.Add(v);
-        if (known.Count == 0) return null; // hiçbir yerde bilinen süre yok — ilk koşu, ETA hesaplanamaz
+        if (known.Count == 0) return null; // hiçbir yerde bilinen süre yok — ETA hesaplanamaz
 
         double average = Average(known);
 

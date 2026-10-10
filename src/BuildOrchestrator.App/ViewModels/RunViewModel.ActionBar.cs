@@ -192,6 +192,24 @@ public sealed partial class RunViewModel
             : "Stash and switch branches off — a branch switch stops while there are uncommitted changes");
     }
 
+    /// <summary>
+    /// [RESOLVE Faz 4 / karar 11] Settings Save: "Resolve cycles at full priority" switch'ini uygular. Değer bir sonraki
+    /// <see cref="StartRunCommand"/> ile motora gider. Not yalnız değer GERÇEKTEN değiştiyse yazılır
+    /// (<see cref="ApplyStashOnBranchSwitch"/> deseni).
+    /// </summary>
+    private void ApplyResolveAtFullPriority(bool fullPriority)
+    {
+        if (fullPriority == ResolveAtFullPriority) return;
+        ResolveAtFullPriority = fullPriority;
+        // [fix 1A — M4] Etiket KATALOGDAN gelir (ShellSwitch.Note deseni): anahtarın adı burada literal yazılmaz.
+        // [fix 1A — M5] Sonek bir SONRAKİ Resolve koşusunu söyler: not koşu sürerken de yazılır, motor ise uçuştaki koşunun
+        // run başı anahtarını korur.
+        string label = GeneralSettingsCatalog.Definition(GeneralSetting.ResolveAtFullPriority).Label;
+        AppendRunLine(fullPriority
+            ? $"{label} on — the next Resolve cycles run runs at normal priority with no CPU cap"
+            : $"{label} off — the next Resolve cycles run follows the performance mode");
+    }
+
     /// <summary>[Settings] Save'in TEK giriş noktası: katman pattern'lerini uygular, gerekirse repo kökünü
     /// değiştirir ve TEK bir Sync gönderir.
     ///
@@ -238,12 +256,15 @@ public sealed partial class RunViewModel
     /// <param name="settingNotes">[P3 · P4] <see cref="BuildOrchestrator.App.Shell.ShellSwitches"/>'in <c>Commit</c>'inin
     /// ürettiği, DEĞİŞEN kabuk anahtarlarının (Start with Windows, Start minimized to tray, Close to tray, Show
     /// notifications) konsol notları —
-    /// <see cref="ApplyStashOnBranchSwitch"/>'ten HEMEN SONRA, idle kapısından ÖNCE <see cref="AppendRunLine"/> ile
+    /// <see cref="ApplyResolveAtFullPriority"/>'den HEMEN SONRA (sıra: Pull → Stash → Resolve → bu notlar), idle kapısından
+    /// ÖNCE <see cref="AppendRunLine"/> ile
     /// sırayla yazılır (bu yüzden motor/workspace durumundan ETKİLENMEZ — <see cref="ApplyPullExternals"/>/
     /// <see cref="ApplyStashOnBranchSwitch"/>'in kendi notlarıyla AYNI konum).</param>
+    /// <param name="resolveAtFullPriority">[RESOLVE Faz 4 / karar 11] General'ın "Resolve cycles at full priority"
+    /// switch'i.</param>
     public async Task ApplySettingsAsync(IReadOnlyList<LayerPattern> patterns, string? repositoryRoot,
         IReadOnlyList<ExternalProject> externals, bool pullExternalsBeforeBuild = true, bool stashOnBranchSwitch = false,
-        IReadOnlyList<string>? settingNotes = null)
+        IReadOnlyList<string>? settingNotes = null, bool resolveAtFullPriority = true)
     {
         string root = RootOf(repositoryRoot);
         if (WorkspaceIdle && root.Length == 0 && HasWorkspace) CloseWorkspace();
@@ -252,6 +273,7 @@ public sealed partial class RunViewModel
         ApplyExternalProjects(externals);
         ApplyPullExternals(pullExternalsBeforeBuild);
         ApplyStashOnBranchSwitch(stashOnBranchSwitch);
+        ApplyResolveAtFullPriority(resolveAtFullPriority);
         if (settingNotes is not null)
             foreach (var note in settingNotes) AppendRunLine(note);
         if (!WorkspaceIdle)

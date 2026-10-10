@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Windows.Automation.Peers;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -25,6 +26,9 @@ namespace BuildOrchestrator.App.Views;
 /// </summary>
 public partial class MaintenanceBox : UserControl
 {
+    /// <summary>UIA rolü — gerekçe ve ölçüm <see cref="UserControlRolePeer"/>'de.</summary>
+    protected override AutomationPeer OnCreateAutomationPeer() => new UserControlRolePeer(this, AutomationControlType.Pane);
+
     // BuildApp.jsx:1932-1933 literal ölçüleri — kutunun KENDİ değerleri, tasarım token'ı değil.
     private const double ButtonWidth = 28;
     private const double ButtonHeight = 22;

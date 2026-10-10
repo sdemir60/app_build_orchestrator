@@ -1,9 +1,12 @@
+using System.Windows.Automation.Peers;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Shapes;
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App;
+using BuildOrchestrator.App.ViewModels;
 
 namespace BuildOrchestrator.App.Views;
 
@@ -15,6 +18,9 @@ namespace BuildOrchestrator.App.Views;
 /// </summary>
 public partial class ProjectRowActions : UserControl
 {
+    /// <summary>UIA rolü — gerekçe ve ölçüm <see cref="UserControlRolePeer"/>'de.</summary>
+    protected override AutomationPeer OnCreateAutomationPeer() => new UserControlRolePeer(this, AutomationControlType.ToolBar);
+
     public ProjectRowActions()
     {
         InitializeComponent();
@@ -26,17 +32,26 @@ public partial class ProjectRowActions : UserControl
 
         // [design §3.8] Play'in tooltip'i kilide göre değişir (boşta "Build this project", koşarken "Build in
         // progress — …") ve pasif düğme de nedenini söylemelidir — yazıcı ProjectRow.ApplyActionState'tir,
-        // burada yalnız boştaki metin ve pasif-tooltip kapısı kurulur. Stop'un adı/tooltip'i sabittir.
+        // burada yalnız boştaki metin ve pasif-tooltip kapısı kurulur. Stop'un adı/tooltip'i Stop aşamasını izler
+        // (ApplyStopStage; yazıcısı ProjectRow'dur).
         PART_BuildButton.ToolTip = AccessibilityNames.BuildThisProject;
         ToolTipService.SetShowOnDisabled(PART_BuildButton, true);
-        AutomationProperties.SetName(PART_StopButton, AccessibilityNames.StopThisBuild);
-        PART_StopButton.ToolTip = AccessibilityNames.StopBuildTooltip;
+        ApplyStopStage(StopStage.Stop);
         PART_MoreButton.ToolTip = "More — Rebuild, Clean";
         PART_RowMenu.Opened += (_, _) => PART_RowMenuContent.PlayPopIn();
         // [design v1.11.0 §9-6] Açık menünün ⋯'sine basmak onu KAPATIR (BuildApp.jsx:657
         // `if (menuOpen) { setMenu(null); return; }`); VS seçicisi de aynı kapıdan geçer.
         Controls.PopoverToggle.Bind(PART_MoreButton, PART_RowMenu);
         Controls.PopoverToggle.Bind(PART_VsButton, PART_VsChooser);
+    }
+
+    /// <summary>[Stop now] Stop ikonunun adı ve tooltip'i. Satırdaki düğmenin görünür bir etiketi yoktur, bu yüzden durumu
+    /// (Stop → Stop now → Terminating…) bu ikisi söyler; metinler Stop düğmesiyle ve tepsi maddesiyle AYNI kaynaktan
+    /// (<see cref="StopText"/>). Pasifliği YAZMAZ: komutun CanExecute'u düğmeyi zaten kapatır.</summary>
+    internal void ApplyStopStage(StopStage stage)
+    {
+        AutomationProperties.SetName(PART_StopButton, StopText.RowName(stage));
+        PART_StopButton.ToolTip = StopText.RowTooltip(stage);
     }
 
     internal FrameworkElement HoverIcons => PART_HoverIcons;

@@ -72,7 +72,9 @@ public enum RunMode { Rebuild, Build, Cycles, Clean }
 /// Build modunda WillBuild hesabını besler — Safe = dirty + tüm transitive dependent'lar yeniden derlenir;
 /// Fast = yalnız dirty (cascade yok). [It-3]</summary>
 public enum DependentMode { Safe, Fast }
-/// <param name="Mode">Rebuild = tüm projeler; Build = incremental (yalnız dirty). [v7Δ-4] [It-3]
+/// <param name="Mode">Rebuild = tüm projeler; Build = incremental (yalnız dirty) — ikisi de dairesel bağımlılık
+/// (SCC) gruplarını turlarla derler: Build kirli grubu, Rebuild her grubu (tur 1'de her üye). Hangi modların grup
+/// derlediği Core'da TEK yerdedir (<c>Core.Planning.CycleCompilation</c>). [v7Δ-4] [It-3]
 /// <para><b>Sürdürme/yeniden deneme AYRI bir mod DEĞİLDİR</b> (design v1.7.0 §3.1): Stop'tan sonra da hata
 /// sonrasında da <b>Build</b> koşulur. Tamamlanıp yeşil bitmiş projeler imzalarını persist ettikleri için
 /// <c>up to date</c> atlanır; öldürülenler ve başarısız olanlar <c>LastResult</c> invalidasyonuyla kirli
@@ -84,14 +86,14 @@ public enum DependentMode { Safe, Fast }
 /// TRANSİTİF UPSTREAM'i (gerekçe <c>Core/Planning/CycleRunScope.cs</c>'te: kirli bir upstream'in eski DLL'ine
 /// karşı derlenen üye yeşil döner, bayat çıktı verir ve imzası persist edildiği için bir daha ASLA
 /// derlenmez). Kapsam dışı kalan her proje <see cref="SkipReasons.OutOfCycleScope"/> ile pre-skip edilir. Bu,
-/// diğer modlardan bir DERECE farkı değil, ayrı bir iştir: Build/Rebuild bir SCC'yi ASLA derlemez (üyeleri
-/// <see cref="SkipReasons.InDependencyCycle"/> ile atlanır). İkisi ardışık kullanılır — önce Cycles, sonra
-/// Build.</para>
+/// Build'in aynı işinin DAR biçimidir: Build kirli grubu ve ona bağlı her şeyi derler, Cycles yalnız grupları ve
+/// bayat upstream'lerini — döngülerin bedeli tek başına ödenmek istendiğinde. İsteğe bağlıdır; Build'den önce
+/// basılması gerekmez.</para>
 /// <para><b>Clean</b> = kapsamdaki her projede <c>msbuild /t:Clean</c> — Visual Studio'nun <i>Clean</i>'i:
 /// yalnız o projenin derleme çıktıları silinir, cache'lere dokunulmaz. Hiçbir şey DERLEMEZ, dolayısıyla
 /// incremental karar da sorulmaz. Çıktılar gittiği için temizlenen projenin build-state kaydı SİLİNİR —
 /// Çıktı kanıtı (ARCHITECTURE §7.6) silinen çıktıyı yalnız çıktı yolu türetilebilen projede görür
-/// (SDK-style'da göremez); kayıt kalsaydı bir sonraki Build böyle bir projeyi "güncel" sayıp atlardı. Kayıt
+/// (düzeni oynatılmış bir SDK-style projede göremez); kayıt kalsaydı bir sonraki Build böyle bir projeyi "güncel" sayıp atlardı. Kayıt
 /// silinince yolu bilinen proje zaman kipine düşer ve silinmiş çıktısı <c>OutputMissing</c> okunur. İki
 /// yerden gönderilir: Build menüsünden <see cref="ScopeProjectId"/> OLMADAN — grafın TÜM projeleri, harici
 /// projeler ve döngü üyeleri dahil (Visual Studio'nun <i>Clean Solution</i>'ı) — ve satır menüsünden
@@ -109,8 +111,10 @@ public enum DependentMode { Safe, Fast }
 /// bağımlılıklarından doğar, listedeki sıradan değil. null/boş ise akış bugünküyle bayt-bayt aynıdır.</param>
 /// <param name="PerfMode">[T20-b/K11] Perf profilinin ADI ("Full"/"Balanced"/"Light") — Supervisor bunu Core'daki
 /// <c>PerfProfile.TryParse</c> ile çözer ve run boyunca inner Job'a CPU cap + priority uygular.
-/// <b>Yalnız cap/priority'nin kaynağıdır:</b> paralellik AYRI bir alandır (<paramref name="Parallelism"/>) ve
-/// App tarafında aynı tablodan türetilir — Supervisor worker sayısını burada YENİDEN hesaplamaz.
+/// <b>Yalnız cap/priority'nin kaynağıdır:</b> paralellik AYRI bir alandır (<paramref name="Parallelism"/>): App onu
+/// aynı tablodan türetir ve o, profilin İSTEDİĞİ işçi sayısıdır; motor onu koşu başında makineye göre kırpar
+/// (<c>WorkerBudget</c>, ARCHITECTURE §11.1) ve fiili sayıyı <c>runStarted</c>'da bildirir. İşçi sayısı PerfMode'dan
+/// türetilmez.
 /// <c>null</c> (varsayılan) ⇒ perf modu bildirilmemiş: cap/priority'ye HİÇ dokunulmaz. Bu alan nullable +
 /// varsayılan değerlidir; P2 öncesi yazılmış NDJSON satırları alansız çözülmeye devam eder.</param>
 /// <param name="UpdateExternals">[Harici projeler] Bu koşu, harici çalışma kopyalarını derlemeden ÖNCE kendi
@@ -132,13 +136,17 @@ public enum DependentMode { Safe, Fast }
 /// olarak hedefe yapışır: bir sonraki Build hedefi yeniden derler, aksi halde taze imzası onu bayat bir
 /// DLL'e kalıcı olarak link'li bırakırdı. Döngü üyesi bir hedef tek başına, döngü dışıymış gibi derlenir;
 /// döngüdeki bağımlılıkları her koşulda bayat sayılır.</para></param>
+/// <param name="ResolveAtFullPriority">[RESOLVE Faz 4 / karar 11] Settings → General "Resolve cycles at full priority".
+/// Yalnız <see cref="RunMode.Cycles"/> koşusunu etkiler: açıkken motor profilin işçi sayısını korur ama cap'siz ve
+/// Normal öncelikte koşar (dönüşüm Core'da: <c>PerfProfile.ForRun</c>). Varsayılan <c>true</c> (onaylanmış
+/// varsayılan): alanı taşımayan eski NDJSON satırları da tam öncelikle çözülür.</param>
 /// <remarks>[spec 2026-09-18 §1-1] Koşu daima <see cref="RootPath"/>'teki çalışma ağacında derlenir: branch ve
 /// worktree alanları kalktı. Onları taşıyan eski NDJSON satırları fazla alanlar yok sayılarak çözülür.</remarks>
 public sealed record StartRunCommand(string RunId, RunMode Mode, string RootPath, string Configuration, int Parallelism,
     DependentMode DependentMode = DependentMode.Safe,
     IReadOnlyList<LayerPattern>? LayerPatterns = null, string? PerfMode = null,
     IReadOnlyList<ExternalProject>? ExternalProjects = null, bool UpdateExternals = true,
-    string? ScopeProjectId = null) : IpcCommand;
+    string? ScopeProjectId = null, bool ResolveAtFullPriority = true) : IpcCommand;
 
 /// <summary>
 /// [T20-b/K11] KOŞARKEN perf profilini değiştir. <b>Canlı değişen YALNIZ CPU cap + priority'dir</b>: worker'lar
@@ -296,14 +304,30 @@ public enum RunOutcome { Completed, Stopped }
 /// bu, run'ın başlangıç durumunun kaydıdır.</param>
 /// <param name="LogDirectory">[spec 2026-09-18 §6.2] Bu koşunun disk log klasörü (<c>RunLogWriter.RunDirectory</c>);
 /// branch değişimiyle kesilen koşunun özet satırı onu anar. Bilinmiyorsa <c>null</c>.</param>
+/// <param name="WorkersReducedReason">[PERF Faz D / karar 10] Motor profilin İSTEDİĞİ işçi sayısını makineye göre
+/// kırptıysa kırpmanın gerekçesi (<c>WorkerBudget.Clamp</c>'in metni: <c>"1 logical processor"</c> ·
+/// <c>"3 GB free memory"</c>); <see cref="Parallelism"/> zaten kırpılmış FİİLİ sayıdır. App bununla kullanıcının
+/// konsoluna ve event stream'e <c>workers reduced to {Parallelism} ({gerekçe})</c> satırını yazar — tek projelik koşu
+/// hariç: orada işçi sayısı koşuyu tarif etmez (metin Core'da,
+/// <c>PerfNoteText.WorkersReduced</c>). Kırpma yoksa <c>null</c> (JSON'a yazılmaz); bu alandan ÖNCE yazılmış NDJSON
+/// satırları <c>null</c> çözülür.</param>
+/// <param name="Warnings">[koşu başı uyarıları görünür] Koşu başında bulunan uyarı satırlarının TAM metni — Supervisor'ın
+/// decision.log'a yazdığı satırın AYNISI, <c>warning: </c> önekli. Sıra: önce bayat obj satırları
+/// (<c>StaleObjRunStartWarner</c> — projenin varsayılan obj'inde yabancı TFM restore artığı, proje başına bir satır),
+/// sonra ters katman satırları (<c>BuildPlan.LayerWarnings</c>). App her satırı kullanıcının konsoluna AYNEN yazar; event
+/// stream'e birkaç satıra kadar her birini öneksiz bir Warn satırı olarak, daha fazlasını tek bir sayan Warn satırı olarak
+/// (eşik ve metin <c>StreamText</c>'te) — tek projelik koşuda da. Uyarı yoksa <c>null</c> (JSON'a yazılmaz); bu
+/// alandan ÖNCE yazılmış NDJSON satırları <c>null</c> çözülür.</param>
 public sealed record RunStartedEvent(string RunId, RunMode Mode, int TotalProjects, int Parallelism,
-    string Configuration, int? CpuCapPercent = null, string? LogDirectory = null) : IpcEvent;
+    string Configuration, int? CpuCapPercent = null, string? LogDirectory = null,
+    string? WorkersReducedReason = null, IReadOnlyList<string>? Warnings = null) : IpcEvent;
 public sealed record ProjectStartedEvent(string RunId, string ProjectId, string Name) : IpcEvent;
 public sealed record ProjectLogEvent(string RunId, string ProjectId, int LineNumber, string Text) : IpcEvent;
 /// <param name="DepIssues">Bu proje için tespit edilen dependency-uyarıları (ör. "dependent X henüz derlenmedi");
 /// yoksa null (JSON'a yazılmaz). [It-3]</param>
 /// <param name="CycleUnsettled">[cycle rounds] Bu proje bir SCC üyesidir ve grup TUR TAVANINA dayanarak bitti
-/// (iki ardışık yeşil tur hiç olmadı): derleme başarılı, ama çıktı bir kuşak geride OLABİLİR. <b>Ayrı bir
+/// (yakınsama ölçütü hiç tutmadı: yüzey kanıtı varken bayatsız bir tur, yokken iki ardışık yeşil tur): derleme
+/// başarılı, ama çıktı bir kuşak geride OLABİLİR. <b>Ayrı bir
 /// alandır, <see cref="DepIssues"/>'a sahte bir isim enjekte EDİLMEZ</b> — o liste "hangi bağımlılık patladı"
 /// sorusunun cevabıdır ve ikinci bir anlam yüklenirse App'in <c>▲ N</c> sayacı ile filtre chip'i yanlış sayar.
 /// Varsayılan <c>false</c>: bu alandan ÖNCE yazılmış NDJSON satırları aynen çözülmeye devam eder.</param>
@@ -324,13 +348,12 @@ public sealed record ProjectSucceededEvent(string RunId, string ProjectId, long 
 /// NDJSON satırları kanıtsız (gri) okunur.</param>
 public sealed record ProjectFailedEvent(string RunId, string ProjectId, long DurationMs, string Reason,
     IReadOnlyList<string>? DepIssues = null, bool Evidence = false) : IpcEvent;
-/// <param name="CycleUnconverged">[cycle rounds/Task 8] BUGÜN her zaman <c>false</c>'tur: motor artık bir
-/// SCC'nin geçmişte yakınsamadığı bir bileşik imzayı görünce onu pre-skip ETMEZ, yalnız decision.log'a
-/// RAPOR düşer (bkz. <c>RunCoordinator</c>'ın Cycles tohumundaki [Task 7 · DEĞİŞEN KURAL] notu) —
-/// <see cref="SkipReasons.CycleNonConvergent"/> da bugün hiçbir üretici tarafından yazılmaz. "Kalıcı kırık
-/// döngü" satırını App bugün bu alandan değil, o SCC'nin BU run'daki tur sonucundan (yakınsamama) çıkarır.
-/// Alan ve varsayılan değeri geriye dönük uyum için KORUNUR: bu alandan ÖNCE yazılmış NDJSON satırları aynen
-/// çözülmeye devam eder.</param>
+/// <param name="CycleUnconverged">[B1 · B2] Yalnız <see cref="SkipReasons.CycleNonConvergent"/> atlamasında anlamlıdır:
+/// hükmü verilmiş bir SCC'de kaydı atılan TAŞINAN üye (<c>RunCoordinator.ReportDiscardedCarry</c>) — grup ilerlemeden
+/// (NoProgress, kalıcı kırık döngü) durduysa <c>true</c>, tavana dayandıysa (bütçe bitti, hareket vardı) <c>false</c>.
+/// Derlenen üyenin "kalıcı kırık döngü" işaretini App bu alandan değil, o SCC'nin BU run'daki tur sonucundan çıkarır
+/// (<see cref="CycleCompletedEvent"/>). Motor geçmişte yakınsamamış bir grubu pre-skip ETMEZ (yakınsamama hafızası
+/// yalnız RAPORLAR). Varsayılan <c>false</c>: bu alandan ÖNCE yazılmış NDJSON satırları aynen çözülmeye devam eder.</param>
 public sealed record ProjectSkippedEvent(string RunId, string ProjectId, string Reason, bool CycleUnconverged = false) : IpcEvent;
 /// <param name="DepIssueCount">Run genelinde depIssues taşıyan proje-sonucu sayısı. [It-3]</param>
 public sealed record RunCompletedEvent(string RunId, RunOutcome Outcome, int Succeeded, int Failed, int Skipped,
@@ -512,9 +535,11 @@ public enum CycleOutcome { Converged, NoProgress, CapReached }
 
 /// <summary>[cycles] Bir SCC'nin koşusu bitti. ProjectId = build-order'daki İLK üye (CycleRoundStartedEvent'in
 /// lideriyle AYNI — satır tıklanabilir kalır). DurationMs üye sürelerinin toplamıdır; Rounds koşulan tur sayısı;
-/// FailedCount SON turun başarısız üye sayısı.</summary>
+/// FailedCount SON turun başarısız üye sayısı. [RESOLVE 3.4] CompiledCount grubun bu koşuda DERLENEN üye sayısıdır
+/// (tur 1'de gerekmeyip sonra da bayatlamayan — taşınan — üyeler girmez); -1 = alanı bilmeyen eski motor, App eski
+/// metni yazar. Sona ve varsayılanlı eklendi: eski JSON okunur.</summary>
 public sealed record CycleCompletedEvent(string RunId, string ProjectId, CycleOutcome Outcome,
-    int MemberCount, int Rounds, int FailedCount, long DurationMs) : IpcEvent;
+    int MemberCount, int Rounds, int FailedCount, long DurationMs, int CompiledCount = -1) : IpcEvent;
 
 /// <summary>[It-3][Task 17] Run başında (per-project build event'lerinden ÖNCE) yayınlanan will-build önizlemesi —
 /// plan'ın <see cref="ProjectNode.WillBuild"/>'ini App'e taşır: dirty=true / güncel=false / imza-yok-yahut-pre-Sync

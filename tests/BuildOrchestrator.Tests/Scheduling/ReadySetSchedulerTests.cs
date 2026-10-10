@@ -306,8 +306,8 @@ public class ReadySetSchedulerTests
     }
 
     // [T2] Koşu başı pre-skip tohum ctor'u: tohumdaki id dispatch edilmez ve bağımlısı için baştan çözülmüş
-    // sayılır; tohumda olmayan InCycle düğüm, gruplar null iken (kill switch kapalı) "in dependency cycle" ile
-    // pre-skip edilir — bu Build'in NORMAL yoludur (Build tohumu SCC üyelerini hiç taşımaz), savunmacı değil.
+    // sayılır; tohumda olmayan InCycle düğüm, gruplar null iken "in dependency cycle" ile pre-skip edilir — üretimde
+    // SCC derleyen her mod haritayı geçtiği için bu, SCC'siz planın ve kill-switch testlerinin yoludur.
     [Fact]
     public void seeded_ctor_treats_seeded_ids_as_resolved_and_still_pre_skips_unseeded_cycle_members()
     {

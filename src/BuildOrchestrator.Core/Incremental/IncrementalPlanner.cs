@@ -6,6 +6,32 @@ using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Planning;
 
 /// <summary>
+/// [RESOLVE Faz 3/Task 3.1] <see cref="IncrementalPlanner.ComputeWillBuildWithSignatures"/>'ın dönüşü: kararı
+/// doldurulmuş plan, düğüm başına bileşik imza ve SCC üyelerinin KENDİ terimleri.
+///
+/// <para><see cref="MemberTermById"/> yalnız SCC üyeleri için doludur: üyenin KENDİ terimi — her upstream (grup içi
+/// ve dışı) sabit <see cref="BuildSignature.NullMarker"/>'a düşer, yalnız içerik ve configuration girer. Kardeşin içeriği
+/// de grup dışı bir upstream'in imzası da bu terime girmez; grup dışı upstream'in değişimi kayıttaki bağımlılık
+/// yüzeyleriyle denetlenir (<see cref="Planning.CycleMemberNeed"/> kural i-b). Bileşik imza (SCC-içi kenarlar sabit
+/// işaret, grup dışı upstream'ler taze imzalarıyla) DOWNSTREAM ve "grup kirli mi" için kalır; grubun İÇİNDE kimin
+/// derleneceğini (tur 1) üye terimi söyler. Fast geçişinde kompozit kurulmadığı için boştur.</para>
+///
+/// <para>İki öğeli ayrıştırma (<c>var (plan, signatures) = ...</c>) korunur: üye terimini okumayan çağıranlar
+/// (Sync'in iki geçişi, testler) değişmeden derlenir.</para>
+/// </summary>
+public sealed record IncrementalSignatures(
+    BuildPlan Plan,
+    IReadOnlyDictionary<string, string> SignatureById,
+    IReadOnlyDictionary<string, string> MemberTermById)
+{
+    public void Deconstruct(out BuildPlan plan, out IReadOnlyDictionary<string, string> signatureById)
+    {
+        plan = Plan;
+        signatureById = SignatureById;
+    }
+}
+
+/// <summary>
 /// [T25][A6] GLOBAL graf propagation + skip-gate: bir <see cref="BuildPlan"/>'ın her düğümü için
 /// <see cref="BuildSignature.Compute"/> (Task 6) ile <see cref="BuildPreview.ComputeWillBuild"/>/<see
 /// cref="WillBuildEvaluator"/> (mevcut, değişmez) arasındaki seam'i doldurur: <c>currentSignatureFunc</c>'ı
@@ -71,7 +97,8 @@ public static class IncrementalPlanner
     /// temsil eden hash (bkz. <see cref="ComputeContentFingerprint"/>). <c>null</c> tolere edilir (hiçbir girdi
     /// okunamadı) — <see cref="BuildSignature.Compute"/> onu sabit bir null-işaretiyle imzaya katar.</param>
     /// <param name="state">projectId → <see cref="BuildState"/> (bkz. <see cref="BuildOrchestrator.Core.State.BuildStateStore.Load"/>). Kayıt yoksa never-built.</param>
-    /// <param name="buildCycles">Bu koşu SCC üyelerini derliyor mu — yalnız <c>RunMode.Cycles</c>'ta <c>true</c>.
+    /// <param name="buildCycles">Bu koşu SCC üyelerini derliyor mu — <see cref="Planning.CycleCompilation.CompilesCycles"/>;
+    /// Sync Build'in değerini geçer.
     /// <c>false</c> ⇒ üyeler <c>WillBuild=false</c>'a kısa devre yapar (<see cref="WillBuildEvaluator"/>),
     /// <c>true</c> ⇒ sıradan imza/state mantığına tabidirler — SCC'nin bileşik imzası (bkz.
     /// <c>ComputeComponent</c>) tüm üyeler için ORTAK olduğundan grup ya bütün olarak "derlenecek" ya bütün
@@ -96,8 +123,11 @@ public static class IncrementalPlanner
     /// (topological memoize edilmiş) imzayı da döner. Supervisor'ın kompozisyon kökü, bir proje
     /// <c>projectSucceeded</c> olduğunda <see cref="BuildState.BuiltSignature"/>'ı bu haritadan persist eder —
     /// böylece BİR SONRAKİ <c>Build</c> koşusu incremental olur (temiz projeler skip).
+    /// <para>[RESOLVE Faz 3/Task 3.1 · D7-b] Dönüş SCC üyelerinin KENDİ terimlerini de taşır
+    /// (<see cref="IncrementalSignatures.MemberTermById"/>): <c>ComputeComponent</c> her üye için hem bileşiğe giren
+    /// (upstream'li) girdiyi hem de upstream'siz kendi terimi aynı içerik özetinden hesaplar.</para>
     /// </summary>
-    public static (BuildPlan Plan, IReadOnlyDictionary<string, string> SignatureById) ComputeWillBuildWithSignatures(
+    public static IncrementalSignatures ComputeWillBuildWithSignatures(
         BuildPlan plan,
         Func<ProjectNode, string?> contentFingerprintForNode,
         IReadOnlyDictionary<string, BuildState> state,
@@ -115,6 +145,8 @@ public static class IncrementalPlanner
         // Fast frozen-upstream imzalarını da barındırdığı için "freshMemo" değil "computedMemo" — ikisi için de
         // tek bir isim doğru.
         var computedMemo = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        // [RESOLVE Faz 3/Task 3.1] SCC üyesi → bileşiğe giren KENDİ terimi (ComputeComponent doldurur).
+        var memberTerm = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var onStack = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         // [A3] üye id → o üyenin SCC'sinin (sıralı) üye listesi. plan.Cycles, TopoSort/Tarjan'ın ürettiği
@@ -176,8 +208,8 @@ public static class IncrementalPlanner
         // downstream'e (o üyenin imzasını okuyor olmasına rağmen) ZİYARET SIRASINA bağlı olarak hiç
         // yansımayabiliyordu: dependent bir sonraki Build'de sessizce "up to date" sayılıp atlanırdı
         // (cycle-tangled transitive under-build). Bu düzeltmenin KENDİSİ yalnız downstream'in GÖRDÜĞÜ değeri
-        // onarır; üyelerin derlenip derlenmediği [Task 11] kill switch'inin (buildCycles) işidir — kapalıyken
-        // hiç derlenmezler, açıkken kompozit onların KENDİ WillBuild'ini de belirler (grup bütün olarak ya
+        // onarır; üyelerin derlenip derlenmediği buildCycles bayrağının (CycleCompilation) işidir — kapalıyken
+        // (Clean, bayrağı kapalı geçen testler) hiç derlenmezler, açıkken kompozit onların KENDİ WillBuild'ini de belirler (grup bütün olarak ya
         // "derlenecek" ya "güncel" görünür, çünkü değer üyeler arasında ORTAKTIR).
         // Fast'te kompozit KULLANILMAZ: Fast zaten hiçbir upstream'i takip etmez (frozen/stored imza okur),
         // yani kompozitin çözdüğü cascade sorunu orada tanım gereği yoktur — semantiği değiştirmemek için
@@ -198,9 +230,16 @@ public static class IncrementalPlanner
             foreach (string id in members)
             {
                 var member = byId[id]; // members yalnız byId'de BULUNAN id'lerle kuruldu
-                sb.Append(BuildSignature.Compute(
-                    member, plan.Configuration, contentFingerprintForNode(member),
-                    depId => membersSet.Contains(depId) ? BuildSignature.NullMarker : Upstream(depId)));
+                string? content = contentFingerprintForNode(member);
+                // Bileşiğin girdisi: SCC-içi kenarlar sabit işaret, grup dışı upstream'ler taze imzalarıyla — grup dışı bir
+                // upstream değişince grup kirli olur ve downstream cascade alır.
+                string term = BuildSignature.Compute(
+                    member, plan.Configuration, content,
+                    depId => membersSet.Contains(depId) ? BuildSignature.NullMarker : Upstream(depId));
+                // [D7-b] Üyenin KENDİ terimi: her upstream (grup içi ve dışı) sabit işaret — yalnız içerik + cfg. Grup dışı
+                // upstream'in etkisi kayıttaki bağımlılık yüzeyleriyle denetlenir (CycleMemberNeed kural i-b).
+                memberTerm[id] = BuildSignature.Compute(member, plan.Configuration, content, _ => BuildSignature.NullMarker);
+                sb.Append(term);
                 sb.Append(BuildSignature.ItemSeparator);
             }
             string composite = BuildSignature.HashText(sb.ToString());
@@ -223,7 +262,7 @@ public static class IncrementalPlanner
         if (mode == DependentMode.Safe && outputs is not null
             && BehindDirtyUpstream(decided, outputs) is { Count: > 0 } cascaded)
             decided = Decide(cascaded);
-        return (decided, computedMemo);
+        return new IncrementalSignatures(decided, computedMemo, memberTerm);
     }
 
     /// <summary>
@@ -299,10 +338,13 @@ public static class IncrementalPlanner
     /// <para><see cref="WillBuildReason.WaitingForDependency"/> ise KOŞULLUDUR: koşu onu yalnız bir kök
     /// düzelirse derler (<see cref="ConditionalRebuild"/>), yani yeni çıktı bir olgu değil bir ihtimaldir. Kök
     /// gerçekten düzelir ve koşullu proje derlenirse, onun arkasındaki zaman kipi düğümünü bir sonraki Sync
-    /// kendi HintPath hedefinin tarihinden zaten bayat okur. <b>Ama döngü üyesi koşullu DEĞİLDİR</b>
+    /// kendi HintPath hedefinin tarihinden zaten bayat okur. <b>Döngü üyesi ise TEK BAŞINA koşullu değildir</b>
     /// (<see cref="ConditionalRebuild.AppliesTo"/>: grup tek iş kalemidir, bir üyeyi atlamak grubu yarım
-    /// bırakırdı) — bu yüzden <c>WaitingForDependency</c> okuyan bir SCC üyesi derleneceği koşuda (Cycles)
-    /// KOŞULSUZ derlenir ve tohumdur. <b>Bilinen dar boşluk:</b> satırdan tetiklenen tek proje koşusunda
+    /// bırakırdı) ve <c>WaitingForDependency</c> okuyan üye burada tohum sayılır. Grup BÜTÜN olarak koşullu
+    /// değerlendirilebilir (<see cref="ConditionalRebuild.GroupAppliesTo"/> — Build ve Cycles'ta, dispatch anında):
+    /// kökü hâlâ kırıksa grup hiç derlenmeden atlanır. Planlayıcı o kararı göremez; atlanırsa üyenin arkasındaki zaman
+    /// kipi düğümleri bir kez gereksiz derlenir ve kökü dep-issue notuyla taşır — <b>kabul edilen bedel</b>, güvenli
+    /// yöndür (over-build), ters yön (bayat çıktıyı güncel saymak) değildir. <b>Bilinen dar boşluk:</b> satırdan tetiklenen tek proje koşusunda
     /// (<c>scopedRun</c>) hedef de koşulsuz derlenir; planlayıcı koşunun kapsamını görmediği için orada
     /// <c>WaitingForDependency</c> bir hedef tohum sayılmaz. Bedeli yoktur: <see cref="ProjectRunScope.Of"/>
     /// planı TEK düğüme indirir, yani o koşuda çekilecek bir bağımlı hiç yoktur.</para>

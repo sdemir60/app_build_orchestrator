@@ -24,14 +24,20 @@ public interface ITrayBuildIndicatorView
     void HideNow();
 }
 
-/// <summary>[K-5] Koşu bitişinin BİLDİRİM yüzeyi — gerçek uygulaması OS tray balloon'udur (uygulama-içi
-/// toast design §8'de YASAK).</summary>
+/// <summary>[K-5] Tepsinin BİLDİRİM yüzeyi: koşu bitişi ve [perf B2] tepsideyken yok sayılan Build kısayolunun
+/// nedeni — gerçek uygulaması OS tray balloon'udur (uygulama-içi toast design §8'de YASAK).</summary>
 public interface ITrayRunNotifier
 {
     /// <summary>Şeridin o anki terminal SATIRI — metin+bayrak çifti DEĞİL. Bildirimin başlığı ile gövdesi
     /// satırın kendi baş/gövde ayrımından (<see cref="RibbonLine.Head"/>/<see cref="RibbonLine.Detail"/>)
     /// doğar; statü de satırın kendi glyph'indedir.</summary>
     void ShowRunFinished(RibbonLine line);
+
+    /// <summary>[perf B2] Tepsideyken basılan ama komutun kapısı kapalı olduğu için yok sayılan Build kısayolunun
+    /// AÇIKLAMASI. Pencere gizliyken ekran yoktur; kısayol sessizce hiçbir şey yapmazsa kullanıcı neden başlamadığını
+    /// bilemez, balon tek yüzeydir. <paramref name="reason"/> <c>RunViewModel.WhyRunCannotStart()</c>'ın kısa
+    /// cümlesidir; balonun metni TEK yerde kurulur (<c>AppTrayIcon.BuildIgnoredBody</c>).</summary>
+    void ShowBuildIgnored(string reason);
 }
 
 /// <summary>
@@ -44,8 +50,8 @@ public interface ITrayRunNotifier
 /// <para><b>İki çıkış yolu ayrıdır.</b> Pencere geri gelirse gösterge ANINDA gizlenir — kullanıcı zaten
 /// ekrana döndü, ona bir çıkış animasyonu izletmenin değeri yoktur ve bildirim de üretilmez (şerit oradadır).
 /// Aktif kümeden çıkılırsa (koşu bitti) çıkış evresi TAMAMLANIR, sonra gizlenme, sonra kısa bir nefes, sonra
-/// balloon. Bu ikisi karışırsa ya yarım kesilmiş bir animasyon ya da pencere açıkken gereksiz bir bildirim
-/// olur.</para>
+/// balloon, en sonda çıkış bildirimi (<see cref="ExitCompleted"/>). Bu ikisi karışırsa ya yarım kesilmiş bir animasyon ya
+/// da pencere açıkken gereksiz bir bildirim olur.</para>
 ///
 /// <para><b>Nefes neden bir dikiş:</b> kaybolma ile bildirim üst üste binmemelidir (K-14), ama süresi bir
 /// motion token'ıdır ve token okumak WPF ister. Controller saf kalsın diye bekleme
@@ -59,9 +65,14 @@ public interface ITrayRunNotifier
 /// yok) ki üretim kablosu unutulamasın; balon TAM gösterileceği anda (<see cref="CompleteExitAsync"/> sonunda)
 /// TAZE okunur — kuruluş anında değil. Kapalıysa yalnız <see cref="ITrayRunNotifier.ShowRunFinished"/> ÇAĞRILMAZ;
 /// gösterge fiilleri (Show/BeginExit/HideNow) ve nefes AYNEN sürer — ayar bildirimi bastırır, göstergeyi değil.</para>
+///
+/// <para><b>[perf Faz C · son toparlama B2] Çıkış, BAŞLADIĞI andaki koşuya aittir.</b> <paramref name="currentRun"/> ZORUNLUDUR
+/// (üretimde <c>RunViewModel.RunSerial</c>): kimlik çıkışın başladığı anda alınır ve <see cref="ExitCompleted"/> ile taşınır.
+/// Bildirim nefesten sonra gelir; o ana kadar yeni bir koşu başlamış olabilir ve bildirim anındaki kimlik onun olurdu — alıcı
+/// biten koşunun çıkışını yeni koşuya yazardı. Balon çağrısı fırlatsa da bildirim yine gelir (hata gözlem noktasına yazılır).</para>
 /// </summary>
 public sealed class TrayBuildIndicatorController(
-    ITrayBuildIndicatorView view, ITrayRunNotifier notifier, Func<bool> notificationsOn)
+    ITrayBuildIndicatorView view, ITrayRunNotifier notifier, Func<bool> notificationsOn, Func<int> currentRun)
 {
     private bool _mainVisible = true;
     private AppPhase _phase = AppPhase.Empty;
@@ -79,6 +90,17 @@ public sealed class TrayBuildIndicatorController(
     /// bekletilmez); testte senkron tamamlanan bir sahtedir, yani süitte GERÇEK bekleme oluşmaz.
     /// </summary>
     internal Func<Task> ExitBreath { get; set; } = () => Task.CompletedTask;
+
+    /// <summary>
+    /// [perf Faz C · C4] Çıkış sırası BİTTİ: gösterge gizlendi, nefes geçti, balon (ayar açıksa) gösterildi. Koreografinin EN SON
+    /// adımıdır: alıcının işi (tepside biten koşunun bellek toplaması, <c>MainWindow.OnTrayIndicatorExitFinished</c>) ne çıkış
+    /// animasyonunu ne balonu bekletebilir, hatası da balonu yutamaz. Pencere çıkış sırasında geri geldiyse de gelir (gösterge
+    /// zaten gizlenmiştir); "pencere gizli mi, koşu bitti mi" kararı alıcıdadır. Reduced-motion'da zincir faz yazımının İÇİNDE
+    /// eşzamanlı koşar — ağır işini alıcı kendisi erteler.
+    /// <para>Bildirim, çıkışın BAŞLADIĞI andaki koşu kimliğini taşır (<c>currentRun</c>): nefes sırasında yeni bir koşu başlasa bile
+    /// çıkış onun değil, çıkışı başlatan koşunundur.</para>
+    /// </summary>
+    internal Action<int>? ExitCompleted { get; set; }
 
     /// <summary>Bir derleme koşuyor mu — göstergenin var olma gerekçesi. Sync bilerek DIŞARIDA.</summary>
     private static bool IsActive(AppPhase phase) =>
@@ -161,13 +183,15 @@ public sealed class TrayBuildIndicatorController(
         if (_exitPending) return;
         _exitPending = true;
 
-        if (_animationsEnabled) view.BeginExit(OnExitFinished);
-        else OnExitFinished(); // reduced-motion: oynatılacak çıkış evresi yok, sıra aynen sürer
+        // [son toparlama B2] Kimlik çıkışın BAŞLADIĞI anda alınır, bildirim anında DEĞİL: nefes sırasında yeni bir koşu başlayabilir.
+        int run = currentRun();
+        if (_animationsEnabled) view.BeginExit(() => OnExitFinished(run));
+        else OnExitFinished(run); // reduced-motion: oynatılacak çıkış evresi yok, sıra aynen sürer
     }
 
-    private void OnExitFinished() => _ = CompleteExitAsync();
+    private void OnExitFinished(int run) => _ = CompleteExitAsync(run);
 
-    private async Task CompleteExitAsync()
+    private async Task CompleteExitAsync(int run)
     {
         _exitPending = false;
         if (_shown)
@@ -177,7 +201,22 @@ public sealed class TrayBuildIndicatorController(
         }
 
         await ExitBreath();
+        try { ShowRunFinishedOnce(); }
+        catch (Exception ex)
+        {
+            // [son toparlama B2] Balon çağrısı fırlatırsa çıkış bildirimi yine gelmeli: alıcı tepside biten koşunun bellek toplamasını ister,
+            // atlanırsa toplama sessizce kaybolurdu. Hata yutulmaz: fire-and-forget zincir (`_ = CompleteExitAsync`) gözlenmemiş bir
+            // exception'la sessizce ölmesin diye gözlem noktasına yazılır ([console pump] deseni, MainWindow.xaml.cs).
+            System.Diagnostics.Debug.WriteLine($"[tray balloon] unobserved error: {ex}");
+        }
+        // [perf Faz C · C-1] Bildirim balondan SONRA: alıcı eskiden burada, balondan ÖNCE koşuyordu ve fırlattığında (geçersiz
+        // GC.Collect biçimi) istisna bu gözlenmeyen Task'e düşüp balonu sessizce yutuyordu. Artık alıcının hatası balona ulaşamaz.
+        ExitCompleted?.Invoke(run);
+    }
 
+    /// <summary>Koşu başına tek balon: bütçe yalnız yeni bir koşu başlarken tazelenir (<see cref="SetPhase"/>).</summary>
+    private void ShowRunFinishedOnce()
+    {
         if (_notified) return;
         _notified = true;
         // [P3 · Task 4] TAZE okuma: ayar koşu SIRASINDA kapatılmış olabilir, ctor anındaki değer güvenilmez.

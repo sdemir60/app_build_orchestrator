@@ -26,8 +26,10 @@ namespace BuildOrchestrator.App.Services;
 /// 1.0 opaklığa GERİ GELİYOR, motor koşuyu başlatınca node'lar İKİNCİ kez sönüyordu — "sönüş ve akış garip"
 /// diye görülen buydu.</para>
 ///
-/// <para><b>Reduced-motion:</b> koreografi HİÇ oynamaz (§1.3 "tüm süreler 0") — kapsam işaretlenir ve satırlar
-/// doğrudan koşu görünümüne geçer.</para>
+/// <para><b>Reduced-motion ve gizli pencere:</b> koreografi HİÇ oynamaz (§1.3 "tüm süreler 0") — kapsam işaretlenir
+/// ve satırlar doğrudan koşu görünümüne geçer. Delege yalnız "motion sinyali" değil, kabuğun ÇALMA KAPISI'dır
+/// (<c>MainWindow.ChoreographyMayPlay</c>): hareket açık VE yüzey görünür. Tepsideki (gizli) pencerede kimse
+/// görmeyeceği için koreografi azaltılmış hareketle AYNI dalı izler ve koşu komutu hemen gider.</para>
 /// </summary>
 public sealed class OperationChoreographer
 {
@@ -54,15 +56,9 @@ public sealed class OperationChoreographer
     public Action<MarkStep, IReadOnlySet<string>, IReadOnlyDictionary<string, int>>? PushToGraph { get; set; }
 
     /// <summary>
-    /// Koreografiyi baştan oynatır. Kapsam BOŞSA (ya da reduced-motion) hiç oynamaz: satırlar yalnız
-    /// işaretlenir ve koşu görünümüne doğrudan geçilir.
-    /// </summary>
-    /// <param name="allRows">Listenin TÜM satırları — kapsam dışındakiler "örtüşen veda"nın gri yarısıdır.</param>
-    /// <param name="scope">Bu işlemin kapsamı (dalgada amber'a yanan küme).</param>
-    /// <summary>
     /// <see cref="Play"/>'in bekleyen biçimi: dönen Task koreografi BİTTİĞİNDE (ya da kesildiğinde) tamamlanır.
     /// Koşu komutunu bu Task'a bağlayan <c>RunViewModel</c>'dir — dizi böylece HER SEFERİNDE baştan sona oynar.
-    /// Koreografi hiç oynamayacaksa (reduced-motion ya da boş kapsam) tamamlanmış bir Task döner: bekleme yok.
+    /// Koreografi hiç oynamayacaksa (reduced-motion, gizli pencere ya da boş kapsam) tamamlanmış bir Task döner: bekleme yok.
     /// </summary>
     public Task PlayAsync(IReadOnlyList<ProjectRowViewModel> allRows, IReadOnlyList<ProjectRowViewModel> scope)
     {
@@ -72,6 +68,12 @@ public sealed class OperationChoreographer
         return _completion.Task;
     }
 
+    /// <summary>
+    /// Koreografiyi baştan oynatır. Kapsam BOŞSA (ya da kapı kapalıysa: reduced-motion, gizli pencere) hiç oynamaz: satırlar yalnız
+    /// işaretlenir ve koşu görünümüne doğrudan geçilir.
+    /// </summary>
+    /// <param name="allRows">Listenin TÜM satırları — kapsam dışındakiler "örtüşen veda"nın gri yarısıdır.</param>
+    /// <param name="scope">Bu işlemin kapsamı (dalgada amber'a yanan küme).</param>
     public void Play(IReadOnlyList<ProjectRowViewModel> allRows, IReadOnlyList<ProjectRowViewModel> scope)
     {
         ArgumentNullException.ThrowIfNull(allRows);

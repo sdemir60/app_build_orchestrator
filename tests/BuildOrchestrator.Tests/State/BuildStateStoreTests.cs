@@ -156,6 +156,115 @@ public class BuildStateStoreTests : IDisposable
         Assert.Equal(fresh, back); // liste alanı içerikle karşılaştırılır (round-trip farklı örnek üretir)
     }
 
+    /// <summary>
+    /// [PERF Faz E3] <see cref="BuildState.PackagesConfigHash"/> round-trip eder (JSON adı <c>PackagesConfigHash</c>,
+    /// eşitliğe girer) ve bu alandan ÖNCE yazılmış bir kayıt — alan eklenmeden önceki biçimin birebir kopyası,
+    /// FedOutputs dahil — <c>null</c>'a çözülür: eski defterle ilk Build her packages.config projesini restore eder
+    /// (güvenli yön). <see cref="Fed_outputs_round_trip_and_an_old_record_reads_null"/> ile aynı desen.
+    /// </summary>
+    [Fact]
+    public void Packages_config_hash_round_trips_and_an_old_record_reads_null()
+    {
+        Directory.CreateDirectory(_root);
+        File.WriteAllText(StatePath,
+            """{"C:\\r\\Old.csproj":{"ProjectId":"C:\\r\\Old.csproj","BuiltSignature":"s","BuiltCommit":null,"LastResult":0,"LastRunAt":null,"LastBranch":null,"LastDurationMs":null,"NonConvergentSignature":null,"BuiltContent":null,"DepIssue":false,"DepIssueRoots":null,"FailedSignature":null,"FailedAt":null,"FedOutputs":null}}""");
+        var store = new BuildStateStore(_root);
+
+        var old = Assert.Contains(@"C:\r\Old.csproj", store.Load());
+        Assert.Null(old.PackagesConfigHash);
+
+        var fresh = new BuildState(@"C:\r\New.csproj", "s", PackagesConfigHash: "ABC123");
+        store.Upsert(fresh);
+
+        Assert.Contains("\"PackagesConfigHash\":\"ABC123\"", File.ReadAllText(StatePath));
+        var back = Assert.Contains(@"C:\r\New.csproj", store.Load());
+        Assert.Equal("ABC123", back.PackagesConfigHash);
+        Assert.Equal(fresh, back);
+        Assert.NotEqual(fresh, fresh with { PackagesConfigHash = "DEF456" });
+    }
+
+    /// <summary>
+    /// [RESOLVE Faz 3/Task 3.2] Döngü alanları — <see cref="BuildState.CycleMemberTerm"/>, <see
+    /// cref="BuildState.CycleReadSurfaces"/>, <see cref="BuildState.CycleEngineFingerprint"/> — round-trip eder (JSON
+    /// adları özellik adlarıdır; üçü de eşitliğe girer, okunan yüzeyler içerikle karşılaştırılır) ve bu alanlardan
+    /// ÖNCE yazılmış bir kayıt — alanlar eklenmeden önceki biçimin birebir kopyası, PackagesConfigHash dahil —
+    /// <c>null</c>'a çözülür: eski defterle ilk Cycles koşusunda her üye gerekli sayılır (güvenli yön).
+    /// <see cref="Packages_config_hash_round_trips_and_an_old_record_reads_null"/> ile aynı desen.
+    /// </summary>
+    [Fact]
+    public void Cycle_fields_round_trip_and_an_old_record_reads_null()
+    {
+        Directory.CreateDirectory(_root);
+        File.WriteAllText(StatePath,
+            """{"C:\\r\\Old.csproj":{"ProjectId":"C:\\r\\Old.csproj","BuiltSignature":"s","BuiltCommit":null,"LastResult":0,"LastRunAt":null,"LastBranch":null,"LastDurationMs":null,"NonConvergentSignature":null,"BuiltContent":null,"DepIssue":false,"DepIssueRoots":null,"FailedSignature":null,"FailedAt":null,"FedOutputs":null,"PackagesConfigHash":null}}""");
+        var store = new BuildStateStore(_root);
+
+        var old = Assert.Contains(@"C:\r\Old.csproj", store.Load());
+        Assert.Null(old.CycleMemberTerm);
+        Assert.Null(old.CycleReadSurfaces);
+        Assert.Null(old.CycleEngineFingerprint);
+
+        var surface = new CycleReadSurface(@"C:\r\B.csproj", @"C:\r\B\bin\Debug\B.dll", "SURF1");
+        var fresh = new BuildState(@"C:\r\New.csproj", "s", LastResult: BuildResult.Succeeded,
+            CycleMemberTerm: "TERM1", CycleReadSurfaces: [surface], CycleEngineFingerprint: "ENGINE1");
+        store.Upsert(fresh);
+
+        string json = File.ReadAllText(StatePath);
+        Assert.Contains("\"CycleMemberTerm\":\"TERM1\"", json);
+        Assert.Contains("\"CycleReadSurfaces\":[{\"Producer\":", json);
+        Assert.Contains("\"Hash\":\"SURF1\"}]", json);
+        Assert.Contains("\"CycleEngineFingerprint\":\"ENGINE1\"", json);
+        var back = Assert.Contains(@"C:\r\New.csproj", store.Load());
+        Assert.Equal([surface], back.CycleReadSurfaces);
+        Assert.Equal(fresh, back); // okunan yüzeyler içerikle karşılaştırılır (round-trip farklı örnek üretir)
+        Assert.Equal(fresh.GetHashCode(), back.GetHashCode());
+        Assert.NotEqual(fresh, fresh with { CycleMemberTerm = "TERM2" });
+        Assert.NotEqual(fresh, fresh with { CycleEngineFingerprint = "ENGINE2" });
+        Assert.NotEqual(fresh, fresh with { CycleReadSurfaces = [surface with { Hash = "SURF2" }] });
+        Assert.NotEqual(fresh, fresh with { CycleReadSurfaces = null });
+    }
+
+    /// <summary>[D6] Sıradan projenin son güvenilir derlemesinde bağlandığı doğrudan bağımlılık yüzeyleri — yüzey kapısının
+    /// (<c>SurfaceGate</c>) karşılaştırma tabanı. Alan SONA ve default'lu: eski kayıt null okur (kapı o projeyi derler —
+    /// güvenli yön). Eşitlik sıraya duyarlı, kanonik sıra yazan tarafın (DepIssueRoots/CycleReadSurfaces deseni).</summary>
+    [Fact]
+    public void Dependency_surfaces_round_trip_and_an_old_record_reads_null()
+    {
+        Directory.CreateDirectory(_root);
+        File.WriteAllText(StatePath,
+            """{"C:\\r\\Old.csproj":{"ProjectId":"C:\\r\\Old.csproj","BuiltSignature":"s","BuiltCommit":null,"LastResult":0,"LastRunAt":null,"LastBranch":null,"LastDurationMs":null,"NonConvergentSignature":null,"BuiltContent":null,"DepIssue":false,"DepIssueRoots":null,"FailedSignature":null,"FailedAt":null,"FedOutputs":null,"PackagesConfigHash":null,"CycleMemberTerm":null,"CycleReadSurfaces":null,"CycleEngineFingerprint":null}}""");
+        var store = new BuildStateStore(_root);
+        Assert.Null(Assert.Contains(@"C:\r\Old.csproj", store.Load()).DependencySurfaces);
+
+        var surface = new CycleReadSurface(@"C:\r\U.csproj", @"C:\r\U\bin\Debug\U.dll", "SURF1");
+        var fresh = new BuildState(@"C:\r\New.csproj", "s", LastResult: BuildResult.Succeeded, DependencySurfaces: [surface]);
+        store.Upsert(fresh);
+
+        Assert.Contains("\"DependencySurfaces\":[{\"Producer\":", File.ReadAllText(StatePath));
+        var back = Assert.Contains(@"C:\r\New.csproj", store.Load());
+        Assert.Equal(fresh, back);
+        Assert.Equal(fresh.GetHashCode(), back.GetHashCode());
+        Assert.NotEqual(fresh, fresh with { DependencySurfaces = [surface with { Hash = "SURF2" }] });
+        Assert.NotEqual(fresh, fresh with { DependencySurfaces = null });
+    }
+
+    /// <summary>
+    /// [RESOLVE Faz 3/Task 3.2] <see cref="BuildState.CycleReadSurfaces"/>'ın eşitliği SIRAYA duyarlıdır
+    /// (<c>DepIssueRoots</c>/<c>FedOutputs</c> deseni): aynı okumanın iki kaydı ancak liste kanonik sıradaysa (Producer,
+    /// sonra File; harf-duyarsız) eşit okunur. Yazan taraf bu yüzden kanonik sırayı üretir (alanın yorumunda yazılı);
+    /// eşitlik sırasız yapılırsa bu test ve o yorum birlikte değişir.
+    /// </summary>
+    [Fact]
+    public void Cycle_read_surface_equality_is_order_sensitive_so_writers_keep_the_canonical_order()
+    {
+        var a = new CycleReadSurface(@"C:\r\A.csproj", @"C:\r\A\bin\Debug\A.dll", "SA");
+        var b = new CycleReadSurface(@"C:\r\B.csproj", @"C:\r\B\bin\Debug\B.dll", "SB");
+        var record = new BuildState(@"C:\r\C.csproj", "s", CycleReadSurfaces: [a, b]);
+
+        Assert.Equal(record, record with { CycleReadSurfaces = [a, b] });
+        Assert.NotEqual(record, record with { CycleReadSurfaces = [b, a] });
+    }
+
     [Fact] // dosya yok → boş, throw yok
     public void Load_returns_empty_when_file_missing()
     {

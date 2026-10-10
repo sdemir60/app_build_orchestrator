@@ -21,9 +21,14 @@ public static class SkipReasons
     /// <summary>Build/Rebuild modunda bir SCC üyesi — turlar yalnız Cycles modunda koşar.</summary>
     public const string InDependencyCycle = "in dependency cycle";
 
-    /// <summary>[cycle rounds/Task 8] Eskiden: SCC daha önce aynı bileşik imzada yakınsamadığı için tur harcanmadan
-    /// pre-skip edildi. O pre-skip kalktı (yakınsamama hafızası artık yalnız RAPORLAR — bkz. <c>RunCoordinator</c>'ın
-    /// Cycles tohumu); motor bu gerekçeyi bugün yaymaz, App onu hâlâ okur (<c>ConsoleEmptyState</c>).</summary>
+    /// <summary>[B1] Hükmü verilmiş (NoProgress, CapReached) bir SCC'de tur 1'de taşınmış ama son turda okuduğu kardeş
+    /// yüzeyi bayat kalan üye: bu koşuda hiç derlenmedi, taşıdığı kayıt atıldı ve kanıtsız geçersizlendi
+    /// (<c>RunCoordinator.ReportDiscardedCarry</c>). App satırı bir sonraki Sync'in cevabıyla (never built) çizer ve
+    /// sayfasında bunu anlatır (<c>ConsoleEmptyState</c>).
+    /// <para>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-09] Eski anlam: SCC daha önce aynı bileşik imzada yakınsamadığı
+    /// için tur harcanmadan pre-skip edildi; o pre-skip kalkınca (yakınsamama hafızası yalnız RAPORLAR) motor bu
+    /// gerekçeyi hiç yaymıyordu. Bayat taşınan üye o arada <c>succeeded (0ms)</c> raporlanıyordu — derlenmeyen projeye
+    /// "succeeded" yazmak yanlıştı; sözcük yeni anlamıyla yeniden kullanılır (IPC'ye yeni alan/olay eklenmedi).</para></summary>
     public const string CycleNonConvergent = "cycle did not converge at this signature";
 
     /// <summary>Koşullu proje (dep-issue notlu, imzası değişmemiş): kayıtlı kök bağımlılıklarının hepsi hâlâ hatalı —

@@ -11,8 +11,8 @@ namespace BuildOrchestrator.App.ViewModels;
 /// soluk çizilir.</param>
 /// <param name="Title">Uzun gerekçe — DS Tooltip DEĞİL, native <c>title</c> (ikon butonlarıyla aynı dil).</param>
 /// <param name="Stale">Etiket BEKLEYEN İŞ mi söylüyor — yuvanın rengi bundan gelir (bekleyen iş
-/// <c>text-secondary</c>, güncel <c>text-faint</c>). "Bu koşuda derlenecek" ile aynı şey DEĞİLDİR: kapsam
-/// dışı bir döngü üyesi bayat olabilir ama bu koşuda derlenmez — o ayrımı uyarı üçgeni söyler.</param>
+/// <c>text-secondary</c>, güncel <c>text-faint</c>). "Bu koşuda derlenecek" ile aynı şey DEĞİLDİR: koşunun
+/// kapsamı dışında kalan bir proje (ör. Resolve cycles'ın dışındaki) bayat olabilir ama o koşuda derlenmez.</param>
 public readonly record struct RowDecision(string Word, string? Tail, string Title, bool Stale)
 {
     /// <summary>Yuvanın boş hâli: karar henüz yok.</summary>
@@ -37,18 +37,18 @@ public readonly record struct RowDecision(string Word, string? Tail, string Titl
 /// DEĞİL: imza upstream'leri de taşır, yani bir bağımlılığın kaydı geçersizleşince kullanıcının hiç
 /// dokunmadığı proje <c>modified</c> görünürdü.</para>
 ///
-/// <para><b>Kapsam etiketi susturmaz, ama SÖZ DE VERDİRMEZ.</b> Kapsam dışı bir döngü üyesi bu koşuda
-/// derlenmez; dosyaları değişmişse yine <c>modified</c> yazar (bayat olduğu doğrudur, onu derleyecek şeyin
-/// <i>Resolve cycles</i> olduğunu uyarı üçgeni söyler). Gizlemek ölçüldü: gerçek bir çalışma alanında 184
-/// satırın 33'ü (tüm SCC üyeleri) hiçbir şey yazmıyordu.</para>
+/// <para><b>Kapsam etiketi susturmaz, ama SÖZ DE VERDİRMEZ.</b> Bir döngü üyesi dosyaları değişmişse
+/// <c>modified</c> yazar, düz satır gibi; döngüde olduğunu uyarı üçgeni söyler. Gizlemek ölçüldü: gerçek bir
+/// çalışma alanında 184 satırın 33'ü (tüm SCC üyeleri) hiçbir şey yazmıyordu.</para>
 ///
 /// <para><b>[DEĞİŞEN KURAL — design v1.20.0 §2.4]</b> Etiket eskiden iki bilgiyi daha taşıyordu ve ikisi de
 /// kaldırıldı:
 /// <list type="bullet">
 /// <item><c>failed · retry</c> çifti: <c>retry</c> bir SÖZDÜ ("bir sonraki Build bunu yeniden deneyecek") ve
 /// döngü üyesinde tutulmuyordu (ölçüldü: gerçek bir çalışma alanında 18 <c>failed</c> satırının 15'i döngü
-/// üyesiydi). "Yeniden denenecek mi" sorusunu artık uzun gerekçe (döngü üyesinde <i>Resolve cycles</i>,
-/// değilse <i>Build</i>) cevaplar, kuyruk değil.</item>
+/// üyesiydi). "Yeniden denenecek mi" sorusunu artık uzun gerekçe cevaplar, kuyruk değil: her satırda
+/// <i>Build</i> — [Build cycle derler] düz Build kirli döngü grubunu da derler; eskiden döngü üyesinde
+/// <i>Resolve cycles</i> yazardı.</item>
 /// <item><c>affected · up to date · &lt;yaş&gt;</c> üçlüsü (koşullu yeniden derleme, Task 4): motor bu koşuyu
 /// gerçekten bekletiyorsa (<c>conditional</c>) yuva kökleri tooltip'inde tekrarlıyordu — ama aynı bilgi zaten
 /// uyarı üçgeninin TEK SATIRLIK tooltip'inde vardı (kopya YASAK). <see cref="WillBuildReason.WaitingForDependency"/>
@@ -79,10 +79,7 @@ public static class DecisionLabel
     /// bugünkünün karşılaştırması (<c>BuildStateStore.OwnFilesChanged</c>); bilinmiyorsa <c>null</c>.</param>
     /// <param name="localEdits">[spec 2026-09-18 §4 <c>local</c>] Projenin girdilerinden en az biri
     /// <c>git status</c>'ta kirli mi — yalnız <c>modified</c> satırında <c>local</c> kuyruğunu ekler.</param>
-    /// <param name="inCycle">Proje bir bağımlılık döngüsünün üyesi mi — yalnız <c>failed</c> satırının uzun
-    /// gerekçesini seçer (o satırı yeniden denemek <i>Resolve cycles</i>'ın işidir).</param>
-    public static RowDecision For(
-        bool? willBuild, WillBuildReason? reason, bool? ownFilesChanged, bool localEdits, bool inCycle = false)
+    public static RowDecision For(bool? willBuild, WillBuildReason? reason, bool? ownFilesChanged, bool localEdits)
     {
         // Karar yok: Sync yapılmadı (willBuild null) ya da motor bu satır için gerekçe üretmedi.
         if (willBuild is null || reason is null) return RowDecision.None;
@@ -97,10 +94,7 @@ public static class DecisionLabel
                 return new("never built", null, NoBuildOutputKnownTitle, Stale: true);
 
             case WillBuildReason.LastFailed:
-            {
-                string retryClause = inCycle ? "Resolve cycles will retry it" : "Build will retry it";
-                return new("failed", null, $"Failed at this source — {retryClause}", Stale: true);
-            }
+                return new("failed", null, "Failed at this source — Build will retry it", Stale: true);
 
             // [DEĞİŞEN KURAL — design v1.20.0 §2.4] Bkz. sınıf özeti: WaitingForDependency artık UpToDate ile
             // AYNI okunur — kapsamın gerçekten bekletip bekletmediği (eski "conditional") etiketi etkilemez,

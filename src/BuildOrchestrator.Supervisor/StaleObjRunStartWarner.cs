@@ -15,7 +15,7 @@ namespace BuildOrchestrator.Supervisor;
 public static class StaleObjRunStartWarner
 {
     /// <param name="nodes">Taranacak projeler (tipik: run'ın BuildPlan.Nodes'u).</param>
-    /// <param name="emit">Bayat bulunan HER proje için tek satır çağrılır (çağıran taraf console/decision.log'a yazar).</param>
+    /// <param name="emit">Bayat bulunan HER proje için tek satır çağrılır (çağıran taraf — RunCoordinator — satırı decision.log'a yazar ve runStarted'la App'e taşır; kullanıcının konsol ve event stream satırını App yazar).</param>
     /// <param name="evaluator">Enjekte edilebilir (testlerde tekrar kullanım için); verilmezse yeni bir <see cref="CsprojEvaluator"/>.</param>
     public static void WarnStaleObj(IReadOnlyList<ProjectNode> nodes, Action<string> emit, CsprojEvaluator? evaluator = null)
     {

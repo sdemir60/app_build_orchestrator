@@ -164,23 +164,30 @@ public static class RibbonText
             case AppPhase.Running:
                 if (allClean)
                     return new RibbonLine("▸ Checking — scanning for changes…", "Brush.TextSecondary", null);
-                // [design v1.7.0 §3.7] Resolve cycles sıradan bir Build DEĞİLDİR: döngü üyeleri ardışık
-                // turlarla derlenir ve kullanıcının bilmek istediği ilk şey kaçıncı turda olduğudur.
+                // [design v1.7.0 §3.7] Bir döngü grubu turlarını koşarken şerit sıradan bir Build satırı DEĞİLDİR:
+                // üyeler ardışık turlarla derlenir ve kullanıcının bilmek istediği ilk şey kaçıncı turda olduğudur.
                 // <para>Tasarımın metni "pass 1/2" der ve SABİT iki geçiş vaat eder; tur sayısını MOTOR
-                // belirler (CycleRoundPolicy: yakınsama iki ardışık yeşil tur, tavan üç) ve uygulama bu
+                // belirler (CycleRoundPolicy: yakınsama yüzey kanıtı varken bayatsız bir tur, yokken iki ardışık
+                // yeşil tur; tavan üç) ve uygulama bu
                 // sayıyı olduğu gibi yazar. Sözcük de motorunkidir ("round") — konsol ve event stream aynı
                 // kelimeyi kullanır, arayüz tek dil konuşur.</para>
+                // <para>[Build cycle derler] Tur satırı moda değil UÇUŞTAKİ TURA bağlıdır: grup hangi düğmeyle başlamış
+                // olursa olsun turlarını koşarken şerit turu yazar (cycleRound > 0; sayaçları CycleRoundStartedEvent
+                // kurar, CycleCompletedEvent sıfırlar). "preparing dependencies" yalnız Resolve koşusunundur: o koşu
+                // turlardan önce döngünün bayat upstream'ini derler (§8.1 kapsam); düz Build'de aynı pencere sıradan
+                // "Building" satırıdır.</para>
+                if (cycleRound > 0)
+                    return new RibbonLine(
+                        string.Format(CultureInfo.InvariantCulture,
+                            "▸ Resolving cycles · round {0}/{1} · {2}/{3} · {4}",
+                            cycleRound, cycleRoundCap, finishedOfWillBuild, willBuild,
+                            DurationFormat.Elapsed(elapsedMs)),
+                        "Brush.TextSecondary", "building");
                 if (resolvingCycles)
                     return new RibbonLine(
-                        cycleRound > 0
-                            ? string.Format(CultureInfo.InvariantCulture,
-                                "▸ Resolving cycles · round {0}/{1} · {2}/{3} · {4}",
-                                cycleRound, cycleRoundCap, finishedOfWillBuild, willBuild,
-                                DurationFormat.Elapsed(elapsedMs))
-                            // Turlar henüz başlamadı: koşu önce döngünün bayat upstream'ini derler (§8.1 kapsam).
-                            : string.Format(CultureInfo.InvariantCulture,
-                                "▸ Resolving cycles · preparing dependencies · {0}/{1} · {2}",
-                                finishedOfWillBuild, willBuild, DurationFormat.Elapsed(elapsedMs)),
+                        string.Format(CultureInfo.InvariantCulture,
+                            "▸ Resolving cycles · preparing dependencies · {0}/{1} · {2}",
+                            finishedOfWillBuild, willBuild, DurationFormat.Elapsed(elapsedMs)),
                         "Brush.TextSecondary", "building");
                 return new RibbonLine(
                     string.Format(CultureInfo.InvariantCulture, "▸ Building {0}/{1} · {2}{3}",

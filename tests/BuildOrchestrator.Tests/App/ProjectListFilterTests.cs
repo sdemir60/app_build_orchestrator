@@ -41,6 +41,36 @@ public class ProjectListFilterTests
     /// veren Sync'ler bunu yeniden yayınlar.</summary>
     private static readonly (string Name, string? Layer)[] SameStructure = [("Alpha", "Core"), ("Beta", "Core"), ("Gamma", "Ui")];
 
+    // ---------------------------------------------------------------- 0) filtre kutusu gecikmesi
+
+    /// <summary>
+    /// [perf Faz B · B5] Filtre kutusu yazıyı kısa bir gecikmeyle modele yazar. <c>ProjectQuery</c>'nin her değişimi bir
+    /// <c>VisibleProjects</c> yayını demektir (liste grupları yeniden kurulur, graf soluklaşması tazelenir): hızlı yazılan beş
+    /// harf beş yayın ve beş yeniden kurulumdu. Döngü dispatcher'a hiç tur vermez — beş tuş vuruşu yapı gereği TEK gecikme
+    /// penceresinin içindedir (süre ShellRoot.xaml'deki <c>Binding.Delay</c>'dedir); gecikme dolunca model yalnız son metni alır
+    /// ve bir kez yayınlar.
+    /// </summary>
+    [StaFact]
+    public void A_burst_of_keystrokes_in_the_filter_box_reaches_the_model_once()
+    {
+        using var temp = new TempDir();
+        var (window, vm, _) = NewShellWithProjects(temp);
+        var box = window.Shell.ProjectFilterBox;
+        int published = 0;
+        vm.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(RunViewModel.VisibleProjects)) published++; };
+
+        foreach (var typed in new[] { "a", "al", "alp", "alph", "alpha" }) box.Text = typed;
+
+        Assert.Equal(0, published);        // gecikme dolmadan hiçbir vuruş yayınlanmaz
+        Assert.Equal("", vm.ProjectQuery); // gecikme dolmadan model eski metinde
+        DispatcherPump.PumpUntil(() => vm.ProjectQuery == "alpha", TimeSpan.FromSeconds(2));
+        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(300)); // gecikmeli güncellemeler tamamen bitsin
+
+        Assert.Equal("alpha", vm.ProjectQuery);
+        Assert.Equal(1, published);
+        GC.KeepAlive(window);
+    }
+
     // ---------------------------------------------------------------- 1) statü chip'i filtresi
 
     [StaFact]
@@ -231,38 +261,46 @@ public class ProjectListFilterTests
         GC.KeepAlive(window);
     }
 
-    // ---------------------------------------------------------------- [T2 fix-1 · I-C] çift reset yok
+    // ---------------------------------------------------------------- [T2 fix-1 · I-C] reset yok
 
     /// <summary>
-    /// <b>[T2 fix-1 · I-C — regresyon]</b> Bir topoloji değişimi listeyi <b>TEK KEZ</b> kurar.
+    /// <b>[T2 fix-1 · I-C — regresyon · perf G2 ile değişen kural]</b> Bir topoloji değişimi listeyi RESETLEMEZ: yerinde
+    /// uzlaştırır, kalan satırın kontrolü aynı nesne olarak kalır.
     ///
-    /// <para><b>Ölçülen kusur:</b> <c>OnWorkspaceTopology</c> <c>RefreshRunSurface()</c>'i
+    /// <para><b>Ölçülen kusur (I-C):</b> <c>OnWorkspaceTopology</c> <c>RefreshRunSurface()</c>'i
     /// <c>TopologyChanged</c>'DEN ÖNCE çağırıyordu. Zincir: <c>RefreshRunSurface</c> →
     /// <c>OnPropertyChanged(VisibleProjects)</c> → <c>RefreshVisibleRows</c> (imza değişti, guard tutmaz) →
     /// <c>ApplyProjectGroups(reveal:false)</c> [1. tam reset, tamamen çöp]; hemen ardından
-    /// <c>TopologyChanged</c> → <c>ApplyProjectGroups(reveal:true)</c> [2. tam reset]. Guard yalnız
-    /// <c>reveal:false</c> dalında olduğu için "churn imza guard'ıyla kesiliyor" savunması bu yol için
-    /// GEÇERSİZDİ — 191 satırlık realize maliyeti iki katına çıkıyordu.</para>
+    /// <c>TopologyChanged</c> → <c>ApplyProjectGroups(reveal:true)</c> [2. tam reset] — 191 satırlık realize
+    /// maliyeti iki katına çıkıyordu. Bu test o gün "tam olarak BİR reset" pinliyordu.</para>
     ///
-    /// <para>Sonda: <c>ItemsSource</c> ataması <see cref="StickyLayerList"/> için TAM reset'tir, yani her
-    /// kurulum YENİ bir <c>Items</c> koleksiyonu üretir. <c>ItemContainerGenerator.ItemsChanged</c> olayı
-    /// bu reset'leri SAYAR.</para>
+    /// <para><b>Değişen kural (perf G2, ÖLÇÜLDÜ):</b> görünür koşu izinde en uzun UI dilimleri pencere dolusu satırın
+    /// yeniden bağlanmasıydı; <c>ItemsSource</c> takası da aynı bedeli her tazelemede ödetiyordu. Liste artık
+    /// koleksiyonu yerinde uzlaştırır (<c>ListReconciler</c>): reset sayısı SIFIR'dır ve değişmeyen satırın
+    /// (Alpha) kontrolü AYNI nesne olarak kalır — çift kurulum da bu kuralın altında kendiliğinden anlamsızlaşır
+    /// (ikinci geçiş hiçbir şey değiştirmez).</para>
     /// </summary>
     [StaFact]
-    public void A_topology_change_rebuilds_the_list_exactly_once()
+    public void A_topology_change_reconciles_the_list_in_place_without_a_reset()
     {
         using var temp = new TempDir();
         var (window, vm, list) = NewShellWithProjects(temp);
+        DispatcherPump.PumpUntil(() => list.RevealRows.Count == SameStructure.Length, TimeSpan.FromSeconds(3));
+        var alphaBefore = list.RevealRows.Single(r => ((ProjectRowViewModel)r.DataContext).Name == "Alpha");
 
         int resets = 0;
-        list.RowFlow.ItemContainerGenerator.ItemsChanged += (_, _) => resets++;
+        list.RowFlow.ItemContainerGenerator.ItemsChanged += (_, e) =>
+        { if (e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Reset) resets++; };
 
         // YENİ bir topoloji (imza değişir → TopologyChanged ateşler) — üretimdeki tek giriş noktası.
         vm.OnEvent(new WorkspaceTopologyEvent(
             [MainWindowHost.Node("Alpha", 0, "Core"), MainWindowHost.Node("Delta", 1, "Ui")], [], [], []));
+        list.UpdateLayout();
 
         Assert.Equal(new[] { "Alpha", "Delta" }, VisibleRowNames(list)); // gerçekten kuruldu (non-vacuous)
-        Assert.Equal(1, resets);                                         // ...ve YALNIZ BİR KEZ
+        Assert.Equal(0, resets);                                         // reset HİÇ yok
+        var alphaAfter = list.RevealRows.Single(r => ((ProjectRowViewModel)r.DataContext).Name == "Alpha");
+        Assert.Same(alphaBefore, alphaAfter);                            // kalan satırın kontrolü yerinde
         GC.KeepAlive(window);
     }
 

@@ -1,3 +1,4 @@
+using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Planning;
 
@@ -24,16 +25,37 @@ public class NextPreviewTests
 
     /// <summary>
     /// [I1 (i) · round 2] Bir SCC üyesi TEK BAŞINA hiçbir zaman koşullu DEĞİLDİR (<see cref="ConditionalRebuild.AppliesTo"/>'nun
-    /// <c>!cycleGroupMember</c> kuralıyla AYNI) — ama bir sonraki Sync'in <c>WillBuildEvaluator</c>'ı bu üyeyi
-    /// yine de <c>WaitingForDependency</c> okur ("etiket bir disk olgusudur" kuralı, §13.2): defter GERÇEKTEN
-    /// not+kök yazdı (grup YAKINSADI, sonuç güvenilir), yalnız <c>WillBuild</c> döngü kapsamı yüzünden
-    /// <c>false</c>'a ZORLANIR. Canlı geçiş bu ÜÇLÜYÜ BİREBİR üretmeli — aksi hâlde etiket bir sonraki Sync'te
-    /// FLİP EDER (round 1'in bıraktığı boşluk: <c>UpToDate</c> canlı → <c>WaitingForDependency</c> Sync sonrası).
+    /// <c>!cycleGroupMember</c> kuralıyla AYNI): grubun kaderine <see cref="ConditionalRebuild.GroupAppliesTo"/> dispatch
+    /// anında grup düzeyinde karar verir. Bir sonraki Sync'in <c>WillBuildEvaluator</c>'ı bu üyeyi
+    /// <c>WaitingForDependency</c> okur ("etiket bir disk olgusudur" kuralı, §13.2): defter GERÇEKTEN not+kök yazdı
+    /// (grup YAKINSADI, sonuç güvenilir). Canlı geçiş bu ÜÇLÜYÜ BİREBİR üretmeli — aksi hâlde etiket bir sonraki
+    /// Sync'te FLİP EDER (round 1'in bıraktığı boşluk: <c>UpToDate</c> canlı → <c>WaitingForDependency</c> Sync sonrası).
+    /// <para><b>[DEĞİŞEN KURAL — Build cycle derler]</b> Eski iddia: <c>(false, WaitingForDependency, false)</c> — bir
+    /// sonraki Sync üyeyi <c>buildCycles: false</c> ile değerlendirir, <c>WillBuild</c> döngü kapsamı yüzünden
+    /// <c>false</c>'a ZORLANIRDI. Değişme gerekçesi (ölçüm, 2026-10-07 13:17 koşusu, ARCHITECTURE §8.1): düz Build
+    /// kirli cycle grubunu da derler; Sync üyeyi Build'in kararıyla (<see cref="CycleCompilation"/>) değerlendirir ve
+    /// bekleyen üye "derlenecek" okunur. Aynı kayıt evaluator'a verilerek doğrulanır — kopya değil, aynı karar.</para>
+    /// <para><b>[DEĞİŞEN KURAL — final review M-2]</b> Eski iddia: <c>Conditional=false</c> — "üye tek başına hiçbir
+    /// zaman koşullu değildir". Sync artık yalnız kökünü bekleyen grubun bekleyen üyelerini GRUPLA birlikte koşullu
+    /// sayar (<see cref="ConditionalRebuild.ConditionalIds"/>): grup dispatch anında bütün olarak atlanabilir, sıradan
+    /// bekleyen proje gibi kesin değildir. Yakınsamış bir grubun üyesi ya bu notu taşır (bekler) ya taşımaz (güncel) —
+    /// başka bir gerekçeyle kirli üye kalmaz, grup kapısı tutar; canlı geçiş bu yüzden Sync'in cevabını BİREBİR
+    /// üretir: sıradan bekleyen projeyle aynı üçlü.</para>
     /// </summary>
     [Fact]
-    public void a_converged_cycle_member_with_a_dep_issue_waits_without_being_conditional()
-        => Assert.Equal((false, WillBuildReason.WaitingForDependency, false),
+    public void a_converged_cycle_member_with_a_dep_issue_waits_conditionally_like_a_plain_project()
+    {
+        Assert.Equal((true, WillBuildReason.WaitingForDependency, true),
             NextPreview.AfterSuccess(inCycle: true, trusted: true, ["Up"]));
+
+        // Motorun yakınsamış gruptaki dep-issue'lu üye için gerçekten yazdığı kayıt (taze imza + not + kök):
+        var noted = new BuildState("A", BuiltSignature: "sig", LastResult: BuildResult.Succeeded,
+            DepIssue: true, DepIssueRoots: ["Up"]);
+        var (willBuild, reason) = WillBuildEvaluator.EvaluateWithReason(inCycle: true, "sig", noted,
+            buildCycles: CycleCompilation.CompilesCycles(RunMode.Build));
+        Assert.True(willBuild);
+        Assert.Equal(WillBuildReason.WaitingForDependency, reason);
+    }
 
     /// <summary>[I1 (ii)] Yakınsamayan bir grubun üyesi (<c>trustedResult=false</c>, <c>RunCoordinator</c> onu
     /// PERSIST ETMEZ, kaydını kanıtsız hata olarak geçersizleştirir).
@@ -41,20 +63,48 @@ public class NextPreviewTests
     /// başarıdan hiçbir şey öğrenmedi, satır bugünkü olguya döner". Yanlıştı: defter öğrenir, kaydı
     /// <c>LastResult=Failed</c>/<c>FailedSignature=null</c> olur ve bir sonraki Sync onu <c>NeverBuilt</c>
     /// okur — satır canlıda yeşil ✓, Sync sonrası gri ○ idi. Yeni cevap evaluator'ın o kayda verdiği cevabın
-    /// kendisidir (aşağıda aynı kayıtla doğrulanır).</para></summary>
+    /// kendisidir (aşağıda aynı kayıtla doğrulanır).</para>
+    /// <para><b>[DEĞİŞEN KURAL — Build cycle derler]</b> Eski iddia: <c>WillBuild=false</c> — döngü üyesi bir sonraki
+    /// Sync'in (<c>buildCycles: false</c>) kapsamı dışındaydı. Değişme gerekçesi (ölçüm, 2026-10-07 13:17 koşusu,
+    /// ARCHITECTURE §8.1): düz Build kirli grubu derler; kanıtsız hata kaydı taşıyan üye düz projeyle aynı biçimde
+    /// "derlenecek" okunur (<see cref="CycleCompilation"/>).</para></summary>
     [Fact]
     public void an_untrusted_cycle_member_reads_what_the_invalidated_ledger_will_say()
     {
-        Assert.Equal((false, WillBuildReason.NeverBuilt, false),
+        Assert.Equal((true, WillBuildReason.NeverBuilt, false),
             NextPreview.AfterSuccess(inCycle: true, trusted: false, ["Up"]));
-        Assert.Equal((false, WillBuildReason.NeverBuilt, false),
+        Assert.Equal((true, WillBuildReason.NeverBuilt, false),
             NextPreview.AfterSuccess(inCycle: true, trusted: false, depIssues: null));
 
         // Motorun gerçekten yazdığı kayıt (dün yeşil, bugün güvenilmez başarı ⇒ kanıtsız invalidate):
         var invalidated = new BuildState("A", BuiltSignature: "old", LastResult: BuildResult.Failed, FailedSignature: null);
-        var (willBuild, reason) = WillBuildEvaluator.EvaluateWithReason(inCycle: true, "sig", invalidated, buildCycles: false);
-        Assert.False(willBuild);
+        var (willBuild, reason) = WillBuildEvaluator.EvaluateWithReason(inCycle: true, "sig", invalidated,
+            buildCycles: CycleCompilation.CompilesCycles(RunMode.Build));
+        Assert.True(willBuild);
         Assert.Equal(WillBuildReason.NeverBuilt, reason);
+    }
+
+    // ---------------------------------------------------------------- AfterUntrustedResult [B3]
+
+    /// <summary>[B3] Motorun arkasında durmadığı sonuç — güvenilmez başarı da, hükmü verilmiş grupta kaydı atılan taşınan
+    /// üyenin atlaması da (<c>skipped — cycle did not converge at this signature</c>) — defterde kanıtsız hata bırakır
+    /// (<c>LastResult=Failed</c>, <c>FailedSignature=null</c>). Satır bir sonraki Sync'in o kayda vereceği cevabı HEMEN
+    /// verir: <c>NeverBuilt</c>, düz Build kirli grubu da derlediği için <c>WillBuild=true</c>, koşullu değil. Güvenilmez
+    /// başarının cevabı da budur — iki geçiş aynı kayıttan okur, ayrışamaz (kopya YASAK).</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void after_an_untrusted_result_the_row_reads_never_built(bool inCycle)
+    {
+        var answer = NextPreview.AfterUntrustedResult(inCycle);
+
+        Assert.Equal((true, WillBuildReason.NeverBuilt, false), answer);
+        var invalidated = WillBuildEvaluator.EvaluateWithReason(inCycle, "sig",
+            new BuildState("A", BuiltSignature: "old", LastResult: BuildResult.Failed, FailedSignature: null),
+            CycleCompilation.CompilesCycles(RunMode.Build));
+        Assert.Equal((invalidated.WillBuild, invalidated.Reason), (answer.WillBuild, answer.Reason));
+        Assert.Equal(NextPreview.AfterSuccess(inCycle, trusted: false, depIssues: null), answer);
+        Assert.Equal(NextPreview.AfterSuccess(inCycle, trusted: false, ["Up"]), answer);
     }
 
     // ---------------------------------------------------------------- AfterFailure [R-M4b]
@@ -71,9 +121,13 @@ public class NextPreviewTests
     /// <summary>
     /// Clean'in sonucu — başarı da hata da — defterde bu projenin başarısını bırakmaz: başarıda kayıt SİLİNİR
     /// (<c>BuildStateStore.Remove</c>), hatada kanıtsız hata yazılır (<c>-t:Clean</c> derleyiciyi çağırmaz, kanıt
-    /// sayılmaz). Evaluator ikisini de <c>NeverBuilt</c> okur; <c>WillBuild</c> kapsamın cevabıdır — düz Build
-    /// döngü üyesini derlemez, üye <c>false</c>'tur. Canlı geçiş bu ÜÇLÜYÜ evaluator'ın o iki kayda verdiği
-    /// cevapla BİREBİR üretir.
+    /// sayılmaz). Evaluator ikisini de <c>NeverBuilt</c> okur; <c>WillBuild</c> bir sonraki düz Build'in cevabıdır
+    /// ve düz Build kirli döngü grubunu da derlediği için temizlenen üye de <c>true</c>'dur. Canlı geçiş bu ÜÇLÜYÜ
+    /// evaluator'ın o iki kayda verdiği cevapla BİREBİR üretir.
+    /// <para><b>[DEĞİŞEN KURAL — Build cycle derler]</b> Eski iddia: temizlenen döngü üyesi <c>false</c>'tur, çünkü
+    /// düz Build onu derlemezdi (evaluator <c>buildCycles: false</c> ile sorulurdu). Değişme gerekçesi (ölçüm,
+    /// 2026-10-07 13:17 koşusu, ARCHITECTURE §8.1): Build kirli grupları derler; evaluator Build'in kararıyla
+    /// (<see cref="CycleCompilation"/>) sorulur ve temizlenen üye düz proje gibi dalgada yanar.</para>
     /// <para><b>[DEĞİŞEN KURAL]</b> Eski ad/iddia: <c>a_cleaned_project_reads_never_built_like_a_missing_ledger_row</c>
     /// — eşleme yalnız gerekçeyi döndürürdü (<c>AfterClean == NeverBuilt</c>), satırın plan bayrağı Clean
     /// önizlemesinin <c>true</c>'sunda kalırdı. Değişme gerekçesi: Build menüsünün Clean'i grafın tamamını
@@ -87,13 +141,31 @@ public class NextPreviewTests
     {
         var (willBuild, reason, conditional) = NextPreview.AfterClean(inCycle);
 
-        var forgotten = WillBuildEvaluator.EvaluateWithReason(inCycle, "sig", state: null, buildCycles: false);
+        bool buildCycles = CycleCompilation.CompilesCycles(RunMode.Build);
+        var forgotten = WillBuildEvaluator.EvaluateWithReason(inCycle, "sig", state: null, buildCycles);
         var invalidated = WillBuildEvaluator.EvaluateWithReason(inCycle, "sig",
             new BuildState("A", BuiltSignature: "sig", LastResult: BuildResult.Failed, FailedSignature: null),
-            buildCycles: false);
+            buildCycles);
         Assert.Equal((forgotten.WillBuild, forgotten.Reason), (willBuild, reason));     // başarı: kayıt silindi
         Assert.Equal((invalidated.WillBuild, invalidated.Reason), (willBuild, reason)); // hata: kanıtsız invalidate
+        Assert.True(willBuild);                                                          // döngü üyesi de derlenecek
         Assert.False(conditional);
+    }
+
+    // ---------------------------------------------------------------- AfterUpToDateSkip [D8]
+
+    /// <summary>[D8] Koşu sürerken yüzey kapısıyla ("up to date") atlanan satır: defter az önce yeni imzayla yenilendi, bir
+    /// sonraki Sync UpToDate der — satır o cevabı HEMEN verir (gri "affected"ta kalmaz). Koşullu değildir. Beklenen, bir
+    /// sonraki Sync'in yenilenmiş kayda (bugünkü imza, son sonuç başarı) verdiği cevaptan da bağımsızca okunur.</summary>
+    [Fact]
+    public void a_project_skipped_as_up_to_date_during_a_run_is_up_to_date()
+    {
+        Assert.Equal((false, WillBuildReason.UpToDate, false), NextPreview.AfterUpToDateSkip());
+
+        var (willBuild, reason, _) = NextPreview.AfterUpToDateSkip();
+        var refreshed = WillBuildEvaluator.EvaluateWithReason(false, "sig",
+            new BuildState("D", BuiltSignature: "sig", LastResult: BuildResult.Succeeded), CycleCompilation.CompilesCycles(RunMode.Build));
+        Assert.Equal((refreshed.WillBuild, refreshed.Reason), (willBuild, reason));
     }
 
     // [DEĞİŞEN KURAL — kullanıcı kararı 2026-09-29] AfterConfigurationChange eşlemesi ve iki testi

@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text.Json;
+using BuildOrchestrator.Core.Io;
+using BuildOrchestrator.Core.State;
 
 namespace BuildOrchestrator.Core.Incremental;
 
@@ -27,6 +29,14 @@ namespace BuildOrchestrator.Core.Incremental;
 /// <para>Bozuk/eksik önbellek dosyası sessizce boş kabul edilir; kaydetme atomiktir (temp + rename) ve IO
 /// hatasında yutulur — önbellek SALT bir optimizasyondur, kaybı yalnız bir sonraki koşuda yeniden okumaya
 /// mal olur.</para>
+///
+/// <para><b>[PERF Faz C/C1] Yalnız kirliyse yazılır, akışla okunur ve yazılır.</b> Gerçek OSYS'te defter birkaç
+/// MB'lık JSON'dur; hiçbir özeti değişmeyen bir Sync/koşu onu yeniden yazmaz. Bayrağı yalnız
+/// <see cref="MarkDirty"/> kaldırır; <see cref="Flush"/> onu yazmadan ÖNCE indirir, böylece yazım sürerken araya
+/// giren yeni bir özet bayrağı yeniden kaldırır ve kaybolmaz. Yazılamayan defter (yutulan IO hatası) ve racy
+/// pencerede dışarıda bırakılan girdi bayrağı kirli bırakır — pencere geçince sonraki <see cref="Flush"/> o
+/// girdiyi de yazar. Defter UTF-16 ara string'e çevrilmez: okuma <c>AtomicFile.ReadJson</c>, yazım <c>AtomicFile.WriteJson</c> — Delete-share'li okuma ve
+/// retry'lı atomik rename durum dosyalarıyla ORTAK koddur.</para>
 /// </summary>
 public sealed class SourceHashCache
 {
@@ -48,6 +58,11 @@ public sealed class SourceHashCache
     private readonly string _cachePath;
     private readonly ConcurrentDictionary<string, Entry> _entries;
 
+    /// <summary>Defter bellekte diskteki hâlinden farklı mı (1 = kirli). Birden çok thread özet ekler (Prefill paralel
+    /// okur, derece <see cref="IoParallelism.Degree"/>) → bayrak <c>Volatile</c>/<c>Interlocked</c> ile
+    /// yönetilir.</summary>
+    private int _dirty;
+
     public SourceHashCache(string cachePath)
     {
         _cachePath = cachePath ?? throw new ArgumentNullException(nameof(cachePath));
@@ -57,6 +72,24 @@ public sealed class SourceHashCache
 
     /// <summary>Önbellek diskte yoktu ya da boştu — bu koşu ilk indekslemeyi yapacak.</summary>
     public bool WasEmpty { get; }
+
+    /// <summary>
+    /// Defteri değiştiren HER yol bunu çağırır (<c>_entries</c> yazımından SONRA); bayrağı kaldıran TEK yer burasıdır
+    /// (yeni bir değiştiren yol da çağırmak zorundadır). <see cref="Flush"/> bayrağı <c>Interlocked.Exchange</c> ile
+    /// okuyup indirir.
+    /// </summary>
+    private void MarkDirty() => Volatile.Write(ref _dirty, 1);
+
+    /// <summary>
+    /// [D8] Atomik rename retry'ının gecikme dikişi — <see cref="BuildStateStore.RenameRetryDelay"/> ile aynı desen (parametre:
+    /// 1-based deneme no). Üretimde null → <see cref="BuildStateStore.DefaultRenameRetryDelay"/> (üretim backoff'unun tek sahibi).
+    /// </summary>
+    internal Action<int>? RenameRetryDelay { get; set; }
+
+    /// <summary>Gerçekten koşacak gecikme: dikiş kuruluysa o, değilse ÜRETİM varsayılanı
+    /// (<see cref="BuildStateStore.EffectiveRenameRetryDelay"/> ile aynı desen). Ayrı üye olmasının sebebi testtir —
+    /// varsayılanı no-op'a çeviren bir mutasyon aksi halde süiti yeşil bırakırdı (<c>LedgerRetryDefaultTests</c>).</summary>
+    internal Action<int> EffectiveRenameRetryDelay => RenameRetryDelay ?? BuildStateStore.DefaultRenameRetryDelay;
 
     /// <summary>
     /// Dosyanın içerik özeti. Boyut ve mtime önbellektekiyle aynıysa dosya AÇILMAZ. Okunamayan / var olmayan
@@ -78,6 +111,7 @@ public sealed class SourceHashCache
 
             string hash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path)));
             _entries[path] = new Entry(length, mtime, hash);
+            MarkDirty();
             return hash;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -98,6 +132,7 @@ public sealed class SourceHashCache
         ArgumentNullException.ThrowIfNull(hash);
         var info = new FileInfo(path);
         _entries[path] = new Entry(info.Length, info.LastWriteTimeUtc.Ticks, hash);
+        MarkDirty();
         Flush();
     }
 
@@ -129,7 +164,7 @@ public sealed class SourceHashCache
 
         // Eksik kümeyi bulmak 23 bin dosyalık bir stat geçişidir — o da IO'dur ve paralelleştirilebilir.
         var missing = paths.Distinct(StringComparer.OrdinalIgnoreCase)
-            .AsParallel().WithDegreeOfParallelism(16)
+            .AsParallel().WithDegreeOfParallelism(IoParallelism.Degree)
             .Where(p => !IsCached(p))
             .ToList();
         if (missing.Count == 0) return 0;
@@ -138,30 +173,44 @@ public sealed class SourceHashCache
 
         Parallel.ForEach(
             missing,
-            new ParallelOptions { MaxDegreeOfParallelism = 16, CancellationToken = ct },
+            new ParallelOptions { MaxDegreeOfParallelism = IoParallelism.Degree, CancellationToken = ct },
             path => HashOf(path));
 
         return missing.Count;
     }
 
-    /// <summary>Önbelleği diske yazar (atomik temp + rename). Racy girdiler DIŞARIDA bırakılır.</summary>
+    /// <summary>
+    /// Önbelleği diske yazar (atomik temp + rename). Racy girdiler DIŞARIDA bırakılır. Değişen bir girdi yoksa
+    /// HİÇ yazmaz; yazılamayan ya da racy olduğu için dışarıda kalan bir girdi varsa defter kirli kalır.
+    /// </summary>
     public void Flush()
     {
-        long cutoff = DateTime.UtcNow.Add(-RacyWindow).Ticks;
-        var persistable = _entries
-            .Where(kv => kv.Value.MtimeTicks < cutoff)
-            .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
+        // Bayrak yazımdan ÖNCE inerse (Exchange) Flush sürerken gelen her yeni özet bayrağı yeniden kaldırır: işaret
+        // kaybolmaz. Kirli değilse hiçbir şey yapılmaz (snapshot, serileştirme ve rename tümüyle atlanır).
+        if (Interlocked.Exchange(ref _dirty, 0) == 0) return;
 
-        string tmp = _cachePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        // Racy pencerenin kesimi, süpürme eşiğiyle AYNI saatten (UtcNow seam'i) okunur; üretimde null → gerçek saat.
+        long cutoff = (UtcNow?.Invoke() ?? DateTime.UtcNow).Add(-RacyWindow).Ticks;
+        // Doğrudan numaralandırma — ToArray() anlık görüntüsü YOK: o, her kirli Flush'ta girdi sayısı kadar ek bir dizi (LOH)
+        // demekti. ConcurrentDictionary numaralandırması eşzamanlı yazımlara karşı güvenlidir ama anlık görüntü DEĞİLDİR; bu
+        // yazım için yeterli: girdiler değişmez kayıtlardır (her biri ya eski ya yeni hâliyle görülür) ve bayrak numaralandırmadan
+        // ÖNCE indi — numaralandırma sürerken gelen her değişiklik bayrağı yeniden kaldırır, sonraki Flush onu yazar.
+        var persistable = new Dictionary<string, Entry>(_entries.Count, StringComparer.OrdinalIgnoreCase);
+        bool leftOutRacy = false;
+        foreach (var (key, entry) in _entries)
+        {
+            if (entry.MtimeTicks < cutoff) persistable[key] = entry;
+            else leftOutRacy = true;
+        }
+
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(_cachePath)!);
-            File.WriteAllText(tmp, JsonSerializer.Serialize(persistable, Json));
-            File.Move(tmp, _cachePath, overwrite: true);
+            AtomicFile.WriteJson(_cachePath, persistable, Json, EffectiveRenameRetryDelay);
+            if (leftOutRacy) MarkDirty(); // dışarıda kalan racy girdi: pencere geçince sonraki Flush onu da yazar
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            try { File.Delete(tmp); } catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException) { }
+            MarkDirty(); // retry bütçesi de tükendi: defter kirli kalır, sonraki Flush yeniden dener
         }
     }
 
@@ -180,7 +229,7 @@ public sealed class SourceHashCache
         var dead = _entries.Keys.Where(k => Paths.RootScope.Contains(prefix, k) && !File.Exists(k)).ToList();
         int removed = 0;
         foreach (string key in dead) if (_entries.TryRemove(key, out _)) removed++;
-        if (removed > 0) Flush();
+        if (removed > 0) { MarkDirty(); Flush(); }
         return removed;
     }
 
@@ -189,7 +238,8 @@ public sealed class SourceHashCache
     public int SweepOrphanTempFiles(TimeSpan olderThan) =>
         Paths.TempFileSweeper.Sweep(_cachePath, olderThan, UtcNow);
 
-    /// <summary>[D8] Süpürme eşiğinin okuduğu saat — testte ileri alınır, üretimde <c>null</c>.</summary>
+    /// <summary>[D8] Süpürme eşiğinin ve <see cref="Flush"/>'ın racy pencere kesiminin okuduğu saat — testte
+    /// ileri alınır ya da enjekte edilir, üretimde <c>null</c> (gerçek saat).</summary>
     internal Func<DateTime>? UtcNow { get; set; }
 
     private static ConcurrentDictionary<string, Entry> Load(string path)
@@ -198,7 +248,9 @@ public sealed class SourceHashCache
         if (!File.Exists(path)) return empty;
         try
         {
-            var loaded = JsonSerializer.Deserialize<Dictionary<string, Entry>>(File.ReadAllText(path), Json);
+            // [PERF Faz C/C1] Akışla okuma: defter UTF-16 ara string'e çevrilmez (birkaç MB'lık JSON'un iki katı bellek).
+            // Delete-share'li (AtomicFile): durum dosyalarıyla aynı okuma kuralı.
+            var loaded = AtomicFile.ReadJson<Dictionary<string, Entry>>(path, Json);
             return loaded is null ? empty : new ConcurrentDictionary<string, Entry>(loaded, StringComparer.OrdinalIgnoreCase);
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)

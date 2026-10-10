@@ -265,8 +265,15 @@ public class PopoverTests
     /// gerçek-saat penceresi vardı, 140→300 gibi bir sapmayı geçirirdi).</para>
     /// <para><b>fix-1 · C4:</b> <c>App.Motion</c> statik seam set/restore'u artık <see cref="MotionScope"/>
     /// (paylaşılan, TEK yer) üzerinden — önceden bu try/finally <c>MotionOwnerHygieneTests.AssertSubscribesOnce</c>'ın
-    /// birebir kopyasıydı.</para></summary>
+    /// birebir kopyasıydı.</para>
+    ///
+    /// <para><b><c>LocalOnly</c>:</b> bu test GERÇEK animasyon saatini bekler (<c>PumpUntil</c> opaklığın hedefe
+    /// varmasını bekler, <c>InRange</c> geçen duvar saatini sınar) ve paylaşılan CI runner'ında zamanlaması
+    /// kararsız — ardışık CI koşularında düştü; lokalde geçiyor. Eşik GEVŞETİLMEZ (CLAUDE.md): yalnız bu metot CI
+    /// filtresinden çıkar (sınıfın diğer testleri CI'da koşar), lokal tam süit (yayının kapısı) onu koşturmaya
+    /// devam eder.</para></summary>
     [StaFact]
+    [Trait("Category", "LocalOnly")]
     public void Opening_a_popover_plays_a_real_140ms_pop_in_rising_4px_from_a_985_scale()
     {
         Assert.Equal(140.0, PopIn.DurationMs); // BuildApp.jsx:21 `.14s` — saf literal pin (A13/T4 fix-1)

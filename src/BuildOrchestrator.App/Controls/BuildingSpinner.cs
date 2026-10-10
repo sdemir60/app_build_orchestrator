@@ -144,17 +144,20 @@ public class BuildingSpinner : Control
         return spin;
     }
 
+    /// <summary>Dönüş saatinin sahibi — bırakırken ağaçtan da çıkarır (<see cref="DecorativeClock"/>).</summary>
+    private readonly DecorativeClock _spin = new();
+
     private void Start()
     {
         if (_rotation is null) return;
-        _rotation.BeginAnimation(RotateTransform.AngleProperty, BuildSpinAnimation());
+        _spin.Start(BuildSpinAnimation(), _rotation, RotateTransform.AngleProperty);
     }
 
     private void Stop()
     {
         _isSpinning = false;
+        _spin.Stop(); // ağaçtan da çıkar: BeginAnimation(null) saati yalnız söker ve yetim bırakırdı (DecorativeClock)
         if (_rotation is null) return;
-        _rotation.BeginAnimation(RotateTransform.AngleProperty, null);
         _rotation.Angle = 0;
     }
 }

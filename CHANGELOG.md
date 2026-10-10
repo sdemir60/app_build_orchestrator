@@ -2,6 +2,44 @@
 
 Release notes for Build Orchestrator, newest version first. The What's new window in the app reads this file.
 
+## [1.8.0] - 2026-10-10
+
+### Added
+
+- Automatic updates: an installed copy checks for a newer version in the background, downloads it and offers it from an Update pill in the title bar. Restart to update applies it at once, or it installs when you quit.
+- Shift+Space shows or hides the window from anywhere, and Ctrl+Shift+Space starts a Build without bringing the window up. F6 rebuilds and F7 cleans.
+- Esc stops a running build; a second Esc ends the projects still in flight at once.
+- While Sync finds the projects, the list shows Discovering projects with a running count, and the graph says it appears once they are found.
+- Resolve cycles runs at full priority so it finishes sooner; a switch in Settings turns that off.
+- The console and the event stream show the warnings raised when a run starts (stale obj leftovers, reversed layers) and say when the number of workers was reduced to fit the machine.
+
+### Changed
+
+- Build also compiles dependency cycle groups that are out of date, in rounds, so projects that depend on a cycle no longer compile against a stale DLL. Resolve cycles stays as the on-demand form.
+- Build, Rebuild and the row actions are disabled while a Sync, Clean, Optimize, branch switch or pull runs, so nothing waits behind it. F5 only starts a Build; it no longer doubles as Stop.
+- Saving Settings with an empty repository root closes the workspace and returns to the first-run screen.
+
+### Fixed
+
+- Close to tray and Show notifications in Settings now take effect, and quitting while a build runs stops it gracefully and closes when the work ends.
+- Switching Debug or Release runs a Sync in the new configuration, so rows are never coloured by a guess.
+- Optimize restores every SDK-style project, which resolves the missing package assets after a fresh clone or a Clean.
+- A cycle member built outside the tool, for example in Visual Studio, is no longer compiled again while its output is current, and a group that does not settle keeps the members that did.
+- Rebuild no longer drops frames late in a run, and the start of a run no longer holds up input for a moment.
+- Smaller fixes to the Export and Import icons and to how API changes are detected.
+
+### Performance
+
+- Changing the inside of a shared project no longer rebuilds everything above it: a dependent is skipped when the public API it uses did not change.
+- Resolve cycles hashes in parallel and skips package restores when nothing changed, and WPF projects compile a metadata-only temporary assembly.
+- The number of workers a run starts is capped by the machine's logical processors and free memory.
+- A build running while the window is in the tray does no screen work; the window catches up in one pass when it returns.
+- A lighter window: the project list keeps its rows instead of rebuilding them while scrolling, the console keeps less memory, carets blink only while the window is active, and run logs are kept for three days.
+
+### Removed
+
+- The Alt+B, Ctrl+F5, Shift+F5 and Ctrl+F1 shortcuts. Shift+Space replaces Alt+B, and F6 replaces the two rebuild keys.
+
 ## [1.7.0] - 2026-09-29
 
 ### Added

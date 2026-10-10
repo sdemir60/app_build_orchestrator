@@ -129,8 +129,9 @@ public class ConsoleMotionPathTests
     // ---------------------------------------------------------------- [A13/T4 · m2] imleç: 1.1s blink + 420ms sönme
 
     /// <summary>[A13/T4 fix-1 · A3/A4] Otorite <c>BuildApp.jsx:16</c>: <c>.bo-cursor { animation: bo-blink 1.1s
-    /// var(--ease-in-out) infinite; }</c> — <see cref="MotionTokens.CreateBlinkAnimation"/> ÜRETİMİN ÜÇ
-    /// başlatıcısının (<c>ConsoleView</c>'in idle/aktif-satır imleçleri + <c>EventStreamView</c>) ORTAK fabrikasıdır;
+    /// var(--ease-in-out) infinite; }</c> — <see cref="MotionTokens.CreateBlinkAnimation"/> imleç blink'inin TEK
+    /// fabrikasıdır; tek tüketicisi <see cref="CursorClock"/>'tur (konsol imleçleri ve <c>EventStreamView</c> onun
+    /// paylaşımlı saatine bağlanır);
     /// SAF, deterministik değer pinlemesi burada yapılır: 550ms × <c>AutoReverse</c> = otoritenin 1.1s'i.
     ///
     /// <para><b>fix-1 notu:</b> önceki sürüm bunu faz-örnekleyen GERÇEK saatle (dip/tepe opaklık eşikleri,

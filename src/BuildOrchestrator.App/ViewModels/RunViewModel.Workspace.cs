@@ -21,11 +21,10 @@ public sealed partial class RunViewModel
     /// <summary>[design-v1 §3.1] Faz makinesi. A5 yalnız <c>Syncing</c> (syncStarted) ve <c>Idle</c>
     /// (syncCompleted) geçişlerini sürer; kalan geçişler (boot/running/stopping/done/stopped) sonraki UI
     /// task'larınındır.
-    /// <para>[Stopping] <see cref="StopCommand"/>'ın CanExecute'u fazı OKUR (<c>Stopping</c>'te pasifleşir) —
-    /// bildirim olmadan buton, Stop'a basıldıktan sonra da tıklanabilir kalır ve her tıklama yeni bir
-    /// <c>stopRun</c> üretirdi.</para></summary>
+    /// <para>[Stop now] <see cref="StopCommand"/>'ın CanExecute'u fazı OKUMAZ — kapıyı <see cref="HardStopRequested"/>
+    /// kapatır; faz, hard bayrağıyla birlikte <see cref="StopStage"/>'i (dolayısıyla komutun ne göndereceğini:
+    /// <c>Stopping</c>'te hard, değilse graceful) belirler.</para></summary>
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(StopCommand))]
     private AppPhase _phase = AppPhase.Empty;
 
     /// <summary>[Stopping] Koşmayan/dinlenen faz: elde topoloji varsa <c>Idle</c> (önceki Sync'in sonucu hâlâ
@@ -78,10 +77,12 @@ public sealed partial class RunViewModel
     /// <summary>Stop istendi (<see cref="AppPhase.Stopping"/>) ya da Sync başladı (<see cref="AppPhase.Syncing"/>):
     /// motor bundan sonra <c>runStopped</c>/<c>runCompleted</c> ya da <c>syncCompleted</c> ile cevap
     /// vermelidir — sessizlik saati burada kurulur (<see cref="OnIsStartingChanged"/> ile aynı gerekçe).
-    /// Faz set eden HER yol buradan geçtiği için kurma noktası tek yerdedir.</summary>
+    /// Faz set eden HER yol buradan geçtiği için kurma noktası tek yerdedir. Aynı kapı Stop aşamasını da tazeler
+    /// (<see cref="StopStage"/> fazdan türer).</summary>
     partial void OnPhaseChanged(AppPhase value)
     {
         if (value is AppPhase.Stopping or AppPhase.Syncing) ArmEngineWatchdog();
+        RefreshStopStage();
     }
 
     /// <summary>[N10] Sync'in çözdüğü hedef commit — remote ulaşılamadıysa yerel HEAD (bkz. <see cref="FetchDegraded"/>).</summary>
@@ -125,8 +126,8 @@ public sealed partial class RunViewModel
 
     /// <summary>[Sync guard] Sync yüzeyi MEŞGUL mü: istek uçuşta (<see cref="_syncRequested"/>) YA DA
     /// <c>syncStarted</c> görüldü (<see cref="_syncInFlight"/>). Workspace meşguliyetinin (<see cref="WorkspaceBusy"/>)
-    /// Sync yarısıdır — soru ayrı ayrı yazılmaz (kopya YASAK): Sync ve bakım işlerini kapatır, run komutları içinse
-    /// "basış bekler" demektir (<see cref="CanRequestRun"/>).
+    /// Sync yarısıdır — soru ayrı ayrı yazılmaz (kopya YASAK): Sync'i, bakım işlerini ve run komutlarını kapatır
+    /// (<see cref="CanRequestRun"/>).
     /// <para>Aksiyon barı da bunu okur (Sync düğmesi amber zemin + spinner olur), bu yüzden
     /// <see cref="CleanBusy"/> gibi BİLDİRİMLİDİR: değeri değiştiren her yol
     /// <see cref="NotifySyncGatedCommands"/>'dan geçer ve bildirim oradan atılır. İstek penceresi dahildir —
@@ -149,8 +150,8 @@ public sealed partial class RunViewModel
     private bool _cleanRequested;
 
     /// <summary>[clean guard] Clean yüzeyi MEŞGUL mü — istek uçuşta YA DA <c>cleanStarted</c> görüldü.
-    /// Workspace meşguliyetinin (<see cref="WorkspaceBusy"/>) Clean yarısı (kopya YASAK): Clean/Sync/Optimize'ı kapatır,
-    /// run komutları içinse "basış bekler" demektir (<see cref="CanRequestRun"/>).
+    /// Workspace meşguliyetinin (<see cref="WorkspaceBusy"/>) Clean yarısı (kopya YASAK): Clean/Sync/Optimize'ı ve run
+    /// komutlarını kapatır (<see cref="CanRequestRun"/>).
     /// <para>Bakım kutusu da bunu okur (koşan düğme amber zemin + spinner olur), bu yüzden BİLDİRİMLİDİR:
     /// değeri değiştiren her yol <see cref="NotifySyncGatedCommands"/>'dan geçer ve bildirim oradan atılır.
     /// <b>İstek penceresi dahildir</b> — kullanıcı tıkladığı anda geri bildirim görmelidir, motorun cevabını
@@ -231,8 +232,8 @@ public sealed partial class RunViewModel
 
     /// <summary>[A5/T69] Sync başladı: faz <c>Syncing</c>'e geçer ve akış "uçuşta" işaretlenir.
     /// <para>[Fix wave 1, C2 review Finding 1] Sync'in kapısına bakan komutlar <c>_syncInFlight</c>'ı okur: Sync, bakım
-    /// işleri ve pull kapanır; run komutlarının kapısı (<see cref="RunViewModel.CanRequestRun"/>) ise liste yokken Sync
-    /// sürdükçe AÇIKTIR (basış bekler) ve Sync listesiz biterse kapanır. Bu geçişte CanExecuteChanged elle
+    /// işleri, pull ve run komutları (<see cref="RunViewModel.CanRequestRun"/>) kapanır — liste yokken de Sync sürdükçe run
+    /// komutları kapalıdır, basış kuyruğa alınmaz. Bu geçişte CanExecuteChanged elle
     /// tetiklenmezse [NotifyCanExecuteChangedFor] zinciri (yalnız IsRunning/IsStarting'e bağlı) gerçek pencerede
     /// düğmelerin kapısını tazelemez.</para>
     /// <para>[D2 review fix, Finding 1] Önizleme kümeleri BURADA temizlenir (<c>ClearPreviewSets</c>): küme ADD-ONLY
@@ -277,7 +278,7 @@ public sealed partial class RunViewModel
     private void NotifySyncGatedCommands()
     {
         SyncCommand.NotifyCanExecuteChanged();
-        BuildCommand.NotifyCanExecuteChanged(); // [DEĞİŞEN KURAL] Build de Sync penceresinde bekler
+        BuildCommand.NotifyCanExecuteChanged(); // run komutları iş sürerken kapalıdır (CanRequestRun) — düğmeleri buradan haberdar olur
         RebuildCommand.NotifyCanExecuteChanged();
         BuildCyclesCommand.NotifyCanExecuteChanged();
         BuildProjectCommand.NotifyCanExecuteChanged();   // [tek proje] satır komutları da aynı kapıdadır
@@ -399,7 +400,6 @@ public sealed partial class RunViewModel
     {
         if (!CleanErrorCodes.Contains(code) || !CleanBusy) return false;
         ReleaseCleanSurface();
-        TakeBackQueuedRun(); // [kullanıcı bildirimi 2026-09-29] beklenen Clean düştü — istek hatanın altında geri alınır
         return true;
     }
 
@@ -451,7 +451,6 @@ public sealed partial class RunViewModel
     {
         if (!OptimizeErrorCodes.Contains(code) || !OptimizeBusy) return false;
         ReleaseOptimizeSurface();
-        TakeBackQueuedRun(); // [kullanıcı bildirimi 2026-09-29] beklenen Optimize düştü — istek hatanın altında geri alınır
         return true;
     }
 
@@ -512,7 +511,6 @@ public sealed partial class RunViewModel
             CurrentOperation = null;
             SetPullBusy(false);
             if (e.RefusalReason is { } reason) PushStream(StreamKind.Warn, null, StreamText.PullRefused(reason));
-            TakeBackQueuedRun(); // [kullanıcı bildirimi 2026-09-29] ağaç ilerlemedi — bekleyen Build çekilmemiş ağacı derlemez
             return;
         }
 
@@ -547,8 +545,8 @@ public sealed partial class RunViewModel
     /// Optimize/Pull ve branch chip kapılarının ORTAK meşguliyet sorusu — liste TEK yerde durur (kopya YASAK).
     /// <para>[spec 2026-09-18 §6.3] Checkout da dahildir: Supervisor checkout boyunca komut döngüsünü bloklar;
     /// o sırada BAŞLAYAN bir Build yeni ağaçta başlar ve checkout cevabının temizliği onun konsolunu siler, bir
-    /// Pull ise yanlış branch'i ilerletir. [kullanıcı bildirimi 2026-09-29] Bu yüzden o sırada basılan Build başlamaz,
-    /// bekler (<see cref="QueueRun"/>) ve checkout'un Sync'i bitince yeni ağaçta açılır.</para></summary>
+    /// Pull ise yanlış branch'i ilerletir. Bu yüzden iş sürerken koşu komutları kapalıdır (<see cref="CanRequestRun"/>);
+    /// basış kuyruğa alınmaz.</para></summary>
     private bool WorkspaceBusy => SyncBusy || NonSyncWorkspaceBusy;
 
     /// <summary>Sync DIŞINDAKİ workspace işleri: Clean, Optimize, checkout ya da pull. <see cref="WorkspaceBusy"/>'nin
@@ -632,9 +630,6 @@ public sealed partial class RunViewModel
             if (treeChanged) AppendRunLine(PlanProgressLines.StashedBeforeSwitch(e.StashMessage!));
             if (e.Status is CheckoutStatus.Failed or CheckoutStatus.StashFailed)
                 AppendRunLine(PlanProgressLines.SwitchFailed(e.Detail ?? "unknown error"));
-            // [kullanıcı bildirimi 2026-09-29] Branch değişmedi: bekleyen Build eski ağacı derlemez, gerekçenin altında
-            // geri alınır. AlreadyOn ağacı zaten istenen yerde bulur — istek beklemeye devam eder.
-            if (e.Status != CheckoutStatus.AlreadyOn) TakeBackQueuedRun();
             // [final review M2] Stash'ten sonra düşen checkout ağacı DEĞİŞTİRDİ (değişiklikler stash'e gitti): bölüm
             // açılmaz ama kararlar bayattır — sessiz bir Sync tazeler. Kilit, Sync kapıyı devraldıktan SONRA düşer.
             if (treeChanged) await SyncThenReleaseAsync(ReleaseCheckout, SyncMode.Silent, SilentSyncReason.Refresh);
@@ -664,7 +659,6 @@ public sealed partial class RunViewModel
         if (!CheckoutErrorCodes.Contains(code) || !CheckoutBusy) return false;
         SetCheckoutBusy(false);
         CurrentOperation = null;
-        TakeBackQueuedRun(); // [kullanıcı bildirimi 2026-09-29] branch değişmedi — istek hatanın altında geri alınır
         return true;
     }
 
@@ -790,8 +784,7 @@ public sealed partial class RunViewModel
         var keys = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var row in Projects)
         {
-            var d = DecisionLabel.For(row.WillBuild, row.WillBuildReason, row.OwnFilesChanged, row.LocalEdits,
-                row.InCycle);
+            var d = DecisionLabel.For(row.WillBuild, row.WillBuildReason, row.OwnFilesChanged, row.LocalEdits);
             keys[row.Id] = $"{row.Standing}|{d.Word}|{d.Tail}";
         }
         return keys;
@@ -883,9 +876,7 @@ public sealed partial class RunViewModel
     /// (3) run PLANLAMA penceresinde değil (<see cref="IsStarting"/> false). Run tarafında <c>planFailed</c>
     /// YALNIZCA o pencerede — <c>runStarted</c>'dan ÖNCE — üretilir (bkz. <c>RunCoordinator.ExecuteRunAsync</c>:
     /// planner çağrısı runStarted'dan öncedir), dolayısıyla pencere dışında gelen bir <c>planFailed</c>'ın
-    /// kaynağı yalnızca Sync olabilir. [kullanıcı bildirimi 2026-09-29] Pencere komutun GİTTİĞİ andan başlar:
-    /// <see cref="IsStarting"/> açık ama komut henüz gitmemişse (<see cref="_pendingRunId"/> dolu — bir workspace
-    /// işinin bitmesini bekleyen istek) hata yine Sync'indir; motor o koşuyu hiç duymadı.</para>
+    /// kaynağı yalnızca Sync olabilir.</para>
     ///
     /// <para><b>Pencereler çakışırsa</b> (aynı anda hem Sync hem yeni bir run başlatılmış) run tarafı seçilir:
     /// orada "yıkım" YALNIZ <see cref="IsStarting"/>'i geri açar (henüz KOŞAN bir run yoktur) ve bunu yapmamak
@@ -899,7 +890,7 @@ public sealed partial class RunViewModel
         // Faz her iki dalda da bırakılır: hata Sync'e aitse syncCompleted GELMEYECEK (asılı kalırdı); run'a
         // aitse uçuştaki Sync zaten kendi syncCompleted'ıyla fazı tazeleyecek.
         if (Phase == AppPhase.Syncing) Phase = RestingPhase;
-        if (IsStarting && _pendingRunId is null) return false; // çakışan pencere → run tarafı seçilir (yukarıdaki gerekçe)
+        if (IsStarting) return false; // çakışan pencere → run tarafı seçilir (yukarıdaki gerekçe)
         _syncInFlight = false;        // hata Sync'e ait: bu Sync bitti, run state'ine DOKUNULMAZ
         EndSyncMode();
         _syncRequested = false;       // [Sync guard] istek penceresinde düşen Sync de kapıyı geri açar
@@ -909,7 +900,6 @@ public sealed partial class RunViewModel
         // bırakan 4. geçiştir (diğer üçü OnSyncStarted/ReleaseSyncPhase'in iki çağrı yeri) — Fix wave 1 bunu
         // kaçırmıştı, butonlar bir sonraki ilgisiz bildirime kadar stale-disabled kalıyordu.
         NotifySyncGatedCommands();
-        TakeBackQueuedRun(); // [kullanıcı bildirimi 2026-09-29] beklenen Sync düştü — istek hatanın altında geri alınır
         return true;
     }
 

@@ -236,6 +236,35 @@ public class ProjectRowInputTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[Stop now] Satırdaki Stop ikonunun görünür etiketi yoktur: durumu (Stop → Stop now → Terminating…) adı ve
+    /// tooltip'i söyler — ikisi de Stop düğmesiyle ve tepsi maddesiyle AYNI aşamadan (<see cref="RunViewModel.StopStage"/>) ve
+    /// AYNI metin kaynağından (<see cref="StopText"/>) gelir. Hard gidince komutun kapısı kapanır: ikon pasif.</summary>
+    [StaFact]
+    public void The_row_stop_button_follows_the_stop_stage_in_its_name_and_tooltip()
+    {
+        var runVm = NewRunVm();
+        VmTopology.Seed(runVm, RowId);
+        var row = Realize(runVm, runVm.Projects.Single(), out var window);
+        runVm.RunTargetId = RowId; // satırdan Build'e basıldı
+        runVm.IsStarting = true;
+        var actions = row.Actions!;
+        Assert.Equal(StopText.RowName(StopStage.Stop), AutomationProperties.GetName(actions.StopButton)); // ön-koşul
+        Assert.Equal(StopText.RowTooltip(StopStage.Stop), actions.StopButton.ToolTip);
+
+        runVm.Phase = AppPhase.Stopping; // graceful gitti
+
+        Assert.Equal(StopText.RowName(StopStage.StopNow), AutomationProperties.GetName(actions.StopButton));
+        Assert.Equal(StopText.RowTooltip(StopStage.StopNow), actions.StopButton.ToolTip);
+        Assert.True(actions.StopButton.IsEnabled);
+
+        runVm.HardStopRequested = true; // hard gitti
+
+        Assert.Equal(StopText.RowName(StopStage.Terminating), AutomationProperties.GetName(actions.StopButton));
+        Assert.Equal(StopText.RowTooltip(StopStage.Terminating), actions.StopButton.ToolTip);
+        Assert.False(actions.StopButton.IsEnabled);
+        GC.KeepAlive(window);
+    }
+
     /// <summary>[§9-6] Satıra SAĞ TIK, ⋯ ile AYNI menüyü açar; menü başlığı projenin kısa adıdır ve maddeleri
     /// Build · Rebuild · Clean'dir (üçü de AYNI tek-proje-koşusu kapısına bağlı; Clean o projeye SCOPED bir
     /// clean run'ı gönderir).</summary>

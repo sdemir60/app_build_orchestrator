@@ -46,7 +46,7 @@ public static class Program
         var writer = new NdjsonWriter(stdout);
         using var coordinator = new RunCoordinator(
             planner: BuildRunPlan,
-            msbuildFactory: ct => ResolveMsBuildAsync(innerJob, ct),
+            msbuildFactory: ct => ResolveMsBuildAsync(innerJob, cacheRoot, ct),
             logFactory: startedAt => new RunLogWriter(logsRoot, startedAt),
             writer: writer,
             innerJob: innerJob,
@@ -58,14 +58,19 @@ public static class Program
             // [A5/T69] sync/branch komutları · [optimize] restore invoker'ı koordinatörle AYNI memoize
             // edilmiş toolset çözümünden gelir (ikinci bir vswhere araması yok).
             WorkspaceServices.Default(cacheRoot,
-                async ct => (await ResolveMsBuildAsync(innerJob, ct)).Invoker),
+                async ct => (await ResolveMsBuildAsync(innerJob, cacheRoot, ct)).Invoker),
             debugHooks, // [A13/B4] kapalıysa debugSpawnChildren error(debugHooksDisabled) ile reddedilir
             interruptedProjects);
+        // [PERF Faz C/C2 · karar 1] Koşu logları üç gün saklanır, son koşu kalır: saklama süpürmesi host kurulur kurulmaz
+        // ARKA PLANDA başlar — engineReady'yi ve ilk komutu bekletmez, sonucunu da kimse beklemez. Etkin koşunun klasörü
+        // süpürmeyle yarışmaz: damgası şimdiden ileri olmayan en yeni damgadır ve pencerenin çok içindedir. Süpürme hiçbir
+        // IO hatası fırlatmaz; özet satırı stderr'e düşer (stdout YALNIZ NDJSON [D4]).
+        _ = Task.Run(() => RunLogRetention.Prune(logsRoot, DateTimeOffset.UtcNow, Console.Error.WriteLine));
         return await host.RunAsync();
 
         // Planlama TAMAMEN Core'da [D3]: scan → evaluate (cache'li) → graph → topo → BuildPlan →
         // incremental willBuild + imza. Planlayıcı (ComputeIncremental) dört modun HEPSİNDE çağrılır — mod
-        // kapısı yok; yalnız Cycles modu Bind'a bileşik imza bayrağını geçirir.
+        // kapısı yok; Bind'ın "SCC derler mi" bayrağı CycleCompilation'dan okunur (Clean dışında her mod).
         // [planlama görünürlüğü] `progress` satırları PlanProgressEvent olarak, runStarted'tan ÖNCE App'e gider
         // (bkz. RunCoordinator'ın planner parametresi). Metinler Core'daki PlanProgressLines'tan gelir — Sync'in
         // yazdıklarıyla AYNI kaynak: iki akış aynı işi anlatır ve tek yerden güncellenir (CLAUDE.md kopya yasağı).
@@ -196,15 +201,27 @@ public static class Program
             // kontroller: dışarıda derlenmiş güncel proje BuiltOutside ile pre-skip edilir, kanıtı eksik/bozuk
             // olan derlenir. Kontroller plana da taşınır (koşu önizlemesi).
             var checks = binder.ChecksFor(state);
-            var (bound, signatures) = binder.Bind(state, cmd.Mode == RunMode.Cycles, cmd.DependentMode, checks);
+            var (bound, signatures, memberTerms) = binder.Bind(state, CycleCompilation.CompilesCycles(cmd.Mode), cmd.DependentMode, checks);
+            // [D5] Yüzey kapısının adayları: Safe (bu koşunun kararı) ile Fast'in (frozen-upstream, kanıtlı) karşılaştırması —
+            // Sync'in iki geçişiyle aynı binder, parmak izleri önbellekten (ikinci bağlama diske inmez). Yalnız defteri
+            // dinleyen tam koşuda (SurfaceGate.AppliesTo) ve Safe kipte: Fast kipte bağımlı zaten "güncel" sayılıp atlanır.
+            // Karar Core'da.
+            IReadOnlySet<string>? candidates = null;
+            if (SurfaceGate.AppliesTo(cmd.Mode, scopedRun: cmd.ScopeProjectId is not null) && cmd.DependentMode == DependentMode.Safe)
+            {
+                var (fast, _) = binder.Bind(state, CycleCompilation.CompilesCycles(cmd.Mode), DependentMode.Fast, checks);
+                candidates = SurfaceGate.CandidateIds(bound, fast);
+            }
 
             hashes.Flush();
             // [v1.16.0] İçerik özetleri de taşınır: başarılı derlemede deftere yazılır (BuildState.BuiltContent)
             // ve önizlemenin modified ↔ affected ayrımı defterdeki özetle bugünkünün karşılaştırmasından çıkar.
             // [Faz 3/Task 4] OutputsById de aynı binder'dan — Supervisor başarılı derlemeden sonra beslenen
             // kopyaları buradan öğrenir (BuildState.FedOutputs).
+            // [RESOLVE Faz 3/Task 3.1] SCC üyelerinin kendi terimleri de taşınır: Resolve'un tur 1'i grubun içinde
+            // kimin derleneceğini bunlarla seçer (bileşik imza downstream ve "grup kirli mi" için kalır).
             return (bound, new IncrementalPlan(signatures, head, branch, externalCommits, binder.ContentById,
-                binder.OutputsById, checks));
+                binder.OutputsById, checks, memberTerms, candidates));
         }
         catch (Exception ex)
         {
@@ -220,13 +237,31 @@ public static class Program
     // startRun'da error(msbuildNotFound) olarak bildirilir. Tek seferde tek run (A6) → bu lazy init yarışsızdır.
     private static MsBuildToolset? _toolset;
 
-    private static async Task<MsBuildToolset> ResolveMsBuildAsync(JobObject innerJob, CancellationToken ct)
+    private static async Task<MsBuildToolset> ResolveMsBuildAsync(JobObject innerJob, string cacheRoot, CancellationToken ct)
     {
         if (_toolset is not null) return _toolset;
         var location = await new MsBuildResolver(new ProcessRunner()).ResolveAsync(ct: ct);
         // [D10] dotnet build DEĞİL, MSBuild.exe; child'lar JobProcessLauncher ile inner Job içinde doğar.
         // Ham (retry'siz) invoker verilir — retry sarmalaması run'a özgü decision.log'a yazdığı için koordinatörün işi.
-        return _toolset = new MsBuildToolset(new MsBuildInvoker(innerJob, location.MsBuildExePath), location.MsBuildExePath);
+        // [WPF geçici assembly] Targets dosyası toolset'le birlikte memoize edilir: motor başına TEK yazım.
+        return _toolset = new MsBuildToolset(new MsBuildInvoker(innerJob, location.MsBuildExePath), location.MsBuildExePath,
+            EnsureWpfTemporaryAssemblyTargets(cacheRoot));
+    }
+
+    /// <summary>
+    /// WPF geçici assembly targets'ını önbellek köküne yazar ve yolunu döner. Yazılamazsa (kilitli ya da salt-okunur
+    /// klasör, dolu disk) ya da tarihi sabitlenemezse MSBuild çözümünü ve motoru DÜŞÜRMEZ: bu bir OPTİMİZASYONDUR — stderr'e tek satır uyarı
+    /// düşer (stdout YALNIZ NDJSON [D4]) ve null döner; derleme targets'sız, bugünkü komut satırıyla sürer.
+    /// </summary>
+    private static string? EnsureWpfTemporaryAssemblyTargets(string cacheRoot)
+    {
+        try { return WpfTemporaryAssemblyTargets.EnsureWritten(cacheRoot); }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine("warning: WPF temporary assembly targets could not be written or pinned under " + cacheRoot
+                + " (builds continue without them): " + ex.Message);
+            return null;
+        }
     }
 
     /// <summary>

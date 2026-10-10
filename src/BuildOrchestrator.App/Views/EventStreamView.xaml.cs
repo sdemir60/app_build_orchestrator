@@ -2,6 +2,7 @@ using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
+using System.Windows.Automation.Peers;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
@@ -27,6 +28,9 @@ namespace BuildOrchestrator.App.Views;
 /// </summary>
 public partial class EventStreamView : UserControl
 {
+    /// <summary>UIA rolü — gerekçe ve ölçüm <see cref="UserControlRolePeer"/>'de.</summary>
+    protected override AutomationPeer OnCreateAutomationPeer() => new UserControlRolePeer(this, AutomationControlType.Pane);
+
     // [A13/B3 · k3] BuildApp.jsx:91 — daktilo bitince imleç ~420ms sonra söner (aktif satırda KALIR).
     // Tek tanım TypewriterScheduler.CursorHoldMs'tedir; bu derleme-zamanı alias'tır (internal: otorite
     // literaline karşı saf assert edilebilsin — ConsoleView.CursorHoldMs ile AYNI desen).
@@ -101,7 +105,9 @@ public partial class EventStreamView : UserControl
         // (aksi halde sonsuz clock unload'da terk edilirdi — StopActiveTypewriter yalnız type-timer'ı söküyordu).
         Unloaded += (_, _) => { StopCursorBlink(); StopCursorRest(); };
         // [design v1.12.1 §2.6] İmlecin renk turu PALETİ okur; DataContext ağaca girmeden yazılabildiği için
-        // (o an kaynak sözlüğü YOKTUR) ilk deneme boşa düşebilir. Yükleme, turun garanti kurulduğu andır.
+        // (o an kaynak sözlüğü YOKTUR) ilk deneme boşa düşebilir: o durumda kırpma tek başına döner. Palet çözülür
+        // çözülmez (Yükleme, ya da sonraki olay) CursorClock çifti birlikte yeniden başlatıp turu kurar — tur
+        // kaybolmaz, yalnız gecikir.
         Loaded += (_, _) => { if (PART_ActiveLine.Visibility == Visibility.Visible) StartCursorBlink(); };
         // Tepsiye inen pencere görünümü boşaltmaz, yalnız gizler — sonsuz saatler görünürlüğe bağlıdır (§14.5).
         IsVisibleChanged += (_, _) =>
@@ -153,8 +159,45 @@ public partial class EventStreamView : UserControl
         UpdateActiveLine();
     }
 
+    /// <summary>
+    /// [perf Faz A · A3] Yüzey gizliyken (<see cref="HiddenSurface"/>: tepside derleme) tampon, sayaç ve aktif satır
+    /// bildirimleri görünüme ÇEVRİLMEZ — satır kurulmaz, daktilo başlamaz, ölçüm geçersizlenmez. Kaynak model
+    /// (<see cref="RunViewModel.StreamEvents"/>; 150 kırpma kuralı da onda) zaten tam durur: bayrak yalnız "ekran
+    /// modelin gerisinde" der ve <see cref="OnPropertyChanged"/> yüzey görününce ekranı modelden tek geçişte kurar.
+    /// </summary>
+    private bool _staleWhileHidden;
+
+    /// <summary>
+    /// Kalıtsal <see cref="HiddenSurface.IsHiddenProperty"/> değişimi torunlara buradan gelir. Yüzey görünür olunca ve
+    /// gizliyken bildirim kaçırıldıysa satırlar, sayaç ve aktif satır modelden bir kez kurulur. <see cref="RebuildRows"/>
+    /// satırları YAZILMIŞ hâliyle koyar (yazımın tek başlatıcısı <see cref="OnStreamEventsChanged"/>'in Add dalıdır),
+    /// yani gizliyken gelmiş olaylar pencere gelince sırayla yazılmaya kalkmaz. Kurulumdan önce modeldeki TÜM olaylar
+    /// "oynandı" işaretlenir (<c>GlowPlayed</c>, <c>TypePlayed</c>): gizliyken akanlar hiçbir görünümde oynamadı ve dönüşte
+    /// kurulan satırlar GEÇMİŞTİR — işaretlenmezse her yeşil "done" satırı yüklenirken 1,1 sn'lik parıltısını başlatırdı
+    /// (en çok 150 satır aynı anda; karar 15: tepsideyken animasyon yok, pencere gelince ekran tek seferde kurulur).
+    /// Bayrağı tam kurulum (<see cref="RebuildRows"/>) düşürür: gizliyken DataContext yeniden bağlandıysa satırlar o anda
+    /// modelden kurulmuştur ve dönüş onları ikinci kez kurmaz.
+    /// </summary>
+    protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
+    {
+        base.OnPropertyChanged(e);
+        if (!HiddenSurface.BecameVisible(e) || !_staleWhileHidden) return;
+        // Bayrağı RebuildRows düşürür (tam kurulum kendi bayrağını kendisi sıfırlar).
+        if (_vm is not null)
+            foreach (var item in _vm.StreamEvents) { item.GlowPlayed = true; item.TypePlayed = true; }
+        RebuildRows();
+        RefreshCounter();
+        UpdateActiveLine();
+    }
+
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        // [perf Faz A · A3] Sayaç ve aktif satır da gizliyken yazılmaz (bkz. _staleWhileHidden).
+        if (HiddenSurface.GetIsHidden(this) && e.PropertyName is nameof(RunViewModel.StreamEventCount) or nameof(RunViewModel.ActiveLineGeneration))
+        {
+            _staleWhileHidden = true;
+            return;
+        }
         switch (e.PropertyName)
         {
             case nameof(RunViewModel.StreamEventCount):
@@ -169,6 +212,8 @@ public partial class EventStreamView : UserControl
     // ---------------------------------------------------------------- tampon satırları
     private void OnStreamEventsChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
+        // [perf Faz A · A3] Gizliyken satır eklenmez/çıkarılmaz ve daktilo başlamaz: yalnız "ekran bayat" işaretlenir.
+        if (HiddenSurface.GetIsHidden(this)) { _staleWhileHidden = true; return; }
         switch (e.Action)
         {
             case NotifyCollectionChangedAction.Add when e.NewItems is not null:
@@ -226,6 +271,20 @@ public partial class EventStreamView : UserControl
 
     private void RebuildRows()
     {
+        // Tam kurulum bayrağı kendisi düşürür (liste, şerit, satır, menü ve chip idiomu): gizliyken DataContext yeniden
+        // bağlandıysa satırlar burada modelden kurulur ve dönüş (OnPropertyChanged) onları ikinci kez kurmaz.
+        _staleWhileHidden = false;
+        // Yazan satır atılacaklar arasındadır: DataContext'i kopunca OnTypeTick (VM yok) erken döner ve yazımı hiç bitirmez —
+        // saat yalnız Unloaded ile durur; ağaçtan Unloaded gelmeyen (hiç yüklenmemiş) satırda Render önceliğinde sonsuza dek
+        // tıklardı. Kural Add dalındakinin AYNISIDIR (yeni satır gelince önceki FinishTyping ile kapatılır) ve DataContext'ten
+        // ÖNCE koşar: TypingEnded satırı bırakır ve prompt satırını göstergeye döndürür (ReleaseToBuffer) — yoksa atılan satır
+        // yazı yüzeyi olarak asılı kalır (_writingRow dolu) ve dönüşteki UpdateActiveLine göstergeyi yazmadan döner: prompt satırı
+        // atılmış satırın yarım metnini taşımaya devam ederdi.
+        _typingRow?.FinishTyping();
+        _typingRow = null;
+        // Atılan satırlar kendi öğe VM'lerinin PropertyChanged'ine abone kalmasın (her gösterimde biriken, sınırlı bir sızıntı
+        // olurdu): bağ Clear'dan ÖNCE koparılır.
+        foreach (var old in PART_Rows.Children.OfType<EventStreamRow>()) old.DataContext = null;
         PART_Rows.Children.Clear();
         if (_vm is null) return;
         foreach (var item in _vm.StreamEvents) PART_Rows.Children.Add(CreateRow(item));
@@ -410,30 +469,36 @@ public partial class EventStreamView : UserControl
         if (PART_ActiveLine.Visibility == Visibility.Visible) StartCursorBlink();
     }
 
-    // [D3 §3] aktif imleç blink'i — ortak MotionTokens.CreateBlinkAnimation (1.0→0.1, 0.55s, SineEase in/out,
-    // 30fps, sonsuz). Reduced-motion'da hiç oynamaz (imleç steady 1.0).
+    // [D3 §3 · perf B4] aktif imleç blink'i — kırpma (MotionTokens.CreateBlinkAnimation: 1.0→0.1, 0.55s, SineEase
+    // in/out, 30fps, sonsuz) ve renk turu pencerenin ORTAK imleç saatinden gelir (CursorClock): konsol prompt'uyla
+    // aynı fazda döner, pencere aktif değilken sabit durur. Reduced-motion'da hiç bağlanmaz (imleç steady 1.0).
     private void StartCursorBlink()
     {
         // Görünmezken saat KURULMAZ: bu metot her olayda çağrılır (UpdateActiveLine), tepsideyken de — kapı
         // çağıranlarda olsaydı bir sonraki olay saati geri kurardı (bkz. HiddenCursorClockTests).
         if (!IsVisible) { StopCursorBlink(); return; }
-        if (!AnimationsEnabledProvider()) { PART_ActiveCursor.BeginAnimation(OpacityProperty, null); PART_ActiveCursor.Opacity = 1.0; return; }
-        PART_ActiveCursor.BeginAnimation(OpacityProperty, MotionTokens.CreateBlinkAnimation());
-        // [design v1.12.1 §2.6] Stream'in imleci konsolunkiyle AYNI bileşendir → aynı renk turunu döner.
-        // Tur zaten dönüyorsa YENİDEN kurulmaz (CursorHop.Start): bu metot her olayda çağrılır.
-        CursorHop.Start(this, PART_ActiveCursor);
+        // Hareket kapalı: Detach idempotent ve ucuzdur (bağlı değilse yalnız opaklığı ve dinlenme rengini yazar), bu yüzden
+        // olay başına "bağlı mı" diye ayrıca sorulmaz — o soru Detach'in kendi guard'ının kopyası olurdu.
+        if (!AnimationsEnabledProvider()) { StopCursorBlink(); return; }
+        // [design v1.12.1 §2.6] Stream'in imleci konsolunkiyle AYNI bileşendir → aynı saatte, aynı renk turunu döner.
+        // Bağlı imleç YENİDEN kurulmaz (CursorClock.Attach idempotent): bu metot her olayda çağrılır.
+        CursorClock.Attach(PART_ActiveCursor, this, _cursorRestKeyProvider ??= CursorRestKey);
     }
 
     /// <summary>Görünüm ağaçtan çıkarken tazelik saatini bırakır: tek atımlık bir <c>DispatcherTimer</c>'ı
     /// dispatcher köklendirir, durdurulmazsa görünüm gitse de tick atmaya devam eder.</summary>
     private void StopCursorRest() => RestCursorTone();
 
-    private void StopCursorBlink()
-    {
-        PART_ActiveCursor.BeginAnimation(OpacityProperty, null);
-        PART_ActiveCursor.Opacity = 1.0;
-        CursorHop.Stop(PART_ActiveCursor, _cursorToneKey ?? WaitingToneKey); // tur sökülür, ton kanalı devralır
-    }
+    /// <summary>İmlecin dinlenme rengi (ton kanalı): saat imleci bıraktığında (pencere aktif değil, görünmez, hareket
+    /// kapalı) imleç bu anahtarın rengine döner. Saat bunu bırakma ANINDA okur — ton, bağlıyken de değişir.</summary>
+    private string CursorRestKey() => _cursorToneKey ?? WaitingToneKey;
+
+    /// <summary><see cref="CursorRestKey"/>'in delegesi: <c>Attach</c> her olayda çağrılır ve örnek yöntemin method group
+    /// dönüşümü her seferinde yeni bir delege tahsis ederdi — bir kez kurulur.</summary>
+    private Func<string>? _cursorRestKeyProvider;
+
+    private void StopCursorBlink() =>
+        CursorClock.Detach(PART_ActiveCursor, CursorRestKey()); // saat sökülür, ton kanalı devralır
 
     // ---------------------------------------------------------------- alta-yapışma
     /// <summary>[E4/T48] Stream'in bottom-anchor'ının merkezi arbiter'a bölgesel suppress bildirimi + pill görünürlüğü

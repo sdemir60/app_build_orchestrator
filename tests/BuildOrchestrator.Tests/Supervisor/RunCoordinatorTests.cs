@@ -30,7 +30,15 @@ public class RunCoordinatorTests
     // (kopya YASAK, CLAUDE.md). Yalnız bu dosyaya özgü olanlar (RecordingGovernor, PumpGateStream, stale-obj
     // yardımcıları) private kalır.
     internal static readonly TimeSpan Limit = TimeSpan.FromSeconds(30); // hang'i sonsuz bekleme değil, test hatası yapar
-    private const string FakeMsBuildExe = @"C:\fake\Bin\MSBuild.exe";
+    internal const string FakeMsBuildExe = @"C:\fake\Bin\MSBuild.exe";
+
+    /// <summary>[R3 final] Bir projenin logunun İLK satırının beklenen değeri: GERÇEK MSBuild komut satırı — <see cref="FakeMsBuildExe"/>
+    /// ile, invoker'ın koşturduğu build listesinden (<see cref="MsBuildArguments.Build"/>; configuration <c>Start</c>'ınki,
+    /// <c>Debug</c>). Log-ilk-satırı pinlerinin ORTAK beklentisi (kalıp kopyalanmaz); <paramref name="customBeforeTargets"/>
+    /// yalnız yol taşıyan toolset içindir.</summary>
+    internal static string ExpectedBuildCommandLine(string projectId, string? customBeforeTargets = null) =>
+        WindowsCommandLine.Build(FakeMsBuildExe,
+            [.. MsBuildArguments.Build(projectId, "Debug", customBeforeTargets: customBeforeTargets)]);
 
     // [T20-b/P3] Gerçek MSBuild'in post-build copy çakışma satırı (MSB3021) — RetryingMsBuildInvoker'ın retry
     // kapısı ve copy-floor penceresinin TEK tetikleyicisi budur (copy'nin "başlıyor" sinyali YOKTUR).
@@ -70,14 +78,18 @@ public class RunCoordinatorTests
 
     internal static Dictionary<string, IReadOnlyList<SolutionRef>> EmptyRefs() => new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Koordinatörün gördüğü komut. Döngüleri derleyen tek mod <see cref="RunMode.Cycles"/>'tır —
-    /// SCC turlarını sınayan testler onu AÇIKÇA geçer, geri kalanlar varsayılan <see cref="RunMode.Rebuild"/>
-    /// ile bugünkü davranışı sınar.</summary>
+    /// <summary>Koordinatörün gördüğü komut. Varsayılan <see cref="RunMode.Rebuild"/> önbelleği yok sayar ve — SCC
+    /// derleyen her mod gibi (<see cref="Core.Planning.CycleCompilation"/>) — plandaki döngü gruplarını turlarla
+    /// derler; döngüsüz planlarda davranış birebir aynıdır. Kapsamı (upstream'li dar koşuyu) sınayan testler
+    /// <see cref="RunMode.Cycles"/>'ı AÇIKÇA geçer. Döngü sınayan fixture <see cref="CyclePlanOf"/> kullanır:
+    /// <see cref="PlanOf"/> döngü listesini boş kurar ve grup haritası hiç oluşmaz.</summary>
     internal static StartRunCommand Start(RunMode mode = RunMode.Rebuild, int parallelism = 1, string runId = "r1") =>
         new(runId, mode, PlanRoot, "Debug", parallelism);
 
     internal static MsBuildInvokeResult Ok() => new(ExitCode: 0, DurationMs: 7, TimedOut: false, Killed: false);
     internal static MsBuildInvokeResult Exit(int code) => new(code, DurationMs: 9, TimedOut: false, Killed: false);
+    /// <summary>Her derlemesi başarılı biten fake — koordinatör testlerinin ORTAK yardımcısı (kopya YASAK).</summary>
+    internal static FakeInvoker AllSucceed() => new((_, _, _) => Task.FromResult(Ok()));
     internal static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     internal static string Describe(IpcEvent e) => e switch
@@ -185,12 +197,15 @@ public class RunCoordinatorTests
         public Harness(RunPlan plan, FakeInvoker invoker, Func<StartRunCommand, Action<string>, RunPlan>? planner = null,
             BuildStateStore? stateStore = null,
             ICpuGovernor? cpuGovernor = null, MemoryStream? output = null, InFlightLedger? inFlight = null,
-            Func<string, string?>? apiSurface = null)
+            Func<string, string?>? apiSurface = null,
+            string? customBeforeTargetsPath = null,
+            bool productionMachine = false)
         {
             _out = output ?? new MemoryStream(); // [Fix round 2] testler pump'ı duraklatan bir stdout verebilir
             Sut = new RunCoordinator(
                 planner: planner ?? ((_, _) => plan),
-                msbuildFactory: _ => Task.FromResult(new MsBuildToolset(invoker, FakeMsBuildExe)),
+                // [WPF geçici assembly] null ⇒ yol taşımayan sahte takım: komut satırı bugünküyle birebir aynıdır.
+                msbuildFactory: _ => Task.FromResult(new MsBuildToolset(invoker, FakeMsBuildExe, customBeforeTargetsPath)),
                 logFactory: startedAt =>
                 {
                     var w = new RunLogWriter(LogsRoot, startedAt);
@@ -209,8 +224,19 @@ public class RunCoordinatorTests
                 inFlight: inFlight,
                 // [API kısa devresi] null ⇒ üretimdeki ApiSurfaceHash.OfFile — sahte planların yolları diskte
                 // olmadığından her dosya "absent" okunur; hash-mode testleri kendi sahte diskini enjekte eder.
-                apiSurface: apiSurface);
+                apiSurface: apiSurface,
+                // [PERF Faz D] Varsayılan makine BOLDUR: eski testler (paralellik tavanı, boşta bekleyen işçiler…) koşunun
+                // yapıldığı makinenin o anki boş belleğine/işlemcisine bağlı bir kırpmaya uğramasın. Kırpma testleri
+                // Machine'i kendisi verir. productionMachine: true ⇒ seam HİÇ verilmez (null): motor üretimdeki
+                // varsayılanı, yani gerçek makineyi okur.
+                machine: productionMachine ? null : () => Machine);
         }
+
+        /// <summary>Bol işlemci ve bellek: işçi bütçesi hiçbir istek için devreye girmez.</summary>
+        public static readonly (int Cores, long FreeBytes) AmpleMachine = (Cores: 64, FreeBytes: 256L * 1024 * 1024 * 1024);
+
+        /// <summary>Koşunun başında motorun okuduğu makine görüntüsü; testler koşuyu başlatmadan ÖNCE değiştirebilir.</summary>
+        public (int Cores, long FreeBytes) Machine { get; set; } = AmpleMachine;
 
         /// <summary>Sahte monotonik saat — testler zamanı elle ilerletir (Thread.Sleep YOK [D8]).</summary>
         public void SetNow(long ms) => Volatile.Write(ref _now, ms);
@@ -239,6 +265,90 @@ public class RunCoordinatorTests
     }
 
     // ---------------------------------------------------------------- 1) paralellik tavanı
+
+    /// <summary>
+    /// [PERF Faz D / karar 10] Profilin işçi sayısı İSTENEN sayıdır; motor onu koşu başında makineye göre kırpar ve
+    /// <c>runStarted</c> FİİLİ sayıyı taşır (App'in akış satırı ve ETA'sı onu okur). Burada makinenin tek mantıksal
+    /// işlemcisi var (bellek bol): istenen dört işçi çekirdek kuralıyla ikiye iner; kırpmanın gerekçesi <c>runStarted</c>'la
+    /// App'e gider (kullanıcının satırını App yazar) ve satır decision.log'a yazılır — Supervisor'ın stderr'ine değil.
+    /// <para><b>Plan hipotezi ve değişme gerekçesi:</b> planın varsayılan hipotezi "işlemci ≤ 2 ise 1 işçi, değilse işlemci − 1"
+    /// idi; bu testin değerleri iki işlemcide tek işçi beklerdi. D1 ölçümü (gerçek OSYS Rebuild, yakınlık maskesiyle 2 ve
+    /// 4 mantıksal işlemci, 1-4 işçi) hipotezi çürüttü: iki işlemcide tek işçi iki işçinin neredeyse iki katı sürdü,
+    /// dört işlemcide dört işçi üçten hızlıydı; küçük makinede üçüncü ve dördüncü işçi hâlâ küçük ama tutarlı kazanç
+    /// verdi, daha fazlası ölçülmedi. Kural bu yüzden "işçi, mantıksal işlemcinin <c>WorkerBudget.WorkersPerCore</c>
+    /// katını aşarsa kırpılır"dır; beklenen değerler buna göre yeniden hesaplandı (eşik gevşetilmedi, ölçüme uydu).</para>
+    /// </summary>
+    [Fact]
+    public async Task requested_workers_are_clamped_to_the_machine_and_runStarted_reports_the_actual_count()
+    {
+        var plan = PlanOf(Node("A"), Node("B"), Node("C"), Node("D"), Node("E"), Node("F"));
+        var pairInFlight = Signal();
+        int arrived = 0;
+        var invoker = new FakeInvoker(async (_, _, _) =>
+        {
+            // İlk İKİ invoke birbirini bekler: iki işçinin gerçekten eşzamanlı çalıştığı deterministik kanıtlanır [D8].
+            if (Interlocked.Increment(ref arrived) >= 2) pairInFlight.TrySetResult();
+            await pairInFlight.Task;
+            return Ok();
+        });
+        using var h = new Harness(plan, invoker) { Machine = (Cores: 1, FreeBytes: Harness.AmpleMachine.FreeBytes) };
+
+        await h.Sut.StartAsync(Start(parallelism: 4), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var started = Assert.Single(h.Events.OfType<RunStartedEvent>());
+        Assert.Equal(2, started.Parallelism);                       // komut dört istedi, motor ikiye kırptı
+        Assert.Equal(2, invoker.MaxConcurrent);                     // iki işçi gerçekten koştu, tavan aşılmadı
+        // [DEĞİŞEN KURAL — işçi kırpma notu görünür] Eski iddia satırı Supervisor'ın konsol geri çağrısında arıyordu
+        // ("kullanıcının konsolunda"). O kanal Supervisor'ın stderr'idir ve App onu atar (EngineHost) — kullanıcı satırı
+        // hiç görmüyordu. Gerekçe artık runStarted'la App'e gider; kullanıcının konsol ve event stream satırını App yazar
+        // (RunViewModelStateTests). Burada: olay gerekçeyi taşır, decision.log'da TAM satır tek kez, konsol geri
+        // çağrısında hiç (Resolve notuyla aynı sahiplik: stderr ileride yüzeye çıkarsa satır çiftlenmesin).
+        Assert.Equal("1 logical processor", started.WorkersReducedReason);
+        AssertNoteOnlyInDecisionLog(h, "workers reduced to 2 (1 logical processor)", "workers reduced");
+        Assert.Contains(h.ConsoleLines, l => l.Contains(", 2 workers,", StringComparison.Ordinal)); // başlık fiili sayıyı yazar
+        Assert.Contains("parallelism=2", h.DecisionLog);
+    }
+
+    /// <summary>[PERF Faz D / karar 10] Makine isteği taşıyorsa HİÇBİR şey değişmez: runStarted istenen sayıyı taşır ve
+    /// ne konsola ne decision.log'a kırpma satırı yazılır (kırpma gürültü olmamalı).</summary>
+    [Fact]
+    public async Task a_request_the_machine_can_carry_is_reported_unchanged_without_a_reduction_line()
+    {
+        var plan = PlanOf(Node("A"), Node("B"));
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        using var h = new Harness(plan, invoker);   // varsayılan makine: bol işlemci ve bellek
+
+        await h.Sut.StartAsync(Start(parallelism: 4), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var started = Assert.Single(h.Events.OfType<RunStartedEvent>());
+        Assert.Equal(4, started.Parallelism);
+        Assert.Null(started.WorkersReducedReason);                  // kırpma yok → App'e gidecek satır da yok
+        Assert.DoesNotContain(h.ConsoleLines, l => l.StartsWith("workers reduced", StringComparison.Ordinal));
+        Assert.DoesNotContain("workers reduced", h.DecisionLog);
+    }
+
+    /// <summary>
+    /// [PERF Faz D fix1 / M4] ÜRETİM varsayılanı bağlıdır: <c>machine</c> seam'i verilmediğinde motor makineyi KENDİSİ okur
+    /// (<c>MachineResources.Snapshot</c>) ve işçi sayısını ona göre kırpar. Harness'in varsayılan "bol makinesi" bu yolu
+    /// gizler — varsayılan sabit bir değere ya da bol makineye çevrilse hiçbir test fark etmezdi. Burada seam verilmez ve
+    /// absürt bir istek (bin işçi) yapılır: bellek ne olursa olsun çekirdek kuralı sonucu mantıksal işlemcinin
+    /// <c>WorkersPerCore</c> katına bağlar (ve hiçbir koşulda 1'in altına inmez).
+    /// </summary>
+    [Fact]
+    public async Task without_a_machine_seam_the_engine_reads_the_real_machine_and_clamps()
+    {
+        var plan = PlanOf(Node("A"));
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        using var h = new Harness(plan, invoker, productionMachine: true);
+
+        await h.Sut.StartAsync(Start(parallelism: 1000), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var started = Assert.Single(h.Events.OfType<RunStartedEvent>());
+        Assert.InRange(started.Parallelism, 1, WorkerBudget.WorkersPerCore * Environment.ProcessorCount);
+    }
 
     [Fact]
     public async Task parallelism_ceiling_is_respected_and_workers_really_run_concurrently()
@@ -931,6 +1041,58 @@ public class RunCoordinatorTests
 
     // ---------------------------------------------------------------- 7) stdout yalnız NDJSON + log ilk satırı
 
+    /// <summary>
+    /// [Faz 2 · WPF geçici assembly] Motor bağlantısının DAVRANIŞ pini: toolset'in taşıdığı targets yolu
+    /// (<see cref="MsBuildToolset.CustomBeforeTargetsPath"/>) koşuya, oradan HER derleme isteğine
+    /// (<see cref="MsBuildInvokeRequest.CustomBeforeTargets"/>) ve proje logunun İLK satırına — gerçek komut satırına —
+    /// aynen taşınır. Zincirin iki halkası var (toolset → koşu bağlamı, koşu bağlamı → istek) ve ikisi de ayrı ayrı
+    /// kopartılarak bu testin kırmızı verdiği gösterildi. Koparsa optimizasyon SESSİZCE kapanırdı: yol taşımayan her
+    /// çağrı zaten bugünkü komut satırını üretir ve başka hiçbir test yolun kaybolduğunu görmezdi.
+    ///
+    /// <para>Yol taşımayan sahte takımın karşılığı hemen aşağıdaki log-ilk-satırı testidir
+    /// (<see cref="hostile_build_output_stays_ndjson_and_project_log_starts_with_the_real_msbuild_command_line"/>):
+    /// yol yoksa komut satırı eskisiyle birebir aynıdır.</para>
+    /// </summary>
+    [Fact]
+    public async Task the_toolset_targets_path_reaches_every_request_and_the_first_log_line()
+    {
+        const string targetsPath = @"C:\state\msbuild\wpf-temporary-assembly.targets";
+        var plan = PlanOf(Node("A"), Node("B"));
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        using var h = new Harness(plan, invoker, customBeforeTargetsPath: targetsPath);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        // (ii) her derleme isteği yolu taşır
+        Assert.Equal(2, invoker.Requests.Count());
+        Assert.All(invoker.Requests, r => Assert.Equal(targetsPath, r.CustomBeforeTargets));
+
+        // (i) her projenin logunun ilk satırı, yolu taşıyan gerçek komut satırıdır
+        foreach (string name in new[] { "A", "B" })
+            Assert.Equal(ExpectedBuildCommandLine(Id(name), targetsPath),
+                File.ReadAllLines(h.LogWriters[0].ProjectLogPath(Id(name)))[0]);
+    }
+
+    /// <summary>
+    /// [R3c3 · M2] Tekil proje yolunda invoker bir <see cref="AggregateException"/> fırlatırsa (ör. Parallel.ForEach sarmalı)
+    /// başarısızlık gerekçesi sarmalın "One or more errors occurred" metni değil, ilk iç istisnanın mesajıdır — SCC grubu
+    /// ile AYNI sahip (<c>RunCoordinator.InvokeErrorReason</c>) yazar. Eski metin: <c>invoke error: One or more errors
+    /// occurred. (boom)</c>; tekil yolun gerekçesini pinleyen test yoktu.
+    /// </summary>
+    [Fact]
+    public async Task a_single_project_invoker_exception_inside_an_aggregate_fails_with_the_inner_message()
+    {
+        var plan = PlanOf(Node("A"));
+        var invoker = new FakeInvoker((_, _, _) => throw new AggregateException(new InvalidOperationException("boom")));
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal("invoke error: boom", Assert.Single(h.Events.OfType<ProjectFailedEvent>()).Reason);
+    }
+
     [Fact]
     public async Task hostile_build_output_stays_ndjson_and_project_log_starts_with_the_real_msbuild_command_line()
     {
@@ -952,8 +1114,7 @@ public class RunCoordinatorTests
         var logs = events.OfType<ProjectLogEvent>().ToList();
         Assert.Equal([1, 2, 3, 4], logs.Select(l => l.LineNumber)); // komut satırı + 3 çıktı satırı, ardışık
 
-        string expectedCommandLine = WindowsCommandLine.Build(FakeMsBuildExe,
-            [.. MsBuildArguments.Build(Id("A"), "Debug")]);
+        string expectedCommandLine = ExpectedBuildCommandLine(Id("A"));
         Assert.Equal(expectedCommandLine, logs[0].Text);
 
         string[] diskLines = File.ReadAllLines(h.LogWriters[0].ProjectLogPath(Id("A")));
@@ -962,12 +1123,22 @@ public class RunCoordinatorTests
         Assert.Equal(logs.Select(l => l.Text), diskLines);     // canlı akış ile disk logu birebir aynı (T28 dikişi)
     }
 
-    // ---------------------------------------------------------------- 8) cycle pre-skip
+    // ---------------------------------------------------------------- 8) taze koşu, döngü dahil her şeyi kendisi yapar
 
+    /// <summary>
+    /// Her koşu TAZEDİR: durdurulan bir koşudan sonra gelen koşu "kaldığı yerden" sürmez, kendi planını baştan yürütür.
+    /// <para><b>[DEĞİŞEN KURAL — Build cycle derler]</b> Eski ad/iddia: <c>cycle_members_are_pre_skipped_again_by_every_fresh_run</c>
+    /// — X↔Y her taze koşuda yeniden <c>in dependency cycle</c> ile pre-skip edilir, "cycle üyeleri asla dispatch
+    /// edilmez". Fixture döngü listesini boş kuran <see cref="PlanOf"/> idi; grup haritası hiç kurulmadığı için test
+    /// yeni kuralda da mekanik olarak yeşil kalır ve eski kuralı pinlerdi. Değişme gerekçesi (ölçüm, 2026-10-07 13:17
+    /// koşusu, ARCHITECTURE §8.1): Rebuild (bu dosyanın varsayılan modu) döngü gruplarını da turlarla derler; plan artık
+    /// <see cref="CyclePlanOf"/> ile kurulur ve iki koşuda da grup yeniden derlenir, hiçbir şey atlanmaz.</para>
+    /// </summary>
     [Fact]
-    public async Task cycle_members_are_pre_skipped_again_by_every_fresh_run()
+    public async Task cycle_members_are_compiled_again_by_every_fresh_rebuild()
     {
-        var plan = PlanOf(Node("X", deps: ["Y"], inCycle: true), Node("Y", deps: ["X"], inCycle: true), Node("A"), Node("B"));
+        var plan = CyclePlanOf(["X", "Y"],
+            Node("X", deps: ["Y"], inCycle: true), Node("Y", deps: ["X"], inCycle: true), Node("A"), Node("B"));
         var inFlight = Signal();
         var release = Signal();
         var invoker = new FakeInvoker(async (req, _, _) =>
@@ -986,21 +1157,23 @@ public class RunCoordinatorTests
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         var firstRun = h.Events;
-        Assert.Equal(["projectSkipped:X", "projectSkipped:Y"],
-            firstRun.OfType<ProjectSkippedEvent>().Select(Describe));
-        Assert.Equal(["A"], invoker.Requests.Select(r => NameOf(r.ProjectId))); // cycle üyeleri asla dispatch edilmez
+        Assert.Empty(firstRun.OfType<ProjectSkippedEvent>());
+        // Kanıtsız grup iki yeşil turla yakınsar, sonra A kapıda bekler; Stop B'yi kuyrukta bırakır.
+        Assert.Equal(["X", "Y", "X", "Y", "A"], invoker.Requests.Select(r => NameOf(r.ProjectId)));
 
         await h.Sut.StartAsync(Start(), default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         // [DEĞİŞEN KURAL — design v1.7.0 §3.1] Eski iddia: "resume edilmiş scheduler'ın PreSkipped'i boştur,
         // X/Y için TEKRAR projectSkipped yazılmaz". Sürdürme segmenti diye bir şey kalmadı: ikinci koşu TAZEDİR
-        // ve döngü üyelerini kendi planında yeniden pre-skip eder — her koşu ne atladığını kendi başına söyler.
+        // ve planını baştan yürütür — grup yeniden derlenir, A ve B de.
         var second = h.Events.Skip(firstRun.Count).ToList();
-        Assert.Equal(["projectSkipped:X", "projectSkipped:Y"], second.OfType<ProjectSkippedEvent>().Select(Describe));
+        Assert.Empty(second.OfType<ProjectSkippedEvent>());
+        Assert.Equal(["X", "Y", "X", "Y", "A", "X", "Y", "X", "Y", "A", "B"],
+            invoker.Requests.Select(r => NameOf(r.ProjectId)));
         var done = Assert.IsType<RunCompletedEvent>(second[^1]);
-        Assert.Equal(2, done.Skipped);   // X, Y
-        Assert.Equal(2, done.Succeeded); // A, B
+        Assert.Equal(0, done.Skipped);
+        Assert.Equal(4, done.Succeeded); // X, Y, A, B
         Assert.Equal(0, done.Queued);
     }
 
@@ -1032,9 +1205,9 @@ public class RunCoordinatorTests
         var ipcReader = new NdjsonReader(p.StandardOutput.BaseStream);
         Assert.IsType<EngineReadyEvent>(await ipcReader.ReadAsync<IpcEvent>().WaitAsync(Limit));
 
-        // [cycles] Testin konusu turların GERÇEK process üzerinden kablajıdır, dolayısıyla mod AÇIKÇA
-        // Cycles'tır — X↔Y grubunu derleyen tek mod odur, Rebuild ile gönderilseydi grup pre-skip edilir ve
-        // aşağıdaki tur iddiaları düşerdi.
+        // [cycles] Testin konusu turların GERÇEK process üzerinden kablajıdır; mod AÇIKÇA Cycles'tır (Build ve
+        // Rebuild de grubu turlarla derler — CycleCompilation; Rebuild'in gerçek motor kablajını
+        // RunViewModelTests.Rebuild_wires_through_the_real_engine_and_populates_rows pinler).
         await ipcWriter.WriteAsync(new StartRunCommand("r1", RunMode.Cycles, root, "Debug", 2));
         var received = new List<IpcEvent>();
         while (true)
@@ -1124,6 +1297,154 @@ public class RunCoordinatorTests
         Assert.Equal(Path.Combine(root, "B"), b.SolutionDir);         // sln yok → projenin kendi dizini
     }
 
+    // ---------------------------------------------------------------- [PERF Faz E3] koşullu restore
+
+    /// <summary>[PERF Faz E3] İki koşunun A tarafı: ilk koşunun ilk A isteği, ikinci koşunun ilk A isteği (Cycles'ta
+    /// tur 1 — restore kararının verildiği istek), ikinci koşunun decision.log'u, ilk koşudan sonraki defter kaydı ve
+    /// A'nın packages.config yolu.</summary>
+    private sealed record RestoreScenario(MsBuildInvokeRequest First, MsBuildInvokeRequest Second, string DecisionLog,
+        BuildState? Recorded, string PackagesConfig);
+
+    /// <summary>[PERF Faz E3] Paketleri kurulu bir packages.config projesi (A; çözüm dizini sln'in dizini, iki paket
+    /// <see cref="RestoreEvidenceTests.InstallPackage"/> ile kurulu) test başına geçici kökte, AYNI harness'ta iki kez
+    /// koşar. Plan şekli <paramref name="cycle"/>'dan gelir: tekil proje — ilk koşu Rebuild — ya da A↔B iki üyeli SCC —
+    /// ilk koşu Cycles (grubu turlarla derleyen dar kapsamlı koşu). İlk koşu kanıtsızdır: restore koşar ve başarı özeti
+    /// deftere yazar; ikinci koşu <paramref name="second"/>. <paramref name="duringFirstRun"/> ilk koşunun her A
+    /// invoke'unda packages.config yoluyla çağrılır. <paramref name="assert"/> geçici dizinler silinmeden çağrılır.
+    /// Paylaşılan PlanRoot KULLANILMAZ (oraya yazılan packages.config paralel testlere sızardı); kurulum tek yerde.</summary>
+    private static async Task RunTwiceWithPackagesInPlace(RunMode second, Action<RestoreScenario> assert,
+        bool cycle = false, Action<string>? duringFirstRun = null)
+    {
+        string root = Directory.CreateTempSubdirectory("bo-coord-restore-").FullName;
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            string aId = Path.Combine(root, "A", "A.csproj");
+            string bId = Path.Combine(root, "B", "B.csproj");
+            string packagesConfig = Path.Combine(root, "A", "packages.config");
+            Directory.CreateDirectory(Path.Combine(root, "A"));
+            await File.WriteAllTextAsync(packagesConfig,
+                """<packages><package id="Dapper" version="2.1.35" /><package id="Serilog" version="3.1.1" /></packages>""");
+            RestoreEvidenceTests.InstallPackage(root, "Dapper.2.1.35");
+            RestoreEvidenceTests.InstallPackage(root, "Serilog.3.1.1");
+
+            IReadOnlyList<IReadOnlyList<string>> cycles = [];
+            ProjectNode[] nodes = [new ProjectNode(aId, "A", aId, [], [], 0, null, null, false, true)];
+            if (cycle)
+            {
+                cycles = [[aId, bId]];
+                nodes =
+                [
+                    new ProjectNode(aId, "A", aId, [], [bId], 0, null, null, true, true),
+                    new ProjectNode(bId, "B", bId, [], [aId], 1, null, null, true, true),
+                ];
+            }
+            var refs = EmptyRefs();
+            refs[aId] = [new SolutionRef("Osys", Path.Combine(root, "Osys.sln"))];
+            var signatures = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [aId] = "sig", [bId] = "sig" };
+            var plan = new RunPlan(new BuildPlan(nodes, cycles, Configuration: "Debug"), refs,
+                new IncrementalPlan(signatures, "headsha", "main"));
+            bool firstRun = true;
+            var invoker = new FakeInvoker((request, _, _) =>
+            {
+                if (firstRun && request.ProjectId == aId) duringFirstRun?.Invoke(packagesConfig);
+                return Task.FromResult(Ok());
+            });
+            var store = new BuildStateStore(cacheRoot);
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            RunMode first = cycle ? RunMode.Cycles : RunMode.Rebuild;
+            await h.Sut.StartAsync(new StartRunCommand("r1", first, root, "Debug", 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+            firstRun = false;
+            BuildState? recorded = store.Load().GetValueOrDefault(aId);
+            int firstRunCount = invoker.Requests.Count(r => r.ProjectId == aId);
+            await h.Sut.StartAsync(new StartRunCommand("r2", second, root, "Debug", 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var requests = invoker.Requests.Where(r => r.ProjectId == aId).ToList();
+            // Döngüsüz plan: A her koşuda TAM bir kez (kesin pin). SCC'de istek sayısı tur politikasına bağlıdır — orada
+            // yalnız iki koşuda da çağrıldığı iddia edilir; karşılaştırılan, ikinci koşunun ilk isteğidir.
+            if (cycle) Assert.True(firstRunCount > 0 && requests.Count > firstRunCount, "A must be invoked in both runs");
+            else { Assert.Equal(1, firstRunCount); Assert.Equal(2, requests.Count); }
+            assert(new RestoreScenario(requests[0], requests[firstRunCount], h.DecisionLog, recorded, packagesConfig));
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { /* test temizliği */ }
+            if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true);
+        }
+    }
+
+    /// <summary>[PERF Faz E3] Paketleri değişmemiş projede Build restore'u atlar: ikinci (Build) koşunun A isteği
+    /// restore taşımaz — komut satırında restore prologu da yoktur (proje logunun ilk satırı ve invoker AYNI
+    /// <see cref="MsBuildArguments.PlanFor"/>'u okur) — ve decision.log nedeni Core'un metniyle yazar.</summary>
+    [Fact]
+    public Task A_build_run_skips_restore_when_packages_config_is_unchanged_and_its_packages_are_present() =>
+        RunTwiceWithPackagesInPlace(RunMode.Build, s =>
+        {
+            Assert.False(s.Second.NeedsRestore);
+            Assert.Null(MsBuildArguments.PlanFor(s.Second).Restore);
+            Assert.Contains(RestoreEvidence.SkippedLine("A", 2), s.DecisionLog);
+        });
+
+    /// <summary>[PERF Faz E3] Cycles da aynı kuralla atlar: A↔B SCC'sinde ikinci Cycles koşusunun tur 1 isteği restore
+    /// taşımaz ve decision.log nedeni yazar. İlk koşuda A'nın özeti tur 1'de (restore koştu) alınır; tur 2'de
+    /// suppressRestore alan üye yakınsamada o özeti deftere yazar.</summary>
+    [Fact]
+    public Task A_cycles_run_skips_restore_when_packages_config_is_unchanged_and_its_packages_are_present() =>
+        RunTwiceWithPackagesInPlace(RunMode.Cycles, s =>
+        {
+            Assert.True(s.First.NeedsRestore);
+            Assert.Equal(RestoreEvidence.HashOf(s.PackagesConfig), s.Recorded?.PackagesConfigHash);
+            Assert.False(s.Second.NeedsRestore);
+            Assert.Contains(RestoreEvidence.SkippedLine("A", 2), s.DecisionLog);
+        }, cycle: true);
+
+    /// <summary>[PERF Faz E3] Rebuild toparlanma yoludur: kanıt tatmin edilmiş olsa da restore KOŞAR ve "atlandı"
+    /// satırı yazılmaz. Bugünkü davranışın pini — yeni kural Rebuild'e sızmasın.</summary>
+    [Fact]
+    public Task A_rebuild_run_restores_even_when_the_packages_evidence_is_satisfied() =>
+        RunTwiceWithPackagesInPlace(RunMode.Rebuild, s =>
+        {
+            Assert.True(s.Second.NeedsRestore);
+            Assert.NotNull(MsBuildArguments.PlanFor(s.Second).Restore);
+            Assert.DoesNotContain(RestoreEvidence.SkippedLine("A", 2), s.DecisionLog);
+        });
+
+    /// <summary>[PERF Faz E3] Başarılı derleme, restore kararı anındaki packages.config özetini deftere yazar
+    /// (<see cref="BuildState.PackagesConfigHash"/>): ilk koşu kanıtsızdır ve restore koşar; yazılan özet bir sonraki
+    /// koşunun kanıtıdır.</summary>
+    [Fact]
+    public Task A_successful_build_records_the_packages_config_hash() =>
+        RunTwiceWithPackagesInPlace(RunMode.Build, s =>
+        {
+            Assert.True(s.First.NeedsRestore);
+            Assert.NotNull(s.Recorded?.PackagesConfigHash);
+            Assert.Equal(RestoreEvidence.HashOf(s.PackagesConfig), s.Recorded!.PackagesConfigHash);
+        });
+
+    /// <summary>[PERF Faz E3] Deftere giden özet restore KARARI anında okunan özettir: derleme sürerken packages.config
+    /// değişirse değişim ÖNCESİ özet yazılır (persist dosyayı yeniden okumaz) ve sonraki Build içerik farkını görüp
+    /// restore eder.</summary>
+    [Fact]
+    public async Task The_recorded_hash_is_the_one_read_at_the_restore_decision()
+    {
+        string? beforeChange = null;
+        await RunTwiceWithPackagesInPlace(RunMode.Build, s =>
+        {
+            Assert.NotNull(beforeChange);
+            Assert.Equal(beforeChange, s.Recorded?.PackagesConfigHash);
+            Assert.NotEqual(RestoreEvidence.HashOf(s.PackagesConfig), s.Recorded?.PackagesConfigHash);
+            Assert.True(s.Second.NeedsRestore);
+            Assert.DoesNotContain(RestoreEvidence.SkippedLine("A", 2), s.DecisionLog);
+        }, duringFirstRun: packagesConfig =>
+        {
+            beforeChange = RestoreEvidence.HashOf(packagesConfig);
+            File.AppendAllText(packagesConfig, " "); // derleme sürerken içerik değişir
+        });
+    }
+
     // ---------------------------------------------------------------- 12) depIssue propagation (T54)
 
     [Fact]
@@ -1186,16 +1507,21 @@ public class RunCoordinatorTests
         Assert.DoesNotContain(LogTextsFor(h, "C"), l => l.StartsWith("warning:", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// X "up to date" diye pre-skip edilir (Skipped tohum). Z, X'e bağımlı: X resolved sayılır (bloklamaz) ama SKIPPED
+    /// bir bağımlılık depIssue ÜRETMEZ (yalnız FAILED kökler taşınır — v7 A6).
+    /// <para><b>[DEĞİŞEN KURAL — Build cycle derler]</b> Eski fixture: X'i döngü üyesi yapıp (<see cref="PlanOf"/>, boş
+    /// döngü listesi) Rebuild'in <c>in dependency cycle</c> pre-skip'ine güveniyordu. Rebuild artık döngü gruplarını
+    /// derler (ARCHITECTURE §8.1); atlanan bağımlılık sıradan "up to date" tohumuyla kurulur. İddia aynı.</para>
+    /// </summary>
     [Fact]
     public async Task a_skipped_dependency_produces_no_dep_issue_for_its_dependent()
     {
-        // X cycle nedeniyle construction'da Skipped (pre-skip) sayılır. Y, X'e bağımlı: X resolved sayılır
-        // (bloklamaz) ama SKIPPED bir bağımlılık depIssue ÜRETMEZ (yalnız FAILED kökler taşınır — v7 A6).
-        var plan = PlanOf(Node("X", deps: ["Y"], inCycle: true), Node("Y", deps: ["X"], inCycle: true), Node("Z", deps: ["X"]));
+        var plan = PlanOf(Node("X", willBuild: false), Node("Z", deps: ["X"], willBuild: true));
         var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
         using var h = new Harness(plan, invoker);
 
-        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await h.Sut.StartAsync(Start(RunMode.Build, parallelism: 1), default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         var succeededZ = Assert.Single(h.Events.OfType<ProjectSucceededEvent>());
@@ -1230,8 +1556,28 @@ public class RunCoordinatorTests
         return proj;
     }
 
+    /// <summary>[koşu başı uyarıları görünür] <c>P</c> projesinin bayat-obj satırı <see cref="RunStartedEvent.Warnings"/>'te
+    /// TEK kez gider (kullanıcının konsol + akış satırını App yazar), decision.log'da TAM satır tek kez kalır, Supervisor'ın
+    /// konsol geri çağrısında (stderr — App atar) hiç yoktur. Satırı döner.</summary>
+    private static string AssertSingleStaleObjWarning(Harness h)
+    {
+        string warning = Assert.Single(Assert.Single(h.Events.OfType<RunStartedEvent>()).Warnings ?? []);
+        Assert.StartsWith("warning: P: ", warning, StringComparison.Ordinal);
+        Assert.Contains(StaleMarker, warning, StringComparison.Ordinal);
+        AssertNoteOnlyInDecisionLog(h, warning, StaleMarker);
+        return warning;
+    }
+
+    /// <summary>
+    /// Taze (Rebuild) koşu bayat obj'i TEK kez bildirir ve obj'e dokunmaz.
+    /// <para><b>[DEĞİŞEN KURAL — koşu başı uyarıları görünür]</b> Eski iddia
+    /// (<c>fresh_in_place_run_warns_once_on_stale_obj_via_console_and_decision_log_and_never_touches_the_obj</c>) satırı
+    /// Supervisor'ın konsol geri çağrısında tek kez ve decision.log'da arıyordu. O konsol Supervisor'ın stderr'idir ve App onu
+    /// atar (EngineHost): kullanıcı uyarıyı hiç görmüyordu. Satır artık runStarted'la App'e gider; decision.log kopyası
+    /// kalır, stderr kopyası yoktur. "obj'e dokunulmaz" iddiası değişmedi.</para>
+    /// </summary>
     [Fact]
-    public async Task fresh_in_place_run_warns_once_on_stale_obj_via_console_and_decision_log_and_never_touches_the_obj()
+    public async Task fresh_in_place_run_carries_the_stale_obj_warning_once_and_never_touches_the_obj()
     {
         string root = Path.Combine(Path.GetTempPath(), "bo-coord-staleobj-" + Guid.NewGuid().ToString("N"));
         try
@@ -1248,12 +1594,7 @@ public class RunCoordinatorTests
             await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, root, "Debug", 1), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
 
-            var warnLines = h.ConsoleLines.Where(l => l.Contains(StaleMarker, StringComparison.Ordinal)).ToList();
-            var warn = Assert.Single(warnLines);
-            Assert.Contains("P", warn);
-
-            Assert.Contains(StaleMarker, h.DecisionLog); // aynı satır decision.log'a da yazılır (onRetry ile aynı ikili-yazım deseni)
-
+            AssertSingleStaleObjWarning(h);
             Assert.Equal(before, File.ReadAllBytes(assets)); // [§4] dokunulmadı — byte-tam aynı
         }
         finally { Directory.Delete(root, recursive: true); }
@@ -1287,7 +1628,11 @@ public class RunCoordinatorTests
             await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, root, "Debug", 1), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
 
-            Assert.DoesNotContain(h.ConsoleLines, l => l.Contains(StaleMarker, StringComparison.Ordinal));
+            // [DEĞİŞEN KURAL — koşu başı uyarıları görünür] Eski iddia yalnız konsol geri çağrısında uyarı OLMADIĞINA
+            // bakıyordu; uyarı artık oraya hiç yazılmadığı için o iddia boş kalırdı. Uyarının gittiği yerler sınanır:
+            // runStarted uyarı taşımaz, decision.log'da da yoktur.
+            Assert.Null(Assert.Single(h.Events.OfType<RunStartedEvent>()).Warnings);
+            Assert.DoesNotContain(StaleMarker, h.DecisionLog, StringComparison.Ordinal);
         }
         finally { Directory.Delete(root, recursive: true); }
     }
@@ -1317,7 +1662,13 @@ public class RunCoordinatorTests
             await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Build, root, "Debug", 1), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
 
-            Assert.Single(h.ConsoleLines, l => l.Contains(StaleMarker, StringComparison.Ordinal));
+            // [DEĞİŞEN KURAL — koşu başı uyarıları görünür] Eski iddia satırı Supervisor'ın konsol geri çağrısında TEK kez
+            // arıyordu. O kanal Supervisor'ın stderr'idir ve App onu atar (EngineHost) — kullanıcı uyarıyı hiç görmüyordu.
+            // Satır artık runStarted'la (Warnings) App'e gider; kullanıcının konsol ve event stream satırını App yazar
+            // (RunViewModelStateTests). Burada: olay satırı TEK kez taşır, decision.log'da TAM satır tek kez, konsol geri
+            // çağrısında hiç (işçi kırpma ve Resolve notlarıyla aynı sahiplik: stderr ileride yüzeye çıkarsa satır
+            // çiftlenmesin).
+            AssertSingleStaleObjWarning(h);
         }
         finally { Directory.Delete(root, recursive: true); }
     }
@@ -1352,8 +1703,9 @@ public class RunCoordinatorTests
             releaseQ.SetResult();
             await h.Sut.RunCompletion.WaitAsync(Limit);
 
-            int warnsAfterRun1 = h.ConsoleLines.Count(l => l.Contains(StaleMarker, StringComparison.Ordinal));
-            Assert.Equal(1, warnsAfterRun1); // 1. koşu TEK BİR KEZ warn eder
+            // [DEĞİŞEN KURAL — koşu başı uyarıları görünür] Sayım artık koşuların runStarted olaylarında yapılır (gerekçe:
+            // A_run_warns_about_a_stale_default_obj); eski sayım konsol geri çağrısındaydı — App'in attığı stderr.
+            Assert.Equal(1, StaleWarningsOnRunStarted(h)); // 1. koşu TEK BİR KEZ warn eder
 
             await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, root, "Debug", 1), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
@@ -1362,24 +1714,42 @@ public class RunCoordinatorTests
             // teşhis/warn YOK". Sürdürme segmenti kalmadı: her koşu tazedir, obj'yi yeniden teşhis eder ve
             // bayatlık HÂLÂ duruyorsa yeniden uyarır — susmak, kullanıcının ikinci koşuda sorunu görmemesi
             // demek olurdu.
-            int warnsAfterRun2 = h.ConsoleLines.Count(l => l.Contains(StaleMarker, StringComparison.Ordinal));
-            Assert.Equal(2, warnsAfterRun2);
+            Assert.Equal(2, StaleWarningsOnRunStarted(h)); // ikinci koşunun runStarted'ı da satırı taşır
+            Assert.DoesNotContain(h.ConsoleLines, l => l.Contains(StaleMarker, StringComparison.Ordinal));
         }
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    /// <summary>[koşu başı uyarıları görünür] Harness'in yazdığı TÜM <c>runStarted</c> olaylarında taşınan bayat obj
+    /// satırlarının sayısı (her koşu satırı kendi olayında taşır).</summary>
+    private static int StaleWarningsOnRunStarted(Harness h) => h.Events.OfType<RunStartedEvent>()
+        .Sum(e => e.Warnings?.Count(w => w.Contains(StaleMarker, StringComparison.Ordinal)) ?? 0);
+
     // ---------------------------------------------------------------- 14) katman uyarıları (A1/T15)
 
-    // Ters-katman uyarısı warn-only DATA'dır: koordinatör onu OKUYUP bloklama/yeniden sıralama YAPMAZ, yalnız
-    // run başında konsola basar — tasarımın tek gerçek düzeltmesi kullanıcının pattern'leri gözden geçirmesidir.
-    [Fact]
-    public async Task layer_warnings_carried_by_the_plan_are_printed_to_the_console_at_run_start()
+    // Ters-katman uyarısı warn-only DATA'dır: koordinatör onu OKUYUP bloklama/yeniden sıralama YAPMAZ, yalnız run
+    // başında bildirir — tasarımın tek gerçek düzeltmesi kullanıcının pattern'leri gözden geçirmesidir.
+    private const string ReverseLayerWarning =
+        "reverse layer dependency: 'OSYS.Data' (layer 0 'DataLayer') depends on producer 'B.csproj' (layer 1 'UiLayer')";
+
+    /// <summary>
+    /// [DEĞİŞEN KURAL — koşu başı uyarıları görünür] Planın taşıdığı ters katman uyarısı <c>runStarted</c>'la
+    /// (<c>Warnings</c>) App'e gider — LayerEngine'ın metni AYNEN, <c>warning: </c> önekli; decision.log'da TAM satır tek
+    /// kez, Supervisor'ın konsol geri çağrısında hiç. Uyarısız koşuda alan <c>null</c>'dır (telde yok).
+    /// <para><b>Eski iddia:</b> satır run başında konsol geri çağrısına basılırdı
+    /// (<c>layer_warnings_carried_by_the_plan_are_printed_to_the_console_at_run_start</c>) ve decision.log'da yoktu. O
+    /// kanal Supervisor'ın stderr'idir ve App onu atar (EngineHost) — kullanıcı uyarıyı hiç görmüyordu. Kullanıcının konsol
+    /// ve event stream satırını artık App yazar (RunViewModelStateTests); decision.log satırı tanı izi kalsın diye
+    /// yazılır.</para>
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task layer_warnings_carried_by_the_plan_ride_runStarted_and_the_decision_log_not_the_console(bool warned)
     {
-        const string Warning =
-            "reverse layer dependency: 'OSYS.Data' (layer 0 'DataLayer') depends on producer 'B.csproj' (layer 1 'UiLayer')";
         var plan = new RunPlan(
             new BuildPlan([Node("A") with { BuildOrder = 0 }], Cycles: [], Configuration: "Debug",
-                LayerWarnings: [Warning]),
+                LayerWarnings: warned ? [ReverseLayerWarning] : []),
             EmptyRefs());
         var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
         using var h = new Harness(plan, invoker);
@@ -1387,7 +1757,41 @@ public class RunCoordinatorTests
         await h.Sut.StartAsync(Start(), default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
-        Assert.Contains(h.ConsoleLines, l => l == "warning: " + Warning);
+        var started = Assert.Single(h.Events.OfType<RunStartedEvent>());
+        if (!warned)
+        {
+            Assert.Null(started.Warnings); // uyarı yok → alan telde yok
+            return;
+        }
+        Assert.Equal(new[] { "warning: " + ReverseLayerWarning }, started.Warnings);
+        AssertNoteOnlyInDecisionLog(h, "warning: " + ReverseLayerWarning, "reverse layer");
+    }
+
+    /// <summary>[koşu başı uyarıları görünür] İki uyarı ailesi <c>runStarted</c>'da TEK listede gider; sıra: önce bayat
+    /// obj satırları, sonra ters katman satırları (App konsola ve akışa bu sırayla yazar).</summary>
+    [Fact]
+    public async Task run_start_warnings_list_stale_obj_lines_before_reverse_layer_lines()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "bo-coord-staleobj-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string proj = WriteStaleObjProject(Path.Combine(root, "P"), "P");
+            var plan = new RunPlan(
+                new BuildPlan([new ProjectNode(proj, "P", proj, [], [], 0, null, null, false, null)], Cycles: [],
+                    Configuration: "Debug", LayerWarnings: [ReverseLayerWarning]),
+                EmptyRefs());
+            using var h = new Harness(plan, new FakeInvoker((_, _, _) => Task.FromResult(Ok())));
+
+            await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Build, root, "Debug", 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var warnings = Assert.Single(h.Events.OfType<RunStartedEvent>()).Warnings;
+            Assert.NotNull(warnings);
+            Assert.Equal(2, warnings.Count);
+            Assert.Contains(StaleMarker, warnings[0], StringComparison.Ordinal);
+            Assert.Equal("warning: " + ReverseLayerWarning, warnings[1]);
+        }
+        finally { Directory.Delete(root, recursive: true); }
     }
 
     // ---------------------------------------------------------------- 15) depIssue-persist penceresi (A2)
@@ -2063,6 +2467,137 @@ public class RunCoordinatorTests
     /// <summary>Run sonu geri alma izi = Full profili (cap yok + Normal priority).</summary>
     private static string[] Released() => Applied(PerfMode.Full);
 
+    // ---------------------------------------------------------------- [RESOLVE Faz 4 / karar 11] Resolve tam öncelikte
+
+    /// <summary>[RESOLVE Faz 4] Resolve cycles'ın derleyeceği bir döngü taşıyan plan (Cycles modu döngü dışını
+    /// pre-skip eder) — bu bölümün ortak planı.</summary>
+    private static RunPlan ResolvePlan() =>
+        CyclePlanOf(["X", "Y"], Node("X", deps: ["Y"], inCycle: true), Node("Y", deps: ["X"], inCycle: true));
+
+    /// <summary>[RESOLVE Faz 4] Tam önceliğin governor izi: cap YOK + Normal priority (Full satırının izi). LİTERAL
+    /// anlamdır; dönüşümün kendisinden (<see cref="PerfProfile.ForRun"/>) türetilmez — türetilseydi test kendini
+    /// doğrulardı.</summary>
+    private static string[] FullPriority() => Applied(PerfMode.Full);
+
+    /// <summary>[RESOLVE Faz 4 / karar 11] Balanced'da Resolve cycles: cap yazılmaz, priority Normal; işçi sayısı
+    /// komuttan gelir, runStarted FİİLEN yazılan cap'i (yok) taşır ve run başında not satırı konsoldadır.</summary>
+    [Fact]
+    public async Task A_resolve_cycles_run_writes_no_cap_and_normal_priority_under_balanced()
+    {
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        var governor = new RecordingGovernor();
+        using var h = new Harness(ResolvePlan(), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 4) with { PerfMode = "Balanced" }, default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal([.. FullPriority(), .. Released()], governor.Calls);
+        var started = Assert.Single(h.Events.OfType<RunStartedEvent>());
+        Assert.Null(started.CpuCapPercent);
+        Assert.Equal(4, started.Parallelism);
+        Assert.Contains(h.ConsoleLines, l => l.Contains("cpu cap off", StringComparison.Ordinal)); // başlık satırı
+        // [DEĞİŞEN KURAL — fix 1A · M1] Eski iddia notu konsol geri çağrısında alt-dize olarak arıyordu. O kopya kullanıcıya
+        // hiç ulaşmıyordu (App Supervisor'ın stderr'ini atar) ve kalktı: kullanıcının satırını App yazar (runStarted —
+        // RunViewModelStateTests). Burada: decision.log'da TAM satır tek kez, konsol geri çağrısında hiç.
+        AssertNoteOnlyInDecisionLog(h, "parallelism: 4 · cpu cap off · priority normal (Resolve cycles)", "priority normal");
+    }
+
+    /// <summary>[RESOLVE Faz 4 · fix 1A — M1] Makine bütçeyi kırptığında not profilin isteğini değil motorun FİİLEN
+    /// koşturduğu işçi sayısını söyler (komut dört istedi, tek çekirdek ikiye kırptı).</summary>
+    [Fact]
+    public async Task A_resolve_cycles_note_names_the_clamped_worker_count()
+    {
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        using var h = new Harness(ResolvePlan(), invoker) { Machine = (Cores: 1, FreeBytes: Harness.AmpleMachine.FreeBytes) };
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 4) with { PerfMode = "Balanced" }, default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(2, Assert.Single(h.Events.OfType<RunStartedEvent>()).Parallelism);
+        AssertNoteOnlyInDecisionLog(h, "parallelism: 2 · cpu cap off · priority normal (Resolve cycles)", "priority normal");
+    }
+
+    /// <summary>[fix 1A — M1 · işçi kırpma notu] Not decision.log'da TAM satır olarak TEK kez (satır = <c>HH:mm:ss.fff</c>
+    /// damgası, boşluk, metin), Supervisor'ın konsol geri çağrısında (stderr) hiçbir satırda <paramref name="consoleMarker"/>
+    /// yok. Damga genişliği (13) YALNIZ burada yaşar: Resolve notu ve işçi kırpma notu testleri aynı kontrolü paylaşır.</summary>
+    private static void AssertNoteOnlyInDecisionLog(Harness h, string note, string consoleMarker)
+    {
+        Assert.Single(h.DecisionLog.Split('\n'), l => l.TrimEnd('\r') is { Length: > 13 } line && line[13..] == note);
+        Assert.DoesNotContain(h.ConsoleLines, l => l.Contains(consoleMarker, StringComparison.Ordinal));
+    }
+
+    /// <summary>[RESOLVE Faz 4] Anahtar kapalıyken Resolve bugünkü gibi profilin cap + priority'siyle koşar.</summary>
+    [Fact]
+    public async Task A_resolve_cycles_run_follows_the_profile_when_the_setting_is_off()
+    {
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        var governor = new RecordingGovernor();
+        using var h = new Harness(ResolvePlan(), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles) with { PerfMode = "Balanced", ResolveAtFullPriority = false }, default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal([.. Applied(PerfMode.Balanced), .. Released()], governor.Calls);
+        Assert.Equal(PerfProfile.For(PerfMode.Balanced).CpuCapPercent,
+            Assert.Single(h.Events.OfType<RunStartedEvent>()).CpuCapPercent);
+        Assert.DoesNotContain(h.ConsoleLines, l => l.Contains("(Resolve cycles)", StringComparison.Ordinal));
+    }
+
+    /// <summary>[RESOLVE Faz 4] Build anahtar açıkken de profili aynen uygular.</summary>
+    [Fact]
+    public async Task A_build_run_keeps_the_profile_even_with_the_setting_on()
+    {
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        var governor = new RecordingGovernor();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start(RunMode.Build) with { PerfMode = "Balanced" }, default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal([.. Applied(PerfMode.Balanced), .. Released()], governor.Calls);
+    }
+
+    /// <summary>[RESOLVE Faz 4] Koşu içinde chip değişince AYNI dönüşüm sürer: Resolve'da Light da cap'siz + Normal
+    /// yazılır (paralellik koşu içinde değişmez kuralı ayrı testlerde).</summary>
+    [Fact]
+    public async Task A_mid_run_switch_in_a_resolve_cycles_run_stays_at_full_priority()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var invoker = new FakeInvoker(async (_, _, _) =>
+        {
+            entered.TrySetResult();
+            await release.Task;
+            return Ok();
+        });
+        var governor = new RecordingGovernor();
+        using var h = new Harness(ResolvePlan(), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles) with { PerfMode = "Full" }, default);
+        await entered.Task.WaitAsync(Limit);
+        h.Sut.ApplyPerfMode(PerfProfile.For(PerfMode.Light));
+        release.TrySetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal([.. FullPriority(), .. FullPriority(), .. Released()], governor.Calls);
+    }
+
+    /// <summary>[RESOLVE Faz 4] Takılan kopya penceresinin tabanı yalnız YÜKSELTİR: Light'ın %40'ı tabanın altındadır,
+    /// dönüşüm olmasa pencere açılıp tabanı yazardı. Resolve tam öncelikteyken cap yoktur — pencere hiç açılmaz,
+    /// Normal BelowNormal'a inmez.</summary>
+    [Fact]
+    public async Task A_copy_contention_in_a_resolve_cycles_run_never_lowers_it()
+    {
+        var governor = new RecordingGovernor();
+        using var h = new Harness(ResolvePlan(), ContendingOnce(), cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles) with { PerfMode = "Light" }, default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.NotEmpty(h.RetryDelays); // tetikleyici GERÇEKTEN ateşledi (contention retry'ı oldu)
+        Assert.Equal([.. FullPriority(), .. Released()], governor.Calls);
+    }
+
     [Fact]
     public async Task Light_perf_mode_caps_the_inner_job_at_run_start_and_the_cap_is_released_when_the_run_ends()
     {
@@ -2168,15 +2703,10 @@ public class RunCoordinatorTests
         var planningStarted = Signal();
         var releasePlanning = Signal();
         var plan = PlanOf(Node("A"));
-        RunPlan GatedPlanner(StartRunCommand _, Action<string> __)
-        {
-            planningStarted.TrySetResult();
-            releasePlanning.Task.GetAwaiter().GetResult(); // run task'ını bloklar, test thread'ini DEĞİL [D8]
-            return plan;
-        }
         var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
         var governor = new RecordingGovernor();
-        using var h = new Harness(plan, invoker, planner: GatedPlanner, cpuGovernor: governor);
+        using var h = new Harness(plan, invoker, planner: GatedPlanner(plan, planningStarted, releasePlanning),
+            cpuGovernor: governor);
 
         await h.Sut.StartAsync(Start() with { PerfMode = "Full" }, default);
         await planningStarted.Task.WaitAsync(Limit);
@@ -2188,6 +2718,43 @@ public class RunCoordinatorTests
         Assert.Equal([.. Applied(PerfMode.Light), .. Released()], governor.Calls); // Full DEĞİL Light uygulandı
         Assert.Equal(PerfProfile.For(PerfMode.Light).CpuCapPercent,
             Assert.Single(h.Events.OfType<RunStartedEvent>()).CpuCapPercent);
+    }
+
+    /// <summary>[fix 1B — M2] Planlama penceresi testlerinin ORTAK planner'ı: plan kurulmaya başlayınca
+    /// <paramref name="started"/>'ı işaretler ve <paramref name="release"/> gelene kadar run task'ını bloklar (test
+    /// thread'ini DEĞİL [D8]).</summary>
+    private static Func<StartRunCommand, Action<string>, RunPlan> GatedPlanner(RunPlan plan, TaskCompletionSource started,
+        TaskCompletionSource release) => (_, _) =>
+    {
+        started.TrySetResult();
+        release.Task.GetAwaiter().GetResult();
+        return plan;
+    };
+
+    /// <summary>[RESOLVE Faz 4 · fix 1B — M2] Üstteki testin Resolve aynası: planlama penceresinde gelen Light komuttaki
+    /// profili yine EZER, ama run başında AYNI dönüşümden geçer — yürürlüğe giren cap'siz + Normal'dir ve
+    /// <c>runStarted</c> cap'siz bildirir (ezme yolu dönüşümü atlayamaz). Anahtar açıkça verilir: test varsayılana
+    /// değil ezme yoluna bağlıdır.</summary>
+    [Fact]
+    public async Task A_perf_change_arriving_while_a_resolve_run_is_planned_still_runs_at_full_priority()
+    {
+        var planningStarted = Signal();
+        var releasePlanning = Signal();
+        var plan = ResolvePlan();
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        var governor = new RecordingGovernor();
+        using var h = new Harness(plan, invoker, planner: GatedPlanner(plan, planningStarted, releasePlanning),
+            cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles) with { PerfMode = "Full", ResolveAtFullPriority = true }, default);
+        await planningStarted.Task.WaitAsync(Limit);
+        h.Sut.ApplyPerfMode(PerfProfile.For(PerfMode.Light)); // komuttaki Full'ü ezecek niyet
+        Assert.Empty(governor.Calls);
+        releasePlanning.TrySetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal([.. FullPriority(), .. Released()], governor.Calls); // Light'ın cap'i ve Idle'ı DEĞİL
+        Assert.Null(Assert.Single(h.Events.OfType<RunStartedEvent>()).CpuCapPercent);
     }
 
     [Fact]
@@ -2629,5 +3196,34 @@ public class RunCoordinatorTests
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         Assert.Equal([.. Applied(PerfMode.Balanced), CapOff, CapOff, FloorPrio, .. Released()], governor.Calls);
+    }
+
+    /// <summary>[RESOLVE Faz 4 · fix 1B — M2] Üstteki testin Resolve aynası: drain sürerken gelen canlı Light, tam
+    /// öncelikteki Resolve koşusuna cap koyamaz, önceliğini ne Light'ın Idle'ına ne tabana indirebilir — canlı yol da aynı
+    /// dönüşümden geçer. Kaldırılacak cap olmadığından drain job'a hiç yazmaz. Anahtar açıkça verilir.</summary>
+    [Fact]
+    public async Task A_perf_change_during_the_graceful_drain_of_a_resolve_run_keeps_it_at_full_priority()
+    {
+        var inFlight = Signal();
+        var release = Signal();
+        var invoker = new FakeInvoker(async (_, _, _) => { inFlight.TrySetResult(); await release.Task; return Ok(); });
+        var governor = new RecordingGovernor();
+        using var h = new Harness(ResolvePlan(), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles) with { PerfMode = "Balanced", ResolveAtFullPriority = true }, default);
+        await inFlight.Task.WaitAsync(Limit);
+        Assert.True(h.Sut.TryRequestStop(StopKind.Graceful));
+        Assert.Equal(FullPriority(), governor.Calls); // drain'in kaldıracağı cap yok
+
+        h.Sut.ApplyPerfMode(PerfProfile.For(PerfMode.Light)); // cap:40 + prio:Idle isterdi
+
+        Assert.Equal([.. FullPriority(), .. FullPriority()], governor.Calls); // cap yok, priority Normal kaldı
+        Assert.DoesNotContain(Prio(PerfMode.Light), governor.Calls);
+        Assert.DoesNotContain(FloorPrio, governor.Calls);
+
+        release.TrySetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal([.. FullPriority(), .. FullPriority(), .. Released()], governor.Calls);
     }
 }

@@ -15,10 +15,11 @@ using BuildOrchestrator.Contracts.Model;
 /// bu deliği kapatır — koşu kendi içinde tutarlıdır: derlediği her şeyi TAZE girdilere karşı derler.</para>
 ///
 /// <para><b>Neden downstream kapsama GİRMEZ.</b> Bir SCC'nin dependent'leri o grubun çıktısına bağlıdır ve
-/// grup derlendikten sonra yeniden derlenmeleri gerekebilir — ama bu, bu koşunun işi değildir: kullanıcı
-/// Cycles'ı Build'den ÖNCE çalıştırır ve dependent'leri zaten Build derler. Downstream'i de almak, kapsamı
-/// sessizce tüm repoya genişletirdi (bir çekirdek kütüphanenin dependent kümesi pratikte her şeydir) — yani
-/// düğmenin var oluş sebebini, "ne kadar ödediğini bilerek ödemeyi", ortadan kaldırırdı.</para>
+/// grup derlendikten sonra yeniden derlenmeleri gerekebilir — ama bu, bu koşunun işi değildir: Resolve cycles dar
+/// kapsamlı, isteğe bağlı bir koşudur ve yalnız cycle'ları ve onların bayat upstream'ini derler; kirli grubu da
+/// bağımlılarını da düz Build derler. Downstream'i de almak, kapsamı sessizce tüm repoya genişletirdi (bir çekirdek
+/// kütüphanenin dependent kümesi pratikte her şeydir) — yani düğmenin tek anlamını, "yalnız cycle'ları, ne kadar
+/// ödediğini bilerek ödemeyi", ortadan kaldırırdı.</para>
 ///
 /// Saf Core state: I/O, process, async, log YOK [D3].
 /// </summary>

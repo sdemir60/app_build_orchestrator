@@ -159,18 +159,44 @@ public class IpcMessagesTests
         Assert.Equal(cmd, back);
     }
 
+    /// <summary>Kuyruk alanlarının HİÇBİRİNİ taşımayan eski bir <c>startRun</c> satırı — tel uyumluluğu testlerinin ortak
+    /// girdisi (kopya yok).</summary>
+    private const string LegacyStartRunLine = """
+        {"type":"startRun","runId":"r1","mode":"build","rootPath":"D:\\repo","configuration":"Debug","parallelism":4}
+        """;
+
     [Fact]
     public void A_start_run_line_written_before_the_scope_field_existed_is_a_full_run()
     {
-        const string legacy = """
-            {"type":"startRun","runId":"r1","mode":"build","rootPath":"D:\\repo","configuration":"Debug","parallelism":4}
-            """;
-
-        var back = Assert.IsType<StartRunCommand>(JsonSerializer.Deserialize<IpcCommand>(legacy, IpcJson.Options));
+        var back = Assert.IsType<StartRunCommand>(JsonSerializer.Deserialize<IpcCommand>(LegacyStartRunLine, IpcJson.Options));
 
         Assert.Null(back.ScopeProjectId);
         // Kapsamsız komut alanı hiç YAZMAZ (WhenWritingNull): eski Supervisor'lar da aynı satırı görür.
         Assert.DoesNotContain("scopeProjectId", JsonSerializer.Serialize<IpcCommand>(back, IpcJson.Options));
+    }
+
+    /// <summary>[RESOLVE Faz 4 · fix 1B — M3] Resolve tam öncelik bayrağını taşımayan eski bir satır onaylanmış
+    /// varsayılanla (açık) çözülür (ARCHITECTURE §5).</summary>
+    [Fact]
+    public void A_start_run_line_written_before_the_priority_flag_existed_resolves_at_full_priority()
+    {
+        var back = Assert.IsType<StartRunCommand>(JsonSerializer.Deserialize<IpcCommand>(LegacyStartRunLine, IpcJson.Options));
+
+        Assert.True(back.ResolveAtFullPriority);
+    }
+
+    /// <summary>[RESOLVE Faz 4 · fix 1B — M3] Kapalı bayrak tele camelCase adıyla YAZILIR ve geri döner: tele düşmeseydi
+    /// Supervisor kapalı anahtarı varsayılan (açık) diye okurdu.</summary>
+    [Fact]
+    public void StartRunCommand_resolve_at_full_priority_round_trips_when_it_is_turned_off()
+    {
+        var cmd = new StartRunCommand("r1", RunMode.Cycles, @"D:\repo", "Debug", 4, ResolveAtFullPriority: false);
+        string json = JsonSerializer.Serialize<IpcCommand>(cmd, IpcJson.Options);
+        Assert.Contains("\"resolveAtFullPriority\":false", json, StringComparison.Ordinal);
+
+        var back = Assert.IsType<StartRunCommand>(JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
+
+        Assert.False(back.ResolveAtFullPriority);
     }
 
     // [A1/T15] Katman pattern'leri App'ten Supervisor'a IPC ile taşınır — Core'daki LayerEngine ancak bu
@@ -789,6 +815,52 @@ public class IpcMessagesTests
         var uncapped = new RunStartedEvent("r1", RunMode.Build, 3, 6, "Debug");
         Assert.Null(uncapped.CpuCapPercent);
         Assert.DoesNotContain("cpuCapPercent", JsonSerializer.Serialize<IpcEvent>(uncapped, IpcJson.Options));
+    }
+
+    // [PERF Faz D / karar 10] runStarted motorun işçi kırpma gerekçesini taşır (App kullanıcının konsol ve event stream
+    // satırını bundan yazar). Kırpma yoksa alan JSON'a YAZILMAZ; bu alandan ÖNCE yazılmış bir satır null çözülür.
+    [Fact]
+    public void RunStartedEvent_carries_the_worker_reduction_reason_and_an_older_line_decodes_it_as_null()
+    {
+        var reduced = new RunStartedEvent("r1", RunMode.Build, 3, 2, "Debug", WorkersReducedReason: "1 logical processor");
+        string json = JsonSerializer.Serialize<IpcEvent>(reduced, IpcJson.Options);
+        Assert.Contains("\"workersReducedReason\":\"1 logical processor\"", json);
+        Assert.Equal(reduced, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+
+        Assert.DoesNotContain("workersReducedReason",
+            JsonSerializer.Serialize<IpcEvent>(new RunStartedEvent("r1", RunMode.Build, 3, 4, "Debug"), IpcJson.Options));
+
+        Assert.Null(DecodeOlderRunStarted().WorkersReducedReason);
+    }
+
+    /// <summary>İsteğe bağlı alanlar (işçi kırpma gerekçesi, koşu başı uyarıları) eklenmeden ÖNCE yazılmış bir
+    /// <c>runStarted</c> satırı — o alanlar <c>null</c> çözülmeli. Tek yerde: iki tel testi aynı satırı okur.</summary>
+    private static RunStartedEvent DecodeOlderRunStarted() => Assert.IsType<RunStartedEvent>(
+        JsonSerializer.Deserialize<IpcEvent>(
+            """{"type":"runStarted","runId":"r1","mode":"build","totalProjects":3,"parallelism":4,"configuration":"Debug"}""",
+            IpcJson.Options));
+
+    // [koşu başı uyarıları görünür] runStarted motorun koşu başı uyarılarını (bayat obj, ters katman) TAM satırlarıyla ve
+    // sırasıyla taşır (App kullanıcının konsol ve event stream satırlarını bundan yazar). Uyarı yoksa alan JSON'a
+    // YAZILMAZ; bu alandan ÖNCE yazılmış bir satır null çözülür.
+    [Fact]
+    public void RunStartedEvent_carries_the_run_start_warnings_in_order_and_an_older_line_decodes_them_as_null()
+    {
+        // Örnek satırlar App testlerinin sabitleriyle AYNI (ikinci bir kopya yok); tel katmanı metni yorumlamaz.
+        var warned = new RunStartedEvent("r1", RunMode.Build, 3, 4, "Debug", Warnings:
+        [
+            BuildOrchestrator.Tests.App.RunViewModelStateTests.StaleObjWarning,
+            BuildOrchestrator.Tests.App.RunViewModelStateTests.ReverseLayerWarning,
+        ]);
+        string json = JsonSerializer.Serialize<IpcEvent>(warned, IpcJson.Options);
+        Assert.Contains("\"warnings\":[", json);
+        var decoded = Assert.IsType<RunStartedEvent>(JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+        Assert.Equal(warned.Warnings, decoded.Warnings); // liste referansla değil, elemanları ve sırasıyla karşılaştırılır
+        Assert.Equal(warned with { Warnings = null }, decoded with { Warnings = null }); // diğer alanlar da gidip döner
+
+        Assert.DoesNotContain("\"warnings\"",
+            JsonSerializer.Serialize<IpcEvent>(new RunStartedEvent("r1", RunMode.Build, 3, 4, "Debug"), IpcJson.Options));
+        Assert.Null(DecodeOlderRunStarted().Warnings);
     }
 
     // [Task 5] Kontrattan kalkan ElapsedMsAtStart alanı hep 0 taşıdığı için silindi. Pinlenen, toleranslı

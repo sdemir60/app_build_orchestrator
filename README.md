@@ -59,7 +59,8 @@ Key consequences of that layout:
   closes and the whole tree dies with it. There is no managed parent-watcher and no PID heuristics.
 - Builds are **shelled out**, never done in-process. `MSBuild.exe` is located through `vswhere` (VS or Build
   Tools), and every project is invoked with `-p:UseSharedCompilation=false -nodeReuse:false` so that no
-  compiler server survives outside the job.
+  compiler server survives outside the job. The temporary assembly WPF compiles for a project's own XAML types is
+  built as metadata only, which shortens WPF compiles and leaves the output unchanged.
 - No output path is ever changed: no `-p:OutDir` / `-p:OutputPath` and no intermediate-path redirect is passed,
   so output — and `obj` — lands exactly where Visual Studio would put it.
 - "Did it change?" is answered from the **content of the source files on disk** — the project file, the items
@@ -117,8 +118,9 @@ dotnet run   --project src/BuildOrchestrator.App/BuildOrchestrator.App.csproj
 ```
 
 Close any running instance of the app before building — a running Supervisor keeps its own binaries locked.
-The test suite is expected to be fully green. The filter above excludes the three acceptance tests, which
-build a real large repository (~2 min) and are run separately with `--filter "Category=Acceptance"`.
+The test suite is expected to be fully green. The filter above excludes the acceptance tests — some build a real
+large repository (about two minutes), the others run the real MSBuild on small throw-away projects — which are
+run separately with `--filter "Category=Acceptance"`.
 Measurement tests are part of the run; the ones that open windows or load the machine report as skipped unless
 their environment variable is set (ARCHITECTURE.md §17.5).
 
@@ -202,7 +204,8 @@ version's notes as its text. Installed copies pick it up on their next check.
    picker, centred over the window.
 
    **General** holds switches in four groups — Startup, Build, Branches and Notifications. *Pull before build*
-   (see step 4), *Stash and switch branches* (see step 3), *Start with Windows*, *Start minimized to tray*, *Close
+   (see step 4), *Resolve cycles at full priority* (see [Performance modes](#performance-modes)), *Stash and
+   switch branches* (see step 3), *Start with Windows*, *Start minimized to tray*, *Close
    to tray* and *Show notifications* all work, and *Save* keeps them. *Close to tray* and *Show notifications* are
    on by default; what they change is described with the tray, further down.
 
@@ -229,13 +232,10 @@ version's notes as its text. Installed copies pick it up on their next check.
    in the project list.
 2. **Sync** — scans, builds the graph, and marks which projects would build. Nothing is compiled here. The
    first Sync runs by itself when the application starts. No build starts before it has run: a run before the
-   first Sync would compile for real while the list and the graph stayed empty. While a Sync is *running*, *Sync*
-   itself is disabled — the engine handles one thing at a time — but *Build* and *Rebuild* (and *Resolve cycles*,
-   once the graph has a cycle) stay pressable: a press made then waits for the Sync — the button turns into *Stop*
-   at once (pressing it takes the request back) — and the run starts the moment the Sync finishes. *Build*
-   pressed during a Clean, an Optimize, a branch switch or a pull waits the same way, so a click on *Build* is
-   never lost — not even the one that brings the window back. If the work it waits for fails — a Sync or a job
-   errors, a branch switch or a pull is refused — the request is taken back and the console keeps the reason.
+   first Sync would compile for real while the list and the graph stayed empty. While a Sync is *running* — the
+   one the application starts by itself included — the engine handles one thing at a time: *Sync* shows its busy
+   state and *Build*, *Rebuild*, *Resolve cycles*, the row actions and `F5` are disabled until it finishes, so
+   nothing waits behind it. A Clean, an Optimize, a branch switch or a pull closes them the same way.
 
    If two projects produce the same assembly name, Sync warns and names both: a reference to that DLL cannot be
    resolved to one producer, so its dependency edge is dropped and nothing waits for it. Rename one of them, or
@@ -338,14 +338,19 @@ version's notes as its text. Installed copies pick it up on their next check.
 
 5. **Build / Rebuild** — from the split button and its menu:
    - *Build* — only stale projects: what changed, what failed, what was never built, and whatever depends on
-     one of those — except a project that already built successfully against a dependency that was failing,
-     which waits until that dependency recovers instead of being retried every time.
-   - *Rebuild* — all projects, cached state ignored.
+     one of those, dirty dependency-cycle groups included (they compile in rounds, see below) — except a project
+     that already built successfully against a dependency that was failing, which waits until that dependency
+     recovers instead of being retried every time. A project whose only change is an upstream's is skipped at its
+     turn when that upstream's API surface — its declarations, not its method bodies — did not move, and its
+     row turns green then; until its turn it counts as one to build.
+   - *Rebuild* — all projects, cycle groups included, cached state ignored; every project with a `packages.config` restores its packages
+     again, whereas *Build* and *Resolve cycles* skip that restore while the file is unchanged and its packages are
+     present.
    - *Clean* — `msbuild /t:Clean` on every project, external projects and cycle members included; nothing is
      compiled and the caches are untouched. Like Visual Studio's *Clean Solution*, it deletes every output
      MSBuild recorded for a project, wherever it was written — a shared output folder included. Each cleaned
-     project reads *never built* until the next *Build* compiles it — *Resolve cycles*, for a cycle member, and
-     when a Clean cleaned any, the event stream says so as it ends. No confirmation; *Stop* stops it.
+     project reads *never built* until the next *Build* compiles it, cycle members included. No confirmation;
+     *Stop* stops it.
 
    **Every operation opens the same way.** A short neutral moment, then the projects this operation will touch
    light amber one at a time in random order, then everything else fades back and the run begins. The run
@@ -367,10 +372,13 @@ version's notes as its text. Installed copies pick it up on their next check.
    *"▸ Starting — resolving what to build"* and the console lists each step as it completes. A stop in that
    window is a real stop, and it still compiles nothing.
 6. **Stop** — nothing new is dispatched and the in-flight `MSBuild.exe` children finish, including their
-   post-build copy, so no half-written DLL is left behind and their work is kept. Until they do, the button
-   reads *Stopping…* and is disabled and the ribbon reports how many are still finishing. To carry on, press
-   *Build* again: everything that already succeeded is skipped as up to date, so only the remaining work runs.
-   The elapsed clock starts from zero — it is a new run.
+   post-build copy, so no half-written DLL is left behind and their work is kept. Until they do, the button — and
+   the tray menu's Stop item — reads *Stop now* and the ribbon reports how many are still finishing. Pressing
+   *Stop now* — or `Esc` — does not wait, whether you asked for the stop or a branch switch did: the in-flight
+   compiles are terminated at once, the console says how many, and the button reads *Terminating…* and is
+   disabled. Those projects count as failed, so the next Build compiles them again.
+   To carry on, press *Build* again: everything that already succeeded is skipped as up to date, so only the
+   remaining work runs. The elapsed clock starts from zero — it is a new run.
 
 **Reading the list.** One colour tells one story: the stripe on the left, the dot beside the name, the status
 glyph and the graph node all carry the same status, so there is nothing to cross-reference. Green does not
@@ -401,15 +409,20 @@ the run is in flight the row's play button becomes a red Stop and the other rows
 list scrolls that group's first row to sit just under the stacked headings above it. It only moves the scroll
 position — selection, the filter and the console are untouched.
 
-Projects that reference each other's output form a dependency cycle. *Build* never compiles them — it skips
-them with the reason `in dependency cycle`. **Resolve cycles** — the
-third icon (unlink) of the maintenance box next to *Sync* — is what compiles them, and it is the only thing
-that does. It is enabled only when the workspace actually has a cycle, and its tooltip says what it will do
-once a Sync has found one: `Resolve cycles — build the N cycle projects in repeated rounds: stale references
-first, then rebuild until they converge` — with ` · N upstream to build first` appended when the run's scope
-must first compile stale prerequisites, so the bill is visible before the click. While it runs the ribbon reports the engine's own count —
-`Resolving cycles · round 2/3 · 5/7 · 12s` — rather than promising a fixed number of passes. It is meant to be pressed **before** a build, not instead of one: it compiles the cycles,
-then *Build* takes care of everything else, including whatever depends on them.
+Projects that reference each other's output form a dependency cycle. *Build* compiles such a group as one unit
+when it is dirty: the members compile in rounds until the API surfaces they read have settled, and whatever
+depends on the group waits for it and compiles against its fresh output; a group whose composite signature is
+clean is skipped as `up to date`. While a group is in rounds the ribbon reports the engine's own count —
+`Resolving cycles · round 2/3 · 5/7 · 12s` — rather than promising a fixed number of passes; the count advances as
+each member's compile in the round ends.
+
+**Resolve cycles** — the third icon (unlink) of the maintenance box next to *Sync* — is the narrow form of the
+same work: it compiles only the cycle groups and whatever stale upstream they need, nothing downstream, so the
+cycles alone can be paid for. It is optional; a plain *Build* runs the same rounds for a dirty group. It is
+enabled only when the workspace actually has a cycle, and its tooltip says what it will do once a Sync has found
+one: `Resolve cycles — build the N cycle projects in repeated rounds: stale references first, then rebuild until
+they converge` — with ` · N upstream to build first` appended when the run's scope must first compile stale
+prerequisites, so the bill is visible before the click.
 
 *Clean* — the eraser in that box — is the workspace reset: it deletes the `bin` and `obj` folders of every
 project it finds, external roots included, along with their build state, so the next *Build* compiles
@@ -422,30 +435,36 @@ a build does not restore them: run *Optimize* before building it again.
 
 *Optimize* — the gauge in the middle of the box — is the workspace doctor: it restores missing NuGet packages
 and every SDK-style project's package assets, names the broken references a restore cannot fix, clears stale NuGet leftovers out of `obj` and prunes dead
-cache entries, over the same projects a build sees, external roots included. It changes no build decision —
+cache entries, over the same projects a build sees, external roots included (cache entries written under a
+schema other than the current one go too, wherever they point). It changes no build decision —
 nothing it does makes a project stale. Its flow is the same as *Clean*'s: the project list and the graph empty at
 the click, its button turns amber with a spinner, and when it finishes a *Sync* runs on its own to put the plan
 back. The console reports each step's result; a failed restore shows MSBuild's error messages, not its whole
 output.
 
-Why cycles are a button and not something *Build* does for you: a cycle is built as one unit — the members
+How a cycle group is built, whichever run builds it: as one unit — the members
 compile in barriered waves (members that don't reference each other directly share a wave and compile in
 parallel, up to the run's parallelism; direct neighbours never overlap; the members most others reference go
-first), and a member compiles again only when the **API surface** of the sibling file it actually built
+first). Round one compiles only the members that need it — a member whose own inputs and the sibling API surfaces
+it read are unchanged since it last settled is carried: reported as up to date, not compiled. A cycle member compiled
+outside this tool is carried like any other when its inputs and the surfaces it read are unchanged, unless its
+sources are newer than that output. An upstream outside the group counts the same way: a body-only change there still
+makes the group dirty, but a member is compiled for it only when the API surface it reads from that upstream moved. A *Rebuild* compiles every member — and after that a member compiles again only when the **API surface** of the sibling file it actually built
 against has changed. A body-only change settles in a single round, right after a *Clean* too; an API change
 costs a second round only for the members that read the old API; three rounds is the ceiling, and a
 member that fails while its inputs are provably settled stops the run at once — an identical compile cannot
-end differently. Even so the worst case is members × rounds of compiling, which next to an ordinary
-incremental build is a large and unpredictable bill. Behind a button you decide when to pay it.
+end differently. The worst case is still members × rounds of compiling; in practice a group whose surfaces did
+not move settles in a single round, and the ribbon shows the round phase while it runs, so the bill is visible as
+it is paid.
 
-Such a run compiles the cycles **and whatever they depend on that is out of date** — otherwise a member would
+A *Resolve cycles* run compiles the cycles **and whatever they depend on that is out of date** — otherwise a member would
 be compiled against a stale DLL, come back green, and then be recorded as up to date so that no later build
 ever fixed it. The event stream opens with `Cycles started — N cycle members · P prerequisites · up to K
 rounds`, so the split between the cycle itself and what it needs first is visible before anything compiles.
 Everything past that scope collapses into a single line, `N outside cycle scope — skipped`, rather than one
-line per project — those are Build's job, and Build is what you press next.
+line per project.
 
-The run reads like any other beyond that: each round prints its own line, `cycle round R/K — N members`, and
+A run that compiles a cycle group — a *Build* or *Resolve cycles* — reads like any other beyond that: each round prints its own line, `cycle round R/K — N members`, and
 while members are actually compiling the active line names the latest of them and its place in the group,
 `member I/N · round R/K`. The members of one wave compile at the same time, each with its own spinner, and the
 count of projects shown compiling never exceeds the run's parallelism. A member whose compile in the round has
@@ -458,25 +477,26 @@ build icons — green, red, the spinner — and carry a single amber warning tri
 tooltip is one line (`In a dependency cycle`); the loop itself is named in the project log,
 `Domain.Parts → Parts.Inventory → Parts.Api → Domain.Parts`. In the graph a member the operation did not build
 keeps its grey frame but shows an **amber cube** inside it — the triangle's proxy, so a finished run still
-answers "why was this one not built?". A member the run actually compiled wears its result colour alone —
-except a member of a group that did not settle, which stays grey (to build) whatever its last round said,
-because nothing it produced is kept. One member escapes that grey: the one whose compile failed while every
-sibling output it read was already final is the proven culprit — it turns red like any failed build, reads
-`failed` with *Resolve cycles will retry it*, and keeps that verdict across Sync, so the project that actually
-breaks the cycle is visible at a glance while its innocent siblings wait in grey.
+shows which nodes sit in a cycle. A member the run actually compiled wears its result colour alone —
+except a member of a group that did not settle whose output was still stale in the last round, which stays grey
+(to build) whatever its last round said, because nothing it produced is kept; a member whose surfaces had settled
+keeps its green and its record. A carried member whose sibling surfaces moved under it in such a group was never
+compiled: it is reported as skipped — `cycle did not converge at this signature` — and stays to build. The member whose compile failed while every sibling output it read was already
+final is the proven culprit — it turns red like any failed build, reads `failed` with *Build will retry it*, and
+keeps that verdict across Sync, so the project that actually breaks the cycle is visible at a glance while its
+settled siblings stay green, and the next *Build* compiles only the members that did not settle.
 
-Pressing the button again is always a real attempt. A cycle that has settled is skipped as up to date, so the
+Pressing *Build* or *Resolve cycles* again is always a real attempt. A cycle that has settled is skipped as up to date, so the
 press costs nothing when nothing changed; a cycle whose only reason to rebuild is a **broken prerequisite** is
 skipped too (`dependency still failing`, with the culprit named) until that root recovers — rebuilding it
-would only relink every member to the same stale output; a cycle that did *not* settle is tried again from round one, and the
+would only relink every member to the same stale output (a *Rebuild* compiles it regardless); a cycle that did *not* settle is tried again from round one, and the
 run log says why it is worth the rounds (`retrying — did not converge at this signature`). The engine
-remembers a failed convergence, but only to report it — refusing to retry would mean the button silently doing
+remembers a failed convergence, but only to report it — refusing to retry would mean a *Build* or *Resolve cycles* silently doing
 nothing, and the signature covers sources alone, so a package restore or anything outside the cycle may well
 have changed since. The summary line says how many projects are stuck in one, so a run whose only casualty is
 a cycle that would not converge never reads as an unqualified success — those rows keep the amber warning triangle
-with a tooltip saying their projects are still out of date, and rows that compiled but never saw two clean
-rounds carry the same triangle with a tooltip saying their output may be one generation stale. And when an ordinary *Build* finishes with cycle members
-still dirty, the event stream adds a closing line pointing at *Resolve cycles* as the next step.
+with a tooltip saying their projects are still out of date, and rows that compiled but were still stale when their
+cycle reached the round ceiling carry the same triangle with a tooltip saying their output may be one generation stale.
 
 The console keeps long MSBuild lines on one line rather than wrapping them, so it scrolls sideways as well as
 down: a horizontal wheel or a touchpad's two-finger sideways pan moves it, not only dragging the bar. At the
@@ -525,12 +545,14 @@ You do not have to keep the window open to watch a build — or to start one: `C
 anywhere and `Shift+Space` shows or hides the window (see *Keyboard shortcuts*). With *Close to tray* on (the
 default), closing it with `X` drops the app to the tray, and if a build is running the product mark animates in the bottom-right corner of
 the screen — click it to bring the window back, or click straight through the empty space around it to whatever
-is underneath. When the run finishes the mark plays out its last turn, fades, and Windows shows a notification
+is underneath. While it is in the tray the window does not redraw itself as the run progresses, and bringing it back
+brings it up to date in a single pass. When the run finishes the mark plays out its last turn, fades, and Windows shows a notification
 with the result — click it to bring the window back too — and the same sentence is waiting in the ribbon when
 you open the window again. A run that finishes while the window is open shows no notification — the ribbon
 already says it. Turn *Show notifications* off and the app shows no Windows notification at all — not the
-result, not the one-time *still running in the tray* note, not the warning a second copy of the app gives when
-it cannot bring the window forward; the corner mark is not a notification and still appears.
+result, not the one-time *still running in the tray* note, not the note a Build hotkey press leaves when something
+keeps it from starting, not the warning a second copy of the app gives when it cannot bring the window forward;
+the corner mark is not a notification and still appears.
 
 To quit, choose *Exit* from the tray icon's menu — or, with *Close to tray* off, just close the window.
 Quitting waits for the work in flight: with nothing running the app closes at once; otherwise a running build is
@@ -552,7 +574,7 @@ brings a fresh engine up.
 |---|---|---|
 | `Shift+Space` | anywhere | Show or hide the window |
 | `Ctrl+Shift+Space` | anywhere | Build without bringing the window up |
-| `F5` | window | Build — only starts; while a run is in flight it does nothing |
+| `F5` | window | Build — only starts; while a run is in flight or a Sync, Clean, Optimize, branch switch or pull runs, it does nothing |
 | `F6` | window | Rebuild |
 | `F7` | window | Clean — the Build menu's Clean, not the maintenance box's Deep Clean |
 | `Ctrl+F` | window | Focus the project filter |
@@ -561,9 +583,9 @@ brings a fresh engine up.
 
 The two global hotkeys work whether the window is in front, behind Visual Studio or in the tray. `Shift+Space`
 hides the window only when it is in front; from the tray, minimized or behind another window it brings it
-forward. `Ctrl+Shift+Space` starts the same Build as the button — nothing happens while a run is in flight, and
-pressed during a Sync or a maintenance job it waits for that work and builds when it ends — and with the window
-hidden the tray indicator and the result balloon report it.
+forward. `Ctrl+Shift+Space` starts the same Build as the button — nothing happens while a run is in flight or while
+a Sync, Clean, Optimize, branch switch or pull runs (with the window hidden in the tray, a balloon says why) — and
+with the window hidden the tray indicator and the result balloon report a build it does start.
 Both are read from `ui-state.json` (`ShowHideHotkey`, `BuildHotkey`); there is no UI for changing them
 (Settings has General, Workspace, External projects and Layers). An older `Hotkey` entry (`Alt+B`) is ignored.
 If one cannot be registered — another application already owns that combination — it is silently disabled; the
@@ -571,9 +593,10 @@ tray icon still restores the window, and the About screen marks that row *unavai
 rather than mysterious.
 
 `Esc` stops a Build, Rebuild or Clean the way *Stop* does — the projects in flight finish and the next Build
-carries on from there. Pressing it again while the stop drains sends nothing; the ribbon line dips once to say
-the key was heard. A Sync, Deep Clean, Optimize, branch switch or pull cannot be stopped; `Esc` during one writes
-a single console line saying so.
+carries on from there. Pressing it while a stop drains — yours, or one a branch switch started — is *Stop now*: the
+in-flight compiles are terminated at once, and a further `Esc` does nothing. A Sync, Deep Clean, Optimize, branch
+switch or pull cannot be stopped;
+`Esc` during one writes a single console line saying so.
 
 Disabled commands stay disabled when triggered by a shortcut — the key never bypasses the button's state.
 `F1` toggles About and works even while another dialog is open: About opens on top, and Esc closes the topmost
@@ -630,7 +653,8 @@ Clicking the pill opens a card: the installed and incoming versions with the dow
 highlights from its release notes grouped like What's new — at most five, with a `+N more in What's new after
 restart` line when there are more — and *Later* / *Restart to update*. While a build, a Sync or a maintenance task
 is running, *Restart to update* is disabled and the line above it says what it is waiting for — `Esc stops it`
-for a build; it comes back on its own when the work ends. *Later*, a second click on the pill, a click elsewhere,
+for a build, `Esc stops it now` once a stop is already draining (the next Esc is the hard stop), and no key once the
+hard stop has gone; it comes back on its own when the work ends. *Later*, a second click on the pill, a click elsewhere,
 Esc or opening a dialog closes the card; the pill stays.
 
 *Restart to update* closes the card and covers the whole window, title bar included, with the restart screen:
@@ -650,7 +674,8 @@ rehearsal), and `BO_UPDATE_PRERELEASE=1` also offers pre-releases.
 ### State on disk
 
 Everything the app persists lives under `%LOCALAPPDATA%\BuildOrchestrator\`: `logs\run-<timestamp>\` (per-run
-and per-project logs), `build-state.json`, `evaluation-cache.json`, `source-hash-cache.json`, `ui-state.json`
+and per-project logs, removed at the first engine start more than three days after their run — the latest run's
+folder always stays), `build-state.json`, `evaluation-cache.json`, `source-hash-cache.json`, `ui-state.json`
 and, only while a build is running, `run-inflight.json` — the projects being compiled right now. If the engine
 dies mid-build (a crash, Task Manager, a closed session), the next start finds that file, marks those projects
 as not built and prints `previous run was interrupted; N projects will rebuild`, so a half-written output is
@@ -677,9 +702,26 @@ One chip in the UI cycles three fixed profiles (default: Balanced):
 | Light | 2 | Idle | 40% |
 
 Switching **while a run is in flight** writes a console note and sends the new profile to the engine; switching
-while idle changes only the chip, because the profile travels with the next run anyway. The note is a timestamped
-narrative line — `14:02:31 parallelism: 4 · cpu cap 70%` — whose body is exactly `parallelism: <n> · cpu cap <p>%`
-(`cpu cap off` for Full).
+while idle changes only the chip, because the profile travels with the next run anyway. The note is a narrative
+line — `parallelism: 4 · cpu cap 70%` — whose text is exactly `parallelism: <n> · cpu cap <p>%`
+(`cpu cap off` for Full); during a *Resolve cycles* run at full priority, a switch to Balanced or Light writes the note
+below instead, which adds the priority.
+
+**Resolve cycles runs at full priority.** Whatever the profile, a *Resolve cycles* run keeps the profile's worker
+count but drops its CPU cap and runs at normal priority, so it finishes sooner on a busy machine — at the price that
+other applications may slow down while it runs. The console says so when the run starts, and a switch to Balanced or
+Light during the run writes the same kind of note: `parallelism: <n> · cpu cap off · priority normal (Resolve cycles)`.
+*Settings → General → Resolve cycles at full priority* (on by default) turns this off, and Resolve then follows the
+profile. Build, Rebuild and Clean always follow the profile — including the cycle rounds a *Build* runs for a
+dirty group.
+
+The parallelism in the table is what a profile *asks for*. At the start of each run the engine fits the request to the
+machine: it never starts more workers than a fixed multiple of the logical processors, nor more than the free physical
+memory can carry, and when it has to cut it says so with one line, `workers reduced to <n> (<reason>)` — in the console
+when the run starts, and in the event stream right after the run's opening line, so it is not lost in a busy console.
+A run started from a single project's row leaves the line out: the worker count does not describe a one-project run.
+A machine with enough processors and memory runs the profile exactly as asked. The progress line and the time estimate
+use the count the engine actually started.
 
 If the whole machine freezes during a build, lower the profile. The limit is usually memory rather than CPU:
 every parallel project runs its own compiler, and with an IDE and browsers already open, Full can use up the
@@ -710,12 +752,14 @@ The reasoning behind all three is in [`ARCHITECTURE.md` §11](ARCHITECTURE.md#11
   *Sync* or pull to refresh it.
 - **A brand-new repository is not watched until its first commit.** The HEAD watcher needs git's reflog, which
   appears with the first commit; until then, switching back to the window keeps the list current.
-- **`UseSharedCompilation=false` and `nodeReuse:false` are kept**, and they cost real time — roughly 2.9× the
-  flags-on build, essentially all of it from shared compilation. They stay because with a compiler server the
-  emit happens outside the job, which brings back the risk of a torn DLL when a run is stopped.
-- **Filling a viewport of project rows costs what it costs.** The list is virtualized, so the work is bounded
-  by the visible window rather than by the size of the repository — but that window is still built from
-  scratch whenever the entries are replaced, which a topology change or a filter change both do.
+- **`UseSharedCompilation=false` and `nodeReuse:false` are kept.** A compiler server with a private pipe could
+  live inside the job, but measured on a real repository it saves about a tenth of a run while holding
+  gigabytes of memory, so the flags stay off; a server *outside* the job would also bring back the risk of a
+  torn DLL when a run is stopped.
+- **Building the project rows costs what it costs, once.** The visible window is built at the first layout and
+  the remaining rows follow in small idle slices, so the total scales with the repository but stays out of the
+  way; a row then keeps its control for good, scrolling re-binds nothing, and a topology or filter change builds
+  only the rows that enter or move.
 - **A large graph costs what it costs to open.** Every node is drawn — nothing is culled and no threshold
   changes the panel's behaviour — so a very large workspace pays for its whole graph once, at Sync (a few
   hundred milliseconds at a thousand projects). Past a few hundred projects the nodes reach their minimum
@@ -729,6 +773,10 @@ The reasoning behind all three is in [`ARCHITECTURE.md` §11](ARCHITECTURE.md#11
   files outside the repository root. Both are accepted risks — the repository is trusted by definition.
 - **Graph nodes are not keyboard-navigable.** A screen reader can read and invoke them — each node is named
   with its project and status — but there is no keyboard route into the canvas.
+- **Skipping a dependent on an unchanged API has two edges.** After a stopped run, or a build started from a row,
+  the dependents of an upstream that run compiled build once more whatever its API did. And a project skipped this
+  way is not compiled, so the copies of its dependencies in its *own* output folder stay as its last build left them —
+  invisible to an application that runs from one shared output folder, which every dependency writes itself.
 
 The measured numbers behind these are in [`ARCHITECTURE.md` §20](ARCHITECTURE.md#20-known-limits).
 

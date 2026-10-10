@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Globalization;
 using System.Reflection;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
@@ -10,7 +11,9 @@ namespace BuildOrchestrator.Core.Incremental;
 /// <summary>
 /// [cycle rounds — API kısa devresi] Bir derleme çıktısının (DLL/EXE) DIŞA GÖRÜNÜR yüzeyinin özeti: assembly
 /// kimliği + private OLMAYAN tipler ve üyeler (imzaları ÇÖZÜLMÜŞ hâlde — ham blob DEĞİL, çünkü blob'lar
-/// TypeRef satır numarası taşır ve gövde değişimi o tabloyu yeniden numaralandırabilir) + öznitelikleri.
+/// TypeRef satır numarası taşır ve gövde değişimi o tabloyu yeniden numaralandırabilir) + öznitelikleri
+/// (parametre, dönüş değeri ve generic parametre öznitelikleri dahil: <c>params</c>, <c>decimal</c> varsayılanı,
+/// <c>Caller*</c> gibi olanlar çağrı biçimini belirler) + açık tip layout'u (<c>StructLayout</c> Size/Pack).
 /// GÖVDE (IL), MVID, timestamp ve tablo sırası özete GİRMEZ — yalnız gövdesi değişen bir yeniden derleme AYNI
 /// özeti üretir. SCC tur döngüsü bunu "bu üyenin bağlandığı API sonradan değişti mi" sorusuna kanıt yapar
 /// (<see cref="Core.Planning.CycleRoundPolicy"/>'nin <c>staleNow</c> girdisi).
@@ -21,10 +24,19 @@ namespace BuildOrchestrator.Core.Incremental;
 /// Strong-named'de ise sürüm bağlamanın parçasıdır ve değişimi yüzey değişimidir.</para>
 ///
 /// <para><b>Internal üyeler DAHİLDİR</b> (muhafazakâr yön): <c>InternalsVisibleTo</c> ile bir kardeş, internal
-/// yüzeye bağlanabilir. Private üyeler ve derleyici üretimi adlar (<c>&lt;</c> içeren) hariçtir — gövde
+/// yüzeye bağlanabilir. Private üyeler (değer tipinin alanları hariç — aşağıdaki paragraf) ve derleyici üretimi
+/// adlar (<c>&lt;</c> içeren) hariçtir — gövde
 /// değişiminde derleyicinin ürettiği state-machine/closure adları kayar ve özet boşuna oynardı; aynı nedenle
 /// üretilmiş tip ADI taşıyan <c>AsyncStateMachine</c>/<c>IteratorStateMachine</c> öznitelikleri ile
-/// <c>CompilerGenerated</c> ve (derleme kipine bağlı) <c>Debuggable</c> da sayılmaz.</para>
+/// <c>CompilerGenerated</c> ve (derleme kipine bağlı) <c>Debuggable</c> da sayılmaz. WPF işaretleme derleyicisinin
+/// ürettiği XAML yükleyici yardımcı tipi (tam adı <c>XamlGeneratedNamespace.GeneratedInternalTypeHelper</c>) da
+/// hariçtir: kaynağa değil <c>obj</c>'deki artımlı işaretleme durumuna bağlı olarak bir derlemede belirir, ötekinde
+/// kaybolur — sayılsaydı içerik aynıyken yüzey "değişti" görünürdü. Dışlama YALNIZ bu tam addır
+/// (<c>XamlGeneratedNamespace.*</c> değil).</para>
+///
+/// <para><b>Değer tipinin private alanları DAHİLDİR:</b> kesin atama ve <c>unmanaged</c> kuralı struct'ın BÜTÜN
+/// alanlarına bakar (Roslyn reference assembly'leri de bu yüzden struct alanlarını atmaz); alanların tipi
+/// <c>sizeof</c>'u ve layout'u belirler. SINIFTA private alan yüzey değildir — ona kimse bağlanamaz.</para>
 ///
 /// <para>Yanılma yönü BİLİNÇLİDİR: kuşkuda "değişti" demek fazladan bir tur satın alır (doğruluk bozulmaz),
 /// "değişmedi" demek ise eski API'ye bağlı bir çıktıyı persist ettirirdi — bu yüzden dahil etme kuralları
@@ -119,38 +131,73 @@ public static class ApiSurfaceHash
         foreach (string line in rendered) text.Append(line);
     }
 
+    /// <summary>WPF işaretleme derleyicisinin ürettiği XAML yükleyici yardımcı tipinin tam adı;
+    /// <see cref="IncludeType"/> bu tipi özetin dışında tutar. Adın gerçek WPF çıktısıyla eşleştiği birim testle değil
+    /// gerçek derlemeyle doğrulandı (OSYS'te aynı kaynaktan iki derleme, bu tip dışlanınca aynı özet).</summary>
+    internal const string XamlLoaderHelperType = "XamlGeneratedNamespace.GeneratedInternalTypeHelper";
+
     private static bool IncludeType(MetadataReader reader, TypeDefinition type)
     {
+        string fullName = FullNameOf(reader, type);
         // '<Module>', '<PrivateImplementationDetails>', closure/state-machine tipleri: üretilmiş adlar.
-        if (FullNameOf(reader, type).Contains('<')) return false;
+        if (fullName.Contains('<')) return false;
+        // WPF'in XAML yükleyici yardımcısı: hiçbir kardeş ona bağlanamaz (aynı tam ad her WPF derlemesinde AYRI
+        // üretilir; yükleyici yansımayla YEREL derlemedekini kullanır) ve varlığı kaynağa değil obj'deki artımlı
+        // işaretleme durumuna bağlıdır — sayılırsa içerik aynıyken yüzey "değişti" görünür ve okuyan herkes
+        // boşuna yeniden derlenir. YALNIZ bu tam ad: "XamlGeneratedNamespace.*" gibi geniş bir kural, aynı
+        // ad alanındaki gerçek bir tipi de yutardı.
+        if (fullName == XamlLoaderHelperType) return false;
         return (type.Attributes & TypeAttributes.VisibilityMask) != TypeAttributes.NestedPrivate;
+    }
+
+    /// <summary>Struct <c>System.ValueType</c>'tan, enum <c>System.Enum</c>'dan türer.</summary>
+    private static readonly string[] ValueTypeBases = ["System.ValueType", "System.Enum"];
+
+    /// <summary>Taban tip adı (<see cref="RenderTypeHandle"/> çıktısı) değer tipi tabanı mı? Ad ya olduğu gibi
+    /// (core assembly'nin kendi tipleri) ya da <c>[assembly]ad</c> biçiminde (TypeRef) gelir; köşeli parantezli sonek
+    /// eşlemesi <c>MySystem.ValueType</c> gibi bir adı yanlışlıkla yakalamaz.</summary>
+    private static bool IsValueTypeBase(string baseName)
+    {
+        foreach (string known in ValueTypeBases)
+            if (baseName == known || baseName.EndsWith("]" + known, StringComparison.Ordinal)) return true;
+        return false;
     }
 
     private static string RenderType(MetadataReader reader, TypeDefinition type)
     {
         var provider = new NameProvider();
         var text = new StringBuilder();
+        string baseName = RenderTypeHandle(reader, type.BaseType, provider);
         text.Append("type ").Append(FullNameOf(reader, type))
             .Append(" attrs=").Append((int)type.Attributes)
-            .Append(" base=").Append(RenderTypeHandle(reader, type.BaseType, provider));
+            .Append(" base=").Append(baseName);
 
         var interfaces = new List<string>();
         foreach (var handle in type.GetInterfaceImplementations())
             interfaces.Add(RenderTypeHandle(reader, reader.GetInterfaceImplementation(handle).Interface, provider));
         interfaces.Sort(StringComparer.Ordinal);
         if (interfaces.Count > 0) text.Append(" impl=").Append(string.Join(",", interfaces));
+        // Açık layout (StructLayout Size/Pack) ClassLayout tablosundadır; unsafe tüketicide sizeof'u değiştirir.
+        var layout = type.GetLayout();
+        if (!layout.IsDefault) text.Append(" layout=").Append(layout.Size).Append('/').Append(layout.PackingSize);
 
-        AppendGenericParameters(reader, type.GetGenericParameters(), provider, text);
-        text.Append('\n');
+        // Generic parametre öznitelikleri ([DynamicallyAccessedMembers], nullable...) ana satırdan SONRA, ayrı satırlardır.
+        var genericParameterAttributes = new StringBuilder();
+        AppendGenericParameters(reader, type.GetGenericParameters(), provider, text, genericParameterAttributes,
+            indent: "");
+        text.Append('\n').Append(genericParameterAttributes);
         AppendAttributes(reader, type.GetCustomAttributes(), text);
 
         var members = new List<string>();
+        bool isValueType = IsValueTypeBase(baseName);
         foreach (var handle in type.GetFields())
         {
             var field = reader.GetFieldDefinition(handle);
             string name = reader.GetString(field.Name);
             if (name.Contains('<')) continue;
-            if ((field.Attributes & FieldAttributes.FieldAccessMask) == FieldAttributes.Private) continue;
+            var access = field.Attributes & FieldAttributes.FieldAccessMask;
+            // Değer tipinde private alan da yüzeydir (kesin atama, unmanaged, layout); sınıfta değildir.
+            if (access == FieldAttributes.Private && !isValueType) continue;
             var line = new StringBuilder();
             line.Append("  field ").Append(name)
                 .Append(':').Append(field.DecodeSignature(provider, null))
@@ -220,6 +267,10 @@ public static class ApiSurfaceHash
             .Append(" attrs=").Append((int)method.Attributes);
 
         // Parametre ADLARI ve varsayılanları yüzeydir: named argument ve optional çağrılar onlara bağlanır.
+        // Öznitelikleri de (params, decimal/DateTime varsayılanı — Constant tablosunda DEĞİL öznitelikte durur —,
+        // Caller*, Dynamic, tuple adları, nullable...) çağrı biçimini belirler; ana satırdan SONRA ayrı satırlardır.
+        // Dönüş değeri SequenceNumber 0'lı satırdır ve aynı döngüden geçer.
+        var parameterAttributes = new StringBuilder();
         foreach (var handle in method.GetParameters())
         {
             var parameter = reader.GetParameter(handle);
@@ -227,9 +278,13 @@ public static class ApiSurfaceHash
                 .Append(reader.GetString(parameter.Name))
                 .Append('/').Append((int)parameter.Attributes)
                 .Append(RenderConstant(reader, parameter.GetDefaultValue()));
+            AppendAttributes(reader, parameter.GetCustomAttributes(), parameterAttributes,
+                indent: "  p" + parameter.SequenceNumber.ToString(CultureInfo.InvariantCulture) + " ");
         }
-        AppendGenericParameters(reader, method.GetGenericParameters(), provider, line);
-        line.Append('\n');
+        var genericParameterAttributes = new StringBuilder();
+        AppendGenericParameters(reader, method.GetGenericParameters(), provider, line, genericParameterAttributes,
+            indent: "  ");
+        line.Append('\n').Append(parameterAttributes).Append(genericParameterAttributes);
         AppendAttributes(reader, method.GetCustomAttributes(), line, indent: "  ");
         return line.ToString();
     }
@@ -244,8 +299,11 @@ public static class ApiSurfaceHash
         return false;
     }
 
+    /// <summary>Generic parametrenin adı, bayrakları ve kısıtları <paramref name="text"/>'e (üyenin ana satırına)
+    /// yazılır; ÖZNİTELİKLERİ <paramref name="attributeLines"/>'a ayrı satırlar olarak — çağıran bunları ana satırın
+    /// satır sonundan SONRA ekler. <paramref name="indent"/> o üyenin öznitelik satırı girintisidir.</summary>
     private static void AppendGenericParameters(MetadataReader reader, GenericParameterHandleCollection handles,
-        NameProvider provider, StringBuilder text)
+        NameProvider provider, StringBuilder text, StringBuilder attributeLines, string indent)
     {
         foreach (var handle in handles)
         {
@@ -258,6 +316,8 @@ public static class ApiSurfaceHash
                     reader.GetGenericParameterConstraint(constraintHandle).Type, provider));
             constraints.Sort(StringComparer.Ordinal);
             if (constraints.Count > 0) text.Append(':').Append(string.Join("&", constraints));
+            AppendAttributes(reader, parameter.GetCustomAttributes(), attributeLines,
+                indent: indent + "gp" + parameter.Index.ToString(CultureInfo.InvariantCulture) + " ");
         }
     }
 

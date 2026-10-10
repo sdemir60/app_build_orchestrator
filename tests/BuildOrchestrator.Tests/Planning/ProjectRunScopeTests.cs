@@ -163,11 +163,15 @@ public class ProjectRunScopeTests
         Assert.True(stale.InCycle);
     }
 
-    /// <summary>Döngü DIŞI bir hedefin döngü üyesi bağımlılığı tam Build'dekiyle AYNI muameleyi görür: orada
-    /// da üye derlenmez ve dependent'ı dep-issue almaz (Skipped bağımlılık issue üretmez, v7 A6) — tek
-    /// proje koşusu bu kuralı değiştirmez.</summary>
+    /// <summary>Döngü DIŞI bir hedefin TEMİZ döngü üyesi bağımlılığı tam Build'dekiyle AYNI muameleyi görür: orada
+    /// da grup "up to date" atlanır ve dependent'ı dep-issue almaz (Skipped bağımlılık issue üretmez, v7 A6) — tek
+    /// proje koşusu bu kuralı değiştirmez.
+    /// <para><b>[DEĞİŞEN KURAL — Build cycle derler]</b> Eski ad/gerekçe:
+    /// <c>An_ordinary_targets_cycle_member_dependency_is_not_flagged_just_like_in_a_full_build</c> — "tam Build'de üye
+    /// derlenmez". Build artık kirli grubu derler (ARCHITECTURE §8.1); temiz üye için iddia aynen geçerli, kirli üye
+    /// için kardeş test (<see cref="An_ordinary_targets_dirty_cycle_member_dependency_is_stale"/>).</para></summary>
     [Fact]
-    public void An_ordinary_targets_cycle_member_dependency_is_not_flagged_just_like_in_a_full_build()
+    public void An_ordinary_targets_clean_cycle_member_dependency_is_not_flagged_just_like_in_a_full_build()
     {
         var plan = Plan(
             Node("A", willBuild: false, inCycle: true, deps: ["B"]),
@@ -177,5 +181,24 @@ public class ProjectRunScopeTests
         var scope = ProjectRunScope.Of(plan, "Target")!;
 
         Assert.Empty(scope.StaleDependencies);
+    }
+
+    /// <summary>[Build cycle derler] Döngü DIŞI bir hedefin KİRLİ döngü üyesi bağımlılığı bayattır: tam Build grubu
+    /// derlerdi, tek proje koşusu derlemez — sıradan kirli bağımlılıkla aynı kural (<c>WillBuild != false</c>). Plan
+    /// üyeye gerçek bir <c>WillBuild</c> verdiği için (Build'in kararı, <c>CycleCompilation</c>) bu yol üretimde
+    /// gerçekleşir; uyarı döngü sözcükleriyle yazılır (<see cref="StaleDependency.InCycle"/>).</summary>
+    [Fact]
+    public void An_ordinary_targets_dirty_cycle_member_dependency_is_stale()
+    {
+        var plan = Plan(
+            Node("A", willBuild: true, inCycle: true, deps: ["B"]),
+            Node("B", willBuild: true, inCycle: true, deps: ["A"]),
+            Node("Target", willBuild: true, deps: ["A"]));
+
+        var scope = ProjectRunScope.Of(plan, "Target")!;
+
+        var stale = Assert.Single(scope.StaleDependencies);
+        Assert.Equal("A", stale.Id);
+        Assert.True(stale.InCycle);
     }
 }

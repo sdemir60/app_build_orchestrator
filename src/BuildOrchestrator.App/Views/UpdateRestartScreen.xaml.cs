@@ -1,3 +1,4 @@
+using System.Windows.Automation.Peers;
 using System.Windows;
 using System.Windows.Controls;
 using BuildOrchestrator.App.Controls;
@@ -30,6 +31,9 @@ namespace BuildOrchestrator.App.Views;
 /// </summary>
 public partial class UpdateRestartScreen : UserControl
 {
+    /// <summary>UIA rolü — gerekçe ve ölçüm <see cref="UserControlRolePeer"/>'de.</summary>
+    protected override AutomationPeer OnCreateAutomationPeer() => new UserControlRolePeer(this, AutomationControlType.Pane);
+
     /// <summary>Kare aralığı (ms) — prototipin <c>requestAnimationFrame</c> döngüsünün ~60 Hz'i. Çubuğun adım içindeki
     /// doğrusal ilerlemesi her karede yazılır.</summary>
     internal const double FrameMs = 16;

@@ -1,11 +1,12 @@
 namespace BuildOrchestrator.Core.Planning;
 
+using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 
 /// <summary>
 /// App'in CANLI geçişleri: bir koşu olayı ya da kullanıcı eylemi bir satırın kaydını değiştirdiği ANDA satır,
 /// motorun bir sonraki önizlemesini (bir Sync'e kadar gelmeyebilir) beklemeden ne göstermeli? Cevap o
-/// önizlemenin (<see cref="WillBuildEvaluator"/> + <see cref="ConditionalRebuild.AppliesTo"/>) AYNEN kendisidir;
+/// önizlemenin (<see cref="WillBuildEvaluator"/> + <see cref="ConditionalRebuild.ConditionalIds"/>) AYNEN kendisidir;
 /// App kendi kopyasını TÜRETMEZ, burayı sorar. Eşlemeler saf ve tek yerdedir (kopya YASAK): her biri, motorun
 /// o anda deftere yazdığı kaydın <see cref="WillBuildEvaluator"/>'da neye düştüğünü söyler — satır ile bir
 /// sonraki Sync ayrışmaz.
@@ -17,10 +18,8 @@ public static class NextPreview
     /// yazdığından) türer ve ayrı ayrı sorulursa sessizce ayrışabilirler.
     ///
     /// <para><b>Güvenilmez başarı (<paramref name="trusted"/> <c>false</c>):</b> yakınsamayan (tavana dayanan ya
-    /// da ilerlemeyen) bir SCC'nin yeşil üyesi. Motor bu başarıyı PERSIST ETMEZ,
-    /// kaydı kanıtsız hata olarak geçersizleştirir (<c>LastResult=Failed</c>, <c>FailedSignature=null</c>) —
-    /// <see cref="WillBuildEvaluator"/> bunu <see cref="WillBuildReason.NeverBuilt"/> okur; döngü üyesi bir
-    /// sonraki Sync'in kapsamı dışında olduğu için <c>WillBuild=false</c>'tur. Koşullu değildir.
+    /// da ilerlemeyen) bir SCC'nin yeşil üyesi. Motor bu başarıyı PERSIST ETMEZ, kaydı kanıtsız hata olarak
+    /// geçersizleştirir — cevap <see cref="AfterUntrustedResult"/>'ındır (dep-issue'ya bakılmaz).
     /// <b>[DEĞİŞEN KURAL — final review I1]</b> Eskiden bu hâl <c>UpToDate</c> dönerdi ("defter hiçbir şey
     /// öğrenmedi, bugünkü olguya dön"); defter aslında kanıtsız hata yazdığı için satır canlıda yeşil, Sync
     /// sonrası gri idi.</para>
@@ -30,21 +29,33 @@ public static class NextPreview
     /// <para><b>Dep-issue'lu, döngü üyesi DEĞİL:</b> <see cref="ConditionalRebuild.AppliesTo"/>'nun koşulları
     /// sağlanır — <c>WaitingForDependency</c>, <c>WillBuild=true</c> (hâlâ dirty), <c>Conditional=true</c>.</para>
     ///
-    /// <para><b>Dep-issue'lu, döngü üyesi (yakınsamış grup):</b> defter GERÇEKTEN not+kök yazar, ama bir sonraki
-    /// Sync bu üyeyi <c>buildCycles:false</c> ile değerlendirir — <c>WillBuild=false</c> ZORLANIR, gerekçe yine
-    /// de <c>WaitingForDependency</c>'dir ("etiket bir disk olgusudur"). <see cref="ConditionalRebuild.AppliesTo"/>
-    /// <c>WillBuild==true</c> gerektirdiğinden <c>Conditional=false</c> kalır — üye TEK BAŞINA hiçbir zaman
-    /// koşullu değildir (grubuyla derlenir).</para>
+    /// <para><b>Dep-issue'lu, döngü üyesi (yakınsamış grup):</b> defter GERÇEKTEN not+kök yazar; bir sonraki Sync
+    /// bu üyeyi Build'in kararıyla (<see cref="CycleCompilation"/>) değerlendirir — <c>WaitingForDependency</c>,
+    /// <c>WillBuild=true</c>, <c>Conditional=true</c>: üye tek başına değil GRUBUYLA koşulludur
+    /// (<see cref="ConditionalRebuild.ConditionalIds"/>). Yakınsamış bir grubun her üyesi ya bu notu taşır (bekler) ya
+    /// taşımaz (güncel); başka gerekçeyle kirli üye kalmadığından grup kapısı (<see cref="ConditionalRebuild.GroupAppliesTo"/>)
+    /// tutar — Sync'in cevabı budur. <b>[DEĞİŞEN KURAL — final review M-2]</b> Eskiden <c>Conditional=false</c>
+    /// dönerdi: grup üyesi koşullu kümeye hiç girmezdi.</para>
     /// </summary>
     public static (bool WillBuild, WillBuildReason Reason, bool Conditional) AfterSuccess(
         bool inCycle, bool trusted, IReadOnlyList<string>? depIssues)
     {
-        if (!trusted) return (!inCycle, WillBuildReason.NeverBuilt, false);
+        if (!trusted) return AfterUntrustedResult(inCycle);
         if (depIssues is not { Count: > 0 }) return (false, WillBuildReason.UpToDate, false);
-        return inCycle
-            ? (false, WillBuildReason.WaitingForDependency, false)
-            : (true, WillBuildReason.WaitingForDependency, true);
+        bool willBuild = NextBuildCompiles(inCycle);
+        return (willBuild, WillBuildReason.WaitingForDependency, willBuild);
     }
+
+    /// <summary>
+    /// [B3] Motorun arkasında DURMADIĞI bir sonuç: yakınsamayan grubun güvenilmez başarısı (<see cref="AfterSuccess"/>'ın
+    /// <c>trusted: false</c> dalı) ya da hükmü verilmiş grupta derlenmeden kaydı atılan taşınan üyenin atlaması
+    /// (<see cref="SkipReasons.CycleNonConvergent"/>). İkisinde de motor kaydı kanıtsız hata olarak geçersizleştirir
+    /// (<c>LastResult=Failed</c>, <c>FailedSignature=null</c>) — <see cref="WillBuildEvaluator"/> bunu
+    /// <see cref="WillBuildReason.NeverBuilt"/> okur; bir sonraki düz Build kirli grubu da derlediği için üye düz proje
+    /// gibi <c>WillBuild=true</c>'dur. Koşullu değildir.
+    /// </summary>
+    public static (bool WillBuild, WillBuildReason Reason, bool Conditional) AfterUntrustedResult(bool inCycle) =>
+        (NextBuildCompiles(inCycle), WillBuildReason.NeverBuilt, false);
 
     /// <summary>
     /// Proje BU KOŞUDA patladı. <paramref name="evidence"/> motorun kanıt kararıdır
@@ -61,12 +72,24 @@ public static class NextPreview
     /// Clean'in başarısı "derlendi" değil "çıktıları silindi"dir ve motor kaydı siler (<c>BuildStateStore.Remove</c>);
     /// patlayan bir <c>-t:Clean</c> derleyiciyi hiç çağırmadığı için kanıt sayılmaz ve kayıt kanıtsız hata olur.
     /// <see cref="WillBuildEvaluator"/> ikisini de <see cref="WillBuildReason.NeverBuilt"/> okur. <c>WillBuild</c>
-    /// bir sonraki DÜZ Build'in cevabıdır: döngü üyesi onun kapsamı dışında olduğu için <c>false</c>, diğer her
-    /// proje <c>true</c>. Koşullu değildir. Clean koşusunun kendi önizlemesi bu bayrağı YAZMAZ (her projeye
+    /// bir sonraki DÜZ Build'in cevabıdır: Build kirli döngü grubunu da derlediği için döngü üyesi dahil her proje
+    /// <c>true</c>. Koşullu değildir. Clean koşusunun kendi önizlemesi bu bayrağı YAZMAZ (her projeye
     /// <c>true</c> verir, çünkü o koşu hepsini temizler) — bayrağı sonuç buradan yazar.
     /// </summary>
     public static (bool WillBuild, WillBuildReason Reason, bool Conditional) AfterClean(bool inCycle) =>
-        (!WillBuildEvaluator.OutOfScope(inCycle, buildCycles: false), WillBuildReason.NeverBuilt, false);
+        (NextBuildCompiles(inCycle), WillBuildReason.NeverBuilt, false);
+
+    /// <summary>[D8] Proje BU KOŞUDA sırası gelince <c>up to date</c> ile atlandı (yüzey kapısı — hiçbir doğrudan bağımlılığının
+    /// API yüzeyi değişmemiş): defteri yeni bileşik imzayla yenilendi, bir sonraki Sync <see cref="WillBuildReason.UpToDate"/>
+    /// der. Pre-skip'ler buraya gelmez (satır zaten WillBuild=false); kök bekleyen atlama (DependencyStillFailing) defterine
+    /// dokunmaz ve buraya gelmez.</summary>
+    public static (bool WillBuild, WillBuildReason Reason, bool Conditional) AfterUpToDateSkip() =>
+        (false, WillBuildReason.UpToDate, false);
+
+    /// <summary>Bir sonraki DÜZ Build bu projeyi derleme kapsamına alır mı — Sync'in sorduğu AYNI soru
+    /// (<see cref="CycleCompilation"/> + <see cref="WillBuildEvaluator.OutOfScope"/>); kopya YASAK.</summary>
+    private static bool NextBuildCompiles(bool inCycle) =>
+        !WillBuildEvaluator.OutOfScope(inCycle, CycleCompilation.CompilesCycles(RunMode.Build));
 
     // [DEĞİŞEN KURAL — kullanıcı kararı 2026-09-29] Configuration değişiminin eşlemesi (AfterConfigurationChange)
     // burada DEĞİLDİR: o bir motor olgusu değil, bir tahmindi — "configuration imzaya girer, yani imza her kayıtta

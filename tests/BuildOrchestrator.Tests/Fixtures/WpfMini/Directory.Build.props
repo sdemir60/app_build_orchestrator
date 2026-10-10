@@ -1,0 +1,3 @@
+<Project>
+  <!-- stops the upward search: the tool repo's own Directory.Build.props must not leak into the throw-away projects -->
+</Project>

@@ -184,16 +184,17 @@ arrives — the symptom is a build that hangs forever rather than one that fails
 of them an active end: it writes stdin, and it must *read* stdout and stderr for as long as the child lives. A
 pipe nobody reads fills its buffer — a few kilobytes — and then the next write from the child blocks forever,
 inside whatever the child happened to be doing. The App drains the Supervisor's stderr for exactly this
-reason and discards the bytes: the engine's diagnostics already reach disk through `decision.log`, and
-anything the user must see travels as an IPC event. The drain exists to keep the pipe moving, not to collect
-anything.
+reason and discards the bytes: a run's diagnostics already reach disk through `decision.log`; the engine's
+start-up and warning lines — among them the run-log retention summary (§8.5) and the memory line (§11.4) — go
+to stderr alone and serve only whoever reads it directly; anything the user must see travels as an IPC event.
+The drain exists to keep the pipe moving, not to collect anything.
 
-This is not theoretical. The engine writes a diagnostic line per stale-obj project at the start of planning; a
-177-project workspace produces tens of kilobytes. With nothing reading stderr, planning froze partway through
-that loop, so `runStarted` never arrived and the App sat in its mid-run lock. Worse, the *stop* that followed
-could not complete either: the coordinator takes ownership of a stop while a run is active and owes the
-`runStopped` acknowledgement to the run task's `finally`, which a frozen planner never reaches — so the phase
-stayed on `stopping` indefinitely. One unread pipe, both symptoms.
+This is not theoretical. A line per project is enough: on a 177-project workspace that is tens of kilobytes, far
+more than that buffer. With nothing reading stderr, the engine blocks partway through such a loop before
+`runStarted` is written, and the App sits in its mid-run lock. Worse, the *stop* that follows cannot complete
+either: the coordinator takes ownership of a stop while a run is active and owes the `runStopped` acknowledgement
+to the run task's `finally`, which a blocked planner never reaches — so the phase stays on `stopping`
+indefinitely. One unread pipe, both symptoms.
 
 ### 4.4 Termination matrix
 
@@ -210,14 +211,20 @@ measured bound is under two seconds with no orphan.
 
 ### 4.5 Stop semantics
 
-**Graceful stop** is what the Stop button and `Esc` request, and what a full exit of the application requests
+**Graceful stop** is what the first press of the Stop button or of `Esc` requests, and what a full exit of the application requests
 for a run still in flight (§12.3). Nothing new is dispatched; the in-flight `MSBuild.exe` children finish,
-*including their post-build copy events*. This is also why the
-shared-compilation flags stay off (§9.2): with a compiler server the emit happens in a long-lived process
-outside the job, where a stop could catch a DLL mid-write.
+*including their post-build copy events*. A compiler server living *outside* the job would break this
+promise: its emit would run where a stop cannot see it, and a DLL could be caught mid-write. The
+shared-compilation flags stay off today for a different reason — the measured gain does not pay for the
+server's memory (§9.2) — but if they are ever turned on, the server has to be born inside the job for exactly
+this guarantee.
 
-**Hard stop** terminates the inner job outright. It exists in the contract and in the engine, but the App
-never sends it.
+**Hard stop** terminates the inner job outright. The App sends it in exactly one situation: the user presses the Stop
+button, or `Esc`, while a stop is already draining — one the user asked for, or the interrupt a branch switch sends. The
+first press of a run is the polite request; a press during a drain says the user would rather not wait, and it is
+honoured. It goes out once: after it the Stop button is disabled and a further press or `Esc` does nothing. A full exit
+of the application never escalates — closing the window while a stop drains waits for the drain like any other exit
+(§12.3).
 
 The choice between them is not about the wait — it is about how much work a stop throws away. A drained
 project *succeeds*, so its `BuildState` is persisted and the next Build skips it as up to date. A terminated
@@ -225,23 +232,37 @@ project is reported `failed("stopped")`, which invalidates its stored state, so 
 again from scratch — up to `parallelism` half-finished compiles discarded, and a row the user's own Stop
 turned red. Draining costs the remaining time of the slowest in-flight project and banks the work; terminating
 returns the machine sooner and bills the difference to the next Build. Since a stopped run is resumed by
-pressing *Build* — there is no separate resume — banking the work is the cheaper trade.
+pressing *Build* — there is no separate resume — banking the work is the cheaper trade, which is why the hard stop
+is a press of its own while the drain runs — the user's own stop or a branch switch's — instead of being what the
+first press does.
 
 `runStopped` and `runCompleted` each fire exactly once; the stopped run's elapsed time is reported in
 `runCompleted` (the next Build counts from zero).
 
 Because a drain can take as long as the slowest in-flight project, the App has to show that the click landed.
 Requesting a stop moves the phase to `stopping` **before the command is even sent** — waiting on a slow engine
-would leave the button reading *Stop* and invite a second click. The button stays visible but reads
-*Stopping…* and goes disabled, the ribbon drops its ETA and reports how many projects are still finishing, and
-a line goes into the run document. The mid-run lock is deliberately *not* released: the engine is still
-working, so the branch chip and the configuration stay locked and the Build split-button does not come back.
+would leave the button reading *Stop*, and the next press is no longer harmless: it is the hard stop. The button
+stays visible and follows the stop: *Stop* until one is requested, then *Stop now* — still enabled, because pressing
+it again is the hard stop — and *Terminating…*, disabled, once the hard stop has been sent. The tray menu's Stop item
+reads the same three labels, and the Stop icon on a project row — it has no visible label — carries them in its tooltip
+and accessible name, so no surface says *Stop* while the next press is the hard stop. The ribbon drops its ETA and
+reports how many projects are still finishing, and a line goes into the run document for each request: the graceful
+one, then the hard one, which also says the compiles in flight will be terminated. The mid-run lock is
+deliberately *not* released: the engine is still working, so the branch chip and the configuration stay locked and
+the Build split-button does not come back.
 
 Leaving `stopping` cannot deadlock, because `runStopped` settles it unconditionally: phase `stopped`, run
 state released. The coordinator only writes that event once every in-flight result has been reported, so by
 the time the App sees it nothing is running — there is no ordering assumption left to violate. A trailing
 `runCompleted` writes the same phase. A run-ending error and an engine death settle it too, and if the command
 cannot even be sent the phase is put back.
+
+A hard stop leaves the same kind of trace when it ends: `runStopped` arrives marked as hard and the run document says
+how many in-flight compiles were terminated. That count is the number of `failed("stopped")` results the engine reports
+after the hard stop was requested — by the time it writes `runStopped` it has already reported every terminated project,
+so the live counter has dropped to zero and cannot be read there. A project that finished on its own between the
+request and the termination is not counted, and when nothing was terminated the run document adds nothing. The
+terminated projects' stored state is invalidated and the next Build compiles them again from scratch, as described above.
 
 Once a drain begins the CPU cap is removed for the rest of that run, and the priority class can no longer be
 lowered past the Balanced floor. The "no torn DLL" guarantee is not negotiated against a resource setting.
@@ -324,8 +345,9 @@ the App never passes that flag. Every other command in the list executes in the 
 dependent-propagation mode, the layer patterns, the perf mode name and the external project list. It carries no
 branch: a run always builds the working tree at the repository root, whatever is checked out there (§10.3).
 Unknown fields on an incoming line are ignored. Parallelism and
-perf mode are separate fields on purpose: the Supervisor derives cap and priority from the perf name but never
-recomputes the worker count, which the App has already resolved from the same table.
+perf mode are separate fields on purpose: the Supervisor derives cap and priority from the perf name, while
+`parallelism` is the worker count the profile *asks for* — the App resolves it from the same table and the engine
+fits it to the machine at the start of the run (§11.1).
 
 `stopRun` names one of three kinds: `graceful`, `hard` (§4.5) and `interrupt`. The App sends `interrupt` when
 the checked-out branch or HEAD moves under a run in flight (§8.8): the engine drains exactly as on a graceful
@@ -358,14 +380,17 @@ flag existed keeps updating; when it is false the engine runs no version-control
 gate.
 
 `startRun` may also carry **`scopeProjectId`** — the identity of one project, sent when a run is started from
-a row (§13.2). It is the last field and defaults to null, so a full run writes the same line it always did.
+a row (§13.2). It defaults to null, so a full run writes the same line it always did.
 When it is set the engine plans in full and then cuts the plan down to that one project (§8.1): dependencies
 are not compiled and nothing outside the scope enters the run.
 
-Building dependency cycles is not a field but a **mode** — `Cycles` (§8.1). It is written to the wire as
-camelCase text like every other enum, so adding a value never shifts the meaning of an older line.
-`syncWorkspace` carries no cycle decision at all: its preview always describes a `Build`, and `Build` never
-compiles a cycle.
+`startRun` also carries **`resolveAtFullPriority`** — the user's *Resolve cycles at full priority* setting, read
+only by a `Cycles` run (§11.1). A line without it decodes as on, the setting's default.
+
+Which runs compile dependency cycles is not a field: every compiling mode does (`Build`, `Rebuild`, `Cycles`;
+§8.1), and `Cycles` is the narrow-scope one. Modes are written to the wire as camelCase text like every other
+enum, so adding a value never shifts the meaning of an older line. `syncWorkspace` carries no cycle decision at
+all: its preview always describes a `Build`, and a `Build` compiles a dirty cycle group like any other dirty node.
 
 `cleanWorkspace` carries the workspace root and the registered external cards — the same list, resolved by the
 same merger. It resets the build output of that workspace on disk: the `bin` and `obj` folders of every project
@@ -389,7 +414,8 @@ external cards. No configuration rides with it, because not one of its steps loo
 `cleanWorkspace` removes build output, this one puts back what is missing and removes only what breaks a
 build: it restores the projects whose NuGet packages are missing from disk and every SDK-style project (§9.3),
 names the references a restore cannot fix, deletes the stale NuGet residue from the `obj` of old-style projects (§9.4), and prunes
-the three ledgers of entries whose file is gone, sweeping the temp files their atomic writes left behind
+the three ledgers of entries whose file is gone and the evaluation cache of entries from a schema other than the
+current one, sweeping the temp files their atomic writes left behind
 (§16). Everything else is left alone — the global NuGet caches, `NuGet.config`, `bin` and the shared `OutDir`,
 the run logs, the UI state, and git, since Optimize runs no version-control command at all.
 Its permission to write in the workspace is bounded by the resolved project set: a folder no card resolves to
@@ -450,7 +476,8 @@ back (§13.2). `optimizeCompleted` closes the window with one counter per
 step: projects scanned, projects restored, restores that failed, references restore could not resolve, projects
 whose `obj` was cleaned, the three ledger prunes kept apart, temp files swept, files that were in use and bytes
 reclaimed. Nothing the App can derive is put on the wire, and the three prune counts stay apart because the
-source-hash ledger is keyed by source file rather than by project and fills up far faster. The console's closing
+source-hash ledger is keyed by source file rather than by project and fills up far faster; entries from a schema
+other than the current one are counted with the evaluation cache's. The console's closing
 line and the App's one-line stream summary are worded from **one list of terms** that names only what happened —
 restores that succeeded and that failed, unresolved references, cleaned `obj` folders, pruned entries, swept
 temp files, bytes reclaimed — so a count is never worded two ways and a zero is never spelled out; with nothing
@@ -477,7 +504,8 @@ git's own detail on failure. The App builds every console line of a branch switc
 run ended normally.
 
 `cycleRoundStarted` is run-level rather than per-project, and it names the group's leader, the round, the cap
-and how many members that round compiles — a later round can be narrower than the group, because only the
+and how many members that round compiles — a round can be narrower than the group: the first compiles only
+the members that need it, a later one only the stale ones, because only the
 members whose read surfaces moved compile again (§8.8). A strongly-connected component is one build unit whose
 per-round results are never published (§8.8), so the round number is the only progress the group itself emits;
 its members still emit their own `projectStarted` on every round they compile in, because they really are
@@ -495,13 +523,18 @@ releases the slot, so the number of projects announced as compiling never exceed
 could not change the result: a failure whose read surfaces had settled, or without surface evidence the same
 members failing twice in a row) or the round cap reached — carrying that outcome as camelCase text, the leader's id (the same
 representative `cycleRoundStarted` used, so the line stays clickable), the member count, the rounds run, the
-last round's failure count and the summed duration of every member across every round. It is never published
+last round's failure count, the summed duration of every member across every round and `compiledCount`, how many of
+its members the group compiled (a member carried through the whole run is not counted; an engine that does not report
+the field leaves the App's line without the count). It is never published
 for a group cut short by a stop or an unexpected error: neither is evidence that the group cannot converge, and
 a later run deserves a real attempt rather than one that starts from a false verdict.
 
 Two per-project results carry a cycle flag of their own, as typed fields rather than as text the App would
-have to match: `projectSucceeded.cycleUnsettled` marks a member of a group that ran out of rounds, and
-`projectSkipped.cycleUnconverged` is the wire form of the same idea for a skip. The `depIssues` list is
+have to match: `projectSucceeded.cycleUnsettled` marks a green member of a group that ran out of rounds while its
+read surfaces were still stale, and `projectSkipped.cycleUnconverged` marks a carried member whose record the engine
+discarded (`skipped — cycle did not converge at this signature`, §8.8) in a group that stopped with no progress — the
+permanently broken cycle. At the round ceiling the same skip carries the flag as false: the budget ran out while the
+group was still moving. The `depIssues` list is
 not reused for either — it answers "which dependency failed", and a second meaning would make the `▲ N`
 counter and its filter chip count the wrong rows.
 
@@ -545,7 +578,14 @@ Three of these carry the whole model:
 `runStarted.cpuCapPercent` reports the cap that was **actually** written to the job, not the one that was
 requested — a Win32 failure surfaces here as `null` plus a warning line, and does not fail the run.
 `runStarted.logDirectory` is the run's log folder on disk; the summary line of a run interrupted by a branch
-change names it (§8.8).
+change names it (§8.8). `runStarted.workersReducedReason` is present only when the engine started fewer workers than
+the profile asked for, and carries the reason the App's reduction note names (§11.1). `runStarted.warnings` is present
+only when the run starts with something to warn about: the exact `warning:` lines the engine wrote to `decision.log`,
+stale-`obj` lines (§9.4) before reverse-layer lines (§6.6). The App writes each line to the console as it is, and to
+the event stream as a warning line without the prefix, right after the run's opening line and any reduction note — a
+single-project run included, where only that project's own stale-`obj` line can appear (§6.6). The stream stays
+readable on a wide workspace: past a small limit the lines collapse into one warning line that counts them and points
+to the console, which keeps every line.
 
 ### 5.4 Error handling
 
@@ -599,26 +639,55 @@ neither followed deliberately nor detected — an accepted risk, since the repos
 Project files are read as **raw XML**. MSBuild is never evaluated for discovery. The evaluator extracts the
 assembly name, the target framework moniker, `Compile` items (including recursive `**` globs), raw `Reference`
 `HintPath`s and `ProjectReference`s — and, for the output evidence of §7.6, the `OutputType`, the default
-`Platform` and every `<OutputPath>` with its condition.
+`Platform`, every `<OutputPath>` with its condition and, for an SDK-style project, whether its output layout is the
+SDK's default.
 
 **The output path is read, never guessed.** `OutputFileFor(configuration)` derives the full path of the
-project's own build output: `<OutputPath>\<AssemblyName>` with `.dll` for a `Library` and `.exe` for an `Exe`
-or `WinExe`. Two condition shapes are recognised — `'$(Configuration)|$(Platform)' == 'C|P'` and
-`'$(Configuration)' == 'C'` — and an unconditional `<OutputPath>` matches every configuration; the platform is
+project's own build output. For a legacy project it is `<OutputPath>\<AssemblyName>` with `.dll` for a `Library`
+and `.exe` for an `Exe` or `WinExe`. Two condition shapes are recognised — `'$(Configuration)|$(Platform)' == 'C|P'`
+and `'$(Configuration)' == 'C'` — and an unconditional `<OutputPath>` matches every configuration; the platform is
 the project's declared default (`'$(Platform)' == ''`), otherwise `AnyCPU`. As in MSBuild the last matching
-entry in document order wins, and with no match the path is `bin\<configuration>\`. Where the path cannot be
-derived with confidence the answer is *none*, never an approximation: an SDK-style project, a missing or
-unrecognised `OutputType`, an `AssemblyName` or chosen path that still contains `$(`, or an `<OutputPath>` under
-any other condition shape — that last one makes the whole project undecidable, whatever configuration is asked,
+entry in document order wins, and with no match the path is `bin\<configuration>\`.
+
+An SDK-style project gets the .NET SDK's default layout, `bin\<configuration>\<TargetFramework>\<AssemblyName>.dll`
+— the framework folder lowercased as the SDK writes it, the file named after the project file when no `AssemblyName`
+is given — but only while nothing the evaluator can see moves that layout. The project is on the .NET SDK
+(`Microsoft.NET.Sdk` or one of its `Microsoft.NET.Sdk.*` variants; another SDK, a version-pinned one or a second
+one is not), it is a library (no `OutputType`, or `Library`; an `Exe` or `WinExe` gets none), it targets one known
+framework, and no `PropertyGroup` of the project file — conditional or inside `Choose` — sets `OutputPath`,
+`OutDir`, `BaseOutputPath`, `AppendTargetFrameworkToOutputPath`, `AppendRuntimeIdentifierToOutputPath`,
+`RuntimeIdentifier`, `RuntimeIdentifiers`, `UseArtifactsOutput`, `ArtifactsPath`, `TargetFrameworks`, `Platform`,
+`PlatformName`, `AppendPlatformToOutputPath`, `TargetName`, `TargetExt`, `TargetFrameworkVersion`,
+`DirectoryBuildPropsPath` or `DirectoryBuildTargetsPath`, nor does it import a file or another SDK. The three values
+the path is built from — `AssemblyName`, `TargetFramework` and `OutputType` — are each written at most once,
+unconditionally, in a top-level `PropertyGroup` and in MSBuild's spelling: the evaluator takes the first value it
+finds while MSBuild weighs conditions and keeps the last, so any other shape could name a file no build writes. The nearest
+`Directory.Build.props` and the nearest `Directory.Build.targets` — found as MSBuild finds them, walking up from the
+project's folder to the drive root and stopping at the first of each name — are read the same way, and there
+`AssemblyName`, `OutputType` and `TargetFramework` count as well, because a props file stands in for what the project
+file leaves out and a targets file overrides it; an import in either, or a file that cannot be read, leaves the
+layout unknown.
+
+Where the path cannot be derived with confidence the answer is *none*, never an approximation: an SDK-style project
+whose layout is moved or unknown, a legacy project with a missing or unrecognised `OutputType`, an `AssemblyName`, a
+framework or a chosen path that still contains `$(`, or an `<OutputPath>` under any other condition shape — that
+last one makes the whole project undecidable, whatever configuration is asked,
 because picking among entries the evaluator cannot read would produce inconsistent evidence. `HintPathTargets()`
 resolves the raw `HintPath`s the same way: absolute paths as they are, relative ones against the project's
 folder, and any path containing `$(` skipped.
 
 Results are cached in `evaluation-cache.json`, keyed by path with an mtime **and file-length** fingerprint. The
 length term is not decoration: an edit that preserves the modification timestamp is otherwise invisible, and
-the cache would serve a stale evaluation. Each entry also carries the cache **schema** it was written under; an
+the cache would serve a stale evaluation. An SDK-style entry also records the length and time of every
+`Directory.Build.*` candidate its layout decision looked at, absent ones included: when one of them changed or
+appeared, the entry is not a hit although the project file is the same — otherwise a props file that moved the
+output later would leave the old path in place, and a gate would keep reading a file no build refreshes any more.
+Each entry also carries the cache **schema** it was written under; an
 entry from an older schema is never a hit, so a field the evaluator learned to extract is never served empty
-from a record that predates it — the project is simply evaluated again the first time it is met.
+from a record that predates it — the project is simply evaluated again the first time it is met. The cache is
+written back only when an entry changed — a project evaluated, or a fingerprint refreshed after a touch — so a run
+made of hits writes nothing (§16). Optimize removes the entries of any other schema outright, whatever root they
+belong to (§16).
 
 `file → project` mapping comes from the evaluated `Compile` items, never from a path prefix. A file that sits
 inside a project's directory but is not compiled by it does not make it dirty.
@@ -663,10 +732,11 @@ Tarjan's algorithm finds strongly-connected components; Kahn's algorithm produce
 Iteration order is stabilized (`OrdinalIgnoreCase` on the project path) so the same repository always yields the
 same plan. Cycle members remain in the plan, flagged `InCycle`. Kahn runs over the *condensation*, so a
 component is ordered as a unit and lands where its dependencies put it; nothing needs a phase of its own.
-What happens to it at run time depends on the run's mode: a `Cycles` run dispatches the component as a single
-work item and compiles it in rounds (§8.2, §8.8); every other mode leaves its members to be pre-skipped by the
-scheduler, which is also what keeps the run from deadlocking — their dependents could otherwise never become
-ready.
+Every compiling run (`Build`, `Rebuild`, `Cycles`) dispatches the component as a single work item and compiles it
+in rounds (§8.2, §8.8); a run started from a row compiles its one target alone and carries no component map
+(§8.1). Without a map the scheduler pre-skips the members (`in dependency cycle`), which is also what keeps such a
+run from deadlocking — their dependents could otherwise never become ready; in production that path is only taken
+by a plan without a cycle, where no member exists.
 
 ### 6.6 Layers
 
@@ -691,8 +761,11 @@ order.
 Assignment imposes a **hard phase barrier**: the plan is re-sorted by `(layerIndex, original build order)`,
 using the stability of the sort to preserve topological order within a layer. This can legitimately place a
 project before one of its own dependencies; that case is detected and reported as a warn-only reverse-layer
-warning. Nothing is blocked or reordered on the basis of those warnings, so every algorithm that consumes the
-plan must be order-independent.
+warning at the start of every run that follows the whole plan's order: the engine writes it to `decision.log` and
+sends it with `runStarted` (§5.3), and the App shows it in the console and in the event stream (where a long list of
+run-start warnings folds into one counting line, §5.3). A Clean drops the order and a single-project run builds one
+node, so neither carries it. Nothing is blocked or reordered on the basis of those warnings, so every algorithm
+that consumes the plan must be order-independent.
 
 User regexes are compiled with a 100 ms match timeout. A pattern that times out is treated as a non-match and
 skipped for the remaining nodes, with a warning. An empty or whitespace pattern is made inert rather than
@@ -758,12 +831,13 @@ answers: the repository read the blob table while external roots already read th
 apart. Reading content closes all three, works offline, and needs no version control at all.
 
 The cost is reading files, and it is paid once: `source-hash-cache.json` (§16) keys each hash by the file's
-size and modification time, so a steady-state run only stats the input set. Measured end to end on the real
+size and modification time, so a steady-state run only stats the input set and writes nothing back — the file is
+rewritten only when an entry changed (§16). Measured end to end on the real
 OSYS repository (177 projects, 22,982 input files, 288 MB), from the scan through both binding passes: **303 ms
 per run** with a warm cache, against ~213 ms for the two git commands the old formula ran. With the cache empty
 but the files in the OS cache it is ~670 ms. Everything on that path that is IO — collecting each project's
-inputs, scanning the cache for misses, reading the misses — runs 16-way parallel; the values do not depend on
-thread order (input lists are sorted, fingerprint terms are sorted), and leaving those loops serial measured
+inputs, scanning the cache for misses, reading the misses — runs `IoParallelism.Degree`-way parallel; the values do not
+depend on thread order (input lists are sorted, fingerprint terms are sorted), and leaving those loops serial measured
 544 ms instead of 303.
 
 The first pass on a **cold** disk is the one-time exception: ~8.9 ms per file sequentially, ~1.9 ms with 16-way
@@ -807,6 +881,19 @@ The composite is also what decides the members themselves. Since they all carry 
 either wholly dirty or wholly up to date — members never disagree, and a group whose every member is up to date
 is skipped as a group rather than rebuilt on every run.
 
+That is the decision about the group. Which members of a dirty group compile is a separate question, asked once more
+when a run starts the group (§8.8), and the composite cannot answer it: it is one value for every member.
+The answer is built from each member's own **term**: the member's files and the configuration, with every upstream —
+inside the component or outside it — collapsed to the marker, so neither a sibling's content nor an outside upstream's
+signature enters it. The composite still hashes each member's inputs with the signatures of its upstreams outside the
+component, which is how a change there makes the group dirty and reaches everything downstream; the term leaves them
+out, and whether an outside upstream moved under the member is judged on that upstream's API surface instead — the
+dependency surfaces of §7.5. The planner returns the terms beside the signatures (`MemberTermById`; SCC members only,
+and empty under frozen-upstream evaluation, which builds no composite), the run plan carries them to the coordinator,
+and a trusted result stores each member's term in its build state (§7.5). A term that equals the stored one says that
+nothing the member itself is built from has changed; what its siblings and its outside upstreams did to it is judged on
+the API surfaces it read (§8.8).
+
 ### 7.4 Will-build tri-state
 
 Before a run — and after every Sync — each project carries `WillBuild` as a tri-state:
@@ -828,17 +915,19 @@ If the decision pass fails outright (an I/O or parse error) the counters are not
 zeros would assert "everything is up to date", which is a different and false claim.
 
 A cycle member is evaluated by the same three rules; what it evaluates is the component's composite signature
-(§7.3), so a group's members move together. The run's scope is the one short circuit: outside a `Cycles` run
-every member reads `false`, which is the truth — nothing in that run will compile them.
+(§7.3), so a group's members move together. Sync's preview and every compiling run read the member that way
+(`CycleCompilation`), so a dirty group reads `true` as a whole and a clean one `false`. The run's scope is the one
+short circuit: a decision asked with cycle compilation off — a run that compiles nothing, or a test that asks
+for it — reads every member `false`, which is the truth for such a run.
 
 During a run the value is live: the moment a project succeeds it turns `false`. A Clean is the exception by
-nature — its success means the outputs are gone, so a cleaned project turns `true` (a cycle member stays `false`,
-the scope short circuit above), the same value the next Sync gives it (§8.1).
+nature — its success means the outputs are gone, so a cleaned project turns `true`, a cycle member included, the
+same value the next Sync gives it (§8.1).
 
 **`true` is not always a promise.** A project whose last success was linked against a failed dependency, whose
 signature has not moved and whose ledger note names the root dependencies reads `true` with the reason
 *waiting for dependency*: a `Build` or `Cycles` run does not pre-skip it, but compiles it only if one of those
-roots is now successful (§8.3). The order of the checks matters — a moved signature wins over the note, because
+roots is now successful (§8.3); a cycle group whose members only wait is judged as a whole the same way. The order of the checks matters — a moved signature wins over the note, because
 the project's own change compiles it regardless, and a note without recorded roots stays an unconditional
 *built against a failed dependency*, because nothing could tell the run when to stop waiting. An output built
 outside this tool reads the same note, without the signature test, when its time verdict is fresh and a
@@ -847,9 +936,9 @@ recorded root is still in trouble (§7.6).
 **The evaluator also returns why** — never built, last build failed, the signature changed, waiting for a
 failed dependency, or built against a failed dependency whose roots are unknown; and, from the output evidence
 (§7.6), built outside this tool, output older than its inputs, output missing, or a fed copy that no longer
-matches — and it returns it even for a project the run will not compile, such as a cycle member outside a
-`Cycles` run. Apart from that scope short circuit, `WillBuild` is `false` for exactly two reasons, up to date
-and built outside this tool; every other reason reads `true`. That reason travels on the preview and is what the
+matches — and it returns it even for a project the run will not compile, such as a member of a group the run
+skips as up to date or a project outside a `Cycles` run's scope. Apart from the scope short circuit, `WillBuild`
+is `false` for exactly two reasons, up to date and built outside this tool; every other reason reads `true`. That reason travels on the preview and is what the
 row's decision label reads (§13.2),
 together with one fact: whether the project's **own** files changed (stored content fingerprint versus
 today's, or — for an output built elsewhere — whether its own inputs are newer than that output). The preview
@@ -887,15 +976,46 @@ taken for a clean one. A project from an external root (§10.4) has the same rec
 its built-commit slot means the same thing — except that the revision written there is **its own** working
 copy's, not the repository's, because the repository's HEAD describes a different repository. The last-branch
 slot stays empty for the same reason, and so does the commit when the working copy has no readable revision at
-all (§10.4). The record also carries the project's **fed outputs** — the copies of its output in dependents'
-`HintPath` locations that this tool's own successful build was seen to refresh (§7.6); the list is `null` when
-nothing could be learned (no derivable output path, the output file missing after the build, an older record),
-empty when the path is known but no candidate matched, and it survives a failed attempt unchanged. The
-built commit and the last branch feed no decision: the built commit is diagnostic, and the project log's "last
-successful build" line is the only place a revision is shown. It is written by a single serialized writer,
-atomically (unique temp file + `File.Move(overwrite)`), after every project completes. Readers open with
-`FileShare.Delete` so they cannot block the writer's rename, and a transient sharing violation is retried a
-bounded number of times. A corrupt file never throws — it falls back to defaults.
+all (§10.4). Beside these sits the content hash (SHA-256) of the project's `packages.config` as its last success
+read it when deciding on the restore — the evidence that lets *Build* and *Resolve cycles* skip the restore
+prologue (§9.3); a record that predates the field answers `null`, and the project restores. The record also carries
+the project's **fed outputs** — the copies of its output in dependents' `HintPath` locations that this tool's own
+successful build was seen to refresh (§7.6); the list is `null` when nothing could be learned (no derivable output
+path, the output file missing after the build, an older record), empty when the path is known but no candidate
+matched, and it survives a failed attempt unchanged. A cycle member's record also carries the three fields behind
+the first round of the next run that compiles its group (§8.8; a `Rebuild` compiles every member regardless): the
+**member term** it last compiled with (its own content and configuration; §7.3), the **read
+surfaces** — for every sibling file its last compile read, the producer, the file and the API-surface hash it saw —
+and the **engine fingerprint** of the run that wrote them. They are written when the member's result is trusted — its
+group converged, or it was settled when the group stopped without a verdict (§8.8) — freshly for a member that
+compiled, carried over untouched for one that was carried. The surfaces are stored in a
+canonical order (producer, then file, case-insensitive; each pair once), so the file reads the same from run to run.
+No other writer stores values in them. A success recorded outside a group's rounds rebuilds the record without them,
+and a Clean removes the record. The invalidations — of a project that failed or whose success is not trusted, which
+includes the members of a group that did not converge whose read surfaces were still stale, and the crash recovery
+at startup (§8.7) of a project that was
+in flight when a run died — turn the last result into a failure and copy the rest of the record as it was, the three
+fields included, and the non-convergence memory (§8.8) copies it too and touches only its own field. Where there is no
+record to copy, a new one is opened without the fields. Keeping the fields through an invalidation is safe because a
+record whose last result is not a success is never trusted. A record without the fields — written before they
+existed, or cleared this way — is one round one cannot trust (§8.8).
+The record also carries the **dependency surfaces**: for every direct dependency — only those outside the group, for a
+cycle member, whose siblings are in the read surfaces — the producer, its evidence file and the API-surface hash the
+project last compiled against, read once all of those dependencies have finished: just before the compile for an ordinary
+project, at the end of its group for a cycle member, whose outside dependencies finish before the group starts. They are
+written on every trusted success, in producer order, and kept through a skip: a project the surface gate (§8.3) or round one
+(§8.8) passes over keeps the surfaces of its last compile, which the decision has just found unchanged. A dependency
+whose output cannot be read is left out of the list, and the list is `null` when nothing could be read and in records
+that predate it — either way the next decision compiles the project. Invalidations copy the field like the cycle
+fields, for the same reason.
+The built commit and the last branch feed no decision: the
+built commit is diagnostic, and the project log's "last successful build" line is the only place a revision is
+shown. The last duration feeds none either: it is recorded after each success and read by nothing — the ETA (§8.4)
+averages the durations the current run has observed — so it stays in the file as a diagnostic record only. The file
+is written by a single serialized writer, atomically (unique temp file + `File.Move(overwrite)`), after every
+project completes. Readers open with `FileShare.Delete`, and because Windows refuses a rename over a file with an
+open handle even when the handle shares delete, a transient sharing violation is retried a bounded number of times.
+A corrupt file never throws — it falls back to defaults.
 
 ### 7.6 Output evidence
 
@@ -974,9 +1094,11 @@ stale from the root's new `HintPath` time. One late round beats a wrong `affecte
 waiting for a dependency compiles only if one of its roots recovers (§8.3), so its new output is a possibility
 and not a fact; when a root does recover and it is compiled, its own dependents read stale from their
 `HintPath` times at the next Sync anyway. A cycle member is the exception: a group is never split, so a member
-that reads waiting for a dependency compiles unconditionally in the *Cycles* run that builds it, and there it
-seeds. A dependent behind both a failed root and a genuinely dirty upstream is reached from the dirty one and
-reads `affected` as before.
+that reads waiting for a dependency is never conditional on its own and seeds. The group as a whole can still be
+skipped while its roots fail (§8.3); the planner cannot see that dispatch-time decision, so the time-mode
+dependents behind such a group compile once for nothing, carrying the root as a dependency issue — the accepted
+cost, in the safe direction. A dependent behind both a failed root and a genuinely dirty upstream is reached from
+the dirty one and reads `affected` as before.
 
 The walk from those seeds does not discriminate: it follows the reverse edges to every transitive dependent,
 because each project it pulls will be built and dirties its own downstream in turn. A project whose own verdict
@@ -1016,8 +1138,8 @@ preview, where a project this tool has since built successfully reports it empty
 tool's own.
 
 **Cost.** In ledger mode only the build evidence and the learned fed copies are statted. Input times are read
-only by a time check — a project in time mode, or a member of a group in time mode. Checks run 16-way parallel,
-as input collection does.
+only by a time check — a project in time mode, or a member of a group in time mode. Checks run
+`IoParallelism.Degree`-way parallel, as input collection does.
 
 ---
 
@@ -1027,14 +1149,20 @@ as input collection does.
 
 | Mode | Set of projects |
 |---|---|
-| `Build` | the will-build set (incremental), minus any project this run only evaluates conditionally (§8.3) — the wave lights only what will *definitely* compile, the same set the queue colour and the run's fixed progress denominator use |
-| `Rebuild` | all projects; cached state ignored |
+| `Build` | the will-build set (incremental), minus any project this run only evaluates conditionally (§8.3) — the wave lights only what will *definitely* compile, the same set the queue colour and the run's fixed progress denominator use; dirty cycle groups included, compiled in rounds (§8.8); a project dirty only through an upstream is decided at its turn by the surface gate (§8.3) |
+| `Rebuild` | all projects; cached state ignored; cycle groups compile every member in round one, later rounds follow the evidence (§8.8), and nothing is evaluated conditionally |
 | `Cycles` | the projects in a dependency cycle **and their transitive upstream**, the cycles compiled in rounds (§8.8); everything else is pre-skipped as `skipped — not needed by a dependency cycle` |
 | `Clean` | every project in the graph — external projects and cycle members included — with `-t:Clean` instead of a compile: Visual Studio's *Clean Solution*, from the Build menu (§13.2). From a row, that one project |
 
-`Cycles` is not a degree of difference from the others but a separate job: `Build` and `Rebuild` never compile
-a cycle, `Cycles` compiles the cycles. It is the third icon of the maintenance box in the action bar (§13.2)
-and is meant to be run before a build, not instead of one.
+`Cycles` is the narrow form of the same work: `Build` and `Rebuild` compile a dirty cycle group in rounds as part
+of the plan, `Cycles` compiles only the cycle groups and their stale upstream. Which modes compile cycles is decided
+in one place (`CycleCompilation`), and so is the component map a run carries (`CycleCompilation.GroupsFor`: a full
+run of a compiling mode over a plan with cycles). `Cycles` is the third icon of the maintenance box in the action
+bar (§13.2) and is optional — useful when the cycles alone are the work to pay for.
+
+A `Cycles` run is also the one run that does not take the perf profile's cap and priority: it keeps the
+profile's worker count and runs uncapped at Normal priority, unless *Resolve cycles at full priority* is turned off in
+Settings (§11.1).
 
 **A single project is a scope, not a mode.** A run started from a row (§13.2) carries the project's identity
 and keeps the mode of the item pressed — *Build* or *Rebuild*. Planning runs in full, exactly as for any run,
@@ -1064,22 +1192,20 @@ which runs no MSBuild target at all (§5.2).
 **Clean has no dependency meaning.** Cleaning one project needs nothing from another, so a Clean run's plan
 (`CleanRunScope`, applied before a row's scope is cut) carries no edges and no cycle marks. Every project is
 ready at once and is cleaned in plan order up to the parallelism ceiling; a cycle member is cleaned like any
-other project — it is not pre-skipped as `in dependency cycle`, no rounds run, and with no circular edge left
-the run cannot lock up. The rules that belong to compiling stay out with the edges: a clean that fails gives
+other project — no rounds run, and with no circular edge left the run cannot lock up. The rules that belong to compiling stay out with the edges: a clean that fails gives
 its dependents no dependency issue, and a row's clean records no stale dependency. An external project is
 cleaned like any other, and its working copy is not updated first (§10.4). The run's preview marks every project
 as this run's work — the queue colour, the fixed progress denominator and the stream's opening line
 (`Clean started — N projects, parallelism P`) read it — while the reasons, which describe the disk, are kept
 until a project is actually cleaned. Like a `Cycles` run's preview, it does not write the rows' will-build flag
-(§7.4): each result writes it instead, with the answer the next Sync will give — to build again, except a cycle
-member, which a plain `Build` never compiles — and a row the run never reached, say after a Stop, keeps what the
-last Sync said. For the same reason the end of a Clean that cleaned cycle members is spelled out in the event
-stream: `N cycle projects cleaned — run Resolve cycles before Build` (§13.2).
+(§7.4): each result writes it instead, with the answer the next Sync will give — to build again, a cycle member
+included, since the next `Build` compiles its group — and a row the run never reached, say after a Stop, keeps
+what the last Sync said.
 
 Two things follow from "the outputs are gone". The project's **build-state row is deleted**, not invalidated:
 the project did not fail, this tool simply no longer knows any output of it. The output evidence (§7.6) would
 notice the deleted output only for a
-project whose output path it can derive — for an SDK-style project it cannot — so a row left behind would let
+project whose output path it can derive — for a project whose output layout cannot be derived it cannot — so a row left behind would let
 the next `Build` skip such a project as up to date and report a green run over deleted outputs. With the row
 gone, a project whose output path is known is in time mode, and its deleted output reads output missing. And the
 row **reads `never built`, in its to-build grey**, after the clean succeeds: elsewhere a
@@ -1100,7 +1226,9 @@ already contains the dependency's new source term, would read as up to date for 
 permanent-stale-binary hole the `Cycles` scope
 closes by pulling its upstream in. The scope stays at one project by design (*build with dependencies* is
 not offered); the ledger closes the hole instead. A cycle member's cycle-mates are always stale inputs, so a
-member built alone can never make its group read as up to date for the next `Cycles` run. External working
+member built alone can never make its group read as up to date for the next run that compiles the group. A
+dirty cycle member that an ordinary target depends on is a stale input like any other — the full `Build` would
+compile its group, the scoped run does not — and is named with the cycle wording. External working
 copies follow the same rule: only the copy that holds the target is updated before a scoped run (§10.4).
 
 **Resuming and retrying are not modes.** A stopped run is not resumed and a failed run is not retried by a
@@ -1109,8 +1237,10 @@ the set the old modes produced. Projects that finished green persisted their sig
 to date; projects that were killed or failed had their stored state invalidated (§7.5) and stay dirty; the
 dependents of a failure succeeded carrying a dependency issue, so their record is flagged with its roots
 (§8.3) and they come along as soon as one of those roots is healthy again — recovered in this run, or already
-recorded as successful, per the table there. The one deliberate difference is the elapsed clock: the new run
-counts from zero, because it is a new run.
+recorded as successful, per the table there. The surface gate (§8.3) does not shorten that second press for the
+dependents of an upstream the stopped run finished: the upstream's new signature is already in the ledger, so the
+dependent no longer reads as dirty through its upstream alone and compiles once, whatever the upstream's surface did.
+The one deliberate difference is the elapsed clock: the new run counts from zero, because it is a new run.
 
 The projects that fall out of scope this way are not announced one at a time in the event stream — a
 workspace with hundreds of unrelated projects would turn a `Cycles` run into scope-only noise — they collapse
@@ -1130,8 +1260,8 @@ A `Cycles` run's own preview does not write that flag, nor the conditional mark 
 answers for this run — `false` for every project outside the scope, whatever its state, and the members' own
 verdict inside it — while the row's flag answers for the next plain `Build` (§7.4): it is what a Sync wrote,
 kept live by the projects this run actually compiles, and it is what that `Build` lights its opening wave from
-(§14.5). Written into the rows, this run's answers would outlive it: the `Build` pressed next would light the
-members that had failed here, which it never compiles, and leave dark the dirty projects the cycles did not
+(§14.5). Written into the rows, this run's answers would outlive it: the `Build` pressed next would light its
+opening wave from this run's scope instead of its own and leave dark the dirty projects the cycles did not
 need, which would then turn queued all at once as its run began. The preview's reason, its own-files fact and
 its roots describe the disk rather than the run, and are written as from any other preview.
 
@@ -1151,19 +1281,23 @@ matching signature (§7.6). Pulling the transitive upstream into scope closes
 that: the run is self-consistent, compiling everything it compiles against fresh inputs. Inside the scope the
 ordinary incremental rule applies, so a clean upstream is still skipped as `skipped — up to date`.
 
-**Why the scope stops there.** Downstream is deliberately excluded. A cycle's dependents may well need
-recompiling once the group has moved, but that is `Build`'s job and `Build` is the next thing the user
-presses. Including them would quietly widen the scope to the whole repository — the dependent set of a core
-library is, in practice, everything — which is exactly the cost the separate button exists to keep visible.
+**Why the scope stops there.** Downstream is deliberately excluded. A plain `Build` compiles the group and
+everything that depends on it; `Cycles` exists to pay for the cycles alone, and including the dependents would
+quietly widen it to the whole repository — the dependent set of a core library is, in practice, everything.
 
-Why it is separate rather than folded into `Build`: a group's cost is members × rounds, which next to an
-ordinary incremental build is unbounded. Folded in, the user waited behind work they had not asked for and
-could not see — a two-minute build measured fifteen. As its own button the decision is theirs: when, and how
-much.
+**Why `Build` compiles the group too.** A dependent compiled against a cycle member's previous output links to a
+stale binary: it fails, or worse, succeeds silently. Measured on the real workspace: a pull that changed two
+`Types` cycle members turned their `Business` dependents red with `CS1061`, and neither the row nor its log said
+why, because a `Build` that never compiled cycles skipped the changed members. A group's cost is members ×
+rounds, but round one compiles only the members that need it (§8.8) and a group whose surfaces did not move
+settles in a single round, so the bill is one compile per dirty member plus a surface hash. The bill stays
+visible: the opening wave and the counts before the click, the ribbon's round phase while the group runs. The
+earlier measurement that kept cycles out of `Build` (a two-minute build measured fifteen) predates round-one
+evidence and the surface short circuit.
 
 Like `Build`, a `Cycles` run is incremental — a group whose composite signature is already clean is skipped as
-`skipped — up to date`, so pressing the button again after a group has converged costs nothing. It is also the
-only mode that reads the non-convergence memory (§8.8).
+`skipped — up to date`, so pressing the button again after a group has converged costs nothing. Every run that
+compiles a group reads the non-convergence memory and reports it (§8.8).
 
 ### 8.2 Ready-set scheduler
 
@@ -1185,10 +1319,11 @@ member it was given, on every path including stop and cancellation, or the run's
 to zero. Driving the rounds from here rather than beside the scheduler is what keeps "are the dependencies
 terminal?" in one place instead of two.
 
-Without the component map — which is how the scheduler is built in every mode but `Cycles` — members are marked
-`Skipped` at construction with the reason `in dependency cycle`. Nothing else distinguishes the two modes:
-there is no code path written for cycles being out of scope, the mode only chooses between passing the map and
-passing nothing.
+Without the component map — a plan without a cycle, a run started from a row, or a `Clean` — members are marked
+`Skipped` at construction with the reason `in dependency cycle`; in production no member reaches that path, because
+a plan with a cycle always carries the map in a compiling run. Nothing else distinguishes the modes: `Cycles`
+differs from `Build` only by the scope seed (§8.1), and `Rebuild` by compiling every member in round one and
+evaluating nothing conditionally.
 
 The scheduler is pure state: no I/O, no processes, no async, no logging. Its mutable state is guarded by one
 lock — with a few hundred projects and a handful of calls per second, finer-grained locking would be
@@ -1214,8 +1349,8 @@ hidden:
   although it is stale. The warning line says so (`X has pending changes and was not rebuilt in this run —
   last known output referenced`), and the flag, the triangle and the counter work exactly as for a failure.
 
-That slot has three other tenants, all about cycles: a member of a group that ran out of rounds, a member of
-a group this run could not converge, and plain membership. The triangle is the same in all four cases and
+That slot has three other tenants, all about cycles: a green member a group left stale when it ran out of rounds,
+a member of a group this run could not converge that the engine did not trust, and plain membership. The triangle is the same in all four cases and
 always amber; only the tooltip's one line differs, and the strongest claim wins (§14.3). The loop itself is
 named in the **project log** rather than in the tooltip — `Domain.Parts → Parts.Inventory → Parts.Api →
 Domain.Parts`, closed back on its first member so it reads as a cycle rather than a chain — because a tooltip
@@ -1245,7 +1380,7 @@ because only then — every dependency terminal — is the roots' result in this
 | compiled in this run and succeeded | recovered |
 | compiled in this run and failed | still failing |
 | not compiled in this run, and this run's preview found its output current — up to date, or built outside this tool | recovered |
-| not compiled in this run, its reason not a current one (say a dormant cycle member reading signature changed) — last recorded result success | recovered |
+| not compiled in this run, its reason not a current one (say one outside a `Cycles` run's scope) — last recorded result success | recovered |
 | the same, and its last recorded result a failure | still failing |
 | no longer in the workspace, or without a record | recovered (build — the safe direction) |
 
@@ -1264,33 +1399,109 @@ next run asks the same question. Its roots still enter the inherited accumulatio
 links to this project's stale output and must carry the note on, or it would read as up to date for good once the
 root recovers. Such a skip is not counted among the run's dependency-affected projects — nothing was compiled.
 
-A root named on that line is not always freshly observed. A root that is itself a dormant cycle member, for
-instance, is pre-skipped in a `Build` run without ever being attempted — the table above still reads its *last
-recorded* result, because that is all there is. The line says so: a root this run actually watched fail reads
+A root named on that line is not always freshly observed. A root this run never attempted — one outside a
+`Cycles` run's scope, for instance — is judged by the table above on its *last recorded* result, because that is
+all there is. The line says so: a root this run actually watched fail reads
 by its bare name (`Up`); a root whose "still failing" verdict came only from the ledger, not this run, reads
 `Up (last known failure)`. The same classification `Decide` uses to reach its verdict produces the label — one
 function, not a second guess re-derived from the same data (`ConditionalRebuild.DescribeStillFailingRoots`).
 
-The condition belongs to `Build` and to the in-scope projects of a `Cycles` run. `Rebuild` compiles everything;
-a row's target compiles unconditionally (§8.1); a member of a cycle group is never skipped *alone*, since that
-would leave the group half built. The group as a whole, though, answers the same question **atomically** at its
-dispatch: when every member is either up to date or dirty *only* because it waits on recorded roots, and every
-one of those roots still fails by the table above, the whole group is skipped member by member as
-`skipped — dependency still failing` — rebuilding it would only relink everyone to the same stale root outputs
-(measured: a broken prerequisite made a 17-member group re-pay ~98 s of rounds on every *Resolve cycles* press).
-One member dirty for any other reason, or one recovered root, builds the whole group exactly as before, and the
-skip touches no ledger record — the group compiles the moment a root recovers. A record written before roots
-were stored carries no roots and compiles on every `Build` as it always did.
+The condition belongs to `Build` and to the in-scope projects of a `Cycles` run. `Rebuild` compiles everything,
+cycle groups included; a row's target compiles unconditionally (§8.1); a member of a cycle group is never skipped
+*alone*, since that would leave the group half built. The group as a whole, though, answers the same question
+**atomically** at its dispatch, in the same modes and by the same mode rule (`IncrementalModes`, the one source the
+up-to-date seed reads too): when every
+member is either up to date or dirty *only* because it waits on recorded roots, and every one of those roots still
+fails by the table above, the whole group is skipped member by member as `skipped — dependency still failing` —
+rebuilding it would only relink everyone to the same stale root outputs (measured: a broken prerequisite made a
+17-member group re-pay ~98 s of rounds on every *Resolve cycles* press). One member dirty for any other reason, or
+one recovered root, builds the whole group exactly as before, and the skip touches no ledger record — the group
+compiles the moment a root recovers. A record written before roots were stored carries no roots and compiles on
+every `Build` as it always did. The set of projects a run evaluates conditionally comes from one function for the
+run and for Sync's preview alike (`ConditionalRebuild.ConditionalIds`, with the component map of §8.1). A member is
+never in that set alone; the waiting members of a group that will be judged as a whole are, so on both sides the
+group leaves the wave, the queue and the progress denominator exactly like a waiting project, and compiles only
+if its check at dispatch finds a recovered root.
+
+#### Surface gate
+
+A failed dependency is one way an upstream reaches its dependents; the ordinary way is the signature. Every project's
+signature carries its upstreams' (§7.1, §7.2), so a body-only change in a widely used project makes everything
+downstream dirty, and each of those dependents would compile against an API that did not move — reproducing the output
+it already had. The surface gate asks of an ordinary project the question a cycle's round one asks of its members
+(§8.8): did the API surface of any direct dependency move since this project last compiled?
+
+A project is a **candidate** when the run's plan finds it dirty only through an upstream: the plan says *signature
+changed*, while a second, frozen-upstream evaluation of the same plan — the Fast evaluation (§7.2), with every
+upstream's signature read from the ledger and the output evidence applied — finds it up to date. That second answer
+means the project's own files and configuration are unchanged, its output evidence is in place and its fed copies are
+intact; a configuration switch changes both evaluations and never makes a candidate. It does not mean the last result
+was a success: after a proven failure, a source reverted to the signature of its last success reads as up to date
+again (§8.8), so the decision asks that separately.
+A project with no direct dependency is never one, and neither is a cycle member, whose question its group asks (§8.8).
+Candidates exist only in the runs that follow the ledger as a whole — a `Build` or a `Cycles` run under Safe mode, not a
+`Rebuild` and not a run started from a row (`SurfaceGate.AppliesTo`, asked by the run's planning step and by the
+coordinator alike); the choice is Core's (`SurfaceGate.CandidateIds`) and the coordinator applies it.
+
+Until its turn a candidate is a plain dirty project: it lights in the wave, sits in the queue and counts in *N to
+build* and in the progress denominator. The decision comes at its turn, every dependency already finished. A record
+whose last result is not a success is not trusted, as in round one (§8.8), and the project compiles. Otherwise, for each
+direct dependency, a failure in this run, a dependency missing from the record, a surface that cannot be read — a
+dependency without a derivable output path, an SDK-style project with an overridden layout (§6.2), has none — or one that differs from the recorded
+hash means the project compiles; when every one matches it is skipped as `skipped — up to date (no dependency surface
+changed)` (`SurfaceGate.Decide`). The current surface is read from the dependency's
+evidence file on disk, once per run (`ApiSurfaceHash`, the hash the cycle rounds use: declarations, not bodies) —
+whether the dependency compiled in this run, was skipped as up to date or was last built elsewhere. A skipped dependency
+is never assumed unchanged: a build from a row or from Visual Studio may have rewritten it since. The comparison base
+sits on the dependent's side, in its record's dependency surfaces (§7.5) — what this project last compiled against,
+not what the dependency last produced.
+
+A skip refreshes the record exactly as a carried cycle member's is refreshed — the new composite signature, the run's
+commit, branch and time and this run's dependency-issue note, with the duration, the content fingerprint, the fed
+outputs and the dependency surfaces left as its last compile wrote them — so the next run finds it up to date
+(`RefreshBuildStateOnSkip`). The row turns green at once, with the next Sync's answer, and the run's count moves (§13.2).
+Transitivity needs no rule of its own: a project the gate skipped has by definition an unchanged surface, so its own
+dependents see nothing move either; the plan still marks the whole downstream dirty, which is the safe direction.
+
+The gate's known limits are listed in §20. An upstream compiled in an earlier run — a stopped run, a build from a
+row — already carries its new signature in the ledger, so its dependents no longer read as dirty through it alone and
+compile once, whatever its surface did. A skipped project is not compiled, so the copies of its dependencies' outputs
+that a compile would have refreshed in its own output folder stay as they were — the same limit, with the same
+reasoning, as a carried cycle member's (§8.8). A skipped project whose record takes on an inherited dependency note
+reads `up to date` on its row until the next Sync says *waiting for dependency*: the skip event carries no roots. The
+direct dependents of an upstream without an evidence path never pass the gate. And the surface read is the
+dependency's own output, not the copy a dependent links against, so a copy that fails without failing the build goes
+unseen.
 
 ### 8.4 ETA
 
 `(sum of duration estimates for queued projects + remaining time of in-flight projects) / parallelism`, plus
-400 ms when anything is building, plus — in a `Cycles` run — the cycle members' estimates multiplied by the
-baseline round count. That term belongs to the run where rounds actually run: a Clean cleans a cycle member once,
-as an ordinary project (§8.1), so there it is plain queued work.
+400 ms when anything is building, plus — in any run that compiles cycle groups (`Build`, `Rebuild`, `Cycles`) —
+the cycle members' estimates multiplied by the baseline round count. That term belongs to the run where rounds
+actually run: a Clean cleans a cycle member once, as an ordinary project (§8.1), and a run started from a row
+compiles its target alone, so there it is plain queued work.
 The result is exponentially smoothed (`0.75 × previous + 0.25 × new`), displayed rounded to 5 s, and
-replaced by `· almost done` below 4 s. The per-project estimate comes from `BuildState.LastDurationMs`; with
-no history the ribbon shows progress and elapsed time without an estimate.
+replaced by `· almost done` below 4 s. `parallelism` is the worker count `runStarted` reports — what the engine
+actually runs once it has fitted the profile to the machine (§11.1) — and it holds for the whole run. The
+per-project estimate is one figure for every project: the mean duration of the projects that have succeeded or
+failed so far in the current run. The persisted last duration (§7.5) plays no part, so every run starts without an
+estimate, not only the first one: until a project has succeeded or failed there is nothing to average, and the
+ribbon shows progress and elapsed time without one.
+
+The estimate has one surface, the suffix of the ribbon's `Building` line: `▸ Building {n}/{m} · {elapsed}` followed
+by `· ~Ns left` or `· almost done`, shown while something is building or waiting and an estimate exists. While a
+cycle group is in rounds — in a `Build` or a `Cycles` run alike — the ribbon reads `▸ Resolving cycles · round
+{r}/{cap} · {n}/{m} · {elapsed}` instead and carries no estimate suffix. `{n}/{m}` counts a member of a group in rounds
+from the moment its compile in the round ends (`cycleMemberHeld`); a member a later round recompiles leaves the count
+until it is held again, so the bar steps back by the members that round recompiles and never claims more than the
+group has finished. Every group in rounds keeps its own
+counters; the one on screen is the one whose round started last, and when its verdict arrives the latest other group
+still in rounds takes the line. Once no group is in rounds a `Build` returns to its `Building` line for the rest of
+the plan.
+`preparing dependencies` stands in for the round only in a `Cycles` run, before its first group starts, while the
+run is still compiling the cycles' stale upstream (§8.1). The figure is still computed while a group is in rounds,
+which is what the cycle term below is for: a `Build` prints it again on its `Building` line once the group's verdict
+is in, and a `Cycles` run never prints it.
 
 Cycle members are the one term that is **not** divided by parallelism: their rounds run in barriered levels
 whose width varies with the group's internal shape (§8.8), and the estimate budgets the baseline round count,
@@ -1299,7 +1510,12 @@ the estimate keeps the two-round budget anyway, in the same direction the rest o
 accepts — an ETA that runs long is the better failure. A member counts in that term from the moment it is planned until its group is finished — while the group
 runs as well, not only while it is queued — because intermediate rounds are never published (§8.8) and a
 member's elapsed time within one round says nothing about how much of the group is left. Entering a third
-round shifts the estimate once more, which is accepted — the ceiling is low enough that the drift is bounded.
+round shifts the estimate once more, which is accepted — the ceiling is low enough that the drift is bounded. A member
+that round one carries (§8.8) counts in the term like any other, at the full figure, until its group is finished: its
+result is reported together with every other member's when the verdict is in — a `skipped` one when the group
+converges — and only then does it leave. One that stays carried until then is never compiled, so the estimate includes
+compile time that is never spent, which is the same long direction; one that a later round finds stale compiles at
+that point and spends its time like any other member.
 
 Every component lands in that single undivided term, even though independent components genuinely do run on
 different workers at the same time. The estimate is therefore pessimistic in exactly one direction whenever a
@@ -1314,6 +1530,21 @@ first 16 hex characters of the SHA-256 of the project id, plus a `decision.log` 
 by exactly one worker (the scheduler guarantees it); `decision.log` is written from all of them. Embedded CR/LF
 inside a single MSBuild output line is normalized to a space so that one appended line is always one physical
 line, and a strange line stitch in MSBuild output cannot desynchronize the chunk reader.
+
+Run logs are kept for three days, and the newest run's folder always stays however old it is, so the last run
+can always be read. The engine prunes them once, in the background, as soon as it has built its host: the sweep
+neither delays `engineReady` nor the first command, and the run that is starting is safe by construction — its
+folder carries the newest stamp not in the future, far inside the window. A folder is removed only when its name is
+exactly a run-folder name, its stamp (the local wall-clock time the run started) is older than the window and it
+is not the newest run folder — the newest of the runs that have started, so a folder stamped in the future (a
+clock set back, a name made by hand) neither goes nor shields an older run. Nothing else is ever touched: only
+folders directly under the logs root, never another folder, a file that happens to carry a run-folder name, or a
+link, and never anything outside the logs root; a link found inside a folder that goes is removed as the link it
+is, never followed, and so is a folder swapped for a link after the sweep chose it: only the link goes and its
+target is not entered. One sweep removes a bounded number of folders, oldest first, so a long backlog is worked off
+over several starts rather than stalling one; an I/O error (a log still open in an editor, say) leaves that
+folder for the next start. A sweep that removed, or failed to remove, something writes one summary line to
+stderr — stdout stays NDJSON only.
 
 ### 8.6 Planning pipeline
 
@@ -1406,9 +1637,13 @@ take slots of their own. A project is therefore never dispatched just to queue f
 always means a compiler child is starting, and a stop never finds a dispatched project still waiting for its
 turn. Nobody holds one slot while waiting for another, so the ordering cannot deadlock.
 
-**Exactly-once completion.** Everything between dispatch and `Complete` sits inside a `try`/`finally`. An
-exception escaping that region would leave the project in flight forever, `IsDone` would never become true and
-the run would hang — so even the display-name lookup is written not to throw.
+**Exactly-once completion.** Everything between dispatch and `Complete` sits inside a `try`/`finally`, except two
+reads that precede it, and neither can throw. The dependency-issue computation — a project's own, or each member's as a
+group starts — turns a failure into a console warning and builds the project with no dependency issue, the safe
+direction (`DepIssuesForCompile`); the dependency-surface read beside it (`DependencySurfacesOf`) swallows its own
+errors the same way and records no surfaces. An exception escaping the region would leave the project in flight forever:
+with one worker the project would vanish from the run, counted only as queued; with several, the workers waiting on
+its dependents would park for good and the run would hang — so even the display-name lookup is written not to throw.
 
 **Event ordering.** All events go through a single unbounded FIFO channel drained by one pump task. MSBuild's
 output callback is invoked *synchronously* from its stdout/stderr pump threads while IPC writing is
@@ -1421,7 +1656,8 @@ log is the real record, and the channel is still drained to completion so no wri
 invoking and used for all three consumers at once (the log's warning lines, the event, and the accumulation
 that this project's own dependents will inherit). A project the run evaluates conditionally is decided just
 before that, and skipped there when every recorded root still fails (§8.3). The invocation request carries the
-solution directory and a restore flag derived from the presence of `packages.config`.
+solution directory and a restore flag derived from the presence of `packages.config`, the run mode and the
+project's restore evidence (§9.3).
 The project's log file is opened before and closed after the
 invocation, so a late line cannot be silently dropped. The first line written is the real MSBuild command
 line. On success the build state is persisted with the signature computed during planning; on failure the
@@ -1434,7 +1670,8 @@ signature is known counts: for that one case the invalidation also writes the pl
 moment into the failed-signature pair (§7.5), opening a fresh record when the project has never been seen
 before, so a first-ever compile failure is not lost. Every other case — a timeout, a stop, an invoke error, a
 failed Clean (which never calls the compiler), or a result the run does not trust at all, such as a
-non-converged cycle's member that came back green — is not proof the sources are broken, only that this
+non-converged cycle's member that came back green while still bound to a stale sibling surface — is not proof the
+sources are broken, only that this
 attempt's output cannot be, and it clears any failed signature a past success has since invalidated rather
 than writing one. For a project the ledger has never heard of it opens a failed record with no built signature:
 without one the project would stay in time mode (§7.6) and a half-written output newer than its inputs would read
@@ -1452,13 +1689,15 @@ would otherwise turn red only for the next Sync to turn it grey. An event withou
 reads as no evidence. A success is handled the same way:
 whether the ledger keeps it as a success travels on the `projectSucceeded` event as `trusted`, decided where
 the invalidation is. A green member of a cycle group that did not converge (no progress, or the round ceiling)
-is invalidated like a failure without evidence and arrives with `trusted: false`; a group cut short reports
-every member as failed instead (§8.8, cycle rounds). An event without the field reads as trusted.
+arrives with `trusted: false` only when its read surfaces were still stale at the end — it is then invalidated like a
+failure without evidence; a settled one is trusted. A carried member left stale in such a group never compiled, so it
+is no success at all: it is reported as a skip and invalidated the same way (§8.8). A group cut short reports every
+member as failed instead (§8.8, cycle rounds). An event without the field reads as trusted.
 
-**Cycle rounds.** These run in one mode only — `Cycles` (§8.1), the third icon of the maintenance box. While
-such a run is in flight the ribbon reads `▸ Resolving cycles · round R/K · n/m · elapsed` with the amber
-building glyph, and before the first round starts (while the cycle's stale upstream compiles) it says
-`preparing dependencies` instead. The numbers are the engine's: the round policy decides how many rounds a
+**Cycle rounds.** These run in every compiling mode — `Build`, `Rebuild` and `Cycles` (§8.1); a `Rebuild` compiles
+every member in round one. While a group is in rounds the ribbon reads `▸ Resolving cycles · round R/K · n/m ·
+elapsed` with the amber building glyph, and in a `Cycles` run, before the first round starts (while the cycle's stale
+upstream compiles), it says `preparing dependencies` instead. The numbers are the engine's: the round policy decides how many rounds a
 group needs, and the interface reports that rather than promising a fixed count. A worker that is
 handed a strongly-connected component runs the whole group. Within a round the members run in **barriered
 levels** (`CycleRoundLevels`): members with no direct edge between them compile concurrently on one level,
@@ -1480,15 +1719,98 @@ member buys a second round for few of its readers, if any. Build order inside a 
 the project path — so a plan that followed it would string the most-read members out one per level; on a real
 17-member group the most-read-first plan reaches the fewest levels its edges allow, about a third as many as
 the group has members. Level
-concurrency draws from the same run-wide invoke budget as the workers (one semaphore sized by the perf
-profile's parallelism), so no combination of workers and level width ever exceeds the configured parallelism.
+concurrency draws from the same run-wide invoke budget as the workers (one semaphore sized by the run's actual
+worker count, §11.1), so no combination of workers and level width ever exceeds that count.
 A member takes its slot *before* it is announced as started and releases it only *after* it has been announced
 held (§5.3): what the screen counts as compiling is exactly what holds a slot, and the members of a level still
 queued for one are announced nothing.
-The first round invokes every member; whether anyone is invoked again is a question of evidence, and a later
-round compiles only the members for whom the answer is yes. Each member's log file is opened once and kept
-open for every round: opening it per round would truncate the previous rounds away and restart the line
-numbers.
+Round one is a question of evidence too: it compiles the members that need it (below) — in a `Rebuild`, every member,
+the decision log saying so in one line (`cycle A: rebuild — every member compiles in round one`) — a later round
+compiles only the members that went stale, and nobody else is invoked. Each member's log file is opened when the member first
+compiles and kept open for every later round: opening it per round would truncate the previous rounds away and
+restart the line numbers, and a member that is never compiled never gets a log.
+
+**Round one compiles only the members that need it.** When the group has surface evidence and the plan carries the
+members' terms (§7.3), a pure function in Core (`CycleMemberNeed`) sorts the members once, as the group starts. It
+reads what the ledger holds for each member (§7.5), the member's current term and output check (§7.6), its direct
+dependencies inside the group and outside it, the surface state hashed at group start — every copy of each producer
+inside the group, the evidence file of each dependency outside it — and the engine fingerprint (below). Without
+that evidence every member compiles in round one. A member needs a compile when the first of these rules matches,
+taken in this order, and the matching rule is written to `decision.log` before the round starts, one line per member
+(`A: round 1 — own inputs changed`):
+
+- **No trusted record.** The record is missing, its last result is not a success, that success was linked against a
+  failed dependency, or one of the three cycle fields (§7.5) is absent or empty; or the member's set of direct
+  dependencies inside the group is empty (every member of a group of two or more has at least one, so an empty set is a
+  mistake in the evidence, and the member compiles rather than being carried by a check that silently never applies);
+  or the recorded surfaces name no file of one of those dependencies.
+- **Engine changed.** The fingerprint stored with the record is not this run's.
+- **No member term, own inputs changed.** The plan holds no term for the member (a plan without a composite has
+  none), or the term differs from the stored one: the member's own files or its configuration changed.
+- **Dependency surface moved.** A direct dependency outside the component has no surface in the record (§7.5), or its
+  evidence file, hashed when the group starts, is gone, unreadable or carries a hash other than the one the member
+  last compiled against. An outside upstream whose body changed while its API stayed put moves nothing here, so the
+  members reading it are carried — the composite still turns the group dirty, which is what brings the group to this
+  question. The comparison is by hash, as the surface gate's is (§8.3); where the evidence file now lives does not
+  matter. An outside upstream with no derivable evidence path (§7.6) has nothing to compare, and the members that
+  read it compile whenever their group does.
+- **Output evidence missing, output older than its inputs.** The member has no output check, no derivable
+  evidence path or an output file that is gone, or fed copies that are not intact (§7.6); or its output is in time
+  mode and older than one of its own inputs — an output that may not have been compiled from the sources on disk (an
+  edit after a Visual Studio build, a branch switch that rewrote the files). The mode alone plays no part: an output
+  Visual Studio compiled after the last edit, read against the same sibling surfaces, is the same answer, and is
+  carried.
+- **No trusted record, again.** A surface entry of the record is incomplete or listed twice. This check runs after the
+  engine, term and output rules, so a record that is damaged this way and also fails one of them is reported by that
+  rule.
+- **Read surface moved.** A sibling file the record says the member read hashes differently on disk, or is gone. The
+  reason names the files, sorted and counted beyond a limit like the `moved=` field of a round line.
+
+A member that matches none of the rules is **carried**: nothing it is built from has changed and the surfaces it read
+are the ones it saw, so its output is still the right answer and it is not invoked. Its read state is rebuilt from
+the record and it counts as clean from the first round on, but it is not exempt — at the end of every round its
+recorded surfaces are compared with the disk like any other member's, so a sibling that compiled in round one and
+moved an API surface under it makes it stale, and a later round compiles it, through the restore decision of §9.3
+because a recorded success is not a round that restored. A member still carried when the group converges gets its
+single result with everyone else's: `skipped — up to date`, with `carried: own inputs and read surfaces unchanged`
+as the detail in `decision.log`. Its build state is refreshed at that moment, unless the run was interrupted: the new
+composite signature, the run's commit and branch, the run time and this run's dependency-issue note replace the old
+ones — which is what lets the next *Build* find the member up to date — while its duration, content fingerprint, fed
+outputs, the three cycle fields and its dependency surfaces stay as its last compile left them (`RefreshBuildStateOnSkip`,
+the same body the surface gate's skip goes through, §8.3). The refresh is the same when the output was
+compiled outside this tool: the member's record is refreshed like any carried member's, and the next run judges it by
+its term and surfaces, not by the output's time. Having never compiled, the member has no
+project log in the run. When a group is cut short a carried member is invalidated with the rest and reported as failed
+like them; when it stops without converging, a carried member whose recorded surfaces were still final is refreshed
+exactly as on convergence, and one whose surfaces had moved is invalidated and, never having compiled, reported as
+skipped — `cycle did not converge at this signature` (below).
+
+A round one that carried members was clean only for the members that compiled, so the engine hands the stopping rule
+below no previous failure set after it: such a round never counts as the first of the two consecutive clean rounds
+the classic rule asks for. The group then converges when everyone is green and nobody is stale — in round one itself
+when nobody went stale. If the surface evidence is lost while round one runs, two further clean rounds are needed: the
+later rounds are full rounds that compile every member, the carried ones included, and the record is written without
+read surfaces, so none of the group's members is carried the next time.
+
+The **engine fingerprint** is a SHA-256 over the full path of the `MSBuild.exe` the run resolved, its file version
+and every argument of the build command line except the project path (`EngineFingerprint`). The configuration enters
+as a placeholder, the WPF temporary-assembly targets argument (§9.2) is part of the list and the separate restore
+invocation (§9.3) is not; a file version that cannot be read counts as one more fixed value, not as an error. It is
+computed once per run. A record written under another fingerprint — another toolset or version, a changed argument
+contract — vouches for no one, so every member of every group compiles once.
+
+`decision.log` carries the outcome: a line per member that needs a compile, a `skipped — up to date (carried …)` line
+per carried member that settled, a `skipped — cycle did not converge at this signature (carried record discarded: …)`
+line per carried member a group without convergence left stale, and a verdict line that gives a converged group's compiled count beside its member count
+(`cycle {leader}: converged (N members, K compiled)`). The event stream carries the same count (§5.3).
+
+**A known limit.** A carried member is not compiled, so the copies of its siblings' outputs that a compile would have
+refreshed in its own output folder stay as its last compile left them — even though a sibling was recompiled in the
+run, which is possible only while that sibling's API surface did not move, the very condition for being carried. The
+tool never writes to an output folder itself (§9.4), so nothing refreshes them. The repository this tool is used on
+runs from one shared `Bin` folder, where the recompiled sibling has already written its own output, which is why the
+limit is accepted; a layout that ran from each member's own folder would see an older implementation of the sibling
+until that member compiles.
 
 The stopping rule is a pure function in Core, given the round number, the members currently failing, the
 previous round's failures and — when the engine can prove it — the members whose read surfaces went stale.
@@ -1496,9 +1818,15 @@ Both of its early exits rest on one fact: the source does not change between rou
 only change if the **API surface** of a sibling output it compiled against changes. Before each invoke the
 engine records the surface state of every intra-group dependency the member is about to read — the
 dependency's evidence path *and* its fed copies (§7.6), each file hashed over declarations alone
-(`ApiSurfaceHash`: no IL, no MVID, no compiler-generated names, signatures resolved to type names rather than
+(`ApiSurfaceHash`: declarations with their attributes — parameter, return-value and generic-parameter
+attributes included — every field of a value type (private ones too), explicit type layout; no IL, no MVID,
+no compiler-generated names, signatures resolved to type names rather than
 raw blobs so a renumbered ref table cannot masquerade as change; the assembly version counts only under a
-strong name, so a wildcard `AssemblyVersion` does not defeat the proof). When the compile ends, the record
+strong name, so a wildcard `AssemblyVersion` does not defeat the proof). One generated type is left out as well,
+matched by its exact full name: WPF's XAML loader helper (`XamlGeneratedNamespace.GeneratedInternalTypeHelper`).
+The markup compiler emits it according to its incremental state in `obj` rather than the source, and no sibling can
+bind to it — every WPF assembly carries its own, which the loader reaches by reflection — so counting it would make
+an unchanged source look changed and recompile every reader for nothing. When the compile ends, the record
 keeps only the file the member really read. The compiler says which one: MSBuild prints the compiler's command
 line, and its `/reference:` list is the outcome of reference resolution, whatever `HintPath`,
 `ProjectReference`, reference path or import led there (`CompilerReferences`). A *Clean* is where this
@@ -1508,9 +1836,17 @@ second round with no API moved. Every copy stays in the record, the conservative
 failed (whether another round can help is judged on the widest evidence), when there is no command line (the
 compiler did not run, or its line could not be read), when the compiler read no file of the dependency's name
 (the reference was not found, and the file may yet appear), and when the file it read is none of the
-dependency's known copies (`CycleReadFiles`). At the end of the round the records are compared with the disk.
+dependency's known copies (`CycleReadFiles`). A producer's own surface is hashed when the group starts — all
+producers in parallel, bounded by the shared IO parallelism (`IoParallelism`) — and again after each of its
+successful compiles, once the member has released its build slot: reading a large output never holds a slot
+another member could use, and the level barrier still waits for the hash, so the next level reads the fresh
+surface. At the end of the round the records are compared with the disk.
 Everyone green and nobody stale means **converged**: every member provably compiled against
-final surfaces — in a single round when no API moved, which is the typical body-only change. A failing member
+final surfaces — in a single round when no API moved, which is the typical body-only change. Two clean rounds in a
+row do not stand in for that proof when the evidence exists: a round after the first compiles only the stale members,
+and a compile can move a surface another member read (one member's constant flowing into another's API), so a member
+can still be bound to an old surface after two clean rounds. The group converges only when nobody is stale, and a
+member that is still stale when the budget runs out ends the group at the ceiling. A failing member
 whose read surfaces did not move is proof that a retry would fail identically, so the group stops as **no
 progress** — in the first round when the failure is hopeless from the start, which is what keeps a broken
 source from burning the remaining rounds. A failing member whose inputs did move gets another round, and that
@@ -1522,15 +1858,16 @@ there, because a member compiled in the first round may have bound to a method t
 identical failure *set* twice means no progress (the comparison is on the set and not its size, since `{A,C}`
 followed by `{B,D}` is oscillation), and anything else means another full round. The ceiling of three holds in
 both modes — a group still moving when the budget runs out is cut, and loses nothing, because rounds are
-idempotent against what is on disk and the next `Cycles` run picks up where this one left off. Restore is not
-repeated across rounds either: a member whose previous round succeeded already restored then, and nothing
-between rounds can change `packages.config` — only a member that failed carries the restore prologue again
-(§9.3), because the failure may have been the restore's own.
+idempotent against what is on disk and the next run that compiles the group picks up where this one left off. Restore is not
+repeated across rounds either: a member whose previous round succeeded already restored then or had no need to, and
+nothing between rounds can change `packages.config` — only a member that failed goes back through the restore
+decision (§9.3), because the failure may have been the restore's own.
 
 **Intermediate rounds are not published.** A member gets no `projectSucceeded`/`projectFailed` until the group
 is finished, and then exactly one, carrying the **sum** of its rounds as the duration — the real cost, not the
 last round's. Publishing per round would send progress backwards, a project going from succeeded back to
-building, and would give the same project two result lines in the event stream. Each compile is still
+building, and would give the same project two result lines in the event stream; the held announcement is what moves
+the ribbon's count instead (§8.4). Each compile is still
 announced at both ends, without a result: `projectStarted` on every round the member compiles in, because it
 really is compiling then, and `cycleMemberHeld` when that compile ends; `cycleRoundStarted` announces the round
 itself (§5.3). With no intermediate results a member stays started for the whole life of the group, so the held
@@ -1538,16 +1875,24 @@ announcement is what tells the App the member is waiting for its group rather th
 it as queued from then on. Without that, a 32-member component would report 32 projects building on a
 four-worker run.
 
-**A group that did not converge persists no success.** Only `Converged` is trusted with a fresh signature: on
-no-progress, on the ceiling, on a stop, on cancellation and on an unexpected exception, every member is
-invalidated — including members that came back green — and a group cut short reports every member as failed
-rather than carrying an intermediate round's verdict out. One thing *is* kept on the surface-proof no-progress
+**A group that did not converge keeps only its settled members.** On no progress and on the ceiling, a member that
+came back green — or was carried — with none of its read surfaces stale at the end of the last round compiled against
+final APIs, and its record is written exactly as a converged member's, cycle fields included; a green member that
+was stale at the end is invalidated, which keeps the group dirty so that the next run's round one compiles only the
+members that did not settle. A carried member that was stale at the end was never compiled: it is reported as skipped
+— `cycle did not converge at this signature`, with `carried record discarded: the group did not converge` as the
+`decision.log` detail and `cycleUnconverged` set on no progress only (§5.3) — and invalidated the same way, so the run
+counts it as skipped rather than succeeded (`RunCoordinator.ReportDiscardedCarry`). Without surface evidence nothing is trusted. A settled green member carries no dependency note for a
+failed sibling: a sibling that later compiles with a changed surface is caught by the read-surface rule, and one
+whose surface did not change leaves the member's output correct. A stop, a cancellation and an unexpected exception
+invalidate everyone, and a group cut short reports every member as failed rather than carrying an intermediate
+round's verdict out. One more thing is kept on the surface-proof no-progress
 path: the member whose compiler failure forced the verdict — it failed with every intra-group surface it read
 already final, so its inputs will be identical on any retry — records that failure as **evidence**
 (`FailedSignature`, §7.5) and arrives with `evidence: true`, exactly like a plain `Build` failure. Its row
-turns red and reads `failed` (with the *Resolve cycles will retry it* clause, §13.2), and the verdict survives
-the next Sync, so the member that actually broke the group is visible at a glance; its green siblings stay
-unevidenced and grey. Without surface proof the old rule holds unchanged — a member of a non-converged group
+turns red and reads `failed` (with the *Build will retry it* clause, §13.2), and the verdict survives
+the next Sync, so the member that actually broke the group is visible at a glance while its settled siblings
+stay green. Without surface proof the old rule holds unchanged — a member of a non-converged group
 that fails with `exit N` looks like evidence from its text alone, but nothing can rule the stale-sibling
 explanation out, so it is not, and no row turns red only for the next Sync to turn it grey.
 
@@ -1574,12 +1919,12 @@ evidence (§7.6) plays no part in it. A member with no state row
 at all gets one created for the purpose, otherwise the very case this solves — a component that has never been
 built successfully — would never accumulate a memory. Failing to write it warns and nothing more.
 
-**The memory reports; it does not block.** A later `Cycles` run that computes the same signature writes
-`cycle {leader}: retrying — did not converge at this signature` to the decision log and then gives the group a
-full attempt from round one. It once pre-skipped the whole group instead, to avoid spending rounds on a
-guaranteed red, and that was wrong for a single reason: the only way into a `Cycles` run is the user pressing
-**Resolve cycles**, so the saving could only ever be taken by swallowing an explicit command, and the button
-appeared to do nothing. The signature also covers sources alone — a package restore, an output from outside
+**The memory reports; it does not block.** A later run that compiles the group at the same signature — a `Build`,
+a `Rebuild` or a `Cycles` run — writes `cycle {leader}: retrying — did not converge at this signature` to the
+decision log and then gives the group a full attempt from round one. It once pre-skipped the whole group instead,
+to avoid spending rounds on a guaranteed red, and that was wrong for a single reason: the only way into the rounds
+is the user pressing a run button, so the saving could only ever be taken by swallowing an explicit command, and
+the button appeared to do nothing. The signature also covers sources alone — a package restore, an output from outside
 the cycle or the environment may well have changed — so refusing a retry on an unchanged source signature
 claims more than the evidence supports. Hitting the ceiling is not recorded at all, by the same standard of
 evidence: no progress is proof that more rounds cannot help — a failure whose read surfaces had settled, or,
@@ -1590,7 +1935,7 @@ Reaching any real verdict clears the memory, at the same place that writes it �
 alike, so a stale record from an earlier stuck run cannot outlive the evidence for it. Converged members would
 lose it anyway as a side effect of persisting a fresh build state; the explicit clear is what keeps that from
 being load-bearing. A converged member can carry a dependency issue too — its transitive upstream compiles in
-the same `Cycles` run and can itself fail (§8.1) — but such a success is persisted exactly like a clean one,
+the same run and can itself fail (§8.1) — but such a success is persisted exactly like a clean one,
 with a note and its roots (§8.3), so the memory is lost the same way, as a side effect of that same fresh build
 state; the clear belongs to the memory's own writer either way rather than to a side effect somewhere else.
 
@@ -1604,8 +1949,20 @@ tell an operator whether a group hit the ceiling, stopped making progress or con
 the remembered signature when one was written. The same verdict also reaches the App, as `cycleCompleted`
 (§5.3), so it shows up in the event stream instead of only on disk.
 
-Members that survive to the ceiling are reported as succeeded but flagged as unsettled, because two clean
-rounds were never observed and their output may be one generation stale (§14.3).
+The rounds themselves leave a trail in `decision.log` as well, so "why did this group take another round" is
+answered from the log. Before the first round a header names the group, its member and intra-group producer
+counts, whether surface evidence is on, and how long the group-start surface hashing took. When evidence is lost
+— at the start or after a member's compile — one line names the producer, the file and the reason (unreadable,
+meaning locked or corrupt, or no derivable evidence path) and says the group continues in full rounds; only the
+first loss is written. Every completed round ends with one line: the round's decision, the stale members by
+name, the sibling files whose surface moved under them (the evidence behind the stale set, listed up to a limit
+and counted beyond it), the number of levels compiled, the round's wall time and its summed post-compile hashing
+time. Without evidence the stale and moved fields read `n/a`. The texts have a single owner in Core
+(`CycleDecisionLines`); the Supervisor only measures and calls it.
+
+Members that survive to the ceiling are reported as succeeded but flagged as unsettled: the group never met its
+convergence test — a round with no stale member under surface evidence, two consecutive clean rounds without it —
+so their output may be one generation stale (§14.3).
 
 **Stop bookkeeping.** If a stop was acknowledged, writing `runStopped` is a debt that must be paid even when
 the run never reached `runStarted` (a stop pressed during a multi-second planning window) — otherwise the App
@@ -1643,6 +2000,7 @@ Without it the Supervisor still starts and the failure surfaces as a resolve err
 <project> -t:Build|-t:Rebuild -p:Configuration=<cfg>
           -p:UseSharedCompilation=false -nodeReuse:false -p:BuildProjectReferences=false
           -clp:Summary -nologo
+          -p:CustomBeforeMicrosoftCommonTargets=<cache>\msbuild\wpf-temporary-assembly.targets
 ```
 
 - The target is `-t:Build` everywhere except one case: *Rebuild* pressed in a **row menu** (§8.1), which runs
@@ -1650,20 +2008,44 @@ Without it the Supervisor still starts and the failure surfaces as a resolve err
 - `-p:BuildProjectReferences=false` is **mandatory**. The orchestrator already builds every dependency as its
   own node; letting MSBuild walk the `ProjectReference` chain again re-enters sibling projects and hits their
   `obj` state.
-- The two v1 flags cost real time — measurements put the flags-off build at roughly **2.9×** the flags-on
-  build, essentially all of it from shared compilation (node reuse alone measures at ~0, because per-project
-  shell-out does not spawn extra nodes). They stay on because with a compiler server the emit happens in a
-  long-lived `VBCSCompiler` **outside** the job, which reintroduces the torn-DLL risk that §4.5 exists to
-  eliminate. Correctness was chosen over the 2.9×; revisiting it requires a mechanism that closes the emit
-  window, not just a faster number. That mechanism was looked for and does not exist on the current toolset:
-  the server's pipe name is derived from the user and the compiler directory with no external override
-  anywhere in the toolset (task assembly, `csc.exe`, `VBCSCompiler.exe` — verified on VS 18), and the client
-  uses the server only for the built-in tool path, so a private toolset copy cannot create a private pipe
-  either. A per-run server therefore cannot be isolated from Visual Studio's in either direction — ours would
-  serve VS's builds and die with the run's job, or VS's would emit outside the job.
+- The two v1 flags stay on, and the reason is cost against benefit, not impossibility. A compiler server
+  *can* be given a private pipe: the compiler targets hand the `Csc` task a `SharedCompilationId`, and with
+  `UseSharedCompilation=true` the first `MSBuild.exe` that needs the server starts `VBCSCompiler` as its own
+  child — inside the inner job, so it dies with the run like any other child, Visual Studio's builds never
+  find it, and a stop cannot catch an emit outside the job (§4.5). Measured on the real repository, though,
+  such a server takes about a tenth off a `Cycles` run — the compiler's own start-up is already cheap, and
+  the time is genuine compile work — while holding two to four gigabytes of memory for as long as the engine
+  lives. That trade is declined. Node reuse alone measures at ~0, because per-project shell-out does not
+  spawn extra nodes. An earlier figure of roughly 2.9× for shared compilation was not reproduced on this
+  repository. Should the flags ever be turned on, the server must be born inside the job
+  under a per-engine pipe name; a server outside the job would reintroduce the torn-DLL risk §4.5 exists to
+  eliminate.
 - No `-p:OutDir` and no `-p:OutputPath` is ever passed (§9.4).
 - No intermediate path is passed either: every project compiles into its own default `obj`, exactly as Visual
   Studio would (§9.4).
+- `-p:CustomBeforeMicrosoftCommonTargets=` names a small targets file the engine keeps in its state folder
+  (`<cache>`, §16). It changes how exactly one thing is compiled: the *temporary assembly* WPF builds when a
+  project's XAML uses types from the project itself (`<project>_<random>_wpftmp`). That assembly is only ever
+  read through reflection — it is thrown away once the markup is compiled — so it is built as metadata only,
+  with no method bodies, which takes roughly a fifth off the compile of a WPF project. The file acts on a
+  project whose name ends in `_wpftmp` and on nothing else, and carries three elements that only work together:
+  `ProduceOnlyReferenceAssembly=true`, which skips the bodies; `ProduceReferenceAssembly=false`, because an
+  SDK-style project would otherwise hand the compiler `/refout` together with `/refonly`, which fails with
+  `CS8308`; and one source file, compiled into the temporary assembly alone, that grants it
+  `InternalsVisibleTo` — a metadata-only build drops internal members, and XAML that sets an internal member of
+  a local type would then fail with `MC3072`. What the file does **not** change is the result: no path is
+  touched (`OutDir` and `obj` stay where §9.4 says), and the final assembly and the compiled markup are
+  equivalent with and without it — the same markup bytes and the same assembly size, not bit identity — which
+  an acceptance test pins with the real `MSBuild.exe` on a legacy-style and an SDK-style WPF project (§17.5).
+  The argument goes on every build call whatever its target and never on the
+  restore call (§9.3), which compiles nothing. A global property replaces MSBuild's own import of the default
+  `Custom.Before.Microsoft.Common.targets`, so the file imports that default itself and the chain stays whole; a
+  project's own `CustomBeforeMicrosoftCommonTargets` is the one thing it displaces (§20). If the files cannot be
+  written or pinned, the engine says so once on stderr and builds without the argument. Both files carry a fixed,
+  old modification time however they were written, so rewriting them with new content never makes MSBuild see a
+  newer import and rebuild every project once; the pin has to go if the file ever starts to change the output.
+  The file has been checked against the Visual Studio 18.9 toolset (SDK-style and legacy-style projects) and the
+  Visual Studio 2022 toolset (legacy-style projects).
 - No verbosity switch is passed. MSBuild's default prints the compiler's command line, and a cycle round reads
   its `/reference:` list to learn which sibling file a member really compiled against (§8.8). Losing that line
   costs precision only: the round then judges the member on every copy.
@@ -1686,19 +2068,39 @@ That argument list has **two callers and one source**. The build path runs it as
 carries a `packages.config` next to its `.csproj` gets a restore child before its build child, and a non-zero
 restore exit means the build child is never started. Within a cycle group's rounds (§8.8) the prologue runs
 once, not per round: a member re-invoked after a successful round carries no restore — that success already
-restored, and nothing between rounds can change `packages.config` — while a member whose last round failed
-gets the prologue again, because the failure may have been the restore's own. A `-t:Clean` target gets no restore — there is nothing to
-restore for. *Optimize* (§13.2) calls the same list through a **restore-only entry point** on the invoker;
-`-t:Build` is never appended there, so that path cannot compile anything. It exists because a restore is not
-always a build's prologue: Optimize repairs what a build would otherwise have failed on. Both callers share the
-same invoker core — inner-job assignment, line pumping, the per-project timeout and the kill on timeout or
-cancel — so a restore child is governed exactly like a build child.
+restored or found its packages in place, and nothing between rounds can change `packages.config` — while a member
+whose last round failed goes back through the decision below, because the failure may have been the restore's own.
+A `-t:Clean` target gets no restore — there is nothing to restore for. *Optimize* (§13.2) calls the same list
+through a **restore-only entry point** on the invoker; `-t:Build` is never appended there, so that path cannot
+compile anything. It exists because a restore is not always a build's prologue: Optimize repairs what a build would
+otherwise have failed on. Both callers share the same invoker core — inner-job assignment, line pumping, the
+per-project timeout and the kill on timeout or cancel — so a restore child is governed exactly like a build child.
+
+**In *Build* and *Resolve cycles* the prologue is conditional.** Each success records the content hash (SHA-256) of
+the project's `packages.config` as the run read it when it made the restore decision, whether the restore then ran
+or was skipped (§7.5). The next *Build* or *Resolve cycles* run hashes the file again and reads its
+`<package id version>` entries; when the hash equals the recorded one and every listed package is installed, the
+prologue is skipped and `decision.log` gives the reason
+(`<project>: restore skipped — packages.config unchanged, N packages present`). A package counts as installed when
+its `<solutionDir>\packages\<id>.<version>\` folder holds `<id>.<version>.nupkg` — the file NuGet keeps beside every
+package it installs there. A folder without it, such as an extraction cut short by *Stop*, a timeout or a locked
+file can leave, counts as missing, so the next run, or the next round of a cycle group, restores again. Content
+alone decides; no date enters. Anything short of that proof runs the restore: no recorded hash (a first build, or a
+record that predates the field), a changed file, a missing folder or `.nupkg`, or an unreadable or malformed
+`packages.config`. The witness is the solution's own `packages` folder, and `nuget.config` is not read: when
+NuGet's `repositoryPath` keeps the store elsewhere, a project with no copies in that folder restores on every run,
+but stale copies left behind there satisfy the evidence while the store NuGet would fill stays empty. *Rebuild*
+never consults the evidence and always restores, handing the decision back to NuGet — the way out of that case, as
+is Optimize when a `HintPath` target is missing. Optimize's repair below stands apart from this record: it restores
+an old-style project whose `HintPath` targets are missing without reading the ledger and leaves the recorded hash
+alone, so the next build finds the repaired folders and its hash comparison decides on the recorded hash,
+unaffected by the repair.
 
 Optimize restores only what a restore can actually fix, in two families. The **old-style** family this tool
 targets — a project that carries a `packages.config` beside its `.csproj`, taking its packages that way rather
 than through `PackageReference` — is restored when at least one of its NuGet `packages` `HintPath` targets is
 missing from disk. The
-`packages.config` itself is never parsed: NuGet's `repositoryPath` can move the store anywhere, so the
+`packages.config` itself is never parsed for this repair: NuGet's `repositoryPath` can move the store anywhere, so the
 `HintPath` is the only trustworthy witness of where the packages are expected. A `HintPath` still carrying an
 unexpanded MSBuild property is counted in nothing at all, because this service does no MSBuild evaluation and
 staying silent beats a wrong diagnosis. Every **SDK-style** project is restored on every Optimize. Its build
@@ -1738,10 +2140,12 @@ project keeps its default `obj` for Visual Studio parity — no output path of a
 (`project.assets.json`, `*.nuget.g.props`) were measured breaking otherwise-healthy builds. What happens to that
 residue depends on **who asked**, and the split is deliberate.
 
-*At the start of a run*, foreign-TFM residue in a default `obj` is detected and reported as a console warning,
-and **nothing is deleted or modified**. A run is not the moment to take a decision the user did not ask for,
-and the detector is warn-only throughout: it never throws, and an unreadable or ambiguous `project.assets.json`
-leaves it silent rather than guessing.
+*At the start of a run*, foreign-TFM residue in a default `obj` is detected and reported as a warning, one line
+per affected project: the engine writes it to `decision.log` and sends it with `runStarted` (§5.3), and the App
+shows it in the console and in the event stream, a single-project run included. The stream folds a long list into
+one counting line (§5.3); the console keeps every line. **Nothing is deleted or modified**. A run is not the moment
+to take a decision the user did not ask for, and the detector is warn-only throughout: it never throws, and an
+unreadable or ambiguous `project.assets.json` leaves it silent rather than guessing.
 
 *A user-triggered Optimize* (§13.2) is that moment. For a project the same detector calls stale, it removes the
 NuGet-generated leftovers — `project.assets.json`, `*.nuget.g.props`, `*.nuget.g.targets` — from that `obj`.
@@ -1818,8 +2222,8 @@ still uses it but no distance is measured — HEAD is not on that branch, and a 
 Full analysis is Sync's job; a Build repeats its planning part (§8.6), which is cheap because of the evaluation
 cache. Because of that, Sync's own `willBuild` pass is not a separate opinion — it is what a plain
 Build, pressed right now, would decide, and the preview says so directly: a project this run would only
-evaluate conditionally (§8.3) carries `Conditional=true` in Sync's own preview too, computed the same way
-(`ConditionalRebuild.AppliesTo`, simulating `Build`). This matters because the row's wave and queue colour are
+evaluate conditionally (§8.3) carries `Conditional=true` in Sync's own preview too, computed by the same function
+(`ConditionalRebuild.ConditionalIds`, simulating `Build`). This matters because the row's wave and queue colour are
 read at the moment *Build* is clicked, before the new run's own preview has arrived — at that instant Sync's
 preview is the only opinion the App has, so it has to already carry the answer a conditional project's row will
 need a moment later, or the row lights amber for one frame and drops grey as soon as the real preview lands.
@@ -1861,11 +2265,11 @@ and the clearing of the previous run's error text and overlay. A silent Sync doe
 screen is not erased by a refresh nobody asked for, and the phase a finished run left behind stays. It is still
 a Sync, though: the engine takes one command at a time, so while it runs the workspace commands (Sync, Clean,
 Optimize, pull, the branch chip, the configuration segment) stay locked and the Sync button shows its busy
-state, exactly as for any other Sync — no pill, no ribbon change and no console clear come with it. A run is not
-refused: pressed while any Sync runs, it waits for it and starts when it ends (§13.2). For a silent Sync that is
-the only honest answer, because it usually starts with the very click that brings the window back — often a
-click on *Build*. Its one
-stream line is `synced after commit` for a commit, and `synced · N projects changed` otherwise — written only
+state, exactly as for any other Sync — no pill, no ribbon change and no console clear come with it. The run
+commands close with it as they do for any other Sync (§13.2): *Build*, *Rebuild*, *Resolve cycles*, the row
+actions, `F5` and the global Build hotkey stay closed until it ends and nothing queues behind it; with the window
+hidden in the tray, a Build hotkey pressed meanwhile is answered by a balloon instead (§12.3). A silent Sync's
+one stream line is `synced after commit` for a commit, and `synced · N projects changed` otherwise — written only
 when N, counted as the rows whose output status or decision label moved between the request and the answer, is
 above zero.
 
@@ -1996,8 +2400,9 @@ M not built · logs: <folder>` — followed by the switch line; if the branch di
 the event stream and a silent Sync runs. A run the user already stopped — the engine has acknowledged the Stop and
 only the run's end is still to come — is not interrupted: no interrupt is sent, no stream line or summary is
 written, and the trigger waits for the run's end like any other. As a safety net the end of every run is itself
-a trigger, so a HEAD movement the watcher missed is still caught when the run finishes. The run logs on disk are
-never deleted; clearing is for the screen only.
+a trigger, so a HEAD movement the watcher missed is still caught when the run finishes. Clearing is for the
+screen only: it never touches the run logs on disk, which leave on their own — the engine removes them at its
+first start more than three days after their run, the newest run's folder excepted (§8.5).
 
 **While git is mid-operation, the tool waits.** The git directory's markers say what is in progress:
 `MERGE_HEAD` (a merge waiting for conflict resolution), `rebase-merge\` or `rebase-apply\` (a rebase),
@@ -2151,7 +2556,8 @@ stash setting says.
 
 ### 11.1 Perf profiles
 
-One chip cycles three fixed profiles. This is the single source of truth for all three values:
+One chip cycles three fixed profiles. This is the single source of truth for all three values; the parallelism column
+is the worker count a profile *asks for* — the engine fits the request to the machine at the start of each run (below):
 
 | Mode | Parallelism | Priority class | Inner-job hard CPU cap |
 |---|---|---|---|
@@ -2159,13 +2565,52 @@ One chip cycles three fixed profiles. This is the single source of truth for all
 | Balanced (default) | 4 | BelowNormal | 70 % |
 | Light | 2 | Idle | 40 % |
 
+A Resolve cycles run is not a fourth profile: with *Resolve cycles at full priority* on it keeps the chosen profile's
+parallelism and takes the Full row's priority and cap — Normal, none (below).
+
 Switching mid-run changes the cap and the priority live and writes a console note whose body is exactly
-`parallelism: <n> · cpu cap <p>%` (`cpu cap off` for Full). **Parallelism does not change mid-run** — workers
-are created once at the start of a run — so the new worker count applies to the next run. The note text has a
-single owner in Core, called by both the App and the Supervisor.
+`parallelism: <n> · cpu cap <p>%` (`cpu cap off` for Full); during a Resolve cycles run at full priority a switch to
+Balanced or Light writes the Resolve cycles note below instead, which adds the priority. **Parallelism does not
+change mid-run** — workers are created once at the start of a run — so the new worker count applies to the next run.
+The note text has a single owner in Core, called by both the App and the Supervisor.
+
+**A Resolve cycles run takes full priority.** A `Cycles` run (§8.1) keeps the worker count of the chosen profile but
+takes the cap and the priority of the Full row — no cap, Normal — whatever the profile. Measured on a machine with
+other work running, Balanced's cap and lower priority stretched a Resolve run markedly, while on a quiet machine the
+difference was small; the run is short and the user is waiting for it. The rule is one pure function in Core
+(`PerfProfile.ForRun`); the Supervisor applies it at the start of the run and to every mid-run switch, with the mode
+and the setting that came with the run, so the copy floor and the drain rule (§11.3) work on the profile actually in
+force. `runStarted` carries the cap actually written — none — and the console and `decision.log` get one line,
+`parallelism: <n> · cpu cap off · priority normal (Resolve cycles)`, which is also the note a mid-run switch to
+Balanced or Light writes during such a run. *Settings → General → Resolve cycles at full priority* (on by default,
+carried by every `startRun`) turns the rule off, and a Resolve run then follows the profile like any other run.
+`Build`, `Rebuild` and `Clean` are never affected — including the cycle rounds a `Build` runs for a dirty group — and
+Full is uncapped at Normal already.
 
 The perf intent is also honoured during the planning window: a change made while a run is starting is held and
 applied when the run begins, rather than being silently dropped.
+
+**The profile asks; the engine fits the request to the machine.** At the start of every run the Supervisor reads the
+machine once — its logical processor count (which follows the process's affinity) and its free physical memory — and
+passes the profile's worker count through `WorkerBudget.Clamp`. The rule and every constant it uses live in Core
+(`WorkerBudget`, `MachineResources`); the Supervisor only applies the answer. The request is cut only when it exceeds a
+fixed multiple of the logical processors (`WorkersPerCore`) or what the free memory can carry once a reserve is left to
+the machine (`BytesPerWorker`, `ReserveBytes`), and the answer is never below one worker; when both limits bind equally
+the memory is the one named. The multiple is above one on purpose, though not by much: measured on the real
+workspace on machines restricted to two and to four logical processors, running fewer workers than processors cost
+time on both; on the smaller machine a third and a fourth worker still shaved a small but consistent amount off,
+and on the larger machine four workers were the fastest tried. Nothing beyond that was measured, so the
+ceiling stays a small multiple of the processors. The memory budget follows a full compile measured on the
+real workspace: beyond a fixed base for the engine and its first worker, each extra worker commits a few hundred
+megabytes. The rule budgets a margin over that for every worker on top of a fixed reserve, so it only comes into play
+on machines with little free memory. `runStarted` carries the **actual** count, so the App's flow line and its ETA show
+what is running. When the request was reduced, `runStarted` also carries the reason (`workersReducedReason`) and
+one line, `workers reduced to <n> (<reason>)` (`PerfNoteText.WorkersReduced`), reaches up to three places with the same
+text: the engine writes it to `decision.log`, and the App writes it to the console when the run starts and to the
+event stream right after the run's opening line. A single-project run (§8.1) is the exception on the App side: its
+worker count does not describe it, and the stream's opening line for it says nothing of parallelism either, so the App
+writes neither line and `decision.log` alone keeps it as a diagnostic. The engine keeps no stderr copy: the App
+discards the engine's stderr (§4.3), so the line the user sees is the App's.
 
 **Memory, not cores, is usually the first limit.** Each worker is an `MSBuild.exe` that starts a fresh,
 multi-threaded compiler process for its project (`UseSharedCompilation=false`, §9.2, so nothing is shared
@@ -2199,10 +2644,19 @@ fresh structure would silently clear the kill flag.
 While a post-build copy is stuck on contention, the cap and priority are raised to the Balanced values
 (70 % / BelowNormal) for the duration of that window, which is reference-counted. Light's 40 % is therefore not
 an absolute ceiling. The floor is *defined as* Balanced's values rather than as separate constants, so the two
-cannot drift apart.
+cannot drift apart. The floor only raises: a run with no cap — Full, or a Resolve cycles run at full priority
+(§11.1) — never opens the window, and a Normal priority is never lowered to it.
 
 Once a graceful stop starts draining, the cap is never re-applied and the priority cannot go below the same
 floor (§4.5).
+
+### 11.4 Memory line
+
+When a sync finishes and when a run ends, whatever its outcome, the engine writes one line to its stderr:
+`memory: private=<MB> committed=<MB> heap=<MB>` — the process's private bytes, the managed heap's committed bytes
+as of the last collection, and the managed heap's current size. The line only reports: nothing is collected or
+released because of it, and stdout stays NDJSON. The App discards the engine's stderr (§4.3), so the line serves
+whoever reads that stream directly, such as a measurement harness.
 
 ---
 
@@ -2234,6 +2688,18 @@ autostart service (the one owner of the Windows startup entry, §12.3), the upda
 implementation `VelopackUpdater` reads the feed of §12.5, and `UpdateService`, which publishes its offer to the
 view model on the UI thread — and the view models. Two application-wide singletons are exposed statically because
 their owners have no constructor seam: the reduced-motion settings and the hero-motion coordinator.
+
+Engine events reach the view model on the UI thread through one pump. `projectLog` lines go straight from the
+reader thread into the console batcher; every other event joins a single queue that one drain empties in arrival
+order, in time slices of about 8 ms (`EngineEventPump.SliceBudgetMs`) — a slice closes once its time is up and the
+event in hand is done. An event that finds the queue empty is handled at once, at the priority a single event
+always had; when a slice is used up with events still waiting, the rest is handed to a priority below input and
+rendering, so a frame is drawn and a key or click is handled between slices. The reason is the start of a run: the
+engine announces it with `runStarted`, `buildPreview` and one `projectSkipped` per project it skips — on the real
+workspace close to two hundred events at once — and handled one dispatcher operation each, above rendering and
+input, they held the interface for a few hundred milliseconds in one piece at the start of every run. The
+engine's exit is applied after the events it sent before it: the exit handler first applies whatever the pump
+still holds, so a late `runStarted` can never reopen a run on a dead engine.
 
 The update engine starts only once the window has been shown or put in the tray, so its first check, five seconds
 later, comes after the opening rather than inside it; the view model's *Restart to update* request is wired to it
@@ -2326,7 +2792,23 @@ animates in the bottom-right corner of the primary work area. It appears if the 
 and disappears the instant the window comes back. The surface is its own top-level window: it must stay visible
 while the main window is hidden, so it cannot be a popup inside it.
 
-Three properties make it a good citizen rather than a box parked on the desktop. It never takes focus and never
+**A hidden window does no screen work.** No choreography plays on it: the opening wave is skipped, the run command
+goes out at once and the end finale never starts (§14.5). The signal behind that rule gates every other surface the
+run's events would otherwise redraw: the event stream's rows, the graph's status, phase and selection pushes and its
+filter refresh, the ribbon, the Build menu, the project rows and their list, the action bar's counter chips and the
+body of the 200 ms tick (live durations, the console header's line counter, following the frontier — only the
+engine-silence watchdog still runs, §4.6). The console document is left alone too: the narrative stays complete in
+the view model, and the document is built from that full text once, without the tilt, when the window comes back
+(§13.5). Infinite decorative animations run only while their element is visible (§14.5), so a hidden window runs
+none. Each surface only notes that it has fallen behind; when the window comes back each catches up with the model in
+a single pass, and nothing that happened meanwhile is played back — no glow, no typewriter, no list reveal, no
+cross-fade of a row's dot. The graph, the ribbon's progress bar and a row whose selection changed settle on the present state with
+their own short transitions rather than a replay of the run. A topology change is the exception: the graph is rebuilt on the spot even while hidden, and the return
+does not repeat it. Measured with CPU cycle counters, a build that runs in the tray costs the UI thread a small
+fraction of what the same build costs with the window in front, and no piece of its work holds the thread long
+enough to be felt.
+
+Three properties make the overlay a good citizen rather than a box parked on the desktop. It never takes focus and never
 appears in Alt-Tab (`ShowActivated=false` plus `WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`). Clicking the drawn logo
 restores the window through the *same* path as clicking the tray icon, while clicks on the transparent area
 around it pass through to whatever is underneath — that separation is free, because a layered window is
@@ -2346,13 +2828,23 @@ failures that name a reason keep their heads — falls back to the product name 
 notification restores the window through the *same* path as the tray icon and the overlay. A run that ends while
 the window is *visible* produces no balloon at all — the ribbon is already on screen.
 
+A run that ends while the window is hidden is followed by one full garbage collection, so a build's leftovers do not stay
+resident while nobody is looking. It waits for two signals, whichever comes last: the run has ended — completed, stopped,
+failed or with the engine lost — and its buffers are released (§13.5), and the tray indicator has finished its exit (and
+shown the result balloon, when *Show notifications* is on). The indicator takes the run's identity when its exit starts
+and hands it over with the exit notice, so a run that begins during the pause before the balloon does not inherit the
+previous run's exit: its own collection waits for its own exit. A collection requested while a run is in flight is
+dropped, and that run's own collection covers it. The collection is blocking and compacting, so it runs only while the
+window is hidden, after the exit (and the balloon) and once the application is idle; it happens once per run and never
+while the window is visible.
+
 **Every balloon answers to one switch.** *Show notifications* (Settings → General, on by default) gates all
-three the application can show: the first-close explanation, the run result and the second instance's warning.
-Each asks at the moment it would appear, like every shell switch (above) — the run result only after the
-overlay's exit and breath — so turning it off while a run is in flight silences that run's result. A
-first-close explanation held back by the switch is not counted as shown, so once the switch is back on it still
-appears, once. The overlay is not a notification and does not answer to the switch: it silences the balloons,
-not the indicator.
+four the application can show: the first-close explanation, the run result, the second instance's warning and
+the explanation of an ignored Build hotkey (below). Each asks at the moment it would appear, like every shell
+switch (above) — the run result only after the overlay's exit and breath — so turning it off while a run is in
+flight silences that run's result. A first-close explanation held back by the switch is not counted as shown, so
+once the switch is back on it still appears, once. The overlay is not a notification and does not answer to the
+switch: it silences the balloons, not the indicator.
 
 The overlay sits closer to the right edge of the work area than to the taskbar: at rest the mark occupies the
 left of its band and the right is reserved for the chevron's exit path, so the edge margins are separate and
@@ -2369,11 +2861,11 @@ that is really in front — visible, not minimized and active — and brings for
 minimized or behind another window (`WindowToggle`), because hiding a visible window the user is reaching for
 would lose it. Hiding goes straight to the tray, without the first-close balloon, which explains `X`.
 `Ctrl+Shift+Space` builds without bringing the window up; it is the view model's own `BuildCommand`, so it
-honours the same gate as the Build button: it does nothing while a run is in flight or being planned, and pressed
-while a Sync or a maintenance job runs it waits for that work and builds when it ends (§13.2). Each gesture is
-read from `ui-state.json` (`ShowHideHotkey`, `BuildHotkey`) and an unreadable value falls back to the default.
-An older file's single `Hotkey` field — its default was `Alt+B`, and every save wrote it — is ignored and dropped
-on the next save, so a stored `Alt+B` does not bring the old shortcut back.
+honours the same gate as the Build button: it does nothing while a run is in flight or being planned, and nothing
+while a Sync, a Clean, an Optimize, a branch switch or a pull runs (§13.2) — the press is not held back for later.
+Each gesture is read from `ui-state.json` (`ShowHideHotkey`, `BuildHotkey`) and an unreadable value falls back to the
+default. An older file's single `Hotkey` field — its default was `Alt+B`, and every save wrote it — is ignored and
+dropped on the next save, so a stored `Alt+B` does not bring the old shortcut back.
 
 The gestures follow the author's Turkish Q keyboard. AltGr reaches Windows as `Ctrl+Alt`, so a `Ctrl+Alt`
 global would fire when `{`, `[` or `@` is followed by a space before AltGr is released — and Visual Studio already
@@ -2382,6 +2874,18 @@ binds `Ctrl+Alt` with every letter. `Shift+Space` can fire when a space follows 
 which the hotkey takes over. A conflict disables a hotkey silently; the tray icon still restores the window.
 There is no UI for changing them yet, but the loss is not invisible: the About screen marks the affected
 shortcut row *unavailable*.
+
+**A Build press the gate refuses explains itself when the window is hidden.** With the window in the tray there is no
+screen to say why a press did nothing, so a balloon does (`Build not started — a Sync is in progress.`). The reason
+is the gate's own answer: `CanRequestRun` is `RunViewModel.WhyRunCannotStart` returning `null`, so the reason cannot
+drift from the refusal — a workspace job that has no sentence of its own yet still closes the gate (`WorkspaceBusy`)
+and is reported as *a workspace task is in progress*. The reasons' wording lives in one class (`RunGateText`) and the
+sentence is built in one place (`AppTrayIcon.BuildIgnoredBody`); it says the reason and no more: some reasons, such as
+an engine that is gone, a missing workspace or a missing project list, never end by themselves, so it never tells the
+user to try again. A visible window gets no balloon — the screen already says it — and neither does a minimized one or
+one behind another window: the condition is the window being hidden, the signal behind *A hidden window does no screen
+work* (above; `HiddenSurface.IsHidden`, written from the window's own visibility), not whether anyone is looking. Like
+every balloon it answers to *Show notifications* (above).
 
 **Start with Windows** is one value under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` — no admin rights,
 no HKLM, no service. It is named `BuildOrchestrator` and holds the quoted path of the running executable followed
@@ -2598,9 +3102,9 @@ for never moves the phase to `stopping`, and a close that left the ribbon unchan
 rejected request is not a failure and does not take this path — declining a request leaves the `stopped` line
 standing, because that line is still true.
 
-A second `Esc` while a stop drains sends nothing; instead the phase line dips once — opacity down to 0.4 and back,
-each half `Duration.Base` on `KeySpline.EaseStandard` — so the key reads as heard. The console gets no line for
-it, because each press would add one. Under reduced motion there is no dip: the line already says `Stopping`.
+An `Esc` while a stop already drains is the hard stop (§4.5): it runs the same command as a press of the *Stop now*
+button, so the console gets one line for it and the button reads *Terminating…*; the phase line itself does not animate.
+A further `Esc` does nothing.
 
 **Projects list.** 36 px rows: a 2 px status stripe (3 px when selected) running the row's full height, the
 8 px **status dot** — the same colour as the stripe — the project name with the solution name beside it, then
@@ -2630,7 +3134,7 @@ Every word maps from the engine's reason (§7.4, §7.6), and the tooltip keeps a
 | Reason | Label | Tooltip |
 |---|---|---|
 | never built, output missing | `never built` | `No build output known to this tool` |
-| last build failed | `failed` | `Failed at this source — Build will retry it` (for a cycle member, `Resolve cycles will retry it`) |
+| last build failed | `failed` | `Failed at this source — Build will retry it` |
 | up to date, waiting for a dependency | `up to date` | `Up to date` |
 | built outside this tool | `up to date` | `Up to date — built outside this tool` |
 | output replaced | `affected` | `Its copy in the shared folder does not match its build output` |
@@ -2639,9 +3143,8 @@ Every word maps from the engine's reason (§7.4, §7.6), and the tooltip keeps a
 | signature changed, dependency issue, output stale — own files unchanged | `affected` | `Its own files are unchanged — a dependency changed` |
 
 **No label and no tooltip carries a time.** The slot names a fact, never a clock: the label reads the plan and
-four facts only — the reason, whether the project's own files changed, whether any of them is dirty, and
-whether the project sits in a dependency cycle (which only picks the retry clause of a `failed` row's tooltip,
-*Resolve cycles* instead of *Build*). `local` is the one tail there is, and a timestamp reaching the row
+three facts only — the reason, whether the project's own files changed, and whether any of them is dirty.
+`local` is the one tail there is, and a timestamp reaching the row
 changes nothing on screen. Showing the age of the evidence behind the word was considered and rejected: for an
 output built outside this tool there is no age of *this* tool's making, so the row would have shown how long
 ago *this* tool last built the project while claiming to describe someone else's output — and for every other
@@ -2661,12 +3164,11 @@ from itself, a Rebuild, an SCC member), and a cycle member all read the identica
 134 px, which holds the longest label (`modified · local`) with room to spare; the width is also the hover icon
 block's, so it is not cut to the text.
 
-**The word is a fact, never a promise.** A failed row's tooltip names who will retry it: *Build* ordinarily, or
-*Resolve cycles* for a cycle member, because a plain Build never compiles a dependency cycle. The word is never
-paired with a fixed retry verb such as `failed · retry`, because that would read as a promise ("the next Build
-will try this again") that a cycle member cannot keep — on a real workspace most `failed` rows were cycle
-members for whom that promise would never come. The word does not change with scope either way — `failed`
-states what happened, the tooltip states who acts on it.
+**The word is a fact, never a promise.** A failed row's tooltip names who will retry it: *Build*, for every row,
+because a plain Build compiles a dirty cycle group too. The word is never paired with a fixed retry verb such as
+`failed · retry`, because that would read as a promise ("the next Build will try this again") that a run cannot
+always keep — a group whose roots still fail is skipped as a whole (§8.3). The word does not change with scope
+either way — `failed` states what happened, the tooltip states who acts on it.
 
 `modified` and `affected` are separated by a fact of its own: the content fingerprint written into
 `build-state.json` on the last successful build, compared against today's (§7.5). Not by the signature — the
@@ -2680,9 +3182,10 @@ project's input files is also dirty
 in `git status` — a fact this tool cannot see any other way, since a dirty working copy has no signature of its
 own yet.
 
-**Scope does not silence the label.** A cycle member is not compiled by a plain Build, but if its files changed
-it still reads `modified` — that is true, and the warning triangle is what says *Resolve cycles* is the thing
-that will compile it. The same principle runs the other way: a Rebuild compiles everything, yet a row whose
+**Scope does not silence the label.** A cycle member whose files changed reads `modified` like any other row,
+and the warning triangle says only that it sits in a cycle — its group compiles in rounds, in the next *Build* or
+*Resolve cycles*; a project outside a *Resolve cycles* run's scope keeps its label too. The same principle runs
+the other way: a Rebuild compiles everything, yet a row whose
 content is current keeps saying `up to date`. The label is a disk fact, never the run's scope. Hiding it was
 measured too: on that same workspace 33 of 184 rows — every SCC member — showed nothing at all.
 
@@ -2695,8 +3198,10 @@ is **empty** only when the decision is genuinely unknown — no Sync yet, or the
 The label also follows the run live: the moment a project succeeds its row reads `up to date` (a Clean's
 success reads `never built` — its outputs are gone, §8.1), and a failure the engine counts as evidence reads
 `failed`. A failure that is not evidence — a timeout, a
-stop, an invoke error, a failed Clean, or a compiler failure inside a cycle group that did not converge — reads
-`never built` at once, because that is what the ledger records for it (§7.5) and what the next Sync will say.
+stop, an invoke error, a failed Clean, or a compiler failure inside a cycle group that did not converge, unless the
+group made no progress and every surface that member read was already final, which rules a stale sibling out
+(§8.8) — reads `never built` at once, because that is what the ledger records for it (§7.5) and what the next Sync
+will say.
 The verdict travels with the failure event (`Evidence`) and is decided by the same gate that writes the ledger;
 the application never re-reads the reason text. It does not wait for the engine's next preview, which may not
 arrive until the next Sync. A success that still carries a dependency issue reads exactly the same `up to date`
@@ -2705,14 +3210,32 @@ event — even though it still drops out of the run's definite queue (`Condition
 this: the label stopped reading that flag, the run's own scope bookkeeping did not) rather than being counted a
 plain success.
 
-A cycle member is its own case, because its signature is never gated the way a plain project's is (§8.3): a
-converged member's dep-issue note is genuinely recorded, but the member is never individually gated on it —
-Build never compiles it and Cycles compiles it with its whole group — so its live row reads `up to date`,
-exactly matching what the next Sync will say (`WaitingForDependency`, `WillBuild=false`,
-`Conditional=false` — read no differently by the label than `UpToDate` would be). A member whose group did not
-converge is different: the engine does not stand behind its green round, the ledger records it as a failure
+A project the run skips as `up to date` at its turn — passed over by the surface gate (§8.3), or a cycle member
+carried through its group (§8.8) — reads `up to date` the moment the skip arrives as well: its record was just
+refreshed with this run's signature, so that is the next Sync's answer too (`NextPreview.AfterUpToDateSkip`), and
+the row turns green instead of staying grey until then. Only a row the plan meant to compile changes this way; a
+project skipped at the start of the run keeps the reason its preview gave — `built outside this tool`, say — and a
+`dependency still failing` skip touches neither the record nor the row's reason. The project's page states such a
+skip as it states any up-to-date skip — *Up to date — nothing to compile in this run.* — with no sentence of its own:
+the App cannot tell a gate skip from any other skip of a project whose signature changed, and the detail stays in
+`decision.log`.
+
+A converged cycle member with a dependency issue reads the same way, though it is never gated alone (§8.3): its
+note is genuinely recorded, the member compiles with its group, and the group is judged as a whole at dispatch —
+so its live row reads `up to date` and leaves the definite queue together with its group, exactly matching what
+the next Sync will say (`WaitingForDependency` with `Conditional=true`, read no differently by the label than
+`UpToDate` would be). A member whose group did not
+converge and whose read surfaces were still stale at the end is different: the engine does not stand behind its
+green round, the ledger records it as a failure
 without evidence, and the success event says so (`trusted: false`, §8.8). Its row reads `never built` in the
 to-build grey at once — what the next Sync will say — rather than a green tick the next Sync would take back.
+A carried member in the same position never compiled: the engine discards its record the same way and reports it as
+skipped — `cycle did not converge at this signature` — so the run counts it as skipped rather than succeeded, its row
+turns to the same `never built` grey at once (`NextPreview.AfterUntrustedResult`, the one answer both paths read),
+and its project page says the project was not compiled and its record was discarded. On no progress the skip carries
+the stuck flag (§5.3) and the row the *did not converge* warning; at the round ceiling it carries no badge — the skip
+event has no field for the *did not fully settle* mark a compiled member at the ceiling gets, and that is an accepted
+cost.
 A cleaned project reads the same `never built`, because its ledger row is gone (§8.1), and so does a project
 whose output file is missing from disk (§7.6).
 
@@ -2788,8 +3311,8 @@ elsewhere, instant under reduced motion. A click only counts if the press that s
 (the header captures the mouse on press and checks it still holds capture on release) — pressing a row and dragging
 onto a header before releasing must not jump. Capture routes the release back to the header wherever the pointer is,
 so the release must also land inside the header's own bounds (press, drag away, release cancels, as a native click
-does), and the header must still be bound to the slot it was pressed on — a recycled in-flow container can carry the
-capture over to another layer's data. It never touches selection, the filter, the console or the graph — only the
+does), and the header must still be bound to the slot it was pressed on — a refresh of the groups can retire or
+re-bind the element under the capture. It never touches selection, the filter, the console or the graph — only the
 scroll position moves, and there is no collapse. The jump is a user scroll like any other, so it pauses
 follow-mode (below): the smooth scroll it starts would otherwise clear the pause the way any programmatic move does,
 and the next follow tick would pull the user straight back to the frontier. The header is deliberately **mouse-only**: the design prototype asks
@@ -2807,20 +3330,37 @@ scroll, pausing follow-mode, resetting the idle-resume window). The band's wheel
 signal at its own root (§13.4), which is an ancestor of both the overlay and the `ScrollViewer` — so scrolling over
 the stack behaves identically to scrolling anywhere else in the list.
 
-The list is **virtualized**, and by a panel of its own rather than WPF's. `VirtualizingStackPanel` estimates
-the height of unrealized items from the average of the realized ones; with 36 px rows interleaved with 24 px
-headers that estimate drifts, and the scroll axis would no longer agree with the cumulative table that sticky
+The list realizes its rows **progressively**, through a panel of its own rather than WPF's. `VirtualizingStackPanel`
+estimates the height of unrealized items from the average of the realized ones; with 36 px rows interleaved with
+24 px headers that estimate drifts, and the scroll axis would no longer agree with the cumulative table that sticky
 headers, follow-mode and selection scrolling all read. `FixedHeightVirtualizingPanel` never estimates — it
 asks for each entry's height and builds the same table — so the extent is exact by construction. It does not
 implement `IScrollInfo`: the enclosing `ScrollViewer` still owns the scrolling and receives the true total
-height, which leaves smooth scrolling, the bottom anchor and follow-mode untouched. Containers are recycled,
-so a row control is reused with a new view model rather than rebuilt. On the first measure pass the viewport
-is not yet known; the panel realizes nothing at all that pass — its reported height comes from the table, not
-from realized children, so the `ScrollViewer` still computes a correct viewport and the real window is
-realized in the same layout round.
+height, which leaves smooth scrolling, the bottom anchor and follow-mode untouched. The first layout builds only
+the visible window (plus half a viewport on each side); the remaining rows arrive while the dispatcher is idle, a
+few rows per slice so that a slice fits between two animation frames. A row control, once built, **stays with
+its row**: the panel neither discards nor recycles containers when the window moves. It is not *drawn* until the
+window comes near, though: rows more than a screen above or below the viewport are kept hidden — built, measured
+and in place, but never rendered — and the band slides with the scroll. Keeping every row drawn was measured at
+about 47 MB on a fresh start (mostly unmanaged: each row's glyph runs and composition nodes) and about 26 million
+cycles a second more in an idle foreground window; a hidden row costs neither, and when the band reaches it only
+its drawing remains, about a millisecond. Recycling was measured to be
+the stutter itself — during a visible run the longest UI-thread slices were the window's rows being re-bound to
+new view models (text formatting, automation peer refresh and binding writes for each) whenever follow-mode moved
+the window a screenful at a time, and the graph's animations stalled for the duration. Construction was a small
+fraction of those slices, so the fix is not a warm pool of containers but the end of re-binding: scrolling now
+re-binds nothing. The entry list itself is never replaced either — `SetGroups` reconciles it in place
+(`ListReconciler`: entries that leave are removed, entries that enter are inserted, entries that move are moved),
+so a topology or filter refresh builds only the rows that actually enter or move and leaves every other row's
+control, measurement and the scroll position untouched. A moved row is rebuilt rather than carried over: WPF's
+generator mis-binds a container that is kept in the tree across a move when the new position borders an
+unrealized block, so the panel drops it the way WPF's own panels do. On the first measure pass the viewport is
+not yet known; the panel realizes nothing at all that pass — its reported height comes from the table, not from
+realized children, so the `ScrollViewer` still computes a correct viewport and the real window is realized in
+the same layout round.
 
-One consequence is deliberate: the staggered reveal reaches the rows that exist, which is the visible window.
-Rows scrolled into view later simply appear.
+One consequence is deliberate: the staggered reveal reaches the rows that exist when it plays, which is the
+visible window. Rows realized afterwards by the idle fill are off screen and simply appear.
 
 **A row waiting for its reveal is never painted.** The row surface is closed the moment the items are handed
 over and reopened by the reveal itself, so no frame can show the rows at full opacity before the stagger hides
@@ -2883,11 +3423,9 @@ the new page (§13.3). An automatic Sync clears nothing and adds at most one lin
 for a git operation (`waiting for git — …`). A git refusal adds one short `warn` line — a branch switch refused
 on a dirty tree, a pull refused (§10.3, §10.5): no glyph (the amber `▸`, like `sync` and `info`), text in the
 same amber the console gives a `warning:` line, and typed like `info` rather than printed at once like a
-failure; it carries no project, so it is not clickable. A Clean that cleaned cycle members closes with one more
-`info` line right after its `Completed` or `Stopped` line — `N cycle projects cleaned — run Resolve cycles before
-Build` — because a plain `Build` never compiles a cycle (§8.1). It counts only the members actually cleaned (not
-one the run never reached, not one whose clean failed), is absent when there are none, and goes to the stream
-alone: the console keeps the operation's raw log.
+failure; it carries no project, so it is not clickable. A run's closing line has no cycle follow-up: a Clean that
+cleaned cycle members leaves them `never built` for the next `Build` to compile in rounds, and a `Build` that ends
+with a member still dirty — a failed or non-converged group — says so on the member's own row (§14.3).
 The **plan surface** — rows, graph nodes, the cycle map, the *to build* count — follows its own rule. No Sync
 empties the plan: the Sync button and a branch change only blank the list and the graph on screen and bring
 them back with the reveal (§10.2), and the other kinds reconcile the rows in place, replaying the reveal only
@@ -2986,6 +3524,8 @@ checks another one out (§10.3); the `N behind` chip (§10.5) — drawn whenever
 than zero; the `Debug | Release` segment;
 the perf chip; and the Build split-button, whose menu carries exactly three items in every phase: *Build — Only stale
 projects*, *Rebuild — All N projects — cache ignored* and *Clean — Remove build outputs — next build is full*.
+The menu has a single variable, the total in Rebuild's description, so it is rebuilt only when that total changes — not on
+every counters notification of a running build — and a window hidden in the tray leaves it alone until it is shown again.
 There is no *Continue* and no *Retry failed*: a stopped run is started again and a failed one is built again,
 and *Build* already covers both sets (§8.1). *Clean* here is Visual Studio's *Clean Solution*: `-t:Clean` on
 every project in the graph — external projects and cycle members included — with the caches untouched (§8.1).
@@ -2994,8 +3534,7 @@ It is drawn, hovered and gated exactly like its two siblings, its tooltip names 
 per project and the bar gives no solution-level impression), it asks for no confirmation and chains no Sync, and
 Stop stops it. The opening wave marks every row, and when it ends the rows read what the row menu's clean leaves
 behind: `never built`. It is neither the row menu's project clean nor the box's *Clean*, a different operation
-described below. While a run is in flight — or waits for the work in flight to end (*Nothing starts while a Sync
-is in flight*, below) — the primary button becomes *Stop*, and the
+described below. While a run is in flight the primary button becomes *Stop*, and the
 branch chip and the configuration control lock; the perf chip stays live.
 
 **The branch chip is a git command, and it is gated like one.** It is enabled only when a workspace is open,
@@ -3005,9 +3544,10 @@ on its own: a 6 px amber dot sits on it and its tooltip names the operation (`Me
 abort it in git`); the same tooltip replaces the `N behind` chip's while the pull is locked for the same
 reason (§10.3). A checkout that is in flight holds every one of those gates for itself: until the engine
 answers, Sync, the maintenance jobs and the pull are closed, because a pull would advance the wrong branch, and no
-run starts, because one started on the new tree would have its console cleared by the checkout's section — a
-*Build* pressed then waits for the checkout and its Sync, and starts on the new tree; if the switch is refused or
-fails, the request is taken back under the refusal.
+run starts, because one started on the new tree would have its console cleared by the checkout's section — *Build*
+and the other run commands stay closed until the checkout and the Sync it hands over to have ended, and a switch
+that is refused or fails reopens them once it has settled — at once, or, when the stash had already changed the tree,
+after the silent Sync that refreshes the decisions.
 
 **The configuration segment starts a Sync, and it is gated like one.** Switching between `Debug` and `Release`
 runs the Sync button's process with the new configuration — a ConfigurationChange Sync (§10.2): the console and
@@ -3031,8 +3571,8 @@ the three draws a hairline of its own on hover — the box's own border is the o
 hovering a button answers with ground and icon only, size and dividers untouched. All
 three drive real commands, and **none of them writes its own enabled state**: that is the command's
 `CanExecute` alone, so the strip can never disagree with the engine behind it. *Clean* is the workspace reset
-and *Optimize* the workspace repair, both described below. *Resolve cycles* is the cycle run, disabled while
-the topology has no cycle. Its icon is neutral: orange left the
+and *Optimize* the workspace repair, both described below. *Resolve cycles* is the narrow-scope cycle run (the cycles
+and their stale upstream only), disabled while the topology has no cycle. Its icon is neutral: orange left the
 interface entirely, so there is no longer a structural channel for it to echo — the presence of a cycle is
 carried by the button's enabled state and its tooltip.
 
@@ -3050,8 +3590,9 @@ the row's own project page: it states the same reason, because a page that descr
 will-build flag would be answering for the next `Build` rather than for this run. Only a row the run actually
 touched — a member, or the upstream it pulled in — can end the run coloured or counted.
 
-The box sits next to Sync rather than next to Build, and the placement carries the meaning: these are things
-you do *before* a build, and the separator on their right belongs to the counters. Beside Build it would read
+The box sits next to Sync rather than next to Build, and the placement carries the meaning: these are
+maintenance runs beside a build — the cycles alone, a clean, a repair — and the separator on their right belongs
+to the counters. Beside Build it would read
 as a variant of the primary action, which it is not — it is a run of its own (§8.1) with the same icon the
 rows and the graph use for "this project is in a cycle". It is disabled unless the workspace actually has one,
 because in a workspace without cycles that run would skip every project and do nothing; a disabled button says
@@ -3105,15 +3646,14 @@ click, a command that fails to send, or one the Supervisor rejects, leaves the l
 Sync; that is the accepted cost of acting on the click rather than on the engine's acceptance.
 
 This costs no extra waiting in practice. No run starts for the whole of a Sync, a Clean or an Optimize — or of a
-checkout or a pull, the same busy question (`WorkspaceBusy`) — and a run pressed in that stretch waits for it
-(*Nothing starts while a Sync is in flight*, below); the plan arrives in the same batch that ends the stretch, so
-the waiting run starts against the plan that has just come back. That is also why *Build* and *Rebuild* stay
-pressable while the list is empty after the click: the work that brings it back is still running. What the
-emptying does change is the failure case: a job or a Sync that never delivers a plan — the engine is gone,
-planning failed, a Clean failed and chained nothing — leaves the surface empty, a run waiting for it is taken back,
-and the run commands stay shut until a Sync succeeds, where before they stayed enabled against a list that no
-longer described anything. That is the same cost Clean already accepted, and it is the safer end of it: a Build
-against a surface the user cannot see would compile a set nobody chose.
+checkout or a pull, the same busy question (`WorkspaceBusy`): the run commands are closed for that stretch
+(*Nothing starts while a Sync is in flight*, below), and the plan arrives in the same batch that ends it, so the
+gate opens against the plan that has just come back — there is no moment when a run could start against the empty
+list. What the emptying does change is the failure case: a job or a Sync that never delivers a plan — the engine
+is gone, planning failed, a Clean failed and chained nothing — leaves the surface empty, and the run commands
+stay shut until a Sync succeeds, where before they stayed enabled against a list that no longer described
+anything. That is the same cost Clean already accepted, and it is the safer end of it: a Build against a surface
+the user cannot see would compile a set nobody chose.
 
 **The step always plays for the same length.** On a small workspace a maintenance job finishes in milliseconds,
 so the spinner would flash and the Sync's animations would land on top of it. Clean and Optimize therefore hold
@@ -3123,7 +3663,7 @@ ends the step, waits the short beat, and only then starts the Sync. The rule it 
 choreography already established: a choreography either always plays or never, because a step that appears only
 when the engine happens to be slow makes the same click feel different every time. The timing lives in the
 shell, as it does for the choreography: the view model says how long to wait, a dispatcher timer counts it, and
-under reduced motion nothing is waited at all.
+under reduced motion, or while the window is hidden, nothing is waited at all.
 
 **The Sync is chained, not asked for.** `cleanCompleted` starts a Sync with the console preserved — the same
 shape as the `N behind` chip's pull — because the engine's own analysis is the only thing that can put real
@@ -3175,8 +3715,8 @@ services scan for themselves — the engine must be alive, and no run, Sync, Cle
 be in flight.
 The exclusion is mutual and complete: while either of them runs, Sync, the `N behind` chip **and the other
 maintenance button** are closed, *Resolve cycles* has no cycle left to offer (the click emptied the plan), and no
-run starts — *Build*, *Rebuild* and the row actions stay pressable, and what they press waits for the job and the
-Sync it hands over to. Every pair of them is a race on the same workspace — deleting `bin` under a compiling
+run starts — *Build*, *Rebuild* and the row actions stay closed for the job and the Sync it hands over to. Every
+pair of them is a race on the same workspace — deleting `bin` under a compiling
 MSBuild, a Sync (the automatic one after a pull included) reading folders that are disappearing, a restore writing
 into an `obj` a Clean is emptying.
 
@@ -3196,9 +3736,9 @@ genuinely disabled in this window (its command's `CanExecute` is false), and WPF
 from hit-testing altogether, so its own `IsMouseOver` never becomes true no matter where the pointer sits.
 
 **No run without a topology.** No run starts until a Sync has published a topology, and an empty one (a folder
-with no projects) keeps *Build*, *Rebuild* and *Resolve cycles* disabled. While the work that will publish it is
-running — the first Sync, or a Clean or Optimize and the Sync it hands over to — *Build* and *Rebuild* can be
-pressed and wait for it (below); with no such work in flight they are disabled. The reason is that the full
+with no projects) keeps *Build*, *Rebuild* and *Resolve cycles* disabled; while the work that will publish one is
+running — the first Sync, or a Clean or Optimize and the Sync it hands over to — they stay disabled too (below). The
+reason is that the full
 analysis runs only in Sync (§6): a run publishes `buildPreview` but never `workspaceTopology`, so a build started
 before the first Sync would compile for real while the list, the graph and the counters stayed empty — the user
 would be watching a run without being able to see what it is doing.
@@ -3206,37 +3746,29 @@ would be watching a run without being able to see what it is doing.
 **Nothing starts while a Sync is in flight** — not a run, and not a second Sync. The engine's command loop
 blocks for the duration of a Sync (§5.2), so a run that began at the press would land in the middle of someone
 else's transcript: it clears the console buffers and writes its own request line while the Sync's remaining
-progress lines are still arriving, and the reader is left with two interleaved stories. A run pressed in that
-window is therefore held as a **request** — and the same holds for a Clean, an Optimize, a checkout and a pull,
-the same busy question (`WorkspaceBusy`). The click takes effect at once where it can without touching the
-work: the primary button becomes *Stop* (a row's play turns into *Stop* on its row), and one line —
-`build requested; it starts when the work in flight finishes` — goes under the work's own transcript. Nothing
-else moves; the console, the event stream, the rows, the pill and the phase belong to the work, and the graph
-stays out of its run phase — a waiting request holds the lock (`IsMidRunLocked`) but not the look of a run
-(`IsRunUnderway`), so the previous operation's pill does not come alive and the graph does not dim. When the work
-ends — the Sync's answer, or a job together with the Sync it hands over to — the run opens exactly as a click at
-that moment would: console cleared, opening choreography against the plan that has just arrived, command sent.
-The request is looked at only once the engine event that ends the work has been applied in full, so the run's
-opening never lands under the rest of that event (a Sync's phase, its stream line). *Stop* and `Esc` take it back
-as they take back a run whose opening choreography is still playing — nothing reaches the engine and the console
-reads `Cancelled — build not started`; a full exit and a branch change seen by the HEAD watcher take it back the
-same way, an engine death drops it with the same line, and while a full exit waits no request can be made at all.
-Work that does not deliver what the run needs takes it back too, the cancel line landing under the work's own
-failure lines so that the opening never erases them: a Sync or a job that fails (a `planFailed` that arrives
-while a request waits is the Sync's — the run's command has not been sent, so the engine has never heard of it), a
-checkout that does not switch, a pull that does not move the tree, a Sync that brings no plan (the topology gate
-above), and a row's request whose project is no longer in the plan. Refusing the press instead would lose it: the
-silent Sync (§10.2) usually starts with the very click that brings the window back, so a refused *Build* is a
-click that vanishes without a trace.
+progress lines are still arriving, and the reader is left with two interleaved stories. The run commands are
+therefore **closed** for the whole of the work: *Build*, *Rebuild*, the Build menu's *Clean*, *Resolve cycles*, the
+row actions, `F5` and the global Build hotkey all answer to one gate (`CanRequestRun`), and the same holds for a
+Clean, an Optimize, a checkout and a pull, the same busy question (`WorkspaceBusy`). A press that cannot start is
+not held for later: the command does not run, nothing is written to the console and the primary button does not
+turn into *Stop*, because there is no run to stop. The screen is the work's — the console, the event stream, the
+rows, the pill and the phase belong to it — and the *Sync* button says so by wearing the busy state (amber ground,
+spinner) whoever started the Sync, a silent one included; a silent Sync leaves the phase alone. When the work ends —
+the Sync's answer, or a job together with the Sync it hands over to — the gate is asked again and the commands open;
+the next press starts a run exactly as a click at that moment would. A press is refused rather than held because a
+held press would act later, on a screen the user was not looking at; the refusal is made visible instead of silent:
+the commands are dim, the Sync button shows its work, and a Build hotkey pressed with the window hidden in the tray
+is answered by a balloon that names what is in the way (§12.3). A Build menu that is open when the gate closes
+closes with it, so no row is left to click over a closed command.
 
-A second Sync is worse value still — it re-runs the whole analysis, scan through incremental, and every press
+A second Sync is no loss to refuse — it re-runs the whole analysis, scan through incremental, and every press
 sends three commands, so the ribbon walks `Syncing → Idle → Syncing` while the console prints the same
 transcript twice.
 
 The gate opens at the **click**, not at `syncStarted`, for the same reason the run lock does: sending takes
 milliseconds and the engine may not reach the command for seconds, and a button that re-enables in between
 invites exactly the second press it is there to prevent. Every control the gate closes hears it at that moment
-— the maintenance box, the `N behind` chip and the branch chip as well as Sync — so none of them is left drawn
+— the run commands, the maintenance box, the `N behind` chip and the branch chip as well as Sync — so none of them is left drawn
 live over a closed command while the engine has not answered yet. It closes again on every exit — the answer
 arrives, the send fails synchronously, the Sync fails, or the engine dies — so no path leaves a button
 permanently dark. Sync remains the way out of an empty topology; what it no longer is, is a way to interrupt
@@ -3245,8 +3777,7 @@ share one gate* above).
 
 The lock — and the *Stop* button with it — begins at the **click**, not at `runStarted`. The phase moves to
 `starting` and a line goes into the run document before the command is even written, mirroring what a stop
-request does. A run that waits for work in flight takes the lock and the *Stop* button at the click too, but
-leaves the phase to the work until it starts (above). Anything less leaves a gap the width of a planning window,
+request does. Anything less leaves a gap the width of a planning window,
 during which the user has pressed a button and the screen still describes the world as it was; on a 177-project
 workspace that gap is seconds long and the console has just been cleared, so nothing on screen contradicts "my
 click did nothing". The phase
@@ -3293,13 +3824,16 @@ categories come in the same fixed order. The **decision** block is one line of t
 and *Restart to update*. The line says what a restart does; while work is in flight *Restart to update* is
 disabled and the line names what it waits for, in a fixed order — a Clean, Optimize, Resolve, checkout or pull
 (`Available once the running task finishes.`), then any Sync, the silent one included
-(`Available once Sync finishes.`), then a build that is running, being marked or waiting for other work to end
+(`Available once Sync finishes.`), then a build that is running or being marked
 (`Available once the build finishes — Esc stops it.`; the design says F5, but F5 only builds — the key's name is
-read from the shortcut catalog). The reason is one computed property of the view model; its task bucket takes the
-workspace work other than Sync from the same list the workspace-busy question reads, so the two cannot drift. It is
-re-evaluated at the workspace-busy notification — which every change of the Sync, Clean, Optimize, checkout and
-pull flags and of the run lock reaches, and so does the end of a run — and when a run starts, since a Resolve
-reads as a task; it is announced only when it changes, so the button comes back on its own when the work ends.
+read from the shortcut catalog). That line follows the Stop button's stage (§4.5): once a stop has been requested the
+next Esc is the hard stop, so it says `Available once the build stops — Esc stops it now.`, and once the hard stop has
+gone Esc does nothing, so it drops the key (`Available once the build stops.`). The reason is one computed property
+of the view model; its task bucket takes the workspace work other than Sync from the same list the workspace-busy
+question reads, so the two cannot drift. It is re-evaluated at the workspace-busy notification — which every change
+of the Sync, Clean, Optimize, checkout and pull flags and of the run lock reaches, and so does the end of a run — when
+a run starts, since a Resolve reads as a task, and when the stop stage changes; it is announced only when it changes,
+so the button comes back on its own when the work ends.
 *Later*, Esc inside the card, a second press on the pill, an outside click, Esc from the window's popover layer
 (§13.7) and the opening of any dialog close the card; *Later* never hides the pill. The dialog rule exists
 because a popup is a window of its own: it cannot sit under a modal, so it goes away when one opens.
@@ -3375,7 +3909,7 @@ The rail exists because settings grow. A single column put every section under t
 setting squeezed it further; a section list keeps each page short and gives the next settings a place to land
 without widening the dialog. **General** is that place. Its rows come from one catalog
 (`GeneralSettingsCatalog`) in four groups — *Startup* (*Start with Windows*, *Start minimized to tray*, *Close
-to tray*), *Build* (*Pull before build*), *Branches* (*Stash and switch branches*, §10.3) and *Notifications*
+to tray*), *Build* (*Pull before build*, *Resolve cycles at full priority*), *Branches* (*Stash and switch branches*, §10.3) and *Notifications*
 (*Show notifications*) — and every row is drawn by
 one template (`Ds.Settings.ToggleRow`): the name over a single line of description on the left, a switch on the
 right, a hairline between rows but not above a group's first. Adding a setting is adding a catalog row; there is
@@ -3383,7 +3917,7 @@ no layout work. A row that depends on another (*Start minimized to tray* on *Sta
 switch's own disabled opacity and stops taking input while its parent is off, without moving anything. Every
 switch on the page drives behaviour. *Stash and switch branches* follows the pull switch's rules: saved with
 *Save*, carried to the engine on the next checkout, and a console note written only when its value actually
-changed.
+changed. *Resolve cycles at full priority* follows the same rules and travels with every `startRun` (§11.1).
 
 *Start with Windows*, *Start minimized to tray*, *Close to tray* and *Show notifications* are **shell switches**:
 they drive the start, the window and the tray (§12.3), not how anything builds, so they never travel to the
@@ -3433,9 +3967,10 @@ The root lives here rather than behind a folder picker because starting takes mo
 root and, optionally, the layers — and a picker can only ask for one of them. That is also why the empty
 project list invites the user *here* rather than opening a picker of its own (§13.2).
 
-Building dependency cycles is **not** a setting: it is a run of its own, reached from the maintenance box
-beside Sync (§8.1, §13.2). A preference would have been the wrong shape — the question is not "should this
-tool ever build cycles" but "do I want to pay for it right now", and that is answered per run.
+Building dependency cycles is **not** a setting: a plain *Build* compiles a dirty group, and *Resolve cycles* —
+the maintenance box beside Sync — compiles the cycles alone (§8.1, §13.2). A preference would have been the wrong
+shape — the question is not "should this tool ever build cycles" but "do I want to pay for the cycles alone right
+now", and that is answered per run.
 
 Layer cards are 36 px and reordered by dragging the grip with `Mouse.Capture` and a half-row swap
 threshold — `DragDrop.DoDragDrop` is prohibited, because the OS ghost-drag semantics do not match the design.
@@ -3500,13 +4035,14 @@ change deferred — …`. A root entered afterwards is a first setup again: sile
 
 **Export · Import · Clear.** The footer carries three icon buttons on its left. Export writes
 `build-orchestrator-settings.json` — `{ app, version, repositoryRoot, externalProjects[{ path }],
-pullExternalBeforeBuild, stashOnBranchSwitch, startWithWindows, startMinimizedToTray, closeToTray,
+pullExternalBeforeBuild, stashOnBranchSwitch, resolveAtFullPriority, startWithWindows, startMinimizedToTray, closeToTray,
 showNotifications, layers[{ name, pattern }] }`, the external array sitting between the root and the layers (the
 field order the file is written in, not just a key that happens to be present) and holding only cards with a
 non-blank path; import reads one back **into the form**; clear empties the root, every layer and every external
-card, and returns every General switch to its catalog default — *Pull before build*, *Close to tray* and *Show
-notifications* on, the rest off. Every General switch travels in the file, so saving an imported file that has
-*Start with Windows* on turns it on for that machine — deliberately. All three touch the draft only: nothing is
+card, and returns every General switch to its catalog default — *Pull before build*, *Resolve cycles at full
+priority*, *Close to tray* and *Show notifications* on, the rest off. Every General switch travels in the file, so
+saving an imported file that has *Start with Windows* on turns it on for that machine — deliberately. All three
+touch the draft only: nothing is
 applied until *Save*, and there is no confirmation dialog. Clear's confirmation is the button itself — the
 first press turns the icon red and prints a warning, cancels itself after 2.4 s, and only a second press
 empties the form. Feedback for all three sits on the same footer line for 2.4 s, green or red. A malformed
@@ -3533,7 +4069,7 @@ highlighted pattern`, in that order of priority. The draft derives the reason fr
 conditions that gate *Save* (`SaveBlockedReason`, with `CanSave` defined as "no reason"), so the button and the
 line cannot disagree.
 
-A file that omits a switch's key (`pullExternalBeforeBuild`, `stashOnBranchSwitch`, `startWithWindows`,
+A file that omits a switch's key (`pullExternalBeforeBuild`, `stashOnBranchSwitch`, `resolveAtFullPriority`, `startWithWindows`,
 `startMinimizedToTray`, `closeToTray` or `showNotifications`) leaves that switch where it is, the same rule the
 external list already follows: a file cannot silently reset a setting it does not carry.
 
@@ -3820,22 +4356,29 @@ lines.
   Leaving the narrative without a backlog was measured as the console "losing" its history — a parallel build
   streams hundreds of lines a second, so the 200-line window turned over in seconds and everything older became
   unreachable even though the text was still buffered.
+- The documents keep **no undo history**. AvalonEdit records every insert and removal on the document's undo
+  stack and keeps the removed text alive as rope slices, so with the default unbounded stack a trim released
+  nothing: after a long visible run about half of the live managed heap was the whole narrative, retained behind
+  a 200-line window. Every console document is created with its undo limit at zero (the console is read-only),
+  so a trimmed line is freed the moment it leaves the window; the narrative's lasting copy is the view-model's
+  buffer and the backlog, a project page's the log on disk.
 - **A line is only text.** There is no wall-clock column and no `▸` marker: every line starts at the same left
   edge as the caret and the line's kind is carried by colour alone. A real run streams hundreds of lines a
   second and a stamp on each of them carried no information; time lives in one place, the event stream and the
   ribbon's elapsed counter.
 - **Nothing is typed.** Live lines print immediately. The only live thing in the console is the prompt line at
   the bottom: a 7 × 13 px rectangle blinking at 1.1 s (not a font glyph), stepping through the console's own
-  line palette as it blinks (§14.3), with `ready` beside it while idle and `Waiting for a workspace` while there
-  is no workspace (§13.2). Output empties `ready`, never the waiting text — on first run the engine prints its
-  own line at once, and a waiting text that output emptied would never be seen. The line is unconditional — output empties its text, not the line —
-  so the caret stays put and new lines pile up above it. The editor reserves one full line of bottom padding,
-  measured from the text view's own line height, so the caret sits below the last line instead of on top of
-  it; it hides while the reader is scrolled away from the bottom, alongside the `⌄ latest` pill, since it is
-  pinned to the panel rather than to the document. That prompt caret is the console's **only** live caret. The
-  editor is read-only but still takes keyboard focus when clicked, and its own thin text caret would then blink
-  beside the prompt's; it is painted with a transparent brush instead. Only its visibility goes — the editor stays
-  focusable, and text selection and Ctrl+C go through it as usual.
+  line palette as it blinks (§14.3) on the one clock the event stream's caret shares, and only while the window
+  is active — behind another window it stands still (§14.5) — with `ready` beside it while idle and
+  `Waiting for a workspace` while there is no workspace (§13.2). Output empties `ready`, never the waiting text — on
+  first run the engine prints its own line at once, and a waiting text that output emptied would never be seen. The
+  line is unconditional — output empties its text, not the line — so the caret stays put and new lines pile up above
+  it. The editor reserves one full line of bottom padding, measured from the text view's own line height, so the
+  caret sits below the last line instead of on top of it; it hides while the reader is scrolled away from the
+  bottom, alongside the `⌄ latest` pill, since it is pinned to the panel rather than to the document. That prompt
+  caret is the console's **only** live caret. The editor is read-only but still takes keyboard focus when clicked,
+  and its own thin text caret would then blink beside the prompt's; it is painted with a transparent brush instead.
+  Only its visibility goes — the editor stays focusable, and text selection and Ctrl+C go through it as usual.
 - **While you are scrolling, the panel is yours.** A user gesture takes the wheel for five seconds — the same
   idle window the list's frontier following uses, and the same constant — and during it arriving content
   never pulls the view down. The 48 px threshold alone was not enough: a small scroll stayed inside it, so
@@ -3884,9 +4427,9 @@ lines.
   that is compiling right now gets one line instead of two: there is no evidence yet, and its output is about
   to arrive. The reason comes from the engine's own vocabulary where there is one — the skip reasons are a
   single shared source, so the page, the event stream and `decision.log` cannot drift apart — and from the
-  will-build verdict and its reason (§7.4) where the project has not been spoken about in this run yet. Cycle
-  membership is checked before that verdict, since Sync gives every cycle member `false` and reading that as
-  "up to date" would be a lie.
+  will-build verdict and its reason (§7.4) where the project has not been spoken about in this run yet. A cycle
+  member reads that verdict like any other row: Sync gives it the answer a `Build` would act on, from its group's
+  composite signature (§7.4).
 - **There is no `build in progress` marker at the end of a project log.** There used to be an amber, blinking
   one. It was set when the page opened and never updated, so a project that finished while its log was on
   screen kept claiming to be building. Two surfaces already answer that question and stay in sync — the
@@ -3922,12 +4465,32 @@ lines.
 - **A new section empties the narrative in place.** Not every operation opens one: a run, the Sync button,
   the click of Clean or Optimize and a branch change do (§10.2); a pull, the Sync a maintenance job chains and
   every automatic Sync append to what is already there, and a refused or failed checkout only adds its line.
-  The disk logs are never
-  touched — clearing is for the screen. The view-model clears its buffer and says so
+  Clearing never touches the disk logs — it is for the screen. The view-model clears its buffer and says so
   (`ConsoleCleared`); the shell resets the document at once, without a tilt — the tilt belongs to the mode
   switch, this is the same panel starting over — and leaves a project log that is on screen alone, since
   `Back` seeds the fresh narrative anyway. Batches of the previous operation still in the pump are dropped
   by the same reseed generation a mode switch uses, so nothing from before the clear can land after it.
+- **A hidden window does not write to the document.** While the window is in the tray the pump keeps draining the
+  view-model's buffer, but the shell drops each batch instead of applying it, and a clear that arrives meanwhile is
+  held back the same way: the narrative is still complete in the view model, and a document nobody can see is not
+  worth the layout work its insertions cause. So is a switch between the narrative and a project log: a run started
+  from the tray drops the open project's selection, the header follows at once and the document waits. When the
+  window returns, one rebuild puts the screen right — the
+  document is built from the model's full text **without the tilt**, once the first layout pass has run (the bottom
+  pin reads layout). It is the same tilt-less rebuild a new section uses; the tilt still belongs to a change of
+  mode. The rebuild seeds with the reseed generation like any other, so a batch that was already in flight when the
+  window returns is dropped rather than landing twice, and a run with no lines shows the idle `ready` line again.
+  A project log that was open is rebuilt from its own text the same way — pinned to the top and not following, as
+  when it is opened — an empty log shows its project's empty-state text, as it does then. Nothing is replayed line by
+  line: the console jumps to the present state of the run (§12.3).
+- **A finished run lets go of its live lines.** While a run streams, the view model also keeps its lines in a side buffer
+  per project: a project log opened mid-run is the disk snapshot plus whatever the disk did not hold yet when the
+  snapshot was taken, and that remainder is read from the side buffer. When the run ends — completed, stopped, failed or
+  with the engine lost — the disk holds everything and the buffer is released, unless a log request is still waiting for
+  its reply; then the release follows the reply, whether it brings the log or says there is none, so the page being built
+  still gets its last lines. A project's own text buffer is dropped when the console leaves its page, for another project
+  or for the narrative, and opening the project again reads the disk log afresh (§5.5). Opening a new section still
+  clears everything at once, as above.
 - The console body is drawn at **Geist Mono 300**; dense output scans more easily at the lighter weight. Every
   other mono surface stays at 400.
 - The console formats text in **Ideal** mode, overriding the window's `Display` (§14.2). Display rounds every
@@ -4009,7 +4572,7 @@ without it a selection edge passing behind a node would show straight through it
 row (§14.3) — the state of the project's output, with the running operation laid over it — and there is no
 separate "plan" core. The cube inside follows the frame, with a single exception: in a **cycle member the cube
 is always amber**, whatever the frame says — unknown, to build, building, a result. Membership is structural,
-not the outcome of a run: a Sync does not end it, and neither does Resolve cycles compiling the member, so the
+not the outcome of a run: a Sync does not end it, and neither does a run compiling the member, so the
 cube does not either; it is the graphical proxy of the list row's warning triangle. It reaches the node as its
 own field (`GraphNode.InCycle`) rather than as a status, because it never changes what the frame reports.
 Earlier versions carried membership here as its own colour, first as an orange square and then as a persistent
@@ -4075,8 +4638,10 @@ precisely the retroactive animation the motion contract forbids. A new row compl
 instantly. That rule lives in the panel rather than in the row, since a row does not know its siblings. Without it — one timer per row — a fast
 run had two or three lines opening leftward at once, which is the defect that started this whole detour. Burst
 and failure events skip the typewriter entirely, as does reduced motion, and each row types exactly once, so a
-recycled container does not replay it. A row counts as "typing" for 420 ms after its text completes, matching
-§6, which is also how long it keeps the single-writer slot.
+recycled container does not replay it. A row counts as "typing" while its lock-in runs, from the first frame until the head has crossed the line, and
+that is exactly how long it holds the single-writer slot; nothing is held after the text completes. In the stream
+the caret-hold figure (`CursorHoldMs`) applies only to a row that prints instantly, where it is the window in which
+the caret wears that row's tone (below).
 
 **The prompt line is an indicator, not a surface.** It has two states and its text is amber in both: the
 project being compiled (`X building…`) or nothing at all, a wall-clock stamp and a blinking caret. Its *text*
@@ -4101,8 +4666,10 @@ The wall-clock stamp stays dim, which keeps the waiting row quiet.
 channel is still visible: while an event is in hand the caret carries that event's *icon* colour — green for a
 success, red for a failure, grey for a skip — and it returns to amber, the resting tone, when the writing is
 over. An event that prints instantly is never written, so it holds the caret for a short window instead —
-420 ms, the same figure the prompt's own caret hold uses. When the colour cycle is running it takes precedence:
-the tone would otherwise cut the cycle short on the first event and freeze the caret on one colour.
+420 ms, the same figure the prompt's own caret hold uses. The tone shows wherever the colour cycle is not
+running, not only with reduced motion: a window that is not the active one (§14.5) stops the cycle, and the
+stream's caret rests in the tone there too. When the colour cycle is running it takes precedence: the tone
+would otherwise cut the cycle short on the first event and freeze the caret on one colour.
 
 Both extremes were tried and measured. Colouring only for the exact duration of the typing left the caret
 amber most of the time and green was almost never seen; holding the colour indefinitely left it stale — a run
@@ -4157,8 +4724,8 @@ the neon play in their standard form. Once the finale has played the graph holds
 short beat (`EndFinale.FilterReturnAtMs`, the finale's length plus the design's short `LightMs`) and then
 fades back to the filtered look at the filter's own 420 ms. A stop and the engine dying end the run in the
 `Stopped` phase, which plays the finale too when something was built, so they follow the same rule. When there
-is no finale — nothing was built, reduced motion, a stop during the opening sequence, a command that never went
-out — the filter returns as soon as the run is over. A restart of the plan surface (a Sync click or a branch
+is no finale — nothing was built, reduced motion, a hidden window, a stop during the opening sequence, a command that
+never went out — the filter returns as soon as the run is over. A restart of the plan surface (a Sync click or a branch
 change, §10.2) cuts a finale still playing and brings the filter back at once (`GraphView.CancelEndFinale`), so
 the new graph's reveal plays with the filtered look. The two end signals — the phase that starts the finale
 and the run lock falling — arrive in different orders on different paths, and either order lands on the same
@@ -4192,8 +4759,12 @@ the drawn path would fall a whole stroke short of the perimeter the dash pattern
 in the graph hangs off **one** shared animation clock — the node size is graph-wide, so the perimeter is too,
 and N parallel builds would otherwise mean N infinite animations. The orbit fades in over 420 ms and out over
 640 ms, and the clock is released 700 ms after the last node stops building, so the dots fade *while still
-turning* rather than freezing in place. Resizing the panel changes the perimeter, so the pattern and the clock
-are rebuilt.
+turning* rather than freezing in place. An orbit whose fade-out has ended leaves the clock and the render
+(collapsed), and the same orbit comes back when its node builds again: the clock keeps turning for as long as any
+node builds, and a finished node's invisible orbit left on it was redrawn — with a fresh pen for its moving dash
+offset — on every frame for the rest of the run. Measured on a full rebuild of the real workspace, that redraw
+was the largest single source of the interface's allocations during a run and grew with every finished node.
+Resizing the panel changes the perimeter, so the pattern and the clock are rebuilt.
 
 **A skipped project is silent.** No orbit, no bright hold, no wave — it settles into its result colour and
 stays exactly as dim as the queue around it. An earlier version gave skipping the full announcement (a brief
@@ -4258,7 +4829,7 @@ clamp would otherwise draw it at the panel's edge pointing at nothing. The one s
 leave clears the value only if it still names that project, and the graph reports its pointer hover through
 `GraphView.HoveredNodeChanged` (`GraphHoverEcho` wires the two). The echo reads the value and never reports
 back (`GraphView.EchoHover`), so no loop can form. Hover on a row lives on the project's view model
-(`ProjectRowViewModel.IsHovered`), not on the recycled container, and a change touches only the previous and
+(`ProjectRowViewModel.IsHovered`), not on the row control, and a change touches only the previous and
 the new row — the pointer sweeping across the graph produces dozens of changes a second. The selection's
 clearing of the node hover (above) counts as the pointer's hover changing, so it clears the shared value too:
 clicking a row leaves the node in its selected look with its name label, without a tooltip on top.
@@ -4345,14 +4916,13 @@ panel header switches to its project-log half with the `Back` button. Clicking t
 selection.
 
 Esc is a chain and only ever closes the topmost layer: dialog → popover/menu (the action bar's popovers and the
-title bar's update card) → selection → the running build.
-With nothing else open, Esc stops a Build, Rebuild or Clean gracefully (§4.5) — so a selection made mid-run is
-dropped by the first Esc and the build stopped by the second. A Sync, a Deep Clean, an Optimize, a checkout or a
-pull cannot be stopped; Esc during one writes a single console line saying so (`sync can't be stopped — it will
-finish on its own`), once per job. A silent Sync is invisible, and Esc says nothing about it. A run pressed
-during one of them and waiting for it (§13.2) is the running build here: Esc takes the request back and the work
-goes on. Right-clicking a
-row is not a selection gesture — it opens the row menu and leaves the selection alone.
+title bar's update card) → selection → the running build. With nothing else open, Esc stops a Build, Rebuild or
+Clean gracefully (§4.5) — so a selection made mid-run is dropped by the first Esc and the build stopped by the
+second. While a stop drains — the user's own or a branch switch's — Esc is the hard stop, the same step pressing
+*Stop now* takes (§4.5), and after that Esc does nothing. A Sync, a Deep Clean, an Optimize, a checkout or a pull
+cannot be stopped; Esc during one writes a single console line saying so (`sync can't be stopped — it will finish on its own`),
+once per job. A silent Sync is invisible, and Esc says nothing about it. Right-clicking a row is not a selection
+gesture — it opens the row menu and leaves the selection alone.
 
 **Starting a run drops the selection and keeps the filter.** Build, Rebuild, Resolve cycles and a row's own
 Build, Rebuild and Clean all go through the same start: the selection is cleared, so the graph glides back to
@@ -4376,6 +4946,12 @@ route, handled events included: if the clicked element took focus itself, nothin
 a text box and the click landed outside it, focus goes to the nearest focusable ancestor of the click — which
 keeps it inside a modal's focus trap — or is cleared when there is none. Clicks inside a popup are left alone:
 their visual route never reaches the window, and the popup manages its own focus.
+
+**The filter box applies what it holds after a short pause, not on every keystroke.** Each change of the query
+rebuilds the list's groups and refreshes the graph's dimming, so the box's binding to `ProjectQuery` is delayed
+(`Binding.Delay`; the trigger stays `PropertyChanged`, so each change of the text restarts the pause): a burst of
+keystrokes publishes `VisibleProjects` once, with the text the burst ended on. Esc and the box's clear button take
+the same road, so the list follows them after the same pause.
 
 ### 13.8 Design-system control library
 
@@ -4471,7 +5047,7 @@ active set appears as a removable chip in the panel header.
 |---|---|---|
 | `Shift+Space` | anywhere | Show or hide the window (§12.3) |
 | `Ctrl+Shift+Space` | anywhere | Build without bringing the window up (§12.3) |
-| `F5` | window | Build — only starts; while a run is in flight it does nothing |
+| `F5` | window | Build — only starts; while a run is in flight or a Sync, Clean, Optimize, branch switch or pull runs, it does nothing |
 | `F6` | window | Rebuild |
 | `F7` | window | Clean — the Build menu's `-t:Clean`, not the maintenance box's Deep Clean |
 | `Ctrl+F` | window | Focus the project filter |
@@ -4600,11 +5176,13 @@ failure (§7.5). Over it lies the **run**: `marked`
 (this operation's scope), `queued`, `building`, and the results `succeeded` (the same green as `current`, kept
 apart so the run can still say "just built") and `failed`. A result does not outrank the standing it wrote:
 `succeeded` shows only over a current standing (or where there is no decision at all); a success that leaves
-the output to build — a Clean, or a cycle member whose group did not converge and whose success the engine
-therefore does not keep (`trusted: false`) — shows that grey. Red is evidence and nothing else, and on a state
+the output to build — a Clean, or a cycle member that compiled in a group that did not converge while its read surfaces
+were still stale, so the engine does not keep its success (`trusted: false`) — shows that grey; a carried member in that
+position never compiled and is reported as a skip, which falls back to the same grey standing. Red is evidence and nothing else, and on a state
 surface it comes only from the standing: a failure the engine counts as evidence writes `LastFailed` into the
 standing, while one it does not — a timeout, a stop, an invoke error, a failed Clean, a compiler failure inside
-a cycle group that did not converge — writes `NeverBuilt`, and over that stale standing the run's `failed` gives
+a cycle group that did not converge while the surfaces that member read were still stale (§8.8) — writes
+`NeverBuilt`, and over that stale standing the run's `failed` gives
 way to the grey (only a row with no decision at all keeps the run's red, since the result is then the one thing
 known). The verdict is the engine's: one gate in the Supervisor — a trusted result of a compiling target, a
 compiler failure (`FailureClassification`) and a known signature — decides it once, writes the ledger with it
@@ -4654,7 +5232,7 @@ never re-derive it.
 **The one exception: a cycle member's cube.** In a cycle member the cube inside the node is **always amber** —
 the graphical proxy of the row's amber warning triangle — while the frame carries the member's own state like
 any other node. Nowhere else do the frame and the cube part company. Membership is not a status (it is passed to
-the node separately and never changes the frame), so neither a Sync nor Resolve cycles compiling the member puts
+the node separately and never changes the frame), so neither a Sync nor a run compiling the member puts
 the cube out. Membership never reaches the list's colour: there the stripe and the dot follow the standing like
 every other row, because the triangle already says it. This is not the orange channel returning — the tone is
 the warning's own amber.
@@ -4691,7 +5269,7 @@ Orange left the interface entirely.
 blew up". The *reason* — the cycle path, the full member list, why a project was skipped — lives in the
 project log, where there is room for it. The status glyph always shows the real status, the warning never
 replaces it, and while the row is building the slot is empty so nothing competes with the spinner. A `Build`
-will not compile a cycle; *Resolve cycles* will (§8.1). The graph carries no triangle at all.
+compiles a dirty group in rounds, and so does *Resolve cycles* (§8.1, §8.8). The graph carries no triangle at all.
 
 The dependency triangle is **cumulative**. Its roots come from one place on the row (`WarningRoots`): this
 run's dependency list when the run produced one, otherwise the ledger's note — a project whose last success was
@@ -4725,15 +5303,17 @@ Four facts share the warning slot, and only the strongest is shown, because the 
 | Outcome | Tooltip |
 |---|---|
 | This run's rounds could not converge the group | `Cycle did not converge — its projects are still out of date` |
-| The group ran out of rounds and this member is green | `Cycle did not fully settle — output may be one generation stale` |
+| The group ran out of rounds and this member is green but was still stale in the last round | `Cycle did not fully settle — output may be one generation stale` |
 | The row is in a cycle | `In a dependency cycle` |
 | A dependency failed or was not rebuilt | `Dependency issue: Sales.Core +2` |
 
 The order runs from the most specific claim to the most general. The first two are about how much a result can
-be trusted rather than about what the result was; the convergence verdict comes from the run's own
-`cycleCompleted` rather than a memory of an earlier one, so it appears in the very run that proved it and
-regardless of how the individual member ended — a member that went green inside a group that never converged
-is still holding a stale output, and the counter reads it the same way, without a status gate. Membership is
+be trusted rather than about what the result was; the convergence verdict comes from the run itself rather than a
+memory of an earlier one — the group's `cycleCompleted`, or for a carried member whose record was discarded its own
+skip (§5.3) — so it appears in the very run that proved it, on the members the engine did not stand behind — one that
+failed, one that went green while still bound to a stale sibling surface, or a carried one whose record was discarded,
+is holding a stale output. A settled member is not marked: its green was trusted and its record kept, and a settled
+carried one was reported `up to date`. The counter then reads the marks themselves, whatever the row's status. Membership is
 the weakest and loses to all of them: it asserts nothing about the output, only about the graph. Dependency
 issues come last because they are about someone else's output: they last as long as the ledger's note, but a
 fact about the row's own cycle is always the more precise thing to say.
@@ -4826,7 +5406,9 @@ them, and it can dump any size as ASCII so the judgement can be re-made against 
 
 Durations 80 / 120 / 180 / 280 ms; three easings — ease-out for entrances, ease-standard for state changes,
 ease-in-out for displacement. All three CSS curves are reproduced exactly as `KeySpline`s. No bounce, no
-overshoot; only transform and opacity are animated, never layout.
+overshoot. What animates is what a frame can redraw without a layout pass — opacity, colour, transforms (the
+console's tilt is a 3D one), a stroke's dash offset and a clip — plus the finite exceptions below that do touch
+layout.
 
 Five contract rules, each enforced by a test:
 
@@ -4858,6 +5440,12 @@ Five contract rules, each enforced by a test:
    the easing curve's own parameter, since that path is not a single keyframe. Equal alphas are left alone:
    there the common factor cancels and straight interpolation is already the premultiplied one. This is why
    no consumer may hand-roll a colour keyframe.
+
+**Deliberate exceptions: finite animations that touch layout.** The row's status stripe and the ribbon's progress indicator
+animate `Width`. Both are short, finite transitions on a single element, so their layout cost is a bounded burst that
+ends with the transition rather than a continuous stream. Two more animations share that bound: the scrollbar pill's
+inset on hover (`Padding`, on the pill alone — the rail and the content beside it do not move, §13.8) and the scroll
+glides, which step a `ScrollViewer`'s or the console editor's offset each frame until the glide ends.
 
 **Overlay entrances are one body.** `PopIn` plays them all, and they differ only in numbers: popovers and the
 Build menu rise 4 px from below at scale .985 over 140 ms; the modals rise 6 px over `Duration.Base` without
@@ -4921,6 +5509,20 @@ either always plays or never does. The operation itself still begins on the firs
 the button becomes *Stop*, the console records the request — and only the command waits. The view-model owns
 the scope and awaits a gate; the shell owns the timing and closes it.
 
+**Choreographies play only on a visible window.** On a hidden one — a build started from the tray with the global
+hotkey, or one that drops to the tray mid-run — the scope is marked in a single step and the command goes out at
+once: the very branch reduced motion takes, and the step holds between a sequence's operations are skipped the
+same way. Hiding the window cuts whatever is playing: the opening choreography releases the waiting command on
+the spot (the marks stay, so the run still takes over from them), and a running end finale stops and hands the
+filter back. While the window stays hidden nothing new starts, and a run that ends there skips its finale and
+returns the filter at once. The whole rule hangs on one signal, the inherited attached property
+`HiddenSurface.IsHidden`, which the window writes from its own visibility (`IsVisibleChanged`, and at start-up when
+it begins in the tray). It is deliberately a signal of its own rather than `IsVisible`: the window sets it
+explicitly, so a tree that was never shown — every headless test — is not mistaken for a hidden window. The
+measurement behind the rule: started from the tray with the hotkey, most of the wait before the engine began was
+an opening animation nobody could see. "Either always plays or never does" is a rule about a *visible* window —
+there it still holds.
+
 **The choreography's last frame holds until the run takes over.** When the sequence ends on its own the driver
 releases the gate but keeps its final step: the settled opacities — 0.13 on the scope, the very value the
 run's own opacity system gives a queued node, and 0.18 on the rest — stay on the graph while the engine plans.
@@ -4937,11 +5539,12 @@ Because nothing has been sent yet, **Stop during the choreography cancels the ru
 no `startRun`, no `stopRun`, and the console says `Cancelled — build not started`.
 
 The wait is also why `queued` is derived from a run that is *live*, not from one that has merely been
-requested. Were the request counted as a run, every project in the plan would turn queued-amber on the click
-itself and the neutral moment and the wave would both be invisible. No information is lost by waiting: the
+requested — one whose click has happened while the opening choreography is still playing. Were that request
+counted as a run, every project in the plan would turn queued-amber on the click itself and the neutral moment
+and the wave would both be invisible. No information is lost by waiting: the
 wave lights exactly the set the queue would have, only progressively — and when the choreography is skipped
-(reduced motion, or an empty scope) the scope is marked in one step, so the amber still appears at once. If
-the run never starts — the command fails, or the engine never answers — the marks are cleared, because an
+(reduced motion, a hidden window, or an empty scope) the scope is marked in one step, so the amber still appears at
+once. If the run never starts — the command fails, or the engine never answers — the marks are cleared, because an
 operation that did not happen may not leave its colour behind.
 
 **The scope fades into amber; it does not snap.** Every surface the wave touches — the node's border, its
@@ -5016,6 +5619,41 @@ a timer for the life of the application. Measured with CPU cycle counters on an 
 the cursor gate and the sleeping pump together took the process from roughly 81 to 5 million cycles a second;
 either one alone removed barely a sixth of it.
 
+**Stopping an infinite animation means removing its clock, not just detaching it.** `BeginAnimation(property,
+null)` only unhooks the clock from the property: the clock stays a root of the dispatcher's timing tree in the
+*active* state, and an active animation clock asks for a tick on every frame. The tree holds it weakly, so only a
+garbage collection would end it — and an idle process never collects. Measured: a run that ended while the window
+was visible left the breathing rows, the building rings, the ribbon's sweep and the graph's bead orbit behind as
+orphaned clocks; hidden to the tray three seconds later, the UI thread idled at about 118 million cycles a second
+against 13 for the same window hidden mid-run, because in a hidden window every tick recommits the composition
+channel and wakes the thread at the display's refresh rate. Every owner of an infinite animation therefore keeps
+its clock in a `DecorativeClock` and stops by removing it from the tree (`ClockController.Remove`), the same
+discipline the carets' `CursorClock` already keeps; a shared clock — the bead orbits, the selection edges — is
+attached to each surface and removed from all of them at once. The proof at the scale of the whole shell is a
+real window, a run ending in view, the finale cut by hiding, and a timing tree with no live clock afterwards
+(`HiddenShellClockTests`); each owner is pinned on its own in `HiddenDecorativeClockTests`.
+
+**The two carets share one clock, and it runs only while the window is active.** The console prompt's caret and
+the event stream's active-line caret are the one pair of infinite loops that is genuinely on screen for the whole
+life of the window, so the visibility gate alone cannot quiet them; with a blink and a colour tour each, they were
+the largest single share of the cost of an idle application in the foreground. They share one clock pair instead
+of owning four: both carets attach to their window's cursor clock, so they blink in phase and step through the
+palette together. Beside visibility the clock has a second gate, the Windows convention for a caret: it runs only
+while the window is active. Behind another window, minimised or in the tray, both carets stand still, fully opaque
+and in their resting colour, and they resume in phase on activation. The signal is the window's own `Activated`
+and `Deactivated`; the views never read it themselves. The window also reads its own state when its content is
+first rendered, because one that was never activated — a foreground lock, an application started behind another —
+never hears `Deactivated` and would otherwise keep blinking until the first click; a clock that has heard nothing
+at all counts as active. Visibility and activity are independent gates and either one stops the clock. If the
+palette cannot be resolved when the clock is created (the view is not yet in a resource scope) the caret blinks
+without its colour tour, and the pair is restarted together at the next re-evaluation once the palette resolves, so
+the two stay in phase. With reduced motion no clock is created at all. Input is deliberately *not* a gate: the
+carets of the window in front keep blinking however long nothing is typed. A stop after the Windows caret timeout
+was built and measured — it took the idle foreground window from about 180 million cycles a second to 17, because
+a blinking caret keeps the whole composition and the GPU driver awake — and was withdrawn as a product decision:
+the caret is the sign of life of the window in front, and the saving belongs to the window behind, which already
+has it (`CaretFocusRuleTests`).
+
 **One seam in the tray indicator is deliberately not instant, and it carries no number in code.** The
 overlay's disappearance and the balloon would otherwise land on the same frame and read as one abrupt event, so
 a short breath separates them; its length is `Duration.Slow`, which means reduced motion collapses it to zero on
@@ -5051,6 +5689,14 @@ and announced once per step rather than per frame. Each region decides when it s
 helper (`LiveRegion`), which finds or creates the element's automation peer and raises the live-region event, so
 no region raises it on its own. Contrast is asserted by test for every text token, including the dim ones.
 
+Every `UserControl` of the app reports a real automation role — a project row is a list item, the panels are
+panes, the menus are menus, the marks are images — never WPF's default *custom* type (`UserControlRolePeer`, pinned
+by a source guard). The role reads better in a screen reader, and it also governs cost: with an automation client
+attached, WPF walks the peer tree after every layout pass, and a custom-typed peer makes that walk re-enumerate the
+control's whole visual subtree every time, whereas a peer with a real role is visited only when something beneath
+it changed. On a machine with such a client the walk was a fifth of the UI thread's busy time during a visible run,
+most of it the project rows being re-enumerated every frame.
+
 Known gap: graph nodes are not keyboard-navigable. They are not silent, though — each node body is a `Button`
 in the automation tree, named with the project and its status from the same central table and refreshed by the
 status tick, and it answers `Invoke` through the exact activation path a click takes. What is missing is the
@@ -5066,11 +5712,12 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 
 | Path | Content | Corruption behaviour |
 |---|---|---|
-| `logs\run-<timestamp>\` | per-run and per-project logs | — |
-| `build-state.json` | per-project signature, commit, result, duration, dependency-issue note with its root project ids, non-convergent cycle signature, the fed outputs learned from the last success (§7.6); projects from external roots share the file under the same key shape, without a commit or branch (§7.5). A record written before a field existed loads with that field empty | falls back to empty |
-| `evaluation-cache.json` | csproj evaluation cache; each entry records the schema it was written under, and an entry from an older schema is re-evaluated rather than served (§6.2) | falls back to empty |
+| `logs\run-<timestamp>\` | per-run and per-project logs; a run's folder is removed at the first engine start more than three days after the run, except the newest run's, which always stays (§8.5) | — |
+| `build-state.json` | per-project signature, commit, result, duration, dependency-issue note with its root project ids, non-convergent cycle signature, the fed outputs learned from the last success (§7.6), the `packages.config` content hash behind the restore decision (§9.3), a cycle member's term, the sibling surfaces it read and the engine fingerprint behind round one's compile decision (§7.5, §8.8); projects from external roots share the file under the same key shape, without a commit or branch (§7.5). A record written before a field existed loads with that field empty | falls back to empty |
+| `evaluation-cache.json` | csproj evaluation cache; each entry records the schema it was written under, and an entry written under another schema is re-evaluated rather than served (§6.2); an SDK-style entry also records the `Directory.Build.*` files its layout decision read, and is re-evaluated when one of them changes or appears; Optimize removes such entries outright, whatever root they belong to | falls back to empty |
 | `source-hash-cache.json` | source content hashes keyed by path, size and modification time (§7.1) — this is what turns the content decision into one stat pass per run | falls back to empty (the next run re-reads and rebuilds it) |
 | `run-inflight.json` | the ids of the projects the engine has dispatched and not yet reported — written at dispatch, erased at the result, emptied at the end of every run; left non-empty only by an engine that died mid-run, and read once at the next engine start (§8.7). Absent while no run is in flight | an unparsable file is deleted and nothing is recovered; an unreadable one stays for the next start |
+| `msbuild\wpf-temporary-assembly.targets`, `msbuild\wpf-temporary-assembly-friend.cs` | the two files behind `-p:CustomBeforeMicrosoftCommonTargets` (§9.2). An engine writes them the first time it resolves `MSBuild.exe` — on its first run or its first Optimize — and only when the content on disk differs from its own; both files carry a fixed, old modification time however they were written (§9.2); the path carries no version, and a missing or edited file is repaired the next time a new engine resolves MSBuild | rewritten from the engine's own copy the next time a new engine resolves MSBuild; if they cannot be written or pinned, builds run without the argument |
 | `ui-state.json` | layout mode + three splits, repository root, configuration, perf mode, layer patterns, external roots (path) and whether to update them (§10.4), whether to stash before a branch switch (§10.3), hotkey, *Start with Windows* (`Autostart`) and *Start minimized to tray*, whether closing the window hides to the tray and whether tray notifications are shown (§12.3), tray-balloon-shown, last-seen release-notes version. The branch is not stored: it is whatever is checked out. Fields older versions wrote and this one no longer reads are ignored | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
 
 *Start with Windows* additionally writes one `HKCU\...\Run` value, and turning it on removes Task Manager's
@@ -5098,15 +5745,32 @@ touched, so no project's build decision moves. Both operations scope by root thr
 normaliser: a root is resolved and compared with a trailing separator, so `C:\repo` cannot claim
 `C:\repo2\...`, and each root gets its own pass, because an external root is not under the main root's prefix.
 
+The evaluation cache has a second kind of dead entry, and it is the one no root can see: an entry written under
+a schema other than the current one is never a hit (§6.2), so it takes room in the file — and what a retired
+worktree or another workspace left behind would stay for good, because a pass scoped to a root reaches only the
+paths under its roots. Optimize therefore removes every entry whose schema is not the current one, wherever its
+path points, and counts those with the evaluation-cache prunes. Nothing is lost: a project met again is evaluated
+once and written under the current schema, so no build decision moves. The one exception is a project file that
+vanishes during a scan: the cache's fallback for a missing file returns whatever entry it holds for that path
+without looking at the schema, and a removed entry can no longer be returned.
+
 Optimize also sweeps the ledgers' **orphaned temp files**. An atomic write killed between its temp write and
 its rename leaves a `<ledger>.<guid>.tmp` behind; each ledger sweeps only the pattern of its own name, and only
 files old enough that no write still in flight could own them.
 
-When an operation finds nothing to change in a ledger, that file is not rewritten at all — no write, no rename
-race.
+The two caches, `evaluation-cache.json` and `source-hash-cache.json`, each keep a dirty flag. Only a change to an
+entry raises it — a project evaluated, a fingerprint refreshed after a touch, a hash recomputed, a dead entry
+pruned — and only a successful write lowers it, so a write that fails leaves the ledger dirty and the next flush
+tries again. The source-hash cache also keeps the flag raised while its last flush left out an entry inside the
+racy window (§21.3); a later flush of the same instance writes that entry once the window has passed, and a
+command that never flushes again simply hashes that file afresh. Both caches are read and written as streams, so
+the file is never turned into one string in memory. An operation that finds nothing to change in a ledger —
+Optimize pruning nothing, or a Sync or a run that only hit the two caches — does not rewrite that file at all: no
+write, no rename race.
 
-`build-state.json` and `run-inflight.json` share one atomic write path (`AtomicFile`): a unique
-temp file, then a rename over the target with a bounded retry for a transient sharing violation.
+All four files share one atomic path (`AtomicFile`): a unique temp file, then a rename over the target with a
+bounded retry for a transient sharing violation. The two small state files go through its text forms, the two
+ledgers through its stream forms.
 
 The Supervisor accepts `--logs` to relocate the log root; the cache and state files, `run-inflight.json`
 included, live next to it, in its parent folder. The App never passes it; it exists so the test suite never
@@ -5192,9 +5856,11 @@ A category of tests that assert properties of the *source*, not of a run:
 | Git mutation surface (`NoGitMutationOutsideTheWriterTests`) | a mutating git verb (`merge`, `checkout`, `switch`, `pull`, `rebase`, `cherry-pick`, `stash`, `clean`, `reset`, `commit`, `push`) at the head of an argument list appears only in `Core/Git/RepositoryWriter.cs` (§10.1) |
 | No worktree surface (`NoWorktreeSurfaceTests`) | no `worktree` git verb and no `BaseIntermediateOutputPath` in the source, no branch or worktree field on `startRun`, and no worktree type or discriminator in the contract |
 | No product name in code (`NoProductNameInCodeTests`) | no identifier under `src` — type, member, enum value, parameter or local — carries the name of the product the tool was first built for; comments and string literals are exempt, and the code inside an interpolation hole is still scanned |
-| Isolated test engines (`SupervisorIsolationGuardTests`) | every test that starts a real Supervisor gives it an isolated cache (`--logs`, or the shared sandbox), so no test reads or recovers the user's own `run-inflight.json` (§16) |
+| Isolated test engines (`SupervisorIsolationGuardTests`) | every test that starts a real Supervisor gives it an isolated cache (`--logs`, or the shared sandbox), so no test reads or recovers the user's own `run-inflight.json` (§16); the engine a test starts comes only from the sandbox — a host built directly on the real executable takes no extra arguments, is never returned by a helper or kept in a non-private field or property, and is never started through a private one |
+| Ledger file access (`LedgerStreamingGuardTests`) | the two large ledgers (`evaluation-cache.json`, `source-hash-cache.json`) never turn their file into one string or byte array and never open, create or move it themselves — they read and write through the stream forms of `AtomicFile` (sharing delete on read, retried atomic rename on write); hashing a *source* file is the one exempt read; the rule is shown to catch each bypass and to ignore a comment |
 | Entry point (`EntryPointTests`) | the App starts from the hand-written `Program.Main`, `VelopackApp…Run()` comes before the `App` is created, the uninstall hook removes the startup value, and the `Velopack` library and the `vpk` tool carry one version (§12.1) |
 | Repository hygiene (`RepoHygieneTests`) | the MIT `LICENSE`, the SDK band in `global.json`, the pinned `vpk` tool, the README's CI badge (the run of `main`), and the workflows: CI builds and tests every push to `develop` and `main`, with no path filter, on the pinned image and can be called by the release; the release runs on `v*` tags one at a time and is never cancelled, writes only from its publish job, checks that the tag is on `main`, and publishes through `package.ps1` (§18) |
+| Automation roles (`AutomationRoleTests`) | every `UserControl` of the app declares its automation role through an override in the app assembly — never WPF's default custom type, which the post-layout peer walk re-enumerates on every pass (§15) |
 
 ### 17.3 Determinism
 
@@ -5227,28 +5893,57 @@ Animation behaviour is measured the same way: the harness can drive the live win
 
 ### 17.5 Acceptance
 
-Three tests carry the `Acceptance` category and build the user's real repository end to end (roughly two
-minutes). They are excluded from the normal verification run and executed separately:
+The tests in the `Acceptance` category run real tooling end to end rather than doubles. Some of them build the
+user's real repository (roughly two minutes). All of them are excluded from the normal verification run and
+executed separately:
 
 ```powershell
 dotnet test tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj --filter "Category!=Acceptance"
 dotnet test tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj --filter "Category=Acceptance"
 ```
 
+`WpfTemporaryAssemblyAcceptanceTests` needs neither the repository nor a long run. It copies the throw-away WPF
+projects under `Fixtures\WpfMini` into a temporary folder and builds each variant twice with the real
+`MSBuild.exe`, through the engine's own argument plan: without and with the WPF temporary-assembly targets
+(§9.2). The variants are an SDK-style project and a legacy-style project whose XAML binds public members, plus the
+legacy-style project with XAML that sets an internal member of a local type. The test first shows that the
+targets take effect — MSBuild's own output must show a compiler command line with `/refonly` with them, and none
+without — and then that they do no harm: the with-targets build must succeed, the compiled markup must be
+byte-identical, the output assembly must have the same size, and it must carry neither a reference-assembly
+marker nor the targets' friend assembly name. The test needs `MSBuild.exe` to resolve and skips when it cannot.
+Each variant also needs what it builds against — the .NET Framework 4.6 targeting pack for the legacy-style
+project, an MSBuild that can host the .NET 10 SDK (Visual Studio 18 or Build Tools 18; Visual Studio 2022 cannot)
+for the SDK-style one — and a variant whose build *without* the targets fails on the machine is skipped rather
+than failed: only a build the targets break turns the test red.
+
 A second group carries the `Measurement` category: probes and measurements that read numbers rather than
 assert rules — the tray overlay's own cost, rendered frames of its loop, the notification call, where the real
-file picker lands, UI latency and memory under each perf profile, and the content-decision timings. The filter
-above does **not** exclude them (`!=` admits every other category value). The tray, file-picker and perf probes
-open real windows and dialogs, show balloons or saturate every core, so each is gated on an environment variable —
-`BO_PROBE_TRAY`, `BO_PROBE_FILE_DIALOG`, `BO_MEASURE_OVERLAY`, `BO_MEASURE_PERF` — and reports itself as skipped
+file picker lands, UI latency and memory under each perf profile, the UI thread cost of a build's events while the
+window is hidden, and the content-decision timings. The filter above does **not** exclude them (`!=` admits every
+other category value). The tray, file-picker, hidden-window and perf probes open real windows and dialogs, show
+balloons or saturate every core, so each is gated on an environment variable — `BO_PROBE_TRAY`,
+`BO_PROBE_FILE_DIALOG`, `BO_MEASURE_OVERLAY`, `BO_MEASURE_HIDDEN`, `BO_MEASURE_PERF` — and reports itself as skipped
 unless it is set. The content-decision measurements are gated
 differently: they read a real repository whose root comes from `BO_MEASURE_ROOT`, `BO_MEASURE_COLD_ROOT` or
 `BO_CACHE_ROOT` with a local default, and skip only when that root is absent — on a machine where the default
-root exists they run with the normal suite.
+root exists they run with the normal suite. One probe lives in the application rather than the suite, because
+what it measures only exists there: with `BO_PROBE_FRAMES=<file>` the shell records the gap between every two
+frames it draws, one line per five-second window (frames drawn, longest gap, gaps over 33/50/100/250 ms), which
+is how an animation freeze under a real, full-priority run is measured; without the variable nothing is created.
 
 A third category, `LocalOnly`, marks a test that cannot run on the hosted CI runner — a timing budget a shared
 runner cannot hold, say. Only CI's filter excludes it (`Category!=Acceptance&Category!=LocalOnly`, §18); the local
 command above runs it, and the local full run stays the gate. A test is never loosened or deleted to make CI green.
+The trait goes on a whole class when its assertions are wall-clock budgets (`UiResponsivenessBudgetTests`) and on a
+single method when only that method depends on a clock or a capacity the runner cannot keep steady. Three methods
+carry it that way, each in a class whose other tests stay in CI: the popover's real pop-in (`PopoverTests`), which
+waits for the live animation to bring the popover to full opacity and then checks how long that took, and the
+console's transition hand-back (`ConsoleTiltInTests`), which waits for the live transition to end and expects the
+real editor back at full opacity — both wait on a real animation clock whose timing on a shared runner is not steady
+enough for the windows they allow — and the cycle group-start surface hash (`CycleRoundsTests`), which proves the
+producers are read in parallel by having two reads meet within 50 ms. That meeting needs the thread pool to hand the
+loop a second thread in time; a loaded shared runner could not, and the same test fails locally once the process is
+pinned to a single core. The local run still executes all three, and it stays the gate.
 
 Test counts are deliberately not recorded here — run the suite for the current number.
 
@@ -5478,14 +6173,22 @@ do, and how the interface works around each — useful to know before attempting
   window-activation Sync covers changes in the meantime.
 - **An automatic Sync does not fetch.** Its `N behind` distance is measured against the last remote state the
   repository already has; the Sync button and a pull refresh it from the network.
-- **The shared-compilation flags cost ~2.9×** and stay off for correctness (§9.2).
+- **The shared-compilation flags stay off.** A private-pipe compiler server inside the job is possible, but its
+  measured gain — about a tenth of a run — does not pay for the memory it holds (§9.2).
+- **A project's own `CustomBeforeMicrosoftCommonTargets` loses to the tool's.** The WPF temporary-assembly
+  targets (§9.2) travel as a global property, and a global property beats the same property set inside a
+  project. A project that points `CustomBeforeMicrosoftCommonTargets` at a file of its own therefore does not get
+  that file imported: whatever it adds to the build is missing, and the project may build differently or not at
+  all. The repository this tool is used on does not set the property, so there is no fallback and nothing
+  detects the clash.
 - **A build does not restore an SDK-style project.** The build path's restore prologue is keyed to
   `packages.config`, so an SDK-style project whose `obj\project.assets.json` is missing — a fresh clone, a
   workspace Clean — fails with `NETSDK1004` until an Optimize restores it (§9.3).
-- **Filling a viewport of rows costs what it costs.** Virtualization bounds the work to the visible window,
-  but that window still has to be built: a screenful of project rows is a few dozen row controls, tens of
-  milliseconds on the reference machine. That price is paid again whenever the entry list is replaced — a
-  topology change or a filter change — because replacing the items source discards the containers.
+- **Building the rows costs what it costs, once.** The first layout builds the visible window synchronously — a
+  screenful of project rows is a few dozen row controls, tens of milliseconds on the reference machine — and the
+  remaining rows arrive in idle slices between frames, so the total scales with the project count but stays off
+  the critical path. A row control then stays with its row for good: scrolling re-binds nothing, and a topology or
+  filter refresh reconciles the entry list in place, building only the rows that enter or move (§13.2).
 - **A large graph costs what it costs to open.** The graph fits the panel at every size (§13.6), so every
   node is on screen and every node is built — there is no threshold above which the panel changes character
   and nothing is culled. The price is paid once, at Sync: on the reference machine a 500-node graph realizes
@@ -5494,7 +6197,8 @@ do, and how the interface works around each — useful to know before attempting
   individual projects.
 - **The will-build preview can under-promise on cycles.** A run's own preview is projected through what that
   run has actually pre-skipped, so it never promises work it will not do. The remaining gap is the other
-  direction and lives inside a `Cycles` run: the preview is computed per node from signatures alone, while the
+  direction and lives inside a run that compiles groups (`Build`, `Cycles`): the preview is computed per node from
+  signatures alone, while the
   group's up-to-date gate is per group, so in a component whose members are only *partly* up to date — in
   practice, one member with no state row — the gate does not hold and members the preview drew grey are built.
   It errs safely: more work happens than promised, and nothing broken can look healthy. Closing it means
@@ -5506,6 +6210,39 @@ do, and how the interface works around each — useful to know before attempting
   new output look older than the ledger's last run, or an input older than the output. These are accepted.
 - **Visual Studio and the tool must not build the same project at once.** Both write the same `obj` and the
   same output; neither can tell, and nothing arbitrates between them.
+- **An output built outside this tool is taken as built for the run's configuration.** An ordinary project is judged
+  by times (§7.6) and a carried cycle member by its term and the surfaces it read (§8.8), and its record is then
+  refreshed as if this tool had compiled it. A project whose output path is shared between configurations would let
+  another configuration's output pass in the same way; per-configuration output paths, the common layout, keep the
+  two apart.
+- **The surface gate compiles once after an earlier run moved an upstream.** Candidates are found against the ledger's
+  upstream signatures (§8.3), so the dependents of an upstream compiled in an earlier run — a stopped run, a build from
+  a row — no longer read as dirty through it alone and compile once, whatever its surface did. It errs safely.
+- **A project the run does not compile keeps the copies its compile would have refreshed.** A project skipped by the
+  surface gate (§8.3), like a carried cycle member (§8.8), leaves the copies of its dependencies' outputs in its own
+  output folder as its last compile wrote them, because the tool never writes to an output folder itself (§9.4). A
+  layout that runs from one shared folder, where each dependency writes its own output, never sees it; a layout that
+  runs from each project's own folder sees a dependency's previous implementation there until that project compiles.
+- **A gate skip does not carry an inherited note to the row.** A skipped project whose record takes on this run's
+  inherited dependency note reads `up to date` on its row until the next Sync says *waiting for dependency*; the skip
+  event carries no roots, and the record is right in the meantime.
+- **A dependent of an upstream without an evidence path compiles whenever it is dirty.** The surface gate (§8.3) and
+  round one (§8.8) compare an upstream's evidence file with the dependent's record; an upstream with no derivable
+  output path (an SDK-style project with an overridden layout, §6.2) has nothing to compare, so its direct dependents never pass the gate and
+  the cycle members that read it from outside their group never count as carried.
+- **An SDK-style layout moved by something the evaluator cannot read keeps the default path.** The evaluator reads the
+  project file and the nearest `Directory.Build.props`/`.targets` as raw XML (§6.2). A layout moved from anywhere else —
+  a NuGet package's build props, a `Directory.Build.rsp`, a global property — goes unseen, and the derived path keeps
+  pointing at `bin\<configuration>\<framework>\`. Where nothing was built there the project merely reads output
+  missing and compiles every time; where an earlier build left its output there, that file is never refreshed again,
+  and the surface gate (§8.3) and round one (§8.8) compare against a frozen surface, so a dependent of a project whose
+  API changed can be skipped. Deleting the old `bin` folder after moving an output this way removes the stale file.
+- **The surface gate reads a dependency's own output, not the copy its dependents link against.** A dependent's
+  record names the surface of the dependency's evidence file (§7.6). Where dependents link against copies in a shared
+  folder (§9.4), a post-build copy that fails without failing the build leaves the copy behind that file: a dependent
+  compiled against the old copy records the new surface, and a later run that refreshes the copy skips it. A copy
+  that fails the build is a failure like any other, and the dependency note compiles the dependent once the
+  dependency recovers (§8.3).
 - **A post-build step that copies more than its own output is seen by name only.** Inside a cycle round a
   member whose name is a dotted prefix of another project's name is kept off the level of that project and of
   its readers (§8.8), because the common `copy $(TargetName).*` rewrites that project's shared copy. Any other
@@ -5569,10 +6306,13 @@ meaning. The one place a command line is assembled by hand (MSBuild) escapes acc
   matching everything.
 - **NDJSON line limit** (1 MiB) is enforced on both write and read; log chunks are 64 K, far below it.
 - **Atomic state writes:** `build-state.json`, `run-inflight.json`, `evaluation-cache.json` and
-  `source-hash-cache.json` are written
-  to a unique temp name and moved into place; readers open with `FileShare.Delete` so they cannot block the
-  rename, which is retried a bounded number of times on a transient sharing violation. The temp file a killed
-  write leaves behind is collected by *Optimize* (§16).
+  `source-hash-cache.json` are written to a unique temp name and moved into place through one code path
+  (`AtomicFile`), and read with `FileShare.Delete`, so a read is not refused because another party holds the file
+  with delete access. Windows refuses a rename over a file that still has an open handle even when that handle
+  shares delete, so the rename is retried a bounded number of times until the handle closes. When the retries run
+  out, `evaluation-cache.json` and `source-hash-cache.json` stay dirty and the same instance writes again at its
+  next flush; an instance that never flushes again loses only that write, and the entries are derived afresh the
+  next time (§16). The temp file a killed write leaves behind is collected by *Optimize* (§16).
 - **Git writes are user actions, each with its own gate, in one file.** The fast-forward is `--ff-only` (so it
   can neither rewrite history nor create a merge), refuses a dirty or diverged tree, and runs only from the
   user's click on the `N behind` chip or for an external root the user left on (§10.5, §10.4). The checkout
@@ -5670,15 +6410,19 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Window close decision — `X`, `Alt+F4`, system-menu *Close*: close, stay, hide to the tray or ask for a full exit — and whether a waiting exit brings the window forward | `App/Shell/WindowCloseRule.cs`; applied in `App/MainWindow.xaml.cs` (`OnClosing`) |
 | Safe full exit: the wait for work in flight, the graceful stop, the release on engine silence or death, `ExitReady` | `App/ViewModels/RunViewModel.Exit.cs`; no Sync while it waits: `RunViewModel.cs` (`SyncCoreAsync`) |
 | …its shell side: the one path tray *Exit* and `X` share, bringing the waiting window forward, the shutdown | `App/MainWindow.xaml.cs` (`RequestFullExit`, `ExitNow`) |
-| *Show notifications* on the three balloons (first close, run result, second instance) | `App/Shell/UiStateStore.cs` (`FirstCloseBalloonGate`), `App/Services/TrayBuildIndicatorController.cs`, `App/Shell/SecondInstanceGate.cs` |
-| Tray build indicator — when it shows, exit choreography, one balloon | `App/Services/TrayBuildIndicatorController.cs` |
+| *Show notifications* on the four balloons (first close, run result, second instance, ignored Build hotkey) | `App/Shell/UiStateStore.cs` (`FirstCloseBalloonGate`), `App/Services/TrayBuildIndicatorController.cs`, `App/Shell/SecondInstanceGate.cs`, `App/MainWindow.xaml.cs` (`OnGlobalHotkey`) |
+| The ignored Build hotkey's balloon: shown only with the window hidden and *Show notifications* on; the reason is the run gate's own answer | `App/MainWindow.xaml.cs` (`OnGlobalHotkey`, `TrayNotifierForTest`), `App/ViewModels/RunViewModel.cs` (`WhyRunCannotStart`), `App/ViewModels/RunGateText.cs` (the reason sentences), `App/Shell/AppTrayIcon.cs` (`ShowBuildIgnored`, `BuildIgnoredBody`) |
+| Tray build indicator — when it shows, exit choreography, one balloon, then the exit notice (`ExitCompleted`, carrying the run the exit began for) | `App/Services/TrayBuildIndicatorController.cs` |
 | …its wiring to the view model (line, phase) | `App/Services/TrayIndicatorBinder.cs` |
 | …the animated mark itself (loop, static frame) | `App/Controls/TrayBuildIndicator.xaml(.cs)` |
 | …the frameless, non-activating overlay window that carries it | `App/Views/TrayBuildOverlayWindow.xaml(.cs)` |
 | Extended window styles for that overlay (`WS_EX_*`) | `App/Shell/Win32.cs` |
+| The hidden-surface signal — one inherited property every screen-only job reads, and the "visible again" test views use to catch up; the window writes it from its own visibility and the Build menu's popup gets it by hand | `App/Controls/HiddenSurface.cs`, `App/MainWindow.HiddenSurface.cs` (`SetSurfaceHidden`), `App/Views/ActionBar.xaml.cs` |
+| Memory collection after a run that ended in the tray — two signals, once per run, deferred to idle | `App/MainWindow.HiddenSurface.cs` (`OnTrayIndicatorExitFinished`, `CollectAfterRunWhenDue`, `MemoryCollector`), `App/ViewModels/RunViewModel.cs` (`MarkRunEnded`, `EndedRunSerial`) |
+| Live line buffer released when a run ends; a pending log load ends in one place | `App/ViewModels/RunViewModel.cs` (`ReleaseLiveLinesWhenIdle`, `CompletePendingLoad`) |
 | View mode + splitter persistence | `App/Shell/LayoutState.cs`, `App/Shell/UiStateStore.cs`, `App/Controls/DsSplitter.cs` |
 | Keyboard semantics (key → intent, Esc chain) | `App/Shell/KeyboardShortcuts.cs` |
-| …Esc's run layer on the view model (stoppable state, the can't-be-stopped line, the heard signal) | `App/ViewModels/RunViewModel.Esc.cs` |
+| …Esc's run layer on the view model (the chain's input state, the can't-be-stopped line) | `App/ViewModels/RunViewModel.Esc.cs` |
 | Shortcut display text, descriptions and About groups (single source) | `App/Shell/ShortcutCatalog.cs` |
 | Product identity (name, version, copyright, tagline, About overview) and the grouped diagnostics model | `App/Services/AppIdentity.cs`, `DiagnosticsReport.cs` |
 | Layer row placeholders (Settings, by row index) | `App/Shell/LayerPlaceholders.cs` |
@@ -5699,9 +6443,11 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 |---|---|
 | Command/event records, JSON options | `Contracts/Ipc/IpcMessages.cs` |
 | Skip reason literals — single source read by Core, Supervisor and App | `Contracts/Ipc/SkipReasons.cs` |
+| The *stopped* failure reason (the user's own Stop) — single source the Supervisor writes and the App reads | `Contracts/Ipc/FailureReasons.cs` |
 | NDJSON framing, line limit, writer serialization | `Contracts/Ipc/NdjsonFraming.cs` |
 | Domain DTOs (`ProjectNode`, `BuildPlan`, `BuildState`, `LayerPattern`…) | `Contracts/Model/ProjectModels.cs` |
 | Spawning the engine, generation guard, engine-died signal; the kill and the wait for the killed process to end (`KillAndAwaitExit`) | `App/Services/EngineHost.cs` |
+| Engine events onto the UI thread: one ordered queue, drained in time slices that yield to input and rendering | `App/Services/EngineEventPump.cs` |
 | Supervisor entry, argument handling, stdout redirect, planner wiring, crash recovery before the host starts | `Supervisor/Program.cs` |
 | Command dispatch, per-command input gates; the `checkoutBranch` handler and its run-active rejection | `Supervisor/SupervisorHost.cs` |
 | Supervisor path resolution from assembly metadata | `App/Services/SupervisorLayout.cs` |
@@ -5711,8 +6457,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Workspace scan, ignore list | `Core/Discovery/WorkspaceScanner.cs` |
-| Raw csproj XML evaluation; the output path (`OutputFileFor`) and resolved `HintPath` targets | `Core/Discovery/CsprojEvaluator.cs` |
-| Evaluation cache (mtime + length fingerprint, schema) | `Core/Discovery/EvaluationCache.cs` |
+| Raw csproj XML evaluation; the output path (`OutputFileFor` — the legacy `OutputPath` reading and an SDK-style project's default layout, with the settings and the nearest `Directory.Build.*` files that move it) and resolved `HintPath` targets | `Core/Discovery/CsprojEvaluator.cs` |
+| Evaluation cache (mtime + length fingerprint, schema, the `Directory.Build.*` files an SDK-style layout decision read; written only when dirty, as a stream) | `Core/Discovery/EvaluationCache.cs` |
 | `.sln` parsing, project↔solution map | `Core/Discovery/SolutionMapper.cs` |
 | Stale-`obj` diagnosis (warn-only, two consumers: the run-start warner and Optimize's removal step), TFM derivation | `Core/Discovery/StaleObjDetector.cs`, `TargetFrameworkMonikerDeriver.cs`, `Supervisor/StaleObjRunStartWarner.cs` |
 | DLL name → producing project | `Core/Graph/ProducerMap.cs` |
@@ -5729,38 +6475,44 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Signature computation | `Core/Incremental/BuildSignature.cs` |
 | Propagation, Safe/Fast, SCC composite hash, content fingerprint | `Core/Incremental/IncrementalPlanner.cs` |
 | The input set of a project (declared items, folder sweep, `Directory.Build.*`) | `Core/Incremental/ProjectInputs.cs` |
-| Content-hash cache keyed by size and mtime, parallel first fill | `Core/Incremental/SourceHashCache.cs` |
+| Content-hash cache keyed by size and mtime, parallel first fill, written only when dirty as a stream | `Core/Incremental/SourceHashCache.cs` |
 | Input collection (files and swept folders), path terms, the two binding passes, output checks per node (`ChecksFor`, `OutputsById`), a cycle member's time check leaving out its siblings' outputs (`ExcludingSameCycleSiblings`) | `Core/Incremental/IncrementalRunBinder.cs` |
 | Output evidence: evidence paths and fed candidates, ledger/time mode, time verdict, cycle groups, learning fed outputs, `modified` ↔ `affected` and `outputBuiltAt` helpers | `Core/Incremental/OutputEvidence.cs` |
 | API surface hash of a managed output (declarations only — no IL/MVID/generated names; version counts only under a strong name) | `Core/Incremental/ApiSurfaceHash.cs` |
 | Will-build tri-state decision and its reason, the ledger-mode vetoes and the time-mode reasons; the plan-wide pass that weighs a dependency note against its roots | `Core/Planning/WillBuildEvaluator.cs`, `Core/Planning/BuildPreview.cs` |
 | Local-edit flag behind `modified · local` (git status ∩ project inputs, main repo root only) | `Core/Workspace/LocalEdits.cs` |
-
 | ETA formula (raw estimate, smoothing, rounding, cycle term) | `Core/Incremental/EtaCalculator.cs` |
-| Build state store, duration persistence, non-convergence lookup, invalidation without evidence | `Core/State/BuildStateStore.cs`, `BuildDurationPersister.cs` |
+| Build state store, non-convergence lookup, invalidation without evidence; what a finished project leaves in it — the success record with its measured duration and the dependency surfaces it compiled against (read before the compile), the failure record (with or without evidence) | `Core/State/BuildStateStore.cs`, `Supervisor/RunCoordinator.cs` (`PersistBuildStateOnSuccess`, `DependencySurfacesOf`, `UpsertBuildState`, `InvalidateBuildStateOnFailure`) |
 | The in-flight ledger (`run-inflight.json`): dispatch/result bookkeeping, startup recovery and its retry | `Core/State/InFlightLedger.cs` |
-| The one atomic write path shared by the build state and the in-flight ledger | `Core/State/AtomicFile.cs` |
+| The one atomic read/write path shared by the build state, the in-flight ledger and the two large ledgers (text, stream and JSON forms) | `Core/State/AtomicFile.cs` |
 
 **Scheduling and run execution**
 
 | Behaviour | File |
 |---|---|
-| Ready-set dispatch seeded with a run's pre-skip results, resolved semantics, cycle group dispatch and pre-skip | `Core/Scheduling/ReadySetScheduler.cs` |
+| Ready-set dispatch seeded with a run's pre-skip results, resolved semantics, cycle group dispatch, and the pre-skip of members in a plan without a component map | `Core/Scheduling/ReadySetScheduler.cs` |
 | SCC membership in build order (scheduler and coordinator read one instance) | `Core/Scheduling/CycleGroups.cs` |
-| Cycle round stopping rule (converged / no progress / cap; surface-proof early exits) | `Core/Planning/CycleRoundPolicy.cs` |
+| Which runs compile cycle groups and a run's component map (`CompilesCycles`, `GroupsFor`) — one source for the Sync preview, the engine's plan, the coordinator's group gate and the App's round bookkeeping | `Core/Planning/CycleCompilation.cs` |
+| Which runs follow the ledger (incremental: `Build`, `Cycles`) — one source for the coordinator's up-to-date seed and the conditional-rebuild mode rule | `Core/Planning/IncrementalModes.cs` |
+| Cycle round stopping rule (converged / no progress / cap; surface-proof early exits) and which members are settled once a group stops on one of them (every member on convergence; on no progress or the cap, those with no read surface stale at the end of the last round, none without surface evidence) | `Core/Planning/CycleRoundPolicy.cs` |
 | Scope of a `Cycles` run (members + transitive upstream) | `Core/Planning/CycleRunScope.cs` |
 | Barriered level plan inside a cycle round (most-read-first placement, any-direction neighbor separation, shared-copy collisions by name) | `Core/Planning/CycleRoundLevels.cs` |
-| Which files of a sibling a cycle member is judged on (the copy its compiler read; every copy when unsure) | `Core/Planning/CycleReadFiles.cs` |
+| Which files of a sibling a cycle member is judged on (the copy its compiler read; every copy when unsure), and which of them moved since the member read them | `Core/Planning/CycleReadFiles.cs` |
+| Which members round one compiles and which it carries (rule chain, reason per member, the read states a carried member keeps, the outside dependencies' surfaces); fed by the member terms the planner returns (`MemberTermById`, own content and configuration only), by the evidence files of the group's outside dependencies hashed as it starts and by the engine fingerprint (path, file version and build argument contract of `MSBuild.exe`); the engine applies the decision once as a group starts, reports a settled carried member as `skipped — up to date` and refreshes its ledger record, reports a carried member a group without convergence left stale as `skipped — cycle did not converge at this signature` and invalidates its record, and writes the cycle fields and outside dependency surfaces of the compiled members when the member's result is trusted (the group converged, or the member was settled when the group stopped without a verdict) | `Core/Planning/CycleMemberNeed.cs`, `Core/Incremental/IncrementalPlanner.cs`, `Core/MsBuild/EngineFingerprint.cs`, `Supervisor/RunCoordinator.cs` (`BuildCycleGroupAsync`, `ReportCarriedCycleMember`, `ReportDiscardedCarry`, `RefreshBuildStateOnSkip`, `PersistBuildStateOnSuccess`) |
+| Surface gate: which projects are candidates (dirty only through an upstream — the Safe plan against the frozen-upstream one), which runs apply it, the verdict at a candidate's turn and the one place a surface becomes persistable; the engine reads each dependency's current surface once per run, skips an unchanged candidate as `skipped — up to date (no dependency surface changed)` and refreshes its record | `Core/Planning/SurfaceGate.cs`, `Supervisor/Program.cs` (`ComputeIncremental`), `Supervisor/RunCoordinator.cs` (`TrySkipWhileDependencySurfacesUnchanged`, `SurfaceOf`, `SkipAsUpToDate`, `RefreshBuildStateOnSkip`) |
+| Cycle round trail in decision.log (group header, evidence loss, round-one need lines or the Rebuild line, carried detail, round line, verdict with the compiled count, retry) | `Core/Planning/CycleDecisionLines.cs` |
 | Scope of a single-project run (plan cut to one node, stale inputs) | `Core/Planning/ProjectRunScope.cs` |
 | Plan of a Clean run (no edges, no cycle marks, every project this run's work) | `Core/Planning/CleanRunScope.cs` |
 | Dependency-issue propagation (failed roots, stale inputs of a scoped run; names and root ids) | `Core/Scheduling/DepIssueTracker.cs` |
-| Conditional rebuild of a project waiting for a failed dependency (which runs apply it, the verdict at its turn, root names) | `Core/Planning/ConditionalRebuild.cs` |
-| What a row reads the moment a result lands, before the next preview (success, trusted or not · failure · Clean) | `Core/Planning/NextPreview.cs` |
+| Conditional rebuild of a project waiting for a failed dependency (which runs apply it, to a project and to a cycle group; the set a run evaluates, `ConditionalIds`; the verdict at its turn, root names) | `Core/Planning/ConditionalRebuild.cs` |
+| What a row reads the moment a result lands, before the next preview (success, trusted or not · failure · Clean · a skip as up to date at its turn · a carried member's discarded record) | `Core/Planning/NextPreview.cs` |
 | Run elapsed clock | `Core/Scheduling/RunClock.cs` |
 | Bounded synchronous retry (used by state store and clipboard) | `Core/Scheduling/SyncRetry.cs` |
-| Worker loop, event pump, stop bookkeeping, perf lifecycle, cycle round loop and non-convergence memory; the build-slot budget and who holds it (a worker from dispatch to result, a cycle member from `projectStarted` to `cycleMemberHeld`); the interrupt flag and the one reporting gate that stops trusting results after it; in-flight ledger calls | `Supervisor/RunCoordinator.cs` |
+| Worker loop, event pump, stop bookkeeping, perf lifecycle, cycle round loop (it applies the settled rule as it reports the members: a settled member's success is trusted, a settled carried member is reported up to date, an unsettled carried member of a group with a verdict is reported skipped with its record discarded (`ReportDiscardedCarry`), every other success is invalidated) and non-convergence memory; the build-slot budget and who holds it (a worker from dispatch to result, a cycle member from `projectStarted` to `cycleMemberHeld`); the interrupt flag and the one reporting gate that stops trusting results after it; the dependency-issue computation that precedes every compile and cannot throw (`DepIssuesForCompile`); in-flight ledger calls | `Supervisor/RunCoordinator.cs` |
 | Failure-evidence classification (compiler exit vs. timeout/stop/invoke error) — the one clause the evidence gate reads | `Core/State/FailureClassification.cs` |
 | Per-run and per-project logs, decision log | `Core/Logs/RunLogWriter.cs`, `RunLogPaths.cs`, `ProjectLogNaming.cs` |
+| Run-log retention: the three-day window, the newest run kept, the bounded sweep and its one stderr line; the sweep started in the background at engine start | `Core/Logs/RunLogRetention.cs`, `Core/Logs/RunLogPaths.cs` (`TryParseRunDirName`), `Supervisor/Program.cs` |
+| The engine's memory line: the line format, the process read and the sink that swallows its own errors; written to stderr after a sync (whatever its outcome) and after a run | `Core/Diagnostics/MemoryLine.cs`, `Supervisor/SupervisorHost.cs` (`SyncWorkspaceAsync`), `Supervisor/RunCoordinator.cs` (`ReportMemory`), the stderr channel in `Supervisor/Program.cs` |
 | Log chunking for the UI | `Core/Logs/LogChunker.cs` |
 
 **Build execution**
@@ -5771,11 +6523,12 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | The `vswhere` search itself | `Core/MsBuild/VsWhereLocator.cs` |
 | Duplicate `AssemblyName` detection and the warning it produces | `Core/Graph/ProducerMap.cs`, `Core/Planning/PlanProgressLines.cs` |
 | Argument contract (build and restore), MSBuild target selection | `Core/MsBuild/MsBuildArguments.cs` |
+| The WPF temporary-assembly targets — their content, the friend source file, the write into the state folder and the fixed modification time of both files | `Core/MsBuild/WpfTemporaryAssemblyTargets.cs` |
 | Invocation, output pumping, per-project kill; the restore-only entry point Optimize uses | `Core/MsBuild/MsBuildInvoker.cs` (`InvokeAsync`, `RestoreAsync`) |
 | Copy-contention detection and retry decorator | `Core/MsBuild/CopyContention.cs`, `RetryingMsBuildInvoker.cs` |
 | Reference list read from the compiler's command line in MSBuild's output | `Core/MsBuild/CompilerReferences.cs` |
 | `SolutionDir` resolution for restore | `Core/MsBuild/SolutionDirResolver.cs` |
-
+| Restore evidence — whether a `packages.config` restore can be skipped — and its `decision.log` line | `Core/MsBuild/RestoreEvidence.cs` |
 | Output encoding | `Core/MsBuild/MsBuildOutputEncoding.cs` |
 | Process launching, argument list discipline, command-line escaping | `Core/Processes/ProcessRunner.cs`, `WindowsCommandLine.cs` |
 
@@ -5804,9 +6557,11 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Command execution wrapper and result shape | `Core/Processes/CommandLineTool.cs`, `Core/Git/GitMessages.cs` |
 | Sync flow (fetch or last known remote → analysis → events), the per-source `syncDiscovery` emit | `Core/Workspace/SyncWorkspaceService.cs` |
 | Clean flow (merged scan incl. external roots → per-root state reset → `bin`/`obj` deletion → summary), the delete permission gate | `Core/Workspace/CleanWorkspaceService.cs` |
+| Link-safe recursive deletion: a link is removed as the link it is and never entered, the root's own link check, and each caller keeps its own error policy (Clean best-effort, the run-log sweep strict) | `Core/Paths/LinkSafeTree.cs` |
 | Optimize flow (merged scan → per-project restore → unresolved-reference report → old-style stale-`obj` removal → ledger prune → temp sweep → summary), the restore heartbeat, the collected restore output and its error extraction, the summary terms shared with the stream line | `Core/Workspace/OptimizeWorkspaceService.cs` |
 | Workspace-scoped build-state removal (every key under the root) | `Core/State/BuildStateStore.cs` (`RemoveUnderRoot`) |
 | Dead-entry pruning (only keys whose file is gone), in all three ledgers | `Core/State/BuildStateStore.cs`, `Core/Discovery/EvaluationCache.cs`, `Core/Incremental/SourceHashCache.cs` (`PruneMissingUnderRoot`) |
+| Stale-schema pruning of the evaluation cache (every entry not under the current schema, whatever its root) | `Core/Discovery/EvaluationCache.cs` (`PruneStaleSchema`) |
 | Root normalization and the `C:\repo` / `C:\repo2` prefix trap — one gate for both the reset and the prune | `Core/Paths/RootScope.cs` |
 | Orphaned atomic-write `.tmp` sweep (per-target pattern, age threshold) | `Core/Paths/TempFileSweeper.cs`, the three ledgers' `SweepOrphanTempFiles` |
 | Human-readable byte sizes (console summaries and the stream) | `Core/Formatting/ByteFormat.cs` |
@@ -5833,7 +6588,10 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Job object: creation, assignment, CPU rate, priority, terminate | `Core/ProcessControl/JobObject.cs`, `NativeMethods.cs` |
 | Suspended launch + handle-list inheritance | `Core/ProcessControl/JobProcessLauncher.cs`, `ProcThreadAttributeList.cs`, `JobChildProcess.cs` |
 | Job completion port notifications | `Core/ProcessControl/JobCompletionPort.cs` |
-| Perf table, copy-phase floor | `Core/ProcessControl/PerfProfile.cs`, `PerfNoteText.cs`, `ICpuGovernor.cs`, `ICopyPhaseCpuFloor.cs` |
+| Perf table, copy-phase floor, and the Resolve cycles full-priority rule: the transform, its note, the single point where the engine applies it (run start and every mid-run switch) and where the App writes the note (run start, mid-run switch) | `Core/ProcessControl/PerfProfile.cs` (`ForRun`), `PerfNoteText.cs` (`ResolveNote`), `ICpuGovernor.cs`, `ICopyPhaseCpuFloor.cs`, `Supervisor/RunCoordinator.cs` (`ApplyPerfLocked`), `App/ViewModels/RunViewModel.cs` (`OnRunStarted`, `CyclePerfAsync`) |
+| Worker budget: the clamp rule with all its constants, the machine reading it uses (logical processors, free physical memory), the note a reduction writes, the single point where the engine applies it at run start (and writes the note to `decision.log`), and where the App writes the note (console at run start, event stream right after the opening line) | `Core/ProcessControl/WorkerBudget.cs`, `MachineResources.cs`, `PerfNoteText.cs` (`WorkersReduced`), `NativeMethods.cs` (`GlobalMemoryStatusEx`), `Supervisor/RunCoordinator.cs`, `App/ViewModels/RunViewModel.cs` (`OnRunStarted`, `WorkersReducedNote`), `App/ViewModels/RunViewModel.Stream.cs` (`BuildPreviewEvent` branch) |
+| Run-start warnings (stale `obj`, reverse layer): gathered once before `runStarted`, written to `decision.log`, carried by `runStarted.warnings`, and where the App writes them (console at run start; event stream after the opening and reduction lines with the prefix dropped, folded into one counting line past a small limit) | `Supervisor/RunCoordinator.cs`, `Supervisor/StaleObjRunStartWarner.cs`, `Contracts/Ipc/IpcMessages.cs` (`RunStartedEvent.Warnings`), `App/ViewModels/RunViewModel.cs` (`OnRunStarted`), `App/ViewModels/RunViewModel.Stream.cs` (`BuildPreviewEvent` branch), `App/ViewModels/StreamText.cs` (`RunStartWarningLines`) |
+| File IO concurrency: the one degree shared by the first content-hash fill (the miss scan and the reads), input collection, the fingerprint warm-up, the output checks and the group-start surface hash | `Core/Io/IoParallelism.cs`, `Core/Incremental/SourceHashCache.cs`, `Core/Incremental/IncrementalRunBinder.cs`, `Supervisor/RunCoordinator.cs` |
 
 **View models — the pure decision cores**
 
@@ -5841,6 +6599,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 |---|---|
 | Run state, rows, counters, commands | `App/ViewModels/RunViewModel*.cs` |
 | Ribbon phase lines and ETA display | `App/ViewModels/RibbonText.cs` |
+| The Stop button's three stages and their labels, shared by the action bar, the tray item and the row icon | `App/ViewModels/StopText.cs` |
 | Event stream composition and wording | `App/ViewModels/StreamComposer.cs`, `StreamText.cs`, `StreamEventViewModel.cs` |
 | Filter rule, chip labels and active-chip colours (multi-select set) | `App/ViewModels/ProjectFilter.cs` |
 | Warning-triangle text (one line, strongest reason wins) | `App/ViewModels/RowWarning.cs` |
@@ -5868,7 +6627,9 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Row menu placement (row-right inset, row overlap, viewport clamp) | `App/Controls/RowMenuPlacement.cs` |
 | Second press on a popover trigger closes it | `App/Controls/PopoverToggle.cs` |
 | List with cumulative sticky headers and reveal | `App/Controls/StickyLayerList.xaml(.cs)` |
-| Row virtualization with an exact (never estimated) extent | `App/Controls/FixedHeightVirtualizingPanel.cs` |
+| Progressive row realization (visible window first, idle slices after; rows are never recycled) with an exact (never estimated) extent | `App/Controls/FixedHeightVirtualizingPanel.cs` |
+| In-place reconciliation of the list's entries (no reset on a topology or filter refresh) | `App/Controls/ListReconciler.cs` |
+| Automation roles of the app's user controls (never the custom type; source guard) | `App/Controls/UserControlRolePeer.cs` |
 | Event stream rows, glow-once | `App/Views/EventStreamView.xaml(.cs)` |
 | Action bar: sync, counters, chips (the branch chip's amber git-operation dot included), segment, build split button | `App/Views/ActionBar.xaml(.cs)` |
 | Build menu (Build / Rebuild / Clean) and the shared icon family | `App/Views/BuildMenu.xaml(.cs)` |
@@ -5882,7 +6643,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | No-workspace look of the panels (header counts, PROJECTS list tools, the console's waiting prompt) | `App/ShellRoot.xaml.cs` (`SetHasWorkspace`; the list tools' one gate `ApplyListTools` is shared with discovery), driven from `HasWorkspace` in `App/MainWindow.xaml.cs` |
 | Discovery blocks: the list's (a list state, the counter and its live region) and the graph's (body layers and header count behind one gate); their shared icon look and their centred column in the interface font | `App/ShellRoot.xaml(.cs)` (`PART_Discovering`, `SetDiscovering`, `SetDiscoveryCount`), `App/Graph/GraphView.xaml(.cs)` (`DiscoveryState`, `SetDiscovering`, `ApplyBodyState`), `App/Resources/Controls.xaml` (`Ds.DiscoveryIcon`, `Ds.DiscoveryBlock`), wired from the view model in `App/MainWindow.xaml.cs` (`ApplyDiscovery`) |
 | Import shortcut's wait before the file picker, and the picker centred over the window | `App/Views/SettingsDialog.xaml.cs` (`OpenForImportAsync`, `ImportPickerDelayMs`), `App/Shell/CenteredDialog.cs`, `App/Shell/DialogPlacement.cs`, `App/Shell/Win32.cs` |
-| Step hold between an operation and the next (dispatcher timer, zero under reduced motion) | `App/Services/StepHold.cs`, `App/ViewModels/RunViewModel.cs` (`OperationHold`) |
+| Step hold between an operation and the next (dispatcher timer, zero under reduced motion and while the window is hidden) | `App/Services/StepHold.cs`, `App/ViewModels/RunViewModel.cs` (`OperationHold`) |
 | Branch popover and its base (shared with the update card) | `App/Views/BranchPopover.xaml(.cs)`, `PopoverBase.cs` |
 | Update card (identity, highlights, decision; the drop-in; *Later*) | `App/Views/UpdateCard.xaml(.cs)` |
 | Update restart screen — the 232 px column, the frame timer and clock, the fade-in, the once-per-step announcement, `BarFilled` when the bar is full; its one step, duration and percentage | `App/Views/UpdateRestartScreen.xaml(.cs)`; timeline `App/ViewModels/UpdateRestartTimeline.cs`, texts `App/ViewModels/UpdateText.cs` |
@@ -5901,15 +6662,16 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Visual status (the single colour channel) and its token table; the standing it is built on | `App/Controls/VisualStatus.cs`, `App/Controls/StandingStatus.cs` |
 | Start-mode drawing constants (stripe/ring opacity, four-arc ring, cross-fade) | `App/Controls/StartMode.cs` |
 | The caret's colour cycle (palette order, step, phase) | `App/Controls/CursorHop.cs` |
+| The carets' shared clock pair and the window-active rule; the window's side of it (Activated/Deactivated, first-show state) | `App/Controls/CursorClock.cs`, `App/MainWindow.xaml.cs` |
 | App-wide tooltip defaults (no delay, no timeout, on disabled too) | `App/Controls/AppTooltipDefaults.cs` |
-| Cycle wording: membership line, cycle path | `App/ViewModels/CycleText.cs` |
+| Cycle wording: cycle path | `App/ViewModels/CycleText.cs` |
 | Opening choreography: step timeline, wave tempo and order | `App/Controls/MarkingChoreography.cs` |
 | Ending choreography: neon timings and keyframes, the moment the filter returns (`FilterReturnAtMs`) | `App/Controls/EndFinale.cs` |
 | Choreography sequencer (one timer per choreography) | `App/Controls/StepPlayer.cs` |
 | Choreography driver (rows + graph) | `App/Services/OperationChoreographer.cs` |
 | Gate the run command waits on while the opening choreography plays | `App/ViewModels/RunViewModel.cs` (`OperationChoreography`), `MainWindow.xaml.cs` |
-| The run commands' one gate; a run pressed while workspace work is in flight — the request, its start when the work ends, its take-back (Stop/Esc/exit/branch change, failed work, engine loss) | `App/ViewModels/RunViewModel.cs` (`CanRequestRun`, `QueueRun`, `StartQueuedRunWhenWorkEnds`, `CancelPendingRun`, `TakeBackQueuedRun`) |
-| A waiting request holds the lock but not the look of a run (graph run phase, operation pill) | `App/ViewModels/RunViewModel.cs` (`IsRunUnderway`), `MainWindow.xaml.cs` (`PushGraphRunPhase`), `App/Views/StickyRibbon.xaml.cs` (`RefreshOpPill`) |
+| The run commands' one gate — closed while workspace work is in flight — and the reason it gives; the take-back of a run still in its opening choreography | `App/ViewModels/RunViewModel.cs` (`CanRequestRun`, `WhyRunCannotStart`, `CancelPendingRun`) |
+| An open Build menu closes when the run gate closes | `App/Views/ActionBar.xaml.cs` (`CloseBuildMenuWhenGateCloses`) |
 | Wave repaint of the graph (marking step + node colours in one push) | `MainWindow.xaml.cs` (`ApplyMarkingToGraph`) |
 | Colour transition onto a token brush (the wave's amber) | `App/Controls/MotionTokens.cs` (`TransitionTokenBrush`) |
 | Letter-spaced caps text | `App/Controls/TrackedTextBlock.cs`, `TrackedGlyphs.cs` |
@@ -5956,6 +6718,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Reduced-motion signal and live zeroing | `App/Services/MotionSettings.cs`, `SystemParametersMotionSignal.cs`, `IMotionSettings.cs`, `IMotionSignal.cs` |
 | One-hero budget | `App/Services/MotionCoordinator.cs`, `App/Controls/MotionGate.cs` |
 | Shared entrance/reveal animations, 120 ms transitions | `App/Controls/PopIn.cs`, `RevealStagger.cs`, `DsTransition.cs`, `MotionTokens.cs`, `PillRadius.cs` |
+| Owner-held infinite clocks: start, attach a further surface, detach one surface (a finished node's bead orbit), stop by removing from the timing tree (breath, ring, sweep, beads, edge flow) | `App/Controls/DecorativeClock.cs` |
 | Colour, size, typography tokens · duration and easing tokens | `App/Resources/Tokens.xaml` · `App/Resources/Motion.xaml` |
 | OS actions (Explorer, Visual Studio, folder picker) | `App/Services/OsActions.cs` |
 | Accessibility names | `App/AccessibilityNames.cs` |

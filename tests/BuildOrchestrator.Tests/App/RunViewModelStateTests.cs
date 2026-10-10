@@ -600,6 +600,402 @@ public class RunViewModelStateTests
         Assert.DoesNotContain("applies to the next run", text);
     }
 
+    // ---------------------------------------------------------------- [RESOLVE Faz 4 · fix 1A] Resolve notu ve koşu bağlamı
+
+    /// <summary>[RESOLVE Faz 4 · fix 1A] Döngülü topolojili bir VM (Balanced). Koşular üretimdeki gibi KOMUT yolundan
+    /// başlar — koşunun perf bağlamı (mod + Resolve anahtarı) yalnız orada yakalanır. Motor başlatılmamıştır: gönderim
+    /// düşer, motorun cevabını (<see cref="RunStartedEvent"/>) test verir.</summary>
+    private static RunViewModel PerfContextVm(EngineHost engine, bool fullPriority)
+    {
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1")
+        {
+            RootPath = @"D:\repo",
+            PerfMode = "Balanced",
+            ResolveAtFullPriority = fullPriority,
+        };
+        vm.OnEvent(CycleTopology());
+        return vm;
+    }
+
+    /// <summary>Koşuyu komut yolundan başlatır: <see cref="RunMode.Cycles"/> → Resolve cycles, diğeri → Build.</summary>
+    private static Task StartViaCommandAsync(RunViewModel vm, RunMode mode) =>
+        (mode == RunMode.Cycles ? vm.BuildCyclesCommand : vm.BuildCommand).ExecuteAsync(null);
+
+    /// <summary>
+    /// [RESOLVE Faz 4 · fix 1A — I1] Resolve cycles tam öncelikte başlarken kullanıcının konsoluna TEK satır düşer; App
+    /// <c>runStarted</c>'ta yazar. Sayı motorun fiilî paralelliğidir (profilin dördü değil, cevaptaki üç), anahtar koşu
+    /// başlatılırken yakalanan değerdir. Kusur: satır yalnız Supervisor'ın stderr'ine gidiyordu ve App stderr'i atar —
+    /// kullanıcı onu hiç görmüyordu. Anahtar kapalıyken ve Build'de satır yoktur.
+    /// </summary>
+    [Theory]
+    [InlineData(RunMode.Cycles, true, true)]
+    [InlineData(RunMode.Cycles, false, false)]
+    [InlineData(RunMode.Build, true, false)]
+    public async Task A_resolve_run_at_full_priority_says_so_once_when_it_starts(RunMode mode, bool fullPriority, bool noted)
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = PerfContextVm(engine, fullPriority);
+
+        await StartViaCommandAsync(vm, mode);
+        vm.OnEvent(new RunStartedEvent("r1", mode, 4, 3, "Debug"));
+
+        string text = vm.GetRunDocumentText();
+        Assert.Equal(noted ? 1 : 0, text.Split("parallelism: 3 · cpu cap off · priority normal (Resolve cycles)").Length - 1);
+        Assert.Equal(noted, text.Contains("priority normal", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// [RESOLVE Faz 4 · fix 1A — I3] Koşu içi chip notu motorun O koşuya uyguladığını söyler: Resolve cycles tam öncelikteyse
+    /// cap'siz + Normal (<see cref="PerfNoteText.ResolveNote"/>), anahtar kapalıysa ya da koşu Build ise profilin kendi notu.
+    /// Mod ve anahtar koşunun yakalanan bağlamından gelir (komut yolundan başlamış koşu).
+    /// </summary>
+    [Theory]
+    [InlineData(RunMode.Cycles, true, ResolveNote)]
+    [InlineData(RunMode.Cycles, false, "parallelism: 2 · cpu cap 40%")]
+    [InlineData(RunMode.Build, true, "parallelism: 2 · cpu cap 40%")]
+    public async Task A_perf_change_during_a_run_describes_what_the_engine_applies_to_it(
+        RunMode mode, bool fullPriority, string expected)
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = PerfContextVm(engine, fullPriority);
+        await StartViaCommandAsync(vm, mode);
+        vm.OnEvent(new RunStartedEvent("r1", mode, 4, 3, "Debug"));
+
+        await vm.CyclePerfAsync(); // Balanced → Light
+
+        string text = vm.GetRunDocumentText();
+        Assert.Contains(expected, text);
+        Assert.Equal(expected.Contains("priority normal", StringComparison.Ordinal),
+            text.Contains("priority normal", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// [RESOLVE Faz 4 · fix 1A — I2] Açılış koreografisi boyunca chip canlıdır (<see cref="RunViewModel.IsMidRunLocked"/>) ve
+    /// notu AÇILAN koşuyu anlatmalı. Kusur: bağlam komutla birlikte, koreografiden SONRA yazılıyordu; oturumun ilk Resolve'u
+    /// o pencerede <c>cpu cap 40%</c> der, motor ise cap'siz ve Normal koşardı.
+    /// </summary>
+    [Fact]
+    public async Task A_perf_change_while_a_resolve_run_is_opening_describes_that_run()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = PerfContextVm(engine, fullPriority: true);
+        var choreography = new TaskCompletionSource();
+        vm.OperationChoreography = _ => choreography.Task;
+
+        var start = StartViaCommandAsync(vm, RunMode.Cycles);
+        Assert.True(vm.IsStarting); // komut henüz gitmedi
+        await vm.CyclePerfAsync(); // Balanced → Light
+
+        Assert.Contains(ResolveNote, vm.GetRunDocumentText());
+        choreography.SetResult();
+        await start;
+    }
+
+    /// <summary>
+    /// [RESOLVE Faz 4 · fix 1A — I2] Bir önceki koşunun bağlamı sonrakinin koreografisine sızmaz: Resolve başlatıldıktan
+    /// (komutu gittikten) sonra Build açılırken chip düz notu yazar — motor Light'ın cap'ini uygular. Kusur: not son
+    /// gönderilen (Resolve) komutla konuşup <c>cpu cap off · priority normal</c> derdi.
+    /// </summary>
+    [Fact]
+    public async Task A_perf_change_while_a_build_opens_after_a_resolve_start_writes_the_plain_note()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = PerfContextVm(engine, fullPriority: true);
+        await StartViaCommandAsync(vm, RunMode.Cycles); // komut gider; motor yok, VM boşa döner
+        Assert.False(vm.IsMidRunLocked);
+        var choreography = new TaskCompletionSource();
+        vm.OperationChoreography = _ => choreography.Task;
+
+        var start = StartViaCommandAsync(vm, RunMode.Build);
+        Assert.True(vm.IsStarting);
+        await vm.CyclePerfAsync(); // Balanced → Light
+
+        string text = vm.GetRunDocumentText();
+        Assert.Contains("parallelism: 2 · cpu cap 40%", text);
+        Assert.DoesNotContain("priority normal", text);
+        choreography.SetResult();
+        await start;
+    }
+
+    /// <summary>
+    /// [RESOLVE Faz 4 · re-review N1] Koşu açılırken anahtar değişse de (Save koreografi sürerken) O koşu başlatıldığı
+    /// andaki değerle kalır: komutun bayrağı, açılıştaki chip notu ve <c>runStarted</c> notu AYNI yakalanan değeri okur.
+    /// Pinsizdi: üç okumadan biri canlı özelliğe dönse süit yeşil kalırdı — not cap'siz derken motor cap uygulardı ya da
+    /// tersi. Üç gerçek tek demette karşılaştırılır ki bir kırmızı hangisinin koptuğunu göstersin.
+    /// </summary>
+    [Fact]
+    public async Task A_setting_changed_while_a_resolve_run_opens_does_not_reach_that_run()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = PerfContextVm(engine, fullPriority: true);
+        var sent = new List<StartRunCommand>();
+        vm.DebugOnCommandSent = c => { if (c is StartRunCommand s) sent.Add(s); };
+        var choreography = new TaskCompletionSource();
+        vm.OperationChoreography = _ => choreography.Task;
+
+        var start = StartViaCommandAsync(vm, RunMode.Cycles);
+        Assert.True(vm.IsStarting);
+        vm.ResolveAtFullPriority = false; // Save koreografi sürerken anahtarı kapatır
+        await vm.CyclePerfAsync();        // Balanced → Light: not AÇILAN koşuyu anlatmalı
+        choreography.SetResult();
+        await start;
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, 4, 3, "Debug"));
+
+        string text = vm.GetRunDocumentText();
+        Assert.Equal((Flag: true, ChipNote: true, StartNote: true), (
+            Flag: Assert.Single(sent).ResolveAtFullPriority,
+            ChipNote: text.Contains(ResolveNote, StringComparison.Ordinal),
+            StartNote: text.Contains("parallelism: 3 · cpu cap off · priority normal (Resolve cycles)", StringComparison.Ordinal)));
+    }
+
+    // ---------------------------------------------------------------- [PERF Faz D / karar 10] İşçi kırpma notu görünür
+
+    /// <summary>
+    /// [PERF Faz D / karar 10 · kırpma notu görünür] Motor profilin istediğinden az işçiyle koşarsa (<c>runStarted</c>
+    /// gerekçe taşır) kullanıcı bunu İKİ yerde görür: konsolda TAM satır bir kez, event stream'de koşunun başlangıç
+    /// satırının HEMEN ardından aynı metin (Info — başlangıç satırının anlatı tonu). Kusur: satır yalnız decision.log'a ve
+    /// Supervisor'ın stderr'ine gidiyordu; App stderr'i atar — kullanıcı onu hiç görmüyordu. Gerekçe yoksa iki yerde de
+    /// satır yoktur.
+    /// </summary>
+    [Theory]
+    [InlineData("1 logical processor")]
+    [InlineData(null)]
+    public async Task A_run_with_fewer_workers_than_asked_says_so_in_the_console_and_after_the_stream_start_line(string? reason)
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = PerfContextVm(engine, fullPriority: true);
+        await StartViaCommandAsync(vm, RunMode.Build);
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 4, 2, "Debug", WorkersReducedReason: reason));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
+
+        const string note = ReductionNote;
+        bool reduced = reason is not null;
+        // [review M2] Satır bazlı: run dokümanı satır satır yazılır (AppendRunLine). Alt-dize sayımı süslenmiş bir satırı
+        // ("warning: workers reduced …") ve gerekçesiz koşuda başka metinle yazılmış bir kırpma satırını kaçırırdı.
+        var lines = vm.GetRunDocumentText().Split('\n');
+        Assert.Equal(reduced ? 1 : 0, lines.Count(l => l == note));
+        Assert.Equal(reduced ? 1 : 0, lines.Count(l => l.Contains("workers reduced", StringComparison.Ordinal)));
+        var stream = vm.StreamEvents.ToList();
+        int start = stream.FindIndex(s => s.Text.StartsWith("Build started", StringComparison.Ordinal));
+        Assert.True(start >= 0, "the run's start line is missing from the stream");
+        Assert.Equal(reduced ? 1 : 0, stream.Count(s => s.Text.Contains("workers reduced", StringComparison.Ordinal)));
+        if (reduced)
+        {
+            Assert.Equal(note, stream[start + 1].Text);
+            Assert.Equal(StreamKind.Info, stream[start + 1].Kind);
+        }
+    }
+
+    /// <summary>
+    /// [kırpma notu görünür] Kırpılmış bir Resolve cycles koşusu tam öncelikte başlarsa iki not da konsola düşer; sıra
+    /// decision.log'unkiyle AYNI: önce kırpma (sayının nereden geldiğini söyler), sonra o sayıyı kullanan Resolve notu.
+    /// </summary>
+    [Fact]
+    public async Task A_clamped_resolve_run_names_the_reduction_before_its_full_priority_note()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = PerfContextVm(engine, fullPriority: true);
+        await StartViaCommandAsync(vm, RunMode.Cycles);
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, 4, 2, "Debug", WorkersReducedReason: "1 logical processor"));
+
+        // [review M2] Sıra da satır bazlı: IndexOf alt-dizeyi bulurdu, süslenmiş bir satır sırayı sahte doğrulardı.
+        var lines = vm.GetRunDocumentText().Split('\n');
+        int reduction = Array.IndexOf(lines, ReductionNote);
+        int resolve = Array.IndexOf(lines, ResolveNote);
+        Assert.True(reduction >= 0 && resolve > reduction, string.Join('\n', lines));
+    }
+
+    /// <summary>
+    /// [kırpma notu görünür] Akış satırı başlangıç satırıyla birlikte <see cref="BuildPreviewEvent"/>'e ertelenir; bir
+    /// sonraki <c>runStarted</c> bekleyen satırı EZER: kırpmasız yeni koşu, önizlemesi gelmemiş kırpılmış koşunun satırını
+    /// taşımaz. Bu pin düzeltmeden önce de yeşildir (o zaman hiç satır yoktu): bekleyen satırın her <c>runStarted</c>'da
+    /// yeniden yazıldığını korur. Koşunun BİTİŞ yollarını (motor kaybı) kapsamaz — onlar bir sonraki teorinin konusu.
+    /// </summary>
+    [Fact]
+    public async Task A_new_run_does_not_carry_the_previous_runs_pending_reduction_line()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = PerfContextVm(engine, fullPriority: true);
+        vm.OnEvent(new RunStartedEvent("r0", RunMode.Build, 4, 2, "Debug", WorkersReducedReason: "1 logical processor"));
+        // r0'ın önizlemesi hiç gelmedi: bekleyen satırı yayılmadı, sıradaki runStarted onu ezer
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 4, 4, "Debug"));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
+
+        Assert.Contains(vm.StreamEvents, s => s.Text.StartsWith("Build started", StringComparison.Ordinal));
+        Assert.DoesNotContain(vm.StreamEvents, s => s.Text.Contains("workers reduced", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// [kırpma notu görünür · review M1] Koşu <c>runStarted</c>'tan sonra, önizlemesinden ÖNCE biterse (motor kaybı —
+    /// <c>OnEngineExited</c>) bekleyen satırlar bırakılır: Restart sonrası Appended Sync'in önizlemesi
+    /// (<see cref="BuildPreviewEvent"/>'in tek diğer üreticisi) ölü koşunun "Build started", "workers reduced" ve uyarı
+    /// satırlarını yeni akışa basmaz. Kusur: bekleyen durum yalnız bir sonraki <c>runStarted</c>'la ya da önizlemeyle
+    /// sıfırlanıyordu; koşu-sonu hunisi (<c>MarkRunEnded</c>) ona dokunmuyordu. Üç satır tek kök nedenden gelir (başlangıç
+    /// kipi bırakılmazsa önizleme üçünü de yayar); her biri ayrı bir satır olarak pinlidir.
+    /// </summary>
+    [Theory]
+    [InlineData(null, null, "Build started")]
+    [InlineData("1 logical processor", null, "workers reduced")]
+    // [koşu başı uyarıları görünür] Ölü koşunun uyarı satırı da sonraki önizlemeye basılmaz — aynı kökün üçüncü belirtisi:
+    // uyarılar başlangıç kapısının (_pendingRunStartMode) içinde yayılır, kapı bırakılmazsa üçü birlikte kırmızı verir.
+    // Bekleyen uyarı listesinin kendi null'lanması hiçbir yüzeyden gözlenmez (hijyen); bu satır onu pinlemez.
+    [InlineData(null, StaleObjWarning, StaleObjWarningText)]
+    public async Task A_run_lost_before_its_preview_leaves_no_stale_stream_line_for_the_next_preview(string? reason,
+        string? warning, string staleLine)
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = PerfContextVm(engine, fullPriority: true);
+        vm.OnEvent(new RunStartedEvent("r0", RunMode.Build, 4, 2, "Debug", WorkersReducedReason: reason,
+            Warnings: warning is null ? null : [warning]));
+        vm.OnEngineExited(1); // motor önizlemeden önce öldü: r0'ın önizlemesi hiç gelmeyecek
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)])); // Restart sonrası Sync'in önizlemesi
+
+        Assert.DoesNotContain(vm.StreamEvents, s => s.Text.Contains(staleLine, StringComparison.Ordinal));
+    }
+
+    // ---------------------------------------------------------------- [koşu başı uyarıları görünür] bayat obj + ters katman
+
+    // Koşu başı uyarılarının örnek satırları — Supervisor'ın decision.log'a yazıp runStarted.Warnings'le taşıdığı biçimde
+    // ("warning: " önekli; önce bayat obj, sonra ters katman). App metni ayrıştırmaz; akışta yalnız öneki düşer. Öneksiz
+    // metinler akış satırının beklenen değeridir (kâhin StreamText'ten bağımsız); önekli satır Supervisor'ın
+    // kompozisyonuyla ("warning: " + metin) kurulur. StaleObjWarning/ReverseLayerWarning internal: tel testi
+    // (IpcMessagesTests) aynı örnekleri kullanır, ikinci bir kopya yok. Konsol/akış not metinleri (PerfNoteText çıktısı)
+    // bu sınıfın birçok testinde AYNEN pinlenir; tek tanım burada.
+    private const string StaleObjWarningText = "A: obj holds a restore for .NETStandard,Version=v2.0";
+    private const string ReverseLayerWarningText =
+        "reverse layer dependency: 'A' (layer 0 'Data') depends on producer 'B.csproj' (layer 1 'Ui')";
+    internal const string StaleObjWarning = "warning: " + StaleObjWarningText;
+    internal const string ReverseLayerWarning = "warning: " + ReverseLayerWarningText;
+    private const string ReductionNote = "workers reduced to 2 (1 logical processor)";
+    private const string ResolveNote = "parallelism: 2 · cpu cap off · priority normal (Resolve cycles)";
+
+    /// <summary>
+    /// [koşu başı uyarıları görünür] Motorun koşu başı uyarıları (<c>runStarted.Warnings</c> — bayat obj, ters katman)
+    /// kullanıcıya İKİ yerde görünür: konsolda her satır AYNEN tam bir kez ("warning: " öneki satırı amber boyar), event
+    /// stream'de başlangıç satırının ve kırpma satırının ardından, sırası korunarak, Warn türünde ve öneksiz (akışın Warn
+    /// satırları önek taşımaz). Kusur: iki uyarı ailesi yalnız Supervisor'ın stderr'ine (App onu atar) ve kısmen
+    /// decision.log'a gidiyordu — kullanıcı hiçbirini görmüyordu. Tek projelik koşuda da yazılır (kırpma notunun istisnası
+    /// burada geçerli değil: o projenin bayat obj'si o koşuyu bozabilir); orada kırpma satırı olmadığı için uyarılar
+    /// başlangıç satırını doğrudan izler. Uyarı yoksa iki yerde de satır yoktur.
+    /// </summary>
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public async Task Run_start_warnings_reach_the_console_and_follow_the_start_lines_in_the_stream(bool warned,
+        bool singleProject)
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = PerfContextVm(engine, fullPriority: true);
+        await StartViaCommandAsync(vm, RunMode.Build);
+        if (singleProject) vm.RunTargetId = "A"; // satırdan basıldı (BeginRunAsync bunu tıklama anında yazar)
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 4, 2, "Debug", WorkersReducedReason: "1 logical processor",
+            Warnings: warned ? [StaleObjWarning, ReverseLayerWarning] : null));
+        int streamBefore = vm.StreamEvents.Count;
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
+
+        // [review M2 deseni] Satır bazlı: süslenmiş ya da öneki düşmüş bir konsol satırı sayılmaz.
+        var lines = vm.GetRunDocumentText().Split('\n');
+        Assert.Equal(warned ? 1 : 0, lines.Count(l => l == StaleObjWarning));
+        Assert.Equal(warned ? 1 : 0, lines.Count(l => l == ReverseLayerWarning));
+        // Önizlemenin akışa eklediği satırlar: başlangıç satırı, (tek projelik koşu değilse) kırpma satırı, uyarılar.
+        var expected = new List<(StreamKind, string)>();
+        if (!singleProject) expected.Add((StreamKind.Info, ReductionNote));
+        if (warned)
+        {
+            expected.Add((StreamKind.Warn, StaleObjWarningText));
+            expected.Add((StreamKind.Warn, ReverseLayerWarningText));
+        }
+        Assert.True(vm.StreamEvents.Count > streamBefore, "the preview did not add the run's start line");
+        Assert.Equal<(StreamKind, string)>(expected, vm.StreamEvents.Skip(streamBefore + 1).Select(s => (s.Kind, s.Text)));
+    }
+
+    /// <summary>
+    /// [koşu başı uyarıları görünür] Konsol sırası: önce kırpma notu, sonra Resolve notu, sonra koşu başı uyarıları
+    /// (motorun sırasıyla) — event stream'deki sırayla AYNI (başlangıç → kırpma → uyarılar). İki not koşunun nasıl koştuğunu
+    /// söyler ve yan yana kalır (Resolve notunun sayısı kırpmadan gelir); uyarılar onların ardından gelir.
+    /// </summary>
+    [Fact]
+    public async Task Run_start_warnings_follow_the_reduction_and_resolve_notes_in_the_console()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = PerfContextVm(engine, fullPriority: true);
+        await StartViaCommandAsync(vm, RunMode.Cycles);
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, 4, 2, "Debug", WorkersReducedReason: "1 logical processor",
+            Warnings: [StaleObjWarning, ReverseLayerWarning]));
+
+        var lines = vm.GetRunDocumentText().Split('\n');
+        int[] order =
+        [
+            Array.IndexOf(lines, ReductionNote),
+            Array.IndexOf(lines, ResolveNote),
+            Array.IndexOf(lines, StaleObjWarning),
+            Array.IndexOf(lines, ReverseLayerWarning),
+        ];
+        Assert.True(order[0] >= 0 && order.Zip(order.Skip(1)).All(p => p.First < p.Second), string.Join('\n', lines));
+    }
+
+    /// <summary>
+    /// [koşu başı uyarıları · akış seli] Event stream'de koşu başı uyarıları tavana kadar (üç) her biri ayrı bir Warn satırıdır,
+    /// öneksiz; tavanı aşınca akışa TEK Warn özet satırı düşer (<c>{n} run-start warnings — see the console</c>, n uyarıların
+    /// gerçek sayısı). Konsol tavandan bağımsız HER satırı AYNEN tam bir kez yazar ve özet satırını yazmaz: özet satırı
+    /// konsola yönlendirir. Kusur: her uyarı satırı akışa ayrı yazılıyordu; çok projeli bir çalışma alanında
+    /// (ARCHITECTURE §4.3) bayat obj satırları akışın sınırlı tamponunu doldurup diğer olayları gömerdi.
+    /// </summary>
+    [Theory]
+    [InlineData(3, false)]
+    [InlineData(4, true)]
+    [InlineData(25, true)]
+    public async Task Run_start_warnings_beyond_the_stream_limit_collapse_into_one_summary_line(int count, bool collapsed)
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = PerfContextVm(engine, fullPriority: true);
+        await StartViaCommandAsync(vm, RunMode.Build);
+        string[] texts = [.. Enumerable.Range(1, count).Select(i => $"P{i}: obj holds a restore for .NETStandard,Version=v2.0")];
+        string[] warnings = [.. texts.Select(t => "warning: " + t)]; // Supervisor'ın kompozisyonu: "warning: " + metin
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 4, 2, "Debug", Warnings: warnings));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
+
+        // Konsol: tavandan bağımsız her satır AYNEN, tam bir kez (satır bazlı); özet satırı konsola yazılmaz.
+        var consoleLines = vm.GetRunDocumentText().Split('\n');
+        Assert.All(warnings, w => Assert.Equal(1, consoleLines.Count(l => l == w)));
+        Assert.DoesNotContain(consoleLines, l => l.Contains("run-start warnings", StringComparison.Ordinal));
+        // Akış: bu koşunun akışa yazdığı Warn satırlarının TAMAMI (uyarılar dışında bu akışa Warn düşüren bir şey yok).
+        string[] expected = collapsed ? [$"{count} run-start warnings — see the console"] : texts;
+        Assert.Equal(expected, vm.StreamEvents.Where(s => s.Kind == StreamKind.Warn).Select(s => s.Text));
+    }
+
+    /// <summary>
+    /// [kırpma notu görünür · review M5] Tek projelik koşuda (satır menüsünden Build/Rebuild/Clean — <c>RunTargetId</c>
+    /// dolu) kırpma satırı ne konsola ne akışa yazılır: bir proje derlenirken işçi sayısı koşuyu tarif etmez, akışın tek
+    /// proje başlangıç satırı da bu yüzden paralellik söylemez. decision.log satırı Supervisor'da kalır (tanı). Önizleme
+    /// akışa yalnız açılış satırını ekler. Satır menüsünün üç kipi de (Build/Rebuild/Clean) aynı kapıdan geçer.
+    /// </summary>
+    [Theory]
+    [InlineData(RunMode.Build)]
+    [InlineData(RunMode.Rebuild)]
+    [InlineData(RunMode.Clean)]
+    public async Task A_single_project_run_writes_the_reduction_line_to_neither_the_console_nor_the_stream(RunMode mode)
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = PerfContextVm(engine, fullPriority: true);
+        await StartViaCommandAsync(vm, RunMode.Build);
+        vm.RunTargetId = "A"; // satırdan basıldı (BeginRunAsync bunu tıklama anında yazar)
+
+        vm.OnEvent(new RunStartedEvent("r1", mode, 1, 2, "Debug", WorkersReducedReason: "1 logical processor"));
+        int streamBefore = vm.StreamEvents.Count;
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
+
+        Assert.DoesNotContain(vm.GetRunDocumentText().Split('\n'), l => l.Contains("workers reduced", StringComparison.Ordinal));
+        Assert.DoesNotContain(vm.StreamEvents, s => s.Text.Contains("workers reduced", StringComparison.Ordinal));
+        Assert.Equal(streamBefore + 1, vm.StreamEvents.Count); // önizleme yalnız tek proje açılış satırını ekledi
+    }
+
     // ---------------------------------------------------------------- [A13/T3a · a10/a11] K11 notunun Balanced varyantı + damgası
 
     /// <summary>
@@ -993,123 +1389,101 @@ public class RunViewModelStateTests
 
     // ---------------------------------------------------------------- [Fix wave 1, C2 review Finding 1] Sync sırasında hiçbir run BAŞLAMAZ
 
+    // [kullanıcı kararı 2026-10-02] Bu bölümün başındaki test (`A_run_pressed_while_a_sync_is_in_flight_waits_for_it_instead_of_starting`,
+    // eski adı `No_run_can_start_while_a_sync_is_in_flight`) silindi — kuyruk yok. "Sync sürerken hiçbir run komutu çalıştırılamaz"
+    // iddiası artık `RunRequestDuringWorkTests`'te pinlidir: her iş türü × her run komutu
+    // (`Every_run_command_is_not_executable_while_a_sync_clean_optimize_checkout_or_pull_is_in_flight`); kuyruğun kaldırılma
+    // gerekçesi o dosyanın doc'undadır. Aşağıdaki dört test kapının Sync BİTİNCE açıldığını pinler. Tek projeli liste ortak
+    // `VmTopology.Seed` ile kurulur (kapıyı yalnız süren Sync kapatsın, listesizlik değil).
+
     /// <summary>
-    /// <b>[DEĞİŞEN KURAL — kullanıcı bildirimi 2026-09-29]</b> Eski iddia (<c>No_run_can_start_while_a_sync_is_in_flight</c>):
-    /// Sync uçuştayken Build ve Rebuild'in kapısı KAPALIDIR. Gerekçesi bugün de doğrudur: Supervisor Sync boyunca komut
-    /// döngüsünü BLOKLAR ve mid-Sync başlayan bir koşu konsol tamponlarını ANINDA temizleyip "build requested" yazar,
-    /// Sync'in kalan satırları da aynı run dokümanına akardı — iki hikâye iç içe geçerdi. (Daha eski bir kural Build'i
-    /// prototipin <c>doBuild</c> asimetrisiyle Sync sırasında da açık tutuyordu; bu test onu da pinlemişti.)
-    ///
-    /// <para><b>Değişme gerekçesi (ölçüm):</b> kapalı kapı tıklamayı YUTUYORDU. Pencereye dönüş kendiliğinden bir Sync
-    /// başlatır; Clean, Optimize ya da Resolve'dan dönen kullanıcının Build'i o Sync boyunca iki tık kayboluyordu.
-    /// Yeni kural: kapı açık kalır ve basış bir İSTEKTİR — koşu hiçbir şeyi temizlemeden bekler, komut Sync bitince
-    /// gider. Hikâyeler yine iç içe geçmez: koşunun ilk satırı Sync'in son satırından SONRA yazılır.</para>
+    /// <b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-02]</b> Önceki ad ve iddia (<c>A_sync_ending_without_a_project_list_closes_build_and_says_so</c>,
+    /// kullanıcı bildirimi 2026-09-29): Sync Build'i kapatmaz (basış bekler); bitişin bildirimi listesiz biten Sync'te
+    /// kapıyı kapatır. Kuyruk kaldırıldı; asıl iddia geri geldi: Sync'in kapattığı Build, Sync bitince TEK yerden yeniden
+    /// açılır ve bildirimi de o yoldan gelir.
     /// </summary>
     [Fact]
-    public async Task A_run_pressed_while_a_sync_is_in_flight_waits_for_it_instead_of_starting()
+    public async Task Sync_completing_reenables_build_as_well_as_rebuild()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
-        VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
-        var sent = new List<IpcCommand>();
-        vm.DebugOnCommandSent = sent.Add;
-
+        VmTopology.Seed(vm);
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
-
-        Assert.True(vm.RebuildCommand.CanExecute(null));
-        Assert.True(CommandPress.Press(vm.BuildCommand));
-        Assert.Empty(sent.OfType<StartRunCommand>()); // Sync sürerken komut gitmez
-
-        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0));
-
-        Assert.Equal(RunMode.Build, Assert.Single(sent.OfType<StartRunCommand>()).Mode);
-    }
-
-    /// <summary>
-    /// <b>[DEĞİŞEN KURAL — kullanıcı bildirimi 2026-09-29]</b> Eski iddia (<c>Sync_completing_reenables_build_as_well_as_rebuild</c>):
-    /// Sync'in kapattığı Build, Sync bitince TEK yerden yeniden açılır ve bildirimi de o yoldan gelir. Sync artık Build'i
-    /// kapatmaz (basış bekler — yukarıdaki test). Bitişin bildirimi yine ŞARTTIR: proje listesi yokken Build'i açık tutan
-    /// şey süren iştir — listesiz biten bir Sync'te kapı o anda kapanır ve RelayCommand bunu kendi sormaz.
-    /// </summary>
-    [Fact]
-    public async Task A_sync_ending_without_a_project_list_closes_build_and_says_so()
-    {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
-        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main")); // ilk Sync: liste henüz yok
-        Assert.True(vm.BuildCommand.CanExecute(null));      // basılabilir — Sync'in listesini bekler
+        Assert.False(vm.BuildCommand.CanExecute(null)); // Sync sürerken kapalı
 
         bool buildChanged = false;
         vm.BuildCommand.CanExecuteChanged += (_, _) => buildChanged = true;
 
-        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 0, 0)); // topolojisiz bitti
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0));
 
-        Assert.False(vm.BuildCommand.CanExecute(null));
+        Assert.True(vm.BuildCommand.CanExecute(null));
         Assert.True(buildChanged);
     }
 
     /// <summary>
-    /// <b>[DEĞİŞEN KURAL — kullanıcı bildirimi 2026-09-29]</b> Eski iddia (<c>Sync_completing_reenables_rebuild_and_raises_CanExecuteChanged</c>):
-    /// Sync bitince Rebuild yeniden açılır ve <c>CanExecuteChanged</c> atılır. Rebuild'in Sync'le ilişkisi Build'inkiyle
-    /// AYNI yeni kurala bağlıdır: Sync onu kapatmaz; listesiz biten Sync kapatır ve bunu duyurur.
+    /// <b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-02]</b> Önceki ad ve iddia (<c>A_sync_ending_without_a_project_list_closes_rebuild_and_raises_CanExecuteChanged</c>,
+    /// kullanıcı bildirimi 2026-09-29): Rebuild'in Sync'le ilişkisi Build'inkiyle aynı kurala bağlıydı. Kuyruk kaldırıldı;
+    /// asıl iddia geri geldi: Sync bitince Rebuild yeniden açılır ve <c>CanExecuteChanged</c> atılır.
     /// <para>[Not] Bu Sync'in İÇİNDE bir <c>WorkspaceTopologyEvent</c> GÖNDERİLMEZ: topolojinin gelişi run komutlarını
     /// KENDİSİ yeniden sordurur (<c>OnWorkspaceTopology</c>) — gönderilseydi bildirimin bitişten geldiği ayırt edilemezdi.</para>
     /// </summary>
     [Fact]
-    public async Task A_sync_ending_without_a_project_list_closes_rebuild_and_raises_CanExecuteChanged()
+    public async Task Sync_completing_reenables_rebuild_and_raises_CanExecuteChanged()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        VmTopology.Seed(vm);
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
-        Assert.True(vm.RebuildCommand.CanExecute(null));
+        Assert.False(vm.RebuildCommand.CanExecute(null));
 
         bool rebuildChanged = false;
         vm.RebuildCommand.CanExecuteChanged += (_, _) => rebuildChanged = true;
 
-        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 0, 0));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0));
 
-        Assert.False(vm.RebuildCommand.CanExecute(null));
+        Assert.True(vm.RebuildCommand.CanExecute(null));
         Assert.True(rebuildChanged);
     }
 
     /// <summary>
-    /// <b>[DEĞİŞEN KURAL — kullanıcı bildirimi 2026-09-29]</b> Eski iddia (<c>Engine_death_mid_sync_reenables_rebuild_via_release_sync_phase</c>):
-    /// motor Sync ortasında ölünce Rebuild <c>ReleaseSyncPhase</c> üzerinden yeniden AÇILIR. Sync artık Rebuild'i
-    /// kapatmaz; o yol yine Rebuild'in kapısını değiştirir ama ters yönde: liste yokken Rebuild'i açık tutan süren
-    /// işti — motor ölünce iş bitti ve liste gelmedi, kapı o anda kapanır ve bunu duyurur. (Sync düğmesinin aynı
-    /// yoldan açılması <see cref="Engine_death_mid_sync_reopens_the_sync_gate"/>'te pinlidir.)
+    /// <b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-02]</b> Önceki ad ve iddia (<c>Engine_death_mid_sync_closes_rebuild_via_release_sync_phase_when_no_project_list_came</c>,
+    /// kullanıcı bildirimi 2026-09-29): liste yokken Rebuild'i açık tutan süren işti; motor ölünce kapı kapanır. Kuyruk
+    /// kaldırıldı; asıl iddia geri geldi: motor Sync ortasında ölünce Rebuild <c>ReleaseSyncPhase</c> üzerinden yeniden
+    /// AÇILIR. (Sync düğmesinin aynı yoldan açılması <see cref="Engine_death_mid_sync_reopens_the_sync_gate"/>'te pinlidir.)
     /// </summary>
     [Fact]
-    public async Task Engine_death_mid_sync_closes_rebuild_via_release_sync_phase_when_no_project_list_came()
+    public async Task Engine_death_mid_sync_reenables_rebuild_via_release_sync_phase()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
-        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main")); // ilk Sync: liste henüz yok
-        Assert.True(vm.RebuildCommand.CanExecute(null));
+        VmTopology.Seed(vm);
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        Assert.False(vm.RebuildCommand.CanExecute(null));
 
         bool rebuildChanged = false;
         vm.RebuildCommand.CanExecuteChanged += (_, _) => rebuildChanged = true;
 
         vm.OnEngineExited(1); // engine Sync ortasında öldü → ReleaseSyncPhase
 
-        Assert.False(vm.RebuildCommand.CanExecute(null));
+        Assert.True(vm.RebuildCommand.CanExecute(null));
         Assert.True(rebuildChanged);
     }
 
     /// <summary>
-    /// <b>[DEĞİŞEN KURAL — kullanıcı bildirimi 2026-09-29]</b> Eski iddia (<c>Sync_attributed_planFailed_reenables_rebuild_and_raises_CanExecuteChanged</c>):
-    /// Sync'e atfedilen <c>planFailed</c> Rebuild'i AÇAR ve <c>CanExecuteChanged</c> atar ([re-review C2, Finding 4]: bu,
-    /// Sync yüzeyini bırakan 4. geçiştir ve bildirimi unutulmuştu). Sync artık Rebuild'i kapatmaz; aynı geçiş Rebuild'i
-    /// liste yokken KAPATIR — bildirimi yine şarttır. (Sync düğmesinin açılması
+    /// <b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-02]</b> Önceki ad ve iddia (<c>Sync_attributed_planFailed_closes_rebuild_and_raises_CanExecuteChanged_when_no_project_list_came</c>,
+    /// kullanıcı bildirimi 2026-09-29): aynı geçiş Rebuild'i liste yokken kapatırdı. Kuyruk kaldırıldı; asıl iddia geri
+    /// geldi: Sync'e atfedilen <c>planFailed</c> Rebuild'i AÇAR ve <c>CanExecuteChanged</c> atar ([re-review C2, Finding 4]:
+    /// bu, Sync yüzeyini bırakan 4. geçiştir ve bildirimi unutulmuştu). (Sync düğmesinin açılması
     /// <see cref="A_failed_sync_reopens_the_sync_gate"/>'te pinlidir.)
     /// </summary>
     [Fact]
-    public async Task Sync_attributed_planFailed_closes_rebuild_and_raises_CanExecuteChanged_when_no_project_list_came()
+    public async Task Sync_attributed_planFailed_reenables_rebuild_and_raises_CanExecuteChanged()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
-        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main")); // ilk Sync: liste henüz yok
-        Assert.True(vm.RebuildCommand.CanExecute(null));
+        VmTopology.Seed(vm);
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        Assert.False(vm.RebuildCommand.CanExecute(null));
 
         bool rebuildChanged = false;
         vm.RebuildCommand.CanExecuteChanged += (_, _) => rebuildChanged = true;
@@ -1118,7 +1492,7 @@ public class RunViewModelStateTests
         // ateşlenmeli.
         vm.OnEvent(new ErrorEvent("planFailed", "git fetch origin failed"));
 
-        Assert.False(vm.RebuildCommand.CanExecute(null));
+        Assert.True(vm.RebuildCommand.CanExecute(null));
         Assert.True(rebuildChanged);
     }
 
@@ -1329,19 +1703,23 @@ public class RunViewModelStateTests
     /// çarpan tam da işin yapıldığı pencerede kayboluyor; üyeler paralelliğe bölünen building kovasına
     /// düşüyordu. Sabit saat: 4 proje, D 1000ms'te bitti ⇒ gözlenen ortalama 1000ms.
     /// <para><b>[DEĞİŞEN KURAL]</b> Eski kurulum koşuyu <c>RunMode.Build</c> ile açıyordu: döngü kovası moddan
-    /// bağımsızdı, dolayısıyla mod önemsizdi. Artık kova yalnız turların GERÇEKTEN koştuğu <c>Cycles</c>
-    /// koşusuna aittir — gerekçe: Build menüsünün Clean'i döngü üyelerini tur koşmadan, sıradan paralel iş
-    /// olarak temizler (<see cref="A_full_clean_estimates_cycle_members_as_ordinary_parallel_work"/>). Bu test
-    /// kovanın kendi kuralını, onu kullanan tek koşuda pinler.</para>
+    /// bağımsızdı, dolayısıyla mod önemsizdi. Sonra kova yalnız turların GERÇEKTEN koştuğu <c>Cycles</c>
+    /// koşusuna verildi — gerekçe: Build menüsünün Clean'i döngü üyelerini tur koşmadan, sıradan paralel iş
+    /// olarak temizler (<see cref="A_full_clean_estimates_cycle_members_as_ordinary_parallel_work"/>).</para>
+    /// <para><b>[DEĞİŞEN KURAL — Build cycle derler]</b> Kova turların koşabildiği her koşuya aittir
+    /// (<c>CycleCompilation</c>): Build ve Rebuild de kirli grubu turlarla derler (ölçüm: 2026-10-07 13:17 koşusu,
+    /// ARCHITECTURE §8.1). Clean'in kuralı değişmez; test iki modda aynı tahmini pinler.</para>
     /// </summary>
-    [Fact]
-    public async Task The_eta_keeps_the_cycle_round_multiplier_while_the_group_is_running()
+    [Theory]
+    [InlineData(RunMode.Cycles)]
+    [InlineData(RunMode.Build)]
+    public async Task The_eta_keeps_the_cycle_round_multiplier_while_the_group_is_running(RunMode mode)
     {
         long now = 5_000;
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", () => now);
         StartCycleGroup(vm);
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, TotalProjects: 4, Parallelism: 4, "Debug"));
+        vm.OnEvent(new RunStartedEvent("r1", mode, TotalProjects: 4, Parallelism: 4, "Debug"));
         vm.OnEvent(new ProjectStartedEvent("r1", D, "D"));
         vm.OnEvent(new ProjectSucceededEvent("r1", D, 1000, null, false));
 
@@ -1356,6 +1734,57 @@ public class RunViewModelStateTests
         // Grup KOŞARKEN de aynı terim: tahmin 6000'de kalır. Kusurlu hâlde üçü building kovasına düşer ve
         // 4'e bölünürdü — ham tahmin 3000/4 + 400 = 1150, EMA ile 4788.
         Assert.Equal(6000, vm.EtaMs);
+    }
+
+    /// <summary>[Build cycle derler] Düz Build'de grup bitince sıradan projeler devam eder: şeridin tur satırı
+    /// "Building"e dönmeli (RibbonText: <c>cycleRound &gt; 0</c> kapısı) ve üye-detay kapısı kapanmalı. Sayaçlar yalnız
+    /// EKRANDA YAZAN grubun (lider) bitişinde sıfırlanır — eşzamanlı ikinci bir grubun bitişi ekrandaki turu silmez.</summary>
+    [Fact]
+    public async Task A_cycle_completion_resets_the_round_counters_of_the_group_on_screen()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        StartCycleGroup(vm);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 4, Parallelism: 4, "Debug"));
+        vm.OnEvent(new CycleRoundStartedEvent("r1", A, Round: 1, RoundCap: 3, MemberCount: 3));
+        Assert.Equal((1, 3), (vm.CycleRound, vm.CycleRoundCap));
+
+        // Başka bir grubun bitişi ekrandaki sayaçlara dokunmaz.
+        vm.OnEvent(new CycleCompletedEvent("r1", D, CycleOutcome.Converged, MemberCount: 1, Rounds: 1, FailedCount: 0,
+            DurationMs: 5));
+        Assert.Equal((1, 3), (vm.CycleRound, vm.CycleRoundCap));
+
+        vm.OnEvent(new CycleCompletedEvent("r1", A, CycleOutcome.Converged, MemberCount: 3, Rounds: 1, FailedCount: 0,
+            DurationMs: 9));
+        Assert.Equal((0, 0), (vm.CycleRound, vm.CycleRoundCap));
+    }
+
+    /// <summary>[final inceleme — iki grup] Düz Build'de birbirine bağlı olmayan iki grup aynı anda turda olabilir. Ekrandaki
+    /// grup önce biterse şerit, hâlâ turda olan öbür grubun turunu yazmaya devam etmeli. Kusur: yalnız TEK grubun sayaçları
+    /// tutuluyordu; ekrandaki grup bitince sayaçlar sıfırlanıyor ve şerit, öbür grubun bir sonraki turu başlayana (ya da grup
+    /// bitene) kadar "Building" yazıyordu — grup hâlâ turdayken.</summary>
+    [Fact]
+    public async Task When_the_group_on_screen_finishes_the_ribbon_follows_a_group_still_in_rounds()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [Node(A, "A", 0, inCycle: true), Node(B, "B", 1, inCycle: true),
+             Node(C, "C", 2, inCycle: true), Node(D, "D", 3, inCycle: true)],
+            [[A, B], [C, D]], [], []));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 4, Parallelism: 4, "Debug"));
+
+        vm.OnEvent(new CycleRoundStartedEvent("r1", C, Round: 2, RoundCap: 3, MemberCount: 2)); // C ve D'nin grubu turda
+        vm.OnEvent(new CycleRoundStartedEvent("r1", A, Round: 1, RoundCap: 3, MemberCount: 2)); // ekranda artık A'nın grubu
+        Assert.Equal((1, 3), (vm.CycleRound, vm.CycleRoundCap));
+
+        vm.OnEvent(new CycleCompletedEvent("r1", A, CycleOutcome.Converged, MemberCount: 2, Rounds: 1, FailedCount: 0,
+            DurationMs: 5));
+        Assert.Equal((2, 3), (vm.CycleRound, vm.CycleRoundCap)); // C'nin grubu hâlâ tur 2'de — şerit onu yazar
+
+        vm.OnEvent(new CycleCompletedEvent("r1", C, CycleOutcome.Converged, MemberCount: 2, Rounds: 2, FailedCount: 0,
+            DurationMs: 7));
+        Assert.Equal((0, 0), (vm.CycleRound, vm.CycleRoundCap)); // turu süren grup kalmadı — şerit "Building"e döner
     }
 
     /// <summary>[Clean] Build menüsünün Clean'i döngü üyelerini de temizler ama TUR KOŞMAZ: motor Clean'de döngü
@@ -1375,6 +1804,98 @@ public class RunViewModelStateTests
         vm.OnEvent(new ProjectSucceededEvent("r1", D, 1000, null, false));
 
         Assert.Equal(750, vm.EtaMs);
+    }
+
+    /// <summary>
+    /// [D4] Şeridin n/m'si ve çubuk grup boyunca KIPIRDAMIYORDU: ara tur sonucu yayılmadığı için üye grubun hükmüne kadar
+    /// terminal olmaz, n yalnız terminal satırı sayardı (17 üyeli grupta 4-6 dk hareketsiz). Artık turdaki derlemesi
+    /// biten üye (<c>CycleMemberHeldEvent</c>) sayılır; sonraki turda yeniden derlenmeye başlayan üye sayımdan düşer
+    /// (çubuk yeniden derlenen üyeler kadar geri adım atar — dürüst); hüküm gelince terminal sayım devralır.
+    /// Sayım yalnız kesin kümedeki (<c>_willBuildIds</c>) üyeler için: n asla m'yi aşmaz.
+    /// </summary>
+    [Fact]
+    public async Task A_cycle_member_counts_as_finished_once_held_and_steps_back_when_a_later_round_recompiles_it()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        StartCycleGroup(vm);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 4, Parallelism: 4, "Debug"));
+        vm.OnEvent(new BuildPreviewEvent([
+            new BuildPreviewItem(A, "A", true), new BuildPreviewItem(B, "B", true),
+            new BuildPreviewItem(C, "C", true), new BuildPreviewItem(D, "D", false)]));
+        Assert.Equal((3, 0), (vm.WillBuildCount, vm.FinishedOfWillBuild));
+
+        vm.OnEvent(new CycleRoundStartedEvent("r1", A, 1, 3, 3));
+        vm.OnEvent(new ProjectStartedEvent("r1", A, "A"));
+        vm.OnEvent(new CycleMemberHeldEvent("r1", A));
+        Assert.Equal(1, vm.FinishedOfWillBuild);                      // tur 1: A bitti, grubunu bekliyor
+        vm.OnEvent(new ProjectStartedEvent("r1", B, "B"));
+        vm.OnEvent(new CycleMemberHeldEvent("r1", B));
+        vm.OnEvent(new ProjectStartedEvent("r1", C, "C"));
+        vm.OnEvent(new CycleMemberHeldEvent("r1", C));
+        Assert.Equal(3, vm.FinishedOfWillBuild);
+
+        vm.OnEvent(new CycleRoundStartedEvent("r1", A, 2, 3, 1));
+        vm.OnEvent(new ProjectStartedEvent("r1", B, "B"));            // tur 2: yalnız B yeniden derlenir
+        Assert.Equal(2, vm.FinishedOfWillBuild);                      // geri adım
+        vm.OnEvent(new CycleMemberHeldEvent("r1", B));
+        Assert.Equal(3, vm.FinishedOfWillBuild);
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", A, 10)); vm.OnEvent(new ProjectSucceededEvent("r1", B, 10));
+        vm.OnEvent(new ProjectSucceededEvent("r1", C, 10));
+        vm.OnEvent(new CycleCompletedEvent("r1", A, CycleOutcome.Converged, 3, 2, 0, 30));
+        Assert.Equal((3, 3), (vm.WillBuildCount, vm.FinishedOfWillBuild)); // çift sayım yok
+        Assert.Equal(100.0, RibbonText.Progress(vm.Phase, vm.AllClean, vm.Counters, vm.WillBuildCount, vm.FinishedOfWillBuild, vm.Counters.Total));
+    }
+
+    /// <summary>[D4 · Stop] Stop'ta motor turdaki grubun her üyesini kanıtsız <c>stopped</c> hatasıyla raporlar, grubun
+    /// hükmü (cycle completed) GELMEZ. Held üye terminal olunca sayım terminale devreder: aynı satır held ve terminal diye
+    /// iki kez sayılmaz, hiç başlamamış üye de bir kez sayılır — n ≤ m (burada n = m = 3; çift sayım 5 okurdu).</summary>
+    [Fact]
+    public async Task A_stopped_cycle_group_counts_each_member_once_so_n_never_exceeds_m()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        StartCycleGroup(vm);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 4, Parallelism: 4, "Debug"));
+        vm.OnEvent(new BuildPreviewEvent([
+            new BuildPreviewItem(A, "A", true), new BuildPreviewItem(B, "B", true),
+            new BuildPreviewItem(C, "C", true), new BuildPreviewItem(D, "D", false)]));
+        vm.OnEvent(new CycleRoundStartedEvent("r1", A, 1, 3, 3));
+        vm.OnEvent(new ProjectStartedEvent("r1", A, "A"));
+        vm.OnEvent(new CycleMemberHeldEvent("r1", A));
+        vm.OnEvent(new ProjectStartedEvent("r1", B, "B"));
+        vm.OnEvent(new CycleMemberHeldEvent("r1", B));
+        Assert.Equal((3, 2), (vm.WillBuildCount, vm.FinishedOfWillBuild));   // A ve B held, C hiç başlamadı
+
+        foreach (string member in new[] { A, B, C })
+            vm.OnEvent(new ProjectFailedEvent("r1", member, 0, FailureReasons.Stopped, Evidence: false));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 3, 0, 1, 100));
+
+        Assert.Equal((3, 3), (vm.WillBuildCount, vm.FinishedOfWillBuild));   // held ∪ terminal: çift sayım yok
+    }
+
+    [Fact] // held üye yalnız kesin kümedeyse sayılır; ikinci koşu temiz başlar
+    public async Task A_held_member_outside_the_fixed_set_is_not_counted_and_the_count_resets_per_run()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        StartCycleGroup(vm);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 4, 4, "Debug"));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(A, "A", true), new BuildPreviewItem(B, "B", false),
+            new BuildPreviewItem(C, "C", false), new BuildPreviewItem(D, "D", false)]));
+        vm.OnEvent(new ProjectStartedEvent("r1", B, "B"));
+        vm.OnEvent(new CycleMemberHeldEvent("r1", B));
+        Assert.Equal((1, 0), (vm.WillBuildCount, vm.FinishedOfWillBuild));
+        vm.OnEvent(new ProjectStartedEvent("r1", A, "A"));
+        vm.OnEvent(new CycleMemberHeldEvent("r1", A));
+        Assert.Equal(1, vm.FinishedOfWillBuild);
+
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 0, 0, 2, 100));
+        vm.OnEvent(new RunStartedEvent("r2", RunMode.Build, 4, 4, "Debug"));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(A, "A", true), new BuildPreviewItem(B, "B", true),
+            new BuildPreviewItem(C, "C", true), new BuildPreviewItem(D, "D", false)]));
+        Assert.Equal((3, 0), (vm.WillBuildCount, vm.FinishedOfWillBuild));
     }
 
     // ---------------------------------------------------------------- [Task 5] kümülatif renk · defter üçgeni · nötrleme
@@ -1612,11 +2133,17 @@ public class RunViewModelStateTests
         Assert.Equal("▸ Ready — everything looks up to date", vm.RibbonLine.Text);
     }
 
-    /// <summary>[kullanıcı kararı 2026-09-29] Geçiş kimseyi "derlenecek" saymaz: ne döngü üyesini (düz Build onu hiç
-    /// derlemez) ne kararı olmayan satırı. Ölçülen kusur: tahmin her satıra <c>WillBuild=true</c> yazıyordu — OSYS'in
-    /// 33 döngü üyesi de şeridin "N to build"una giriyor, Build'in açılış dalgası onları da yakıyordu.</summary>
+    /// <summary>[kullanıcı kararı 2026-09-29] Geçiş kimseyi "derlenecek" SAYMAZ: satırların bayrağı Sync'in cevabıdır ve
+    /// yeni configuration'ın Sync'i başlayana kadar aynen kalır — güncel satır da kararı olmayan satır da geçişle
+    /// "derlenecek" olmaz. Ölçülen kusur: tahmin her satıra <c>WillBuild=true</c> yazıyordu — OSYS'in 33 döngü üyesi de
+    /// şeridin "N to build"una giriyor, Build'in açılış dalgası onları da yakıyordu.
+    /// <para><b>[DEĞİŞEN KURAL — Build cycle derler]</b> Eski ad/iddia:
+    /// <c>Switching_configuration_puts_no_cycle_member_or_undecided_row_in_the_next_build</c> — döngü üyesi (Sync'in eski
+    /// cevabıyla <c>false</c>, "düz Build onu hiç derlemez") ve kararı olmayan satır geçişten sonra kapsam dışında kalır.
+    /// Sync artık kirli üyeye Build'in kararıyla <c>true</c> verir (ölçüm: 2026-10-07 13:17 koşusu, ARCHITECTURE §8.1);
+    /// geçiş o cevaba dokunmaz, yalnız kendi tahminini eklemez.</para></summary>
     [Fact]
-    public void Switching_configuration_puts_no_cycle_member_or_undecided_row_in_the_next_build()
+    public void Switching_configuration_adds_no_row_to_the_next_build()
     {
         var vm = T5Vm();
         MainWindowHost.AcceptSends(vm);
@@ -1625,15 +2152,16 @@ public class RunViewModelStateTests
             [Node(P("A"), "A", 0), Node(P("C"), "C", 1, inCycle: true), Node(P("U"), "U", 2)], [], [], []));
         vm.OnEvent(new BuildPreviewEvent([
             Item("A", false, WillBuildReason.UpToDate),
-            Item("C", false, WillBuildReason.SignatureChanged), // kapsam dışı döngü üyesi: bayat ama Build derlemez
+            Item("C", true, WillBuildReason.SignatureChanged), // kirli döngü üyesi: Build grubunu derler (Sync'in cevabı)
             Item("U", null, null)]));
         vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 3, 0));
-        Assert.Equal(0, vm.WillBuildCount); // ön-koşul: Build'in yapacağı iş yok
+        Assert.Equal(1, vm.WillBuildCount); // ön-koşul: Build'in yapacağı tek iş C
 
         vm.SetConfiguration("Release");
 
-        Assert.DoesNotContain(vm.ScopeFor(RunMode.Build), r => r.Name is "C" or "U");
-        Assert.Equal(0, vm.WillBuildCount);
+        // Kapsam Sync'in cevabından ibarettir: güncel A ve kararı olmayan U geçişle eklenmez.
+        Assert.Equal(["C"], vm.ScopeFor(RunMode.Build).Select(r => r.Name));
+        Assert.Equal(1, vm.WillBuildCount);
     }
 
     /// <summary>[kullanıcı kararı 2026-09-29] Bitmiş bir koşudan sonra geçiş, koşunun hikâyesini kendi Sync'ine bırakır:
@@ -1880,5 +2408,117 @@ public class RunViewModelStateTests
         Assert.Equal("Dependency issue: A", RowWarning.For(false, false, false, down.WarningRoots, down.NamePrefix));
         Assert.Equal("up to date",
             DecisionLabel.For(down.WillBuild, down.WillBuildReason, down.OwnFilesChanged, down.LocalEdits).Word);
+    }
+
+    /// <summary>[D8] Koşu sürerken "up to date" ile atlanan satır (yüzey kapısı, taşınan döngü üyesi): motor defteri yeni imzayla
+    /// yeniledi, bir sonraki Sync UpToDate diyecek — satır o cevabı hemen verir (<see cref="NextPreview.AfterUpToDateSkip"/>),
+    /// gri "affected"ta kalmaz. Kök bekleyen atlama (DependencyStillFailing) plan bayrağına dokunmaz
+    /// (<see cref="A_dependency_still_failing_skip_leaves_the_row_current_with_the_warning_and_the_up_to_date_label"/> korunur).
+    /// Bilinen sınır: kaydı miras kök notu taşıyorsa satır bir sonraki Sync'e kadar UpToDate okur (olay kök taşımaz).</summary>
+    [Fact]
+    public void A_row_skipped_as_up_to_date_during_a_run_turns_up_to_date_at_once()
+    {
+        var vm = T5Vm();
+        SyncWith(vm, Item("D", true, WillBuildReason.SignatureChanged));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug"));
+        vm.OnEvent(new BuildPreviewEvent([Item("D", true, WillBuildReason.SignatureChanged)]));
+        Assert.Equal(1, vm.WillBuildCount);
+
+        vm.OnEvent(new ProjectSkippedEvent("r1", P("D"), SkipReasons.UpToDate));
+
+        var row = RowOf(vm, "D");
+        Assert.Equal((ProjectRowState.Skipped, false, WillBuildReason.UpToDate, false, false),
+            (row.State, row.WillBuild, row.WillBuildReason, row.Conditional, row.OwnFilesChanged));
+        Assert.Equal(1, vm.FinishedOfWillBuild); // terminal: n ilerler, çubuk hareket eder
+    }
+
+    /// <summary>[D8 · Resolve cycles] Resolve koşusunda taşınan üye (ya da kapsamdaki bir upstream'in kapı atlaması) da AYNI cevabı
+    /// hemen verir: motor defteri Cycles koşusunda da yeniler (RefreshBuildStateOnSkip) ve satırın plan bayrağı Sync'ten gelen
+    /// "bir sonraki düz Build"ün cevabıdır. Başarı yolu (OnProjectDone → NextPreview.AfterSuccess) bu cevabı Resolve'da da yazar;
+    /// atlama yolu ondan ayrışmaz. Resolve'un ÖNİZLEMESİ bayrağa yazmaz (PreviewWritesPlanFlag) — canlı geçiş yazar, yalnız Clean hariç.</summary>
+    [Fact]
+    public void A_member_carried_in_a_resolve_cycles_run_turns_up_to_date_at_once()
+    {
+        var vm = T5Vm();
+        SyncWith(vm, Item("M", true, WillBuildReason.SignatureChanged));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, 1, 4, "Debug"));
+        vm.OnEvent(new BuildPreviewEvent([Item("M", true, WillBuildReason.SignatureChanged)]));
+
+        vm.OnEvent(new ProjectSkippedEvent("r1", P("M"), SkipReasons.UpToDate));
+
+        var row = RowOf(vm, "M");
+        Assert.Equal((ProjectRowState.Skipped, false, WillBuildReason.UpToDate, false, false),
+            (row.State, row.WillBuild, row.WillBuildReason, row.Conditional, row.OwnFilesChanged));
+    }
+
+    /// <summary>[D8 · Resolve cycles] Resolve'un önizlemesi plan bayrağını yazmaz (PreviewWritesPlanFlag); kapı bu yüzden satırın
+    /// bayrağını (Sync'in cevabı, bayat olabilir) DEĞİL, koşunun kendi önizlemesinin kesin kümesini okur. Sync'in kirli gördüğü
+    /// ama koşu başında "up to date" (built outside) atlanan kapsamdaki upstream'in gerekçesi ezilmez: motor onun defterini
+    /// yenilemedi, bir sonraki Sync yine "built outside" der.</summary>
+    [Fact]
+    public void A_resolve_pre_skip_of_a_row_the_sync_saw_dirty_keeps_its_reason()
+    {
+        var vm = T5Vm();
+        SyncWith(vm, Item("U", true, WillBuildReason.SignatureChanged));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, 1, 4, "Debug"));
+        vm.OnEvent(new BuildPreviewEvent([Item("U", false, WillBuildReason.BuiltOutside)])); // VS Sync'ten sonra derledi
+
+        vm.OnEvent(new ProjectSkippedEvent("r1", P("U"), SkipReasons.UpToDate));
+
+        var row = RowOf(vm, "U");
+        Assert.Equal((ProjectRowState.Skipped, true, WillBuildReason.BuiltOutside), (row.State, row.WillBuild, row.WillBuildReason));
+    }
+
+    /// <summary>Pre-skip satırı (koşu başında "up to date", gerekçesi "built outside this tool") dokunulmaz: planın derleyecek
+    /// demediği satırın gerekçesi UpToDate'e ezilmez — ezilseydi satır ile bir sonraki Sync ayrışırdı.</summary>
+    [Fact]
+    public void A_pre_skipped_row_keeps_its_built_outside_reason()
+    {
+        var vm = T5Vm();
+        SyncWith(vm, Item("D", false, WillBuildReason.BuiltOutside));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug"));
+        vm.OnEvent(new BuildPreviewEvent([Item("D", false, WillBuildReason.BuiltOutside)]));
+
+        vm.OnEvent(new ProjectSkippedEvent("r1", P("D"), SkipReasons.UpToDate));
+
+        var row = RowOf(vm, "D");
+        Assert.Equal((ProjectRowState.Skipped, false, WillBuildReason.BuiltOutside), (row.State, row.WillBuild, row.WillBuildReason));
+    }
+
+    /// <summary>[B1 · B3] Hükmü verilmiş grupta kaydı atılan taşınan üye (<c>skipped — cycle did not converge at this
+    /// signature</c>) bu koşuda hiç derlenmedi ve motor defterini kanıtsız geçersizledi: bir sonraki Sync <c>NeverBuilt</c>
+    /// diyecek, satır o cevabı HEMEN verir (<see cref="NextPreview.AfterUntrustedResult"/> — güvenilmez başarıyla aynı cevap).
+    /// Koşunun tablosu onu "succeeded" değil "skipped" sayar; NoProgress'in kalıcı kırık döngü bayrağı olayla gelir ve stuck
+    /// sayacına girer. Taşınan üye hiç başlamaz: olay akışında <c>ProjectStartedEvent</c> yoktur.</summary>
+    [Fact]
+    public void A_discarded_carry_skip_reads_never_built_and_counts_as_skipped()
+    {
+        var vm = T5Vm();
+        void SyncCycle(params BuildPreviewItem[] items)
+        {
+            vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+            vm.OnEvent(new WorkspaceTopologyEvent([.. items.Select((it, i) => Node(it.ProjectId, it.Name, i) with { InCycle = true })],
+                [[.. items.Select(it => it.ProjectId)]], [], []));
+            vm.OnEvent(new BuildPreviewEvent(items));
+            vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, items.Length, 0));
+        }
+        BuildPreviewItem[] dirty = [Item("M", true, WillBuildReason.SignatureChanged), Item("R", true, WillBuildReason.SignatureChanged)];
+        SyncCycle(dirty);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, 2, 4, "Debug"));
+        vm.OnEvent(new BuildPreviewEvent(dirty));
+
+        vm.OnEvent(new ProjectSkippedEvent("r1", P("M"), SkipReasons.CycleNonConvergent, CycleUnconverged: true));
+
+        var row = RowOf(vm, "M");
+        Assert.Equal((ProjectRowState.Skipped, SkipReasons.CycleNonConvergent, true), (row.State, row.SkipReason, row.CycleUnconverged));
+        Assert.Equal((true, WillBuildReason.NeverBuilt, false), (row.WillBuild, row.WillBuildReason, row.Conditional));
+        Assert.Equal(VisualStatus.Stale, row.VisualStatus);
+        Assert.Equal((1, 0, 1), (vm.Counters.Skipped, vm.Counters.Succeeded, vm.Counters.StuckCycles));
+
+        // Bir sonraki Sync'in GERÇEKTEN üreteceği önizleme (defter kanıtsız hata) — satır titremez.
+        var before = (row.WillBuild, row.WillBuildReason, row.VisualStatus);
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 1, 0, 500));
+        SyncCycle(Item("M", true, WillBuildReason.NeverBuilt), Item("R", true, WillBuildReason.NeverBuilt));
+        Assert.Equal(before, (row.WillBuild, row.WillBuildReason, row.VisualStatus));
     }
 }

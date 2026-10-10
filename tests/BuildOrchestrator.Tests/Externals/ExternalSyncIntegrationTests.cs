@@ -32,9 +32,13 @@ public class ExternalSyncIntegrationTests
 {
     private const string SlnName = "Osys.sln";
 
+    /// <summary>SDK-style proje — bilerek KANITSIZ (<see cref="SdkFixture.EvidenceNeutralLayout"/>): bu sınıf hariciler için imza
+    /// ve içerik kararını sınar, diske çıktı yazmaz. [DEĞİŞEN KURAL — A1 · kullanıcı kararı 2026-10-09] Eski hâl: düz SDK-style
+    /// projeydi, çünkü SDK-style proje kanıtsız sayılırdı; varsayılan düzenli proje artık çıktı yolu alır ve çıktısı yokken
+    /// <c>output missing</c> okurdu (ölçüm 2026-10-09, surface-gate-measurement).</summary>
     private static string ProjectXml(string assemblyName, string? hintPathDll = null) =>
         "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><AssemblyName>" + assemblyName
-        + "</AssemblyName><TargetFramework>net10.0</TargetFramework></PropertyGroup>"
+        + "</AssemblyName><TargetFramework>net10.0</TargetFramework>" + SdkFixture.EvidenceNeutralLayout + "</PropertyGroup>"
         + (hintPathDll is null ? "" :
             "<ItemGroup><Reference Include=\"" + Path.GetFileNameWithoutExtension(hintPathDll)
             + "\"><HintPath>..\\lib\\" + hintPathDll + "</HintPath></Reference></ItemGroup>")

@@ -1,3 +1,4 @@
+using System.Windows.Automation.Peers;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -12,6 +13,9 @@ namespace BuildOrchestrator.App.Controls;
 /// </summary>
 public partial class LatestPill : UserControl
 {
+    /// <summary>UIA rolü — gerekçe ve ölçüm <see cref="UserControlRolePeer"/>'de.</summary>
+    protected override AutomationPeer OnCreateAutomationPeer() => new UserControlRolePeer(this, AutomationControlType.Group);
+
     // [feasibility §3.7] Paylaşılan/frozen token brush'ı DOĞRUDAN animate etmek YASAK (Storyboard tüm tüketicileri
     // etkiler) — hover geçişi için template-lokal KOPYA brush'lar üstünde ColorAnimation.
     private SolidColorBrush? _bg;

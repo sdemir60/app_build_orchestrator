@@ -71,6 +71,34 @@ public static class StreamText
         _ => throw new ArgumentOutOfRangeException(nameof(reason), reason, "unknown pull refusal reason"),
     };
 
+    /// <summary>[koşu başı uyarıları görünür] Koşu başı uyarısının (<c>runStarted.Warnings</c> — bayat obj, ters katman)
+    /// akış satırı: motorun <c>warning: </c> önekli satırının öneki DÜŞMÜŞ hâli (<c>reverse layer dependency: …</c>). Akışın
+    /// Warn satırları önek taşımaz — türü rengi söyler (<see cref="PullRefused"/>, <see cref="BranchSwitchRefused"/>);
+    /// konsol satırı öneki AYNEN taşır. Önek YALNIZ burada düşer; öneksiz bir satır olduğu gibi döner.</summary>
+    public static string RunStartWarning(string line) =>
+        line.StartsWith(RunStartWarningPrefix, StringComparison.Ordinal) ? line[RunStartWarningPrefix.Length..] : line;
+
+    private const string RunStartWarningPrefix = "warning: ";
+
+    /// <summary>[koşu başı uyarıları · akış seli] Akışa her biri AYRI satır olarak yazılan koşu başı uyarısı sayısının
+    /// tavanı. Bayat obj taraması planın her düğümünde koşar ve her bayat proje bir uyarıdır; çok projeli bir çalışma
+    /// alanında (ARCHITECTURE §4.3) satır satır yazmak akışın sınırlı tamponunu doldurup diğer olayları gömerdi. Tavanı
+    /// aşan uyarılar <see cref="RunStartWarningLines"/> ile TEK özet satırına iner; konsol tavandan bağımsız her satırı
+    /// yazar ve özet oraya yönlendirir. Tavan tek yerde tanımlıdır.</summary>
+    private const int RunStartWarningLineLimit = 3;
+
+    /// <summary>[koşu başı uyarıları · akış seli] <c>runStarted.Warnings</c>'in event stream'e yazılacak Warn satırları:
+    /// en çok <see cref="RunStartWarningLineLimit"/> uyarı varsa her biri ayrı satır (<see cref="RunStartWarning"/> —
+    /// öneksiz); daha çoksa tek özet satırı, <c>{n} run-start warnings — see the console</c> (n uyarıların gerçek sayısı).
+    /// Uyarı yoksa (<c>null</c> ya da boş) satır yoktur. Özet metni YALNIZ burada yazılır.</summary>
+    public static IReadOnlyList<string> RunStartWarningLines(IReadOnlyList<string>? warnings)
+    {
+        if (warnings is null or { Count: 0 }) return [];
+        if (warnings.Count > RunStartWarningLineLimit)
+            return [string.Format(CultureInfo.InvariantCulture, "{0} run-start warnings — see the console", warnings.Count)];
+        return [.. warnings.Select(RunStartWarning)];
+    }
+
     /// <summary>[spec 2026-09-18 §6.2] Commit'in tetiklediği sessiz Sync'in TEK satırı — her zaman yazılır.</summary>
     public const string SyncedAfterCommit = "synced after commit";
 
@@ -167,22 +195,6 @@ public static class StreamText
             "Completed — {0} succeeded · {1} skipped · {2}", succeeded, skipped, dur);
     }
 
-    /// <summary>[Task 6] Bir Build/Rebuild koşusu bitince, döngü üyesi projelerde HÂLÂ bekleyen
-    /// (WillBuild==true) değişiklik varsa kullanıcıya bunu Cycles'ın derleyeceğini hatırlatır — normal Build
-    /// döngü üyelerine dokunmaz, kullanıcı "hata aldım, baktım döngüdeki projeye bağlı" çıkarımını burada
-    /// yapmadan önce ekrandan okur. <c>RunCompletedEvent</c>'in Completed satırından SONRA yayılır
-    /// (<c>RunViewModel.Stream</c>).</summary>
-    public static string CyclesHint(int count) =>
-        string.Format(CultureInfo.InvariantCulture, "{0} cycle projects have pending changes — run Cycles", count);
-
-    /// <summary>[Clean · kullanıcı kararı 2026-09-28] Build menüsünün Clean'i döngü üyelerini de temizledi; düz Build
-    /// bir SCC'yi ASLA derlemez, onu yalnız Resolve cycles derler. Clean biterken (Stop dahil) GERÇEKTEN temizlenen
-    /// üye sayısıyla sırayı hatırlatan TEK bilgi satırı. Düğmenin adı <see cref="AccessibilityNames.ResolveCyclesButton"/>'dan
-    /// okunur — ekrandaki ad değişirse satır da değişir (kopya YASAK).</summary>
-    public static string CleanedCyclesHint(int count) =>
-        string.Format(CultureInfo.InvariantCulture, "{0} cycle projects cleaned — run {1} before Build",
-            count, AccessibilityNames.ResolveCyclesButton);
-
     /// <summary>[cycle rounds/Task 8] Tur göstergesi — <c>CycleRoundStartedEvent</c>'in TEK metin kaynağı:
     /// <c>cycle round {round}/{cap} — {memberCount} members</c>.
     /// <para><b>[DEĞİŞEN KURAL — Task 4]</b> Eski iddia: <c>{leaderName} (+{memberCount-1} more)</c> — tek lider
@@ -193,9 +205,10 @@ public static class StreamText
     public static string CycleRound(int round, int cap, int memberCount) =>
         string.Format(CultureInfo.InvariantCulture, "cycle round {0}/{1} — {2}", round, cap, Counted(memberCount, "member"));
 
-    /// <summary>Sayı + çekimli ad (<c>1 member</c> · <c>2 members</c>) — döngü satırlarının TEK çekim kuralı;
-    /// tekil sayı artık olağan bir durumdur (tek turda biten grup, tek üyeli seçici tur).</summary>
-    private static string Counted(int count, string noun) =>
+    /// <summary>Sayı + çekimli ad (<c>1 member</c> · <c>2 members</c> · <c>1 in-flight compile</c>) — döngü satırlarının ve hard
+    /// stop bitiş satırının (<see cref="RunViewModel.HardStoppedLine"/>) TEK çekim kuralı; tekil sayı olağan bir durumdur
+    /// (tek turda biten grup, tek üyeli seçici tur, tek uçuştaki derleme).</summary>
+    internal static string Counted(int count, string noun) =>
         string.Format(CultureInfo.InvariantCulture, "{0} {1}{2}", count, noun, count == 1 ? "" : "s");
 
     /// <summary>[Task 4] Aktif satırın grup-ilerleme detayı — <c>StreamComposer.StartBuilding</c>'in <c>detail</c>
@@ -211,9 +224,18 @@ public static class StreamText
     /// kararı TEK turda da verir (girdisi oturmuşken patlayan üye aynı girdiyle yine patlar), bu yüzden "iki
     /// kez" olmamış bir şeyi anlatabiliyordu. Satır artık iki kanıt yolunun ORTAK hükmünü söyler: bir deneme
     /// daha aynı biçimde patlar.</para></summary>
-    public static string CycleCompleted(CycleOutcome outcome, int members, int rounds, int failed, long durationMs) =>
+    /// <param name="compiled">[RESOLVE 3.4] Bu koşuda derlenen üye sayısı (taşınan üyeler girmez); -1 = alanı bilmeyen
+    /// eski motor — eski metin.</param>
+    public static string CycleCompleted(CycleOutcome outcome, int members, int rounds, int failed, long durationMs,
+        int compiled = -1) =>
         outcome switch
         {
+            // [RESOLVE 3.4] Motor derlenen sayısını bildiriyorsa satır onu da söyler (tur 1 yalnız gereken üyeleri
+            // derler); bildirmeyen eski motor (compiled < 0) eski metni alır. Üye, derlenen ve tur sayıları virgülle
+            // birleşir (plan metni: "17 members, 1 compiled, 1 round"), süre " · " ile ayrılır.
+            CycleOutcome.Converged when compiled >= 0 => string.Format(CultureInfo.InvariantCulture,
+                "cycle converged — {0}, {1} compiled, {2} · {3}", Counted(members, "member"), compiled,
+                Counted(rounds, "round"), DurationFormat.Duration(durationMs)),
             CycleOutcome.Converged => string.Format(CultureInfo.InvariantCulture,
                 "cycle converged — {0} · {1} · {2}", Counted(members, "member"), Counted(rounds, "round"),
                 DurationFormat.Duration(durationMs)),

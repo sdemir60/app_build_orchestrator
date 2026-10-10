@@ -3,6 +3,7 @@ using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Discovery;
 using BuildOrchestrator.Core.Graph;
+using BuildOrchestrator.Core.Io;
 using BuildOrchestrator.Core.Scheduling;
 
 namespace BuildOrchestrator.Core.Incremental;
@@ -71,7 +72,7 @@ public sealed class IncrementalRunBinder
         // [Task 2] Klasörler de AYNI taramadan (CollectWithFolders) toplanır — ikinci bir yürüyüş yapılmaz.
         var collectedInputs = new ConcurrentDictionary<string, IReadOnlyList<ProjectInput>>(StringComparer.OrdinalIgnoreCase);
         var collectedFolders = new ConcurrentDictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
-        Parallel.ForEach(plan.Nodes, new ParallelOptions { MaxDegreeOfParallelism = 16 }, node =>
+        Parallel.ForEach(plan.Nodes, new ParallelOptions { MaxDegreeOfParallelism = IoParallelism.Degree }, node =>
         {
             var (files, folders) = ProjectInputs.CollectWithFolders(
                 node.Id, evaluatedById.TryGetValue(node.Id, out var ev) ? ev : null, _workspaceRoot);
@@ -102,7 +103,7 @@ public sealed class IncrementalRunBinder
         // paralelleştirilebilir; hesaplanan değer birebir aynıdır, yalnız daha erken ve daha hızlı hazırdır.
         Parallel.ForEach(
             _plan.Nodes,
-            new ParallelOptions { MaxDegreeOfParallelism = 16, CancellationToken = ct },
+            new ParallelOptions { MaxDegreeOfParallelism = IoParallelism.Degree, CancellationToken = ct },
             node => FingerprintOf(node));
 
         return read;
@@ -113,13 +114,16 @@ public sealed class IncrementalRunBinder
     /// karar diskten geldiği için hesaplanamayan bir imza yoktur (bkz. <see cref="IncrementalPlanner"/>).
     /// </summary>
     /// <param name="state">projectId → build-state kaydı (<see cref="BuildOrchestrator.Core.State.BuildStateStore.Load"/>).</param>
-    /// <param name="buildCycles">[Task 11] Bu koşu SCC üyelerini derliyor mu — yalnız <c>RunMode.Cycles</c>.
+    /// <param name="buildCycles">[Task 11] Bu koşu SCC üyelerini derliyor mu —
+    /// <see cref="Planning.CycleCompilation.CompilesCycles"/>; Sync Build'in değerini geçer.
     /// <b>Varsayılanı YOKTUR:</b> her çağıran koşunun kapsamını açıkça yazar, yoksa o yüzeydeki önizleme
     /// motorla ayrışır.</param>
     /// <param name="mode">Safe (dirty + transitive dependent) ya da Fast (yalnız kendi terimi bayatlayanlar).</param>
     /// <param name="outputs">[Faz 3/Task 5] Çıktı kanıtı kontrolleri (<see cref="ChecksFor"/>) — yalnız karara
     /// girer, imzaya ASLA. <c>null</c> ⇒ kanıtsız bağlama (bugünkü karar).</param>
-    public (BuildPlan Plan, IReadOnlyDictionary<string, string> SignatureById) Bind(
+    /// <returns>[RESOLVE Faz 3/Task 3.1] Bağlanmış plan, bileşik imzalar ve SCC üyelerinin kendi terimleri
+    /// (<see cref="IncrementalSignatures"/>; iki öğeli <c>(plan, signatures)</c> ayrıştırması korunur).</returns>
+    public IncrementalSignatures Bind(
         IReadOnlyDictionary<string, BuildState> state, bool buildCycles, DependentMode mode,
         IReadOnlyDictionary<string, OutputCheck>? outputs = null)
     {
@@ -159,7 +163,7 @@ public sealed class IncrementalRunBinder
         }
 
         var checks = new ConcurrentDictionary<string, OutputCheck>(StringComparer.OrdinalIgnoreCase);
-        Parallel.ForEach(_plan.Nodes, new ParallelOptions { MaxDegreeOfParallelism = 16 },
+        Parallel.ForEach(_plan.Nodes, new ParallelOptions { MaxDegreeOfParallelism = IoParallelism.Degree },
             node => checks[node.Id] = CheckOf(node.Id, timeOnly: false));
         return OutputEvidence.ApplyCycleGroups(checks, _plan.Cycles, id => CheckOf(id, timeOnly: true));
     }
@@ -212,7 +216,7 @@ public sealed class IncrementalRunBinder
     /// [Faz 3/Task 4 — spec 2026-09-18 §5.1] Her düğüm için çıktı kanıtı + beslenen aday kopyalar (<see
     /// cref="OutputEvidence.Locate"/>) — ikinci bir hesap YOK, Supervisor başarılı bir derlemeden sonra bunu
     /// okuyup <see cref="OutputEvidence.LearnFedOutputs"/> ile <see cref="Contracts.Model.BuildState.FedOutputs"/>'a
-    /// yazar. Kanıt yolu türetilemeyen (SDK-style, belirsiz OutputPath) düğümler haritada YOKTUR — <see
+    /// yazar. Kanıt yolu türetilemeyen (düzeni oynatılmış SDK-style, belirsiz OutputPath) düğümler haritada YOKTUR — <see
     /// cref="OutputEvidence.Locate"/>'in <c>null</c> dönüşü.
     /// </summary>
     public IReadOnlyDictionary<string, ProjectOutputs> OutputsById => _outputsById ??= ComputeOutputsById();

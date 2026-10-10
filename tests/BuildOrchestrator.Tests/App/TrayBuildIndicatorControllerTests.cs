@@ -52,19 +52,6 @@ public sealed class TrayBuildIndicatorControllerTests
         }
     }
 
-    private sealed class FakeNotifier(Recorder r) : ITrayRunNotifier
-    {
-        public int Count;
-        public RibbonLine? LastLine;
-
-        public void ShowRunFinished(RibbonLine line)
-        {
-            Count++;
-            LastLine = line;
-            r.Log.Add($"Notify:{line.Text}");
-        }
-    }
-
     /// <summary>Şeridin BAŞARILI biten bir satırını taklit eder — statü ayrı bir bayrak değil, satırın kendi
     /// glyph'idir (<c>RibbonText.Compose</c> da öyle yazar).</summary>
     private static RibbonLine Succeeded(string text) => new(text, "Brush.StatusSuccessText", "succeeded");
@@ -78,7 +65,7 @@ public sealed class TrayBuildIndicatorControllerTests
     {
         public readonly Recorder Recorder = new();
         public readonly FakeView View;
-        public readonly FakeNotifier Notifier;
+        public readonly RecordingTrayNotifier Notifier;
         public readonly TrayBuildIndicatorController Controller;
 
         /// <summary>[P3 · Task 4] Controller'ın <c>notificationsOn</c> dikişi — varsayılan AÇIK (üretimin
@@ -86,11 +73,15 @@ public sealed class TrayBuildIndicatorControllerTests
         /// okuma iddiasını sınamak için).</summary>
         public bool NotificationsOn = true;
 
+        /// <summary>[son toparlama B2] Controller'ın <c>currentRun</c> dikişi (üretimde <c>RunViewModel.RunSerial</c>): testler çıkış
+        /// SIRASINDA değiştirip "nefes içinde yeni koşu başladı"yı taklit eder.</summary>
+        public int RunSerial = 1;
+
         public Fixture()
         {
             View = new FakeView(Recorder);
-            Notifier = new FakeNotifier(Recorder);
-            Controller = new TrayBuildIndicatorController(View, Notifier, () => NotificationsOn);
+            Notifier = new RecordingTrayNotifier(Recorder.Log.Add);
+            Controller = new TrayBuildIndicatorController(View, Notifier, () => NotificationsOn, () => RunSerial);
         }
 
         public List<string> Log => Recorder.Log;
@@ -104,6 +95,130 @@ public sealed class TrayBuildIndicatorControllerTests
             Log.Clear();
             return this;
         }
+    }
+
+    /// <summary>Balon çağrısı fırlatan bildirim yüzeyi: OS balonunun gerçek hata biçimi (ör. kapanmış tepsi ikonu).</summary>
+    private sealed class ThrowingNotifier : ITrayRunNotifier
+    {
+        public void ShowRunFinished(RibbonLine line) => throw new InvalidOperationException("balloon failed");
+        public void ShowBuildIgnored(string reason) { }
+    }
+
+    /// <summary>
+    /// [perf Faz C · son toparlama B2] Çıkış bildirimi, çıkışın BAŞLADIĞI andaki koşuya aittir. Nefes sürerken yeni bir koşu
+    /// başlayabilir; bildirim o koşuyu değil, çıkışı başlatan koşuyu taşımalıdır — aksi halde alıcı biten koşunun çıkışını yeni
+    /// koşuya yazar (bellek toplaması yanlış koşuya bağlanır).
+    /// </summary>
+    [Fact]
+    public void The_exit_notice_carries_the_run_that_was_current_when_the_exit_began()
+    {
+        var f = new Fixture().RunningInTray();
+        f.RunSerial = 7;
+        f.Controller.ExitBreath = () =>
+        {
+            f.RunSerial = 8;                               // nefes sürerken yeni koşu başladı
+            f.Controller.SetPhase(AppPhase.Running);
+            return Task.CompletedTask;
+        };
+        var seen = new List<int>();
+        f.Controller.ExitCompleted = run => seen.Add(run);
+
+        f.Controller.SetPhase(AppPhase.Done);              // çıkış başladı: kimlik 7
+        f.View.FinishExit();                               // gizlendi, nefes (yeni koşu), balon, bildirim
+
+        Assert.Equal([7], seen);
+    }
+
+    /// <summary>
+    /// [perf Faz C · son toparlama B2] Balon çağrısının hatası çıkış bildirimini atlatmaz. Alıcı tepside biten koşunun bellek
+    /// toplamasını ister; balon fırlatınca bildirim de gelmezse toplama sessizce kaybolurdu. Hata yutulmaz, gözlem noktasına
+    /// yazılır (sıra: balon → bildirim; iki adım birbirinin hatasından bağımsızdır).
+    /// </summary>
+    [Fact]
+    public void The_exit_notice_still_fires_when_the_balloon_call_throws()
+    {
+        var controller = new TrayBuildIndicatorController(new FakeView(new Recorder()), new ThrowingNotifier(), () => true, () => 1);
+        int notices = 0;
+        controller.ExitCompleted = _ => notices++;
+        controller.SetAnimationsEnabled(false);   // reduced-motion: zincir faz yazımının İÇİNDE eşzamanlı tamamlanır
+        controller.SetTerminalLine(Succeeded("Completed"));
+        controller.SetMainWindowVisible(false);
+        controller.SetPhase(AppPhase.Running);
+
+        controller.SetPhase(AppPhase.Done);       // balon çağrısı fırlatır
+
+        Assert.Equal(1, notices);   // KIRMIZI: balon fırlatınca alıcı atlanıyor, toplama sessizce kayboluyordu
+    }
+
+    // ---------------------------------------------------------------- çıkış bildirimi ([perf Faz C · C4])
+
+    /// <summary>
+    /// [perf Faz C · C-1] <c>ExitCompleted</c> alıcısının hatası sonuç balonunu YUTMAZ. Alıcı (tepside biten koşunun bellek
+    /// toplaması) eskiden balondan ÖNCE, gözlenmeyen bir Task'in içinde koşuyordu: fırlatınca istisna orada kalıyor ve balon
+    /// sessizce kayboluyordu (<c>TrayBalloonProbeTests</c>'in daha önce teşhis ettiği tuzak). Bildirim artık balondan SONRA gelir.
+    /// </summary>
+    [Fact]
+    public void A_throwing_exit_receiver_does_not_swallow_the_run_result_balloon()
+    {
+        var f = new Fixture().RunningInTray();
+        f.Controller.ExitCompleted = _ => throw new InvalidOperationException("receiver failed");
+
+        f.Controller.SetPhase(AppPhase.Done);
+        f.View.FinishExit();
+
+        Assert.Equal(1, f.Notifier.Count);   // KIRMIZI: alıcı balondan önce koşuyor, istisnası balonu yutuyordu
+    }
+
+    /// <summary>
+    /// [perf Faz C · C4] Bitiş koreografisinin tam sırası: çıkış evresi → gizlenme → nefes → balon → çıkış bildirimi
+    /// (<c>ExitCompleted</c>). Bildirim EN SONDA gelir: alıcının işi (bloklayan bellek toplaması) ne çıkış animasyonunu ne balonu
+    /// bekletir.
+    /// </summary>
+    [Fact]
+    public void The_exit_notice_comes_after_the_indicator_hides_and_after_the_balloon()
+    {
+        var f = new Fixture().RunningInTray();
+        f.Controller.ExitBreath = () => { f.Log.Add("Breath"); return Task.CompletedTask; };
+        f.Controller.ExitCompleted = _ => f.Log.Add("ExitCompleted");
+
+        f.Controller.SetPhase(AppPhase.Done);
+        Assert.DoesNotContain("ExitCompleted", f.Log);   // çıkış evresi sürerken bildirim yok
+        f.View.FinishExit();
+
+        Assert.Equal(
+            ["BeginExit", "HideNow", "Breath", "Notify:Completed — 24 succeeded · 9 skipped · 1m 12s", "ExitCompleted"],
+            f.Log);   // KIRMIZI: bildirim gizlenmenin hemen ardından, nefes ve balondan ÖNCE geliyordu
+    }
+
+    /// <summary>[perf Faz C · C4] Reduced-motion'da oynatılacak çıkış evresi yoktur: zincir faz yazımının İÇİNDE, eşzamanlı
+    /// tamamlanır ve sıra aynıdır (gizlenme → balon → bildirim).</summary>
+    [Fact]
+    public void Under_reduced_motion_the_exit_notice_fires_synchronously_after_the_balloon()
+    {
+        var f = new Fixture();
+        f.Controller.SetAnimationsEnabled(false);
+        f.RunningInTray();
+        f.Controller.ExitCompleted = _ => f.Log.Add("ExitCompleted");
+
+        f.Controller.SetPhase(AppPhase.Done);   // FinishExit yok: çıkış evresi oynatılmaz
+
+        Assert.Equal(["HideNow", "Notify:Completed — 24 succeeded · 9 skipped · 1m 12s", "ExitCompleted"], f.Log);
+    }
+
+    /// <summary>[perf Faz C · C4] Pencere çıkış evresi sürerken geri gelirse gösterge anında gizlenir ama çıkışın bildirimi yine
+    /// BİR kez gelir: "pencere gizli mi, koşu bitti mi" kararı alıcıdadır (karakterizasyon pini).</summary>
+    [Fact]
+    public void The_exit_notice_still_fires_once_when_the_window_returns_mid_exit()
+    {
+        var f = new Fixture().RunningInTray();
+        int notices = 0;
+        f.Controller.ExitCompleted = _ => notices++;
+        f.Controller.SetPhase(AppPhase.Done);
+
+        f.Controller.SetMainWindowVisible(true);   // çıkış sürerken pencere geri geldi
+        f.View.FinishExit();
+
+        Assert.Equal(1, notices);
     }
 
     // ---------------------------------------------------------------- görünürlük kuralı
@@ -416,7 +531,7 @@ public sealed class TrayBuildIndicatorControllerTests
     {
         string source = File.ReadAllText(Path.Combine(RepoPaths.AppSrcRoot, "MainWindow.xaml.cs"));
         var wiring = new Regex(
-            @"new TrayBuildIndicatorController\(\s*new LazyOverlayView\(this\), notifier, \(\) => ShellSwitches\.ShowNotifications\(_uiState\.Load\(\)\)\)");
+            @"new TrayBuildIndicatorController\(\s*new LazyOverlayView\(this\), notifier, \(\) => ShellSwitches\.ShowNotifications\(_uiState\.Load\(\)\),\s*(?://[^\n]*\s*)*\(\) => _vm\.RunSerial\)"); // üçüncü (notificationsOn) VE dördüncü (currentRun) argüman
 
         Assert.Single(wiring.Matches(source));
     }

@@ -1,3 +1,4 @@
+using System.Windows.Automation.Peers;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -20,6 +21,9 @@ namespace BuildOrchestrator.App;
 /// </summary>
 public partial class ShellRoot : UserControl
 {
+    /// <summary>UIA rolü — gerekçe ve ölçüm <see cref="UserControlRolePeer"/>'de.</summary>
+    protected override AutomationPeer OnCreateAutomationPeer() => new UserControlRolePeer(this, AutomationControlType.Pane);
+
     // [E5/T46] Proje filtre input'u — PanelHeader.RightContent alt-namescope'unda olduğundan XAML'de adlanamaz;
     // referans RightContent DP'sinden alınır, Esc handler'ı kod-tarafı bağlanır.
     private readonly TextBox _projectFilter;
@@ -65,6 +69,11 @@ public partial class ShellRoot : UserControl
     public ConsoleView ConsoleViewControl => PART_ConsoleView;
     public Views.EventStreamView EventStreamControl => PART_EventStream; // [E4/T48] arbiter kablajı
     public StickyLayerList ProjectsList => PART_Projects;
+    /// <summary>[perf Faz A · A5 test yüzeyi] Sticky şerit — gizli yüzey testleri kalıtsal sinyalin GERÇEK ağaçta şeride
+    /// ulaştığını buradan sınar (<see cref="EventStreamControl"/> deseni).</summary>
+    public Views.StickyRibbon Ribbon => PART_Ribbon;
+    /// <summary>[perf Faz A · A5 test yüzeyi] Build menüsü — ActionBar'ın popup'ı içinde durur; kalıtsal sinyal oraya da inmelidir.</summary>
+    public Views.BuildMenu BuildMenuControl => PART_ActionBar.BuildMenuControl;
 
     // ---- [E5/T46] Klavye kısayolları: filtre odağı (Ctrl+F) + popover Esc katmanı (MainWindow'un Esc zinciri) ----
     /// <summary>[test yüzeyi] Proje filtre input'u (Ctrl+F bunu odaklar; içindeki Esc yereldir).</summary>

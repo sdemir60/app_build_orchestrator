@@ -4,16 +4,17 @@ using CommunityToolkit.Mvvm.ComponentModel;
 namespace BuildOrchestrator.App.ViewModels;
 
 /// <summary>[design v1.19.0 §2.9] Settings → General sayfasının anahtarları.
-/// <para>Altı anahtarın hepsi gerçektir. <see cref="PullBeforeBuild"/>
-/// (<see cref="SettingsDraftViewModel.PullExternalsBeforeBuild"/>) ve <see cref="StashOnBranchSwitch"/>
-/// (<see cref="SettingsDraftViewModel.StashOnBranchSwitch"/>) motora giden iş akışı tercihleridir; kalan dördü kabuk
+/// <para>Yedi anahtarın hepsi gerçektir. <see cref="PullBeforeBuild"/>
+/// (<see cref="SettingsDraftViewModel.PullExternalsBeforeBuild"/>), <see cref="StashOnBranchSwitch"/>
+/// (<see cref="SettingsDraftViewModel.StashOnBranchSwitch"/>) ve <see cref="ResolveAtFullPriority"/>
+/// (<see cref="SettingsDraftViewModel.ResolveAtFullPriority"/>) motora giden iş akışı tercihleridir; kalan dördü kabuk
 /// anahtarıdır ve <see cref="ShellSwitches"/> tablosu üzerinden kalıcıdır: Save'de yazılır, diyalog kayıtlı değeri
 /// gösterir, Export/Import taşır, değişince konsola not düşer.</para>
 /// <para><b>[DEĞİŞEN KURAL — P3 2026-09-28 · P4 2026-09-29, kullanıcı kararları]</b> ESKİ: dört kabuk anahtarı
 /// (<see cref="StartWithWindows"/>, <see cref="StartMinimizedToTray"/>, <see cref="CloseToTray"/>,
 /// <see cref="ShowNotifications"/>) yalnız diyalog taslağında yaşardı — kaydedilmez, dosyaya yazılmaz, hiçbir davranışı
 /// sürmezdi. Artık Windows ile başlama, Windows ile açılışta tepside başlama, pencere kapanışı
-/// (<c>MainWindow.OnClosing</c>) ve üç tray-balloon yolu bu değerleri okur.</para></summary>
+/// (<c>MainWindow.OnClosing</c>) ve dört tray-balloon yolu bu değerleri okur.</para></summary>
 public enum GeneralSetting
 {
     /// <summary>[P4] Kalıcı kabuk anahtarı (<see cref="ShellSwitches.StartWithWindows"/>) — Windows'un başlangıç
@@ -33,6 +34,9 @@ public enum GeneralSetting
     /// <summary>Gerçek bayrak: <see cref="SettingsDraftViewModel.StashOnBranchSwitch"/> — branch chip'inden
     /// checkout'ta kirli ağaç stash'lenip geçilsin mi (spec 2026-09-18 §6.3).</summary>
     StashOnBranchSwitch,
+    /// <summary>[RESOLVE Faz 4 / karar 11] Gerçek bayrak: <see cref="SettingsDraftViewModel.ResolveAtFullPriority"/> —
+    /// Resolve cycles koşusu profilin işçi sayısıyla ama cap'siz ve Normal öncelikte mi koşsun.</summary>
+    ResolveAtFullPriority,
 }
 
 /// <summary>General sayfasındaki tek bir ayar satırının tanımı (prototip <c>GENERAL_GROUPS</c> satırı).</summary>
@@ -71,6 +75,10 @@ public static class GeneralSettingsCatalog
             new(GeneralSetting.PullBeforeBuild, "Pull before build",
                 "Update every external working copy first — a fast-forward-only git pull, one per copy.", Default: true,
                 AutomationName: AccessibilityNames.PullExternalsBeforeBuild),
+            new(GeneralSetting.ResolveAtFullPriority, "Resolve cycles at full priority",
+                "Resolve cycles runs at normal priority with no CPU cap, whatever the performance mode — it finishes "
+                + "sooner on a busy machine, but other apps may slow down while it runs. Off: it follows the performance mode.",
+                Default: true),
         ]),
         new("BRANCHES",
         [
@@ -81,7 +89,8 @@ public static class GeneralSettingsCatalog
         new("NOTIFICATIONS",
         [
             new(GeneralSetting.ShowNotifications, "Show notifications",
-                "A tray notification when a build finishes — succeeded or failed.", Default: true),
+                "Tray notifications: a build's result, the first close to the tray, a Build shortcut that could not start, "
+                + "and a second launch that could not bring the window forward.", Default: true),
         ]),
     ];
 

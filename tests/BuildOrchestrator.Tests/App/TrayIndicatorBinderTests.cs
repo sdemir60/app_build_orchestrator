@@ -49,18 +49,6 @@ public sealed class TrayIndicatorBinderTests
         }
     }
 
-    private sealed class SpyNotifier : ITrayRunNotifier
-    {
-        public int Count;
-        public RibbonLine? LastLine;
-
-        public void ShowRunFinished(RibbonLine line)
-        {
-            Count++;
-            LastLine = line;
-        }
-    }
-
     private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
 
     private static RunViewModel NewVm() =>
@@ -69,12 +57,12 @@ public sealed class TrayIndicatorBinderTests
 
     /// <summary>Bağlanmış bir üçlü: VM + controller + iki casus. Pencere TEPSİDE (gizli) kabul edilir —
     /// göstergenin var olma koşulunun yarısı budur.</summary>
-    private static (RunViewModel Vm, SpyView View, SpyNotifier Notifier, TrayBuildIndicatorController Controller) Bound()
+    private static (RunViewModel Vm, SpyView View, RecordingTrayNotifier Notifier, TrayBuildIndicatorController Controller) Bound()
     {
         var vm = NewVm();
         var view = new SpyView();
-        var notifier = new SpyNotifier();
-        var controller = new TrayBuildIndicatorController(view, notifier, () => true);
+        var notifier = new RecordingTrayNotifier();
+        var controller = new TrayBuildIndicatorController(view, notifier, () => true, () => 1);
         controller.SetMainWindowVisible(false);
         TrayIndicatorBinder.Attach(vm, controller);
         return (vm, view, notifier, controller);
@@ -109,8 +97,8 @@ public sealed class TrayIndicatorBinderTests
     {
         var (vm, view, notifier, _) = Bound();
         StartRun(vm);
-        vm.OnEvent(new ProjectSucceededEvent("r1", MainWindowHost.IdOf("A"), 10));
-        vm.OnEvent(new ProjectSucceededEvent("r1", MainWindowHost.IdOf("B"), 12));
+        MainWindowHost.SucceedProject(vm, "A", 10);
+        MainWindowHost.SucceedProject(vm, "B", 12);
 
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 2, 0, 0, 0, 1234, 0));
         view.FinishExit();
@@ -135,7 +123,7 @@ public sealed class TrayIndicatorBinderTests
         var (vm, view, notifier, _) = Bound();
         StartRun(vm);
         vm.OnEvent(new ProjectFailedEvent("r1", MainWindowHost.IdOf("A"), 10, "compile error"));
-        vm.OnEvent(new ProjectSucceededEvent("r1", MainWindowHost.IdOf("B"), 12));
+        MainWindowHost.SucceedProject(vm, "B", 12);
 
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 1, 0, 0, 1234, 0));
         view.FinishExit();
@@ -152,11 +140,11 @@ public sealed class TrayIndicatorBinderTests
     {
         var (vm, view, notifier, _) = Bound();
         StartRun(vm);
-        vm.OnEvent(new ProjectSucceededEvent("r1", MainWindowHost.IdOf("A"), 10));
+        MainWindowHost.SucceedProject(vm, "A", 10);
         // B UÇUŞTA kalır: Stop anında derlenmekteydi ve sonucu hiç gelmedi. Bu satır önemlidir — koşu
         // serbest bırakılınca (IsRunning=false) o satır "derlenen"den "derlenmemiş"e geçer ve bu geçiş
         // fazdan SONRA yayınlanır.
-        vm.OnEvent(new ProjectStartedEvent("r1", MainWindowHost.IdOf("B"), "B"));
+        MainWindowHost.StartProject(vm, "B");
 
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 1, 0, 0, 1, 900, 0));
         view.FinishExit();
@@ -201,7 +189,7 @@ public sealed class TrayIndicatorBinderTests
     {
         var vm = NewVm();
         var view = new SpyView();
-        var controller = new TrayBuildIndicatorController(view, new SpyNotifier(), () => true);
+        var controller = new TrayBuildIndicatorController(view, new RecordingTrayNotifier(), () => true, () => 1);
         TrayIndicatorBinder.Attach(vm, controller);   // pencere GÖRÜNÜR (varsayılan)
 
         StartRun(vm);

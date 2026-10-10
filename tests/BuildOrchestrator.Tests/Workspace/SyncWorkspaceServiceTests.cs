@@ -42,26 +42,59 @@ public class SyncWorkspaceServiceTests
     /// taramasıyla bulur — bkz. [Task 6]).</summary>
     private static void WriteWorkspace(GitTestRepo repo, bool includeC = false)
     {
-        repo.WriteFile(Path.Combine("src", "A", "A.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><AssemblyName>A</AssemblyName>"
-            + "<TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
-        repo.WriteFile(Path.Combine("src", "A", "A.cs"), "public class A { }");
-        repo.WriteFile(Path.Combine("src", "B", "B.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><AssemblyName>B</AssemblyName>"
-            + "<TargetFramework>net10.0</TargetFramework></PropertyGroup>"
-            + "<ItemGroup><ProjectReference Include=\"..\\A\\A.csproj\" /></ItemGroup></Project>");
-        repo.WriteFile(Path.Combine("src", "B", "B.cs"), "public class B { }");
-        repo.WriteFile(SlnName,
-            "Project(\"{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}\") = \"A\", \"src\\A\\A.csproj\", \"{1}\"\nEndProject\n"
-            + "Project(\"{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}\") = \"B\", \"src\\B\\B.csproj\", \"{2}\"\nEndProject\n");
-
-        if (!includeC) return;
-        repo.WriteFile(Path.Combine("src", "C", "C.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><AssemblyName>C</AssemblyName>"
-            + "<TargetFramework>net10.0</TargetFramework></PropertyGroup>"
-            + "<ItemGroup><ProjectReference Include=\"..\\B\\B.csproj\" /></ItemGroup></Project>");
-        repo.WriteFile(Path.Combine("src", "C", "C.cs"), "public class C { }");
+        WriteSdkProject(repo, "A");
+        WriteSdkProject(repo, "B", "A");
+        WriteSln(repo, "A", "B");
+        if (includeC) WriteSdkProject(repo, "C", "B");
     }
+
+    /// <summary>A ↔ B: iki SDK-style proje birbirine <c>ProjectReference</c> verir — tek SCC. <see cref="WriteWorkspace"/>
+    /// ile aynı üslup; tek farkı A'nın B'ye de referans vermesi.</summary>
+    private static void WriteCycleWorkspace(GitTestRepo repo)
+    {
+        WriteSdkProject(repo, "A", "B");
+        WriteSdkProject(repo, "B", "A");
+        WriteSln(repo, "A", "B");
+    }
+
+    /// <summary>R (kök) ve ona bağlı A ↔ B döngüsü: A, R ile B'ye; B, A ile R'ye <c>ProjectReference</c> verir.
+    /// <see cref="WriteCycleWorkspace"/> ile aynı üslup; döngünün dışında bir kök taşır.</summary>
+    private static void WriteRootedCycleWorkspace(GitTestRepo repo)
+    {
+        WriteSdkProject(repo, "R");
+        WriteSdkProject(repo, "A", "B", "R");
+        WriteSdkProject(repo, "B", "A", "R");
+    }
+
+    /// <summary>Tek SDK-style proje: <c>src\{name}\{name}.csproj</c> (sırayla verilen projelere <c>ProjectReference</c>)
+    /// ve bir sınıf dosyası. Bu sınıfın çalışma alanı fixture'ları projelerini buradan yazar (kopya YASAK).
+    /// <para><b>[DEĞİŞEN KURAL — A1 · kullanıcı kararı 2026-10-09]</b> Proje bilerek KANITSIZDIR
+    /// (<see cref="SdkFixture.EvidenceNeutralLayout"/>): bu sınıfın SDK testleri imza ve içerik kararını sınar ve diske çıktı
+    /// yazmaz. Eski hâl: düz SDK-style projeydi, çünkü SDK-style proje kanıtsız sayılırdı. Değişme gerekçesi (ölçüm 2026-10-09,
+    /// surface-gate-measurement): varsayılan düzenli SDK projesi artık çıktı yolu alır ve kanıt mekanizmasına girer — kaydı olup
+    /// çıktısı olmayan proje <c>output missing</c> okurdu. Varsayılan düzen <see cref="WriteSdkProjectWithLayout"/> ile
+    /// yazılır.</para></summary>
+    private static void WriteSdkProject(GitTestRepo repo, string name, params string[] references) =>
+        WriteSdkProjectWithLayout(repo, name, SdkFixture.EvidenceNeutralLayout, references);
+
+    /// <summary><see cref="WriteSdkProject"/>'in gövdesi; <paramref name="layout"/> PropertyGroup'a eklenir — boş ⇒ SDK'nın
+    /// varsayılan düzeni, çıktı yolu <c>bin\Debug\net10.0\{name}.dll</c> türetilir.</summary>
+    private static void WriteSdkProjectWithLayout(GitTestRepo repo, string name, string layout, params string[] references)
+    {
+        string items = references.Length == 0
+            ? ""
+            : "<ItemGroup>" + string.Concat(references.Select(r => $"<ProjectReference Include=\"..\\{r}\\{r}.csproj\" />"))
+              + "</ItemGroup>";
+        repo.WriteFile(Path.Combine("src", name, name + ".csproj"),
+            $"<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><AssemblyName>{name}</AssemblyName>"
+            + "<TargetFramework>net10.0</TargetFramework>" + layout + "</PropertyGroup>" + items + "</Project>");
+        repo.WriteFile(Path.Combine("src", name, name + ".cs"), $"public class {name} {{ }}");
+    }
+
+    /// <summary>Verilen projeleri (bu sırayla) içeren <see cref="SlnName"/>.</summary>
+    private static void WriteSln(GitTestRepo repo, params string[] names) =>
+        repo.WriteFile(SlnName, string.Concat(names.Select((n, i) =>
+            $"Project(\"{{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}}\") = \"{n}\", \"src\\{n}\\{n}.csproj\", \"{{{i + 1}}}\"\nEndProject\n")));
 
     /// <summary>İzole bir cache kökü — kullanıcının GERÇEK evaluation-cache/build-state dosyaları ASLA kirletilmez.</summary>
     private static string NewCacheRoot() => Directory.CreateTempSubdirectory("bo-sync-cache-").FullName;
@@ -608,6 +641,52 @@ public class SyncWorkspaceServiceTests
         Assert.Equal(1, done.UpToDateCount); // DEĞİŞEN KURAL — B bekliyor ama güncel sayılır, ne de olsa ikisi ARASINDA kaybolmaz
     }
 
+    /// <summary>[ara inceleme I2 — Build cycle derler] Sync önizlemesi bir sonraki düz Build'in cevabıdır ve
+    /// <c>Conditional</c> da AYNI soruyu sorar. Kusur (I2): Sync grup üyeliğini sormuyordu (<c>cycleGroupMember: false</c>);
+    /// bekleyen üye Sync'te koşullu, koşunun kendi önizlemesinde koşulsuzdu — Build tıklanınca satır bir karede kuyruğa
+    /// sıçrıyordu. Sync ile koşu koşullu kümeyi artık aynı fonksiyondan, aynı grup haritasıyla alır
+    /// (<c>ConditionalRebuild.ConditionalIds</c>, <c>CycleCompilation.GroupsFor</c>).
+    /// <para><b>[DEĞİŞEN KURAL — final review M-2]</b> Eski iddia: bekleyen üye koşullu DEĞİLDİR ve "N to build" onu sayar
+    /// (<c>ToBuildCount == 3</c>). Kusur: grubun tamamı yalnız kökünü beklerken koşu grubu dispatch anında
+    /// <c>dependency still failing</c> ile atlayabilir — Sync'in "derlenecek" sözü tutulmuyordu, sıradan bekleyen proje
+    /// ise bu sözü hiç vermez. Üye artık grubuyla birlikte koşulludur; kesin derlenecek yalnız R'dir.</para></summary>
+    [Fact]
+    public async Task A_cycle_group_waiting_only_for_a_failed_root_is_conditional_in_the_sync_preview()
+    {
+        using var origin = new GitTestRepo();
+        WriteRootedCycleWorkspace(origin);
+        origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
+        string cloneRoot = origin.CloneFull();
+        string cacheRoot = NewCacheRoot();
+
+        await PrimeBuildStateAsUpToDateAsync(cloneRoot, cacheRoot);
+        string IdOf(string name) => Path.Combine(cloneRoot, "src", name, name + ".csproj");
+        var store = new BuildStateStore(cacheRoot);
+        var primed = store.Load();
+        // R kendi (bugünkü) imzasında patladı; A ve B ona rağmen derlendi ve R'yi kök olarak not etti.
+        store.Upsert(primed[IdOf("R")] with { LastResult = BuildResult.Failed, FailedSignature = primed[IdOf("R")].BuiltSignature });
+        foreach (string member in new[] { "A", "B" })
+            store.Upsert(primed[IdOf(member)] with { DepIssue = true, DepIssueRoots = [IdOf("R")] });
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, cacheRoot)
+            .RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add, CancellationToken.None);
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        foreach (string member in new[] { "A", "B" })
+        {
+            var item = Assert.Single(preview.Items, i => i.Name == member);
+            Assert.Equal(WillBuildReason.WaitingForDependency, item.Reason);
+            Assert.True(item.WillBuild);
+            Assert.True(item.Conditional); // grubuyla birlikte koşullu — koşunun önizlemesiyle AYNI küme
+        }
+        var done = Assert.Single(events.OfType<SyncCompletedEvent>());
+        Assert.Equal(1, done.CycleCount);
+        Assert.Equal(1, done.ToBuildCount);   // yalnız R kesin; A ve B grubun dispatch kararına bağlı
+        Assert.Equal(2, done.UpToDateCount);  // bekleyen, sıradan bekleyen proje gibi güncel sayılır
+    }
+
     /// <summary>
     /// [Task 3] Önizlemenin <c>FailedAt</c> alanı <see cref="BuildStateStore.FailedAtOf"/>'un AYNI defterden
     /// okuduğu değeri taşır — <c>BuiltCommit</c>/<c>LastBuiltAt</c> ile aynı desen (W1). A kendi ANINDAki
@@ -982,6 +1061,35 @@ public class SyncWorkspaceServiceTests
     }
 
     /// <summary>
+    /// <b>[DEĞİŞEN KURAL — Build cycle derler]</b> Sync'in önizlemesi bir sonraki DÜZ Build'i anlatır. Eski iddia: düz
+    /// Build bir SCC'yi asla derlemediği için kapı sabit KAPALIYDI (<c>buildCycles: false</c>) ve cycle üyesi her
+    /// zaman <c>WillBuild=false</c> gelirdi — idle will-dot hiç yanmaz, "N to build" üyeyi saymazdı.
+    /// Değişme gerekçesi (ölçüm, 2026-10-07 13:17 koşusu): pull ile değişen iki Types cycle üyesi Build'de atlandı,
+    /// bağımlıları paylaşılan klasördeki eski DLL'e karşı derlenip CS1061 verdi; satırda ve logda sebep görünmedi.
+    /// Build artık kirli grupları derler (ARCHITECTURE §8.1); kapı <see cref="CycleCompilation"/>'dan okunur.
+    /// </summary>
+    [Fact]
+    public async Task A_dirty_cycle_member_reads_will_build_in_the_sync_preview()
+    {
+        using var repo = new GitTestRepo();
+        WriteCycleWorkspace(repo);
+        repo.CommitAll("cycle");
+        string cacheRoot = NewCacheRoot();
+
+        var events = await SyncWithoutFetchAsync(repo, cacheRoot);
+
+        var topology = Assert.Single(events.OfType<WorkspaceTopologyEvent>());
+        Assert.Single(topology.Cycles);                                   // A ↔ B gerçekten bir SCC
+        Assert.All(topology.Nodes, n => Assert.True(n.InCycle));
+        Assert.All(topology.Nodes, n => Assert.True(n.WillBuild));        // hiç derlenmemiş → derlenecek
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        Assert.All(preview.Items, i => Assert.True(i.WillBuild));
+        var done = Assert.IsType<SyncCompletedEvent>(events[^1]);
+        Assert.Equal(1, done.CycleCount);
+        Assert.Equal(2, done.ToBuildCount);
+    }
+
+    /// <summary>
     /// [spec 2026-09-18 §5.3] Aracın kendisinin derlediği (kaydı güncel, <c>LastRunAt</c> dolu) ama derleme
     /// kanıtı diskten silinmiş proje defter kipindedir ve <see cref="WillBuildReason.OutputMissing"/> ile
     /// derlenir. Eski karar yalnız imzaya bakıp <c>UpToDate</c> derdi — çıktısı olmayan bir projeyi atlardı.
@@ -1007,14 +1115,21 @@ public class SyncWorkspaceServiceTests
     }
 
     /// <summary>
-    /// [spec 2026-09-18 §5.2 "kanıtsız"] Derleme kanıtının yolu türetilemeyen proje (SDK-style) bugünkü kararla
-    /// karar verir: diskte ondan yeni bir DLL dursa bile hiç derlenmemiş sayılır (<c>NeverBuilt</c>), yaşı
-    /// taşınmaz ve "changed" sayılır. Kanıt yalnız yolu bilinen projelere kredi verir.
+    /// [spec 2026-09-18 §5.2 "kanıtsız"] Derleme kanıtının yolu türetilemeyen proje (düzeni oynatılmış SDK-style) bugünkü
+    /// kararla karar verir: diskte ondan yeni bir DLL dursa bile hiç derlenmemiş sayılır (<c>NeverBuilt</c>), yaşı
+    /// taşınmaz ve "changed" sayılır. Kanıt yalnız yolu bilinen projelere kredi verir — DLL, MSBuild'in o düzende yazacağı
+    /// yerde (<c>bin\Debug\A.dll</c>) dursa bile yol yaklaşık türetilmez.
     /// <para><b>[DEĞİŞEN KURAL — Task 9 fix round 2, kullanıcı kararı I1]</b> Eski iddia
     /// <c>OwnFilesChanged == true</c> idi (defter kipinde cevap Fast geçişinden geliyordu). Cevap artık koşu
     /// önizlemesiyle aynı kaynaktan, defterdeki içerik özetinden gelir; kaydı olmayan projede özet yoktur ve cevap
     /// <c>null</c>dır (bilinmiyor — etiket zaten <c>never built</c>). "N changed" sayacı Fast semantiğinde kalır
     /// (ruling R9), iki proje orada sayılmaya devam eder.</para>
+    /// <para><b>[DEĞİŞEN KURAL — A1 · kullanıcı kararı 2026-10-09]</b> Eski iddia: SDK-style proje kanıtsızdır — DLL SDK'nın
+    /// varsayılan yolunda (<c>bin\Debug\net10.0\A.dll</c>) dursa bile kredi verilmez. Değişme gerekçesi (ölçüm 2026-10-09,
+    /// surface-gate-measurement: OSYS'in SDK-style PRM projeleri yüzey kapısını kör ediyordu): varsayılan düzenli SDK projesi
+    /// artık sıradan projedir ve o DLL'den kredi alır
+    /// (<see cref="An_sdk_style_project_with_the_default_layout_is_credited_like_any_other"/>); kanıtsızlık düzeni oynatılmış
+    /// projenin hâlidir (fixture: <see cref="SdkFixture.EvidenceNeutralLayout"/>).</para>
     /// </summary>
     [Fact]
     public async Task A_project_without_derivable_output_is_decided_as_today()
@@ -1022,7 +1137,7 @@ public class SyncWorkspaceServiceTests
         using var repo = new GitTestRepo();
         WriteWorkspace(repo);
         repo.CommitAll("c1");
-        string dll = Path.Combine(repo.RootPath, "src", "A", "bin", "Debug", "net10.0", "A.dll");
+        string dll = Path.Combine(repo.RootPath, "src", "A", "bin", "Debug", "A.dll");
         Directory.CreateDirectory(Path.GetDirectoryName(dll)!);
         File.WriteAllBytes(dll, new byte[16]);
         EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"), [dll]);
@@ -1037,6 +1152,35 @@ public class SyncWorkspaceServiceTests
         });
         var done = Assert.Single(events.OfType<SyncCompletedEvent>());
         Assert.Equal((2, 2, 0), (done.ChangedCount, done.ToBuildCount, done.UpToDateCount));
+    }
+
+    /// <summary>
+    /// [A1 · A4 — kullanıcı kararı 2026-10-09] Varsayılan düzenli SDK-style proje sıradan projedir: çıktısı SDK'nın varsayılan
+    /// yolunda (<c>bin\Debug\net10.0\A.dll</c>) ve girdilerinden yeniyse, aracın kaydı olmasa da başka bir derlemenin güncel
+    /// çıktısıdır (<c>BuiltOutside</c>, derlenmez); çıktısı diskte olmayan B <c>output missing</c> okur. İkisi de yalnız yolu
+    /// türetilen projede mümkündür — kanıtsız proje ikisinde de <c>never built</c> derdi
+    /// (<see cref="A_project_without_derivable_output_is_decided_as_today"/>).
+    /// </summary>
+    [Fact]
+    public async Task An_sdk_style_project_with_the_default_layout_is_credited_like_any_other()
+    {
+        using var repo = new GitTestRepo();
+        WriteSdkProjectWithLayout(repo, "A", layout: "");
+        WriteSdkProjectWithLayout(repo, "B", layout: "", "A");
+        repo.CommitAll("c1");
+        string dll = Path.Combine(repo.RootPath, "src", "A", "bin", "Debug", "net10.0", "A.dll");
+        Directory.CreateDirectory(Path.GetDirectoryName(dll)!);
+        File.WriteAllBytes(dll, new byte[16]);
+        EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"), [dll]);
+
+        var events = await SyncWithoutFetchAsync(repo, NewCacheRoot());
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        var a = Assert.Single(preview.Items, i => i.Name == "A");
+        var b = Assert.Single(preview.Items, i => i.Name == "B");
+        Assert.Equal((false, WillBuildReason.BuiltOutside), (a.WillBuild, a.Reason));
+        Assert.NotNull(a.OutputBuiltAt);
+        Assert.Equal((true, WillBuildReason.OutputMissing), (b.WillBuild, b.Reason));
     }
 
     /// <summary>
@@ -1271,18 +1415,24 @@ public class SyncWorkspaceServiceTests
     }
 
     /// <summary>
-    /// [Task 5 — rehber madde 33'ün çıkarımı, durum (e)] SDK-style projede <c>OutputFileFor</c> HER ZAMAN
-    /// <c>null</c>'dur (<c>CsprojEvaluator.IsSdkStyle</c> ⇒ kanıtsız) — Clean'in bin'i gerçekten silmiş olması
-    /// kararı DEĞİŞTİRMEZ, çünkü zaman yolu hiç yoktu. Kanıtsız projede bugünkü karar hep <c>NeverBuilt</c>'tir;
-    /// bu senaryonun tek konusu Clean'in de bu kararı bozmadığıdır.
+    /// [Task 5 — rehber madde 33'ün çıkarımı, durum (e)] Çıktı yolu türetilemeyen projede (düzeni oynatılmış SDK-style)
+    /// <c>OutputFileFor</c> <c>null</c>'dur — Clean'in bin'i gerçekten silmiş olması kararı DEĞİŞTİRMEZ, çünkü zaman yolu hiç
+    /// yoktu. Kanıtsız projede bugünkü karar hep <c>NeverBuilt</c>'tir; bu senaryonun tek konusu Clean'in de bu kararı
+    /// bozmadığıdır.
+    /// <para><b>[DEĞİŞEN KURAL — A1 · kullanıcı kararı 2026-10-09]</b> Eski ad/iddia:
+    /// <c>An_sdk_style_project_reads_never_built_after_clean_with_no_derivable_output_path</c> — SDK-style projede
+    /// <c>OutputFileFor</c> HER ZAMAN <c>null</c>'dur (<c>IsSdkStyle</c> ⇒ kanıtsız). Değişme gerekçesi (ölçüm 2026-10-09,
+    /// surface-gate-measurement): varsayılan düzenli SDK projesi artık çıktı yolu alır, silinmiş bin'i <c>output missing</c>
+    /// okur (<see cref="An_sdk_style_project_with_the_default_layout_is_credited_like_any_other"/>'daki B); kanıtsızlık düzeni
+    /// oynatılmış projenin hâlidir (<see cref="SdkFixture.EvidenceNeutralLayout"/>, DLL o düzenin yazacağı yerde).</para>
     /// </summary>
     [Fact]
-    public async Task An_sdk_style_project_reads_never_built_after_clean_with_no_derivable_output_path()
+    public async Task A_project_without_derivable_output_reads_never_built_after_clean()
     {
         using var repo = new GitTestRepo();
         WriteWorkspace(repo);
         repo.CommitAll("c1");
-        string dll = Path.Combine(repo.RootPath, "src", "A", "bin", "Debug", "net10.0", "A.dll");
+        string dll = Path.Combine(repo.RootPath, "src", "A", "bin", "Debug", "A.dll");
         Directory.CreateDirectory(Path.GetDirectoryName(dll)!);
         File.WriteAllBytes(dll, new byte[16]);
         EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"), [dll]);

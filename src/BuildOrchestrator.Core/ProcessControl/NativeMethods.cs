@@ -9,6 +9,26 @@ namespace BuildOrchestrator.Core.ProcessControl;
 /// </summary>
 internal static class NativeMethods
 {
+    // [PERF Faz D / karar 10] Boş fiziksel bellek için TEK okuma yolu (MachineResources). Yapı Win32'nin
+    // MEMORYSTATUSEX'idir; çağıran dwLength'i doldurmak ZORUNDADIR.
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MemoryStatusEx
+    {
+        public uint dwLength;
+        public uint dwMemoryLoad;
+        public ulong ullTotalPhys;
+        public ulong ullAvailPhys;
+        public ulong ullTotalPageFile;
+        public ulong ullAvailPageFile;
+        public ulong ullTotalVirtual;
+        public ulong ullAvailVirtual;
+        public ulong ullAvailExtendedVirtual;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GlobalMemoryStatusEx(ref MemoryStatusEx buffer);
+
     public const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
     // [T20-a/K11] Priority, KILL_ON_JOB_CLOSE ile AYNI struct'ta (JOBOBJECT_EXTENDED_LIMIT_INFORMATION) yaşar —
     // LimitFlags üzerine körlemesine yazan her çağrı §3 kaskat garantisini siler (bkz. JobObject.SetPriorityClass).

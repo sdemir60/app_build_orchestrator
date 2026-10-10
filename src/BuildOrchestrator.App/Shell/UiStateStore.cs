@@ -106,6 +106,11 @@ public sealed class UiState
     /// sıfırlamasın); yok ⇒ kapalı (MainWindow seed'i).</summary>
     public bool? StashOnBranchSwitch { get; set; }
 
+    /// <summary>[RESOLVE Faz 4 / karar 11] Settings → General → <c>Resolve cycles at full priority</c>.
+    /// <see cref="UpdateExternals"/> ile AYNI gerekçeyle NULLABLE; yok ⇒ AÇIK (MainWindow seed'i) — anahtarı taşımayan
+    /// eski bir dosya onaylanmış varsayılanı alır.</summary>
+    public bool? ResolveAtFullPriority { get; set; }
+
     /// <summary>[P4] Settings → General → STARTUP → <c>Start with Windows</c>: uygulamanın tercihi — Windows oturumu
     /// açılınca başlasın mı. Her açılış bu tercihi Windows'un başlangıç kaydıyla hizalar
     /// (<see cref="Services.AutostartService.Apply"/>); Save kaydı anında yazar. <see cref="UpdateExternals"/> ile AYNI
@@ -128,9 +133,10 @@ public sealed class UiState
     public bool? CloseToTray { get; set; }
 
     /// <summary>[P3] Settings → General → NOTIFICATIONS → <c>Show notifications</c>: tepsinin OS balonları gösterilsin
-    /// mi — koşu bitişi, ilk-× bilgilendirmesi ve ikinci-instance uyarısı; kapalıyken hiçbiri gösterilmez.
+    /// mi — koşu bitişi, ilk-× bilgilendirmesi, ikinci-instance uyarısı ve yok sayılan Build kısayolunun notu;
+    /// kapalıyken hiçbiri gösterilmez.
     /// <see cref="Autostart"/> ile AYNI gerekçeyle NULLABLE; yok ⇒ katalog varsayılanı (açık). Okuma yalnız
-    /// <see cref="ShellSwitches.ShowNotifications"/> üzerindendir; kararı üç balon yolu verir.</summary>
+    /// <see cref="ShellSwitches.ShowNotifications"/> üzerindendir; kararı dört balon yolu verir.</summary>
     public bool? ShowNotifications { get; set; }
 }
 

@@ -1,5 +1,6 @@
 ﻿using System.ComponentModel;
 using System.Globalization;
+using System.Windows.Automation.Peers;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -31,6 +32,9 @@ namespace BuildOrchestrator.App.Views;
 /// </summary>
 public partial class ActionBar : UserControl
 {
+    /// <summary>UIA rolü — gerekçe ve ölçüm <see cref="UserControlRolePeer"/>'de.</summary>
+    protected override AutomationPeer OnCreateAutomationPeer() => new UserControlRolePeer(this, AutomationControlType.ToolBar);
+
     private const double ChipIconSize = 12;     // BuildApp.jsx:1553 sayaç chip ikonları 12px
     private const double LabelIconSize = 14;    // branch/tree/sync/stop/play ikonları ~14px
     private const double ChevronSize = 12;
@@ -83,6 +87,24 @@ public partial class ActionBar : UserControl
         // olmaz (WPF disabled öğeleri hit-test'ten dışlar). ActionBar.xaml'in onu saran HER ZAMAN etkin
         // Border'ı gerçek hover sinyalini taşır (bkz. DsChrome.IsHoverProxyProperty'nin XML doc'u).
         DsChrome.WireHoverProxy((Border)PART_Sync.Parent, PART_Sync);
+    }
+
+    /// <summary>[perf Faz A · A9] Yüzey gizliyken sayaç chip'leri modele dokunmaz: <c>Counters</c>/<c>ActiveFilters</c> bildirimleri
+    /// yalnız "chip'ler modelin gerisinde" bayrağını kaldırır (değerler ve building ikonu yazılmaz; yazılsalardı her proje olayı bir
+    /// layout geçişi çıkarırdı). Bayrağı chip'lerin tam kurulumu (<see cref="RefreshChips"/>) düşürür: <c>Loaded</c> ve DataContext
+    /// değişimi de aynı kurulumu yaptığı için dönüş onu ikinci kez koşmaz.</summary>
+    private bool _chipsStaleWhileHidden;
+
+    /// <summary>[perf Faz A · A5] Build menüsü <c>SplitButton.MenuContent</c>'tir: popup kapalıyken (gizli pencerede hep) pencerenin
+    /// ağacında DEĞİLDİR ve kalıtsal <see cref="HiddenSurface.IsHiddenProperty"/> ona inmez. Sinyali ağaçtaki bu çubuk menüye
+    /// açıkça aktarır; böylece menünün gizli kapısı (<see cref="BuildMenu"/>) popup'tan bağımsız çalışır.
+    /// [perf Faz A · A9] Yüzey görünür olunca ve chip'ler bayat kalındıysa TEK geçişte modele yetişir (<see cref="RefreshChips"/>).</summary>
+    protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
+    {
+        base.OnPropertyChanged(e);
+        if (e.Property != HiddenSurface.IsHiddenProperty) return;
+        HiddenSurface.SetIsHidden(PART_BuildMenu, (bool)e.NewValue);
+        if (HiddenSurface.BecameVisible(e) && _chipsStaleWhileHidden) RefreshChips();
     }
 
     // ---------------------------------------------------------------- test yüzeyi
@@ -150,6 +172,7 @@ public partial class ActionBar : UserControl
             _vm.PropertyChanged -= OnVmPropertyChanged;
             _vm.PullRepositoryCommand.CanExecuteChanged -= OnPullGateChanged;
             _vm.SyncCommand.CanExecuteChanged -= OnSyncGateChanged;
+            _vm.BuildCommand.CanExecuteChanged -= OnBuildGateChanged;
         }
         _vm = e.NewValue as RunViewModel;
         // Popup içerikleri (görsel ağaç dışı) DataContext'i güvenilir MİRAS ALMAZ → açıkça bağla.
@@ -163,6 +186,8 @@ public partial class ActionBar : UserControl
             // [kullanıcı kararı 2026-09-29] Debug|Release segment'inin kapısı Sync komutunun kapısıdır (geçiş bir Sync
             // başlatır) — her geçişi buradan gelir; workspace'in varlığını RefreshEnabled ayrıca izler.
             _vm.SyncCommand.CanExecuteChanged += OnSyncGateChanged;
+            // [kullanıcı kararı 2026-10-02] Açık Build menüsü, koşu komutunun kapısı kapanınca kapanır (iş menü açıkken başlayabilir).
+            _vm.BuildCommand.CanExecuteChanged += OnBuildGateChanged;
         }
         RefreshAll();
     }
@@ -170,6 +195,17 @@ public partial class ActionBar : UserControl
     private void OnPullGateChanged(object? sender, EventArgs e) => RefreshBehindGate();
 
     private void OnSyncGateChanged(object? sender, EventArgs e) => RefreshConfigGate();
+
+    private void OnBuildGateChanged(object? sender, EventArgs e) => CloseBuildMenuWhenGateCloses();
+
+    /// <summary>[kullanıcı kararı 2026-10-02] Build menüsünün satırları (Build / Rebuild / Clean) koşu komutunun kapısındadır
+    /// (<c>BuildCommand.CanExecute</c>). Chevron kapı kapalıyken açılmaz (birincil yarının etkinliğini izler), ama AÇIK duran
+    /// bir menü kapıyı kendiliğinden görmez: iş menü açıkken başlarsa satırlar canlı görünür ve tıklamayı sessizce yutar.
+    /// Kapı kapanınca menü kapanır — bar kapıyı yeniden türetmez, komuta sorar.</summary>
+    private void CloseBuildMenuWhenGateCloses()
+    {
+        if (_built && !(_vm?.BuildCommand.CanExecute(null) ?? false)) PART_Split.IsMenuOpen = false;
+    }
 
     /// <summary>[kullanıcı kararı 2026-09-29] Segment'in tıklanabilirliği = <see cref="RunViewModel.CanSwitchConfiguration"/>
     /// (workspace + Sync'in kapısı: koşu, Sync, Clean, Optimize, checkout, pull, motor) — bar kapıyı yeniden türetmez.</summary>
@@ -191,6 +227,8 @@ public partial class ActionBar : UserControl
         {
             case nameof(RunViewModel.Counters):
             case nameof(RunViewModel.ActiveFilters):
+                // [perf Faz A · A9] Gizliyken yalnız bayrak; dönüşte OnPropertyChanged chip'leri tek geçişte kurar.
+                if (HiddenSurface.GetIsHidden(this)) { _chipsStaleWhileHidden = true; break; }
                 RefreshChips();
                 break;
             case nameof(RunViewModel.HasWorkspace):
@@ -202,6 +240,7 @@ public partial class ActionBar : UserControl
             case nameof(RunViewModel.IsRunning):
             case nameof(RunViewModel.IsStarting):
             case nameof(RunViewModel.Phase):
+            case nameof(RunViewModel.StopStage):
                 RefreshEnabled();
                 RefreshBuildArea();
                 break;
@@ -357,6 +396,7 @@ public partial class ActionBar : UserControl
     private void RefreshChips()
     {
         if (!_built) return;
+        _chipsStaleWhileHidden = false; // tam kurulum modelin O ANKİ hâlini yazar: "chip'ler bayat" işareti de tazelenir
         var c = _vm?.Counters ?? default;
         _sigmaValue.Text = Inv(c.Total);
         _buildingValue.Text = Inv(c.Building);
@@ -571,27 +611,31 @@ public partial class ActionBar : UserControl
         _syncIcon.Children.Add(IconVisual.BoundToForeground(PART_Sync, "Icon.Sync", LabelIconSize, 24));
         _syncIcon.Children.Add(new TextBlock { Text = "Sync", Margin = new Thickness(IconVisual.LabelGap, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
         PART_Sync.Content = _syncIcon;
-        // [Stopping] Stop'un İÇERİĞİ artık duruma bağlı (Stop / Stopping…) — tek yazıcısı RefreshBuildArea'dır.
-        // UIA adı burada ve SABİT kalır: buton kimliği değişmiyor, yalnız durumu değişiyor.
+        // [Stop now] Stop'un İÇERİĞİ ve UIA adı duruma bağlı (Stop / Stop now / Terminating…) — tek yazıcısı RefreshBuildArea'dır;
+        // burada yalnız ilk aşamanın adı kurulur (metinler TEK kaynaktan: StopText).
         AutomationProperties.SetName(PART_Sync, AccessibilityNames.SyncButton);
-        AutomationProperties.SetName(PART_Stop, AccessibilityNames.StopButton);
+        AutomationProperties.SetName(PART_Stop, StopText.ActionBarName(StopStage.Stop));
     }
 
     private void RefreshBuildArea()
     {
         if (!_built) return;
         // Kilit penceresinin TAMAMINDA (running VEYA planlama/starting) Stop göster — StopCommand da o pencerede
-        // etkindir (CanStop = IsRunning || IsStarting). Aksi halde split-button (Build).
+        // etkindir (CanStop = (IsRunning || IsStarting) && !HardStopRequested). Aksi halde split-button (Build).
         bool locked = _vm?.IsMidRunLocked ?? false;
         PART_Stop.Visibility = locked ? Visibility.Visible : Visibility.Collapsed;
         PART_Split.Visibility = locked ? Visibility.Collapsed : Visibility.Visible;
+        // [Stop now] Etiket ve UIA adı VM'in TEK Stop durumundan (StopStage) ve TEK metin kaynağından (StopText) gelir; tepsi
+        // maddesi ve satır ikonu da aynı ikisini okur. Ad her yenilemede yazılır: gizliyken de bir sonraki koşuya bayat kalmaz.
+        var stage = _vm?.StopStage ?? StopStage.Stop;
+        AutomationProperties.SetName(PART_Stop, StopText.ActionBarName(stage));
         if (locked)
         {
-            // [Stopping] Kilit SÜRERKEN Stop'un iki hâli var: istenmeden önce "Stop", istendikten sonra
-            // "Stopping…". Pasifleşmeyi bu metot YAZMAZ — buton Command'ına bağlı olduğundan IsEnabled
-            // StopCommand.CanExecute'tan (faz kapısı) gelir; iki ayrı yerden yazılan bir enable hâli olmaz.
-            PART_Stop.Content = ButtonContent("Icon.Stop",
-                _vm?.Phase == AppPhase.Stopping ? "Stopping…" : "Stop", "Brush.StatusFailText", 24);
+            // [Stop now] Kilit SÜRERKEN Stop'un üç hâli var: istenmeden önce "Stop", graceful gittikten sonra "Stop now"
+            // (buton ETKİN — basış hard stop'tur), hard gittikten sonra "Terminating…" (pasif). Pasifleşmeyi bu metot
+            // YAZMAZ — buton Command'ına bağlı olduğundan IsEnabled StopCommand.CanExecute'tan (hard kapısı) gelir; iki ayrı
+            // yerden yazılan bir enable hâli olmaz.
+            PART_Stop.Content = ButtonContent("Icon.Stop", StopText.Label(stage), "Brush.StatusFailText", 24);
             return;
         }
 
@@ -672,10 +716,11 @@ public partial class ActionBar : UserControl
 
         // Sync: buton IsEnabled=hasWs, komut CanExecute'i ButtonBase AND'ler → hasWs && !running.
         PART_Sync.IsEnabled = hasWs;
-        // Build split-button: yalnız repo; gerisini primary komutun kapısı söyler (chevron onu izler).
-        // [DEĞİŞEN KURAL — kullanıcı bildirimi 2026-09-29] Eskiden Sync sürerken de sönerdi (hasWs && !syncing,
-        // BuildApp.jsx:1594). Artık bir iş sürerken basılan Build bekler ve iş bitince koşar — sönük düğme o
-        // basışı yutuyordu.
+        // Build split-button: yalnız workspace (BuildApp.jsx:1594). İş sürerken (görünür ya da görünmeyen Sync, Clean,
+        // Optimize, checkout, pull, koşu) kapıyı komut kurar: birincil yarı BuildCommand.CanExecute'u AND'ler, chevron
+        // birincil yarıyı izler (şablon: PART_Menu.IsEnabled ← PART_Primary.IsEnabled); açık menüyü OnBuildGateChanged
+        // kapatır. Görünür Sync'i (faz Syncing) ayrıca okumak gerekmez: kapı onu da kapatır. İş sürerken koşu komutları
+        // kapalıdır, basış kuyruğa alınmaz.
         PART_Split.IsEnabled = hasWs;
     }
 

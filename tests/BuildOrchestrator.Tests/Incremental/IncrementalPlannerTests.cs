@@ -681,18 +681,104 @@ public class IncrementalPlannerTests
         // koşar: diğer [A3] testlerinde SCC üyeleri sadece birbirine bağımlı olduğu için her kenar TRUE koluna
         // düşüyordu. Acceptance'taki "TAM cascade" eşitliği tam da bu mekanizmaya dayanır — değişim SCC'nin
         // İÇİNE girip kompozit üzerinden DIŞARI çıkabilmelidir.
-        var u = Node(CycU, 0, inCycle: false);
-        var a = Node(CycA, 1, inCycle: true, CycB, CycU);
-        var b = Node(CycB, 2, inCycle: true, CycA);
-        var d = Node(CycD, 3, inCycle: false, CycA);
-        // Sıra KASITLI olarak topolojik DEĞİL (D ve B, A'dan önce) — cascade sıraya bağlı olmamalı.
-        var plan = new BuildPlan([d, b, a, u], [[CycA, CycB]], "Debug");
-
-        string? SigOfD(string uFingerprint) => IncrementalPlanner.ComputeWillBuildWithSignatures(
-            plan, FingerprintLookup(Fingerprints((CycU, uFingerprint), (CycA, "fpA"), (CycB, "fpB"), (CycD, "fpD"))),
-            NoState, buildCycles: false, mode: DependentMode.Safe).SignatureById[CycD];
+        // Sıra KASITLI olarak topolojik DEĞİL (bkz. UpstreamCyclePlan) — cascade sıraya bağlı olmamalı.
+        string SigOfD(string uFingerprint) => UpstreamCycleSignatures(uFingerprint, "fpB").SignatureById[CycD];
 
         Assert.NotEqual(SigOfD("fpU-v1"), SigOfD("fpU-v2"));
+    }
+
+    /// <summary>U (SCC DIŞI) → SCC={A,B} → D (SCC DIŞI): A hem B'ye hem U'ya, B yalnız A'ya bağımlı. Düğüm sırası
+    /// KASITLI olarak topolojik DEĞİL (D ve B, A'dan önce).</summary>
+    private static BuildPlan UpstreamCyclePlan() => new(
+        [
+            Node(CycD, 3, inCycle: false, CycA),
+            Node(CycB, 2, inCycle: true, CycA),
+            Node(CycA, 1, inCycle: true, CycB, CycU),
+            Node(CycU, 0, inCycle: false),
+        ],
+        [[CycA, CycB]], "Debug");
+
+    /// <summary><see cref="UpstreamCyclePlan"/>'ın imzaları ve üye terimleri. DEĞİŞEN girdiler SCC dışı upstream
+    /// U'nun ve SCC üyesi B'nin içerik fingerprint'leri ile geçiş kipidir (varsayılan Safe).</summary>
+    private static IncrementalSignatures UpstreamCycleSignatures(
+        string uFingerprint, string bFingerprint, DependentMode mode = DependentMode.Safe) =>
+        IncrementalPlanner.ComputeWillBuildWithSignatures(
+            UpstreamCyclePlan(),
+            FingerprintLookup(Fingerprints((CycU, uFingerprint), (CycA, "fpA"), (CycB, bFingerprint), (CycD, "fpD"))),
+            NoState, buildCycles: false, mode: mode);
+
+    // ---- [RESOLVE Faz 3/Task 3.1] Üye terimi (MemberTermById): bileşik imzanın GİRDİSİ olan, üyenin KENDİ terimi
+    // plana ayrıca taşınır. Bileşik imza DOWNSTREAM ve "grup kirli mi" için kalır; Resolve'un tur 1'i grubun İÇİNDE
+    // kimin derleneceğini üye terimiyle seçer. -------------------------------------------------------------------
+
+    [Fact]
+    public void member_term_ignores_sibling_content()
+    {
+        var before = UpstreamCycleSignatures("fpU", bFingerprint: "fpB-v1");
+        var after = UpstreamCycleSignatures("fpU", bFingerprint: "fpB-v2");
+
+        Assert.Equal(before.MemberTermById[CycA], after.MemberTermById[CycA]);    // kardeşin içeriği A'nın teriminde yok
+        Assert.NotEqual(before.MemberTermById[CycB], after.MemberTermById[CycB]); // B'nin kendi terimi değişti
+        Assert.NotEqual(before.SignatureById[CycA], after.SignatureById[CycA]);   // bileşik (grup kirli) değişti
+        // Yalnız SCC üyeleri için dolu: U ve D'nin terimi yoktur.
+        Assert.Equal(new[] { CycA, CycB }, before.MemberTermById.Keys.Order(StringComparer.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — D7-b]</b> Eski iddia (<c>member_term_follows_outside_upstream</c>): üye terimi grup DIŞI
+    /// upstream'in taze imzasını taşır (U değişince A'nın terimi değişir). Değişme gerekçesi: Business'ta gövde değişince
+    /// 17 UI üyesinin terimi değişiyor ve hepsi "own inputs changed" ile derleniyordu — yüzeyi değişmeyen upstream için
+    /// boşuna. Terim artık yalnız üyenin KENDİSİdir (configuration + içerik); grup dışı upstream'in etkisi kayıttaki
+    /// bağımlılık yüzeyleriyle (<c>BuildState.DependencySurfaces</c>) denetlenir (<see cref="CycleMemberNeed"/> kural i-b).
+    /// Bileşik imza DEĞİŞMEZ: U değişince grup yine kirlidir ve downstream yine cascade alır.
+    /// </summary>
+    [Fact]
+    public void member_term_ignores_outside_upstream_while_the_composite_still_follows_it()
+    {
+        var before = UpstreamCycleSignatures("fpU-v1", "fpB");
+        var after = UpstreamCycleSignatures("fpU-v2", "fpB");
+
+        Assert.Equal(before.MemberTermById[CycA], after.MemberTermById[CycA]);    // A'nın KENDİ terimi U'yu taşımaz
+        Assert.Equal(before.MemberTermById[CycB], after.MemberTermById[CycB]);
+        Assert.NotEqual(before.SignatureById[CycA], after.SignatureById[CycA]);   // bileşik hâlâ U'yu izler (grup kirli)
+        Assert.NotEqual(before.SignatureById[CycD], after.SignatureById[CycD]);   // downstream cascade korunur
+    }
+
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — D7-b]</b> Eski iddia (<c>member_term_equals_the_composite_input</c>): üye terimi bileşiğin
+    /// GİRDİSİYLE aynıdır (grup dışı upstream taze imzasıyla terime girer). Değişme gerekçesi yukarıdaki testte. Bileşik yine
+    /// upstream'li girdilerin özetidir; üye terimi ise her upstream'i sabit işarete düşürür — ikisi artık AYNI değer değildir.
+    /// </summary>
+    [Fact]
+    public void member_term_is_the_own_term_while_the_composite_still_hashes_the_upstream_aware_inputs()
+    {
+        var result = UpstreamCycleSignatures("fpU", "fpB");
+        ProjectNode NodeOf(string id) => UpstreamCyclePlan().Nodes.Single(n => n.Id == id);
+        string? Intra(string dep) => dep is CycA or CycB ? BuildSignature.NullMarker : result.SignatureById[dep];
+
+        string inputA = BuildSignature.Compute(NodeOf(CycA), "Debug", "fpA", Intra);
+        string inputB = BuildSignature.Compute(NodeOf(CycB), "Debug", "fpB", Intra);
+        Assert.Equal(
+            BuildSignature.HashText(inputA + BuildSignature.ItemSeparator + inputB + BuildSignature.ItemSeparator),
+            result.SignatureById[CycA]);                                                   // bileşik: upstream'li girdiler
+
+        Assert.Equal(BuildSignature.Compute(NodeOf(CycA), "Debug", "fpA", _ => BuildSignature.NullMarker), result.MemberTermById[CycA]);
+        Assert.Equal(BuildSignature.Compute(NodeOf(CycB), "Debug", "fpB", _ => BuildSignature.NullMarker), result.MemberTermById[CycB]);
+        Assert.NotEqual(inputA, result.MemberTermById[CycA]);                              // A, U'yu okur: girdi ≠ kendi terimi
+        Assert.Equal(inputB, result.MemberTermById[CycB]);                                 // B grup dışı upstream okumaz: eşit kalır
+    }
+
+    /// <summary>Fast geçişinde kompozit kurulmaz (bkz. <c>ComputeComponent</c>'in gerekçesi), dolayısıyla üye terimi
+    /// de yoktur: <see cref="IncrementalSignatures.MemberTermById"/> null DEĞİL, BOŞ bir sözlüktür. Tüketen taraf
+    /// (Resolve tur 1, defter yazımı) terimi <c>GetValueOrDefault</c> ile okur; indeksleyici Fast koşusunda atar.</summary>
+    [Fact]
+    public void member_terms_are_an_empty_dictionary_in_fast_mode()
+    {
+        var fast = UpstreamCycleSignatures("fpU", "fpB", DependentMode.Fast);
+
+        Assert.NotNull(fast.MemberTermById);
+        Assert.Empty(fast.MemberTermById);
+        Assert.Contains(CycA, fast.SignatureById.Keys); // geçiş imzayı yine üretir; yalnız üye terimi yoktur
     }
 
     private const string SccE = @"C:\r\E.csproj";      // SCC2 üyeleri (bkz. AdjacentSccNodes)

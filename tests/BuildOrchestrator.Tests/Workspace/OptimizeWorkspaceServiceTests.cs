@@ -403,6 +403,26 @@ public class OptimizeWorkspaceServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Evaluation_entries_from_an_older_schema_are_pruned_whatever_their_root_and_current_foreign_entries_survive()
+    {
+        // [PERF Faz C/C2] Eski şemalı değerlendirme girdisi hiç isabet vermez; başka bir workspace'in ya da kaldırılmış bir
+        // worktree'nin (bo-vm-…) kalıntısı kök dışında kalır ve kök-başına budama onu göremez — şema ölçütü kökten bağımsızdır.
+        WriteLegacyProject("Alive");
+        string oldVm = Path.Combine(_tmp, "bo-vm-old", "Gone", "Gone.csproj");   // kök dışı + eski şema
+        string foreign = Path.Combine(_tmp, "other", "X", "X.csproj");           // kök dışı + güncel şema
+        string cachePath = Path.Combine(CacheRoot, "evaluation-cache.json");
+        EvaluationCacheFile.Write(cachePath, (oldVm, null), (foreign, EvaluationCache.CurrentSchema));
+
+        var events = await RunAsync(ServiceWith());
+
+        var keys = EvaluationCacheFile.Keys(cachePath);
+        Assert.DoesNotContain(keys, k => string.Equals(k, oldVm, StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(keys, k => string.Equals(k, foreign, StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(1, Completed(events).PrunedCacheEntries);
+        Assert.Contains("checking caches — pruned 1 evaluation-cache entry", Lines(events));
+    }
+
+    [Fact]
     public async Task Orphan_temp_files_older_than_the_threshold_are_swept()
     {
         WriteLegacyProject("Alive");

@@ -36,7 +36,7 @@ public static class ProjectInputs
 {
     /// <summary>Proje klasöründen yukarı yürürken aranan MSBuild dosyaları — her ad için ilk bulunan alınır.</summary>
     public static readonly IReadOnlyList<string> DirectoryLevelFileNames =
-        ["Directory.Build.props", "Directory.Build.targets", "Directory.Packages.props"];
+        [.. CsprojEvaluator.DirectoryBuildFileNames, "Directory.Packages.props"];
 
     /// <param name="projectFile">Projenin kimlik yolu (tam csproj yolu).</param>
     /// <param name="evaluated">Bu projenin değerlendirmesi; yoksa yalnız klasör taraması ve csproj kalır.</param>

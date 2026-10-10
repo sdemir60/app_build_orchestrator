@@ -19,7 +19,8 @@ namespace BuildOrchestrator.Tests.App;
 /// gruplar ve tek <c>ToggleRow</c> şablonu; <c>Pull before build</c>'in buraya taşınması ve External projects sayfasının
 /// altındaki "nereye gitti" satırı.
 ///
-/// <para>Altı anahtarın hepsi gerçektir: <c>Pull before build</c> (<see cref="PullBeforeBuildTests"/>), <c>Stash and
+/// <para>Yedi anahtarın hepsi gerçektir: <c>Pull before build</c> (<see cref="PullBeforeBuildTests"/>), <c>Resolve
+/// cycles at full priority</c> (<see cref="ResolveAtFullPrioritySettingsTests"/>), <c>Stash and
 /// switch branches</c> (<see cref="StashOnBranchSwitchTests"/>), <c>Start with Windows</c> ve <c>Start minimized to
 /// tray</c> (<see cref="StartWithWindowsTests"/>), <c>Close to tray</c> ve <c>Show notifications</c>
 /// (<see cref="ShellSwitchesTests"/>; davranışları <see cref="CloseToTrayTests"/> ve tepsi balonu testleri).</para>
@@ -55,7 +56,10 @@ public class SettingsGeneralPageTests
     /// <summary>Gruplar ve satırlar BİREBİR (git-only uyarlanmış pull açıklaması dahil); yeni ayar = kataloğa bir satır.
     /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §6.3]</b> Eski iddia (<c>The_catalog_carries_the_three_groups_and_their_rows_verbatim</c>):
     /// katalog üç gruptu (STARTUP, BUILD, NOTIFICATIONS). Branch chip'i checkout edince kirli ağaç kararı bir ayar
-    /// oldu: BUILD'in ardına dördüncü grup BRANCHES ve tek satırı <c>Stash and switch branches</c> eklendi.</para></summary>
+    /// oldu: BUILD'in ardına dördüncü grup BRANCHES ve tek satırı <c>Stash and switch branches</c> eklendi.</para>
+    /// <para><b>[DEĞİŞEN KURAL — RESOLVE Faz 4 / karar 11, kullanıcı onayı]</b> Eski iddia: BUILD grubunun tek satırı
+    /// <c>Pull before build</c>'di. Resolve cycles'ın tam öncelik ayarı BUILD'e ikinci satır olarak eklendi (motora giden
+    /// bir build tercihi; ayrıntı <see cref="ResolveAtFullPrioritySettingsTests"/>).</para></summary>
     [Fact]
     public void The_catalog_carries_the_groups_and_their_rows_verbatim()
     {
@@ -70,15 +74,20 @@ public class SettingsGeneralPageTests
             ("Close to tray", "Closing the window leaves the engine running in the tray."),
         ], actual[0].Rows);
         Assert.Equal(
-            [("Pull before build", "Update every external working copy first — a fast-forward-only git pull, one per copy.")],
-            actual[1].Rows);
+        [
+            ("Pull before build", "Update every external working copy first — a fast-forward-only git pull, one per copy."),
+            ("Resolve cycles at full priority",
+                "Resolve cycles runs at normal priority with no CPU cap, whatever the performance mode — it finishes "
+                + "sooner on a busy machine, but other apps may slow down while it runs. Off: it follows the performance mode."),
+        ], actual[1].Rows);
         Assert.Equal(
             [("Stash and switch branches",
                 "When the working tree has uncommitted changes, stash them (including untracked files) and switch. "
                 + "Off: switching stops and asks you to commit or stash first.")],
             actual[2].Rows);
         Assert.Equal(
-            [("Show notifications", "A tray notification when a build finishes — succeeded or failed.")],
+            [("Show notifications", "Tray notifications: a build's result, the first close to the tray, a Build shortcut that could not start, "
+                + "and a second launch that could not bring the window forward.")],
             actual[3].Rows);
     }
 
@@ -170,7 +179,9 @@ public class SettingsGeneralPageTests
     /// sırası ve metinleri katalogla aynı; UIA adı etiket (pull: mevcut ad).
     /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §6.3]</b> Eski iddia (<c>The_general_page_realizes_three_groups_with_their_rows</c>):
     /// sayfa üç grup, beş satır realize ederdi. BRANCHES grubu (<c>Stash and switch branches</c>) eklendi — yeni satır
-    /// aynı <c>ToggleRow</c> şablonuyla realize olur ve ölçüler onu da kapsar.</para></summary>
+    /// aynı <c>ToggleRow</c> şablonuyla realize olur ve ölçüler onu da kapsar.</para>
+    /// <para><b>[DEĞİŞEN KURAL — RESOLVE Faz 4 / karar 11]</b> Eski iddia: altı satır, BUILD'de tek satır. BUILD'e
+    /// <c>Resolve cycles at full priority</c> eklendi — sonraki grubun satır indeksleri bir kayar, aralık kuralı aynıdır.</para></summary>
     [StaFact]
     public void The_general_page_realizes_its_groups_with_their_rows()
     {
@@ -191,10 +202,11 @@ public class SettingsGeneralPageTests
 
         var rows = Rows(dialog);
         Assert.Equal(["Start with Windows", "Start minimized to tray", "Close to tray", "Pull before build",
-                "Stash and switch branches", "Show notifications"],
+                "Resolve cycles at full priority", "Stash and switch branches", "Show notifications"],
             rows.Select(r => DsResources.Descendants(r).OfType<TextBlock>().First().Text));
         Assert.Equal(["Start with Windows", "Start minimized to tray", "Close to tray",
-                AccessibilityNames.PullExternalsBeforeBuild, "Stash and switch branches", "Show notifications"],
+                AccessibilityNames.PullExternalsBeforeBuild, "Resolve cycles at full priority", "Stash and switch branches",
+                "Show notifications"],
             rows.Select(r => AutomationProperties.GetName(SwitchOf(r))));
 
         // Başlık → ilk satır 5px; bir grubun son satırı → sonraki başlık 22px.
@@ -203,9 +215,9 @@ public class SettingsGeneralPageTests
         Assert.Equal(5.0, Top(rows[0]) - Bottom(headings[0]), precision: 1);
         Assert.Equal(5.0, Top(rows[3]) - Bottom(headings[1]), precision: 1);
         Assert.Equal(22.0, Top(headings[1]) - Bottom(rows[2]), precision: 1);
-        Assert.Equal(22.0, Top(headings[2]) - Bottom(rows[3]), precision: 1);
-        Assert.Equal(5.0, Top(rows[4]) - Bottom(headings[2]), precision: 1);
-        Assert.Equal(22.0, Top(headings[3]) - Bottom(rows[4]), precision: 1);
+        Assert.Equal(22.0, Top(headings[2]) - Bottom(rows[4]), precision: 1);
+        Assert.Equal(5.0, Top(rows[5]) - Bottom(headings[2]), precision: 1);
+        Assert.Equal(22.0, Top(headings[3]) - Bottom(rows[5]), precision: 1);
     }
 
     /// <summary>ToggleRow: padding <c>13 0</c>, satırlar arası 1px <c>border-subtle</c> (grubun ilk satırında yok);
@@ -218,7 +230,8 @@ public class SettingsGeneralPageTests
         using var _scope = scope;
         var rows = Rows(dialog);
 
-        var firstOfGroup = new[] { true, false, false, true, true, true };
+        // [DEĞİŞEN KURAL — RESOLVE Faz 4] Eski: altı satır. BUILD'in ikinci satırı (Resolve cycles at full priority) hairline taşır.
+        var firstOfGroup = new[] { true, false, false, true, false, true, true };
         for (int i = 0; i < rows.Count; i++)
         {
             Assert.Equal(new Thickness(0, 13, 0, 13), rows[i].Padding);
@@ -249,14 +262,15 @@ public class SettingsGeneralPageTests
         Assert.Equal(row.ActualWidth, toggle.TranslatePoint(new Point(toggle.ActualWidth, 0), row).X, precision: 1);
     }
 
-    /// <summary>Switch'lerin açılış değerleri: <c>off/off/on/on</c> + pull ve stash canlı değerden.</summary>
+    /// <summary>Switch'lerin açılış değerleri: <c>off/off/on/on</c> + pull, Resolve tam öncelik ve stash canlı değerden.
+    /// [DEĞİŞEN KURAL — RESOLVE Faz 4] Eski: altı switch; BUILD'e Resolve tam öncelik (varsayılan açık) eklendi.</summary>
     [StaFact]
     public void The_switches_open_on_their_defaults()
     {
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(r => r.UpdateExternals = false);
         using var _scope = scope;
 
-        Assert.Equal([false, false, true, false, false, true], Rows(dialog).Select(r => SwitchOf(r).IsChecked == true));
+        Assert.Equal([false, false, true, false, true, false, true], Rows(dialog).Select(r => SwitchOf(r).IsChecked == true));
     }
 
     /// <summary>Start with Windows kapalıyken <c>Start minimized to tray</c> satırı %45 opak ve etkileşimsiz; açınca
@@ -307,7 +321,8 @@ public class SettingsGeneralPageTests
 
         dialog.Open(run, store, () => null);
         dialog.UpdateLayout();
-        Assert.Equal([true, true, false, true, false, false], Rows(dialog).Select(r => SwitchOf(r).IsChecked == true));
+        // [RESOLVE Faz 4] Pull ve Resolve tam öncelik canlı (açık) değerlerinde kalır.
+        Assert.Equal([true, true, false, true, true, false, false], Rows(dialog).Select(r => SwitchOf(r).IsChecked == true));
     }
 
     /// <summary>[P3] Close to tray ve Show notifications Save'de UiState'e yazılır ve yeniden açılışta KAYITLI değeri
@@ -361,7 +376,7 @@ public class SettingsGeneralPageTests
 
         dialog.Open(run, store, () => null);
         dialog.UpdateLayout();
-        Assert.Equal([true, true, true, true, false, true], Rows(dialog).Select(r => SwitchOf(r).IsChecked == true));
+        Assert.Equal([true, true, true, true, true, false, true], Rows(dialog).Select(r => SwitchOf(r).IsChecked == true));
     }
 
     /// <summary>[P4] Uçtan uca: switch'e tıklayıp Save → diyaloğun servisi Windows'un başlangıç kaydını ANINDA yazar.</summary>

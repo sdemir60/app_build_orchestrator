@@ -52,7 +52,8 @@ public sealed partial class RunViewModel
     /// Tam çıkış iste. Sıra: (1) ikinci istek hiçbir şey yapmaz; (2) kendiliğinden Sync kapanır; (3) uçuşta iş yoksa
     /// <see cref="ExitReady"/> hemen — bekleyiş açılmaz, satır yazılmaz, komut gitmez; (4) varsa bekleyiş açılır,
     /// konsola <see cref="ExitPendingLine"/> düşer ve Stop yapılabiliyorsa yapılır (marking fazında isteği geri alır,
-    /// aksi hâlde graceful <c>stopRun</c>; Stop zaten istendiyse ikincisi gitmez — <see cref="CanStop"/>); (5) koşul
+    /// aksi hâlde graceful <c>stopRun</c>; Stop zaten istendiyse ikincisi gitmez — çıkış Stopping'deki Stop basışı (hard)
+    /// DEĞİLDİR, hard stop'a tırmanmaz ve drain'i bekler); (5) koşul
     /// hemen yeniden değerlendirilir (motor zaten susmuş olabilir).
     /// </summary>
     public void RequestExit()
@@ -67,7 +68,9 @@ public sealed partial class RunViewModel
         }
         ExitPending = true;
         AppendRunLine(ExitPendingLine);
-        if (StopCommand.CanExecute(null)) StopCommand.Execute(null);
+        // [Stop now] Stop zaten istendiyse (StopStage Stop değil) komutun basışı hard stop'tur — çıkış isteği kullanıcının
+        // beklemek istemediği anlamına GELMEZ: ikinci bir stop göndermez, drain'i bekler (hard yalnız kullanıcının kendi basışıdır).
+        if (StopStage == StopStage.Stop && StopCommand.CanExecute(null)) StopCommand.Execute(null);
         EvaluateExit();
     }
 
@@ -87,8 +90,8 @@ public sealed partial class RunViewModel
     /// <summary>Sessizlik bekçisinin uyarısı değişti — motor sustuysa çıkış drain'i beklemez.</summary>
     partial void OnEngineOverdueMessageChanged(string? value) => EvaluateExit();
 
-    /// <summary>[kullanıcı bildirimi 2026-09-29] Bekleyiş açıldı: run komutlarının kapısı (<see cref="CanRequestRun"/>)
-    /// artık istek almaz — iş sürerken basılan bir koşu çıkışı ya bir tam derleme boyunca bekletir ya da asılı bırakırdı.
+    /// <summary>Bekleyiş açıldı: run komutlarının kapısı (<see cref="CanRequestRun"/>) kapanır — bekleyiş iş bitince
+    /// kapanmak içindir; o sırada başlayan bir koşu çıkışı bir tam derleme boyunca bekletirdi.
     /// Kapıların yeniden sorulduğu liste TEKTİR (<see cref="NotifySyncGatedCommands"/>).</summary>
     partial void OnExitPendingChanged(bool value) => NotifySyncGatedCommands();
 }

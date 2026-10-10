@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using System.Windows.Automation.Peers;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -30,6 +31,9 @@ namespace BuildOrchestrator.App.Console;
 /// </summary>
 public partial class ConsoleView : UserControl
 {
+    /// <summary>UIA rolü — gerekçe ve ölçüm <see cref="UserControlRolePeer"/>'de.</summary>
+    protected override AutomationPeer OnCreateAutomationPeer() => new UserControlRolePeer(this, AutomationControlType.Pane);
+
     // [3b Minor 1/2] Off-palette hex YOK: base foreground + FontSize XAML token/resource'ından gelir.
 
     /// <summary>[3b/Ek A #16] Canlı append'te belgede tutulan azami satır (render dilimi). "N lines" sayacı bundan
@@ -45,7 +49,7 @@ public partial class ConsoleView : UserControl
     /// (kardeş sahiplerin deseni: <see cref="Views.EventStreamView"/>/<see cref="Views.ProjectRow"/>/
     /// <see cref="Graph.GraphView"/>). <b>latch'siz abonelikli kip</b> (<c>new MotionGate(this)</c>) —
     /// <see cref="Controls.StickyLayerList"/>'in aboneliksiz kipi burada YANLIŞ olurdu: o sahip sonsuz saat
-    /// TUTMAZ, bu görünüm ise <c>RepeatBehavior.Forever</c> bir blink saati başlatır (<see cref="StartBlink"/>).
+    /// TUTMAZ, bu görünüm ise pencerenin ortak imleç saatine bağlanır (<see cref="StartBlink"/>, <see cref="CursorClock"/>).
     ///
     /// <para><b>Neden seam gerekliydi (1.8/1.9):</b> bu görünüm motion sinyalini statik
     /// <see cref="MotionGate.StaticAnimationsEnabled"/> üzerinden DOĞRUDAN okuyordu; headless'ta <c>App.Motion</c>
@@ -65,7 +69,6 @@ public partial class ConsoleView : UserControl
     private bool _idleReady;
     // [design v1.8.0 §3.1] Workspace YOK mu — prompt satırı "Waiting for a workspace" der (SetHasWorkspace).
     private bool _noWorkspace;
-    private bool _blinking; // imleç blink saati dönüyor mu (yeniden başlatma guard'ı)
 
     // [Task 6] Satır hover bandının YEREL (donmamış) fırçası — MotionTokens.TransitionColor bunu animate eder.
     private readonly SolidColorBrush _hoverBandBrush;
@@ -114,6 +117,7 @@ public partial class ConsoleView : UserControl
         _motion = new MotionGate(this);
         _motion.Changed += OnMotionChanged;
         InitializeComponent();
+        EditorControl.Document = NewDocument(""); // açılış belgesi de geri-alma geçmişi tutmaz (gerekçe fabrikada)
         // Gömülü Geist Mono Console CompositeFont'u (It-0 asset'i) — pack URI burada TEKRARLANMAZ [T64].
         EditorControl.FontFamily = AppFonts.MonoConsole;
         ActiveLineText.FontFamily = AppFonts.MonoConsole;
@@ -457,7 +461,9 @@ public partial class ConsoleView : UserControl
     /// <summary>[design v1.7.0 §2.5] Boşta (idle/boot) tek prompt satırı: <b>yanıp sönen blok imleç + "ready"
     /// (dim)</b>. Duvar-saati damgası kaldırıldı (§2.5: konsolda saat sütunu yok) — prompt satırı imleçle
     /// başlar ve konsolun geri kalanıyla aynı sol hizadadır. Doküman satırı DEĞİLdir: overlay'de canlı
-    /// gösterilir, içerik gelince (<see cref="AppendNarrativeBatch"/> / <see cref="PlayCascade"/>) temizlenir.
+    /// gösterilir, içerik gelince temizlenir: ilk anlatı satırı (<see cref="AppendNarrativeBatch"/>), satır taşıyan bir
+    /// belge kurulumu (<see cref="ReplaceRunDocument"/>) ya da proje logu kurulumu (<see cref="ReplaceProjectDocument"/>,
+    /// <see cref="PlayCascade"/>).
     /// Reduced-motion iken imleç statiktir.</summary>
     public void ShowReady()
     {
@@ -565,32 +571,32 @@ public partial class ConsoleView : UserControl
         if (ActiveLineOverlay.Margin != margin) ActiveLineOverlay.Margin = margin;
     }
 
-    // [3b M-4 · D3 §3] Aktif-satır imlecinin blink animasyonu — artık
-    // EventStreamView'ın imleci de dahil ÜÇ başlatıcı MotionTokens.CreateBlinkAnimation'ı paylaşır (kopya YASAK).
+    // [3b M-4 · D3 §3 · perf B4] Aktif-satır imlecinin blink'i: EventStreamView'ın imleciyle birlikte pencerenin TEK
+    // imleç saatine (CursorClock) bağlanır — iki imleç ayrı saat kurmaz (kopya YASAK).
     /// <summary>[StatusGlyph/BuildingSpinner deseni] Zaten dönen saat YENİDEN BAŞLATILMAZ: RefreshPrompt her
-    /// görsel-satır değişiminde koşar ve her seferinde yeni bir blink kurmak imleci "takılı" gösterirdi.</summary>
+    /// görsel-satır değişiminde koşar ve her seferinde yeni bir blink kurmak imleci "takılı" gösterirdi. Bu garanti
+    /// <see cref="CursorClock.Attach"/>'tadır (idempotent): burada ayrıca bir "dönüyor mu" bayrağı tutulmaz.</summary>
     private void StartBlink()
     {
         // Görünmezken saat KURULMAZ. Kapı burada, çağıranlarda değil: RefreshPrompt her görsel-satır değişiminde
         // koşar ve tepsideyken de koşar — yalnız IsVisibleChanged'de durdurmak saati bir sonraki olayda geri
         // kurardı (ölçüldü, bkz. HiddenCursorClockTests).
         if (!IsVisible) { StopBlink(); return; }
-        if (_blinking) return;
-        _blinking = true;
-        ActiveCursor.BeginAnimation(OpacityProperty, MotionTokens.CreateBlinkAnimation());
-        // [design v1.12.1 §2.5] Kırpmanın üstüne renk turu biner — ikisi ayrı saatlerdir ve yalnız FAZLARI
-        // ortaktır (renk kırpmanın dibinde atlar, bkz. CursorHop).
-        CursorHop.Start(this, ActiveCursor);
+        // [perf B4 · karar 4] Kırpma ve renk turu pencerenin ORTAK saatinden gelir (CursorClock): konsol ve event
+        // stream imleçleri aynı fazda kırpar ve pencere aktif değilken ikisi de sabit durur.
+        CursorClock.Attach(ActiveCursor, this, CursorRestKey);
     }
 
     private void StopBlink()
     {
-        _blinking = false;
-        ActiveCursor.BeginAnimation(OpacityProperty, null);
-        ActiveCursor.Opacity = 1.0;
-        // Prompt'un dinlenme rengi amberdir — turdan çıkınca imleç oraya döner (stream'in ton kanalının eşi).
-        CursorHop.Stop(ActiveCursor, ConsolePalette.Keys.Icon);
+        // Prompt'un dinlenme rengi amberdir — saatten çıkınca imleç oraya döner (stream'in ton kanalının eşi).
+        // Detach opaklığı da 1'e getirir ve hiç bağlanmamış imleç (reduced-motion) için de aynı sonucu verir.
+        CursorClock.Detach(ActiveCursor, CursorRestKey());
     }
+
+    /// <summary>Prompt imlecinin dinlenme rengi (amber): bağlama ve bırakma AYNI anahtarı okur — tek tanım. Stream'in
+    /// <c>CursorRestKey</c>'inin eşi; orada ton kanalı değiştiği için dinamik, burada sabittir.</summary>
+    private static string CursorRestKey() => ConsolePalette.Keys.Icon;
 
     // ---------------------------------------------------------------- narrative (run) modu
 
@@ -609,7 +615,7 @@ public partial class ConsoleView : UserControl
     /// <para>[design v1.7.0 §2.5] Geçiş animasyonu İKİ YÖNDE de aynıdır (<see cref="PlayTiltIn"/>).</para></summary>
     public void ShowRunDocument(string fullRunText)
     {
-        ResetRunDocument(fullRunText);
+        ReplaceRunDocument(fullRunText);
         PlayTiltIn(fromAbove: true); // dönüş açılışın TAM AYNASI
     }
 
@@ -620,26 +626,35 @@ public partial class ConsoleView : UserControl
     /// onu BU çağrıyla izler (kablo <c>MainWindow</c>'da, <c>RunViewModel.ConsoleCleared</c>).
     ///
     /// <para><b>Tilt YOK:</b> <see cref="PlayTiltIn"/> yalnız panel GEÇİŞİNDE (proje logu ↔ anlatı) oynar; bu
-    /// ise aynı panelin sıfırlanmasıdır — <see cref="ShowRunDocument"/>'ın tilt'siz çekirdeği. "ready" satırına
+    /// ise aynı panelin sıfırlanmasıdır — tilt'siz çekirdek <see cref="ReplaceRunDocument"/>'tır. "ready" satırına
     /// dokunulmaz: ilk anlatı satırı gelince metni zaten boşalır (<see cref="ClearReadyText"/>).</para>
     ///
     /// <para><b>[DEĞİŞEN KURAL — ölçüldü]</b> Eskiden işlem başlangıcında ekrana hiç dokunulmuyordu: VM
     /// tamponu silinse de AvalonEdit belgesi yalnız mod geçişinde yeniden kuruluyordu, yeni işlemin satırları
     /// bir öncekinin ALTINA ekleniyordu — Build ve Sync'te konsol "hiç temizlenmiyor" diye görülen buydu.</para>
     /// </summary>
-    public void ClearRunDocument() => ResetRunDocument("");
+    public void ClearRunDocument() => ReplaceRunDocument("");
 
-    /// <summary>Anlatı belgesini verilen metinle yeniden kurar (render dilimi + chunk loader + dip pini +
-    /// takip): <see cref="ShowRunDocument"/> ile <see cref="ClearRunDocument"/>'ın ORTAK gövdesi (kopya YASAK).</summary>
-    private void ResetRunDocument(string fullRunText)
+    /// <summary>[test yüzeyi] <see cref="ReplaceRunDocument"/> çağrı sayısı: gizli pencere dönüşünde belgenin TEK
+    /// seferde kurulduğunu (gizliyken hiç kurulmadığını) sayıyla sınar. Üretimde zararsız bir sayaçtır.</summary>
+    internal int RunDocumentReplacedCount { get; private set; }
+
+    /// <summary>Anlatı belgesini verilen metinle yeniden kurar (render dilimi + chunk loader + dip pini + takip) —
+    /// <b>tilt'siz</b>. Üç yol bu TEK gövdeyi paylaşır (kopya YASAK): <see cref="ShowRunDocument"/> (mod geçişi; ardına
+    /// <see cref="PlayTiltIn"/> ekler), <see cref="ClearRunDocument"/> (boş metin) ve gizli pencere dönüşü
+    /// (<c>MainWindow.ResyncAfterShow</c>: tepsideyken belgeye yazılmadı, dönüşte modelin tam metninden bir kez kurulur).
+    /// Belge satır taşıyorsa boşta "ready" satırı da gider: gizliyken ilk anlatı satırı belgeye hiç girmediği için onu
+    /// silen <see cref="AppendNarrativeBatch"/> yolu çalışmamıştır.</summary>
+    public void ReplaceRunDocument(string fullRunText)
     {
+        RunDocumentReplacedCount++;
         _projectMode = false;
         _armedForChunk = false; // ilk layout'ta spurious prepend olmasın (kullanıcı henüz kaydırmadı)
         _backlogLines = SplitLines(fullRunText ?? "");
         // Render dilimi: son RenderSliceLines satır belgeye; öncesi chunk loader'a bırakılır (PlayCascade ile
         // AYNI hesap — iki mod tek kuralı paylaşır).
         _loadedFrom = Math.Max(0, _backlogLines.Count - RenderSliceLines);
-        EditorControl.Document = new TextDocument(Join(_backlogLines, _loadedFrom, _backlogLines.Count));
+        EditorControl.Document = NewDocument(Join(_backlogLines, _loadedFrom, _backlogLines.Count));
         PinAfterModeSwitch(toBottom: true);
         // [SIRA ÖNEMLİ] Takibi devralmak pin'den SONRA gelir. Kullanıcı önceki modda serbest kaydırmış olsa
         // bile mod değişimi takibi yeniden alır — ama ForceStuck bir bildirim yayınlar ve pill'in görünürlüğü
@@ -648,6 +663,9 @@ public partial class ConsoleView : UserControl
         // beliriyor, pin bitince kayboluyordu — sahada "geri diyorsun latest çıkıyor kayboluyor" diye görülen
         // buydu. Pin'den SONRA geometri doğrudur: uzaklık sıfır, pill hiç çıkmaz.
         _bottomAnchor.ForceStuck(true);
+        // Belge satır taşıyorsa boşta "ready" gider: gizliyken ilk anlatı satırı belgeye girmediği için onu silen
+        // AppendNarrativeBatch (ClearReadyText) koşmadı. Boş metinde (ClearRunDocument) "ready"ye dokunulmaz.
+        if (_backlogLines.Count > 0) ClearReadyText();
         RefreshPrompt(); // anlatıya dönüldü → prompt satırı geri gelir
     }
 
@@ -671,6 +689,17 @@ public partial class ConsoleView : UserControl
     /// </summary>
     public void PlayCascade(IReadOnlyList<string> allLines)
     {
+        ReplaceProjectDocument(allLines);
+        PlayTiltIn(fromAbove: false);
+    }
+
+    /// <summary>[perf Faz A · A2] Proje-log belgesini kurar — <see cref="PlayCascade"/>'in <b>tilt'siz</b> çekirdeği:
+    /// mod, prompt, backlog, render dilimi ve tepe pini; takip KAPALI (proje logu baştan okunur — ayrıntı
+    /// <see cref="PlayCascade"/>'te). <see cref="PlayCascade"/> bunun ardına <see cref="PlayTiltIn"/> ekler; gizli
+    /// pencere dönüşü (<c>MainWindow.ResyncAfterShow</c>) onu tilt'siz çağırır: panel geçişi değil, aynı proje logunun
+    /// modelin tam metninden yeniden kurulmasıdır.</summary>
+    public void ReplaceProjectDocument(IReadOnlyList<string> allLines)
+    {
         EnsureColorizer();
         _bottomAnchor.ForceStuck(false); // proje logu baştan okunur — dibe çekilmez
         allLines ??= [];
@@ -683,10 +712,8 @@ public partial class ConsoleView : UserControl
 
         // Render dilimi: son RenderSliceLines satır belgeye; öncesi chunk loader'a bırakılır.
         _loadedFrom = Math.Max(0, _backlogLines.Count - RenderSliceLines);
-        EditorControl.Document = new TextDocument(Join(_backlogLines, _loadedFrom, _backlogLines.Count));
+        EditorControl.Document = NewDocument(Join(_backlogLines, _loadedFrom, _backlogLines.Count));
         PinAfterModeSwitch(toBottom: false);
-
-        PlayTiltIn(fromAbove: false);
     }
 
     /// <summary>
@@ -922,6 +949,18 @@ public partial class ConsoleView : UserControl
     // Metni satırlara böler (ayraçlar ATILIR — Join onları geri koyar). Sondaki '\n'in doğurduğu boş kuyruk
     // parçası satır SAYILMAZ: append sözleşmesi gereği canlı metin '\n' ile biter, yani o parça bir satır
     // değil bir sonektir. Boş metin → boş liste.
+    /// <summary>Konsol belgelerinin TEK fabrikası: geri-alma geçmişi KAPALI (<c>SizeLimit = 0</c>). Konsol salt-okunurdur;
+    /// AvalonEdit yine de her Insert/Remove'u geri-alma yığınına kaydeder ve kaldırılan metni ip (rope) dilimi olarak canlı
+    /// tutar — ÖLÇÜLDÜ: görünür bir Resolve'un ardından canlı yönetilen yığının yaklaşık yarısı, render dilimine kırpılmış
+    /// belgenin arkasında böyle tutulan koşu anlatısıydı (<c>ConsoleMemoryTests</c>). Geçmiş dilimi için satır listesi
+    /// yeter; belge yalnız pencereyi taşır ve kırpılan metin o an serbest kalır.</summary>
+    private static TextDocument NewDocument(string text)
+    {
+        var document = new TextDocument(text);
+        document.UndoStack.SizeLimit = 0;
+        return document;
+    }
+
     private static List<string> SplitLines(string text)
     {
         var lines = new List<string>();

@@ -38,18 +38,45 @@ public static class UpdateText
     /// <summary>[plan U3 · 2] Bir Sync (sessizi dahil) sürerken.</summary>
     public const string WaitForSync = "Available once Sync finishes.";
 
-    /// <summary>[plan U3 · 3] Koşu sürerken, işaretlenirken ya da bir Build isteği beklerken.
+    /// <summary>[plan U3 · 3] Koşu sürerken ya da işaretlenirken (açılış koreografisi oynarken) — Stop henüz istenmedi
+    /// (istendikten sonrası <see cref="WaitForBuildAt"/>).
     /// <para><b>Tasarımdan sapma:</b> tasarım "— F5 stops it." der; uygulamada F5 koşuyu durdurmaz, Esc durdurur. Tuşun
     /// adı elle yazılmaz, kısayol kataloğundan okunur (<see cref="ShortcutCatalog"/> — jestin tek kaynağı).</para></summary>
     public static string WaitForBuild { get; } =
-        $"Available once the build finishes — {ShortcutCatalog.Get(ShortcutId.Escape).Gestures[0]} stops it.";
+        $"Available once the build finishes — {EscapeKey} stops it.";
 
-    /// <summary>Restart kilidinin nedeni — sıra görev &gt; Sync &gt; koşu (plan U3); hiçbir iş yoksa <c>null</c>.
-    /// Soruları VM sorar (<see cref="RunViewModel.UpdateRestartBlockedReason"/>), karar burada tek yerdedir.</summary>
-    public static string? RestartBlockedReason(bool taskRunning, bool syncRunning, bool buildRunning) =>
+    /// <summary>[perf Faz B · F-M1] Stop İSTENDİ, uçuştakiler bitiyor (<see cref="StopStage.StopNow"/>): bir sonraki Esc artık
+    /// hard stop'tur ("Stop now" — uçuştakiler öldürülür), yani <see cref="WaitForBuild"/>'in "Esc stops it" ipucu yanlış
+    /// olurdu. Cümle aynı tuşu söyler ama tırmanmayı da söyler.</summary>
+    public static string WaitForBuildStopping { get; } =
+        $"Available once the build stops — {EscapeKey} stops it now.";
+
+    /// <summary>[perf Faz B · F-M1] Hard stop GİTTİ (<see cref="StopStage.Terminating"/>): Esc artık hiçbir şey yapmaz
+    /// (<c>StopAsync</c> bu aşamada yutar) — ipucu YOKTUR.</summary>
+    public const string WaitForBuildTerminating = "Available once the build stops.";
+
+    /// <summary>[perf Faz B · F-M1] Koşu nedeninin metni Stop'un aşamasına göre: istenmedi → <see cref="WaitForBuild"/>,
+    /// graceful gitti → <see cref="WaitForBuildStopping"/>, hard gitti → <see cref="WaitForBuildTerminating"/>.
+    /// ARCHITECTURE §4.5'in kuralı: hiçbir yüzey, bir sonraki basış hard stop iken "Stop" demez — güncelleme kartı da dahil.</summary>
+    public static string WaitForBuildAt(StopStage stage) => stage switch
+    {
+        StopStage.Stop => WaitForBuild,
+        StopStage.StopNow => WaitForBuildStopping,
+        StopStage.Terminating => WaitForBuildTerminating,
+        _ => throw new ArgumentOutOfRangeException(nameof(stage), stage, null),
+    };
+
+    /// <summary>Durduran tuşun adı kısayol kataloğundan okunur (jestin tek kaynağı) — hesaplanan özellik: statik başlatma
+    /// sırasından bağımsız.</summary>
+    private static string EscapeKey => ShortcutCatalog.Get(ShortcutId.Escape).Gestures[0];
+
+    /// <summary>Restart kilidinin nedeni — sıra görev &gt; Sync &gt; koşu (plan U3); hiçbir iş yoksa <c>null</c>. Koşu cümlesi
+    /// Stop'un aşamasını izler (<see cref="WaitForBuildAt"/>); aşama ZORUNLU parametredir ki VM'in bağlamayı unutması
+    /// derlenmesin. Soruları VM sorar (<see cref="RunViewModel.UpdateRestartBlockedReason"/>), karar burada tek yerdedir.</summary>
+    public static string? RestartBlockedReason(bool taskRunning, bool syncRunning, bool buildRunning, StopStage stopStage) =>
         taskRunning ? WaitForTask
         : syncRunning ? WaitForSync
-        : buildRunning ? WaitForBuild
+        : buildRunning ? WaitForBuildAt(stopStage)
         : null;
 
     /// <summary>[design v1.23.0 §2.12] Restart ekranının başlığı (13px/600). Ürün adı YAZILMAZ, kimlikten okunur

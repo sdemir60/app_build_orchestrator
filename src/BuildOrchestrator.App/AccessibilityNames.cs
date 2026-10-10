@@ -91,7 +91,8 @@ public static class AccessibilityNames
     ///
     /// <para><b>Tasarımdan bilinçli SAPMA (karar 2026-08-13):</b> prototip metni "in two passes" der; sabit
     /// bir tur sayısı VAAT EDİLMEZ, çünkü tur sayısını motor belirler (<c>CycleRoundPolicy</c>: yakınsama
-    /// ölçütü iki ardışık yeşil tur, tavan üç). Sözcük de motorunkidir ("round"): şerit, konsol ve event
+    /// ölçütü yüzey kanıtı varken bayatsız bir tur, yokken iki ardışık yeşil tur; tavan üç). Sözcük de motorunkidir
+    /// ("round"): şerit, konsol ve event
     /// stream aynı kelimeyi kullanır, arayüz tek dil konuşur. Cümlenin geri kalanı tasarımdakiyle aynıdır.</para>
     ///
     /// <para><b>Korunan geliştirme:</b> grup sayısı yalnız BİRDEN ÇOK ayrı döngü varken eklenir — tasarımın

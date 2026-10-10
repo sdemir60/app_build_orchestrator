@@ -35,9 +35,8 @@ namespace BuildOrchestrator.Tests.App;
 public class DecisionLabelTests
 {
     private static RowDecision For(
-        bool? willBuild, WillBuildReason? reason = null, bool? ownChanged = null, bool localEdits = false,
-        bool inCycle = false)
-        => DecisionLabel.For(willBuild, reason, ownChanged, localEdits, inCycle);
+        bool? willBuild, WillBuildReason? reason = null, bool? ownChanged = null, bool localEdits = false)
+        => DecisionLabel.For(willBuild, reason, ownChanged, localEdits);
 
     [Fact]
     public void Its_own_files_changed_reads_modified()
@@ -131,21 +130,25 @@ public class DecisionLabelTests
         Assert.DoesNotContain("failed", modified.Title, StringComparison.Ordinal);
     }
 
-    /// <summary>Bir döngü üyesinde bu satırı yeniden derleyecek şey düz bir Build DEĞİL, <i>Resolve
-    /// cycles</i>'tır — uzun gerekçe bunu adlandırır (kelime <c>failed</c> her koşulda kalır, o bir
-    /// olgudur).</summary>
+    /// <summary>Failed satırın uzun gerekçesi onu yeniden deneyecek koşuyu adlandırır: her satırda Build (kelime
+    /// <c>failed</c> her koşulda kalır, o bir olgudur).
+    /// <para><b>[DEĞİŞEN KURAL — Build cycle derler]</b> Eski ad/iddia: <c>A_cycle_member_failure_names_resolve_cycles_in_the_tooltip</c>
+    /// — döngü üyesinde bu satırı yeniden derleyecek şey düz Build DEĞİL, <i>Resolve cycles</i>'tı ("Resolve cycles will
+    /// retry it"). Değişme gerekçesi (ölçüm, 2026-10-07 13:17 koşusu, ARCHITECTURE §8.1): Build kirli grubu turlarla
+    /// derler; döngü üyeliği etiketin girdisi olmaktan çıktı (<c>DecisionLabel.For</c>'un <c>inCycle</c> parametresi
+    /// kalktı).</para></summary>
     [Fact]
-    public void A_cycle_member_failure_names_resolve_cycles_in_the_tooltip()
+    public void A_failed_row_names_build_as_the_retrier_whatever_its_cycle_membership()
     {
-        var cycleMember = For(true, WillBuildReason.LastFailed, inCycle: true);
+        foreach (bool willBuild in new[] { true, false })
+        {
+            var failed = For(willBuild, WillBuildReason.LastFailed);
 
-        Assert.Equal("failed", cycleMember.Word);
-        Assert.Null(cycleMember.Tail);
-        Assert.Equal("Failed at this source — Resolve cycles will retry it", cycleMember.Title);
-        Assert.True(cycleMember.Stale);
-
-        var outOfScope = For(false, WillBuildReason.LastFailed);
-        Assert.Equal("Failed at this source — Build will retry it", outOfScope.Title);
+            Assert.Equal("failed", failed.Word);
+            Assert.Null(failed.Tail);
+            Assert.Equal("Failed at this source — Build will retry it", failed.Title);
+            Assert.True(failed.Stale);
+        }
     }
 
     /// <summary>
@@ -171,9 +174,8 @@ public class DecisionLabelTests
         foreach (bool willBuild in new[] { true, false })
         foreach (bool ownChanged in new[] { true, false })
         foreach (bool localEdits in new[] { true, false })
-        foreach (bool inCycle in new[] { true, false })
         {
-            var decision = For(willBuild, reason, ownChanged, localEdits, inCycle);
+            var decision = For(willBuild, reason, ownChanged, localEdits);
 
             Assert.True(decision.Tail is null or "local", $"beklenmedik kuyruk: {decision.Tail}");
             Assert.DoesNotContain("ago", decision.Title, StringComparison.Ordinal);
@@ -216,9 +218,9 @@ public class DecisionLabelTests
         Assert.False(decision.Stale);
         Assert.Equal("Up to date", decision.Title);
 
-        // Kapsam ZORLASA bile (eski "conditional=false") aynı cümle — döngü üyesi de aynı okur.
+        // Kapsam ZORLASA bile (eski "conditional=false") aynı cümle — döngü üyesi de aynı okur (etiket üyeliği
+        // girdi olarak almaz).
         Assert.Equal(decision, For(false, WillBuildReason.WaitingForDependency));
-        Assert.Equal(decision, For(false, WillBuildReason.WaitingForDependency, inCycle: true));
     }
 
     // ---------------------------------------------------------------- [Faz 3 — spec 2026-09-18 §5.4] dört yeni gerekçe
@@ -316,8 +318,8 @@ public class DecisionLabelTests
         Assert.Equal("up to date", For(false, WillBuildReason.UpToDate).Word);
         Assert.Equal("never built", For(false, WillBuildReason.NeverBuilt).Word);
 
-        // ...ama hiçbiri SÖZ vermez ve hiçbiri saat okumaz: döngü üyesinin hatası da kuyruksuzdur.
-        Assert.Null(For(false, WillBuildReason.LastFailed, inCycle: true).Tail);
+        // ...ama hiçbiri SÖZ vermez ve hiçbiri saat okumaz: hata da kuyruksuzdur.
+        Assert.Null(For(false, WillBuildReason.LastFailed).Tail);
     }
 
     /// <summary>

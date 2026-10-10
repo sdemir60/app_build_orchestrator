@@ -139,8 +139,8 @@ public class SingleProjectRunTests
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
 
-    /// <summary>Döngü üyesi bir hedef satırından TEK BAŞINA derlenir (tam Build onu atlardı); döngüdeki
-    /// bağımlılıkları bayat sayılır ve uyarı döngü sözcükleriyle yazılır.</summary>
+    /// <summary>Döngü üyesi bir hedef satırından TEK BAŞINA derlenir (tam Build onu grubuyla, turlarla derlerdi);
+    /// döngüdeki bağımlılıkları bayat sayılır ve uyarı döngü sözcükleriyle yazılır.</summary>
     [Fact]
     public async Task A_cycle_member_target_is_built_alone_against_its_cycle_mates_last_known_outputs()
     {

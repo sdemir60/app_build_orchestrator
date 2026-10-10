@@ -79,11 +79,13 @@ public class KeyboardShortcutTests
         => Assert.Equal(EscAction.StopRun,
             KeyboardShortcuts.ResolveEsc(dialogOpen: false, popoverOrMenuOpen: false, hasSelection: false, EscRunState.Stoppable));
 
-    /// <summary>[kullanıcı kararı 2026-09-29] Durdurma zaten sürüyorsa ikinci bir stop GİTMEZ — Esc yalnız "duyuldu"
-    /// der (şerit vurgusu).</summary>
+    /// <summary>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-03] ESKİ İDDİA (kullanıcı kararı 2026-09-29): durdurma zaten
+    /// sürüyorsa ikinci bir stop GİTMEZ — Esc yalnız "duyuldu" der (şerit vurgusu). GEREKÇE: drain en yavaş projenin kalan
+    /// süresi kadar sürebilir; ikinci Esc beklemek istemediğini söyler ve hard stop'tur ("Stop now"). "Duyuldu" vurgusunun
+    /// yerini konsol satırı ve düğmenin "Terminating…" hâli aldı.</summary>
     [Fact]
-    public void Esc_acknowledges_a_stop_that_is_already_in_progress()
-        => Assert.Equal(EscAction.AcknowledgeStopping,
+    public void Esc_while_stopping_resolves_to_StopNow()
+        => Assert.Equal(EscAction.StopNow,
             KeyboardShortcuts.ResolveEsc(dialogOpen: false, popoverOrMenuOpen: false, hasSelection: false, EscRunState.Stopping));
 
     /// <summary>[kullanıcı kararı 2026-09-29] Durdurulamayan bir iş (Sync, Deep Clean, Optimize, checkout, pull)

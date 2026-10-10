@@ -145,11 +145,12 @@ public class StartModeContinuousTests
     // ------------------------------------------------------------------ geçiş NE ZAMAN oynar
 
     /// <summary>
-    /// <b>Geri dönüştürülen bir satır YENİ verisinin hâline ANINDA oturur.</b> Liste sanallaştırılmıştır ve
-    /// container'lar yeniden kullanılır (<see cref="FixedHeightVirtualizingPanel"/>,
-    /// <c>VirtualizationMode.Recycling</c>): kaydırırken aynı <see cref="ProjectRow"/> kontrolü sırayla farklı
-    /// projelere bağlanır. Çapraz-sönüm bir DURUM DEĞİŞİMİNİ anlatır ("işlem başladı"); veri değişimini
-    /// anlatmaz — orada oynarsa liste kaydırıldıkça satırlar birbirine dönüşüyor gibi görünür.
+    /// <b>Yeni veriye bağlanan bir satır o verinin hâline ANINDA oturur.</b> Liste satır kontrollerini artık
+    /// geri dönüştürmez (<see cref="FixedHeightVirtualizingPanel"/>: kurulan kontrol satırında kalır) — ama
+    /// <see cref="ProjectRow"/> başka yollardan da yeni bir modele bağlanır (ör. gizlilikten dönüşte yeniden
+    /// kurulum) ve kural o yollar için aynen geçerlidir. Çapraz-sönüm bir DURUM DEĞİŞİMİNİ anlatır ("işlem
+    /// başladı"); veri değişimini anlatmaz — orada oynarsa yeniden bağlanan satır başka bir satıra dönüşüyor
+    /// gibi görünür.
     /// </summary>
     [StaFact]
     public void A_recycled_row_lands_on_its_new_data_without_animating()

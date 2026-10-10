@@ -62,13 +62,12 @@ public partial class MainWindow : Window
     // paneller bölgesel suppress'lerini buna bildirir — bir panelde kaydırmak diğerlerini duraklatmaz).
     private readonly ScrollArbiter _scrollArbiter = new();
     /// <summary>[design v1.11.0 §9-4] Açılış koreografisinin sürücüsü — motion sinyalini TAZE okur
-    /// (reduced-motion'da koreografi hiç oynamaz).</summary>
-    private readonly Services.OperationChoreographer _choreographer =
-        new(() => App.Motion?.AnimationsEnabled ?? false);
+    /// (reduced-motion'da koreografi hiç oynamaz; [perf A1] gizli pencerede de oynamaz). Kapı
+    /// <see cref="ChoreographyMayPlay"/>'dir ve ctor'da kurulur: alan başlatıcısındaki lambda `this`'i yakalayamaz.</summary>
+    private readonly Services.OperationChoreographer _choreographer;
     /// <summary>[clean] Adımlar arası bekletme — motion sinyalini AYNI kaynaktan, taze okur (azaltılmış
-    /// harekette hiç beklenmez).</summary>
-    private readonly Services.StepHold _stepHold =
-        new(() => App.Motion?.AnimationsEnabled ?? false);
+    /// harekette ve gizli pencerede hiç beklenmez; kapı <see cref="ChoreographyMayPlay"/>).</summary>
+    private readonly Services.StepHold _stepHold;
     /// <summary>[design v1.11.0 §9-5] Neonun random sırasını tohumlayan koşu sayacı — koreografi koşudan
     /// koşuya farklı bir sıra oynasın diye artar.</summary>
     private int _endFinaleRun;
@@ -103,6 +102,28 @@ public partial class MainWindow : Window
     public MainWindow(EngineHost engine, RunViewModel vm, ConsoleBatcher console,
         ResourceDictionary? resourceScope = null, IUiStateStore? uiState = null, AutostartService? autostart = null)
     {
+        // [perf A1] Koreografi ve bekletme kapısı ctor'un ilk işidir: ilk kullanımlardan (koreografi kablajı,
+        // ImportHold) ÖNCE kurulmalı ve kapı pencerenin kendi durumunu (IsSurfaceHidden) okur.
+        _choreographer = new(ChoreographyMayPlay);
+        _stepHold = new(ChoreographyMayPlay);
+        // [perf A1] Gizli yüzey sinyali: pencere gizlenince/gösterilince DP yazılır (tek abonelik). Tepsi göstergesinin
+        // SetMainWindowVisible aboneliğiyle birleşmez — o göstergenin denetleyicisini sürer, bu DP'yi yazar. Hiç
+        // gösterilmeyen pencerede olay ateşlenmez: StartInTray sinyali kendisi kurar.
+        IsVisibleChanged += (_, _) => SetSurfaceHidden(!IsVisible);
+        // [perf B4 · karar 4] İmleçler pencere AKTİFKEN kırpar (Windows geleneği); başka pencere öne gelince, simge
+        // durumuna küçültülünce ve tepsiye inince ikisi de sabit durur. Sinyalin TEK kaynağı bu pencerenin kendi
+        // Activated/Deactivated olaylarıdır: görünümler aktifliği kendileri OKUMAZ (başsız test pencereleri etkin
+        // olmayabilir). Saat pencere başınadır — konsol ve event stream aynı pencerede aynı saati bulur.
+        // (Aynı Activated olayına bağlı öbür kanca, VM'in OnWindowActivated'ı, aşağıda VM kablajının yanındadır.)
+        var cursorClock = CursorClock.For(this);
+        Activated += (_, _) => cursorClock.SetWindowActive(true);
+        Deactivated += (_, _) => cursorClock.SetWindowActive(false);
+        // [perf B4 takip] İlk durum: pencere HİÇ aktifleşmeden gösterilebilir (foreground-lock, başka uygulama önde iken
+        // açılış, yeniden başlatma) — Deactivated o zaman hiç gelmez ve saat varsayılan "aktif"te kalıp arka plandaki
+        // pencerede kırpardı. İçerik ilk çizildiğinde (Loaded'dan sonra; aktivasyon o ana dek işlenmiştir) durum pencerenin
+        // KENDİ IsActive'inden okunur, sonrası yukarıdaki olayların işidir. İmleç saati için pencerenin IsActive'ini
+        // okuyan TEK yer burasıdır.
+        ContentRendered += (_, _) => cursorClock.SetWindowActive(IsActive);
         InitializeComponent();
         if (resourceScope is not null) Resources.MergedDictionaries.Add(resourceScope);
         _uiState = uiState ?? new JsonUiStateStore(JsonUiStateStore.DefaultPath);
@@ -183,6 +204,8 @@ public partial class MainWindow : Window
         _vm.UpdateExternals = saved.UpdateExternals ?? true;
         // [spec 2026-09-18 §6.3] Stash ayarı: hiç yazılmamışsa KAPALI — araç commit'lenmemiş işi kendiliğinden kenara koymaz.
         _vm.StashOnBranchSwitch = saved.StashOnBranchSwitch ?? false;
+        // [RESOLVE Faz 4 / karar 11] Resolve tam öncelik: hiç yazılmamışsa AÇIK — onaylanmış varsayılan; eski dosya da onu alır.
+        _vm.ResolveAtFullPriority = saved.ResolveAtFullPriority ?? true;
         _vm.PropertyChanged += OnWorkflowPreferenceChanged;
 
         // [design v1.11.0 §2.1] Title bar'ın mono bağlam metni (OSYS · main · main-2) KALDIRILDI — başlık
@@ -284,7 +307,11 @@ public partial class MainWindow : Window
         // silinen satırları EventStreamView CollectionChanged ile düşürür.
         _vm.ConsoleCleared += (_, _) =>
         {
-            if (_vm.ActiveProjectId is null) Shell.ConsoleViewControl.ClearRunDocument();
+            if (_vm.ActiveProjectId is not null) return;
+            // [perf Faz A · A2] Gizli pencerede belgeye dokunulmaz: temizlik de dönüşteki tek kurulumun işidir
+            // (ResyncAfterShow belgeyi modelin o anki tam metninden kurar).
+            if (IsSurfaceHidden) _consoleStaleWhileHidden = true;
+            else Shell.ConsoleViewControl.ClearRunDocument();
         };
         // [design v1.8.0 §3.1 · kullanıcı kararı 2026-09-29] Workspace yokken paneller boş durumdadır: başlıklar sayaç ve
         // liste araçları taşımaz, konsolun prompt satırı "Waiting for a workspace" der — ilk açılışta da, kök boş
@@ -327,40 +354,40 @@ public partial class MainWindow : Window
         // [clean] Bekletmeyi de kabuk sayar: VM "şu kadar bekle" der, süreyi UI thread'indeki timer tutar.
         _vm.OperationHold = _stepHold.HoldAsync;
 
-        _engine.EngineExited += code => Dispatcher.Invoke(() =>
-        {
-            // [Task 16 — It-2 devir §8] VM'in run-state'i (IsStarting/IsRunning) bu sinyale bağlıdır.
-            // Motor durumu görsel şeridi (sticky ribbon) T37'nin işidir — C1'de yalnız VM state'i güncellenir.
-            _vm.OnEngineExited(code);
-        });
         // [A13.2/Kısıt 4] YALNIZ projectLog YÜKSEK frekanslı akan log satırıdır — VM'in o dalı ConsoleBatcher.Post
         // (kilitsiz) kullanır, ObservableProperty'e DOKUNMAZ; marshal OLMADAN doğrudan çağrılabilir. Diğer TÜM
-        // event'ler UI thread'ine taşınır.
+        // event'ler UI thread'ine taşınır — olay başına bir dispatcher işi olarak DEĞİL, zaman dilimli tek bir pompayla
+        // (EngineEventPump): koşu başının yüzlerce olaylık patlaması UI thread'ini tek blokta tutmasın.
+        var engineEvents = new EngineEventPump(Dispatcher, _vm.OnEvent);
         _engine.EventReceived += ev =>
         {
             if (ev is ProjectLogEvent) _vm.OnEvent(ev);
-            else Dispatcher.InvokeAsync(() => _vm.OnEvent(ev));
+            else engineEvents.Post(ev);
         };
-        // [spec 2026-09-18 §6.1 · karar 11] Kendiliğinden Sync: HEAD izleyicisinin thread-pool geri çağrısı motor
-        // olaylarıyla AYNI yoldan (Dispatcher.InvokeAsync) UI thread'ine taşınır; pencereye dönüş (tepsiden dönüş
-        // dahil — ShowFromTray Activate çağırır) koordinatöre gider.
+        _engine.EngineExited += code => Dispatcher.Invoke(() =>
+        {
+            // Çıkış (Send önceliği) pompada bekleyen olayların önüne GEÇMEZ: motorun ölmeden önce gönderdikleri önce uygulanır —
+            // geç uygulanan bir runStarted ölü motorla koşuyu yeniden açıp "engine stopped" satırını silerdi
+            // (EngineEventBurstTests). Bir işleyici fırlatsa bile çıkış yine uygulanır.
+            try { engineEvents.DrainNow(); }
+            finally
+            {
+                // [Task 16 — It-2 devir §8] VM'in run-state'i (IsStarting/IsRunning) bu sinyale bağlıdır.
+                // Motor durumu görsel şeridi (sticky ribbon) T37'nin işidir — C1'de yalnız VM state'i güncellenir.
+                _vm.OnEngineExited(code);
+            }
+        });
+        // [spec 2026-09-18 §6.1 · karar 11] Kendiliğinden Sync: HEAD izleyicisinin thread-pool geri çağrısı
+        // Dispatcher.InvokeAsync (Normal) ile UI thread'ine taşınır — motor olaylarının pompası ayrı bir kuyruktur, iki kaynağın
+        // birbirine göre sırası garanti değildir; pencereye dönüş (tepsiden dönüş dahil — ShowFromTray Activate çağırır)
+        // koordinatöre gider.
         // [spec 2026-09-18 §6.4] Yarıdaki git işleminin yoklaması UI thread'inde tık atar; yalnız işaret dururken çalışır.
         _vm.GitOperationPollTimer = new DispatcherPollTimer(Dispatcher);
         _vm.EnableAutoSync(action => Dispatcher.InvokeAsync(action));
+        // (Aynı Activated olayına bağlı öbür kanca — imleç saatinin aktiflik kablajı — ctor'un başındadır: cursorClock.)
         Activated += (_, _) => _vm.OnWindowActivated();
 
-        _elapsedTimer.Tick += (_, _) =>
-        {
-            _vm.TickElapsed();
-            // [T56/3a] "N lines" TAM tampon sayacı — 200ms'de bir aktif tampondan tazelenir (marshal-free log
-            // yolundan ObservableProperty tetiklemek yerine; render dilimi DEĞİL, Ek A #23).
-            Shell.ConsoleHeaderControl.SetLineCount(_vm.GetActiveLineCount());
-            // [D5] Koşarken grafı düzenli besle: kamera frontier'i yumuşak takip etsin, queued→building→done
-            // geçişleri ≤200ms'de yansısın. GraphView sık UpdateStatuses'a göre tasarlandı (Zeno/pulse guard'ları).
-            // Boşta itmeyiz (statü değişimi zaten Counters/topoloji event'lerinden gelir — gereksiz churn yok).
-            // [E4/T48] Koşarken frontier'i (ilk building satır) yumuşak takip et (arbiter seçim varken reddeder).
-            if (_vm.IsRunUnderway) { PushGraphStatuses(); FollowFrontier(); } // bekleyen istek bir koşu değildir
-        };
+        _elapsedTimer.Tick += (_, _) => OnElapsedTick();
         _elapsedTimer.Start();
 
         // [T56/3a] Konsol modu ActiveProjectId'yi izler: null → anlatı başlığı. (Proje-loguna geçiş başlığı
@@ -380,6 +407,12 @@ public partial class MainWindow : Window
         _vm.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(RunViewModel.SelectedProjectId)) UpdateFrontierSelection();
+        };
+        // [perf Faz C · C4] "Koşu bitti" sinyali: tepside biten koşunun bellek toplaması iki sinyalin birleşimidir
+        // (MainWindow.HiddenSurface — CollectAfterRunWhenDue); bu, koşu tarafı.
+        _vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(RunViewModel.EndedRunSerial)) CollectAfterRunWhenDue();
         };
         Shell.ConsoleHeaderControl.BackRequested += (_, _) => OnBack();
         // Liste ↔ graf karşılıklı hover: bir yüzeydeki imleç, öbüründe standart hover olarak yansır.
@@ -549,7 +582,10 @@ public partial class MainWindow : Window
     /// <summary>[design v1.13.0 §2.11] Esc zincirinin dialog dalı: <b>What's new → About → Settings</b> — üst üste
     /// binerler (XAML'de sonra gelen üstte çizilir); Esc her zaman EN ÜST katmanı indirir, alta sızmaz.
     /// [kullanıcı kararı 2026-09-29] Zincirin son halkası koşudur — karar <see cref="KeyboardShortcuts.ResolveEsc"/>'te;
-    /// Stop kendi komutundan geçer (kapısı <see cref="RunViewModel.EscRunState"/>'in girdisidir).</summary>
+    /// Stop kendi komutundan geçer: Esc graceful gönderir; Stopping sürerken (kullanıcı ya da branch kesmesi istemiş
+    /// olsun) hard stop gönderir ([kullanıcı kararı 2026-10-03]); komut hangisi olduğuna kendi fazından karar verir ve
+    /// hard gittikten sonraki Esc'i kendi içinde yutar
+    /// (<see cref="RunViewModel.EscRunState"/> yalnız zincirin girdisidir).</summary>
     private void OnEscapePressed()
     {
         switch (KeyboardShortcuts.ResolveEsc(AnyDialogOpen, AnyPopoverOpen, _vm.SelectedProjectId is not null,
@@ -562,8 +598,8 @@ public partial class MainWindow : Window
                 break;
             case EscAction.ClosePopovers: CloseAllPopovers(); break;
             case EscAction.ClearSelection: _vm.SelectProject(null); break;
-            case EscAction.StopRun: _vm.StopCommand.Execute(null); break;
-            case EscAction.AcknowledgeStopping: _vm.AcknowledgeStopRequest(); break;
+            case EscAction.StopRun:
+            case EscAction.StopNow: _vm.StopCommand.Execute(null); break;
             case EscAction.ExplainUnstoppable: _vm.NoteEscCannotStop(); break;
         }
     }
@@ -594,9 +630,22 @@ public partial class MainWindow : Window
     /// BAYATTIR ve ATILIR — Solution B'nin senkron doküman-set'inin ardından koşan bir bayat flush'ın taze
     /// dokümana sızmasını (dup/cross-doc) kapatır. Aksi halde: anlatı (null) →
     /// <see cref="ConsoleView.AppendNarrativeBatch"/> (en yeni satır T34 hibrit daktilo); proje-log → ham MSBuild
-    /// <see cref="ConsoleView.AppendBatch"/> instant (ham çıktı ASLA harf-harf — DD2).</summary>
-    private void AppendConsoleBatch(string text, long batchGen)
+    /// <see cref="ConsoleView.AppendBatch"/> instant (ham çıktı ASLA harf-harf — DD2).
+    ///
+    /// <para>[perf Faz A · A2] <b>Gizli ya da bayat konsolda belgeye yazılmaz:</b> metin VM tamponunda zaten durur; batch atılır,
+    /// "ekran bayat" bayrağı kalkar (<c>_consoleStaleWhileHidden</c>) ve <see cref="ResyncAfterShow"/> dönüşte belgeyi
+    /// tam metinden bir kez kurar. Kapı yalnız <see cref="IsSurfaceHidden"/>'a bakmaz, bayrağa da bakar: gösterimden sonra
+    /// ama Loaded-öncelikli dönüş kurulumu koşmadan Normal-öncelikli bir pompa batch'i araya girebilir; bayat belgeye
+    /// basılsaydı kurulum onu boşa çıkarır, belge kısa süre aradaki satırlar eksik kalırdı. Kapı nesil kararından ÖNCEDİR
+    /// (bayat batch de aynı bayrağı kaldırır; zararsız: dönüşteki kurulum zaten tam metindir). <c>internal</c> = test
+    /// yüzeyi: pompa tick etmeyen fixture'da testler batch'i pompanın yaptığı gibi (<see cref="ConsoleReseedGen"/>
+    /// damgasıyla) doğrudan verir.</para></summary>
+    internal void AppendConsoleBatch(string text, long batchGen)
     {
+        // [perf Faz A · A2] Gizli ya da bayat konsolda belgeye yazılmaz (kapı nesil kararından ÖNCE): metin VM tamponunda
+        // zaten durur; belgeyi ResyncAfterShow tam metinden bir kez kurar. Bayrak gösterimden o kurulumun koştuğu ana dek de
+        // kalkık kalır: araya giren batch bayat belgeye basılmaz.
+        if (IsSurfaceHidden || _consoleStaleWhileHidden) { _consoleStaleWhileHidden = true; return; }
         switch (ConsoleBatchRouter.Decide(batchGen, _console.CurrentReseedGen, _vm.ActiveProjectId))
         {
             case ConsoleBatchRouter.Route.Drop: return; // aradan reseed geçti → bayat batch, at
@@ -605,10 +654,20 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>[test yüzeyi] Konsol pompasının şu anki reseed nesli: pompa tick etmeyen bir fixture'da testler bir
+    /// batch'i <see cref="AppendConsoleBatch"/>'e pompanın yaptığı gibi bu damgayla verir (pompanın batch'i okuduğu
+    /// andaki nesil; reseed-drop sentinel'i onu ilerletir).</summary>
+    internal long ConsoleReseedGen => _console.CurrentReseedGen;
+
     /// <summary>[D4/Solution B] Kart seçimi değişince konsol modunu senkron sürer. Seçim varsa: proje logunu
     /// (dikişli) YÜKLE, sonra başlık + gövde AYNI UI turunda proje-loguna geçir (reseed flicker YOK). Seçim
     /// kalkınca (null): run anlatısına dön. logNotFound/skipped gibi durumlarda ActiveProjectId kurulmaz →
-    /// run modunda kalınır.</summary>
+    /// run modunda kalınır.
+    ///
+    /// <para>[perf Faz A · A2] <b>Gizli pencerede belge kurulmaz:</b> başlık ve VM tarafı yine güncellenir; belge yerine
+    /// "ekran bayat" bayrağı kalkar (<c>_consoleStaleWhileHidden</c>) ve <see cref="ResyncAfterShow"/> dönüşte belgeyi
+    /// <c>ActiveProjectId</c>'ye bakarak tilt'siz kurar. Görünür kurulum (gösterimden sonra, dönüş kurulumundan önce bile)
+    /// belgeyi kendisi kurar ve bayrağı düşürür: dönüş kurulumu o belgeyi ikinci kez kurmaz.</para></summary>
     private async Task OnSelectedProjectChangedAsync()
     {
         try
@@ -621,17 +680,20 @@ public partial class MainWindow : Window
             // projedeyse (guard2, arada select→deselect/başka-id olmadı) gösterilir; aksi halde run modunda kal
             // (§2 donma: deselect-mid-load'da ActiveProjectId zaten null kaldığından burada erken dönülür).
             if (!_vm.ShouldShowLoadedProject(id!)) return;
-            var row = _vm.Projects.FirstOrDefault(p => string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase));
+            var row = _vm.FindRow(id!);
             if (row is null) return;
 
             Shell.ConsoleHeaderControl.LogTextProvider = () => _vm.GetProjectDocumentText(id!);
             Shell.ConsoleHeaderControl.ShowProjectLog(row, _vm.GetActiveLineCount());
             TrackHeaderRow(row); // [R1 finding 2] seçim SABİT kalsa da satırın kendi değişimi başlığı tazeler
+            // [perf Faz A · A2] Gizli pencerede belge kurulmaz (bkz. ShowRunConsole): yükleme sürerken pencere tepsiye
+            // indiyse belgeyi dönüş kurulumu AYNI satır kuralıyla (ProjectDocumentLines) kurar. Başlık yukarıda güncellendi.
+            if (IsSurfaceHidden) { _consoleStaleWhileHidden = true; return; }
+            _consoleStaleWhileHidden = false; // görünür TAM kurulum: belge modelden kurulur, dönüş kurulumunun yapacağı iş kalmaz
             // [Solution B] Doküman TIKLAMA (yükleme tamamlanma) ANINDA senkron kurulur — pump'a bağlı DEĞİL.
             // [her projenin sayfası var] Log BOŞSA sayfa boş bırakılmaz: o projenin O ANKİ durumunu anlatan
             // metin gösterilir. Karar Console.ConsoleEmptyState'te (saf, test edilebilir); pencere yalnız uygular.
-            _vm.SeedProjectDocument(id!, text => Shell.ConsoleViewControl.PlayCascade(
-                text.Length == 0 ? ConsoleEmptyState.ForEmptyLog(row) : SplitLogLines(text)));
+            _vm.SeedProjectDocument(id!, text => Shell.ConsoleViewControl.PlayCascade(ProjectDocumentLines(row, text)));
         }
         catch (Exception ex)
         {
@@ -641,11 +703,21 @@ public partial class MainWindow : Window
     }
 
     /// <summary>[3b → D4/Solution B] Run belgesine döner; başlık anlatı moduna ActiveProjectId=null
-    /// PropertyChanged'ı üzerinden döner (bkz. constructor). Doküman SENKRON kurulur (reseed flicker YOK).</summary>
+    /// PropertyChanged'ı üzerinden döner (bkz. constructor). Doküman SENKRON kurulur (reseed flicker YOK).
+    ///
+    /// <para>[perf Faz A · A2] <b>Gizli pencerede belge kurulmaz</b> (tepsiden başlayan koşu proje seçimini düşürünce buraya
+    /// gelinir): başlık ve VM tarafı güncellenir, belge yerine "ekran bayat" bayrağı kalkar ve <see cref="ResyncAfterShow"/>
+    /// dönüşte belgeyi <c>ActiveProjectId</c>'ye bakarak kurar. Görünür kurulum (gösterimden sonra, dönüş kurulumundan önce
+    /// bile) belgeyi modelin tam metninden kendisi kurar ve bayrağı düşürür: dönüş kurulumu ikinci kez kurmaz.</para></summary>
     private void ShowRunConsole()
     {
         _vm.ShowRun(); // ActiveProjectId=null → PropertyChanged → ShowNarrative (başlık, aynı tur)
         TrackHeaderRow(null); // [R1 finding 2] anlatıya dönüldü — eski satırın aboneliği bırakılır
+        // [perf Faz A · A2] Gizli pencerede belge kurulmaz: yeniden kurulum + layout + 340 ms'lik tilt kimsenin
+        // görmeyeceği iş (tepsiden başlayan koşu proje seçimini düşürünce buraya gelinir). Başlık/VM tarafı yukarıda
+        // güncellendi; belgeyi dönüşteki tek kurulum (ResyncAfterShow) ActiveProjectId'ye bakarak kurar.
+        if (IsSurfaceHidden) { _consoleStaleWhileHidden = true; return; }
+        _consoleStaleWhileHidden = false; // görünür TAM kurulum: belge modelden kurulur, dönüş kurulumunun yapacağı iş kalmaz
         _vm.SeedRunDocument(text => Shell.ConsoleViewControl.ShowRunDocument(text));
         if (_vm.GetActiveLineCount() == 0) Shell.ConsoleViewControl.ShowReady(); // boş run → idle "ready"
     }
@@ -694,10 +766,23 @@ public partial class MainWindow : Window
     private static IReadOnlyList<string> SplitLogLines(string text) =>
         text.Length == 0 ? [] : text.TrimEnd('\n').Split('\n');
 
+    /// <summary>Proje-log belgesinin satırları: log BOŞSA sayfa boş bırakılmaz — o projenin O ANKİ durumunu anlatan
+    /// metin (<see cref="ConsoleEmptyState"/>, saf karar); aksi halde dikilmiş log satırları. Kart seçimi
+    /// (<see cref="OnSelectedProjectChangedAsync"/>) ile gizli pencere dönüşü (<see cref="ResyncAfterShow"/>) AYNI
+    /// kuralı kullanır (kopya YASAK). <paramref name="row"/> yoksa (proje topolojiden düşmüş) yalnız log satırları.</summary>
+    private static IReadOnlyList<string> ProjectDocumentLines(ProjectRowViewModel? row, string text) =>
+        text.Length == 0 && row is not null ? ConsoleEmptyState.ForEmptyLog(row) : SplitLogLines(text);
+
     /// <summary>[D1] VM'in katman gruplarını (topolojiden — App'te regex YOK) StickyLayerList'e verir.
     /// <see cref="ProjectRowViewModel"/> nesneleri satır olarak akar; isimsiz grup (null) StickyLayerList'te
     /// başlıksızdır.</summary>
-    private void RefreshProjectGroups() => ApplyProjectGroups(reveal: true);
+    private void RefreshProjectGroups()
+    {
+        // [perf Faz A · A5] Gizli yüzeyde liste kurulmaz: topoloji modelde zaten durur ve dönüşte ResyncAfterShow listeyi TEK
+        // geçişte (reveal'siz) kurar. Graf bu kapının dışındadır: RebuildGraph gizliyken de koşar (A4).
+        if (IsSurfaceHidden) { _listStaleWhileHidden = true; return; }
+        ApplyProjectGroups(reveal: true);
+    }
 
     /// <summary>[A13/T2 · 2.5] Filtre/sorgu (ya da bir satırın statüsü) yüzünden GÖRÜNÜR küme değişti → listeyi
     /// tazele, ama kademeli belirişi (bo-reveal) OYNATMA.
@@ -712,6 +797,10 @@ public partial class MainWindow : Window
         // yeniden doldurmasın — geri dönüş reveal'li TopologyChanged yolundandır.
         if (_vm.PlanSurfaceRestarting) return;
         if (VisibleRowSignature() == _visibleRowSignature) return;
+        // [perf Faz A · A5] Kurulum GERÇEKTEN gerekiyorken yüzey gizliyse ertelenir (ResyncAfterShow tek geçişte kurar). Kapı iki
+        // "yapacak iş yok" korumasının ARKASINDADIR: imza aynıyken bayrak kalksaydı tepsideki her derleme, pencere gelince
+        // listeyi boşuna baştan kurdururdu.
+        if (IsSurfaceHidden) { _listStaleWhileHidden = true; return; }
         ApplyProjectGroups(reveal: false);
     }
 
@@ -724,6 +813,9 @@ public partial class MainWindow : Window
     /// davet kararında onlardan önce gelir (<see cref="ListInvite.Resolve"/>).</para></summary>
     private void BlankPlanSurface()
     {
+        // [perf Faz A · A5] Liste şimdi BOŞ yazıldı: gizlilikten kalma "liste bayat" bayrağı düşer — yoksa bekleyen dönüş
+        // kurulumu modeldeki eski topolojiyi boşaltılmış listeye geri yazardı (geri getiren tek şey bir sonraki TopologyChanged).
+        _listStaleWhileHidden = false;
         Shell.ProjectsList.SetGroups([], reveal: false);
         _orderedRows = [];
         _visibleRowSignature = "";
@@ -736,6 +828,9 @@ public partial class MainWindow : Window
     /// alt kümesi) — gerekçe <see cref="StickyLayerList.SetGroups(IReadOnlyList{StickyLayerList.LayerGroup}, bool)"/>'ta.</summary>
     private void ApplyProjectGroups(bool reveal)
     {
+        // [perf Faz A · A5] Listeyi YAZAN yol "liste bayat" bayrağını düşürür: dönüş ile Loaded-öncelikli ResyncAfterShow
+        // arasında görünür bir kurulum olduysa dönüş kurulumu listeyi ikinci kez (reveal'siz) kurmaz.
+        _listStaleWhileHidden = false;
         var groups = _vm.BuildLayerGroups()
             .Select(g => new StickyLayerList.LayerGroup(g.Name ?? "", g.Rows.Cast<object>().ToList()))
             .ToList();
@@ -775,11 +870,43 @@ public partial class MainWindow : Window
         if (row >= 0) Shell.ProjectsList.SelectRow(row);
     }
 
+    /// <summary>
+    /// 200 ms'lik <c>_elapsedTimer</c> tikinin gövdesi (zamanlayıcı tek satırla buraya devreder). <c>internal</c>: tik
+    /// üretimde yalnız gerçek zamanlayıcıdan gelir; testler gövdeyi doğrudan sürer (<see cref="OnGlobalHotkey"/> deseni) —
+    /// enjekte saatle 3 sn'lik bir tik dizisini gerçek zamanı beklemeden ancak bu yüzeyle sınayabilirler.
+    ///
+    /// <para><b>[perf Faz A · A6] Gizliyken yalnız motor sessizlik bekçisi koşar.</b> Canlı süreler (koşu süresi, building
+    /// satırların süresi, ETA), konsol başlığının satır sayacı, grafın statü itişi ve frontier takibi görünmeyen bir ekranı
+    /// yeniden yazardı: hepsi yalnız görünürken koşar. Gizliyken <c>_tickStaleWhileHidden</c> kalkar ve dönüşte
+    /// <see cref="ResyncAfterShow"/> süreleri ve sayacı bir kez yeniler. Bekçi gizliyken de koşar — tepsiden Exit + susmuş
+    /// motorda bekleyen çıkışı bekçinin uyarısı serbest bırakır (<c>RunViewModel.Exit.cs</c>) — bu yüzden zamanlayıcı
+    /// <b>durdurulmaz</b>.</para>
+    /// </summary>
+    internal void OnElapsedTick()
+    {
+        bool visible = !IsSurfaceHidden;
+        _vm.TickElapsed(visible);
+        if (!visible) { _tickStaleWhileHidden = true; return; }
+        // [T56/3a] "N lines" TAM tampon sayacı — 200ms'de bir aktif tampondan tazelenir (marshal-free log
+        // yolundan ObservableProperty tetiklemek yerine; render dilimi DEĞİL, Ek A #23).
+        Shell.ConsoleHeaderControl.SetLineCount(_vm.GetActiveLineCount());
+        // [D5] Koşarken grafı düzenli besle: kamera frontier'i yumuşak takip etsin, queued→building→done
+        // geçişleri ≤200ms'de yansısın. GraphView sık UpdateStatuses'a göre tasarlandı (Zeno/pulse guard'ları).
+        // Boşta itmeyiz (statü değişimi zaten Counters/topoloji event'lerinden gelir — gereksiz churn yok).
+        // [E4/T48] Koşarken frontier'i (ilk building satır) yumuşak takip et (arbiter seçim varken reddeder).
+        if (_vm.IsMidRunLocked) { PushGraphStatuses(); FollowFrontier(); }
+    }
+
+    /// <summary>[perf Faz A · A6 test yüzeyi] <see cref="FollowFrontier"/> çağrı sayacı — gizliyken tikin frontier takibine
+    /// girmediğini, görünürken koşan derlemede girdiğini pinler.</summary>
+    internal int FrontierFollowCount { get; private set; }
+
     /// <summary>[E4/T48] Koşarken frontier'i (ilk <c>Started</c> satır) yumuşak takip et — arbiter seçim aktifken
     /// bunu reddeder (seçim &gt; follow, <c>BuildApp.jsx:1388</c>). Bölgesel wheel-suppress + throttle/dead-band
     /// kararı <see cref="Controls.FollowScrollController"/>'a aittir (StickyLayerList.FollowRow onu uygular).</summary>
     private void FollowFrontier()
     {
+        FrontierFollowCount++;
         // [E4 fix] Arbiter'ın CANLI frontier gate'i: seçim YOK **ve** frontier bölgesel wheel-suppress YOK. Böylece
         // arbiter'ın _suppressed[Frontier] bit'i yalnız yazılan değil OKUNAN olur — kullanıcı kaydırması onu kurar
         // (NotifyUserScroll), yalnız boşta penceresi temizler (StickyLayerList.ResumeFrontierIfIdle → Resume).
@@ -831,6 +958,8 @@ public partial class MainWindow : Window
     /// Topoloji yokken no-op.</summary>
     private void PushGraphStatuses()
     {
+        // [perf Faz A · A4] Gizliyken itiş atlanır, graf "bayat" işaretlenir; dönüşte ResyncAfterShow üç itişi tek seferde yapar.
+        if (IsSurfaceHidden) { _graphStaleWhileHidden = true; return; }
         // [E2/§5-a] Projects boşken (topoloji henüz gelmedi ya da workspace değişti) push ETME: RowsById()
         // boş olurdu ve GraphBinder her topoloji düğümünü bir kare Discovered'a "flash" ederdi (queued/dirty
         // statüleri kaybolur, sonra liste yeniden dolunca geri gelir). Guard no-op'tur — A13.2 Clear/reset
@@ -841,11 +970,13 @@ public partial class MainWindow : Window
 
     /// <summary>[quiet] Koşu fazını grafa iter (design v1.3.0 §2.3 "Koşu yaşam döngüsü"): koşarken graf
     /// soluklaşır ve yalnız derlenenler parlak kalır; koşu bitince tümü sonuç renginde tam opak canlanır.
-    /// Kaynak koşunun gerçekten yolda olmasıdır (<see cref="RunViewModel.IsRunUnderway"/>) — [kullanıcı bildirimi
-    /// 2026-09-29] bir işin bitmesini bekleyen istek kilidi taşır ama grafı söndürmez: o sırada graf süren işi ve önceki
-    /// sonucu gösterir. (Eskiden kilidin kendisiydi, <see cref="RunViewModel.IsMidRunLocked"/>.)</summary>
-    private void PushGraphRunPhase() =>
-        Shell.GraphHost.RunPhase = _vm.IsRunUnderway ? GraphRunPhase.Running : GraphRunPhase.Idle;
+    /// Kaynak koşu kilididir (<see cref="RunViewModel.IsMidRunLocked"/>): koşu açılırken (planlama dahil) ve koşarken Running.
+    /// Bir workspace işi (Sync, Clean, ...) sürerken kilit kapalıdır — graf o sırada süren işi ve önceki sonucu gösterir.</summary>
+    private void PushGraphRunPhase()
+    {
+        if (IsSurfaceHidden) { _graphStaleWhileHidden = true; return; } // [perf Faz A · A4] bkz. PushGraphStatuses
+        Shell.GraphHost.RunPhase = _vm.IsMidRunLocked ? GraphRunPhase.Running : GraphRunPhase.Idle;
+    }
 
     /// <summary>[D5] Id → satır VM haritası (GraphBinder statüyü buradan okur). Id'ler Windows yolu → OIC.</summary>
     private IReadOnlyDictionary<string, ProjectRowViewModel> RowsById()
@@ -860,6 +991,7 @@ public partial class MainWindow : Window
     /// yok sayar (aksi halde SelectProject toggle'ı seçimi geri alırdı).</summary>
     private void PushGraphSelection()
     {
+        if (IsSurfaceHidden) { _graphStaleWhileHidden = true; return; } // [perf Faz A · A4] bkz. PushGraphStatuses
         _suppressGraphSelection = true;
         try { Shell.GraphHost.SelectedNode = _vm.SelectedProjectId; }
         finally { _suppressGraphSelection = false; }
@@ -912,7 +1044,8 @@ public partial class MainWindow : Window
                     // kuyruk artık InRunQueue'dan gelir (Task 1) ve o YALNIZ bu run'ın kendi buildPreview'inden
                     // yazılır — runStarted ile buildPreview arasında gerçek bir IPC boşluğu vardır (Supervisor
                     // bu ikisi arasında stateStore.Load + proje başına OwnFilesChanged hesaplar,
-                    // RunCoordinator.cs ~885-905), her IPC olayı kendi Dispatcher.InvokeAsync turudur (~293).
+                    // RunCoordinator.cs ~885-905) ve iki olay ayrı dispatcher turlarında uygulanabilir (EngineEventPump
+                    // dilimleri; boşluk sırasında çizim yapılabilir).
                     // Eskiden burada ClearMarks de birlikte çağrılıyordu: WillBuild (genel, koşuyu bilmeyen bayrak)
                     // o boşlukta hâlâ true olduğu için Queued sanki kesintisiz sürüyormuş GİBİ görünürdü — Task 1
                     // WillBuild'i InRunQueue'yla değiştirince (kök neden A'yı kapatırken) bu yanılsama bozuldu ve
@@ -929,16 +1062,15 @@ public partial class MainWindow : Window
                 // oynuyorsa dönüşü finalin kendisi yapar (GraphView.EndOperation).
                 if (!_vm.IsMidRunLocked) Shell.GraphHost.EndOperation();
                 break;
-            case nameof(RunViewModel.IsRunUnderway):
-                // [kullanıcı bildirimi 2026-09-29] Bir işin bitmesini bekleyen istek başladı: kilit (IsStarting) zaten
-                // açıktı, dolayısıyla koşu fazına giriş bu bildirimle gelir — tıklamayla hemen başlayan koşunun aynısı.
-                PushGraphRunPhase();
-                PushGraphStatuses();
-                break;
             case nameof(RunViewModel.Phase):
                 // [design v1.11.0 §9-5] Koşu bitti → "neon tutuşma" YALNIZ grafta oynar.
+                // [perf A1] ...ve yalnız GÖRÜNÜR pencerede. Gizliyken final hiç oynamaz: CancelEndFinale, PlayEndFinale'in
+                // "final yok" dalıyla aynı sonucu verir (filtre askısı kalkar) — koşu bitti, askı da bitmeli.
                 if (_vm.Phase is AppPhase.Done or AppPhase.Stopped)
-                    Shell.GraphHost.PlayEndFinale(_vm.BuiltInThisRun(), _endFinaleRun++);
+                {
+                    if (IsSurfaceHidden) Shell.GraphHost.CancelEndFinale();
+                    else Shell.GraphHost.PlayEndFinale(_vm.BuiltInThisRun(), _endFinaleRun++);
+                }
                 break;
             case nameof(RunViewModel.SelectedProjectId):
                 PushGraphSelection();
@@ -1107,6 +1239,9 @@ public partial class MainWindow : Window
     /// </summary>
     private void RefreshGraphFilter()
     {
+        // [perf Faz A · A4] Gizliyken atlanır: etkin filtrede her proje olayı (VisibleProjects) yeni bir eşleşme kümesi kurar ve
+        // tüm düğümlerin opaklığını yeniden hesaplatırdı. Üç graf itişiyle AYNI bayrak; dönüşte ResyncAfterShow bir kez uygular.
+        if (IsSurfaceHidden) { _graphStaleWhileHidden = true; return; }
         bool filtering = _vm.ActiveFilters.Count > 0 || !string.IsNullOrWhiteSpace(_vm.ProjectQuery);
         Shell.GraphHost.FilterMatches = filtering
             ? _vm.VisibleProjects.Select(p => p.Id).ToHashSet(StringComparer.OrdinalIgnoreCase)
@@ -1144,7 +1279,7 @@ public partial class MainWindow : Window
         SyncModeButtons(state.Mode);
     }
 
-    /// <summary>[D6 fold] İş akışı tercihi (RepositoryRoot/Configuration/PerfMode/UpdateExternals/StashOnBranchSwitch)
+    /// <summary>[D6 fold] İş akışı tercihi (RepositoryRoot/Configuration/PerfMode/UpdateExternals/StashOnBranchSwitch/ResolveAtFullPriority)
     /// değişince kalıcı duruma yazar — yerleşim persist'iyle AYNI desen (Load → muta → Save; düşük frekans).
     /// [D7 M3] RootPath değişimi (Settings → Save ile uygulanan kök, ilk kurulum dahil)
     /// TEK noktadan buradan persist edilir; açılışta seed edilip hatırlanır.</summary>
@@ -1157,12 +1292,14 @@ public partial class MainWindow : Window
             case nameof(RunViewModel.PerfMode):
             case nameof(RunViewModel.UpdateExternals):
             case nameof(RunViewModel.StashOnBranchSwitch):
+            case nameof(RunViewModel.ResolveAtFullPriority):
                 var s = _uiState.Load();
                 s.RepositoryRoot = _vm.RootPath;
                 s.Configuration = _vm.Configuration;
                 s.PerfMode = _vm.PerfMode;
                 s.UpdateExternals = _vm.UpdateExternals;
                 s.StashOnBranchSwitch = _vm.StashOnBranchSwitch;
+                s.ResolveAtFullPriority = _vm.ResolveAtFullPriority;
                 _uiState.Save(s);
                 break;
         }
@@ -1190,7 +1327,7 @@ public partial class MainWindow : Window
 
         // [T62] Tepsi: Close to tray açıkken × pencereyi buraya gizler (K5) → uygulama tepsiden yönetilir. [P3 · Task 3]
         // Exit güvenli tam çıkıştır — uçuştaki iş beklenir (ExitFromTray).
-        _tray = new AppTrayIcon(_vm.StopCommand);
+        _tray = new AppTrayIcon(_vm.StopCommand, _vm);
         _tray.RestoreRequested += ShowFromTray;
         _tray.ExitRequested += ExitFromTray;
 
@@ -1229,11 +1366,17 @@ public partial class MainWindow : Window
     private void SetUpTrayBuildIndicator(ITrayRunNotifier notifier)
     {
         var controller = new TrayBuildIndicatorController(
-            new LazyOverlayView(this), notifier, () => ShellSwitches.ShowNotifications(_uiState.Load()))
+            new LazyOverlayView(this), notifier, () => ShellSwitches.ShowNotifications(_uiState.Load()),
+            // [perf Faz C · son toparlama B2] Çıkışın BAŞLADIĞI andaki koşu kimliği: bildirim nefesten sonra gelir ve o ana kadar yeni
+            // bir koşu başlamış olabilir; kimlik bildirim anında okunsaydı biten koşunun çıkışı yeni koşuya yazılırdı.
+            () => _vm.RunSerial)
         {
             // [K-14] Kaybolma ile bildirim üst üste binmesin diye araya giren nefes. Süre token'dan gelir ve
             // reduced-motion'da kendiliğinden sıfırlanır — kod tarafında ms literali yoktur.
             ExitBreath = () => Task.Delay(MotionTokens.ResolveSlow(this).TimeSpan),
+            // [perf Faz C · C4] Çıkış sırası bitince (gösterge gizlendi, balon gösterildi): tepside biten koşunun bellek
+            // toplamasının gösterge sinyali (koşu sinyali ctor'daki EndedRunSerial aboneliğidir).
+            ExitCompleted = OnTrayIndicatorExitFinished,
         };
         _trayIndicator = controller;
 
@@ -1297,9 +1440,19 @@ public partial class MainWindow : Window
         return 0;
     }
 
+    /// <summary>[perf B2] Tepsi bildirim yüzeyi: üretimde tepsi ikonunun kendisi (<c>_tray</c>), testte sahte bir
+    /// notifier. <c>OnSourceInitialized</c> headless süitte koşmaz, yani gerçek <c>TaskbarIcon</c> kurulmaz ve
+    /// <c>_tray</c> orada <c>null</c>'dır — bu seam olmadan "tepsideyken yok sayılan kısayol balon gösterir" sınanamazdı.</summary>
+    internal ITrayRunNotifier? TrayNotifierForTest { get; set; }
+
+    private ITrayRunNotifier? TrayNotifier => TrayNotifierForTest ?? _tray;
+
     /// <summary>[kullanıcı kararı 2026-09-29] Getir/gizle kararı <see cref="WindowToggle"/>'da; gizleme tepsiye iner
     /// (ilk-× balonu burada gösterilmez — o balon ×'ın davranışını anlatır). Build pencereyi GETİRMEZ ve pencere
     /// içindeki Build ile AYNI komuttur (<see cref="GlobalHotkeys.CommandFor"/>; CanExecute onurlanır).
+    /// <para>[perf B2] Kapı kapalıysa (iş sürüyor) kısayol hiçbir şey yapmaz — kuyruk yoktur. Pencere GİZLİYKEN bunu
+    /// söyleyen tek yüzey bir balondur (<see cref="ITrayRunNotifier.ShowBuildIgnored"/>); pencere görünürken ekran
+    /// zaten söyler. Her balon gibi Show notifications'a bağlıdır ve sorulduğu anda TAZE okunur.</para>
     /// <para>[design v1.23.0 §2.12] Restart ekranı görünürken hiçbir global kısayol çalışmaz
     /// (<see cref="InputSuspended"/>). internal: test yüzeyi — <c>WM_HOTKEY</c> gösterilmeyen pencerede üretilemez.</para></summary>
     internal void OnGlobalHotkey(GlobalHotkeyAction action)
@@ -1314,6 +1467,9 @@ public partial class MainWindow : Window
         }
         var command = GlobalHotkeys.CommandFor(action, _vm);
         if (command is not null && command.CanExecute(null)) command.Execute(null);
+        else if (action == GlobalHotkeyAction.Build && IsSurfaceHidden
+            && _vm.WhyRunCannotStart() is { } reason && ShellSwitches.ShowNotifications(_uiState.Load()))
+            TrayNotifier?.ShowBuildIgnored(reason);
     }
 
     private void ToggleMaximizeRestore()
@@ -1338,7 +1494,12 @@ public partial class MainWindow : Window
     /// tetikler → tepsi ikonu kurulur; pencere hiç <c>Show()</c> edilmediğinden görünmez. Kullanıcı tepsi ikonundan
     /// (ya da getir/gizle global kısayolu) <see cref="ShowFromTray"/> ile getirir. Açılışın Sync'i normal açılıştaki gibi motor hazır
     /// olunca koşar (<c>RunViewModel.OnEngineReady</c>); RepositoryRoot'un seed'i ([D7 M3]) kendisi komut göndermez.</summary>
-    public void StartInTray() => new System.Windows.Interop.WindowInteropHelper(this).EnsureHandle();
+    public void StartInTray()
+    {
+        new System.Windows.Interop.WindowInteropHelper(this).EnsureHandle();
+        // [perf A1] Pencere hiç gösterilmeyecek: IsVisibleChanged ateşlenmez, gizli yüzey sinyali burada kurulur.
+        SetSurfaceHidden(true);
+    }
 
     /// <summary>Tepsiden/kısayoldan/ikinci instance'tan pencereyi geri getirir.</summary>
     public void ShowFromTray()

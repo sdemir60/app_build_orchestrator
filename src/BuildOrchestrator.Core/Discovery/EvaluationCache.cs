@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using BuildOrchestrator.Core.State;
 
 namespace BuildOrchestrator.Core.Discovery;
 
@@ -18,11 +19,41 @@ public sealed class EvaluationCache(string cachePath)
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = false };
 
     /// <summary>
+    /// [PERF Faz C/C1] Defter bellekte diskteki hâlinden farklı mı. Bayrağı YALNIZ <see cref="MarkDirty"/> kaldırır —
+    /// bir girdi değiştiğinde (yeni değerlendirme, tazelenen parmak izi, budanan girdi) — ve yalnız yazım BAŞARILI
+    /// olunca <see cref="Flush"/> indirir: yalnız isabet gören bir Sync/koşu defteri diske HİÇ yazmaz; yazılamayan
+    /// defter kirli kalır ve sonraki <see cref="Flush"/> yeniden dener. Defteri değiştiren her yeni yol da
+    /// <see cref="MarkDirty"/>'i çağırmak zorundadır. Sınıfın kendisi gibi (<c>_entries</c>) tek thread içindir.
+    /// </summary>
+    private bool _dirty;
+
+    private void MarkDirty() => _dirty = true;
+
+    /// <summary>
+    /// [D8] Atomik rename retry'ının gecikme dikişi — <see cref="BuildStateStore.RenameRetryDelay"/> ile aynı desen (parametre:
+    /// 1-based deneme no). Üretimde null → <see cref="BuildStateStore.DefaultRenameRetryDelay"/> (üretim backoff'unun tek sahibi).
+    /// </summary>
+    internal Action<int>? RenameRetryDelay { get; set; }
+
+    /// <summary>Gerçekten koşacak gecikme: dikiş kuruluysa o, değilse ÜRETİM varsayılanı
+    /// (<see cref="BuildStateStore.EffectiveRenameRetryDelay"/> ile aynı desen). Ayrı üye olmasının sebebi testtir —
+    /// varsayılanı no-op'a çeviren bir mutasyon aksi halde süiti yeşil bırakırdı (<c>LedgerRetryDefaultTests</c>).</summary>
+    internal Action<int> EffectiveRenameRetryDelay => RenameRetryDelay ?? BuildStateStore.DefaultRenameRetryDelay;
+
+    /// <summary>
     /// [Faz 3/Task 1] Güncel önbellek şeması. Eski (şemasız/daha düşük şemalı) kayıtlar isabet SAYILMAZ —
     /// <see cref="EvaluatedProject"/>'e eklenen yeni alanlar (OutputType, OutputPaths, ...) eski kayıtta boş
     /// kalmasın diye proje her karşılaşıldığında bir kez yeniden değerlendirilir.
+    /// <para>[A3] Şema 2: <see cref="EvaluatedProject.SdkOutputLayoutIsDefault"/>. Alan şema 1 kaydında yoktur (false ⇒ yol
+    /// yok) ve csproj değişmediği sürece girdi yeniden değerlendirilmezdi — SDK-style projenin kör noktası sonsuza dek kalırdı.</para>
     /// </summary>
-    internal const int CurrentSchema = 1;
+    internal const int CurrentSchema = 2;
+
+    /// <summary>[Ruling · A2] Kaydın csproj DIŞINDAKİ girdileri — SDK-style yol kararının baktığı Directory.Build.props/targets
+    /// adayları (<see cref="EvaluatedProject.LayoutInputs"/>) — hâlâ kaydedildiği gibi mi. Değilse csproj aynı olsa da kayıt
+    /// isabet SAYILMAZ: çıktıyı sonradan taşıyan bir props'a rağmen eski yol kalırdı. Legacy kayıtta liste boştur (maliyet yok);
+    /// SDK-style projede birkaç ucuz dosya bilgisi okunur.</summary>
+    private static bool LayoutInputsCurrent(EvaluatedProject project) => project.LayoutInputs.All(stamp => stamp.IsCurrent());
 
     /// <summary>
     /// Canlı build ↔ scan yarışı [Task 0/It-4a]: scanner bir .csproj'u bulduktan sonra bu çağrı
@@ -51,14 +82,15 @@ public sealed class EvaluationCache(string cachePath)
             long mtime = info.LastWriteTimeUtc.Ticks;
             long length = info.Length;
 
-            if (_entries.TryGetValue(csprojPath, out var e) && e.Schema == CurrentSchema)
+            if (_entries.TryGetValue(csprojPath, out var e) && e.Schema == CurrentSchema && LayoutInputsCurrent(e.Project))
             {
                 if (e.MtimeTicks == mtime && e.Length == length) return e.Project; // hızlı yol: mtime+size eşit
                 if (Hash(csprojPath) is var h && h == e.Hash)                      // mtime/size farklı ama içerik aynı
-                { _entries[csprojPath] = e with { MtimeTicks = mtime, Length = length }; return e.Project; }
+                { _entries[csprojPath] = e with { MtimeTicks = mtime, Length = length }; MarkDirty(); return e.Project; }
             }
             var proj = evaluate(csprojPath);
             _entries[csprojPath] = new Entry(mtime, length, Hash(csprojPath), proj, CurrentSchema);
+            MarkDirty();
             return proj;
         }
         catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException
@@ -87,27 +119,31 @@ public sealed class EvaluationCache(string cachePath)
     /// kullanıyordu — iki yazıcı aynı geçici dosyada çakışıyor (IOException) ya da rename hedefte paylaşım
     /// ihlaline düşüyordu (UnauthorizedAccessException). İstisna, <c>BuildPlanBuilder.Build</c> üzerinden
     /// Sync'in kendi try'ının DIŞINDAN IPC sınırına kadar çıkıp TÜM Sync'i <c>planFailed</c>'a çeviriyordu.
-    /// İki savunma: (1) geçici ad ÖRNEK BAŞINA tekil (çakışma imkânsız), (2) IO hatası YUTULUR.</para>
+    /// Üç savunma: (1) geçici ad ÖRNEK BAŞINA tekil (çakışma imkânsız), (2) rename'in geçici sharing-violation'ı
+    /// <see cref="AtomicFile"/>'ın bütçeli retry'ıyla absorbe edilir, (3) bütçe de tükenirse IO hatası YUTULUR.</para>
     ///
     /// <para>Yutmak güvenlidir çünkü bu cache SALT bir optimizasyondur ve <see cref="Load"/> hem YOK olan hem
     /// BOZUK bir dosyayı zaten tolere eder (boş map ile devam) — düşen bir flush'ın bedeli, bir sonraki
     /// taramada yeniden değerlendirilecek csproj'lardır; kaybolan bir Sync değil.</para>
+    ///
+    /// <para><b>[PERF Faz C/C1] Yalnız kirliyse yazar, akışla yazar.</b> Hiçbir girdisi değişmemiş bir defter (warm
+    /// Sync ya da koşu: her girdi isabet) diske dokunmaz — gerçek OSYS'te birkaç MB'lık JSON'u her pencereye
+    /// dönüşte yeniden yazmak gereksiz yüktü. Yazılamayan defter (yutulan IO hatası) kirli kalır ve sonraki
+    /// <see cref="Flush"/> yeniden dener. Yazım <see cref="AtomicFile.WriteJson{T}"/> ile akışla yapılır — defter UTF-16 ara
+    /// string'e çevrilmez; atomik yol (temp + retry'lı rename) durum dosyalarıyla ORTAKTIR, burada kopyalanmaz.</para>
     /// </summary>
     public void Flush()
     {
-        // Tekil temp adı: BuildStateStore.Upsert ile AYNI desen (`<path>.<guid>.tmp`).
-        string tmp = cachePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        if (!_dirty) return;
+
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
-            File.WriteAllText(tmp, JsonSerializer.Serialize(_entries, Json));
-            File.Move(tmp, cachePath, overwrite: true);
+            AtomicFile.WriteJson(cachePath, _entries, Json, EffectiveRenameRetryDelay);
+            _dirty = false; // yalnız yazım BAŞARILIYSA: düşen yazım defteri kirli bırakır
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            // Öksüz temp dosyası bırakma (her başarısız flush diskte çöp biriktirirdi); temizliğin kendisi de
-            // best-effort'tur — zaten yutulmuş bir hatanın üstüne yeni bir hata fırlatmak anlamsız olurdu.
-            try { File.Delete(tmp); } catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException) { }
+            // Retry bütçesi de tükendi: yut — defter kirli kalır, sonraki Flush yeniden dener. Geçici dosyayı AtomicFile siler.
         }
     }
 
@@ -125,8 +161,27 @@ public sealed class EvaluationCache(string cachePath)
 
         var dead = _entries.Keys.Where(k => Paths.RootScope.Contains(prefix, k) && !File.Exists(k)).ToList();
         foreach (string key in dead) _entries.Remove(key);
-        if (dead.Count > 0) Flush();
+        if (dead.Count > 0) { MarkDirty(); Flush(); }
         return dead.Count;
+    }
+
+    /// <summary>
+    /// [optimize · PERF Faz C/C2] Şeması güncel olmayan girdileri KÖKTEN BAĞIMSIZ budar. <see cref="GetOrEvaluate"/> böyle
+    /// bir girdiyi hiçbir zaman isabet saymaz (<c>Schema == CurrentSchema</c> şartı); isabet sayılmayan girdi dosyada yer
+    /// tutar. TEK istisna <c>Stale()</c> yedeğidir: csproj tarama sırasında KAYBOLURSA yedek, o girdiyi şemaya BAKMADAN
+    /// döndürür. Başka bir workspace'in ya da kaldırılmış bir worktree'nin eski sürümden kalan kayıtları ise
+    /// sonsuza dek birikirdi — <see cref="PruneMissingUnderRoot"/> yalnız kökün ALTINDAKİ ölü girdileri görür. Budanan
+    /// girdi, proje bir daha karşılaşıldığında bir kez yeniden değerlendirilir; budama o yedek durumu dışında hiçbir kararı
+    /// değiştirmez (kaybolan bir csproj için yedek artık o girdiyi döndüremez). Kaldırılan sayı döner.
+    /// <para>Gerçekten budandıysa <see cref="MarkDirty"/> + <see cref="Flush"/> çağrılır (aksi hâlde budama yalnız bellekte
+    /// kalır, dosyada durmaya devam ederdi); budanacak bir şey yoksa dosyaya HİÇ dokunulmaz.</para>
+    /// </summary>
+    public int PruneStaleSchema()
+    {
+        var stale = _entries.Where(e => e.Value.Schema != CurrentSchema).Select(e => e.Key).ToList();
+        foreach (string key in stale) _entries.Remove(key);
+        if (stale.Count > 0) { MarkDirty(); Flush(); }
+        return stale.Count;
     }
 
     /// <summary>[optimize] Yarım kalmış atomik yazımlardan kalan kendi <c>.tmp</c> artıklarını süpürür
@@ -144,7 +199,9 @@ public sealed class EvaluationCache(string cachePath)
         if (!File.Exists(path)) return new(StringComparer.OrdinalIgnoreCase);
         try
         {
-            var d = JsonSerializer.Deserialize<Dictionary<string, Entry>>(File.ReadAllText(path), Json);
+            // [PERF Faz C/C1] Akışla okuma: defter UTF-16 ara string'e çevrilmez (birkaç MB'lık JSON'un iki katı bellek).
+            // Delete-share'li (AtomicFile): durum dosyalarıyla aynı okuma kuralı.
+            var d = AtomicFile.ReadJson<Dictionary<string, Entry>>(path, Json);
             return d is null ? new(StringComparer.OrdinalIgnoreCase) : new(d, StringComparer.OrdinalIgnoreCase);
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException) { return new(StringComparer.OrdinalIgnoreCase); } // bozuk cache → yeniden kur
