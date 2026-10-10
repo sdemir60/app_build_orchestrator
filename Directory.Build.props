@@ -11,7 +11,7 @@
          [sürüm notları] Yalnız bir sürüm çıkarılırken artar (CLAUDE.md "Sürüm çıkarma"): CHANGELOG.md'deki en üst
          sürüm bu değere eşit olmak zorundadır (WhatsNewTests) ve git tag'i v + bu değerdir. InformationalVersion
          ayrıca yazılmaz — SDK onu Version'dan türetir, ekran yalın "1.7.0" gösterir (PublishLayoutTests). -->
-    <Version>1.7.0</Version>
+    <Version>1.8.0</Version>
     <!-- SDK varsayılanı InformationalVersion'a commit sha ekler ("1.7.0+<sha>"): sürüm hem deterministik
          kalsın hem de ekranda ve konsolun boot satırında yalın okunsun diye kapatıldı. -->
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
