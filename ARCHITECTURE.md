@@ -2818,9 +2818,15 @@ it would make the whole window click-through and kill the click-to-restore.
 When the run ends the overlay does **not** cut off. It finishes the exit phase of the loop it is in — the pieces
 slide away and the last strip dissolves — and the window closes on that frame. After a short breath, so the two
 events do not land on top of each other, an **OS balloon** reports the result, carrying the application's own
-icon. That icon is loaded at the one size the notification API accepts — any other size is rejected only when the
-balloon is shown, and because the notification is sent from an unawaited continuation the rejection would
-vanish without a trace, so a test pins the size headlessly. Its text is not composed a second time: it is the ribbon's own terminal line, split once
+icon. The notification API accepts that icon at exactly one size, the system's large-icon size, and that size
+grows with the screen scale (32 px at 100%, 40 at 125%) — so it is not written down anywhere: it is read from the
+tray library's own rule when the icon is first needed. A frame the icon file carries at that size is used as drawn;
+any other size is resampled from the largest frame, because the icon loader only picks the nearest frame and does
+not scale it, and the API would reject that frame too. A wrong size is rejected only when the balloon is shown, and
+the notification is sent from an unawaited continuation, so tests pin the size headlessly — at the screen's own
+scale and at every size a scale can ask for. Should the icon still fail — it cannot be loaded, or the API turns it
+down — the same balloon is shown without it: the icon is decoration and never costs the notification. Its text is
+not composed a second time: it is the ribbon's own terminal line, split once
 at the separator the ribbon itself writes — the head becomes the title (`Completed`, `▸ Stopped`, `Run failed`)
 and everything after it becomes the body. Opening the window afterwards shows that same sentence whole, in the
 ribbon. A line that carries no separator — today only the one an unexpected engine stop writes; the engine
@@ -6417,6 +6423,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | …the animated mark itself (loop, static frame) | `App/Controls/TrayBuildIndicator.xaml(.cs)` |
 | …the frameless, non-activating overlay window that carries it | `App/Views/TrayBuildOverlayWindow.xaml(.cs)` |
 | Extended window styles for that overlay (`WS_EX_*`) | `App/Shell/Win32.cs` |
+| The run-result balloon's icon — the size the tray library asks for at the screen's scale, a drawn frame or one resampled from the largest — and the same balloon without the icon when it fails | `App/Shell/AppTrayIcon.cs` (`LoadBalloonIcon`, `ShowWithIconFallback`) |
 | The hidden-surface signal — one inherited property every screen-only job reads, and the "visible again" test views use to catch up; the window writes it from its own visibility and the Build menu's popup gets it by hand | `App/Controls/HiddenSurface.cs`, `App/MainWindow.HiddenSurface.cs` (`SetSurfaceHidden`), `App/Views/ActionBar.xaml.cs` |
 | Memory collection after a run that ended in the tray — two signals, once per run, deferred to idle | `App/MainWindow.HiddenSurface.cs` (`OnTrayIndicatorExitFinished`, `CollectAfterRunWhenDue`, `MemoryCollector`), `App/ViewModels/RunViewModel.cs` (`MarkRunEnded`, `EndedRunSerial`) |
 | Live line buffer released when a run ends; a pending log load ends in one place | `App/ViewModels/RunViewModel.cs` (`ReleaseLiveLinesWhenIdle`, `CompletePendingLoad`) |
