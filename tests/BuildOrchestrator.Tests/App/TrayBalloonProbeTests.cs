@@ -38,6 +38,10 @@ public sealed class TrayBalloonProbeTests(ITestOutputHelper output)
 
     private static List<string> Probe()
     {
+        // `pack://` şemasını WPF `PackUriHelper`'ın statik ctor'unda kaydeder; headless süitte Application yoktur, şemaya
+        // ilk dokunan sonda olmalıdır — yoksa ikon adresi "Invalid port specified" ile reddedilir (TrayBalloonIconTests ile aynı).
+        _ = System.IO.Packaging.PackUriHelper.UriSchemePack;
+
         var log = new List<string>();
         AppTrayIcon? tray = null;
         try

@@ -1,12 +1,15 @@
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using CommunityToolkit.Mvvm.Input;
 using H.NotifyIcon;
 using H.NotifyIcon.Core;
+using H.NotifyIcon.Interop;
 
 namespace BuildOrchestrator.App.Shell;
 
@@ -21,24 +24,13 @@ namespace BuildOrchestrator.App.Shell;
 /// artık var ama tepsi BİLEREK 16px varyantında kalır: tepsi zaten 16px ister ve elle ayarlanmış kare
 /// rasterlestirilmiş olandan nettir.</para>
 ///
-/// <para><b>Balloon ikonu ayrıdır:</b> koşu sonucu bildirimi <c>app-icon.ico</c>'nun BÜYÜK karesini taşır
-/// (<see cref="LargeIconPx"/>). Bildirim penceresi tepsi kutucuğundan çok daha geniştir; oraya 16px raster
-/// koymak ikonu bulanıklaştırır.</para>
+/// <para><b>Balloon ikonu ayrıdır:</b> koşu sonucu bildirimi <c>app-icon.ico</c>'dan, kütüphanenin ekran ölçeğine
+/// göre istediği BÜYÜK ölçüde yüklenen ikonu taşır (<see cref="LoadBalloonIcon()"/>). Bildirim penceresi tepsi
+/// kutucuğundan çok daha geniştir; oraya 16px raster koymak ikonu bulanıklaştırır.</para>
 /// </summary>
 internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
 {
     private const string IconUri = "pack://application:,,,/BuildOrchestrator.App;component/Assets/tray-icon-16.ico";
-
-    /// <summary>Windows'un "large icon" balloon'unda gösterdiği kare. <c>app-icon.ico</c> bu kareyi gerçekten
-    /// taşır (<c>IconGeometryTests</c> 16/24/32/48/256'yı pinler), yani ölçekleme yapılmaz.</summary>
-    /// <summary>
-    /// Bildirimin özel ikonunun kenarı. Bir tercih DEĞİL, API'nin ŞARTI: <c>H.NotifyIcon</c> özel balloon
-    /// ikonunu çalışma anında ölçer ve 32×32 dışındaki her şeyi <see cref="InvalidOperationException"/> ile
-    /// reddeder. Yanlış ölçü derlemede görünmez; bildirim gösterilirken patlar ve üretimde o çağrı
-    /// beklenmeyen bir <c>Task</c>'in içinde olduğu için istisna YUTULUR — koşu bildirimsiz kapanır.
-    /// Pin: <c>TrayBalloonIconTests</c>.
-    /// </summary>
-    private const int BalloonIconPx = 32;
 
     private readonly TaskbarIcon _icon;
 
@@ -102,16 +94,94 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
         return menu;
     }
 
-    /// <summary>Gömülü uygulama ikonundan (<see cref="AppIdentity.AppIconUri"/> — adres TEK kaynaktan, pencere
-    /// ikonu da onu okur) istenen kareyi çözer. <c>System.Drawing.Icon</c> veriyi ctor'da kendi içine kopyalar,
-    /// bu yüzden akış hemen bırakılabilir.</summary>
-    internal static System.Drawing.Icon LoadBalloonIcon()
+    /// <summary>
+    /// Bildirimin ürün ikonu, kütüphanenin O AN istediği ölçüde. Ölçü bir tercih DEĞİL, API'nin ŞARTIDIR:
+    /// <c>H.NotifyIcon</c> özel balloon ikonunu gösterim anında ölçer ve <c>GetSystemMetrics(SM_CXICON)</c>'dan başka her
+    /// ölçüyü <see cref="InvalidOperationException"/> ile reddeder — o ölçü ekran ölçeğiyle büyür (%100 → 32, %125 → 40,
+    /// %150 → 48). Kural kütüphanenin KENDİ public metodundan okunur (<see cref="IconUtilities.GetRequiredCustomIconSize"/>);
+    /// ikinci bir ölçü kuralı YAZILMAZ — eskiden burada sabit 32 vardı ve %125'te her bitiş bildirimi sessizce düşüyordu.
+    /// Pin: <c>TrayBalloonIconTests</c>.
+    /// </summary>
+    internal static System.Drawing.Icon LoadBalloonIcon() =>
+        LoadBalloonIcon(IconUtilities.GetRequiredCustomIconSize(largeIcon: true));
+
+    /// <summary>
+    /// Gömülü uygulama ikonunu (<see cref="AppIdentity.AppIconUri"/> — adres TEK kaynaktan, pencere ikonu da onu okur)
+    /// TAM <paramref name="size"/> ölçüsünde bir HICON olarak yükler.
+    ///
+    /// <para><b>ICO o ölçüde bir kare taşıyorsa</b> (32, 48) kare olduğu gibi kullanılır: o ölçüde ayrıca üretilmiş kare,
+    /// büyük karenin küçültülmüşünden nettir. <b>Taşımıyorsa</b> (ör. %125'in 40'ı) en büyük kare o ölçüye örneklenir.
+    /// Ölçüm: <c>System.Drawing.Icon</c> ÖLÇEKLEMEZ — istenen ölçüye en yakın kareyi olduğu gibi seçer (40 isteyene 32
+    /// verir), yani ölçüyü yalnız iletmek kütüphanenin reddini değiştirmez.</para>
+    ///
+    /// <para>Sonuç her iki yolda da bir ICO akışından <c>System.Drawing.Icon</c>'a verilir: HICON'un sahibi o olur
+    /// (<see cref="System.Drawing.Icon.Dispose()"/> yok eder) ve veriyi ctor'da kendi içine kopyaladığı için akış hemen
+    /// bırakılabilir.</para>
+    /// </summary>
+    internal static System.Drawing.Icon LoadBalloonIcon(System.Drawing.Size size)
+    {
+        byte[] ico = ReadAppIcon();
+        using (var source = new MemoryStream(ico))
+        {
+            var frames = new IconBitmapDecoder(
+                source, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad).Frames;
+            if (!frames.Any(f => f.PixelWidth == size.Width && f.PixelHeight == size.Height))
+                ico = SingleFrameIco(Resample(frames.MaxBy(f => f.PixelWidth)!, size));
+        }
+
+        using var stream = new MemoryStream(ico);
+        return new System.Drawing.Icon(stream, size);
+    }
+
+    private static byte[] ReadAppIcon()
     {
         var resource = Application.GetResourceStream(new Uri(AppIdentity.AppIconUri))
             ?? throw new InvalidOperationException(
                 $"The application icon resource was not found: {AppIdentity.AppIconUri}");
         using var stream = resource.Stream;
-        return new System.Drawing.Icon(stream, new System.Drawing.Size(BalloonIconPx, BalloonIconPx));
+        using var copy = new MemoryStream();
+        stream.CopyTo(copy);
+        return copy.ToArray();
+    }
+
+    /// <summary>Kareyi <paramref name="size"/>'a örnekler. Örnekleme önceden çarpılmış (premultiplied) piksellerde
+    /// yapılır: düz alfalı pikselleri ortalamak tam saydam piksellerin rengini kenarın yumuşatma piksellerine karıştırır.
+    /// Sonuç ICO'nun beklediği düz alfaya geri çevrilir.</summary>
+    private static BitmapSource Resample(BitmapSource frame, System.Drawing.Size size)
+    {
+        var premultiplied = new FormatConvertedBitmap(frame, PixelFormats.Pbgra32, null, 0);
+        var scaled = new TransformedBitmap(premultiplied, new ScaleTransform(
+            (double)size.Width / frame.PixelWidth, (double)size.Height / frame.PixelHeight));
+        return new FormatConvertedBitmap(scaled, PixelFormats.Bgra32, null, 0);
+    }
+
+    /// <summary>Tek kareli, PNG gövdeli bir ICO (Vista'dan beri ICO karesi PNG taşıyabilir). Dizin ICO biçiminin
+    /// kendisidir: 6 baytlık başlık + 16 baytlık tek giriş, ardından gövde; sayılar little-endian (BinaryWriter da
+    /// öyle yazar).</summary>
+    private static byte[] SingleFrameIco(BitmapSource frame)
+    {
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(frame));
+        using var png = new MemoryStream();
+        encoder.Save(png);
+
+        using var ico = new MemoryStream();
+        using (var writer = new BinaryWriter(ico, System.Text.Encoding.UTF8, leaveOpen: true))
+        {
+            writer.Write((ushort)0);                 // ayrılmış
+            writer.Write((ushort)1);                 // tür: ikon
+            writer.Write((ushort)1);                 // kare sayısı
+            writer.Write((byte)frame.PixelWidth);    // ICO ölçüsü tek bayttır: 256 → 0 (balon ölçüleri çok altında)
+            writer.Write((byte)frame.PixelHeight);
+            writer.Write((byte)0);                   // palet yok
+            writer.Write((byte)0);                   // ayrılmış
+            writer.Write((ushort)1);                 // düzlem
+            writer.Write((ushort)32);                // piksel başına bit
+            writer.Write((uint)png.Length);          // gövde uzunluğu
+            writer.Write((uint)(6 + 16));            // gövdenin konumu: başlık + tek giriş
+        }
+        png.WriteTo(ico);
+        return ico.ToArray();
     }
 
     /// <summary>Tepsi ikonuna sol tık / çift tık / balloon tıkı — pencereyi geri getir.</summary>
