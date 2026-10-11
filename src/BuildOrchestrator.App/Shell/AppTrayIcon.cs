@@ -34,9 +34,11 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
 
     private readonly TaskbarIcon _icon;
 
-    /// <summary>Bildirimin büyük ikonu — bir KEZ yüklenir ve handle'ı her balloon'a verilir; her bildirimde
-    /// yeniden çözmek gereksiz GDI nesnesi üretirdi. <see cref="Dispose"/> bırakır.</summary>
-    private readonly System.Drawing.Icon _largeIcon;
+    /// <summary>Bildirimin büyük ikonu — ilk bitiş bildiriminde bir KEZ yüklenir ve handle'ı her balloon'a verilir; her
+    /// bildirimde yeniden çözmek gereksiz GDI nesnesi üretirdi. Kurulumda değil ilk bildirimde yüklenir: yükleme düşerse
+    /// tepsi ikonu (ve uygulamanın açılışı) değil yalnız o bildirimin ikonu düşer (<see cref="ShowWithIconFallback"/>).
+    /// <see cref="Dispose"/> bırakır.</summary>
+    private System.Drawing.Icon? _largeIcon;
 
     /// <summary>Hiçbir zaman çalıştırılamayan Stop komutu — arkasında RunViewModel/engine olmayan bir tepsi
     /// içindir (ör. ikinci instance'ın geçici balloon tray'i). Kopya YASAK: aynı <c>RelayCommand(() => { },
@@ -47,8 +49,6 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
 
     public AppTrayIcon(ICommand stopCommand, RunViewModel? run = null)
     {
-        _largeIcon = LoadBalloonIcon();
-
         var menu = CreateMenu(stopCommand, () => ExitRequested?.Invoke(), run);
 
         _icon = new TaskbarIcon
@@ -222,12 +222,24 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
     /// Burada ikon HER sonuçta ürünün kendi (büyük) ikonudur — bir OS glyph'i sonucu zaten taşımaz, sonuç
     /// başlıktaki sözcüktedir ("Completed" / "▸ Stopped" / "Run failed").</para>
     /// <para>[P3 · Task 4] Kapı: <c>TrayBuildIndicatorController</c>, balonun TAM gösterileceği anda
-    /// <c>notificationsOn()</c>'ı TAZE okur ve yalnız açıksa buraya gelir.</para></summary>
-    public void ShowRunFinished(RibbonLine line) => _icon.ShowNotification(
+    /// <c>notificationsOn()</c>'ı TAZE okur ve yalnız açıksa buraya gelir.</para>
+    /// <para>Ürün ikonu düşerse (yüklenemez ya da kütüphane reddeder) bildirim aynı metinle ikonsuz gösterilir
+    /// (<see cref="ShowWithIconFallback"/>): koşu sonucu bir ikon yüzünden kaybolmaz.</para></summary>
+    public void ShowRunFinished(RibbonLine line) => ShowWithIconFallback(
+        withProductIcon: () => ShowRunFinishedWithProductIcon(line),
+        withoutIcon: () => _icon.ShowNotification(
+            title: RunFinishedTitle(line),
+            message: RunFinishedBody(line),
+            icon: NotificationIcon.None));
+
+    /// <summary>Bitiş bildiriminin ürün ikonlu denemesi — YEDEKSİZ: ikon yüklenemezse ya da kütüphane reddederse fırlatır.
+    /// Üretim onu yalnız <see cref="ShowRunFinished"/>'in yedek yolu içinden çağırır; sonda (<c>TrayBalloonProbeTests</c>)
+    /// doğrudan çağırır ki ürün ikonunun reddi yedek yolun arkasında görünmez kalmasın.</summary>
+    internal void ShowRunFinishedWithProductIcon(RibbonLine line) => _icon.ShowNotification(
         title: RunFinishedTitle(line),
         message: RunFinishedBody(line),
         icon: NotificationIcon.None,           // yerini büyük ürün ikonu alır
-        customIconHandle: _largeIcon.Handle,
+        customIconHandle: (_largeIcon ??= LoadBalloonIcon()).Handle,
         largeIcon: true);
 
     /// <summary>Balloon başlığı = satırın BAŞI (<c>"Completed"</c>, <c>"Run failed"</c>); ayırıcı taşımayan bir
@@ -241,6 +253,31 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
     /// artık bir <c>RibbonLine</c> ve varsayılanı <c>default</c>, yani hiç satır itilmemişken <c>Text</c>
     /// <c>null</c>'dır. Kutu eskiden <c>""</c> ile başlıyordu; imza değişirken taban düşmez.</para></summary>
     internal static string RunFinishedBody(RibbonLine line) => line.Detail ?? line.Text ?? "";
+
+    /// <summary>
+    /// [yedek yol] Bildirimi önce ürün ikonuyla dener; o deneme HANGİ sebeple düşerse düşsün bildirimi ikonsuz gösterir.
+    /// İkon süstür, bildirimin kendisi değildir: ürün ikonu yolu bildirimi iki kez sessizce yuttu (önce 48×48, sonra
+    /// sabit 32'nin %125'te reddi) ve ikisinde de kullanıcı koşu sonucunu hiç görmedi.
+    /// <para>Deneme yolunun gerçek hataları tek tipte değildir — kütüphanenin ölçü reddi ve <c>Shell_NotifyIcon</c> reddi
+    /// <see cref="InvalidOperationException"/>, HICON'un okunamaması <c>COMException</c>, ikon dosyasının çözülememesi
+    /// WIC'in kendi istisnaları — bu yüzden her hata yakalanır. İlk denemenin hatası gözlem noktasına yazılır
+    /// ([console pump] deseni); ikonsuz gösterim de düşerse ONUN hatası çağırana (<c>TrayBuildIndicatorController</c>)
+    /// ulaşır — kalıcı bir arıza yedek yolda kaybolmaz.</para>
+    /// <para>Ayrı ve saf: gerçek bir tepsi ikonu kurmadan sınanabilsin diye (<c>TaskbarIcon</c> headless süitte
+    /// kurulamaz). Pin: <c>TrayBalloonIconTests</c>.</para>
+    /// </summary>
+    internal static void ShowWithIconFallback(Action withProductIcon, Action withoutIcon)
+    {
+        try
+        {
+            withProductIcon();
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[tray balloon] product icon failed, shown without it: {ex}");
+            withoutIcon();
+        }
+    }
 
     /// <summary>
     /// [perf B2] Uygulama TEPSİDEYKEN basılan ama komutun kapısı kapalı olduğu için yok sayılan Build kısayolunun
@@ -266,6 +303,6 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
     public void Dispose()
     {
         _icon.Dispose();
-        _largeIcon.Dispose();
+        _largeIcon?.Dispose();
     }
 }

@@ -65,6 +65,47 @@ public class TrayBalloonIconTests
         Assert.Equal(size, PixelSize(icon));
     }
 
+    /// <summary>[yedek yol] Ürün ikonlu deneme HANGİ sebeple düşerse düşsün bildirim ikonsuz yine gösterilir — ikon süstür,
+    /// bildirimin kendisi değildir. Denenen sebepler deneme yolunun gerçek hatalarıdır: kütüphanenin ölçü reddi ve
+    /// <c>Shell_NotifyIcon</c> reddi (<see cref="InvalidOperationException"/>), HICON'un okunamaması (<c>GetIconInfo</c> →
+    /// <see cref="System.Runtime.InteropServices.COMException"/>), ikon dosyasının çözülememesi
+    /// (<see cref="System.IO.FileFormatException"/>).</summary>
+    [Theory]
+    [InlineData(typeof(InvalidOperationException))]
+    [InlineData(typeof(System.Runtime.InteropServices.COMException))]
+    [InlineData(typeof(System.IO.FileFormatException))]
+    public void A_failed_product_icon_still_shows_the_notification_without_it(Type failure)
+    {
+        int withoutIcon = 0;
+
+        AppTrayIcon.ShowWithIconFallback(
+            withProductIcon: () => throw (Exception)Activator.CreateInstance(failure)!,
+            withoutIcon: () => withoutIcon++);
+
+        Assert.Equal(1, withoutIcon);
+    }
+
+    /// <summary>Ürün ikonlu deneme geçerse ikinci bir balon YOKTUR.</summary>
+    [Fact]
+    public void An_accepted_product_icon_shows_the_notification_once()
+    {
+        int withIcon = 0, withoutIcon = 0;
+
+        AppTrayIcon.ShowWithIconFallback(withProductIcon: () => withIcon++, withoutIcon: () => withoutIcon++);
+
+        Assert.Equal((1, 0), (withIcon, withoutIcon));
+    }
+
+    /// <summary>Yedek yol hatayı YUTMAZ: ikonsuz gösterim de düşerse onun hatası çağırana ulaşır
+    /// (<c>TrayBuildIndicatorController</c> onu gözlem noktasına yazar) — kalıcı bir arıza sessizce kaybolmaz.</summary>
+    [Fact]
+    public void A_notification_that_fails_without_the_icon_too_reaches_the_caller()
+    {
+        Assert.Throws<System.Runtime.InteropServices.COMException>(() => AppTrayIcon.ShowWithIconFallback(
+            withProductIcon: () => throw new InvalidOperationException("Custom icon must be {Width=40, Height=40}."),
+            withoutIcon: () => throw new System.Runtime.InteropServices.COMException("Show notification failed.")));
+    }
+
     /// <summary>HICON'un GERÇEK piksel ölçüsü. <c>FromHandle</c> ölçüyü handle'ın kendi bitmap'inden okur ve handle'ın
     /// sahibi olmaz (Dispose onu yok etmez).</summary>
     private static System.Drawing.Size PixelSize(System.Drawing.Icon icon)
