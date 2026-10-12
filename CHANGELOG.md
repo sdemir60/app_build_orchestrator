@@ -2,6 +2,14 @@
 
 Release notes for Build Orchestrator, newest version first. The What's new window in the app reads this file.
 
+## [1.8.1] - 2026-10-12
+
+### Fixed
+
+- The notification shown when a run finishes now appears at display scaling above 100%, for example 125%, where it was silently dropped. If its icon cannot be shown, the notification appears without it instead of being lost.
+- During a Rebuild, projects waiting to build stay marked until they are built instead of turning green the moment the run starts, and the opening line, progress and run summary count every project of the plan.
+- Smaller fixes to queued and single-project runs: a queued project that is up to date says Queued on its page, a project run from its row keeps its reason label while it builds, and stopping that run before the project starts leaves the row as it was.
+
 ## [1.8.0] - 2026-10-10
 
 ### Added
