@@ -71,6 +71,11 @@ public partial class NotesDialog : ModalDialog
         NotesSeen?.Invoke();
     }
 
+    /// <summary>Açılışta odak footer'a (Close) iner, dialogun ilk kontrolüne DEĞİL: o, kayan listenin dibindeki
+    /// Earlier versions düğmesidir ve WPF odak alan öğeyi görünür kılmak için gövdeyi ona kaydırırdı — başa sarılmış
+    /// gövde dibe iner, en yeni sürüm görünmezdi (ölçüldü). Close gövdenin dışındadır; gövde en üstte kalır.</summary>
+    protected override UIElement InitialFocusScope => FooterBar;
+
     private void OnClose(object sender, RoutedEventArgs e) => CloseDialog();
 
     // ---------------------------------------------------------------- liste

@@ -235,6 +235,51 @@ public class NotesDialogTests
         }
     }
 
+    /// <summary>
+    /// Açılışta gövde EN ÜSTTEN başlar: en yeni sürüm görünür, okumak için yukarı kaydırmak gerekmez.
+    ///
+    /// <para><b>Kusur (ölçüldü):</b> <c>NotesDialog.Open</c> gövdeyi başa sarıyordu, ama hemen ardından
+    /// kabuk odağı dialogun İLK kontrolüne taşıyordu — o da listenin dibindeki <i>Earlier versions</i> düğmesiydi. WPF
+    /// odak alan öğeyi görünür kılar (<c>FrameworkElement.OnGotFocus → BringIntoView</c>) ve gövde o düğmeye inerdi:
+    /// gerçek CHANGELOG ile 1581px kayabilen gövdede 1557px'e. Ön koşullar senaryoyu kurar — dipte odaklanabilir düğme
+    /// ve gerçekten kayan bir gövde; ikisi yoksa sıfır ofset hiçbir şey kanıtlamaz.</para>
+    /// </summary>
+    [StaFact]
+    public void Opening_the_dialog_starts_the_body_at_the_top_with_the_newest_version_in_view()
+    {
+        var (dialog, scope) = NotesDialogHost.OpenRealized(configure: d => d.Releases = NotesDialogHost.SyntheticReleases(6));
+        using (scope)
+        {
+            DispatcherPump.PumpUntil(() => false, TimeSpan.FromMilliseconds(20)); // ertelenmiş bir kaydırma da yakalansın
+            Assert.Equal(Visibility.Visible, dialog.EarlierVersionsFold.Visibility);
+            Assert.True(dialog.Body.ScrollableHeight > 0, $"gövde kaymıyor: {dialog.Body.ScrollableHeight}");
+
+            Assert.Equal(0.0, dialog.Body.VerticalOffset);
+            Assert.InRange(TopIn(dialog.WhatsNewBlocks[0], dialog.Body), 0.0, dialog.Body.ViewportHeight - 1);
+        }
+    }
+
+    /// <summary>Gövde dibe kaydırılıp dialog kapatıldıysa sonraki açılış yine EN ÜSTTEN başlar: açılış başa sarar
+    /// ve odak gövdeyi yeniden aşağı çekmez. (Kusurda ikinci açılış da dibe iniyordu, ölçüldü.)</summary>
+    [StaFact]
+    public void Reopening_after_scrolling_to_the_bottom_starts_the_body_at_the_top_again()
+    {
+        var (dialog, scope) = NotesDialogHost.OpenRealized(configure: d => d.Releases = NotesDialogHost.SyntheticReleases(6));
+        using (scope)
+        {
+            dialog.Body.ScrollToVerticalOffset(dialog.Body.ScrollableHeight);
+            dialog.UpdateLayout();
+            Assert.True(dialog.Body.VerticalOffset > 0, "senaryo gövdeyi aşağı kaydıramadı");
+            dialog.CloseDialog();
+
+            dialog.Open();
+            dialog.UpdateLayout();
+            DispatcherPump.PumpUntil(() => false, TimeSpan.FromMilliseconds(20));
+
+            Assert.Equal(0.0, dialog.Body.VerticalOffset);
+        }
+    }
+
     // ---------------------------------------------------------------- liste
 
     /// <summary>[§2.11] Sürüm başına bir blok; blokta mono sürüm numarası ve tarih durur.</summary>
