@@ -49,6 +49,25 @@ public class GitServiceTests
         Assert.Equal(expectedBranch, result.Value);
     }
 
+    /// <summary>[tag çakışması] Checkout edilmiş branch'le AYNI adı taşıyan bir tag varken de ad düz branch adıdır.
+    /// <para><b>Ölçülen kusur:</b> ad <c>git symbolic-ref --short</c>'tan okunuyordu; git bu durumda belirsizliği önlemek için
+    /// <c>heads/feature/x</c> döner. O ad ne bir branch'tir ne de diskten okunan HEAD'le aynıdır: pencereye her dönüş sahte bir
+    /// "branch değişti" bölümü açıyordu, branch chip'i <c>heads/…</c> gösteriyordu, pull
+    /// <c>refs/remotes/origin/heads/…</c>'yi arıyordu.</para></summary>
+    [Fact]
+    public async Task GetCurrentBranchAsync_returns_the_plain_branch_name_when_a_tag_has_the_same_name()
+    {
+        using var repo = new GitTestRepo();
+        repo.WriteFile("a.txt", "hello");
+        repo.CommitAll("c1");
+        repo.CheckoutBranchNamedLikeATag("feature/x");
+
+        var result = await new GitService(Runner, repo.RootPath).GetCurrentBranchAsync();
+
+        Assert.True(result.Success);
+        Assert.Equal("feature/x", result.Value);
+    }
+
     // ---- no-commits (fresh init, no commit yet) ----
 
     [Fact]
@@ -240,6 +259,23 @@ public class GitServiceTests
         var locals = result.Value!.Where(b => !b.IsRemote).ToList();
         Assert.Contains(locals, b => b.Name == current && b.IsActive);
         Assert.Contains(locals, b => b.Name == "feature-x" && !b.IsActive);
+    }
+
+    /// <summary>[tag çakışması] Aynı adlı bir tag varken de checkout edilmiş branch listede aktif işaretlenir — işaret
+    /// <see cref="GitService.GetCurrentBranchAsync"/>'ın adıyla eşleştirilir. Kusurlu hâlde ad <c>heads/feature/x</c>'ti ve
+    /// listedeki hiçbir adla eşleşmiyordu: branch listesinde aktif branch YOKTU.</summary>
+    [Fact]
+    public async Task ListBranchesAsync_flags_the_checked_out_branch_as_active_when_a_tag_has_the_same_name()
+    {
+        using var repo = new GitTestRepo();
+        repo.WriteFile("a.txt", "v1");
+        repo.CommitAll("c1");
+        repo.CheckoutBranchNamedLikeATag("feature/x");
+
+        var result = await new GitService(Runner, repo.RootPath).ListBranchesAsync();
+
+        Assert.True(result.Success);
+        Assert.Contains(result.Value!, b => b.Name == "feature/x" && !b.IsRemote && b.IsActive);
     }
 
     // [A5/T69] BranchRef (branchList IPC event'i) her branch için sha TAŞIR — UI kart/chip'lerinde commit

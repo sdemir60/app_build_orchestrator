@@ -2201,7 +2201,7 @@ The complete set of git invocations in the codebase:
 
 | Command | Mutates? |
 |---|---|
-| `rev-parse --verify -q HEAD` · `symbolic-ref --short -q HEAD` · `status --porcelain -z` · `rev-parse --is-shallow-repository` · `for-each-ref …` · `rev-parse --verify -q refs/{heads,remotes/origin}/<branch>` · `rev-list --count HEAD..<sha>` | no |
+| `rev-parse --verify -q HEAD` · `symbolic-ref -q HEAD` · `status --porcelain -z` · `rev-parse --is-shallow-repository` · `for-each-ref …` · `rev-parse --verify -q refs/{heads,remotes/origin}/<branch>` · `rev-list --count HEAD..<sha>` | no |
 | `fetch origin <branch> --no-tags` | only `refs/remotes/*` |
 | `merge-base --is-ancestor` · `merge --ff-only` | external working copies when updates are on (§10.4), and the **main repository only when the user clicks the `N behind` chip** (§10.5) |
 | `stash push -u -m <message>` | the main repository, **only** when the user picks a branch on the branch chip, the tree is dirty and *Stash and switch branches* is on (§10.3) |
@@ -2217,7 +2217,17 @@ guards pin this (§17.2): one allows mutating verbs in that single file and nowh
 Some reads need no process at all. The HEAD watcher and the git-operation gate (§10.3) read the git directory
 as files: `.git` resolved to the real git directory (a folder, or a `gitdir:` file for a linked worktree or a
 submodule), `HEAD` and the ref it names (loose or packed), the last lines of `logs/HEAD`, and the presence of
-the operation markers. They run on every trigger, so they cost a file read rather than a `git` child.
+the operation markers. They run on every trigger, so they cost a file read rather than a `git` child. A
+repository in the reftable format keeps HEAD, its branches, tags and the reflog in its own tables: its `HEAD`
+file holds only a placeholder for older git versions (`ref: refs/heads/.invalid`) and it has no `logs` folder. There the file
+read reports HEAD as unknown rather than taking the placeholder for a branch, and the watcher cannot start
+(§10.3).
+
+The checked-out branch is read from git as the full ref (`symbolic-ref -q HEAD`), never in git's short form,
+and its `refs/heads/` prefix is dropped by the one rule the file read and the branch list use too
+(`HeadReader.BranchOf`). The short form is not always the branch name: when a tag or another ref has the same name, git shortens to
+`heads/<name>`, which matches neither the branch list, the remote-tracking ref a pull merges, nor the HEAD read
+from disk — every return to the window would look like a branch change.
 
 `ls-tree` is not called: the signature does not read git (§7.1).
 
@@ -2392,6 +2402,9 @@ moved, because files may have been edited elsewhere.
 
 Each trigger is weighed against the HEAD of the last Sync (§5.3, `syncCompleted`), read from disk:
 
+- HEAD cannot be read from disk — no git directory at the root, or a reftable repository (§10.1) → a return to
+  the window runs a silent Sync and the end of a run runs nothing; a branch switched outside the tool is then
+  not announced as a section, the silent Sync refreshes the list and the branch chip in place;
 - the branch name differs → a new section (BranchChange), first line `Switched to …`;
 - branch and commit are the same and the trigger is a HEAD movement → nothing: the tool's own checkout and the
   Sync a pull chains are not followed by a second Sync;
@@ -2406,8 +2419,9 @@ is compared against that earlier HEAD, so the switch still opens its `Switched t
 did open a section — the tool's own checkout, the Sync button — it is not told twice. A trigger whose Sync could
 not be sent — the gate was closed, or the send failed because the engine is gone — stays pending the same way
 and is weighed at the next change of the gate, the engine coming back included. If the watcher
-cannot start (a network drive, a permission, a repository with no reflog yet) the console says so once per
-root and a return to the window keeps working as the safety net; the watcher is retried on each return.
+cannot start (a network drive, a permission, a repository with no reflog yet, a reftable repository that keeps
+its reflog in its tables) the console says so once per root and a return to the window keeps working as the
+safety net; the watcher is retried on each return.
 
 **A branch change during a run interrupts it.** A commit during a run does nothing. Any other HEAD movement —
 checkout, pull, merge, reset, rebase — asks the engine to stop with kind `interrupt`, once per run (§8.8): no new
@@ -2425,7 +2439,9 @@ first start more than three days after their run, the newest run's folder except
 **While git is mid-operation, the tool waits.** The git directory's markers say what is in progress:
 `MERGE_HEAD` (a merge waiting for conflict resolution), `rebase-merge\` or `rebase-apply\` (a rebase),
 `CHERRY_PICK_HEAD` and `REVERT_HEAD`, and `index.lock` (a git command running right now); a named operation
-wins over the lock. While one stands:
+wins over the lock. A reftable repository (§10.1) keeps `CHERRY_PICK_HEAD` and `REVERT_HEAD` in its tables
+rather than as files, so there a cherry-pick or revert left half-done is not seen; a merge, a rebase and the
+lock are. While one stands:
 
 - an automatic Sync waits, and the event stream says `waiting for git — <reason>` once per operation;
 - the branch chip carries an amber dot, and its tooltip names the operation (`Merge in progress — finish or
@@ -6199,7 +6215,11 @@ do, and how the interface works around each — useful to know before attempting
   plain commit.
 - **The HEAD watcher needs a reflog.** It follows `logs/HEAD`; a repository that has no commit yet has no
   reflog folder, so the watcher cannot start and says so once. Returning to the window retries it, and the
-  window-activation Sync covers changes in the meantime.
+  window-activation Sync covers changes in the meantime. A reftable repository never has that folder — its
+  reflog lives in its tables — and its HEAD cannot be read from disk either (§10.1), so there a branch switched
+  outside the tool is not announced with a `Switched to …` section: returning to the window refreshes the list
+  in place. A cherry-pick or revert left half-done in such a repository is not seen as git being mid-operation
+  either (§10.3).
 - **An automatic Sync does not fetch.** Its `N behind` distance is measured against the last remote state the
   repository already has; the Sync button and a pull refresh it from the network.
 - **The shared-compilation flags stay off.** A private-pipe compiler server inside the job is possible, but its
@@ -6578,7 +6598,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | All read-only git invocations (HEAD, status, refs, distance, fetch) | `Core/Git/GitService.cs` |
 | The only mutating git surface: the fast-forward (dirty gate → fetch → is-ancestor → `merge --ff-only`, `FastForwardUpdater`) and the branch switch (dirty gate → optional `stash push -u` → `checkout`, `BranchSwitcher`) | `Core/Git/RepositoryWriter.cs` |
 | Git directory resolution (`.git` folder or `gitdir:` file) | `Core/Git/GitDirectory.cs` |
-| HEAD and its ref read from files (loose, packed, linked-worktree common dir) | `Core/Git/HeadReader.cs` |
+| HEAD and its ref read from files (loose, packed, linked-worktree common dir; a reftable placeholder reads as unknown) and the branch-name rule the git query shares | `Core/Git/HeadReader.cs` |
 | Operation markers (merge, rebase, cherry-pick, revert, `index.lock`) | `Core/Git/GitOperationProbe.cs` |
 | Tooltip, Build warning, Sync warning and stuck-lock texts for an operation in progress, and the 30 s threshold | `Core/Git/GitOperationText.cs` |
 | Reflog line classification (commit, checkout, other) and the strength order | `Core/Git/ReflogEntry.cs` |

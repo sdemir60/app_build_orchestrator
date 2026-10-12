@@ -227,7 +227,9 @@ internal sealed class AutoSyncCoordinator : IDisposable
     /// bildirimini atar ve tetik normal yoldan değerlendirilir.</item>
     /// <item>Hiç Sync tamamlanmamış → hiçbir şey: kıyaslanacak HEAD yok ve ilk bölümü açılış Sync'i açar.</item>
     /// <item>Pencereye dönüş ve son Sync'ten <see cref="ActivationQuietMs"/> geçmemiş → hiçbir şey.</item>
-    /// <item>HEAD okunamıyor → sessiz yenileme (güvenli yön); koşu bitişinin güvenlik ağı tetiğinde hiçbir şey.</item>
+    /// <item>HEAD okunamıyor → sessiz yenileme (güvenli yön); koşu bitişinin güvenlik ağı tetiğinde hiçbir şey. HEAD'i
+    /// dosyadan okunamayan reftable repo da buraya düşer (<see cref="HeadReader"/>): orada dışarıdan bir branch değişimi
+    /// bölüm açmaz, sessiz Sync onu yerinde tazeler.</item>
     /// <item>Branch adı farklı → yeni bölüm (<see cref="SyncMode.BranchChange"/>), ilk satır yeni branch. Kıyasın
     /// tabanı <see cref="BranchReference"/>: beklerken bölümsüz bir Sync'in yuttuğu değişim de bölüm açar.</item>
     /// <item>HEAD (branch + commit) son Sync'tekiyle aynı ve tetik bir HEAD hareketi → hiçbir şey (çift Sync yok).</item>

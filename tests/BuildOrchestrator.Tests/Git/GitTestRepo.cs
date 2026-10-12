@@ -24,13 +24,22 @@ public sealed class GitTestRepo : IDisposable
 
     public string RootPath { get; }
 
-    public GitTestRepo()
+    public GitTestRepo() : this(refFormat: null) { }
+
+    /// <param name="refFormat">Ref deposunun biçimi (<c>git init --ref-format</c>); <c>null</c> ⇒ git'in varsayılanı.</param>
+    private GitTestRepo(string? refFormat)
     {
         RootPath = Path.Combine(Path.GetTempPath(), "gitsvc-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(RootPath);
-        RunGit(RootPath, "init", "-q", ".");
+        if (refFormat is null) RunGit(RootPath, "init", "-q", ".");
+        else RunGit(RootPath, "init", "-q", "--ref-format=" + refFormat, ".");
         ConfigureIdentity(RootPath);
     }
+
+    /// <summary>[reftable] Ref'leri tek tek dosya yerine tablo dosyalarında tutan (<c>reftable</c>) bir repo. Böyle bir
+    /// repoda <c>.git\HEAD</c> yalnız eski git sürümleri için bir yer tutucudur (<c>ref: refs/heads/.invalid</c>) ve
+    /// <c>.git\logs</c> klasörü yoktur — dosyadan okuyan her kodun bu biçimde de doğru davrandığını sınamak içindir.</summary>
+    public static GitTestRepo Reftable() => new("reftable");
 
     /// <summary>Bir repoya (kök ya da klon) fixture kimliğini repo-yerel yazar. Klonlar kaynağın <c>.git/config</c>'ini
     /// devralmaz; bu yüzden her klon ayrıca yapılandırılır — kimliği olmayan makinede (CI) klondaki commit düşerdi.</summary>
@@ -69,6 +78,21 @@ public sealed class GitTestRepo : IDisposable
         => File.AppendAllText(Path.Combine(RootPath, ".git", "config"), "\n[garbage syntax error !!! ===\n");
 
     public void CreateBranch(string name) => RunGit(RootPath, "branch", name);
+
+    /// <summary>[tag çakışması] <paramref name="name"/> adıyla bir branch açıp checkout eder ve AYNI adla bir tag oluşturur —
+    /// git'in <c>symbolic-ref --short</c> kısaltmasının belirsizliği önlemek için <c>heads/&lt;ad&gt;</c>'a düştüğü durum.</summary>
+    public void CheckoutBranchNamedLikeATag(string name)
+    {
+        CreateBranch(name);
+        Checkout(name);
+        TagTheCheckedOutBranch(RootPath);
+    }
+
+    /// <summary>[tag çakışması] <paramref name="root"/>'taki çalışma kopyasında checkout edilmiş branch'in ADIYLA yerel bir tag
+    /// oluşturur — çakışmayı bir klonda da (uzak ucu olan kopyada) kurmanın TEK yolu; <see cref="CheckoutBranchNamedLikeATag"/>
+    /// bunu bu repoda yeni bir branch için yapar.</summary>
+    public static void TagTheCheckedOutBranch(string root) =>
+        RunGitAt(root, "tag", RunGitAt(root, "symbolic-ref", "--short", "-q", "HEAD").Trim());
 
     /// <summary>Şu an checkout edilmiş branch adı (fixture doğrulaması için — GitService sonucu buna karşı kıyaslanır).</summary>
     public string CurrentBranchName() => RunGit(RootPath, "symbolic-ref", "--short", "-q", "HEAD").Trim();
