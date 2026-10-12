@@ -3922,7 +3922,7 @@ window is resized; the arithmetic lives in one pure function (`DialogSize`). The
 same way: a scrim press closes the dialog while a press inside the frame never reaches the scrim, Esc closes it
 and is marked handled, the scrim is a cyclic focus scope so Tab cannot escape to the window behind, and opening
 lays the dialog out before moving keyboard focus inside — to the first control of a subtree the dialog names
-(Settings names the page it opens on), or else to the first control of the dialog — because before layout,
+(Settings names the page it opens on, What's new its footer), or else to the first control of the dialog — because before layout,
 focus navigation finds nothing and focus would stay on the dialog itself. Every modal enters with a 180 ms fade and a 6 px rise, the
 duration read from the `Duration.Base` token and snapping to the end state under reduced motion. The dialog's
 typography (the UI font and `text-primary`) is set on the dialog rather than the frame, because the slot content
@@ -4204,7 +4204,9 @@ hairline and another 22 px. The three newest versions are open; the rest fold un
 button with a down chevron, placed in the notes column of the same two-column grid below its own hairline and
 aligned flush with the note text (its own left padding cancelled by a negative margin); the fold returns on
 the next open. The footer carries only *Close* — *Copy diagnostics* stays on About, where the rest of the
-diagnostics live.
+diagnostics live. Every open starts the body at its top, on the newest version, and puts the opening focus on
+*Close*: the dialog's first control is the *Earlier versions* button at the foot of the list, and WPF scrolls a
+control that takes focus into view, so focusing it would open the body scrolled to its bottom.
 
 **The notes come from `CHANGELOG.md` at the repository root**, the single source — no list is kept in code.
 The App embeds the file as a resource and `ReleaseNotes` parses it on first use: a `## [x.y.z] - yyyy-MM-dd`
