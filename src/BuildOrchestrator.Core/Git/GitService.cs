@@ -101,14 +101,19 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
         return GitResult<string?>.Fail(CommandLineTool.DescribeFailure(CommandLineTool.Git, r));
     }
 
-    /// <summary>Checkout edilmiş branch adı. Normal → ad. Detached HEAD → <c>Ok(null)</c> (hata DEĞİL, edge).</summary>
+    /// <summary>Checkout edilmiş branch adı. Normal → ad. Detached HEAD → <c>Ok(null)</c> (hata DEĞİL, edge).
+    /// <para><b>Tam ref okunur, <c>--short</c> KULLANILMAZ:</b> git'in kısaltması, aynı adı taşıyan bir tag (ya da başka bir
+    /// ref) varken belirsizliği önlemek için <c>heads/&lt;ad&gt;</c> döner. O ad ne bir branch'tir ne de diskten okunan HEAD'le
+    /// aynıdır: pencereye her dönüş sahte bir "branch değişti" bölümü açıyordu, branch chip'i <c>heads/…</c> gösteriyordu,
+    /// branch listesinde aktif branch kalmıyordu, pull olmayan <c>refs/remotes/origin/heads/…</c>'yi arıyordu. Ad, disk
+    /// okuyucusuyla ORTAK kuraldan çıkar (<see cref="HeadReader.BranchOf"/>).</para></summary>
     public async Task<GitResult<string?>> GetCurrentBranchAsync(CancellationToken ct = default)
     {
-        var outcome = await CommandLineTool.RunAsync(_runner, CommandLineTool.Git, _gitExecutable, ["symbolic-ref", "--short", "-q", "HEAD"], _repoRoot, CommandTimeout, ct);
+        var outcome = await CommandLineTool.RunAsync(_runner, CommandLineTool.Git, _gitExecutable, ["symbolic-ref", "-q", "HEAD"], _repoRoot, CommandTimeout, ct);
         if (!outcome.Success) return GitResult<string?>.Fail(outcome.Error!);
 
         var r = outcome.Value!;
-        if (r.ExitCode == 0) return GitResult<string?>.Ok(r.StandardOutput.Trim());
+        if (r.ExitCode == 0) return GitResult<string?>.Ok(HeadReader.BranchOf(r.StandardOutput.Trim()));
 
         // symbolic-ref -q, HEAD detached olduğunda ve YALNIZ bu durumda sessizce exit=1 + BOŞ stderr
         // döner. Başka her kombinasyon (özellikle exit=128) gerçek bir git hatasıdır — Fail.

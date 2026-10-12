@@ -41,6 +41,26 @@ public class FastForwardUpdaterTests
         Assert.Equal("two", File.ReadAllText(Path.Combine(clone, "a.txt")));
     }
 
+    /// <summary>[tag çakışması] Checkout edilmiş branch'le aynı adı taşıyan bir tag varken de ileri sarılır. Ölçülen kusur:
+    /// branch adı <c>heads/&lt;ad&gt;</c> okunuyordu (<see cref="GitService.GetCurrentBranchAsync"/>) ve ileri sarma olmayan
+    /// <c>refs/remotes/origin/heads/&lt;ad&gt;</c>'ı arıyordu — <c>N behind</c> chip'inin pull'u bu repoda hiç çalışmıyordu.</summary>
+    [Fact]
+    public async Task A_branch_named_like_a_tag_is_fast_forwarded()
+    {
+        using var upstream = new GitTestRepo();
+        upstream.WriteFile("a.txt", "one");
+        upstream.CommitAll("first");
+        string clone = upstream.CloneFull();
+        GitTestRepo.RunGitAt(clone, "tag", BranchOf(clone)); // checkout edilmiş branch'le aynı adlı yerel tag
+        upstream.WriteFile("a.txt", "two");
+        string expected = upstream.CommitAll("second");
+
+        var result = await Updater(clone).UpdateAsync();
+
+        Assert.Equal(FastForwardStatus.Updated, result.Status);
+        Assert.Equal(expected, HeadOf(clone));
+    }
+
     [Fact]
     public async Task A_working_copy_already_at_its_remote_reports_already_current()
     {

@@ -2,6 +2,7 @@ using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Core.Git;
 using BuildOrchestrator.Core.Planning;
+using BuildOrchestrator.Core.Processes;
 using BuildOrchestrator.Tests.Git;
 
 namespace BuildOrchestrator.Tests.App;
@@ -467,21 +468,32 @@ public sealed class AutoSyncCoordinatorTests
         Assert.Single(h.Port.ConsoleLines);
     }
 
-    // ---------------------------------------------------------------- [reftable] HEAD'i dosyadan okunamayan repo
+    // ---------------------------------------------------------------- [reftable · tag çakışması] gerçek diskte branch kıyası
 
-    /// <summary>[reftable] Gerçek bir reftable repo, son Sync'in HEAD'i motorun bildirdiği gibi git'in kendisinden (branch
-    /// adı + sha) ve eşiği geçmiş bir an. Koordinatör ÜRETİMDEKİ okuyucularla kurulur: HEAD diskten (<see cref="HeadReader"/>),
-    /// izleyici gerçek (<see cref="HeadWatcher"/> — reftable'da reflog klasörü yoktur, kurulamaz).</summary>
-    private static (FakePort Port, AutoSyncCoordinator Coordinator) SyncedOnReftable(GitTestRepo repo)
+    /// <summary>Gerçek bir repoda (commit'li) son Sync ve eşiği geçmiş bir an — kıyasın İKİ tarafı da ÜRETİMDEKİ
+    /// okuyucudur: son Sync'in branch adı motorunkinden (<see cref="GitService.GetCurrentBranchAsync"/>; Sync'in
+    /// <c>ActiveBranch</c>'i oradan gelir), HEAD koordinatörün varsayılan okuyucusuyla diskten (<see cref="HeadReader"/>),
+    /// izleyici gerçek (<see cref="HeadWatcher"/>; reftable'da reflog klasörü olmadığı için kurulamaz).</summary>
+    private static async Task<(FakePort Port, AutoSyncCoordinator Coordinator)> SyncedOnDisk(GitTestRepo repo)
     {
-        repo.WriteFile("a.txt", "hello");
-        string sha = repo.CommitAll("c1");
+        string sha = GitTestRepo.RunGitAt(repo.RootPath, "rev-parse", "HEAD").Trim();
+        var engineBranch = await new GitService(new ProcessRunner(), repo.RootPath).GetCurrentBranchAsync();
+        Assert.True(engineBranch.Success); // ön-koşul: motor branch'i okuyabildi
         var port = new FakePort();
-        port.Synced(repo.CurrentBranchName(), sha);
+        port.Synced(engineBranch.Value, sha);
         port.Now += AutoSyncCoordinator.ActivationQuietMs + 1;
         var coordinator = new AutoSyncCoordinator(port, action => action());
         coordinator.Attach(repo.RootPath);
         return (port, coordinator);
+    }
+
+    /// <summary>Tek commit'li bir reftable repo (<see cref="GitTestRepo.Reftable"/>).</summary>
+    private static GitTestRepo CommittedReftable()
+    {
+        var repo = GitTestRepo.Reftable();
+        repo.WriteFile("a.txt", "hello");
+        repo.CommitAll("c1");
+        return repo;
     }
 
     /// <summary>[reftable] Pencereye dönüş, HEAD'i dosyadan okunamayan bir repoda sessiz yeniler — "branch değişti" bölümü
@@ -490,8 +502,8 @@ public sealed class AutoSyncCoordinatorTests
     [Fact]
     public async Task Returning_to_the_window_in_a_reftable_repository_refreshes_silently()
     {
-        using var repo = GitTestRepo.Reftable();
-        var (port, coordinator) = SyncedOnReftable(repo);
+        using var repo = CommittedReftable();
+        var (port, coordinator) = await SyncedOnDisk(repo);
         using var _ = coordinator;
 
         await coordinator.WindowActivatedAsync();
@@ -504,10 +516,10 @@ public sealed class AutoSyncCoordinatorTests
     /// <see cref="A_run_that_ends_on_an_unchanged_or_unreadable_head_syncs_nothing"/>'in gerçek diskteki hâli. Ölçülen kusur:
     /// her build bitişinde de "branch değişti" Sync'i koşuyordu.</summary>
     [Fact]
-    public void A_finished_build_in_a_reftable_repository_starts_no_sync()
+    public async Task A_finished_build_in_a_reftable_repository_starts_no_sync()
     {
-        using var repo = GitTestRepo.Reftable();
-        var (port, coordinator) = SyncedOnReftable(repo);
+        using var repo = CommittedReftable();
+        var (port, coordinator) = await SyncedOnDisk(repo);
         using var _ = coordinator;
 
         port.IsRunInFlight = true;
@@ -516,5 +528,23 @@ public sealed class AutoSyncCoordinatorTests
         coordinator.OnWorkspaceIdle();
 
         Assert.Equal(0, port.SyncCount);
+    }
+
+    /// <summary>[tag çakışması] Pencereye dönüş, aynı adlı bir tag'le çakışan bir branch'te sessiz yeniler. Ölçülen kusur:
+    /// motor <c>heads/feature/x</c>, disk <c>feature/x</c> diyordu ve her dönüş "branch değişti" bölümü açıyordu.</summary>
+    [Fact]
+    public async Task Returning_to_the_window_on_a_branch_named_like_a_tag_refreshes_silently()
+    {
+        using var repo = new GitTestRepo();
+        repo.WriteFile("a.txt", "hello");
+        repo.CommitAll("c1");
+        repo.CheckoutBranchNamedLikeATag("feature/x");
+        var (port, coordinator) = await SyncedOnDisk(repo);
+        using var _ = coordinator;
+
+        await coordinator.WindowActivatedAsync();
+
+        Assert.Empty(port.BranchChanges);
+        Assert.Equal([SilentSyncReason.Refresh], port.Silent);
     }
 }

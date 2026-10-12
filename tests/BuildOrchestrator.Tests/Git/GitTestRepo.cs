@@ -79,6 +79,16 @@ public sealed class GitTestRepo : IDisposable
 
     public void CreateBranch(string name) => RunGit(RootPath, "branch", name);
 
+    /// <summary>[tag çakışması] <paramref name="name"/> adıyla bir branch ve AYNI adla bir tag oluşturur, branch'i checkout
+    /// eder — git'in <c>symbolic-ref --short</c> kısaltmasının belirsizliği önlemek için <c>heads/&lt;ad&gt;</c>'a düştüğü
+    /// durum (git checkout'ta aynı adlı branch'i tag'e tercih eder).</summary>
+    public void CheckoutBranchNamedLikeATag(string name)
+    {
+        CreateBranch(name);
+        RunGit(RootPath, "tag", name);
+        Checkout(name);
+    }
+
     /// <summary>Şu an checkout edilmiş branch adı (fixture doğrulaması için — GitService sonucu buna karşı kıyaslanır).</summary>
     public string CurrentBranchName() => RunGit(RootPath, "symbolic-ref", "--short", "-q", "HEAD").Trim();
 

@@ -43,14 +43,19 @@ public static class HeadReader
         // yönde ele alır (pencereye dönüş sessiz yeniler, koşu bitişi Sync başlatmaz); yer tutucuyu branch adı saymak her
         // dönüşte motorun bildirdiği gerçek adla kıyaslanıp sahte bir "branch değişti" bölümü açıyordu.
         if (string.Equals(refName, ReftableHeadPlaceholder, StringComparison.Ordinal)) return null;
-        string? branch = refName.StartsWith(BranchRefPrefix, StringComparison.Ordinal)
-            ? refName[BranchRefPrefix.Length..]
-            : refName; // refs/heads/ dışı bir ref (savunmacı — normalde görülmez)
+        string branch = BranchOf(refName);
 
         string commonDir = ResolveCommonDir(gitDir);
         string? sha = ReadLooseRef(commonDir, refName) ?? ReadPackedRef(commonDir, refName);
         return new HeadState(branch, sha);
     }
+
+    /// <summary>HEAD'in gösterdiği tam ref adından branch adı: <c>refs/heads/</c> öneki atılır; önekisiz bir ref (savunmacı —
+    /// normalde görülmez) olduğu gibi kalır. Diskten okuyan <see cref="Read"/> ile git'e soran
+    /// <see cref="GitService.GetCurrentBranchAsync"/>'ın ORTAK kuralı: koordinatör bu iki okumayı kıyaslar ve aynı HEAD için
+    /// farklı ad üretirlerse sahte bir "branch değişti" görür (kopya YASAK).</summary>
+    internal static string BranchOf(string refName) =>
+        refName.StartsWith(BranchRefPrefix, StringComparison.Ordinal) ? refName[BranchRefPrefix.Length..] : refName;
 
     /// <summary>Linked worktree'de <c>commondir</c> dosyası ortak <c>.git</c>'e göreli/mutlak yolu taşır;
     /// dosya yoksa (normal repo) ref'ler zaten <paramref name="gitDir"/>'in kendisindedir.</summary>
