@@ -545,8 +545,9 @@ public sealed record CycleCompletedEvent(string RunId, string ProjectId, CycleOu
 /// <c>Projects</c> listesini run başlamadan (proje-başına ilk event'ten önce) PRE-POPULATE etmek için kullanır — bkz.
 /// RunViewModel.OnBuildPreview. <see cref="WillBuild"/> iki üreticide iki ayrı soruyu cevaplar: Sync'in önizlemesinde bir
 /// sonraki düz Build'in kararı (dirty=true / güncel=false / karar yok=null); bir koşunun kendi önizlemesinde BU koşunun
-/// işi — motorun önden atlamadığı (pre-skip) her proje <c>true</c>, atladığı <c>false</c>, <c>null</c> hiç gelmez
-/// (Rebuild ve Clean'de her proje, satırdan başlatılan koşuda hedef).</summary>
+/// işi (kural <c>Core/Planning/RunPreview</c>'da): önden atlanan (pre-skip) proje <c>false</c>; Rebuild ve Clean kalan her
+/// projeyi, satırdan başlatılan koşu hedefini işler; Build ve Cycles planlayıcının cevabını taşır, cevap yoksa
+/// <c>true</c>. Koşu önizlemesinde <c>null</c> hiç gelmez.</summary>
 /// <param name="BuiltCommit">[W1/It-5] Bu projenin SON BAŞARIYLA derlendiği commit — <see
 /// cref="Model.BuildState.BuiltCommit"/>'ten AYNEN (40-hex ham sha; kısaltma bir GÖRÜNTÜ kararıdır ve App'te
 /// yapılır). Kart bunu sha çiftinin SOL yarısı olarak gösterir; sağ yarı run-geneli <see

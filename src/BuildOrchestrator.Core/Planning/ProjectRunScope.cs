@@ -76,7 +76,7 @@ public sealed record ProjectRunScope(BuildPlan Plan, ProjectNode Target, IReadOn
             InCycle = false,
             // Hedef koşulsuz derlenir: WillBuild=true, bu koşunun işi. Gerekçe AYNEN kalır — bir disk olgusudur,
             // koşunun kapsamı değil: güncel hedef derlenirken de "up to date" okunur, Rebuild'in ve Clean'in güncel
-            // satırı gibi (satır Clean'i bu planın ÜSTÜNDE kurulur; CleanRunScope da gerekçeye dokunmaz).
+            // satırı gibi (satır Clean'inde bu kapsam CleanRunScope'un planı ÜSTÜNDE kurulur; o da gerekçeye dokunmaz).
             // [DEĞİŞEN KURAL — 2026-10-12] Güncel hedefin gerekçesi eskiden DÜŞÜRÜLÜRDÜ ("UpToDate + WillBuild=true
             // çelişir"); o çelişkiyi gösteren will-build noktası v1.11'de kalktı. Ölçülen bedel (sonda testi): App boş
             // gerekçeyi satıra yazıyordu — etiket koşu boyunca boşaldı, hedef başlamadan durdurulan koşu satırı "karar

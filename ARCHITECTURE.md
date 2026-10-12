@@ -545,10 +545,12 @@ Three of these carry the whole model:
   name→path map of solutions and the reverse-layer warnings. The graph panel, the layer grouping and
   "Open in Visual Studio" all read from this one event.
 - **`buildPreview`** delivers the will-build set before the first per-project event of a run, so rows are
-  populated before anything starts. A run's own preview names **this run's work**: `willBuild` is `true` for every
-  project the engine does not skip up front — the whole plan of a `Rebuild` and of a `Clean`, the target of a row's
-  run, and in a `Build` or a `Cycles` run everything not skipped at the start as up to date or out of scope — and
-  `false` for the ones it skips, never `null`. Each item also carries the reason (§7.4), a fact about the disk that
+  populated before anything starts. A run's own preview names **this run's work** (`RunPreview`): a project the
+  engine skips up front reads `false`; a run that ignores the ledger — a `Rebuild`, a `Clean` — works on every other
+  project, and so does a row's run on its target; a `Build` or a `Cycles` run keeps the planner's answer, an unknown
+  one counting as work, since such a project is never skipped up front. It never carries `null`, and it never
+  promises work the run will not do: the up-to-date member of a group that waits for its root stays `false`, as its
+  group may be skipped whole (§8.3). Each item also carries the reason (§7.4), a fact about the disk that
   reads the same in every preview — an up-to-date project a `Rebuild` or a row's run compiles still reads
   `up to date` — and for a project waiting on a failed dependency the display names of its recorded roots — the
   row's tooltip prints them, the App never composes them. `conditional` marks a project **this run** evaluates
@@ -1187,8 +1189,9 @@ one there is nothing left for it to decide — honouring it would swallow the co
 and the cost was plain: the first press compiled the project and the second did nothing at all, leaving the
 row grey. The target's reason stays what the disk says — an up-to-date target reads `up to date` while it compiles,
 like a row of a `Rebuild` — and the run's preview, which names the target as this run's work, does not write the
-row's will-build flag (§7.4): a run stopped before the target started leaves the row exactly as the last Sync said,
-current and out of the next `Build`'s wave. The menu items stay distinct through the MSBuild target instead: *Build*
+row's will-build flag (§7.4): a run stopped before the target started leaves that flag as the last Sync wrote it,
+so an up-to-date target stays current and out of the next `Build`'s wave. The menu items stay distinct through the
+MSBuild target instead: *Build*
 runs `-t:Build`, *Rebuild* runs `-t:Rebuild` — MSBuild's own clean-then-build for that project. That is the
 one place the two words diverge from the action bar, where *Rebuild* means "ignore the cache" and still runs
 `-t:Build` per project; in a scope of one, ignoring the cache is what *Build* already does.
@@ -6223,6 +6226,12 @@ do, and how the interface works around each — useful to know before attempting
   practice, one member with no state row — the gate does not hold and members the preview drew grey are built.
   It errs safely: more work happens than promised, and nothing broken can look healthy. Closing it means
   computing the preview per component, which is a larger change than the divergence costs.
+- **A run that describes only itself leaves an unreached row's will-build flag where Sync put it.** The previews of
+  a `Rebuild`, a `Clean`, a `Cycles` run and a row's run write the reason — a fact about the disk — but not the flag
+  (§7.4). If the disk changed after the last Sync and such a run stops before it reaches a project, that row can read
+  `modified` while its flag still holds the last Sync's `up to date`: the next `Build`'s wave does not light it, and
+  that run's own preview queues it as the run begins. The next Sync puts the two back together. Carrying the next
+  `Build`'s answer on every run's preview would close it; that is a contract change larger than the gap.
 - **The output evidence trusts file times and lengths** (§7.6), the same assumption the source-hash cache makes
   (§7.1). A DLL copied into a shared folder by hand with the same length as the build output can pass for a fed
   copy; a different length is caught. A file restored with its old timestamp — from a backup, say — does not
@@ -6515,6 +6524,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | SCC membership in build order (scheduler and coordinator read one instance) | `Core/Scheduling/CycleGroups.cs` |
 | Which runs compile cycle groups and a run's component map (`CompilesCycles`, `GroupsFor`) — one source for the Sync preview, the engine's plan, the coordinator's group gate and the App's round bookkeeping | `Core/Planning/CycleCompilation.cs` |
 | Which runs follow the ledger (incremental: `Build`, `Cycles`) — one source for the coordinator's up-to-date seed and the conditional-rebuild mode rule | `Core/Planning/IncrementalModes.cs` |
+| The will-build flag of a run's own preview — this run's work: a project skipped up front `false`, every other one in a run that ignores the ledger, the planner's answer (an unknown one counting as work) in one that follows it | `Core/Planning/RunPreview.cs`, applied in `Supervisor/RunCoordinator.cs` |
 | Cycle round stopping rule (converged / no progress / cap; surface-proof early exits) and which members are settled once a group stops on one of them (every member on convergence; on no progress or the cap, those with no read surface stale at the end of the last round, none without surface evidence) | `Core/Planning/CycleRoundPolicy.cs` |
 | Scope of a `Cycles` run (members + transitive upstream) | `Core/Planning/CycleRunScope.cs` |
 | Barriered level plan inside a cycle round (most-read-first placement, any-direction neighbor separation, shared-copy collisions by name) | `Core/Planning/CycleRoundLevels.cs` |
