@@ -2218,14 +2218,14 @@ Some reads need no process at all. The HEAD watcher and the git-operation gate (
 as files: `.git` resolved to the real git directory (a folder, or a `gitdir:` file for a linked worktree or a
 submodule), `HEAD` and the ref it names (loose or packed), the last lines of `logs/HEAD`, and the presence of
 the operation markers. They run on every trigger, so they cost a file read rather than a `git` child. A
-repository in the reftable format keeps HEAD and every ref in its own tables: its `HEAD` file holds only a
-placeholder for older git versions (`ref: refs/heads/.invalid`) and it has no `logs` folder. There the file
+repository in the reftable format keeps HEAD, its branches, tags and the reflog in its own tables: its `HEAD`
+file holds only a placeholder for older git versions (`ref: refs/heads/.invalid`) and it has no `logs` folder. There the file
 read reports HEAD as unknown rather than taking the placeholder for a branch, and the watcher cannot start
 (§10.3).
 
 The checked-out branch is read from git as the full ref (`symbolic-ref -q HEAD`), never in git's short form,
-and its `refs/heads/` prefix is dropped by the same rule the file read uses (`HeadReader.BranchOf`). The short
-form is not always the branch name: when a tag or another ref has the same name, git shortens to
+and its `refs/heads/` prefix is dropped by the one rule the file read and the branch list use too
+(`HeadReader.BranchOf`). The short form is not always the branch name: when a tag or another ref has the same name, git shortens to
 `heads/<name>`, which matches neither the branch list, the remote-tracking ref a pull merges, nor the HEAD read
 from disk — every return to the window would look like a branch change.
 
@@ -2439,7 +2439,9 @@ first start more than three days after their run, the newest run's folder except
 **While git is mid-operation, the tool waits.** The git directory's markers say what is in progress:
 `MERGE_HEAD` (a merge waiting for conflict resolution), `rebase-merge\` or `rebase-apply\` (a rebase),
 `CHERRY_PICK_HEAD` and `REVERT_HEAD`, and `index.lock` (a git command running right now); a named operation
-wins over the lock. While one stands:
+wins over the lock. A reftable repository (§10.1) keeps `CHERRY_PICK_HEAD` and `REVERT_HEAD` in its tables
+rather than as files, so there a cherry-pick or revert left half-done is not seen; a merge, a rebase and the
+lock are. While one stands:
 
 - an automatic Sync waits, and the event stream says `waiting for git — <reason>` once per operation;
 - the branch chip carries an amber dot, and its tooltip names the operation (`Merge in progress — finish or
@@ -6216,7 +6218,8 @@ do, and how the interface works around each — useful to know before attempting
   window-activation Sync covers changes in the meantime. A reftable repository never has that folder — its
   reflog lives in its tables — and its HEAD cannot be read from disk either (§10.1), so there a branch switched
   outside the tool is not announced with a `Switched to …` section: returning to the window refreshes the list
-  in place.
+  in place. A cherry-pick or revert left half-done in such a repository is not seen as git being mid-operation
+  either (§10.3).
 - **An automatic Sync does not fetch.** Its `N behind` distance is measured against the last remote state the
   repository already has; the Sync button and a pull refresh it from the network.
 - **The shared-compilation flags stay off.** A private-pipe compiler server inside the job is possible, but its
