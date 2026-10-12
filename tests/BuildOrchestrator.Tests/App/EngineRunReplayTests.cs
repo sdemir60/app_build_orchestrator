@@ -167,4 +167,58 @@ public class EngineRunReplayTests
 
         Assert.Equal("▸ Stopped — 1/3 · 2 not built", vm.RibbonLine.Text);
     }
+
+    /// <summary>
+    /// Durdurulan Rebuild'in ULAŞMADIĞI satırlar Sync'in dediği kalır: güncel, yeşil ve bir sonraki Build'in dalgasının
+    /// dışında. Rebuild'in önizlemesi her projeye <c>true</c> der — bu koşunun işi — ama bu, satırın plan bayrağının
+    /// cevapladığı soru değildir ("bir sonraki düz Build ne yapar", ARCHITECTURE §7.4); Clean ve Resolve önizlemeleri gibi
+    /// bayrağa yazmaz.
+    /// <para><b>Ölçülen kusur:</b> önizleme bu koşunun işini söylemeye başlayınca (motor kuralı, 2026-10-12) App onu
+    /// bayrağa yazıyordu — Stop'tan sonra güncel satırlar <c>WillBuild=true</c> kaldı ve bir sonraki Build'in dalgası
+    /// onları boşuna yaktı (o Build'in kendi önizlemesi gelince yeşile döndüler).</para>
+    /// </summary>
+    [Fact]
+    public async Task A_stopped_rebuild_leaves_the_rows_it_did_not_reach_as_the_sync_said()
+    {
+        var plan = AllUpToDate(Names);
+        var events = await RunEngineAsync(plan, Start(RunMode.Rebuild));
+        var vm = Synced(plan);
+
+        StopAfterFirstSuccess(vm, events, Names.Length);
+
+        Assert.Empty(vm.ScopeFor(RunMode.Build));
+        foreach (var name in new[] { "B", "C" })
+        {
+            Assert.False(Row(vm, name).WillBuild);
+            Assert.Equal(VisualStatus.Current, Row(vm, name).VisualStatus);
+        }
+    }
+
+    /// <summary>
+    /// Satırın ▶'siyle başlatılan koşu, hedefi başlamadan durdurulursa (örneğin şerit "Starting — resolving what to
+    /// build" derken Stop: motor planı bitirir, önizlemeyi yazar, hiçbir şey başlatmaz) satır Sync'in dediği kalır:
+    /// güncel hedef yeşil, etiketi <c>up to date</c>, bir sonraki Build'in dalgasında yanmaz.
+    /// <para><b>Ölçülen kusur (sonda testi, 2026-10-12):</b> satır "karar yok" görünümüne düştü (gri, kesikli halka,
+    /// boş etiket) ve bir sonraki Build'in dalgası onu boşuna yaktı — motor güncel hedefin gerekçesini siliyor, App de
+    /// o koşunun önizlemesindeki <c>true</c>'yu satırın plan bayrağına yazıyordu.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_row_run_stopped_before_its_target_started_leaves_the_row_as_the_sync_said()
+    {
+        var plan = AllUpToDate("A", "B");
+        var events = await RunEngineAsync(plan, Start(RunMode.Build) with { ScopeProjectId = Id("A") });
+        var vm = Synced(plan);
+        MainWindowHost.AcceptSends(vm);
+        await vm.BuildProjectCommand.ExecuteAsync(Id("A")); // satırın ▶'si — koşunun kapsamı yalnız A
+
+        ReplayThroughPreview(vm, events);
+        vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, Succeeded: 0, Failed: 0, Skipped: 0, Queued: 1,
+            DurationMs: 10));
+
+        var a = Row(vm, "A");
+        Assert.Equal(VisualStatus.Current, a.VisualStatus);
+        Assert.Equal("up to date", DecisionLabel.For(a.WillBuild, a.WillBuildReason, a.OwnFilesChanged, a.LocalEdits).Word);
+        Assert.Empty(vm.ScopeFor(RunMode.Build));
+    }
 }
