@@ -753,6 +753,9 @@ The reasoning behind all three is in [`ARCHITECTURE.md` §11](ARCHITECTURE.md#11
   *Sync* or pull to refresh it.
 - **A brand-new repository is not watched until its first commit.** The HEAD watcher needs git's reflog, which
   appears with the first commit; until then, switching back to the window keeps the list current.
+- **A reftable repository is not watched.** Git's newer reftable format keeps the current branch and the reflog
+  in its own table files, which the tool does not read. Switching back to the window keeps the list current,
+  but a branch switched outside the tool shows up there without a `Switched to …` line.
 - **`UseSharedCompilation=false` and `nodeReuse:false` are kept.** A compiler server with a private pipe could
   live inside the job, but measured on a real repository it saves about a tenth of a run while holding
   gigabytes of memory, so the flags stay off; a server *outside* the job would also bring back the risk of a
