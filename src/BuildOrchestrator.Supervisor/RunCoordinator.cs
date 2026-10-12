@@ -958,28 +958,22 @@ public sealed class RunCoordinator(
             plan.Configuration, appliedCap, LogDirectory: logs.RunDirectory, WorkersReducedReason: workerBudget.Reason,
             Warnings: runStartWarnings.Count > 0 ? runStartWarnings : null));
         // [Task 17] runStarted'dan HEMEN SONRA, ilk projectStarted/projectSkipped'ten ÖNCE: App'in Projects
-        // listesini will-build önizlemesiyle pre-populate edebilmesi için. WillBuild alanı BU koşunun işidir — aşağıda,
-        // koşunun pre-skip kümesinden; gerekçe ve diğer disk olguları plan'ın düğümlerinden aynen taşınır.
+        // listesini will-build önizlemesiyle pre-populate edebilmesi için. WillBuild alanı BU koşunun işidir — kural
+        // Core'da (RunPreview), burada yalnız uygulanır; gerekçe ve diğer disk olguları plan'ın düğümlerinden aynen taşınır.
         // [W1] BuiltCommit (sha çiftinin sol yarısı) da BURADAN taşınır — Sync'te doldurup burada boş bırakmak,
         // run başlar başlamaz kartların sha slotunu sıfırlardı. Load() ITEM BAŞINA DEĞİL, TOPLU okunur —
         // önizlemenin tamamı tek okumadan beslenir. Yukarıdaki [Task 7] yakınsamama hafızası taraması store'u
         // ayrıca okur; o yalnız grup haritası kurulan koşuda (Build, Rebuild, Cycles) koşar ve ayrı bir soruyu cevaplar.
         var builtCommits = stateStore?.Load();
-        // Önizleme BU KOŞUNUN yapacağını anlatır, planlayıcının soyut "dirty mi" cevabını değil: motorun önden
-        // atlamadığı (pre-skip) her proje bu koşuda dispatch edilir ve WillBuild=true gösterilir, atladığı her proje
-        // false. App kuyruğu, sabit ilerleme paydasını, "ortada iş var mı" sorusunu ve açılış satırını bu bayraktan
-        // okur; iki yer ayrışırsa kullanıcıya YALAN söylenir — kuyrukta amber görünüp hemen "skipped" geçen bir satır
-        // ya da derlenirken yeşil görünen, şeridi "Checking…" diyen bir koşu. Kararı sırası gelince verilen proje
-        // (koşullu, yüzey kapısı adayı) de dispatch edilir ve true'dur; koşulluyu kuyruktan ayıran kendi alanıdır
-        // (Conditional). (Yakınsamama hafızası eskiden ikinci bir pre-skip kaynağıydı; artık pre-skip etmiyor — bkz.
-        // Cycles tohumundaki [Task 7 · DEĞİŞEN KURAL].)
-        // [DEĞİŞEN KURAL — 2026-10-12] Pre-skip edilmeyen düğüm eskiden planlayıcının cevabını (n.WillBuild) AYNEN
-        // taşırdı. Build ve Cycles'ta ikisi aynı kümedir — tohum o cevaptan doğar. Ayrıştıkları iki yer ölçüldü:
-        // Rebuild önbelleği yok sayar ve hiçbir şeyi önden atlamaz ama güncel projeye false gidiyordu (gerçek koşu,
-        // 10:44 Rebuild: dalganın yaktığı düğümler koşu başlar başlamaz yeşile döndü, şerit koşu boyunca "Checking…"
-        // dedi); artımlı geçişi düşen koşuda plan WillBuild=null taşır ve motor her şeyi derlerken önizleme null
-        // gönderiyordu. Önden atlananlar koşunun tohumu ile scheduler'ın kendi "in dependency cycle" pre-skip'idir
-        // (o yalnız grup haritası olmayan koşuda dolar — bkz. aşağıdaki PreSkipped raporu); ikisi de dispatch edilmez.
+        // Önizleme BU KOŞUNUN yapacağını anlatır (RunPreview — kural ve gerekçesi orada): önden atlanan (pre-skip) her
+        // proje WillBuild=false; Rebuild ve Clean önden atlamadığı her projeyi işler; Build ve Cycles planlayıcının
+        // cevabını taşır (cevap yoksa true). App kuyruğu, sabit ilerleme paydasını, "ortada iş var mı" sorusunu ve
+        // açılış satırını bu bayraktan okur; iki yer ayrışırsa kullanıcıya YALAN söylenir — kuyrukta amber görünüp
+        // hemen "skipped" geçen bir satır ya da derlenirken yeşil görünen, şeridi "Checking…" diyen bir koşu.
+        // (Yakınsamama hafızası eskiden ikinci bir pre-skip kaynağıydı; artık pre-skip etmiyor — bkz. Cycles
+        // tohumundaki [Task 7 · DEĞİŞEN KURAL].) Önden atlananlar koşunun tohumu ile scheduler'ın kendi "in dependency
+        // cycle" pre-skip'idir (o yalnız grup haritası olmayan koşuda dolar — bkz. aşağıdaki PreSkipped raporu); ikisi
+        // de dispatch edilmez.
         var preSkipped = upToDateSkips.Select(s => s.ProjectId)
             .Concat(scheduler.PreSkipped.Select(s => s.ProjectId))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -998,7 +992,7 @@ public sealed class RunCoordinator(
             // ve etiket bir disk olgusudur: yakınsamayan ya da kapsam dışı bir projenin dosyalarının değişip
             // değişmediği doğru bir bilgidir. WillBuild yine false kalır — bu koşu onu derlemez.
             [.. plan.Nodes.Select(n => new BuildPreviewItem(n.Id, n.Name,
-                !preSkipped.Contains(n.Id),
+                RunPreview.WillBuild(n, cmd.Mode, preSkipped.Contains(n.Id)),
                 BuildStateStore.BuiltCommitOf(builtCommits, n.Id), n.WillBuildReason,
                 // [Faz 3/Task 6] modified ↔ affected ve "built outside" yaşı Sync ile AYNI yardımcılardan: zaman
                 // kipinde kanıttan, diğer kiplerde defterin cevabı (kontrol yoksa bugünkü cevap aynen).

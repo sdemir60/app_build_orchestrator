@@ -1,9 +1,11 @@
+using System.IO;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.State;
 using BuildOrchestrator.Supervisor;
 using BuildOrchestrator.Tests.Supervisor;
 using static BuildOrchestrator.Tests.Supervisor.RunCoordinatorTests;
@@ -30,10 +32,12 @@ public class EngineRunReplayTests
     private static RunPlan AllUpToDate(params string[] names) =>
         PlanOf([.. names.Select(n => Node(n, willBuild: false) with { WillBuildReason = WillBuildReason.UpToDate })]);
 
-    /// <summary>Koordinatörü <paramref name="cmd"/> ile sonuna kadar koşturur ve yazdığı olayları döner.</summary>
-    private static async Task<IReadOnlyList<IpcEvent>> RunEngineAsync(RunPlan plan, StartRunCommand cmd)
+    /// <summary>Koordinatörü <paramref name="cmd"/> ile sonuna kadar koşturur ve yazdığı olayları döner. Varsayılan
+    /// sahte MSBuild her projeyi başarıyla derler; defter verilmezse koşu defterisizdir.</summary>
+    private static async Task<IReadOnlyList<IpcEvent>> RunEngineAsync(RunPlan plan, StartRunCommand cmd,
+        FakeInvoker? invoker = null, BuildStateStore? store = null)
     {
-        using var h = new Harness(plan, AllSucceed());
+        using var h = new Harness(plan, invoker ?? AllSucceed(), stateStore: store);
         await h.Sut.StartAsync(cmd, default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
         return h.Events;
@@ -166,6 +170,36 @@ public class EngineRunReplayTests
         StopAfterFirstSuccess(vm, events, Names.Length);
 
         Assert.Equal("▸ Stopped — 1/3 · 2 not built", vm.RibbonLine.Text);
+    }
+
+    /// <summary>
+    /// Build'de kökünü bekleyen KARIŞIK döngü grubunun güncel üyesi kuyruğa girmez ve sabit payda onu saymaz: grup
+    /// dispatch anında bütün olarak atlanır (kök hâlâ kırık), güncel üye <c>skipped — up to date</c> ile kendi yeşilinde
+    /// kalır. Önizleme yapmayacağı bir işi vaat etmez (ARCHITECTURE §20).
+    /// <para><b>Ölçülen kusur (inceleme, 2026-10-12):</b> önizleme bir an "önden atlanmayan her proje true" kuralına
+    /// geçince güncel üye koşu başında — dalga onu yakmamışken — amber kuyruğa girdi ve paydada sayıldı, sonra
+    /// atlandı.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_build_never_queues_the_up_to_date_member_of_a_group_waiting_for_its_root()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var (store, plan) = CycleRoundsTests.WaitingCyclePlan(cacheRoot, bUpToDate: true);
+            var failingRoot = new FakeInvoker((req, _, _) =>
+                Task.FromResult(NameOf(req.ProjectId) == "Up" ? Exit(1) : Ok())); // kök yine patlıyor
+            var events = await RunEngineAsync(plan, Start(RunMode.Build), failingRoot, store);
+            var vm = Synced(plan);
+
+            var rest = ReplayThroughPreview(vm, events);
+            Assert.Equal(VisualStatus.Current, Row(vm, "B").VisualStatus);
+            Assert.Equal(1, vm.WillBuildCount); // yalnız kök: A koşullu, B güncel
+
+            foreach (var e in rest) vm.OnEvent(e);
+            Assert.Equal(VisualStatus.Current, Row(vm, "B").VisualStatus);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
 
     /// <summary>

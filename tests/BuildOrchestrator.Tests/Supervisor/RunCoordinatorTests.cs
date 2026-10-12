@@ -2232,6 +2232,28 @@ public class RunCoordinatorTests
         Assert.All(Assert.Single(h.Events.OfType<BuildPreviewEvent>()).Items, i => Assert.True(i.WillBuild));
     }
 
+    /// <summary>
+    /// Scheduler'ın KENDİ önden atlaması da önizlemede <c>false</c>'tur: grup haritası olmayan koşuda (planda SCC listesi
+    /// yok — üretimde orada döngü üyesi de olmaz; kill-switch yolu) döngü işaretli düğüm <c>in dependency cycle</c> ile
+    /// atlanır ve dispatch edilmez. Önizleme yapmayacağı bir işi vaat etmez — her projeyi işleyen Rebuild'de bile.
+    /// </summary>
+    [Fact]
+    public async Task A_project_the_scheduler_skips_up_front_is_not_previewed_as_this_runs_work()
+    {
+        var plan = PlanOf(Node("Free"), Node("Member", inCycle: true)); // döngü listesi yok → grup haritası yok
+        var invoker = AllSucceed();
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(RunMode.Rebuild), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal([Id("Free")], invoker.Requests.Select(r => r.ProjectId));
+        Assert.Contains(h.Events.OfType<ProjectSkippedEvent>(),
+            e => e.ProjectId == Id("Member") && e.Reason == SkipReasons.InDependencyCycle);
+        var preview = Assert.Single(h.Events.OfType<BuildPreviewEvent>()).Items.ToDictionary(i => NameOf(i.ProjectId));
+        Assert.Equal((true, false), (preview["Free"].WillBuild, preview["Member"].WillBuild));
+    }
+
     [Fact]
     public async Task Build_mode_pre_skips_up_to_date_nodes_without_invoking_msbuild_and_persists_the_built_ones()
     {
