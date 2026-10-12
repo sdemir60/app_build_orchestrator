@@ -26,12 +26,14 @@ tekrarlanmaz. Bu skill yalnız sırayı ve komutları verir.
    `Version`'ı script yazar. Ön koşullardan emin değilsen önce `-DryRun`: bütün guard'lar koşar; dosyaya, branch'e ve
    tag'e dokunulmaz.
 3. `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release.ps1 -Version X.Y.Z`
-   — guard'lar → `Version` → build + tam süit → `develop`'ta `release: vX.Y.Z` commit'i → `main`'e `--no-ff` merge
+   — guard'lar → `Version` → build → `develop`'ta `release: vX.Y.Z` commit'i → `main`'e `--no-ff` merge
    (`merge: release vX.Y.Z`) → merge commit'ine annotated tag → `develop` `main`'e ff (develop = main) →
-   `git push --atomic origin main develop vX.Y.Z` (üçü birlikte gider ya da hiçbiri). `-SkipCiCheck` yalnız
-   çevrimdışı/acil durumda: CI kontrolünü atlar ve uyarır (`release.yml` tag'i yine derleyip test eder).
+   `git push --atomic origin main develop vX.Y.Z` (üçü birlikte gider ya da hiçbiri). Script testleri lokal KOŞMAZ:
+   testler CI'dadır — develop HEAD'inin koşusu yukarıdaki ön koşuldur, tag'inki `release.yml`'de `publish`'ten önce
+   koşar (kırmızıysa adım 6). `-SkipCiCheck` yalnız çevrimdışı/acil durumda: CI kontrolünü atlar ve uyarır
+   (`release.yml` tag'i yine derleyip test eder).
 4. **Script durduysa** sebebi kullanıcıya ilet. Nerede durduğuna göre:
-   - **Release commit'inden ÖNCE** (guard, build, test): commit/tag yok, hiçbir şey push edilmedi. En fazla
+   - **Release commit'inden ÖNCE** (guard, build): commit/tag yok, hiçbir şey push edilmedi. En fazla
      `Directory.Build.props`'ta yeni `Version` yazılıdır; CHANGELOG ile birlikte ağaçta kalır, yeniden koşu aynı
      değeri yazar. Sebebi gider, adım 3'ü yeniden koş.
    - **Release commit'inden SONRA** (en olası: push reddedildi — fetch'ten sonra `origin/develop` ya da `origin/main`
