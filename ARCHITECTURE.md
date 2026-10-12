@@ -5841,7 +5841,7 @@ release, so the two branches never share a commit id and a mix-up between them s
 tag and three-ref push of a clean release, a branch other than `develop`, a `develop` whose CI run is missing,
 unfinished, red or cannot be read and `-SkipCiCheck`, a `develop` or `main` missing on `origin`, out of step with it
 or checked out elsewhere, a worktree list git fails to give, a clone without a local `main`, a dry run that stops
-wherever the real run would and writes nothing, a tag `origin` already has, a `develop` or `main` that moves before
+wherever the real run would and writes nothing, a release that builds without ever running the tests, a tag `origin` already has, a `develop` or `main` that moves before
 the push — with the printed undo commands run after a fetch and checked — a push that reports an error after
 `origin` took the release, one whose outcome cannot be read, a tagged commit `origin/main` does not contain or cannot
 be checked against, an application still running from the checkout and one installed elsewhere that does not stop
@@ -6082,7 +6082,7 @@ carrying the version's tag.
   `CHANGELOG.md` and `Directory.Build.props`; after a pruning fetch (a branch deleted on `origin` does not linger as a
   remote-tracking ref), `develop` and `main` exist on `origin`, `develop` equals `origin/develop`, a local `main` (when
   there is one) equals `origin/main`, and `origin/main` is an ancestor of `develop` — `main` takes all of `develop`
-  and nothing else, so the merge produces exactly the tree that was built and tested; `main` is not checked out in
+  and nothing else, so the merge produces exactly the tree that CI tested and the script builds; `main` is not checked out in
   another worktree, since the flow switches to it; `vX.Y.Z` exists neither locally nor on `origin`; no copy of the
   application is running from this checkout; and `develop`'s CI run is green. A live Supervisor keeps its binaries
   locked and the build would fail, but only after `Version` was written, so that check comes first. A copy installed
@@ -6093,11 +6093,14 @@ carrying the version's tag.
   `ci.yml` run of `develop`'s commit and wants it `completed` with
   `success`; no run, an unfinished or red one, and an API that cannot be read all stop the release. `-SkipCiCheck`
   skips that one check, for an offline machine or an emergency, and says so; the release workflow still builds and
-  tests the tag. Then it writes `Version`, runs `release-guard.ps1`, builds, runs the full suite (`-SkipTests` when it
-  was just seen green), commits `release: vX.Y.Z` on `develop` — the one commit made directly rather than through a
-  work branch — merges `develop` into `main` with `--no-ff` (`merge: release vX.Y.Z`), tags that merge (annotated),
-  fast-forwards `develop` to `main` and pushes `main`, `develop` and the tag in one `--atomic` push. The build and the
-  suite take minutes; should `origin/develop` or `origin/main` move meanwhile, all three refs are refused together,
+  tests the tag. Then it writes `Version`, runs `release-guard.ps1`, builds, commits `release: vX.Y.Z` on `develop` —
+  the one commit made directly rather than through a work branch — merges `develop` into `main` with `--no-ff`
+  (`merge: release vX.Y.Z`), tags that merge (annotated), fast-forwards `develop` to `main` and pushes `main`,
+  `develop` and the tag in one `--atomic` push. The script runs no tests itself: the CI run it requires green tested
+  the very commit it releases — the release commit changes `CHANGELOG.md` and `Version` and nothing else — and the
+  release workflow tests the tag again before anything is published. The `Acceptance` and `LocalOnly` categories, which
+  CI leaves out, are not part of a release. The build takes time; should `origin/develop` or `origin/main` move
+  meanwhile, all three refs are refused together,
   so `origin` never gets a release its `develop` does not contain or a tag on a merge its `main` does not have. When
   a step after the release commit stops — the refused push above, most likely — the script's last line prints the
   commands that undo the local commit, merge and tag, with the commit ids the release started from, so a fetch in
@@ -6767,7 +6770,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Publish, release-note cut and Velopack pack — the one owner of the publish command; the previous package for the delta | `scripts/package.ps1` |
 | What the release scripts and `verify-publish.ps1` share: property reader, `CHANGELOG.md` heading pattern and reader, repository URL, running-instance probe (`Get-RunningApp`, optionally scoped to a folder), removal of a version's earlier packages (`Remove-PackagedVersion`), the three-way ancestry check (`Test-GitAncestor`), the GitHub API call (`Invoke-GitHubApi`) with the release count (`Get-ReleaseCount`) and a commit's newest workflow run (`Get-CiConclusion`) | `scripts/release-common.ps1` |
 | Tag = `Version` = top `CHANGELOG.md` version; with `-RequireOnMain`, the tagged commit on `origin/main` | `scripts/release-guard.ps1` |
-| One-command release from `develop`: guards (`develop`'s CI run green included), `Version`, build + suite, release commit, `--no-ff` merge into `main`, annotated tag on the merge, `develop` fast-forwarded to `main`, one atomic push of `main`, `develop` and the tag; the undo line when it stops after the release commit, withheld when a push that reported an error left the tag on `origin` | `scripts/release.ps1` |
+| One-command release from `develop`: guards (`develop`'s CI run green included), `Version`, build, release commit, `--no-ff` merge into `main`, annotated tag on the merge, `develop` fast-forwarded to `main`, one atomic push of `main`, `develop` and the tag; the undo line when it stops after the release commit, withheld when a push that reported an error left the tag on `origin` | `scripts/release.ps1` |
 | The `/release` request: order and commands; the note rules stay in `CLAUDE.md` | `.claude/skills/release/SKILL.md` |
 | End-to-end check of a publish output | `scripts/verify-publish.ps1` |
 | CI build and suite; the release workflow (guard → CI → package → GitHub Release) | `.github/workflows/ci.yml`, `.github/workflows/release.yml` |

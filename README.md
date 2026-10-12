@@ -182,8 +182,9 @@ it. Claude writes the new version's `CHANGELOG.md` section — the rules are in 
 clean and level with `origin/develop`, `main` holds nothing `develop` lacks, the section is on top and dated today,
 the tag exists neither locally nor on `origin`, no copy of the app is running from this checkout (it keeps the
 checkout's files locked — tray icon → Exit; an installed copy elsewhere is no obstacle), and `develop`'s CI run is
-green (`-SkipCiCheck` skips that check when offline or in an emergency); then it writes `Version`, builds, runs the
-full suite, commits `release: vX.Y.Z` on `develop`, merges `develop` into `main`, tags the merge, moves `develop`
+green (`-SkipCiCheck` skips that check when offline or in an emergency); then it writes `Version`, builds (it does
+not run the tests: CI ran them on `develop`'s head and runs them again on the tag before anything is published),
+commits `release: vX.Y.Z` on `develop`, merges `develop` into `main`, tags the merge, moves `develop`
 up to `main` and pushes `main`, `develop` and the tag atomically — all three reach GitHub or none does. Should it
 stop after the release commit, its last line prints the commands that undo the local commit, merge and tag — unless
 a push that reported an error still left the tag on GitHub, which it then reports instead. `-DryRun` runs every
