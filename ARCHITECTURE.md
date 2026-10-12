@@ -548,15 +548,18 @@ Three of these carry the whole model:
   populated before anything starts. A run's own preview names **this run's work** (`RunPreview`): a project the
   engine skips up front reads `false`; a run that ignores the ledger — a `Rebuild`, a `Clean` — works on every other
   project, and so does a row's run on its target; a `Build` or a `Cycles` run keeps the planner's answer, an unknown
-  one counting as work, since such a project is never skipped up front. It never carries `null`, and it never
-  promises work the run will not do: the up-to-date member of a group that waits for its root stays `false`, as its
-  group may be skipped whole (§8.3). Each item also carries the reason (§7.4), a fact about the disk that
+  one counting as work, since such a project is never skipped up front. It never carries `null`. In a `Build` or a
+  `Cycles` run it is the planner's answer, not the outcome: a project decided only at its turn — a surface-gate
+  candidate (§8.3), a cycle member round one carries (§8.8) — reads as work and can still be skipped, while the
+  up-to-date member of a group that waits for its root keeps the planner's `false`, as its group may be skipped
+  whole (§8.3). Each item also carries the reason (§7.4), a fact about the disk that
   reads the same in every preview — an up-to-date project a `Rebuild` or a row's run compiles still reads
   `up to date` — and for a project waiting on a failed dependency the display names of its recorded roots — the
   row's tooltip prints them, the App never composes them. `conditional` marks a project **this run** evaluates
   only when its turn comes (§8.3): it may
-  still compile, so `willBuild` stays `true`, but it is not part of the queue. A `Rebuild`, a row's target and a
-  cycle-group member never carry it — those compile unconditionally. Sync's own preview does carry it, computed
+  still compile, so `willBuild` stays `true`, but it is not part of the queue. A `Rebuild` and a row's target never
+  carry it — those compile unconditionally — and a cycle-group member carries it only when it waits for its roots and
+  its whole group is judged at dispatch (§8.3). Sync's own preview does carry it, computed
   the same way, because Sync answers what a plain `Build` would decide (§10.2). Each item also carries
   `failedAt` — the same evidence-based failure moment §7.5 stores, read through the one lookup both a Sync's
   preview and a run's own preview share — and `localEdits`, which is `true` only on **Sync's** preview, for a
@@ -6219,7 +6222,8 @@ do, and how the interface works around each — useful to know before attempting
   reach their 8 px floor, at which point a very large workspace is legible as a shape rather than as
   individual projects.
 - **The will-build preview can under-promise on cycles.** A run's own preview is projected through what that
-  run has actually pre-skipped, so it never promises work it will not do. The remaining gap is the other
+  run has actually pre-skipped, so it never promises work the run skips up front; a project decided only at its turn
+  (§8.3, §8.8) reads as the planner said until then. The remaining gap is the other
   direction and lives inside a run that compiles groups (`Build`, `Cycles`): the preview is computed per node from
   signatures alone, while the
   group's up-to-date gate is per group, so in a component whose members are only *partly* up to date — in
@@ -6228,8 +6232,9 @@ do, and how the interface works around each — useful to know before attempting
   computing the preview per component, which is a larger change than the divergence costs.
 - **A run that describes only itself leaves an unreached row's will-build flag where Sync put it.** The previews of
   a `Rebuild`, a `Clean`, a `Cycles` run and a row's run write the reason — a fact about the disk — but not the flag
-  (§7.4). If the disk changed after the last Sync and such a run stops before it reaches a project, that row can read
-  `modified` while its flag still holds the last Sync's `up to date`: the next `Build`'s wave does not light it, and
+  (§7.4). If the disk changed after the last Sync and such a run does not reach a project — it stopped first, or the
+  project lies outside a `Cycles` run's scope — that row can read `modified` while its flag still holds the last
+  Sync's `up to date`: the next `Build`'s wave does not light it, and
   that run's own preview queues it as the run begins. The next Sync puts the two back together. Carrying the next
   `Build`'s answer on every run's preview would close it; that is a contract change larger than the gap.
 - **The output evidence trusts file times and lengths** (§7.6), the same assumption the source-hash cache makes
