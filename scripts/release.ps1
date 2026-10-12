@@ -2,7 +2,7 @@
    ve ona yalniz bu script dokunur: main'deki her merge commit'i bir surum + tag'tir (kullanici karari 2026-09-30; tek istisna:
    tag geri cekilip ayni surum yeniden cikarilinca onceki merge tag'siz kalir). Notu Claude yazmis olmali (CHANGELOG en ustte
    "## [X.Y.Z] - <bugun>"). Akis:
-     guard'lar (hicbir yazmadan once) -> Version'i yazar -> build + tam suit -> develop'ta "release: vX.Y.Z" commit'i ->
+     guard'lar (hicbir yazmadan once) -> Version'i yazar -> build -> develop'ta "release: vX.Y.Z" commit'i ->
      main'e --no-ff merge ("merge: release vX.Y.Z") -> merge commit'ine annotated tag -> develop main'e ff (develop == main)
      -> tek atomik push: main + develop + tag ya birlikte gider ya hicbiri.
    Guard'lar: CHANGELOG'un en ust bolumu bu surum ve bugun; branch develop; agacta CHANGELOG/props disinda degisiklik yok;
@@ -10,16 +10,16 @@
    origin/main develop'un atasi, main baska bir worktree'de acik degil; tag ne yerelde ne origin'de; bu checkout'tan calisan
    uygulama yok; develop HEAD'inin ci.yml kosusu yesil (completed + success). Sorulamayan ata, worktree listesi, uzak tag ve
    CI kosusu (git ya da API hatasi) gecmis sayilmaz, durdurur.
-   Build/test'te durursa hicbir sey commit/push edilmemistir. Release commit'inden sonra durursa (en olasi: push reddi - bu
+   Testleri lokal KOSMAZ: develop HEAD'inin ci.yml kosusu yesil olmadan baslamaz (guard) ve release.yml tag'i yayindan once yine
+   test eder; kirmizi bir test orada durur - tag ve main origin'de kalir, Release acilmaz (SKILL adim 6).
+   Build'de durursa hicbir sey commit/push edilmemistir. Release commit'inden sonra durursa (en olasi: push reddi - bu
    arada origin/develop ya da origin/main ilerledi) son satir yerel kurtarma komutlarini yazar. Push hata dondugunde once
    origin'e tag sorulur: tag oradaysa yayin cikmistir ve kurtarma basilmaz; origin okunamazsa kurtarma once origin'e bakmayi ister.
      release.ps1 -Version 1.8.0              (tam akis)
-     release.ps1 -Version 1.8.0 -SkipTests   (suit lokalde zaten yesil gorulduyse)
      release.ps1 -Version 1.8.0 -SkipCiCheck (develop'un CI kosusu sorulmaz - cevrimdisi/acil durum; uyari yazar)
      release.ps1 -Version 1.8.0 -DryRun      (butun guard'lar, sonra cikis; dosyaya, branch'e, tag'e dokunmaz) #>
 param(
     [Parameter(Mandatory = $true)][ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version,
-    [switch]$SkipTests,
     [switch]$SkipCiCheck,
     [switch]$DryRun
 )
@@ -107,13 +107,9 @@ if ($updated -ne $props) { [System.IO.File]::WriteAllText($propsPath, $updated, 
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'release-guard.ps1') -Tag $tag
 if ($LASTEXITCODE -ne 0) { exit 1 }
 
-# --- kapi: build + tam suit (lokal kapi; CI de kosar)
+# --- kapi: build (testler lokal kosmaz - CI'dadir: develop HEAD'inin ci.yml kosusu guard'da, tag'inki release.yml'de)
 & dotnet build BuildOrchestrator.slnx -c Release
 if ($LASTEXITCODE -ne 0) { Fail 'build failed - nothing was committed or pushed.' }
-if (-not $SkipTests) {
-    & dotnet test tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj -c Release --no-build --filter 'Category!=Acceptance'
-    if ($LASTEXITCODE -ne 0) { Fail 'tests failed - nothing was committed or pushed.' }
-}
 
 # --- develop'ta release commit'i -> main'e merge -> tag -> develop = main -> atomik push
 $script:Undo = "git switch develop; git tag -d $tag; git reset --soft $develop; git restore --staged .; git branch -f main $main"
@@ -125,7 +121,7 @@ Invoke-Git merge -q --no-ff develop -m "merge: release $tag"
 Invoke-Git tag -a $tag -m "$(Get-BuildProp 'Product') $Version - release notes in CHANGELOG.md"
 Invoke-Git switch -q develop
 Invoke-Git merge -q --ff-only main
-# --atomic: fetch ile push arasinda build + tam suit dakikalar surer; origin/develop ya da origin/main bu arada ilerlerse o ref
+# --atomic: fetch ile push arasinda build dakikalar surebilir; origin/develop ya da origin/main bu arada ilerlerse o ref
 # reddedilir ve digerleri de gitmez (atomiksiz push reddedilmeyenleri yine gonderirdi: main + tag gider develop gitmez - yayin
 # cikar, develop ile main ayrisir).
 & git push --atomic origin main develop $tag
