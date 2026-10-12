@@ -50,12 +50,16 @@ public static class HeadReader
         return new HeadState(branch, sha);
     }
 
-    /// <summary>HEAD'in gösterdiği tam ref adından branch adı: <c>refs/heads/</c> öneki atılır; önekisiz bir ref (savunmacı —
-    /// normalde görülmez) olduğu gibi kalır. Diskten okuyan <see cref="Read"/> ile git'e soran
-    /// <see cref="GitService.GetCurrentBranchAsync"/>'ın ORTAK kuralı: koordinatör bu iki okumayı kıyaslar ve aynı HEAD için
-    /// farklı ad üretirlerse sahte bir "branch değişti" görür (kopya YASAK).</summary>
-    internal static string BranchOf(string refName) =>
-        refName.StartsWith(BranchRefPrefix, StringComparison.Ordinal) ? refName[BranchRefPrefix.Length..] : refName;
+    /// <summary>Tam ref adından branch adı: <c>refs/heads/</c> öneki atılır; önekisiz bir ref (savunmacı — normalde
+    /// görülmez) olduğu gibi kalır. Branch adının TEK kuralı: diskten okuyan <see cref="Read"/>, git'e soran
+    /// <see cref="GitService.GetCurrentBranchAsync"/> ve yerel branch'leri listeleyen
+    /// <see cref="GitService.ListBranchesAsync"/> bunu kullanır. Koordinatör ilk ikisini, branch listesinin aktif işareti son
+    /// ikisini kıyaslar; aynı ref için farklı ad üretselerdi sahte bir "branch değişti" ya da aktifsiz bir liste çıkardı
+    /// (kopya YASAK).</summary>
+    internal static string BranchOf(string refName) => IsBranchRef(refName) ? refName[BranchRefPrefix.Length..] : refName;
+
+    /// <summary>Ref yerel bir branch mı (<c>refs/heads/…</c>) — <see cref="BranchOf"/>'un öneki tek yerde durur.</summary>
+    internal static bool IsBranchRef(string refName) => refName.StartsWith(BranchRefPrefix, StringComparison.Ordinal);
 
     /// <summary>Linked worktree'de <c>commondir</c> dosyası ortak <c>.git</c>'e göreli/mutlak yolu taşır;
     /// dosya yoksa (normal repo) ref'ler zaten <paramref name="gitDir"/>'in kendisindedir.</summary>

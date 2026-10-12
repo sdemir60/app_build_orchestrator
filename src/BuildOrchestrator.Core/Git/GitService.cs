@@ -105,7 +105,8 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
     /// <para><b>Tam ref okunur, <c>--short</c> KULLANILMAZ:</b> git'in kısaltması, aynı adı taşıyan bir tag (ya da başka bir
     /// ref) varken belirsizliği önlemek için <c>heads/&lt;ad&gt;</c> döner. O ad ne bir branch'tir ne de diskten okunan HEAD'le
     /// aynıdır: pencereye her dönüş sahte bir "branch değişti" bölümü açıyordu, branch chip'i <c>heads/…</c> gösteriyordu,
-    /// branch listesinde aktif branch kalmıyordu, pull olmayan <c>refs/remotes/origin/heads/…</c>'yi arıyordu. Ad, disk
+    /// branch listesinde aktif branch kalmıyordu, Sync'in fetch'i ve pull olmayan <c>refs/remotes/origin/heads/…</c>'yi
+    /// arıyordu, zaten açık branch'e geçiş "zaten orada" sayılmıyor ve kirli ağaç boşuna stash'leniyordu. Ad, disk
     /// okuyucusuyla ORTAK kuraldan çıkar (<see cref="HeadReader.BranchOf"/>).</para></summary>
     public async Task<GitResult<string?>> GetCurrentBranchAsync(CancellationToken ct = default)
     {
@@ -176,9 +177,10 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
             string refName = line[..tab];
             string sha = line[(tab + 1)..].Trim();
 
-            if (refName.StartsWith("refs/heads/", StringComparison.Ordinal))
+            if (HeadReader.IsBranchRef(refName))
             {
-                string name = refName["refs/heads/".Length..];
+                // Ad, aktif branch'inkiyle AYNI kuraldan (GetCurrentBranchAsync) — aktif işareti bu eşitliğe dayanır.
+                string name = HeadReader.BranchOf(refName);
                 list.Add(new GitBranchInfo(name, sha, IsRemote: false, IsActive: active is not null && name == active));
             }
             else if (refName.StartsWith("refs/remotes/", StringComparison.Ordinal))

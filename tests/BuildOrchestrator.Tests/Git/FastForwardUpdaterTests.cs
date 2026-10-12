@@ -51,7 +51,8 @@ public class FastForwardUpdaterTests
         upstream.WriteFile("a.txt", "one");
         upstream.CommitAll("first");
         string clone = upstream.CloneFull();
-        GitTestRepo.RunGitAt(clone, "tag", BranchOf(clone)); // checkout edilmiş branch'le aynı adlı yerel tag
+        string branch = BranchOf(clone); // tag'den ÖNCE: henüz çakışma yok, kısaltma düz addır
+        GitTestRepo.TagTheCheckedOutBranch(clone);
         upstream.WriteFile("a.txt", "two");
         string expected = upstream.CommitAll("second");
 
@@ -59,6 +60,7 @@ public class FastForwardUpdaterTests
 
         Assert.Equal(FastForwardStatus.Updated, result.Status);
         Assert.Equal(expected, HeadOf(clone));
+        Assert.Equal(branch, result.Branch); // pull satırının adı da düz branch adı
     }
 
     [Fact]

@@ -95,14 +95,19 @@ public sealed class AutoSyncCoordinatorTests
     }
 
     /// <summary>Koordinatör + portu; HEAD değişkeni testin elinde, UI taşıması senkron.</summary>
-    private sealed class Harness
+    private sealed class Harness : IDisposable
     {
         public FakePort Port { get; } = new();
         public HeadState? Head { get; set; }
         public AutoSyncCoordinator Coordinator { get; }
 
-        public Harness(Func<IHeadWatcher>? newWatcher = null) =>
-            Coordinator = new AutoSyncCoordinator(Port, action => action(), _ => Head, newWatcher);
+        /// <param name="headFromDisk">[reftable · tag çakışması] HEAD <see cref="Head"/>'den değil, koordinatörün ÜRETİMDEKİ
+        /// okuyucusuyla diskten okunur (<see cref="SyncedOnDisk"/>).</param>
+        public Harness(Func<IHeadWatcher>? newWatcher = null, bool headFromDisk = false) =>
+            Coordinator = new AutoSyncCoordinator(Port, action => action(), headFromDisk ? null : _ => Head, newWatcher);
+
+        /// <summary>Koordinatörü (ve gerçek izleyiciyi) bırakır — diskteki bir repoya bağlanan testler kullanır.</summary>
+        public void Dispose() => Coordinator.Dispose();
 
         /// <summary>Son Sync main@A'da bitti, HEAD hâlâ orada, üstünden eşik kadar zaman geçti.</summary>
         public static Harness SyncedOnMain(Func<IHeadWatcher>? newWatcher = null)
@@ -285,9 +290,11 @@ public sealed class AutoSyncCoordinatorTests
 
     /// <summary>Koşu uçuşta: <see cref="AutoSyncCoordinator.OnWorkspaceIdle"/> koşunun başladığını görür (VM'de
     /// <c>PropagateRunLock</c> her kilit geçişinde bildirir).</summary>
-    private static Harness RunningOnMain()
+    private static Harness RunningOnMain() => StartRun(Harness.SyncedOnMain());
+
+    /// <summary>Koşu başladı: VM'in kilit kalkışı bildirimi.</summary>
+    private static Harness StartRun(Harness h)
     {
-        var h = Harness.SyncedOnMain();
         h.Port.IsRunInFlight = true;
         h.Coordinator.OnWorkspaceIdle();
         return h;
@@ -382,8 +389,7 @@ public sealed class AutoSyncCoordinatorTests
         EndRun(h);
         Assert.Equal(0, h.Port.SyncCount);
 
-        h.Port.IsRunInFlight = true;
-        h.Coordinator.OnWorkspaceIdle();
+        StartRun(h);
         h.Head = null;
         EndRun(h);
         Assert.Equal(0, h.Port.SyncCount);
@@ -470,21 +476,21 @@ public sealed class AutoSyncCoordinatorTests
 
     // ---------------------------------------------------------------- [reftable · tag çakışması] gerçek diskte branch kıyası
 
-    /// <summary>Gerçek bir repoda (commit'li) son Sync ve eşiği geçmiş bir an — kıyasın İKİ tarafı da ÜRETİMDEKİ
-    /// okuyucudur: son Sync'in branch adı motorunkinden (<see cref="GitService.GetCurrentBranchAsync"/>; Sync'in
-    /// <c>ActiveBranch</c>'i oradan gelir), HEAD koordinatörün varsayılan okuyucusuyla diskten (<see cref="HeadReader"/>),
-    /// izleyici gerçek (<see cref="HeadWatcher"/>; reftable'da reflog klasörü olmadığı için kurulamaz).</summary>
-    private static async Task<(FakePort Port, AutoSyncCoordinator Coordinator)> SyncedOnDisk(GitTestRepo repo)
+    /// <summary><see cref="Harness.SyncedOnMain"/>'in gerçek diskteki hâli: commit'li bir repoda son Sync ve eşiği geçmiş bir
+    /// an — kıyasın İKİ tarafı da ÜRETİMDEKİ okuyucudur: son Sync'in branch adı motorunkinden
+    /// (<see cref="GitService.GetCurrentBranchAsync"/>; Sync'in <c>ActiveBranch</c>'i oradan gelir), HEAD koordinatörün
+    /// varsayılan okuyucusuyla diskten (<see cref="HeadReader"/>), izleyici gerçek (<see cref="HeadWatcher"/>; reftable'da
+    /// reflog klasörü olmadığı için kurulamaz).</summary>
+    private static async Task<Harness> SyncedOnDisk(GitTestRepo repo)
     {
         string sha = GitTestRepo.RunGitAt(repo.RootPath, "rev-parse", "HEAD").Trim();
         var engineBranch = await new GitService(new ProcessRunner(), repo.RootPath).GetCurrentBranchAsync();
         Assert.True(engineBranch.Success); // ön-koşul: motor branch'i okuyabildi
-        var port = new FakePort();
-        port.Synced(engineBranch.Value, sha);
-        port.Now += AutoSyncCoordinator.ActivationQuietMs + 1;
-        var coordinator = new AutoSyncCoordinator(port, action => action());
-        coordinator.Attach(repo.RootPath);
-        return (port, coordinator);
+        var h = new Harness(headFromDisk: true);
+        h.Port.Synced(engineBranch.Value, sha);
+        h.Port.Now += AutoSyncCoordinator.ActivationQuietMs + 1;
+        h.Coordinator.Attach(repo.RootPath);
+        return h;
     }
 
     /// <summary>Tek commit'li bir reftable repo (<see cref="GitTestRepo.Reftable"/>).</summary>
@@ -503,13 +509,12 @@ public sealed class AutoSyncCoordinatorTests
     public async Task Returning_to_the_window_in_a_reftable_repository_refreshes_silently()
     {
         using var repo = CommittedReftable();
-        var (port, coordinator) = await SyncedOnDisk(repo);
-        using var _ = coordinator;
+        using var h = await SyncedOnDisk(repo);
 
-        await coordinator.WindowActivatedAsync();
+        await h.Coordinator.WindowActivatedAsync();
 
-        Assert.Empty(port.BranchChanges);
-        Assert.Equal([SilentSyncReason.Refresh], port.Silent);
+        Assert.Empty(h.Port.BranchChanges);
+        Assert.Equal([SilentSyncReason.Refresh], h.Port.Silent);
     }
 
     /// <summary>[reftable] Koşu bitişinin güvenlik ağı HEAD'i okunamayan bir repoda Sync başlatmaz —
@@ -519,15 +524,12 @@ public sealed class AutoSyncCoordinatorTests
     public async Task A_finished_build_in_a_reftable_repository_starts_no_sync()
     {
         using var repo = CommittedReftable();
-        var (port, coordinator) = await SyncedOnDisk(repo);
-        using var _ = coordinator;
+        using var h = await SyncedOnDisk(repo);
 
-        port.IsRunInFlight = true;
-        coordinator.OnWorkspaceIdle();
-        port.IsRunInFlight = false;
-        coordinator.OnWorkspaceIdle();
+        StartRun(h);
+        EndRun(h);
 
-        Assert.Equal(0, port.SyncCount);
+        Assert.Equal(0, h.Port.SyncCount);
     }
 
     /// <summary>[tag çakışması] Pencereye dönüş, aynı adlı bir tag'le çakışan bir branch'te sessiz yeniler. Ölçülen kusur:
@@ -539,12 +541,14 @@ public sealed class AutoSyncCoordinatorTests
         repo.WriteFile("a.txt", "hello");
         repo.CommitAll("c1");
         repo.CheckoutBranchNamedLikeATag("feature/x");
-        var (port, coordinator) = await SyncedOnDisk(repo);
-        using var _ = coordinator;
+        // Ön-koşul: HEAD diskten GERÇEKTEN okunuyor. Okunamasaydı (ör. git'in varsayılan biçimi reftable olursa) dönüş zaten
+        // sessiz yenilerdi ve test eski kusurla da yeşil kalırdı.
+        Assert.Equal("feature/x", HeadReader.Read(GitDirectory.Resolve(repo.RootPath)!)?.Branch);
+        using var h = await SyncedOnDisk(repo);
 
-        await coordinator.WindowActivatedAsync();
+        await h.Coordinator.WindowActivatedAsync();
 
-        Assert.Empty(port.BranchChanges);
-        Assert.Equal([SilentSyncReason.Refresh], port.Silent);
+        Assert.Empty(h.Port.BranchChanges);
+        Assert.Equal([SilentSyncReason.Refresh], h.Port.Silent);
     }
 }

@@ -79,15 +79,20 @@ public sealed class GitTestRepo : IDisposable
 
     public void CreateBranch(string name) => RunGit(RootPath, "branch", name);
 
-    /// <summary>[tag çakışması] <paramref name="name"/> adıyla bir branch ve AYNI adla bir tag oluşturur, branch'i checkout
-    /// eder — git'in <c>symbolic-ref --short</c> kısaltmasının belirsizliği önlemek için <c>heads/&lt;ad&gt;</c>'a düştüğü
-    /// durum (git checkout'ta aynı adlı branch'i tag'e tercih eder).</summary>
+    /// <summary>[tag çakışması] <paramref name="name"/> adıyla bir branch açıp checkout eder ve AYNI adla bir tag oluşturur —
+    /// git'in <c>symbolic-ref --short</c> kısaltmasının belirsizliği önlemek için <c>heads/&lt;ad&gt;</c>'a düştüğü durum.</summary>
     public void CheckoutBranchNamedLikeATag(string name)
     {
         CreateBranch(name);
-        RunGit(RootPath, "tag", name);
         Checkout(name);
+        TagTheCheckedOutBranch(RootPath);
     }
+
+    /// <summary>[tag çakışması] <paramref name="root"/>'taki çalışma kopyasında checkout edilmiş branch'in ADIYLA yerel bir tag
+    /// oluşturur — çakışmayı bir klonda da (uzak ucu olan kopyada) kurmanın TEK yolu; <see cref="CheckoutBranchNamedLikeATag"/>
+    /// bunu bu repoda yeni bir branch için yapar.</summary>
+    public static void TagTheCheckedOutBranch(string root) =>
+        RunGitAt(root, "tag", RunGitAt(root, "symbolic-ref", "--short", "-q", "HEAD").Trim());
 
     /// <summary>Şu an checkout edilmiş branch adı (fixture doğrulaması için — GitService sonucu buna karşı kıyaslanır).</summary>
     public string CurrentBranchName() => RunGit(RootPath, "symbolic-ref", "--short", "-q", "HEAD").Trim();
