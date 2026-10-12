@@ -74,13 +74,14 @@ public sealed record ProjectRunScope(BuildPlan Plan, ProjectNode Target, IReadOn
         {
             BuildOrder = 0,
             InCycle = false,
-            // Hedef koşulsuz derlenir; gerekçe YALNIZ gerçekten kirliyken taşınır — güncel bir projede
-            // hiçbir <see cref="WillBuildReason"/> doğru değildir (UpToDate + WillBuild=true çelişkidir) ve
-            // yüzey o durumda jenerik metne düşer. [Clean] Satır Clean'i bu planın ÜSTÜNDE kurulur ve CleanRunScope
-            // her düğüme zaten WillBuild=true verdiği için gerekçe orada HEP taşınır — bilerek: Clean derlemez,
-            // gerekçe bir disk olgusudur ve proje temizlenene kadar doğrudur.
+            // Hedef koşulsuz derlenir: WillBuild=true, bu koşunun işi. Gerekçe AYNEN kalır — bir disk olgusudur,
+            // koşunun kapsamı değil: güncel hedef derlenirken de "up to date" okunur, Rebuild'in ve Clean'in güncel
+            // satırı gibi (satır Clean'i bu planın ÜSTÜNDE kurulur; CleanRunScope da gerekçeye dokunmaz).
+            // [DEĞİŞEN KURAL — 2026-10-12] Güncel hedefin gerekçesi eskiden DÜŞÜRÜLÜRDÜ ("UpToDate + WillBuild=true
+            // çelişir"); o çelişkiyi gösteren will-build noktası v1.11'de kalktı. Ölçülen bedel (sonda testi): App boş
+            // gerekçeyi satıra yazıyordu — etiket koşu boyunca boşaldı, hedef başlamadan durdurulan koşu satırı "karar
+            // yok" görünümüne (gri, kesikli halka) düşürdü ve bir sonraki Sync'e kadar orada bıraktı.
             WillBuild = true,
-            WillBuildReason = target.WillBuild == true ? target.WillBuildReason : null,
         };
         return new ProjectRunScope(
             new BuildPlan([node], Cycles: [], plan.Configuration, LayerWarnings: null),
