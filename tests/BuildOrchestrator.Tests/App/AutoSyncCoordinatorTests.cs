@@ -2,6 +2,7 @@ using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Core.Git;
 using BuildOrchestrator.Core.Planning;
+using BuildOrchestrator.Tests.Git;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -464,5 +465,56 @@ public sealed class AutoSyncCoordinatorTests
         Assert.Equal(2, watchers.Count); // bir başarısız, bir başarılı; başarılıdan sonra yeniden denenmez
         Assert.NotNull(watchers[1].OnSettled);
         Assert.Single(h.Port.ConsoleLines);
+    }
+
+    // ---------------------------------------------------------------- [reftable] HEAD'i dosyadan okunamayan repo
+
+    /// <summary>[reftable] Gerçek bir reftable repo, son Sync'in HEAD'i motorun bildirdiği gibi git'in kendisinden (branch
+    /// adı + sha) ve eşiği geçmiş bir an. Koordinatör ÜRETİMDEKİ okuyucularla kurulur: HEAD diskten (<see cref="HeadReader"/>),
+    /// izleyici gerçek (<see cref="HeadWatcher"/> — reftable'da reflog klasörü yoktur, kurulamaz).</summary>
+    private static (FakePort Port, AutoSyncCoordinator Coordinator) SyncedOnReftable(GitTestRepo repo)
+    {
+        repo.WriteFile("a.txt", "hello");
+        string sha = repo.CommitAll("c1");
+        var port = new FakePort();
+        port.Synced(repo.CurrentBranchName(), sha);
+        port.Now += AutoSyncCoordinator.ActivationQuietMs + 1;
+        var coordinator = new AutoSyncCoordinator(port, action => action());
+        coordinator.Attach(repo.RootPath);
+        return (port, coordinator);
+    }
+
+    /// <summary>[reftable] Pencereye dönüş, HEAD'i dosyadan okunamayan bir repoda sessiz yeniler — "branch değişti" bölümü
+    /// AÇMAZ. Ölçülen kusur: dosyadaki yer tutucu (<c>.invalid</c>) branch adı sanılıyordu; her dönüşte konsol temizleniyor,
+    /// liste ve graf Sync'e basılmış gibi baştan kuruluyordu (bir kullanıcının makinesinde, aynı sürümde).</summary>
+    [Fact]
+    public async Task Returning_to_the_window_in_a_reftable_repository_refreshes_silently()
+    {
+        using var repo = GitTestRepo.Reftable();
+        var (port, coordinator) = SyncedOnReftable(repo);
+        using var _ = coordinator;
+
+        await coordinator.WindowActivatedAsync();
+
+        Assert.Empty(port.BranchChanges);
+        Assert.Equal([SilentSyncReason.Refresh], port.Silent);
+    }
+
+    /// <summary>[reftable] Koşu bitişinin güvenlik ağı HEAD'i okunamayan bir repoda Sync başlatmaz —
+    /// <see cref="A_run_that_ends_on_an_unchanged_or_unreadable_head_syncs_nothing"/>'in gerçek diskteki hâli. Ölçülen kusur:
+    /// her build bitişinde de "branch değişti" Sync'i koşuyordu.</summary>
+    [Fact]
+    public void A_finished_build_in_a_reftable_repository_starts_no_sync()
+    {
+        using var repo = GitTestRepo.Reftable();
+        var (port, coordinator) = SyncedOnReftable(repo);
+        using var _ = coordinator;
+
+        port.IsRunInFlight = true;
+        coordinator.OnWorkspaceIdle();
+        port.IsRunInFlight = false;
+        coordinator.OnWorkspaceIdle();
+
+        Assert.Equal(0, port.SyncCount);
     }
 }

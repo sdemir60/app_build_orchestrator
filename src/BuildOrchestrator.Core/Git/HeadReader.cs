@@ -11,11 +11,19 @@ public sealed record HeadState(string? Branch, string? Sha);
 /// dosya okumasıyla çözer — process YOK. Linked worktree'de <c>HEAD</c> worktree'nin KENDİ gitdir'inden
 /// okunur ama ref'ler (<c>refs/heads/*</c>, <c>packed-refs</c>) ORTAK dizinden (<c>commondir</c> dosyasının
 /// gösterdiği yoldan) okunur — worktree'ler kendi <c>refs/heads</c>'ini taşımaz.
+/// <para>[reftable] Ref'leri tablo dosyalarında tutan repoda <c>HEAD</c> dosyası yalnız bir yer tutucudur
+/// (<see cref="ReftableHeadPlaceholder"/>) ve gerçek HEAD dosyadan okunamaz: <see cref="Read"/> <c>null</c> ("okunamadı")
+/// döner. Okuyucu saf dosya okuması kalır — tabloyu çözmek için process açılmaz.</para>
 /// </summary>
 public static class HeadReader
 {
     private const string RefPrefix = "ref: ";
     private const string BranchRefPrefix = "refs/heads/";
+
+    /// <summary>[reftable] reftable biçimli repoda <c>HEAD</c> dosyasının gösterdiği ref: gerçek HEAD git'in tablolarındadır,
+    /// dosyaya bu ad yalnız eski git sürümleri onu repo saysın diye yazılır. Bileşeni '.' ile başladığı için git'in ref adı
+    /// kuralına göre geçersizdir — gerçek bir branch bu adı hiçbir zaman taşımaz.</summary>
+    private const string ReftableHeadPlaceholder = "refs/heads/.invalid";
 
     public static HeadState? Read(string gitDir)
     {
@@ -31,6 +39,10 @@ public static class HeadReader
             return new HeadState(Branch: null, Sha: content); // detached — içerik doğrudan sha
 
         string refName = content[RefPrefix.Length..].Trim();
+        // [reftable] Yer tutucu bir branch değildir: HEAD bu biçimde dosyadan okunamaz. Koordinatör "okunamadı"yı güvenli
+        // yönde ele alır (pencereye dönüş sessiz yeniler, koşu bitişi Sync başlatmaz); yer tutucuyu branch adı saymak her
+        // dönüşte motorun bildirdiği gerçek adla kıyaslanıp sahte bir "branch değişti" bölümü açıyordu.
+        if (string.Equals(refName, ReftableHeadPlaceholder, StringComparison.Ordinal)) return null;
         string? branch = refName.StartsWith(BranchRefPrefix, StringComparison.Ordinal)
             ? refName[BranchRefPrefix.Length..]
             : refName; // refs/heads/ dışı bir ref (savunmacı — normalde görülmez)
