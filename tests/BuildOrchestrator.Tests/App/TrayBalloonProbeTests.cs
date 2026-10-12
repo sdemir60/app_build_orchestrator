@@ -8,14 +8,15 @@ namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
 /// [tray indicator/3. tur teşhis] ÖLÇÜM — bir pin DEĞİL, bir SONDA. Kullanıcı koşu bitişinde HİÇBİR bildirim
-/// görmediğini bildirdi. Bildirim yolu tek bir çağrıdır (<see cref="AppTrayIcon.ShowRunFinished"/>) ve
-/// üretimde <c>_ = CompleteExitAsync()</c> ile beklenmeden başlatılır: orada atılan bir istisna gözlenmeyen
-/// bir <see cref="Task"/>'e düşer ve SESSİZCE yutulur. Yani "bildirim çıkmadı" ile "bildirim çağrısı patladı"
-/// ekranda aynı görünür.
+/// görmediğini iki kez bildirdi (önce 48×48 yüklenen ikon, sonra %125 ekran ölçeğinde sabit 32 reddedildi). Bildirim
+/// yolu üretimde <c>_ = CompleteExitAsync()</c> ile beklenmeden başlatılır ve ürün ikonu düşerse
+/// <see cref="AppTrayIcon.ShowRunFinished"/> bildirimi ikonsuz gösterir — yani ekranda bir ikon reddi en fazla
+/// "ikonsuz bildirim" olarak görünür, NEDENİ görünmez.
 ///
-/// <para>Sonda ikisini ayırır: gerçek bir tepsi ikonu kurar ve iki balloon yolunu ayrı ayrı çağırıp
-/// istisnayı RAPORLAR — (1) özel ikonlu bitiş bildirimi (bu turda eklendi), (2) özel ikonsuz, OS ikonlu
-/// klasik bildirim (bu iş öncesinde de vardı). Biri patlayıp diğeri geçerse suçlu bellidir. Hiçbiri
+/// <para>Sonda nedeni görünür kılar: gerçek bir tepsi ikonu kurar ve iki balloon yolunu ayrı ayrı çağırıp
+/// istisnayı RAPORLAR — (1) ürün ikonlu bitiş bildirimi YEDEKSİZ
+/// (<see cref="AppTrayIcon.ShowRunFinishedWithProductIcon"/>; kütüphanenin reddi burada mesajıyla görünür),
+/// (2) özel ikonsuz, OS ikonlu klasik bildirim. Biri patlayıp diğeri geçerse suçlu bellidir. Hiçbiri
 /// patlamazsa kusur çağrıda değil, ya Windows'un bildirim ayarındadır ya da çağrının hiç yapılmamış
 /// olmasındadır.</para>
 ///
@@ -38,6 +39,10 @@ public sealed class TrayBalloonProbeTests(ITestOutputHelper output)
 
     private static List<string> Probe()
     {
+        // `pack://` şemasını WPF `PackUriHelper`'ın statik ctor'unda kaydeder; headless süitte Application yoktur, şemaya
+        // ilk dokunan sonda olmalıdır — yoksa ikon adresi "Invalid port specified" ile reddedilir (TrayBalloonIconTests ile aynı).
+        _ = System.IO.Packaging.PackUriHelper.UriSchemePack;
+
         var log = new List<string>();
         AppTrayIcon? tray = null;
         try
@@ -46,10 +51,12 @@ public sealed class TrayBalloonProbeTests(ITestOutputHelper output)
                 () => tray = new AppTrayIcon(AppTrayIcon.NoRunToStop)));
             if (tray is null) return log;
 
-            // (1) Bu turda eklenen yol: ürünün büyük ikonu + satırın baş/gövde ayrımı.
+            // (1) Ürünün büyük ikonu + satırın baş/gövde ayrımı, YEDEKSİZ: üretimin yedek yolu bir reddi ikonsuz
+            // bildirimle örterdi, sonda örtüyü kaldırır.
             var completed = new RibbonLine(
                 "Completed — 3 failed · 24 succeeded · 9 skipped · 1m 12s", "Brush.StatusFailText", "failed");
-            log.Add(Try("ShowRunFinished (özel büyük ikon)", () => tray!.ShowRunFinished(completed)));
+            log.Add(Try("ShowRunFinishedWithProductIcon (ürün ikonu, yedeksiz)",
+                () => tray!.ShowRunFinishedWithProductIcon(completed)));
             log.Add(string.Format(CultureInfo.InvariantCulture,
                 "    başlık='{0}' gövde='{1}'",
                 AppTrayIcon.RunFinishedTitle(completed), AppTrayIcon.RunFinishedBody(completed)));

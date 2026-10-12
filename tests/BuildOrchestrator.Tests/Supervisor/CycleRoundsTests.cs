@@ -2053,22 +2053,28 @@ public class CycleRoundsTests
     // ---------------------------------------------------------------- 15) grup koşullu atlama
 
     /// <summary>Up kökü kırık; A↔B üyelerinin İKİSİ de yalnız "kökü bekliyor" (WaitingForDependency + defter
-    /// notunda kök Up). Ledger + plan bu durumu kurar; Up bu koşuda yine patlar.</summary>
-    private static (BuildStateStore Store, RunPlan Plan) WaitingCyclePlan(string cacheRoot,
-        WillBuildReason bReason = WillBuildReason.WaitingForDependency)
+    /// notunda kök Up). Ledger + plan bu durumu kurar; Up bu koşuda yine patlar. <paramref name="bUpToDate"/> grubu
+    /// KARIŞIK kurar: B notsuz ve güncel (<c>false</c> · <c>up to date</c>) — grup yine bütün olarak koşullu
+    /// değerlendirilir (<c>ConditionalRebuild.GroupAppliesTo</c>). Uçtan uca App testleri de bu sahneyi kullanır.</summary>
+    internal static (BuildStateStore Store, RunPlan Plan) WaitingCyclePlan(string cacheRoot,
+        WillBuildReason bReason = WillBuildReason.WaitingForDependency, bool bUpToDate = false)
     {
         var store = new BuildStateStore(cacheRoot);
         store.Upsert(new BuildState(Id("Up"), "up-sig", LastResult: BuildResult.Failed,
             LastRunAt: DateTimeOffset.UtcNow.AddDays(-1)));
         store.Upsert(new BuildState(Id("A"), "old", "sha", BuildResult.Succeeded,
             DateTimeOffset.UtcNow.AddDays(-1), DepIssue: true, DepIssueRoots: [Id("Up")]));
-        store.Upsert(new BuildState(Id("B"), "old", "sha", BuildResult.Succeeded,
-            DateTimeOffset.UtcNow.AddDays(-1), DepIssue: true, DepIssueRoots: [Id("Up")]));
+        store.Upsert(bUpToDate
+            ? new BuildState(Id("B"), "old", "sha", BuildResult.Succeeded, DateTimeOffset.UtcNow.AddDays(-1))
+            : new BuildState(Id("B"), "old", "sha", BuildResult.Succeeded,
+                DateTimeOffset.UtcNow.AddDays(-1), DepIssue: true, DepIssueRoots: [Id("Up")]));
         var plan = CyclePlanOf(["A", "B"],
             Node("Up", willBuild: true) with { WillBuildReason = WillBuildReason.LastFailed },
             Node("A", deps: ["Up", "B"], inCycle: true, willBuild: true)
                 with { WillBuildReason = WillBuildReason.WaitingForDependency },
-            Node("B", deps: ["A"], inCycle: true, willBuild: true) with { WillBuildReason = bReason })
+            bUpToDate
+                ? Node("B", deps: ["A"], inCycle: true, willBuild: false) with { WillBuildReason = WillBuildReason.UpToDate }
+                : Node("B", deps: ["A"], inCycle: true, willBuild: true) with { WillBuildReason = bReason })
             with { Incremental = RunCoordinatorTests.Incremental("Up", "A", "B") };
         return (store, plan);
     }
@@ -2117,6 +2123,40 @@ public class CycleRoundsTests
             Assert.Equal(BuildResult.Succeeded, a.LastResult);
             Assert.Equal("old", a.BuiltSignature);
             Assert.Equal([Id("Up")], a.DepIssueRoots);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    /// <summary>
+    /// Kökünü bekleyen KARIŞIK grubun güncel üyesi (A kökünü bekliyor, B güncel) koşunun kendi önizlemesinde kesin iş
+    /// DEĞİLDİR: grup dispatch anında bütün olarak atlanabilir — kök hâlâ kırıksa B <c>skipped — up to date</c> olur.
+    /// Önizleme planlayıcının <c>false</c>'unu taşır; kuyruk ve sabit payda B'yi saymaz, önizleme yapmayacağı bir işi
+    /// vaat etmez (ARCHITECTURE §20).
+    /// <para><b>Ölçülen kusur (inceleme, 2026-10-12):</b> önizleme bir an "önden atlanmayan her proje true" kuralına
+    /// geçince B <c>(true, conditional: false)</c> yazıldı — dalganın yakmadığı satır koşu başında amber kuyruğa girdi,
+    /// sabit payda onu saydı, ardından <c>skipped — up to date</c> geçti.</para>
+    /// </summary>
+    [Theory]
+    [InlineData(RunMode.Cycles)]
+    [InlineData(RunMode.Build)]
+    public async Task an_up_to_date_member_of_a_group_waiting_for_its_root_is_not_previewed_as_definite_work(RunMode mode)
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var (store, plan) = WaitingCyclePlan(cacheRoot, bUpToDate: true);
+            var rec = new RoundRecorder();
+            var invoker = rec.Invoker((name, _) => name == "Up" ? Exit(1) : Ok()); // kök yine patlıyor
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(Start(mode, parallelism: 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            Assert.Equal(["Up#1"], rec.Calls); // grup bütün olarak atlandı
+            var b = Assert.Single(h.Events.OfType<BuildPreviewEvent>()).Items.Single(i => i.ProjectId == Id("B"));
+            Assert.Equal((false, WillBuildReason.UpToDate), (b.WillBuild, b.Reason));
+            Assert.Contains(h.Events.OfType<ProjectSkippedEvent>(),
+                e => e.ProjectId == Id("B") && e.Reason == SkipReasons.UpToDate);
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }

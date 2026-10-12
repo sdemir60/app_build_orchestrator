@@ -70,6 +70,25 @@ public class SingleProjectRunTests
     }
 
     /// <summary>
+    /// Güncel hedefin GEREKÇESİ önizlemede kalır: hedef bu koşunun işidir (<c>WillBuild=true</c>), gerekçe ise bir disk
+    /// olgusudur — Clean önizlemesinin güncel projeye verdiği <c>(true, up to date)</c> ile aynı biçim. Satır böylece
+    /// koşu boyunca <c>up to date</c> yazar ve hedef başlamadan durdurulan koşu onu "karar yok" görünümüne düşürmez
+    /// (kural ve ölçüm: <c>ProjectRunScopeTests.A_scoped_run_always_builds_its_target_even_when_it_is_up_to_date</c>).
+    /// </summary>
+    [Fact]
+    public async Task A_scoped_preview_keeps_an_up_to_date_targets_reason()
+    {
+        var plan = PlanOf(Node("Target", willBuild: false) with { WillBuildReason = WillBuildReason.UpToDate });
+        using var h = new Harness(plan, AllSucceed());
+
+        await h.Sut.StartAsync(Scoped("Target"), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var item = Assert.Single(Assert.Single(h.Events.OfType<BuildPreviewEvent>()).Items);
+        Assert.Equal((true, WillBuildReason.UpToDate), (item.WillBuild, item.Reason));
+    }
+
+    /// <summary>
     /// Menünün iki maddesi FARKLI şeyler yapar: <b>Build</b> projeyi derler (<c>-t:Build</c>), <b>Rebuild</b>
     /// MSBuild'in kendi Rebuild hedefini koşar (<c>-t:Rebuild</c> = önce Clean, sonra Build) — prototipin
     /// satır menüsü de tam olarak bunu yazar (<c>msbuild X.csproj /t:Rebuild</c>).

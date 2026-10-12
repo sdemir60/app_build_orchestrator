@@ -1,12 +1,15 @@
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using CommunityToolkit.Mvvm.Input;
 using H.NotifyIcon;
 using H.NotifyIcon.Core;
+using H.NotifyIcon.Interop;
 
 namespace BuildOrchestrator.App.Shell;
 
@@ -21,30 +24,21 @@ namespace BuildOrchestrator.App.Shell;
 /// artık var ama tepsi BİLEREK 16px varyantında kalır: tepsi zaten 16px ister ve elle ayarlanmış kare
 /// rasterlestirilmiş olandan nettir.</para>
 ///
-/// <para><b>Balloon ikonu ayrıdır:</b> koşu sonucu bildirimi <c>app-icon.ico</c>'nun BÜYÜK karesini taşır
-/// (<see cref="LargeIconPx"/>). Bildirim penceresi tepsi kutucuğundan çok daha geniştir; oraya 16px raster
-/// koymak ikonu bulanıklaştırır.</para>
+/// <para><b>Balloon ikonu ayrıdır:</b> koşu sonucu bildirimi <c>app-icon.ico</c>'dan, kütüphanenin ekran ölçeğine
+/// göre istediği BÜYÜK ölçüde yüklenen ikonu taşır (<see cref="LoadBalloonIcon()"/>). Bildirim penceresi tepsi
+/// kutucuğundan çok daha geniştir; oraya 16px raster koymak ikonu bulanıklaştırır.</para>
 /// </summary>
 internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
 {
     private const string IconUri = "pack://application:,,,/BuildOrchestrator.App;component/Assets/tray-icon-16.ico";
 
-    /// <summary>Windows'un "large icon" balloon'unda gösterdiği kare. <c>app-icon.ico</c> bu kareyi gerçekten
-    /// taşır (<c>IconGeometryTests</c> 16/24/32/48/256'yı pinler), yani ölçekleme yapılmaz.</summary>
-    /// <summary>
-    /// Bildirimin özel ikonunun kenarı. Bir tercih DEĞİL, API'nin ŞARTI: <c>H.NotifyIcon</c> özel balloon
-    /// ikonunu çalışma anında ölçer ve 32×32 dışındaki her şeyi <see cref="InvalidOperationException"/> ile
-    /// reddeder. Yanlış ölçü derlemede görünmez; bildirim gösterilirken patlar ve üretimde o çağrı
-    /// beklenmeyen bir <c>Task</c>'in içinde olduğu için istisna YUTULUR — koşu bildirimsiz kapanır.
-    /// Pin: <c>TrayBalloonIconTests</c>.
-    /// </summary>
-    private const int BalloonIconPx = 32;
-
     private readonly TaskbarIcon _icon;
 
-    /// <summary>Bildirimin büyük ikonu — bir KEZ yüklenir ve handle'ı her balloon'a verilir; her bildirimde
-    /// yeniden çözmek gereksiz GDI nesnesi üretirdi. <see cref="Dispose"/> bırakır.</summary>
-    private readonly System.Drawing.Icon _largeIcon;
+    /// <summary>Bildirimin büyük ikonu — ilk bitiş bildiriminde bir KEZ yüklenir ve handle'ı her balloon'a verilir; her
+    /// bildirimde yeniden çözmek gereksiz GDI nesnesi üretirdi. Kurulumda değil ilk bildirimde yüklenir: yükleme düşerse
+    /// tepsi ikonu (ve uygulamanın açılışı) değil yalnız o bildirimin ikonu düşer (<see cref="ShowWithIconFallback"/>).
+    /// <see cref="Dispose"/> bırakır.</summary>
+    private System.Drawing.Icon? _largeIcon;
 
     /// <summary>Hiçbir zaman çalıştırılamayan Stop komutu — arkasında RunViewModel/engine olmayan bir tepsi
     /// içindir (ör. ikinci instance'ın geçici balloon tray'i). Kopya YASAK: aynı <c>RelayCommand(() => { },
@@ -55,8 +49,6 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
 
     public AppTrayIcon(ICommand stopCommand, RunViewModel? run = null)
     {
-        _largeIcon = LoadBalloonIcon();
-
         var menu = CreateMenu(stopCommand, () => ExitRequested?.Invoke(), run);
 
         _icon = new TaskbarIcon
@@ -102,16 +94,94 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
         return menu;
     }
 
-    /// <summary>Gömülü uygulama ikonundan (<see cref="AppIdentity.AppIconUri"/> — adres TEK kaynaktan, pencere
-    /// ikonu da onu okur) istenen kareyi çözer. <c>System.Drawing.Icon</c> veriyi ctor'da kendi içine kopyalar,
-    /// bu yüzden akış hemen bırakılabilir.</summary>
-    internal static System.Drawing.Icon LoadBalloonIcon()
+    /// <summary>
+    /// Bildirimin ürün ikonu, kütüphanenin O AN istediği ölçüde. Ölçü bir tercih DEĞİL, API'nin ŞARTIDIR:
+    /// <c>H.NotifyIcon</c> özel balloon ikonunu gösterim anında ölçer ve <c>GetSystemMetrics(SM_CXICON)</c>'dan başka her
+    /// ölçüyü <see cref="InvalidOperationException"/> ile reddeder — o ölçü ekran ölçeğiyle büyür (%100 → 32, %125 → 40,
+    /// %150 → 48). Kural kütüphanenin KENDİ public metodundan okunur (<see cref="IconUtilities.GetRequiredCustomIconSize"/>);
+    /// ikinci bir ölçü kuralı YAZILMAZ — eskiden burada sabit 32 vardı ve %125'te her bitiş bildirimi sessizce düşüyordu.
+    /// Pin: <c>TrayBalloonIconTests</c>.
+    /// </summary>
+    internal static System.Drawing.Icon LoadBalloonIcon() =>
+        LoadBalloonIcon(IconUtilities.GetRequiredCustomIconSize(largeIcon: true));
+
+    /// <summary>
+    /// Gömülü uygulama ikonunu (<see cref="AppIdentity.AppIconUri"/> — adres TEK kaynaktan, pencere ikonu da onu okur)
+    /// TAM <paramref name="size"/> ölçüsünde bir HICON olarak yükler.
+    ///
+    /// <para><b>ICO o ölçüde bir kare taşıyorsa</b> (32, 48) kare olduğu gibi kullanılır: o ölçüde ayrıca üretilmiş kare,
+    /// büyük karenin küçültülmüşünden nettir. <b>Taşımıyorsa</b> (ör. %125'in 40'ı) en büyük kare o ölçüye örneklenir.
+    /// Ölçüm: <c>System.Drawing.Icon</c> ÖLÇEKLEMEZ — istenen ölçüye en yakın kareyi olduğu gibi seçer (40 isteyene 32
+    /// verir), yani ölçüyü yalnız iletmek kütüphanenin reddini değiştirmez.</para>
+    ///
+    /// <para>Sonuç her iki yolda da bir ICO akışından <c>System.Drawing.Icon</c>'a verilir: HICON'un sahibi o olur
+    /// (<see cref="System.Drawing.Icon.Dispose()"/> yok eder) ve veriyi ctor'da kendi içine kopyaladığı için akış hemen
+    /// bırakılabilir.</para>
+    /// </summary>
+    internal static System.Drawing.Icon LoadBalloonIcon(System.Drawing.Size size)
+    {
+        byte[] ico = ReadAppIcon();
+        using (var source = new MemoryStream(ico))
+        {
+            var frames = new IconBitmapDecoder(
+                source, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad).Frames;
+            if (!frames.Any(f => f.PixelWidth == size.Width && f.PixelHeight == size.Height))
+                ico = SingleFrameIco(Resample(frames.MaxBy(f => f.PixelWidth)!, size));
+        }
+
+        using var stream = new MemoryStream(ico);
+        return new System.Drawing.Icon(stream, size);
+    }
+
+    private static byte[] ReadAppIcon()
     {
         var resource = Application.GetResourceStream(new Uri(AppIdentity.AppIconUri))
             ?? throw new InvalidOperationException(
                 $"The application icon resource was not found: {AppIdentity.AppIconUri}");
         using var stream = resource.Stream;
-        return new System.Drawing.Icon(stream, new System.Drawing.Size(BalloonIconPx, BalloonIconPx));
+        using var copy = new MemoryStream();
+        stream.CopyTo(copy);
+        return copy.ToArray();
+    }
+
+    /// <summary>Kareyi <paramref name="size"/>'a örnekler. Örnekleme önceden çarpılmış (premultiplied) piksellerde
+    /// yapılır: düz alfalı pikselleri ortalamak tam saydam piksellerin rengini kenarın yumuşatma piksellerine karıştırır.
+    /// Sonuç ICO'nun beklediği düz alfaya geri çevrilir.</summary>
+    private static BitmapSource Resample(BitmapSource frame, System.Drawing.Size size)
+    {
+        var premultiplied = new FormatConvertedBitmap(frame, PixelFormats.Pbgra32, null, 0);
+        var scaled = new TransformedBitmap(premultiplied, new ScaleTransform(
+            (double)size.Width / frame.PixelWidth, (double)size.Height / frame.PixelHeight));
+        return new FormatConvertedBitmap(scaled, PixelFormats.Bgra32, null, 0);
+    }
+
+    /// <summary>Tek kareli, PNG gövdeli bir ICO (Vista'dan beri ICO karesi PNG taşıyabilir). Dizin ICO biçiminin
+    /// kendisidir: 6 baytlık başlık + 16 baytlık tek giriş, ardından gövde; sayılar little-endian (BinaryWriter da
+    /// öyle yazar).</summary>
+    private static byte[] SingleFrameIco(BitmapSource frame)
+    {
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(frame));
+        using var png = new MemoryStream();
+        encoder.Save(png);
+
+        using var ico = new MemoryStream();
+        using (var writer = new BinaryWriter(ico, System.Text.Encoding.UTF8, leaveOpen: true))
+        {
+            writer.Write((ushort)0);                 // ayrılmış
+            writer.Write((ushort)1);                 // tür: ikon
+            writer.Write((ushort)1);                 // kare sayısı
+            writer.Write((byte)frame.PixelWidth);    // ICO ölçüsü tek bayttır: 256 → 0 (balon ölçüleri çok altında)
+            writer.Write((byte)frame.PixelHeight);
+            writer.Write((byte)0);                   // palet yok
+            writer.Write((byte)0);                   // ayrılmış
+            writer.Write((ushort)1);                 // düzlem
+            writer.Write((ushort)32);                // piksel başına bit
+            writer.Write((uint)png.Length);          // gövde uzunluğu
+            writer.Write((uint)(6 + 16));            // gövdenin konumu: başlık + tek giriş
+        }
+        png.WriteTo(ico);
+        return ico.ToArray();
     }
 
     /// <summary>Tepsi ikonuna sol tık / çift tık / balloon tıkı — pencereyi geri getir.</summary>
@@ -152,12 +222,24 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
     /// Burada ikon HER sonuçta ürünün kendi (büyük) ikonudur — bir OS glyph'i sonucu zaten taşımaz, sonuç
     /// başlıktaki sözcüktedir ("Completed" / "▸ Stopped" / "Run failed").</para>
     /// <para>[P3 · Task 4] Kapı: <c>TrayBuildIndicatorController</c>, balonun TAM gösterileceği anda
-    /// <c>notificationsOn()</c>'ı TAZE okur ve yalnız açıksa buraya gelir.</para></summary>
-    public void ShowRunFinished(RibbonLine line) => _icon.ShowNotification(
+    /// <c>notificationsOn()</c>'ı TAZE okur ve yalnız açıksa buraya gelir.</para>
+    /// <para>Ürün ikonu düşerse (yüklenemez ya da kütüphane reddeder) bildirim aynı metinle ikonsuz gösterilir
+    /// (<see cref="ShowWithIconFallback"/>): koşu sonucu bir ikon yüzünden kaybolmaz.</para></summary>
+    public void ShowRunFinished(RibbonLine line) => ShowWithIconFallback(
+        withProductIcon: () => ShowRunFinishedWithProductIcon(line),
+        withoutIcon: () => _icon.ShowNotification(
+            title: RunFinishedTitle(line),
+            message: RunFinishedBody(line),
+            icon: NotificationIcon.None));
+
+    /// <summary>Bitiş bildiriminin ürün ikonlu denemesi — YEDEKSİZ: ikon yüklenemezse ya da kütüphane reddederse fırlatır.
+    /// Üretim onu yalnız <see cref="ShowRunFinished"/>'in yedek yolu içinden çağırır; sonda (<c>TrayBalloonProbeTests</c>)
+    /// doğrudan çağırır ki ürün ikonunun reddi yedek yolun arkasında görünmez kalmasın.</summary>
+    internal void ShowRunFinishedWithProductIcon(RibbonLine line) => _icon.ShowNotification(
         title: RunFinishedTitle(line),
         message: RunFinishedBody(line),
         icon: NotificationIcon.None,           // yerini büyük ürün ikonu alır
-        customIconHandle: _largeIcon.Handle,
+        customIconHandle: (_largeIcon ??= LoadBalloonIcon()).Handle,
         largeIcon: true);
 
     /// <summary>Balloon başlığı = satırın BAŞI (<c>"Completed"</c>, <c>"Run failed"</c>); ayırıcı taşımayan bir
@@ -171,6 +253,31 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
     /// artık bir <c>RibbonLine</c> ve varsayılanı <c>default</c>, yani hiç satır itilmemişken <c>Text</c>
     /// <c>null</c>'dır. Kutu eskiden <c>""</c> ile başlıyordu; imza değişirken taban düşmez.</para></summary>
     internal static string RunFinishedBody(RibbonLine line) => line.Detail ?? line.Text ?? "";
+
+    /// <summary>
+    /// [yedek yol] Bildirimi önce ürün ikonuyla dener; o deneme HANGİ sebeple düşerse düşsün bildirimi ikonsuz gösterir.
+    /// İkon süstür, bildirimin kendisi değildir: ürün ikonu yolu bildirimi iki kez sessizce yuttu (önce 48×48, sonra
+    /// sabit 32'nin %125'te reddi) ve ikisinde de kullanıcı koşu sonucunu hiç görmedi.
+    /// <para>Deneme yolunun gerçek hataları tek tipte değildir — kütüphanenin ölçü reddi ve <c>Shell_NotifyIcon</c> reddi
+    /// <see cref="InvalidOperationException"/>, HICON'un okunamaması <c>COMException</c>, ikon dosyasının çözülememesi
+    /// WIC'in kendi istisnaları — bu yüzden her hata yakalanır. İlk denemenin hatası gözlem noktasına yazılır
+    /// ([console pump] deseni); ikonsuz gösterim de düşerse ONUN hatası çağırana (<c>TrayBuildIndicatorController</c>)
+    /// ulaşır — kalıcı bir arıza yedek yolda kaybolmaz.</para>
+    /// <para>Ayrı ve saf: gerçek bir tepsi ikonu kurmadan sınanabilsin diye (<c>TaskbarIcon</c> headless süitte
+    /// kurulamaz). Pin: <c>TrayBalloonIconTests</c>.</para>
+    /// </summary>
+    internal static void ShowWithIconFallback(Action withProductIcon, Action withoutIcon)
+    {
+        try
+        {
+            withProductIcon();
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[tray balloon] product icon failed, shown without it: {ex}");
+            withoutIcon();
+        }
+    }
 
     /// <summary>
     /// [perf B2] Uygulama TEPSİDEYKEN basılan ama komutun kapısı kapalı olduğu için yok sayılan Build kısayolunun
@@ -196,6 +303,6 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
     public void Dispose()
     {
         _icon.Dispose();
-        _largeIcon.Dispose();
+        _largeIcon?.Dispose();
     }
 }

@@ -460,11 +460,13 @@ public class RunCoordinatorTests
         var aLog2 = Assert.Single(h.Events.OfType<ProjectLogEvent>(), e => NameOf(e.ProjectId) == "A" && e.LineNumber == 2);
         Assert.Equal("warning: B failed in this run — last successful output referenced (B)", aLog2.Text);
 
-        // [Task 17] buildPreview, plan.Nodes'un TAMAMINI (build-order'da) taşır — henüz hiçbir proje
-        // başlamadan (WillBuild burada hep null: BuildPlanBuilder run-time wiring'i henüz doldurmuyor).
+        // [Task 17] buildPreview, plan.Nodes'un TAMAMINI (build-order'da) taşır — henüz hiçbir proje başlamadan.
+        // [DEĞİŞEN KURAL — 2026-10-12] Eski iddia: WillBuild burada hep null'dır (önizleme planın değerini aynen taşırdı,
+        // bu planda karar yok). Önizleme artık BU koşunun işini söyler: Rebuild hiçbir şeyi önden atlamaz, her proje
+        // true. Gerekçe ve ölçüm: A_rebuild_previews_every_project_as_this_runs_work_and_keeps_each_reason.
         var preview = Assert.Single(h.Events.OfType<BuildPreviewEvent>());
         Assert.Equal(["C", "B", "A"], preview.Items.Select(i => NameOf(i.ProjectId)));
-        Assert.All(preview.Items, i => Assert.Null(i.WillBuild));
+        Assert.All(preview.Items, i => Assert.True(i.WillBuild));
 
         var done = Assert.IsType<RunCompletedEvent>(h.Events[^1]);
         Assert.Equal(2, done.Succeeded);
@@ -2177,6 +2179,79 @@ public class RunCoordinatorTests
             Assert.Null(Assert.Single(preview.Items, i => NameOf(i.ProjectId) == "Fresh").FailedAt);
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    /// <summary>
+    /// <b>Koşunun önizlemesi BU koşunun işini söyler:</b> motorun önden atlamadığı (pre-skip) her proje
+    /// <c>WillBuild=true</c>. Rebuild önbelleği yok sayar ve hiçbir şeyi önden atlamaz — planlayıcı güncel bir projeye
+    /// <c>false</c> dese de o proje bu koşuda derlenir. Gerekçe bir disk olgusudur ve aynen taşınır: güncel proje
+    /// <c>up to date</c> kalır.
+    /// <para><b>Ölçülen kusur (2026-10-12, gerçek koşu: 10:44 Rebuild, 194 proje, hepsi güncel):</b> önizleme
+    /// planlayıcının artımlı cevabını aynen taşıyordu. App kuyruğu, sabit ilerleme paydasını ve açılış satırını o
+    /// bayraktan okuduğu için dalganın amber'a yaktığı düğümler koşu başlar başlamaz yeşile döndü; şerit koşu boyunca
+    /// <c>Checking — scanning for changes…</c> dedi, açılış satırı <c>Build started — 0 projects</c> oldu.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_rebuild_previews_every_project_as_this_runs_work_and_keeps_each_reason()
+    {
+        var plan = PlanOf(
+            Node("Current", willBuild: false) with { WillBuildReason = WillBuildReason.UpToDate },
+            Node("Changed", willBuild: true) with { WillBuildReason = WillBuildReason.SignatureChanged });
+        var invoker = AllSucceed();
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(RunMode.Rebuild), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal([Id("Current"), Id("Changed")], invoker.Requests.Select(r => r.ProjectId)); // ikisi de derlendi
+        var items = Assert.Single(h.Events.OfType<BuildPreviewEvent>()).Items;
+        Assert.Equal(
+            new (bool?, WillBuildReason?)[] { (true, WillBuildReason.UpToDate), (true, WillBuildReason.SignatureChanged) },
+            items.Select(i => (i.WillBuild, i.Reason)));
+    }
+
+    /// <summary>
+    /// Artımlı geçiş düştüğünde (<c>Program.ComputeIncremental</c> planı AYNEN döner: <c>WillBuild=null</c>,
+    /// <c>Incremental=null</c>) Build hiçbir şeyi önden atlamaz ve hepsini derler — güvenli yön. Önizleme de bunu
+    /// söyler: her proje bu koşunun işidir.
+    /// <para><b>Ölçülen kusur (sonda testi, 2026-10-12):</b> önizleme <c>null</c> taşıyordu; App kuyruğu boş ve
+    /// sabit paydayı sıfır buldu — MSBuild her projeyi derlerken şerit <c>Checking — scanning for changes…</c>,
+    /// bitişte yeşil <c>Everything up to date — … nothing to build</c> yazdı.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_build_whose_incremental_pass_failed_previews_every_project_it_compiles()
+    {
+        var plan = PlanOf(Node("A"), Node("B", deps: ["A"])); // karar yok: WillBuild=null, Incremental=null
+        var invoker = AllSucceed();
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(RunMode.Build), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal([Id("A"), Id("B")], invoker.Requests.Select(r => r.ProjectId)); // hiçbiri önden atlanmadı
+        Assert.All(Assert.Single(h.Events.OfType<BuildPreviewEvent>()).Items, i => Assert.True(i.WillBuild));
+    }
+
+    /// <summary>
+    /// Scheduler'ın KENDİ önden atlaması da önizlemede <c>false</c>'tur: grup haritası olmayan koşuda (planda SCC listesi
+    /// yok — üretimde orada döngü üyesi de olmaz; kill-switch yolu) döngü işaretli düğüm <c>in dependency cycle</c> ile
+    /// atlanır ve dispatch edilmez. Önizleme yapmayacağı bir işi vaat etmez — her projeyi işleyen Rebuild'de bile.
+    /// </summary>
+    [Fact]
+    public async Task A_project_the_scheduler_skips_up_front_is_not_previewed_as_this_runs_work()
+    {
+        var plan = PlanOf(Node("Free"), Node("Member", inCycle: true)); // döngü listesi yok → grup haritası yok
+        var invoker = AllSucceed();
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(RunMode.Rebuild), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal([Id("Free")], invoker.Requests.Select(r => r.ProjectId));
+        Assert.Contains(h.Events.OfType<ProjectSkippedEvent>(),
+            e => e.ProjectId == Id("Member") && e.Reason == SkipReasons.InDependencyCycle);
+        var preview = Assert.Single(h.Events.OfType<BuildPreviewEvent>()).Items.ToDictionary(i => NameOf(i.ProjectId));
+        Assert.Equal((true, false), (preview["Free"].WillBuild, preview["Member"].WillBuild));
     }
 
     [Fact]

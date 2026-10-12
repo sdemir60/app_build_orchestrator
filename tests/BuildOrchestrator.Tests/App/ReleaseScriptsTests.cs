@@ -120,11 +120,13 @@ public class ReleaseScriptsTests
     /// verir; <paramref name="processShadow"/> sondaya sahte bir uygulama (<see cref="RunningApp"/>) gösterir. develop'un CI koşusu
     /// (<c>Invoke-RestMethod</c>): varsayılan, develop'un ŞU ANKİ commit'i için yeşil bir koşu (<see cref="CiRun"/>);
     /// <paramref name="ciShadow"/> başka bir cevap verir. <paramref name="switches"/> script'e verilen anahtarlardır.
-    /// <paramref name="gitShadow"/> verilirse script'in git çağrıları ondan geçer (<see cref="GitShadow"/>); varsayılan gerçek git.</summary>
+    /// <paramref name="gitShadow"/> verilirse script'in git çağrıları ondan geçer (<see cref="GitShadow"/>); varsayılan gerçek git.
+    /// <paramref name="dotnetShadow"/> verilirse script'in <c>dotnet</c> çağrıları ondan geçer (<see cref="RecordingDotnet"/>);
+    /// varsayılan gerçek <c>dotnet</c> (sandbox'ın boş çözümünü derler).</summary>
     private static (int ExitCode, string Output) RunRelease(ReleaseSandbox box, string processShadow = NoAppShadow,
-        string? ciShadow = null, string switches = "-SkipTests", string gitShadow = "") =>
+        string? ciShadow = null, string switches = "", string gitShadow = "", string dotnetShadow = "") =>
         RunCommand(
-            $"{processShadow}; {ciShadow ?? CiRun(box.LocalDevelop, "completed", "success")}; {gitShadow}; "
+            $"{processShadow}; {ciShadow ?? CiRun(box.LocalDevelop, "completed", "success")}; {gitShadow}; {dotnetShadow}; "
             + $"& '{box.ReleaseScript}' -Version {box.NextVersion} {switches}; exit $LASTEXITCODE",
             box.Work);
 
@@ -821,13 +823,35 @@ public class ReleaseScriptsTests
         RequirePowerShell();
         using var box = new ReleaseSandbox("1.8.0");
 
-        var r = RunRelease(box, ciShadow: NetworkForbidden, switches: "-SkipTests -SkipCiCheck");
+        var r = RunRelease(box, ciShadow: NetworkForbidden, switches: "-SkipCiCheck");
 
         Assert.True(r.ExitCode == 0, r.Output);
         Assert.DoesNotContain("NETWORK-TOUCHED", r.Output, StringComparison.Ordinal);
         Assert.Contains("CI run was not checked", r.Output, StringComparison.Ordinal);
         Assert.Equal(box.OriginMain, box.OriginDevelop);
         Assert.Equal("tag", box.Git(box.Origin, "cat-file", "-t", "refs/tags/v1.8.0").Trim());
+    }
+
+    /// <summary>Yayın kapısı yalnız build'dir; testleri lokal koşmaz. Testler CI'dadır: develop HEAD'inin <c>ci.yml</c> koşusu yeşil
+    /// olmadan script başlamaz (guard) ve <c>release.yml</c> tag'i yayından önce yine derleyip test eder (<c>publish</c> ona
+    /// bağlıdır). Gölge <c>dotnet</c> çağrıları yazar: build koşar, <c>test</c> hiç koşmaz.
+    /// <para><b>Değişen kural (kullanıcı kararı 2026-10-12):</b> eski iddia "script build'den sonra filtreli tam süiti de koşar
+    /// (<c>-SkipTests</c> ile atlanır); süit kırmızıysa hiçbir şey commit ya da push edilmez" idi. Süit bu makinede paralel
+    /// koşuda gerçek motor testlerinden birini ~60 sn takıp düşürdü — her koşuda farklı biri, birbirinden ayrı iki commit'te
+    /// (<c>e7bc4384</c> iki kez, <c>de57c62f</c> bir kez) ve düşen test tek başına 9/9 geçti — ve CI'ın aynı commit'te zaten yeşil
+    /// gördüğü bir sürümü engelledi. Kırmızı bir test artık tag'te <c>release.yml</c>'de durur: tag ve main origin'de kalır,
+    /// Release açılmaz (SKILL adım 6).</para></summary>
+    [SkippableFact]
+    public void The_release_builds_but_leaves_the_tests_to_CI()
+    {
+        RequirePowerShell();
+        using var box = new ReleaseSandbox("1.8.0");
+
+        var r = RunRelease(box, dotnetShadow: RecordingDotnet);
+
+        Assert.True(r.ExitCode == 0, r.Output);
+        Assert.Contains("DOTNET build BuildOrchestrator.slnx -c Release", r.Output, StringComparison.Ordinal);
+        Assert.DoesNotContain("DOTNET test", r.Output, StringComparison.Ordinal);
     }
 
     /// <summary>Akışın git ön koşulları yazmadan ÖNCE denetlenir; tutmazsa script hiçbir şeye dokunmadan durur:

@@ -388,6 +388,30 @@ public class ConsoleModesTests
                 willBuildReason: WillBuildReason.UpToDate, currentSha: sha)));
     }
 
+    /// <summary>
+    /// Bu koşunun KUYRUĞUNDAKİ satır, plan bayrağı "bir sonraki düz Build onu atlar" dese de bu koşunun işidir: Rebuild
+    /// güncel projeyi derler, Clean temizler, satırın ▶'si hedefini derler. Sayfa başlığıyla (<c>Queued</c>) aynı şeyi
+    /// söyler — <c>nothing to compile</c> DEMEZ. Dışarıda derlenmiş çıktının kanıt satırı yine yazılır.
+    /// <para><b>Ölçülen kusur (inceleme, 2026-10-12):</b> erken dönen "güncel" dalı kuyruğa bakmıyordu — Rebuild'in
+    /// kuyruktaki güncel satırında başlık <c>Queued</c>, gövde <c>Up to date — nothing to compile.</c> diyordu; satırın
+    /// ▶'siyle derlenen güncel hedef de önizleme plan bayrağını artık yazmadığı için aynı çelişkiye düşüyordu (önceden
+    /// <c>Queued in this run.</c>).</para>
+    /// </summary>
+    [Fact]
+    public void A_queued_row_reads_as_this_runs_work_even_when_its_plan_says_up_to_date()
+    {
+        const string sha = "a3f81c29b4d5e6f708192a3b4c5d6e7f80910a2b";
+
+        Assert.Equal(
+            ["Queued in this run."],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: false,
+                willBuildReason: WillBuildReason.UpToDate, currentSha: sha, runActive: true, inRunQueue: true)));
+        Assert.Equal(
+            ["Queued in this run.", "Built outside this tool"],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: false,
+                willBuildReason: WillBuildReason.BuiltOutside, currentSha: sha, runActive: true, inRunQueue: true)));
+    }
+
     /// <summary>[T16] LastFailed + sha YOK (<c>ConsoleEmptyState.cs:201</c> çevresi): <c>RepeatsReason</c>'ın
     /// metin-tekrarı guard'ı yalnız NeverBuilt/OutputMissing gerekçeleri için geçerlidir — LastFailed onların
     /// dışında kalır, bu yüzden kanıt satırı YAZILIR ve İKİ satır birden görünür.</summary>

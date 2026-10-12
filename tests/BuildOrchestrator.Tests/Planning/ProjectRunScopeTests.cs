@@ -61,18 +61,24 @@ public class ProjectRunScopeTests
     /// kullanıcı "satırdan build bazen gri kalıyor" diye bildirdi. Tek projelik bir kapsamda "cache'i yok say"
     /// zaten play'in kendisidir; incremental karar orada koruyacak bir şey değil, yutulacak bir komuttur.</para>
     ///
-    /// <para>Gerekçe (<see cref="WillBuildReason"/>) DÜŞER: hiçbir değeri doğru değildir — proje güncel ama
-    /// yine de derlenecektir; <c>UpToDate</c> gerekçesiyle <c>WillBuild=true</c> kendi kendisiyle çelişirdi.</para>
+    /// <para>Gerekçe (<see cref="WillBuildReason"/>) AYNEN kalır: bir disk olgusudur, koşunun kapsamı değil — güncel
+    /// hedef derlenirken de <c>up to date</c> okunur, Rebuild'in ve Clean'in güncel satırı gibi.</para>
+    /// <para><b>[DEĞİŞEN KURAL — 2026-10-12]</b> Eski iddia: gerekçe DÜŞER — "hiçbir değeri doğru değildir, <c>UpToDate</c>
+    /// gerekçesiyle <c>WillBuild=true</c> kendi kendisiyle çelişirdi". O çelişkiyi gösteren will-build noktası v1.11'de
+    /// kalktı; ölçülen bedel (sonda testi): App boş gerekçeyi satıra yazıyordu — etiket koşu boyunca boşaldı, hedef
+    /// başlamadan durdurulan koşu satırı "karar yok" görünümüne (gri, kesikli halka) düşürdü ve bir sonraki Sync'e kadar
+    /// orada bıraktı.</para>
     /// </summary>
     [Fact]
     public void A_scoped_run_always_builds_its_target_even_when_it_is_up_to_date()
     {
-        var plan = Plan(Node("Dep", willBuild: false), Node("Target", willBuild: false, deps: ["Dep"]));
+        var plan = Plan(Node("Dep", willBuild: false),
+            Node("Target", willBuild: false, deps: ["Dep"]) with { WillBuildReason = WillBuildReason.UpToDate });
 
         var scope = ProjectRunScope.Of(plan, "Target")!;
 
         Assert.True(scope.Target.WillBuild);
-        Assert.Null(scope.Target.WillBuildReason);
+        Assert.Equal(WillBuildReason.UpToDate, scope.Target.WillBuildReason);
         Assert.Empty(scope.StaleDependencies); // güncel bağımlılık bayat DEĞİLDİR
     }
 
@@ -125,21 +131,23 @@ public class ProjectRunScopeTests
 
     /// <summary>
     /// Döngü üyesi bir hedef satırından TEK BAŞINA derlenir (design §3.8 "koşul yok"): düğüm koşuya döngü
-    /// dışıymış gibi girer (scheduler onu pre-skip etmesin) ve planın "kapsam dışı" anlamındaki
-    /// <c>WillBuild=false</c>'unu taşımaz — her hedef gibi o da derlenir.
+    /// dışıymış gibi girer (scheduler onu pre-skip etmesin) ve planın <c>WillBuild=false</c>'unu taşımaz — her hedef
+    /// gibi o da derlenir. Gerekçesi her hedefinki gibi aynen kalır.
+    /// <para><b>[DEĞİŞEN KURAL — 2026-10-12]</b> Eski iddia: gerekçe düşer (<c>null</c>). Gerekçe ve ölçüm:
+    /// <see cref="A_scoped_run_always_builds_its_target_even_when_it_is_up_to_date"/>.</para>
     /// </summary>
     [Fact]
     public void A_cycle_member_target_enters_the_run_as_a_plain_node_that_will_build()
     {
         var plan = Plan(
-            Node("A", willBuild: false, inCycle: true, deps: ["B"]),
+            Node("A", willBuild: false, inCycle: true, deps: ["B"]) with { WillBuildReason = WillBuildReason.UpToDate },
             Node("B", willBuild: false, inCycle: true, deps: ["A"]));
 
         var scope = ProjectRunScope.Of(plan, "A")!;
 
         Assert.False(scope.Target.InCycle);
         Assert.True(scope.Target.WillBuild);
-        Assert.Null(scope.Target.WillBuildReason);
+        Assert.Equal(WillBuildReason.UpToDate, scope.Target.WillBuildReason);
     }
 
     /// <summary>

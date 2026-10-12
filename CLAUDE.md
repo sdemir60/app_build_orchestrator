@@ -142,11 +142,13 @@ bir şey dediğinde yazılır. Sıradan işlerde `CHANGELOG.md`'ye ve `Directory
 4. **Numara tek yerde:** `Version` aynı değere çekilir (guard: CHANGELOG'daki en üst sürüm = `Version`).
 5. **Yayın:** `/release` (ya da elle `scripts/release.ps1 -Version X.Y.Z`), ana proje checkout'unda `develop`
    üzerinde: guard'lar (develop push'lu ve `origin/develop`'la eşit, **develop HEAD'inin `ci.yml` koşusu yeşil**,
-   `origin/main` develop'un atası) → tam süit → `develop`'ta `release: vX.Y.Z` commit'i (bu commit için ayrı
+   `origin/main` develop'un atası) → build → `develop`'ta `release: vX.Y.Z` commit'i (bu commit için ayrı
    branch açılmaz — tek istisna) → `main`'e `--no-ff` merge (`merge: release vX.Y.Z`) → merge commit'ine annotated
-   tag `vX.Y.Z` → `develop` `main`'e ff (develop = main) → `main`, `develop` ve tag tek atomik push. Tag'i gören
-   `release.yml` derler, `scripts/package.ps1` ile paketler ve GitHub Release'i açar; senin başka bir şey yapman
-   gerekmez. Paket çıktıları `artifacts/` altındadır (ignore'lu). Script durursa ne yapılacağı `/release` skill'inde.
+   tag `vX.Y.Z` → `develop` `main`'e ff (develop = main) → `main`, `develop` ve tag tek atomik push. **Testleri lokal
+   koşmaz, CI koşar:** develop HEAD'inin `ci.yml` koşusu guard'dadır, tag'inki `release.yml`'de paketlemeden önce
+   koşar — orada kırmızı çıkarsa tag ve `main` origin'de kalır, Release açılmaz (`/release` skill'i adım 6). Tag'i
+   gören `release.yml` derler, testleri koşar, `scripts/package.ps1` ile paketler ve GitHub Release'i açar; senin
+   başka bir şey yapman gerekmez. Paket çıktıları `artifacts/` altındadır (ignore'lu). Script durursa ne yapılacağı `/release` skill'inde.
 
 Yayınlanmış bir sürümün notu yalnız yanlışsa düzeltilir.
 
