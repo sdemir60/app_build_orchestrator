@@ -126,20 +126,25 @@ public static class ConsoleEmptyState
         // Sync artık üyeye Build'in kararıyla gerçek bir WillBuild verir (ARCHITECTURE §7.4, §8.1).
         if (row.WillBuild is not { } willBuild)
             return "Not analysed yet — run Sync to see what this project will do.";
-        // [Faz 3 — spec 2026-09-18 §5.4, Task 7] BuiltOutside de "derlenmeyecek" bir disk olgusudur, ama genel
-        // "nothing to compile" cümlesi NEDENİ söylemez (Sync'in kendi kararı mı, yoksa çıktı zaten dışarıdan mı
-        // güncellendi?) — kullanıcı bu sayfayı tam da bunu sormak için açar.
-        if (!willBuild)
-            return row.WillBuildReason == WillBuildReason.BuiltOutside
-                ? BuiltOutsideReason
-                : "Up to date — nothing to compile.";
-
         // Bir koşu uçuştaysa VE bu satır BU koşunun kendi kuyruğundaysa KUYRUKTADIR; değilse yalnız bir plandır.
         // [Task 1 review fix — I-2] Eskiden yalnız row.IsRunActive okurdu — genel plan bayrağının (WillBuild)
         // ait olduğu koşuyu bilmediği aynı kusur (kök neden A): tek proje koşusunda bayat bir komşu satır
         // grafta/listede Discovered iken burada "Queued" yazardı. Tek doğruluk kaynağı Status'tur (kopya YASAK) —
         // o zaten Pending dalında IsRunActive && InRunQueue'yu okur.
-        string head = row.Status == GraphStatus.Queued ? "Queued" : "Will build";
+        bool queued = row.Status == GraphStatus.Queued;
+        // [Faz 3 — spec 2026-09-18 §5.4, Task 7] BuiltOutside de "derlenmeyecek" bir disk olgusudur, ama genel
+        // "nothing to compile" cümlesi NEDENİ söylemez (Sync'in kendi kararı mı, yoksa çıktı zaten dışarıdan mı
+        // güncellendi?) — kullanıcı bu sayfayı tam da bunu sormak için açar.
+        // [DEĞİŞEN KURAL — 2026-10-12] Kuyruktaki satır bu dala girmez: plan bayrağı "bir sonraki düz Build onu atlar"
+        // dese de bu koşunun işidir (Rebuild güncel projeyi derler, Clean temizler, satırın ▶'si hedefini derler) ve
+        // aşağıdaki "Queued" cümlesine düşer — sayfa başlıkla (Queued) aynı şeyi söyler. Eskiden kuyruğa bakılmazdı:
+        // Rebuild'in kuyruktaki güncel satırı başlıkta Queued, gövdede "nothing to compile" diyordu.
+        if (!willBuild && !queued)
+            return row.WillBuildReason == WillBuildReason.BuiltOutside
+                ? BuiltOutsideReason
+                : "Up to date — nothing to compile.";
+
+        string head = queued ? "Queued" : "Will build";
         return row.WillBuildReason switch
         {
             WillBuildReason.NeverBuilt => $"{head} — this tool has never built it.",

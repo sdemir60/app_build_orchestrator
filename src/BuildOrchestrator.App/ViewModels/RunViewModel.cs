@@ -2171,7 +2171,8 @@ public sealed partial class RunViewModel : ObservableObject
             // (ScopeFor) yanlış kümeyi yakardı. Ölçülen kusur: Resolve'un dokunmadığı 104 kirli projenin hiçbiri
             // dalgada yanmadı, Resolve'da patlayan bir döngü üyesi yandı (ChoreographyTests.After_a_resolve_*).
             // Gerekçe ve kökler moddan bağımsız disk olgularıdır; onlar her önizlemeden yazılır.
-            // [Clean] Clean koşusunun önizlemesi de yalnız KENDİ koşusunu anlatır — bkz. PreviewWritesPlanFlag.
+            // [Clean · Rebuild · satır koşusu] Bu koşuların önizlemesi de yalnız KENDİ koşusunu anlatır — bkz.
+            // PreviewWritesPlanFlag.
             if (PreviewWritesPlanFlag)
             {
                 row.WillBuild = item.WillBuild;
@@ -2196,14 +2197,21 @@ public sealed partial class RunViewModel : ObservableObject
         RefreshRunSurface();
     }
 
-    /// <summary>[Resolve → Build · Clean] Koşunun önizlemesi PLAN BAYRAĞINA (<see cref="ProjectRowViewModel.WillBuild"/>
-    /// + <see cref="ProjectRowViewModel.Conditional"/>) yazar mı. Bayrak bir sonraki DÜZ Build'in cevabıdır; iki
-    /// koşunun önizlemesi o soruyu cevaplamaz, yalnız KENDİ koşusunu anlatır: Resolve kapsam dışına <c>false</c>,
-    /// üyelere kendi kararını verir; Clean her projeye <c>true</c> verir, çünkü o koşu hepsini temizler. Clean'de
-    /// bayrağı projenin SONUCU yazar (<see cref="OnProjectDone"/> → <c>NextPreview.AfterClean</c>); koşunun
-    /// ulaşmadığı satır Sync'in dediği kalır. Kuyruk (<see cref="InRunQueueFor"/>) ve önizleme kümeleri bu kapıdan
-    /// ETKİLENMEZ — onlar zaten bu koşunun kendisidir.</summary>
-    private bool PreviewWritesPlanFlag => !(IsResolvingCycles || RunActive && RunIsClean);
+    /// <summary>[Resolve → Build · Clean · Rebuild · satır koşusu] Koşunun önizlemesi PLAN BAYRAĞINA
+    /// (<see cref="ProjectRowViewModel.WillBuild"/> + <see cref="ProjectRowViewModel.Conditional"/>) yazar mı. Bayrak bir
+    /// sonraki DÜZ Build'in cevabıdır ve onu iki önizleme verir: Sync'inki (koşu dışında) ve tam bir Build koşusunun
+    /// kendisi — o koşunun işi ile bir sonraki Build'in cevabı aynı kümedir. Öteki koşuların önizlemesi o soruyu
+    /// cevaplamaz, yalnız KENDİ koşusunu anlatır: Resolve kapsam dışına <c>false</c>, üyelere kendi kararını verir; Clean
+    /// ve Rebuild her projeye <c>true</c> verir, çünkü o koşu hepsini temizler/derler; satırdan başlatılan koşu
+    /// (<see cref="RunTargetId"/>) hedefe <c>true</c> verir. Onlarda bayrağı projenin SONUCU yazar
+    /// (<see cref="OnProjectDone"/> → <c>NextPreview</c>); koşunun ulaşmadığı satır Sync'in dediği kalır. Kuyruk
+    /// (<see cref="InRunQueueFor"/>) ve önizleme kümeleri bu kapıdan ETKİLENMEZ — onlar zaten bu koşunun kendisidir.
+    /// <para><b>[DEĞİŞEN KURAL — 2026-10-12]</b> Kapı eskiden yalnız Resolve'u ve Clean'i dışarıda tutuyordu. Motorun
+    /// önizlemesi bu koşunun işini söylemeye başlayınca (Rebuild'de her proje <c>true</c>) Rebuild'in önizlemesi de
+    /// bayrağa yazmamalıydı: yazınca durdurulan bir Rebuild'in ulaşmadığı güncel satırlar <c>true</c> kalıyor ve bir
+    /// sonraki Build'in dalgası onları boşuna yakıyordu. Satır koşusunda aynısı ölçüldü (sonda testi): hedefi başlamadan
+    /// durdurulan koşu güncel satırı bayrağı <c>true</c> bırakıyordu (<c>EngineRunReplayTests</c>).</para></summary>
+    private bool PreviewWritesPlanFlag => !RunActive || _currentRunMode == RunMode.Build && RunTargetId is null;
 
     /// <summary>[Task 1/2] Kuyruk üyeliğinin TEK karar yeri — <see cref="OnBuildPreview"/>'ın TEK çağıranı.
     /// Modun DIŞINDA (Build/Rebuild) <see cref="BuildPreviewItem.WillBuild"/>'e eşittir — koşullu proje hariç
