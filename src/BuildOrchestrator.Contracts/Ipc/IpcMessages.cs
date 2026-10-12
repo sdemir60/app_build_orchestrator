@@ -541,10 +541,12 @@ public enum CycleOutcome { Converged, NoProgress, CapReached }
 public sealed record CycleCompletedEvent(string RunId, string ProjectId, CycleOutcome Outcome,
     int MemberCount, int Rounds, int FailedCount, long DurationMs, int CompiledCount = -1) : IpcEvent;
 
-/// <summary>[It-3][Task 17] Run başında (per-project build event'lerinden ÖNCE) yayınlanan will-build önizlemesi —
-/// plan'ın <see cref="ProjectNode.WillBuild"/>'ini App'e taşır: dirty=true / güncel=false / imza-yok-yahut-pre-Sync
-/// (hollow)=null. App bunu <c>Projects</c> listesini run başlamadan (proje-başına ilk event'ten önce) PRE-POPULATE
-/// etmek için kullanır — bkz. RunViewModel.OnBuildPreview.</summary>
+/// <summary>[It-3][Task 17] Run başında (per-project build event'lerinden ÖNCE) yayınlanan will-build önizlemesi. App bunu
+/// <c>Projects</c> listesini run başlamadan (proje-başına ilk event'ten önce) PRE-POPULATE etmek için kullanır — bkz.
+/// RunViewModel.OnBuildPreview. <see cref="WillBuild"/> iki üreticide iki ayrı soruyu cevaplar: Sync'in önizlemesinde bir
+/// sonraki düz Build'in kararı (dirty=true / güncel=false / karar yok=null); bir koşunun kendi önizlemesinde BU koşunun
+/// işi — motorun önden atlamadığı (pre-skip) her proje <c>true</c>, atladığı <c>false</c>, <c>null</c> hiç gelmez
+/// (Rebuild ve Clean'de her proje, satırdan başlatılan koşuda hedef).</summary>
 /// <param name="BuiltCommit">[W1/It-5] Bu projenin SON BAŞARIYLA derlendiği commit — <see
 /// cref="Model.BuildState.BuiltCommit"/>'ten AYNEN (40-hex ham sha; kısaltma bir GÖRÜNTÜ kararıdır ve App'te
 /// yapılır). Kart bunu sha çiftinin SOL yarısı olarak gösterir; sağ yarı run-geneli <see
@@ -552,10 +554,10 @@ public sealed record CycleCompletedEvent(string RunId, string ProjectId, CycleOu
 /// <c>null</c> — JSON'a hiç yazılmaz, dolayısıyla W1 ÖNCESİ yazılmış NDJSON satırları da alansız çözülmeye
 /// devam eder (geriye dönük uyum). <b>Not:</b> bu değer ile <c>TargetSha</c> FARKLI ref ailelerinden gelir
 /// (bu: derleme anındaki yerel HEAD — o: <c>refs/remotes/origin/&lt;branch&gt;</c>).</param>
-/// <param name="Reason">[gerekçe] <see cref="WillBuild"/> kararının NEDENİ — kart, will-build noktasının
-/// tooltip'inde bunu söyler ("commit aynı ama neden derlenecek?" sorusunun cevabı). Düğümden AYNEN taşınır;
-/// koordinatörün koşu-zamanlama kuralıyla (pre-skip) <c>false</c>'a çevirdiği projelerde <c>null</c>'dır —
-/// o karar imzadan gelmez, önizleme yalan söylemez. Alan default'lu: eski NDJSON satırları alansız çözülür.</param>
+/// <param name="Reason">[gerekçe] Projenin diskteki durumunun NEDENİ (<see cref="WillBuildReason"/>) — satırın karar
+/// etiketi ve taban rengi bunu okur. Bir disk olgusudur, koşunun kapsamı değil: düğümden AYNEN taşınır; pre-skip edilen,
+/// Rebuild'de derlenen ya da satırdan başlatılan koşunun güncel hedefi olan proje de kendi gerekçesini taşır (güncelse
+/// <c>UpToDate</c>). Alan default'lu: eski NDJSON satırları alansız çözülür.</param>
 /// <param name="OwnFilesChanged">[v1.16.0] Projenin KENDİ girdi dosyaları son derlemeden bu yana değişti mi —
 /// satırın karar etiketi <c>modified</c> (kendi dosyası) ile <c>affected</c> (yalnız bağımlılığı) ayrımını
 /// buradan okur. Motorun Fast geçişinden gelir; karar bilinmiyorsa <c>null</c>. Alan default'lu: eski NDJSON
