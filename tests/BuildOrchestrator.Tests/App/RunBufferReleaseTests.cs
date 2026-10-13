@@ -22,9 +22,10 @@ namespace BuildOrchestrator.Tests.App;
 /// doğrudan verir (<c>OnGlobalHotkey</c> deseni). Fixture her pencereye boş bir toplayıcı takar (süitte gerçek agresif
 /// toplama koşmaz) ve açılış Sync'inin trimini dönmeden yürütür; toplamayı sayan testler kendi sahtesini takar
 /// (<c>MainWindow.MemoryCollector</c>). Toplama uygulama boştayken ertelendiği için testler sinyalden sonra dispatcher'ı
-/// boşaltır (<c>DispatcherPump.DrainToIdle</c>); boşaltma zamanlayıcı ATEŞLEMEZ, bu yüzden görünür yolu süren testler payı
-/// sıfırlar (<c>MainWindow.TrimGraceAfterFinale</c>; <see cref="TrimHost"/>). Headless'ta bitiş finali oynamaz (animasyonlar
-/// kapalı: "final yok" dalı bitişi hemen duyurur); finali bekleyen yolu sınayan test grafın kapısını açar. Gerçek toplamayı
+/// boşaltır (<c>DispatcherPump.DrainToIdle</c>); boşaltma zamanlayıcı ATEŞLEMEZ, bu yüzden görünür yolu boşaltmayla süren testler
+/// payı sıfırlar (<c>MainWindow.TrimGraceAfterFinale</c>; <see cref="TrimHost"/>). Payın kendisini sınayan testler onu kısa tutup
+/// pompalar (<c>DispatcherPump.PumpUntil</c>) ya da test boyunca dolmayacak kadar uzun tutar. Headless'ta bitiş finali oynamaz
+/// (animasyonlar kapalı: "final yok" dalı bitişi hemen duyurur); finali bekleyen yolu sınayan test grafın kapısını açar. Gerçek toplamayı
 /// yalnız üretim toplayıcısının geçerliliğini sınayan test, bir kez koşturur.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
@@ -291,7 +292,9 @@ public class RunBufferReleaseTests
     }
 
     /// <summary>Görünür pencerede trim, bitişten (finalden) sonra PAY kadar bekler: pay dolmadan toplanmaz, dolunca bir kez.
-    /// Üretimin görünür yolu yalnız bu zamanlayıcıdan geçer — diğer testler payı sıfırlar.</summary>
+    /// Üretimin görünür yolu yalnız bu zamanlayıcıdan geçer; bu test onu dolana dek pompalar. Trimi boşaltmayla süren testler payı
+    /// sıfırlar (<see cref="TrimHost"/>'un varsayılanı); sıfırlamayanlar onu bilerek uzun tutar — pay dolmadan olanı sınarlar:
+    /// gizlenme, yeniden kurulan pay, kapanış — ya da kısa tutup pompalar.</summary>
     [StaFact]
     public void A_visible_trim_runs_once_the_grace_has_passed()
     {
@@ -304,6 +307,23 @@ public class RunBufferReleaseTests
 
         DispatcherPump.PumpUntil(() => collections.Count > 0, TimeSpan.FromSeconds(5));
         Assert.Equal(1, collections.Count);              // KIRMIZI: eski kural görünürde hiç toplamıyordu
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Görünür yolda her yeni istek koşan payı BAŞTAN kurar: pay en son sinyalden sayılır (tipik olarak bitiş finalinin
+    /// sonundan — koşunun bitiş sinyali finalden önce gelir). Gözlem için ikinci istekten önce pay uzatılır: ilk payın kısa süresi
+    /// yerinde kalsaydı toplama onun sonunda olurdu; yeniden kurulan pay test boyunca dolmaz.</summary>
+    [StaFact]
+    public void A_new_request_restarts_a_running_grace()
+    {
+        using var dir = new TempDir();
+        var (window, vm, collections) = TrimHost(dir, grace: TimeSpan.FromMilliseconds(200));
+        MainWindowHost.RunBuild(vm, "A");                // pay kuruldu (200 ms)
+        window.TrimGraceAfterFinale = TimeSpan.FromMinutes(10);
+        window.RequestTrimWhenDue();                     // pay dolmadan yeni bir sinyal geldi (ör. finalin sonu)
+
+        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(600));
+        Assert.Equal(0, collections.Count);              // ilk payın süresi çoktan geçti: trim yeniden kurulan payın sonuna kaydı
         GC.KeepAlive(window);
     }
 
@@ -369,6 +389,38 @@ public class RunBufferReleaseTests
         vm.OnEvent(MainWindowHost.SyncCompleted());
         DispatcherPump.DrainToIdle();
         Assert.Equal(1, collections.Count);              // KIRMIZI: eski kural görünürde hiç toplamıyordu
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// İşlem SAYILMAYAN bir iş de trimi bekletir ve trim onun sonunda yapılır (spec §6.1: "arada yeni işlem başladıysa yapılmaz, o
+    /// işlemin sonunda yapılır"). Boşta ertelenen yürütme iş uçuştayken vazgeçer; iş ise hiçbir işlem bitişi üretmeden düşer —
+    /// reddedilen pull'a Sync zincirlenmez, reddedilen başlatmanın koşusu hiç başlamadı. Trimi yeniden isteyen, "uçuşta işlem var
+    /// mı" sorusunun değişimidir (<c>RunViewModel.IsOperationInFlight</c>); iki iş ona iki ayrı yoldan iner: workspace bayrakları
+    /// ve koşu kilidi.
+    /// </summary>
+    [StaTheory]
+    [InlineData("pull")]        // reddedilen pull: zincirli Sync yok
+    [InlineData("run start")]   // motor başlatmayı reddetti (runInProgress): koşu hiç başlamadı
+    public void A_trim_skipped_for_a_job_that_ends_without_an_operation_end_runs_when_the_job_is_gone(string job)
+    {
+        using var dir = new TempDir();
+        var (window, vm, collections) = TrimHost(dir);
+        MainWindowHost.AcceptSends(vm);                  // iş motora gider; cevabını test verir
+        if (job == "pull") vm.OnEvent(MainWindowHost.SyncCompleted() with { Behind = 2 });   // "N behind" chip'i: pull yapılabilir
+        MainWindowHost.RunBuild(vm, "A");                // biten işlem: yürütme boşta kuyrukta
+
+        _ = job == "pull" ? vm.PullRepositoryCommand.ExecuteAsync(null) : vm.BuildCommand.ExecuteAsync(null);   // yürütmeden önce iş başladı
+        Assert.True(vm.IsOperationInFlight);             // ön-koşul
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(0, collections.Count);              // iş uçuşta: yürütme vazgeçti
+
+        vm.OnEvent(job == "pull"
+            ? new PullCompletedEvent(Succeeded: false)
+            : new ErrorEvent("runInProgress", "A run is already in progress — 'r1' was rejected."));
+        Assert.False(vm.IsOperationInFlight);            // iş bitti — bir işlem bitişi olmadan
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(1, collections.Count);              // KIRMIZI: trim bir sonraki SAYILAN işlemin sonuna kayıyordu
         GC.KeepAlive(window);
     }
 
@@ -441,6 +493,27 @@ public class RunBufferReleaseTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>Gizliyken boşta kuyruğa alınan yürütme koşmadan pencere geri gelirse geri alınır ve trim görünür yoldan, dönüşten PAY
+    /// kadar sonra yapılır: görünür yolda pay en son sinyalden sayılır — dönüş de bir sinyaldir — ve kuyruktaki yürütme payı
+    /// atlayamaz.</summary>
+    [StaFact]
+    public void Showing_the_window_withdraws_a_trim_queued_while_hidden_and_waits_for_the_grace()
+    {
+        using var dir = new TempDir();
+        var (window, vm, collections) = TrimHost(dir, grace: TimeSpan.FromMilliseconds(200));
+        window.SetSurfaceHidden(true);
+        MainWindowHost.RunBuild(vm, "A");                // tepside biter
+        window.OnTrayIndicatorExitFinished(vm.RunSerial);   // gösterge çıktı: yürütme boşta kuyrukta (gizli yol: pay yok)
+
+        window.SetSurfaceHidden(false);                  // yürütme koşmadan pencere döndü
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(0, collections.Count);              // kuyruktaki yürütme geri alındı: pay sürüyor
+
+        DispatcherPump.PumpUntil(() => collections.Count > 0, TimeSpan.FromSeconds(5));
+        Assert.Equal(1, collections.Count);              // pay dolunca bir kez
+        GC.KeepAlive(window);
+    }
+
     /// <summary>
     /// Cevabı beklenen bir proje log yüklemesi trimi tutar: dikişin kuyruğu canlı tampondadır ve yükleme sürerken toplanmaz.
     /// Yüklemenin sonu — dikiş ya da motorun "log yok" yanıtı — trimi yeniden ister (Review Focus 2: bekleyen yükleme yüzünden
@@ -488,6 +561,61 @@ public class RunBufferReleaseTests
 
         ReplyWithProjectLog(vm, "A", "on disk\n", through: 0);   // yine de gecikmiş bir yanıt dikilir: yükleme silahlıydı
         Assert.Equal("on disk\n", vm.GetProjectDocumentText(a));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// Motor giderse — çöktü ya da kullanıcı Restart'a bastı — motora gitmiş bir proje log isteğinin cevabı da gelmez. Yükleme,
+    /// gönderimi düşen yükleme gibi silahlı kalır (motorun ölmeden yazdığı gecikmiş bir chunk hâlâ dikilir) ama trimi artık
+    /// TUTMAZ: tutsaydı başka bir log açılana dek her işlem sonu trimini — yeniden başlatmanın Sync'i dahil — kilitlerdi.
+    /// </summary>
+    [StaTheory]
+    [InlineData(false)]  // motor öldü
+    [InlineData(true)]   // Restart: var olmayan exe ile yeniden başlatma düşer, eski motorun bırakma yolu yine koşar
+    public async Task A_project_log_load_whose_engine_is_gone_does_not_hold_the_trim(bool restart)
+    {
+        using var dir = new TempDir();
+        var (window, vm, collections) = TrimHost(dir);
+        string a = MainWindowHost.IdOf("A");
+        MainWindowHost.AcceptSends(vm);                  // istek motora gitti: cevap bekleniyor
+        MainWindowHost.StartBuild(vm, "A");
+        RequestProjectLog(vm, "A");
+        Assert.True(vm.HasPendingLogLoad);               // ön-koşul
+
+        if (restart) await vm.RestartEngineCommand.ExecuteAsync(null);
+        else vm.OnEngineExited(1);
+        DispatcherPump.DrainToIdle();
+
+        Assert.Equal(1, collections.Count);              // KIRMIZI: cevabı gelmeyecek yükleme trimi sonsuza dek tutuyordu
+        Assert.False(vm.HasPendingLogLoad);
+        ReplyWithProjectLog(vm, "A", "on disk\n", through: 0);   // yine de gecikmiş bir yanıt dikilir: yükleme silahlıydı
+        Assert.Equal("on disk\n", vm.GetProjectDocumentText(a));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Pencere kapanınca bekleyen trim düşer: koşan pay durur, boşta kuyruktaki yürütme geri alınır — kapanan pencere
+    /// toplamaz. Kapanışı gerçek yapan çıkıştır: tepsi → Exit (uçuşta iş yok, çıkış hemen hazır), ardından gelen kapanış pencereyi
+    /// kapatır (<c>CloseToTrayTests</c> deseni; uygulamayı kapatan ve pencereyi öne getiren dikişler sahtedir).</summary>
+    [StaTheory]
+    [InlineData(0)]     // pay yok: yürütme boşta kuyrukta
+    [InlineData(200)]   // pay sürüyor
+    public void Closing_the_window_drops_a_pending_trim(int graceMs)
+    {
+        using var dir = new TempDir();
+        var (window, vm, collections) = TrimHost(dir, grace: TimeSpan.FromMilliseconds(graceMs));
+        window.ShutdownApplication = () => { };
+        window.BringForward = () => { };
+        bool closed = false;
+        window.Closed += (_, _) => closed = true;
+        MainWindowHost.RunBuild(vm, "A");                // trim bekliyor
+
+        window.ExitFromTray();
+        window.Close();
+        Assert.True(closed);                             // ön-koşul: pencere gerçekten kapandı
+
+        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(graceMs + 300));
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(0, collections.Count);
         GC.KeepAlive(window);
     }
 

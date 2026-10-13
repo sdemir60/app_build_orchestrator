@@ -409,8 +409,9 @@ public partial class MainWindow : Window
             if (e.PropertyName == nameof(RunViewModel.SelectedProjectId)) UpdateFrontierSelection();
         };
         // [idle-memory · dalga 1] İşlem sonu bellek trimi (MainWindow.HiddenSurface — RequestTrimWhenDue): VM'in sinyalleri
-        // (işlem bitti, koşu tepside mi bitti, log yüklemesi bitti) ve grafın bitiş finalinin sonu. Öbür iki sinyal kendi
-        // yerinde bağlanır: gösterge çıkışı SetUpTrayBuildIndicator'da, yüzeyin gizlenip görünmesi SetSurfaceHidden'da.
+        // (işlem bitti, koşu tepside mi bitti, log yüklemesinin cevabı artık beklenmiyor, uçuştaki iş değişti) ve grafın bitiş
+        // finalinin sonu. Öbür iki sinyal kendi yerinde bağlanır: gösterge çıkışı SetUpTrayBuildIndicator'da, yüzeyin gizlenip
+        // görünmesi SetSurfaceHidden'da.
         _vm.PropertyChanged += (_, e) => OnVmPropertyChangedForTrim(e.PropertyName);
         Shell.GraphHost.EndFinaleFinished += RequestTrimWhenDue;
         Shell.ConsoleHeaderControl.BackRequested += (_, _) => OnBack();

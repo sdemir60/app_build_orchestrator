@@ -1867,25 +1867,38 @@ public sealed partial class RunViewModel : ObservableObject
     /// <summary>Engine hazır değilken (henüz başlamadı/çöktü) SendAsync SENKRON fırlar — UI tıklaması bu
     /// yüzden çökmemeli; hata run dokümanına düşürülür, sessizce yutulmaz. Dönen <c>bool</c>, çağıranın
     /// gönderim BAŞARISIZ olduğunda kendi "starting" durumunu geri açabilmesi içindir — bu metot kendi başına
-    /// hiçbir bound-state'e dokunmaz. <see cref="DebugOnCommandSent"/> yalnız testler içindir.</summary>
+    /// hiçbir bound-state'e dokunmaz. Gönderimin kendisi <see cref="SendToEngineAsync"/>'tir.</summary>
     private async Task<bool> TrySendAsync(IpcCommand cmd, string what)
     {
-        DebugOnCommandSent?.Invoke(cmd);
-        try { await (DebugSendOverride?.Invoke(cmd) ?? _engine.SendAsync(cmd)); return true; }
+        var send = SendToEngineAsync(cmd);
+        try { await send; return true; }
         catch (Exception ex) { AppendRunLine($"[error] failed to send {what}: {ex.Message}"); return false; }
     }
 
+    /// <summary>Bir komutu motora göndermenin TEK yolu — <see cref="TrySendAsync"/> ve proje log isteği
+    /// (<see cref="LoadProjectLogAsync"/>) bunu kullanır: önce gözlemciye bildirir (<see cref="DebugOnCommandSent"/>), sonra
+    /// gönderimi test dikişine (<see cref="DebugSendOverride"/>) ya da motora yönlendirir. Gönderimin hatası — motor hazır değilken
+    /// <c>SendAsync</c>'in SENKRON fırlaması dahil — dönen görevde taşınır; çağıran onu kendi hata satırıyla karşılar ve görev
+    /// zaten düşmüşse <c>await</c> askıya almadan fırlatır. Gözlemcinin kendi istisnası bir gönderim hatası DEĞİLDİR, çağırana
+    /// yükselir: testin gözlemcideki bir iddiası konsol satırına dönüşüp yutulmaz.</summary>
+    private Task SendToEngineAsync(IpcCommand cmd)
+    {
+        DebugOnCommandSent?.Invoke(cmd);
+        try { return DebugSendOverride?.Invoke(cmd) ?? _engine.SendAsync(cmd); }
+        catch (Exception ex) { return Task.FromException(ex); }
+    }
+
     /// <summary>[C2 testleri] YALNIZ testler ayarlar (bkz. <see cref="DebugAfterStitchLockExited"/> deseni):
-    /// bir komut gönderilmeden hemen ÖNCE senkron tetiklenir; gönderilen <see cref="StartRunCommand"/>'ın
-    /// workspace argümanlarını (Mode/RootPath/Configuration/LayerPatterns) gerçek Supervisor'a
-    /// ihtiyaç duymadan gözlemlemeye yarar. Üretimde hep null — sıfır maliyet.</summary>
+    /// bir komut gönderilmeden hemen ÖNCE senkron tetiklenir (<see cref="SendToEngineAsync"/> — proje log isteği dahil her
+    /// gönderim); gönderilen <see cref="StartRunCommand"/>'ın workspace argümanlarını (Mode/RootPath/Configuration/LayerPatterns)
+    /// gerçek Supervisor'a ihtiyaç duymadan gözlemlemeye yarar. Üretimde hep null — sıfır maliyet.</summary>
     internal Action<IpcCommand>? DebugOnCommandSent;
 
     /// <summary>[task 3 testleri] YALNIZ testler ayarlar: gönderimi motorun yerine bu yapar. Başlatılmamış bir
     /// motorla gönderim hep düşer; gerçek bir Supervisor ise kendi cevabını pencereye ASENKRON akıtıp testle
     /// yarışır. Bu seam "gönderim başarılı, cevabı test verir" yolunu motorsuz kurar. Üretimde hep null.
-    /// <para>Proje log isteği de (<see cref="LoadProjectLogAsync"/>, kendi hata satırıyla) bu dikişten geçer: cevabı beklenen
-    /// bir yükleme (<see cref="HasPendingLogLoad"/>) ancak böyle kurulur.</para></summary>
+    /// <para>Her gönderim bu dikişten geçer (<see cref="SendToEngineAsync"/>) — proje log isteği de (<see cref="LoadProjectLogAsync"/>,
+    /// kendi hata satırıyla): cevabı beklenen bir yükleme (<see cref="HasPendingLogLoad"/>) ancak böyle kurulur.</para></summary>
     internal Func<IpcCommand, Task>? DebugSendOverride;
 
     // ---------------------------------------------------------------- elapsed
@@ -2766,7 +2779,11 @@ public sealed partial class RunViewModel : ObservableObject
     /// tam olarak o kilidi açmaktır.</para>
     ///
     /// <para><b>Idempotent:</b> [ObservableProperty] setter'ları eşitlik kontrolüyle çalışır, yani hiçbir run
-    /// aktif değilken çağrılırsa no-op'tur.</para></summary>
+    /// aktif değilken çağrılırsa no-op'tur.</para>
+    ///
+    /// <para><b>[idle-memory] Proje log yüklemesi bırakılmaz, cevabı artık beklenmez</b> (<see cref="StopAwaitingReply"/>): gönderimi
+    /// düşen yükleme gibi silahlı kalır — motorun ölmeden yazdığı gecikmiş bir chunk hâlâ dikilir — ama işlem sonu trimini tutmaz.
+    /// Tutsaydı başka bir log açılana dek her trimi (yeniden başlatmanın Sync'i dahil) kilitlerdi.</para></summary>
     private void ReleaseAfterEngineLoss()
     {
         // [E2/F3 fold] Terminal Phase kararı: engine run ORTASINDA (Phase=Running) ölürse Phase Running'de asılı
@@ -2799,6 +2816,7 @@ public sealed partial class RunViewModel : ObservableObject
         ReleaseOptimizeSurface();
         SetCheckoutBusy(false); // [§6.3] motor checkout ortasında öldüyse cevap gelmez — chip kilidi sızmaz
         SetPullBusy(false); // [§6.1] motor pull ortasında öldüyse pullCompleted gelmez — kapı sızmaz
+        if (_pendingLoad is { } pendingLoad) StopAwaitingReply(pendingLoad); // [idle-memory] log isteğinin cevabı gelmez — gerekçe özette
         // Beklenen geçiş kalmadı → sessizlik uyarısının konusu da kalmadı. (Tick zaten aynı sonuca varırdı;
         // burada YAZILMASININ sebebi, kullanıcının Restart'a bastığı KAREde amber satırın kalkmasıdır.)
         EngineOverdueMessage = null;
@@ -3166,8 +3184,8 @@ public sealed partial class RunViewModel : ObservableObject
         bool wasPending = HasPendingLogLoad;
         _pendingLoad = pending;
         NotifyPendingLogLoad(wasPending);
-        var command = new GetProjectLogCommand(projectId);
-        try { await (DebugSendOverride?.Invoke(command) ?? _engine.SendAsync(command)); }
+        var send = SendToEngineAsync(new GetProjectLogCommand(projectId));
+        try { await send; }
         catch (Exception ex)
         {
             AppendRunLine($"[error] could not load project log: {ex.Message}");
@@ -3185,9 +3203,7 @@ public sealed partial class RunViewModel : ObservableObject
             // senkron fırlamaya dayanır ve sonrasında gelen bir ProjectLogChunkEvent'in _pendingLoad üzerinden
             // OnProjectLogChunk'ta hâlâ eşleşip dikişi tamamlamasını bekler — burada null'lamak o akışı kırardı.
             // [idle-memory] Silahlı kalır ama cevabı BEKLENMEZ: işlem sonu trimini tutmaz (HasPendingLogLoad).
-            wasPending = HasPendingLogLoad;
-            pending.SendFailed = true;
-            NotifyPendingLogLoad(wasPending);
+            StopAwaitingReply(pending);
             pending.Completion.TrySetResult();
         }
         await pending.Completion.Task;
@@ -3196,18 +3212,32 @@ public sealed partial class RunViewModel : ObservableObject
     /// <summary>
     /// [idle-memory] Cevabı BEKLENEN bir proje log yüklemesi var mı: istek motora gitti, dikiş ya da "log yok" yanıtı henüz
     /// gelmedi. İşlem sonu bellek trimi (<c>MainWindow.RequestTrimWhenDue</c>) bunu bekler — dikişin kuyruğu canlı tampondadır —
-    /// ve yüklemenin sonunda yeniden sorar; bu yüzden BİLDİRİMLİDİR: yükleme başlayınca, gönderimi düşünce ve bitince
-    /// (<see cref="CompletePendingLoad"/>, yerini yenisi aldığında dahil) değer değiştiyse bildirilir (<see cref="NotifyPendingLogLoad"/>).
-    /// <para><b>Gönderimi düşen yükleme sayılmaz:</b> dikiş bilerek silahlı kalır (<see cref="_pendingLoad"/>: gecikmiş bir chunk
-    /// hâlâ eşleşir, canlı tamponun bırakılması da onu bekler) ama cevap hiç gelmeyebilir — sayılsaydı tek bir düşen gönderim,
-    /// başka bir log açılana dek her trimi kilitlerdi.</para>
+    /// ve yüklemenin sonunda yeniden sorar; bu yüzden BİLDİRİMLİDİR: yükleme başlayınca, cevabı artık beklenmeyince
+    /// (<see cref="StopAwaitingReply"/>: gönderim düştü ya da motor gitti) ve bitince (<see cref="CompletePendingLoad"/>, yerini yenisi
+    /// aldığında dahil) değer değiştiyse bildirilir (<see cref="NotifyPendingLogLoad"/>).
+    /// <para><b>Cevabı artık beklenmeyen yükleme sayılmaz</b> — gönderimi düştü ya da motor gitti
+    /// (<see cref="ReleaseAfterEngineLoss"/>): dikiş bilerek silahlı kalır (<see cref="_pendingLoad"/>: gecikmiş bir chunk hâlâ
+    /// eşleşir, canlı tamponun bırakılması da onu bekler) ama cevap hiç gelmeyebilir — sayılsaydı tek bir düşen gönderim ya da
+    /// motor kaybı, başka bir log açılana dek her trimi kilitlerdi.</para>
     /// </summary>
-    internal bool HasPendingLogLoad => _pendingLoad is { SendFailed: false };
+    internal bool HasPendingLogLoad => _pendingLoad is { ReplyExpected: true };
 
     /// <summary><see cref="HasPendingLogLoad"/> bildiriminin TEK noktası: değer <paramref name="before"/>'dan farklıysa bildirir.</summary>
     private void NotifyPendingLogLoad(bool before)
     {
         if (HasPendingLogLoad != before) OnPropertyChanged(nameof(HasPendingLogLoad));
+    }
+
+    /// <summary>[idle-memory] Yüklemenin cevabı artık BEKLENMEZ — TEK yer; iki çağıran: gönderim düştü
+    /// (<see cref="LoadProjectLogAsync"/>: istek yola hiç çıkmadı) ve motor gitti (<see cref="ReleaseAfterEngineLoss"/>: cevabı
+    /// yazacak motor yok). Bu bir son DEĞİLDİR (<see cref="CompletePendingLoad"/> değil): dikiş bilerek silahlı kalır (gecikmiş bir
+    /// chunk hâlâ eşleşir, canlı tamponun bırakılması da onu bekler); yalnız yükleme işlem sonu trimini tutmaz olur
+    /// (<see cref="HasPendingLogLoad"/>) ve bu değişim bildirilir.</summary>
+    private void StopAwaitingReply(PendingLoad pending)
+    {
+        bool wasPending = HasPendingLogLoad;
+        pending.ReplyExpected = false;
+        NotifyPendingLogLoad(wasPending);
     }
 
     /// <summary>[Kısıt 4] MainWindow bu event'i (diğer tüm state event'leri gibi) UI thread'ine MARSHAL EDER —
@@ -3281,8 +3311,9 @@ public sealed partial class RunViewModel : ObservableObject
     /// (<see cref="LoadProjectLogAsync"/>). Sıra her yerde aynıdır: bekleyen düşer, ertelenmiş tampon bırakması yeniden sorulur
     /// (koşu bitmişse şimdi yapılır — <see cref="ReleaseLiveLinesWhenIdle"/>), yüklemenin bittiği bildirilir
     /// (<see cref="HasPendingLogLoad"/>: işlem sonu trimi bırakılmış tamponla yeniden sorar), awaiter serbest kalır. Gönderim
-    /// hatası bir son DEĞİLDİR: istek yola çıkmadı ve dikiş bilerek silahlı kalır (gecikmiş bir chunk hâlâ eşleşir); orada yalnız
-    /// cevap beklenmediği işaretlenir ve awaiter serbest kalır.
+    /// hatası ve motor kaybı bir son DEĞİLDİR: dikiş bilerek silahlı kalır (gecikmiş bir chunk hâlâ eşleşir); orada yalnız cevabın
+    /// beklenmediği işaretlenir (<see cref="StopAwaitingReply"/>) — gönderim hatasında awaiter da serbest kalır (istek yola hiç
+    /// çıkmadı).
     /// </summary>
     private void CompletePendingLoad(PendingLoad pending)
     {
@@ -3338,8 +3369,8 @@ public sealed partial class RunViewModel : ObservableObject
         public StringBuilder Assembly { get; } = new();
         public TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        /// <summary>İstek motora hiç gitmedi (gönderim düştü): dikiş silahlı kalır ama cevabı beklenmez
-        /// (<see cref="HasPendingLogLoad"/>).</summary>
-        public bool SendFailed { get; set; }
+        /// <summary>Cevap hâlâ bekleniyor mu: istek motora gitti ve motor duruyor. Gönderim düşünce ya da motor gidince false olur
+        /// (<see cref="StopAwaitingReply"/>): dikiş silahlı kalır ama cevabı beklenmez (<see cref="HasPendingLogLoad"/>).</summary>
+        public bool ReplyExpected { get; set; } = true;
     }
 }

@@ -708,6 +708,27 @@ public class RunViewModelTests
         Assert.Equal("line1\nline2\n", vm.GetProjectDocumentText(projectId));
     }
 
+    /// <summary>[idle-memory · kopya YASAK] Proje log isteği de motora her komutun yolundan gider: komut gözlemcisi
+    /// (<c>DebugOnCommandSent</c>) onu da görür ve gönderimi aynı dikiş (<c>DebugSendOverride</c>) üstlenir. Yönlendirme iki yerde
+    /// ayrı yazılmıştı ve çoktan ayrışmıştı: istek gözlemciyi atlıyordu.</summary>
+    [Fact]
+    public async Task LoadProjectLogAsync_sends_its_request_on_the_route_of_every_command()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string projectId = @"C:\p\a.csproj";
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+        MainWindowHost.AcceptSends(vm);
+
+        var load = vm.LoadProjectLogAsync(projectId);
+
+        Assert.Equal(new GetProjectLogCommand(projectId), Assert.Single(sent));   // KIRMIZI: istek gözlemciyi atlıyordu
+        Assert.True(vm.HasPendingLogLoad);                                         // gönderim dikişten geçti: cevap bekleniyor
+        vm.OnEvent(new ErrorEvent("logNotFound", projectId));
+        await load.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
     // ---------------------------------------------------------------- 4) run dokümanı proje modunda bile birikir
 
     [Fact]

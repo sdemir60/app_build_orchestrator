@@ -140,10 +140,11 @@ public partial class MainWindow
     /// nesneler) ölü yük olarak kalmaz. Kararı saf kural verir (<see cref="MemoryTrimRule"/>); burası sinyalleri toplar, zamanlar
     /// ve yürütür.
     ///
-    /// <para><b>Beş sinyal buraya gelir; hangisi en son gelirse trimi o ister:</b> işlem bitti
+    /// <para><b>Altı sinyal buraya gelir; hangisi en son gelirse trimi o ister:</b> işlem bitti
     /// (<c>RunViewModel.EndedOperationSerial</c>), grafın bitiş finali bitti (<c>GraphView.EndFinaleFinished</c>), tepsi göstergesi
-    /// çıkışını bitirdi (<see cref="OnTrayIndicatorExitFinished"/>), yüzey gizlendi ya da göründü (<see cref="SetSurfaceHidden"/>) ve
-    /// cevabı beklenen proje log yüklemesi bitti (<c>RunViewModel.HasPendingLogLoad</c>).</para>
+    /// çıkışını bitirdi (<see cref="OnTrayIndicatorExitFinished"/>), yüzey gizlendi ya da göründü (<see cref="SetSurfaceHidden"/>),
+    /// proje log yüklemesinin cevabı artık beklenmiyor — geldi ya da gelmeyecek (<c>RunViewModel.HasPendingLogLoad</c>) — ve
+    /// uçuştaki iş değişti (<c>RunViewModel.IsOperationInFlight</c>: işlem sayılmayan bir iş de trimi bekletir ve bitince ister).</para>
     ///
     /// <para><b>Zamanlama:</b> gizliyken pay beklenmez (duraklama görünmez): yürütme boşta kuyruğa düşer
     /// (<see cref="DispatcherPriority.ApplicationIdle"/>) — reduced-motion'da sinyaller koşu bitişinin içinde eşzamanlı gelebilir ve
@@ -215,8 +216,10 @@ public partial class MainWindow
         awaitingTrayIndicator: _runEndedHidden != 0 && _runEndedHidden == _vm.EndedRunSerial
                                && _indicatorExitedRun != _runEndedHidden);
 
-    /// <summary>VM'in trim sinyalleri (ctor aboneliği): koşu bittiyse yüzey o an gizli miydi kaydedilir; işlemin bitişi ve
-    /// log yüklemesinin değişimi trimi yeniden sorar.</summary>
+    /// <summary>VM'in trim sinyalleri (ctor aboneliği): koşu bittiyse yüzey o an gizli miydi kaydedilir; işlemin bitişi, log
+    /// yüklemesinin değişimi ve uçuştaki işin değişimi trimi yeniden sorar. Sonuncusu işlem SAYILMAYAN işler içindir (reddedilen
+    /// pull/checkout, reddedilen başlatma): onların yüzünden atlanan trim, bitişleri <c>EndedOperationSerial</c>'ı değiştirmese de
+    /// onların sonunda istenir. İş başlarken gelen bildirim zararsızdır — istek uçuştaki işi görüp hiçbir şey zamanlamaz.</summary>
     private void OnVmPropertyChangedForTrim(string? propertyName)
     {
         switch (propertyName)
@@ -226,6 +229,7 @@ public partial class MainWindow
                 break;
             case nameof(RunViewModel.EndedOperationSerial):
             case nameof(RunViewModel.HasPendingLogLoad):
+            case nameof(RunViewModel.IsOperationInFlight):
                 RequestTrimWhenDue();
                 break;
         }

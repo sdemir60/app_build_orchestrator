@@ -576,8 +576,27 @@ public sealed partial class RunViewModel
     /// workspace işi (<see cref="WorkspaceBusy"/>: Sync, Clean, Optimize, checkout, pull). "Uygulama boşta mı" sorusunun TEK
     /// tanımı (kopya YASAK): kendiliğinden Sync tetiği bununla bekletilir (<c>IAutoSyncPort.IsWorkspaceBusy</c>) ve işlem sonu
     /// bellek trimi bununla ertelenir (<c>MainWindow.RequestTrimWhenDue</c>). <see cref="WorkspaceIdle"/>'dan farkı koşunun
-    /// <c>runCompleted</c>'a dek sürmesidir: Stop'un kilidi düşürdüğü aralıkta da koşu bitmemiştir.</summary>
+    /// <c>runCompleted</c>'a dek sürmesidir: Stop'un kilidi düşürdüğü aralıkta da koşu bitmemiştir.
+    /// <para><b>BİLDİRİMLİDİR</b> (<see cref="NotifyOperationInFlight"/>): trimi bekleten iş bitince trim yeniden sorulur. Burada
+    /// sayılan her iş bir İŞLEM değildir — reddedilen pull/checkout'a Sync zincirlenmez, reddedilen ya da koreografide durdurulan
+    /// başlatmanın koşusu hiç başlamadı — ve bunların sonu <see cref="RunViewModel.EndedOperationSerial"/>'ı değiştirmez; bildirim
+    /// olmasaydı onların yüzünden atlanan trim bir sonraki SAYILAN işlemin sonuna kayardı.</para></summary>
     internal bool IsOperationInFlight => IsRunInFlight || WorkspaceBusy;
+
+    /// <summary><see cref="IsOperationInFlight"/>'ın son bildirilen değeri (<see cref="NotifyOperationInFlight"/>).</summary>
+    private bool _operationInFlightNotified;
+
+    /// <summary><see cref="IsOperationInFlight"/> bildiriminin TEK noktası — <see cref="OnWorkspaceBusyChanged"/>'in son adımı:
+    /// koşu kilidinin, koşunun bitişinin ve workspace bayraklarının her geçişi oraya iner, yani değerin her değişimi buradan geçer.
+    /// Yalnız değer son bildirilenden farklıysa bildirir: aynı değerde tekrar eden çağrılar (boştaki motor kaybının bırakmaları,
+    /// iç içe geçişler) bildirim üretmez.</summary>
+    private void NotifyOperationInFlight()
+    {
+        bool inFlight = IsOperationInFlight;
+        if (inFlight == _operationInFlightNotified) return;
+        _operationInFlightNotified = inFlight;
+        OnPropertyChanged(nameof(IsOperationInFlight));
+    }
 
     /// <summary>
     /// [final review O1] "Workspace meşguliyeti değişti" bildiriminin TEK noktası — Sync/Clean/Optimize/checkout/pull
@@ -587,7 +606,9 @@ public sealed partial class RunViewModel
     /// kendiliğinden Sync tetiğini yeniden değerlendirir; [P3 · Task 2] güvenli çıkış uçuştaki iş bitince hazır olur
     /// (<see cref="EvaluateExit"/>); [kullanıcı kararı 2026-09-29] Esc'in "durdurulamaz" satırı iş bitince yeniden
     /// yazılabilir olur (<see cref="ResetEscNoteWhenIdle"/>); [design v1.23.0 §2.12] güncelleme kartının Restart kilidi
-    /// yeniden sorulur (<see cref="NotifyUpdateRestartGate"/>).
+    /// yeniden sorulur (<see cref="NotifyUpdateRestartGate"/>); [idle-memory] uçuştaki işin değişimi bildirilir ve işlem sonu
+    /// bellek trimi onu bekleten iş bitince yeniden sorulur (<see cref="NotifyOperationInFlight"/>). Bildirim EN SONDADIR: tetik
+    /// bu geçişte yeni bir Sync başlattıysa bildirilen değer onu da görür.
     /// <para>Ad bu yüzden nötrdür ve yeri <see cref="WorkspaceIdle"/>'ın yanıdır: çıkış beklerken koordinatör YOKTUR
     /// (<see cref="RequestExit"/> onu kapatır), yani buraya konacak bir "koordinatör yoksa dön" kısayolu bekleyen her
     /// çıkışı sessizce sonsuza dek bekletirdi.</para>
@@ -598,6 +619,7 @@ public sealed partial class RunViewModel
         EvaluateExit();
         ResetEscNoteWhenIdle();
         NotifyUpdateRestartGate();
+        NotifyOperationInFlight();
     }
 
     /// <summary>[final review O1] Workspace komut kapısının TEK sorusu: <see cref="WorkspaceIdle"/> ve motor erişilebilir.
