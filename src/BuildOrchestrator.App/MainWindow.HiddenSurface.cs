@@ -244,12 +244,13 @@ public partial class MainWindow
     }
 
     /// <summary>Gizliyken konsol belgesine yazılmayan bir batch, temizlik ya da mod geçişi oldu (seçim yolu:
-    /// <c>ShowRunConsole</c>, <c>OnSelectedProjectChangedAsync</c>): ekrandaki belge modelin (<c>RunViewModel</c> tamponu)
-    /// gerisinde. Başlık ve VM tarafı yine güncellenir; belgeyi <see cref="ResyncAfterShow"/> kurar ve bayrağı sıfırlar.
+    /// <c>ShowRunConsole</c>, <c>OnSelectedProjectChangedAsync</c>): ekrandaki belge modelin (<c>RunViewModel</c>'in anlatısı
+    /// ya da proje tamponu) gerisinde. Başlık ve VM tarafı yine güncellenir; belgeyi <see cref="ResyncAfterShow"/> kurar ve
+    /// bayrağı sıfırlar.
     ///
     /// <para>Bayrak kalkık kaldıkça batch'ler belgeye YAZILMAZ: gösterim ile Loaded-öncelikli dönüş kurulumu arasındaki aralık
     /// dahil (<c>AppendConsoleBatch</c> kapısı: gizli YA DA bayrak kalkık) — bayat belgeye basılan bir batch, dönüş kurulumu
-    /// belgeyi tam metinden yeniden kurunca boşa giderdi. Belgeyi modelin tam metninden kuran görünür yollar, mod geçişi
+    /// belgeyi modelden yeniden kurunca boşa giderdi. Belgeyi modelden kuran görünür yollar, mod geçişi
     /// (<c>ShowRunConsole</c>) ve proje belgesi (<c>OnSelectedProjectChangedAsync</c>), bayrağı da düşürür: dönüş kurulumu o
     /// belgeyi ikinci kez kurmaz. Temizlik (<c>ConsoleCleared</c>) düşürmez: belgeyi boşaltır ama boş anlatının "ready"
     /// satırını kurmaz, onu dönüş kurulumu kurar.</para></summary>
@@ -286,9 +287,10 @@ public partial class MainWindow
     ///
     /// <para><b>Konsol:</b> gizliyken batch'ler, temizlik ve mod geçişi (kart seçimi: <c>ShowRunConsole</c>,
     /// <c>OnSelectedProjectChangedAsync</c>) belgeye yazılmadı (<see cref="_consoleStaleWhileHidden"/>); başlık ve VM tarafı
-    /// yine güncellendi. Belge modelin TAM metninden bir kez, <b>tilt'siz</b> kurulur — hangi belgenin kurulacağını o anki
-    /// <c>ActiveProjectId</c> söyler: anlatı için <c>RunViewModel.SeedRunDocument</c>, proje logu açıksa
-    /// <c>RunViewModel.SeedProjectDocument</c>. İkisi de reseed-drop sentinel'ini yazar: uçuştaki bayat batch'ler
+    /// yine güncellendi. Belge modelden bir kez, <b>tilt'siz</b> kurulur — hangi belgenin kurulacağını o anki
+    /// <c>ActiveProjectId</c> söyler: anlatı için <c>RunViewModel.SeedRunDocument</c> (store'un snapshot'ı: son dilim belgeye,
+    /// öncesi store'da kalır), proje logu açıksa <c>RunViewModel.SeedProjectDocument</c> (dikilmiş tam log). İkisi de
+    /// reseed-drop sentinel'ini yazar: uçuştaki bayat batch'ler
     /// <c>ConsoleBatchRouter</c> kararıyla düşer, YENİ bir tampon yolu açılmaz. Anlatı boşsa idle "ready" satırı geri gelir;
     /// boş bir proje logu, kart seçimiyle AYNI kuralla (<c>ProjectDocumentLines</c>) o projenin boş-durum metnini gösterir.</para>
     ///
@@ -322,7 +324,7 @@ public partial class MainWindow
             var activeProjectId = _vm.ActiveProjectId;
             if (activeProjectId is null)
             {
-                _vm.SeedRunDocument(text => Shell.ConsoleViewControl.ReplaceRunDocument(text));
+                _vm.SeedRunDocument(snapshot => Shell.ConsoleViewControl.ReplaceRunDocument(snapshot));
                 if (_vm.GetActiveLineCount() == 0) Shell.ConsoleViewControl.ShowReady();
             }
             else

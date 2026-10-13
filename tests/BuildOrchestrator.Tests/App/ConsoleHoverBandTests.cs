@@ -436,7 +436,7 @@ public class ConsoleHoverBandTests
     }
 
     /// <summary>
-    /// [Review round 2 M-2, senaryo b] Aynı scroll offsette (mod değişimi/`ClearRunDocument` sözleşmesi) çok
+    /// [Review round 2 M-2, senaryo b] Aynı scroll offsette (mod değişimi/boş anlatıya yeniden kurulum sözleşmesi) çok
     /// daha KISA bir belgeye geçilirse, eski bantlı satır artık YOK — `_forceHoverRefresh` bayrağı işaretlenmeden
     /// bırakılsaydı belge-Y hâlâ eski (yanlış) aralıkta sayılabilir ve bant, hiçbir satırın olmadığı bir yerde asılı kalırdı.
     /// </summary>
@@ -457,7 +457,7 @@ public class ConsoleHoverBandTests
         Assert.True(((SolidColorBrush)view.HoverBand.Fill).Color.A > 0, "test kurgusu: 5. satır bantlanmalıydı");
 
         // Aynı offsette (0), çok daha KISA bir belgeye geç (mod değişimi sözleşmesi) — eski 5. satır artık YOK.
-        view.ClearRunDocument();
+        view.ReplaceRunDocument(NarrativeSnapshots.FromText(""));
         view.UpdateLayout(); // VisualLinesChanged GERÇEK kablosu burada ateşlenir (RefreshHoverBand'ı tetikler)
 
         // Y hâlâ eski 5. satırın olduğu ekran konumunda ama belge artık tek boş satırdan ibaret — o konum

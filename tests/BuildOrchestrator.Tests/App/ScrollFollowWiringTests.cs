@@ -27,7 +27,7 @@ public class ScrollFollowWiringTests
         view.Arrange(new Rect(0, 0, 800, 400));
         view.UpdateLayout();
         // Viewport'u gerçekten aşan bir anlatı — aksi halde "kaydırma" diye bir şey olmaz ve test vacuous olur.
-        view.ShowRunDocument(string.Concat(Enumerable.Range(0, 300).Select(i => $"line{i}\n")));
+        view.ShowRunDocument(NarrativeSnapshots.FromText(string.Concat(Enumerable.Range(0, 300).Select(i => $"line{i}\n"))));
         view.UpdateLayout();
         return view;
     }

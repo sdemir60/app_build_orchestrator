@@ -207,9 +207,11 @@ public class ConsoleViewTests
     // loader YALNIZ proje modunda çalışıyordu, yani run anlatısında 200 satırdan öncesine hiçbir jestle
     // erişilemiyordu. Paralel bir build saniyede yüzlerce satır aktığı için o pencere anında doluyor.
     //
-    // Backlog artık moddan bağımsızdır: anlatı da baştan tohumlanır ve KIRPILAN CANLI satırlar backlog'a
-    // taşınır — böylece hem run modunda geçmişe dönülebilir, hem de proje modunda canlı kırpılan satırların
-    // eskiden düştüğü delik (eski kodun "index'i yok" diyen clamp'i) kapanır.
+    // Backlog moddan bağımsızdır: anlatıda da render diliminden öncesi tepeye kaydırınca geri gelir. Değişen yalnız
+    // geçmişin KAYNAĞIDIR: anlatıda VM'in anlatı store'u (görünüm kopya tutmaz — [DEĞİŞEN KURAL], bkz.
+    // Lines_trimmed_from_the_live_run_document_stay_reachable_by_scrolling_up), proje logunda görünümün kendi listesi;
+    // orada belgeden kırpılan canlı satırlar listeye eklenir ve canlı kırpılan satırların eskiden düştüğü delik (eski
+    // kodun "index'i yok" diyen clamp'i) kapanır.
 
     [StaFact]
     public void Run_narrative_scroll_to_top_prepends_older_history()
@@ -219,19 +221,31 @@ public class ConsoleViewTests
         view.Arrange(new Rect(0, 0, 800, 600));
         view.UpdateLayout();
 
+        var store = new NarrativeStore();
         var all = Enumerable.Range(0, 250).Select(i => $"narrative{i}").ToArray();
+        foreach (var line in all) store.Append(line);
         var expected = string.Concat(all.Select(l => l + "\n"));
 
-        view.ShowRunDocument(expected); // ← Back akışı: son 200 belgeye, öncesi backlog'a
+        view.ShowRunDocument(NarrativeSnapshots.Of(store)); // ← Back akışı: son 200 belgeye, öncesi store'da kalır
         Assert.StartsWith("narrative50\n", view.Document.Text);
         Assert.DoesNotContain("narrative49\n", view.Document.Text); // ön-koşul: ilk 50 belgede DEĞİL
 
         view.EvaluateChunkScroll(100.0); // arm: kullanıcı tepeden uzaklaştı
-        view.EvaluateChunkScroll(0.0);   // scroll-to-top → önceki dilim geri gelir
+        view.EvaluateChunkScroll(0.0);   // scroll-to-top → önceki dilim store'dan gelir
 
         Assert.Equal(expected, view.Document.Text); // bitişik ve TAM — tekrar YOK, kayıp YOK
     }
 
+    /// <summary>
+    /// Canlı anlatıda belgeden kırpılan satırlar tepeye kaydırınca DELİKSİZ geri gelir.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — idle-memory dalga 1]</b> Eski iddia: kırpılan canlı satırlar görünümün backlog'una
+    /// TAŞINIR — görünüm anlatının kendi kopyasını tutar (test boş metinle tohumlayıp satırları doğrudan belgeye basıyordu;
+    /// geri gelen satırlar görünümün listesindendi). Değişme gerekçesi (ölçüldü, boşta bellek analizi §3): o liste VM
+    /// tamponunun ikinci kopyasıydı — 83 k satırlık bir koşuda 59 MB. Artık her anlatı satırı önce VM'in store'una yazılır,
+    /// sonra pompayla belgeye gelir; kırpılan satır zaten store'dadır ve geri oradan gelir, görünüm kopya tutmaz. Test bu
+    /// yüzden üretim düzenini kurar: satır önce store'a, sonra batch olarak görünüme.</para>
+    /// </summary>
     [StaFact]
     public void Lines_trimmed_from_the_live_run_document_stay_reachable_by_scrolling_up()
     {
@@ -239,16 +253,18 @@ public class ConsoleViewTests
         view.Measure(new Size(800, 600));
         view.Arrange(new Rect(0, 0, 800, 600));
         view.UpdateLayout();
-        view.ShowRunDocument(""); // anlatı modu, takip AÇIK (canlı build gibi)
+        var store = new NarrativeStore();
+        view.ShowRunDocument(NarrativeSnapshots.Of(store)); // anlatı modu, takip AÇIK (canlı build gibi)
 
-        for (int i = 0; i < 260; i++) view.AppendBatch($"live{i}\n");
+        for (int i = 0; i < 260; i++) NarrativeSnapshots.Deliver(store, view, [$"live{i}"]);
         Assert.DoesNotContain("live0\n", view.Document.Text); // ön-koşul: kırpıldı (belge 200 ile sınırlı)
 
         view.EvaluateChunkScroll(100.0);
         view.EvaluateChunkScroll(0.0);
 
-        Assert.Contains("live0\n", view.Document.Text);      // backlog'dan DELİKSİZ geri geldi
+        Assert.Contains("live0\n", view.Document.Text);          // store'dan DELİKSİZ geri geldi
         Assert.Contains("live59\nlive60\n", view.Document.Text); // dikiş yerinde boşluk yok
+        Assert.False(view.BacklogOwnsCopy);                      // kırpılan satırlar görünüme kopyalanmadı
     }
 
     [StaFact]

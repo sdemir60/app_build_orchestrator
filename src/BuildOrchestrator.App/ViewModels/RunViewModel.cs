@@ -401,8 +401,9 @@ public enum ConsoleSelection { ShowRun, LoadProjectLog }
 /// zaman dilimli bir pompayla yapar (<see cref="Services.EngineEventPump"/>). Bu marshal PER-DURUM-DEĞİŞİKLİĞİ'dir (proje/run
 /// başına birkaç adet, akan log satırları GİBİ binlerce DEĞİL), bu yüzden A13.2'nin "satır başına Dispatcher yasak" kuralını
 /// ihlal etmez.
-/// İki thread'in ORTAK dokunduğu düz arabellekler (<c>_runText</c>/<c>_projectText</c>/<c>_liveLines</c>)
-/// <c>_gate</c> kilidiyle korunur.</para>
+/// İki thread'in ORTAK dokunduğu düz arabellekler (<c>_projectText</c>/<c>_liveLines</c>) <c>_gate</c> kilidiyle korunur;
+/// koşu anlatısı (<see cref="Narrative"/>) kendi iç kilidiyle korunur ve yazımı yine <c>_gate</c> altındadır (pompaya gönderimle
+/// AYNI bölümde).</para>
 ///
 /// <para><b>Log dikişi [T28]:</b> <see cref="LoadProjectLogAsync"/> bir proje için diskteki snapshot'ı ister;
 /// gelen <c>ProjectLogChunkEvent</c>'ler sırayla biriktirilir, SON chunk'ta (<c>IsLast</c>) o ana kadar
@@ -429,21 +430,25 @@ public sealed partial class RunViewModel : ObservableObject
     private readonly Func<long> _nowMs; // [Minor/Fix wave 1] elapsed hesap kaynağı — testte deterministik saat enjekte edilir (D8)
     private readonly Services.IOsActions? _osActions; // [E1/T67] satır hover ikonlarının OS eylemleri (Reveal/Open-in-VS); üretimde daima enjekte, testte null default = güvenli no-op
 
-    // [Kısıt 4] _runText/_projectText/_liveLines HEM arka plan thread'inden (OnProjectLog — marshal YOK,
-    // A13.2) HEM UI thread'inden (chunk/Get*DocumentText) dokunulur — düz Dictionary/StringBuilder thread-safe
-    // DEĞİLDİR, bu yüzden tüm erişimler _gate altındadır. ActiveProjectId'nin kendisi (WPF binding'e bağlı
-    // [ObservableProperty]) SADECE UI thread'inde yazılır (OnProjectLogChunk marshallı) — kilide gerek yok,
-    // yalnız OKUNURKEN arka plandan (benign race: referans türü ataması atomiktir, en kötü tek satır yanlış
-    // hedefe gider — kabul edilebilir ölçek [It-2 iskelesi]).
+    // [Kısıt 4] _projectText/_liveLines HEM arka plan thread'inden (OnProjectLog — marshal YOK, A13.2) HEM UI
+    // thread'inden (chunk/Get*DocumentText) dokunulur — düz Dictionary/StringBuilder thread-safe DEĞİLDİR, bu yüzden
+    // tüm erişimler _gate altındadır. Anlatı (Narrative) kendi kilidini taşır; VM onu yine _gate altında yazar ve okur
+    // (sıra her yerde _gate → store kilidi). ActiveProjectId'nin kendisi (WPF binding'e bağlı [ObservableProperty])
+    // SADECE UI thread'inde yazılır (OnProjectLogChunk marshallı) — kilide gerek yok, yalnız OKUNURKEN arka plandan
+    // (benign race: referans türü ataması atomiktir, en kötü tek satır yanlış hedefe gider — kabul edilebilir ölçek
+    // [It-2 iskelesi]).
     private readonly object _gate = new();
-    private readonly StringBuilder _runText = new();
     private readonly Dictionary<string, StringBuilder> _projectText = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, List<ProjectLogEvent>> _liveLines = new(StringComparer.OrdinalIgnoreCase);
-    // [T56/3a] "N lines" TAM tampon sayacı (render dilimi DEĞİL, Ek A #23). _gate altında O(1) artırılır — her
-    // append tam bir satır ('\n' sonekli) eklediğinden konsol başlığı (ConsoleHeader) bunu okur. Marshal-free
-    // OnProjectLog yolundan yazıldığı için ObservableProperty DEĞİL; UI thread'i _gate altında okur (GetActiveLineCount).
-    private int _runLineCount;
     private readonly Dictionary<string, int> _projectLineCount = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>[idle-memory · dalga 1 · spec §6.2] Koşu anlatısının bellekteki TEK sahibi: tüm projelerin satırları + anlatı
+    /// satırları, işlem boyunca. Konsol görünümü belgeyi bundan kurar ve geçmiş dilimini bundan ister — kopya tutmaz (kabuk
+    /// açılışta bağlar: <c>ConsoleView.BindNarrative</c>). "N lines" sayacı da budur (<see cref="GetActiveLineCount"/>: tam
+    /// anlatı, render dilimi DEĞİL — Ek A #23). Yazım <c>_gate</c> altında, pompaya gönderimle AYNI bölümdedir (reseed nesil
+    /// guard'ı ona dayanır — <see cref="SeedRunDocument"/>).</summary>
+    internal NarrativeStore Narrative { get; } = new();
+
     private PendingLoad? _pendingLoad; // yalnız UI thread'inde dokunulur (LoadProjectLogAsync + OnProjectLogChunk)
 
     private string? _currentRunId;
@@ -914,7 +919,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// <summary>[C2] Ortak run başlatma yolu (Rebuild/Build/Cycles) — tek yerde toplanır:
     /// runId üret, konsolu run dokümanına al, <see cref="IsStarting"/>'i aç ve <see cref="StartRunCommand"/>'ı
     /// workspace hedefiyle (kök/configuration/layer patterns) gönder.
-    /// <para>[Fix wave 1(It-3), Finding 1] Önceki run'ın <c>_liveLines/_projectText/_runText</c> tortusu HER
+    /// <para>[Fix wave 1(It-3), Finding 1] Önceki run'ın <c>_liveLines</c>/<c>_projectText</c>/anlatı tortusu HER
     /// çağrıda koşulsuz temizlenir: aksi halde İKİNCİ run'da kart tıklamasında dikiş filtresi (LineNumber
     /// &gt; ThroughLineNumber) eski run'ın kuyruk satırlarını da geçirir ve OrderBy(LineNumber) eski+yeni'yi
     /// karıştırır (bozuk "tam log"). runStarted'ı BEKLEMEDEN burada temizlenir: ProjectLogEvent marshal'sız
@@ -2916,9 +2921,8 @@ public sealed partial class RunViewModel : ObservableObject
                 _liveLines[e.ProjectId] = list = [];
             list.Add(e);
 
-            // Run dokümanı proje modunda bile birikmeye devam eder — ekranda görünmese de.
-            _runText.Append(e.Text).Append('\n');
-            _runLineCount++;
+            // Anlatı proje modunda bile birikmeye devam eder — ekranda görünmese de.
+            Narrative.Append(e.Text);
             if (string.Equals(ActiveProjectId, e.ProjectId, StringComparison.OrdinalIgnoreCase))
                 AppendProjectTextLocked(e.ProjectId, e.Text);
 
@@ -2926,7 +2930,8 @@ public sealed partial class RunViewModel : ObservableObject
             // "buffer'a yazıldı ama kanala henüz post edilmedi" aralığını SeedRunDocument/SeedProjectDocument'ın
             // (kendi _gate kilidiyle) atomik biçimde kapatmasını engelliyordu (mod değişiminde kopya satır —
             // bkz. task-12-report.md Fix wave 1). Post kilitsiz/hızlı (Channel.Writer.TryWrite) olduğundan
-            // kilidi gereksiz uzatmaz.
+            // kilidi gereksiz uzatmaz. Store'a yazım da aynı bölümdedir: store önce yazılır, sonra pompa — görünüm
+            // backlog'unun belgeden hep ileride olması buna dayanır.
             if (ActiveProjectId is null || string.Equals(ActiveProjectId, e.ProjectId, StringComparison.OrdinalIgnoreCase))
                 _console.Post(e.Text);
         }
@@ -2960,8 +2965,7 @@ public sealed partial class RunViewModel : ObservableObject
         {
             _liveLines.Clear();
             _projectText.Clear();
-            _runText.Clear();
-            _runLineCount = 0;
+            Narrative.Clear();
             _projectLineCount.Clear();
             // Uçuştaki bayat batch'ler düşer (SeedRunDocument ile AYNI sentinel): temizlikten ÖNCE pompaya girmiş
             // bir önceki işlemin satırı, temizlikten SONRA ekrana sızamaz (nesil damgası — ConsoleBatcher).
@@ -2972,9 +2976,10 @@ public sealed partial class RunViewModel : ObservableObject
 
     /// <summary>
     /// [design v1.13.2 §2.5 · §9] Konsol tamponu bir işlem başlangıcında SİLİNDİĞİNDE ateşler
-    /// (<see cref="ClearConsoleForNewOperation"/>) — kabuk ekrandaki AvalonEdit belgesini de boşaltır
-    /// (<c>ConsoleView.ClearRunDocument</c>). VM tamponu ile ekran ayrı iki kopyadır ve ikincisi yalnız
-    /// mod geçişinde yeniden kuruluyordu; bu olay o kopyayı işlem başlangıcında da hizalar.
+    /// (<see cref="ClearConsoleForNewOperation"/>) — kabuk ekrandaki AvalonEdit belgesini de boşaltır: belgeyi anlatıya
+    /// (<see cref="Narrative"/>) BOŞ bağlar (<c>ConsoleView.ReplaceRunDocument</c>, satır sayısı 0). Belge anlatının yalnız
+    /// render penceresidir ve eskiden yalnız mod geçişinde yeniden kuruluyordu; bu olay onu işlem başlangıcında da hizalar.
+    /// Olay kilit DIŞINDA yayınlanır: arada gelen bir satır store'dadır ve pompadan batch'le gelir.
     /// </summary>
     public event EventHandler? ConsoleCleared;
 
@@ -2985,10 +2990,11 @@ public sealed partial class RunViewModel : ObservableObject
         // durur (event stream + şeritteki geçen süre). Satır türünü yalnız RENK ayırır; ham MSBuild
         // (OnProjectLog) zaten bu yoldan geçmez.
         // [Fix wave 1, Finding 3] OnProjectLog ile aynı gerekçeyle Post kilit İÇİNE alındı.
+        // Metin birden çok satır taşıyabilir (çok satırlı hata mesajı, git stderr): store onu belgenin göstereceği satırlara
+        // böler, yani "N lines" ekrandaki satırları sayar.
         lock (_gate)
         {
-            _runText.Append(text).Append('\n');
-            _runLineCount++;
+            Narrative.Append(text);
             if (ActiveProjectId is null) _console.Post(text);
         }
     }
@@ -3000,7 +3006,7 @@ public sealed partial class RunViewModel : ObservableObject
     {
         lock (_gate)
             return ActiveProjectId is null
-                ? _runLineCount
+                ? Narrative.Count
                 : _projectLineCount.TryGetValue(ActiveProjectId, out var n) ? n : 0;
     }
 
@@ -3020,7 +3026,9 @@ public sealed partial class RunViewModel : ObservableObject
         return n;
     }
 
-    public string GetRunDocumentText() { lock (_gate) return _runText.ToString(); }
+    /// <summary>[test yüzeyi] Anlatının tamamı, '\n' sonekli — üretim çağıranı yoktur: görünüm belgeyi store'un son diliminden
+    /// kurar (<see cref="SeedRunDocument"/>), tam metni hiçbir üretim yolu istemez.</summary>
+    internal string GetRunDocumentText() { lock (_gate) return Narrative.Join(0, Narrative.Count); }
     /// <summary>[perf Faz C · C4 · test yüzeyi] Bir projenin metin tamponundaki satır sayısı — sayfası ekranda olmasa da (yetim
     /// dikiş). Tamponun temizliğini metinle birlikte pinler.</summary>
     internal int GetProjectLineCount(string projectId)
@@ -3035,30 +3043,37 @@ public sealed partial class RunViewModel : ObservableObject
 
     /// <summary>[D4/Solution B — reseed flicker] MainWindow'un "Back" akışının kullandığı tohumlama metodu.
     /// Doküman TIKLAMA ANINDA UI thread'inde SENKRON kurulur (başlık ve gövde AYNI karede değişir): bu metot UI
-    /// thread'inde çağrılır ve <paramref name="applyNow"/>'ı run dokümanının TAZE snapshot'ıyla senkron çağırır
-    /// (çağıran doğrudan <c>ConsoleView.ShowRunDocument</c>'a verir). Ayrıca <see cref="ConsoleBatcher.PostReseedDrop"/>
-    /// ile bir drop-only sentinel yazar: pump, snapshot'a zaten dahil olan uçuştaki satırları atar (doküman-set
-    /// yapmaz — o zaten senkron olduğundan).
+    /// thread'inde çağrılır ve <paramref name="applyNow"/>'ı anlatının TAZE snapshot'ıyla senkron çağırır
+    /// (çağıran doğrudan <c>ConsoleView.ShowRunDocument</c>'a verir). Snapshot tam metin DEĞİLDİR: store + o anki satır
+    /// sayısı (<see cref="NarrativeSnapshot"/>); görünüm belgeyi store'un son diliminden kurar, öncesini tepeye
+    /// kaydırınca aynı store'dan ister. Ayrıca <see cref="ConsoleBatcher.PostReseedDrop"/> ile bir drop-only sentinel
+    /// yazar: pump, snapshot'a zaten dahil olan uçuştaki satırları atar (doküman-set yapmaz — o zaten senkron olduğundan).
     ///
-    /// <para><b>Sıralama (atomiklik):</b> snapshot okuma + <c>PostReseedDrop</c> (nesli ilerletir → sentinel) TEK
-    /// _gate kilidi altında ATOMİKTİR — OnProjectLog da _runText yazımını ve <c>_console.Post</c>'unu AYNI _gate
-    /// altında yaptığından, snapshot'a giren her satır sentinel'den ÖNCE kanaldadır. <b>[D4 review §1]</b>
+    /// <para><b>Sıralama (atomiklik):</b> snapshot okuma (satır sayısı) + <c>PostReseedDrop</c> (nesli ilerletir →
+    /// sentinel) TEK _gate kilidi altında ATOMİKTİR — OnProjectLog da store yazımını (<see cref="Narrative"/>) ve
+    /// <c>_console.Post</c>'unu AYNI _gate altında yaptığından, sayıya giren her satır sentinel'den ÖNCE kanaldadır,
+    /// sonrakiler SONRA. <b>[D4 review §1]</b>
     /// <paramref name="applyNow"/> (WPF doküman rebuild'i) artık _gate DIŞINDA çağrılır: generation guard,
     /// correctness'i "applyNow boyunca kilidi tutup post'ları bloke etme"den AYIRDIĞINDAN marshal-free OnProjectLog
-    /// hot-path'i WPF rebuild süresince bloklanmaz. Güvenlik: reseed'den ÖNCE drenajlanan (eski nesil) satırlar,
-    /// koşullarına bakılmaksızın MainWindow.AppendConsoleBatch'te <c>batchGen &lt; CurrentReseedGen</c> ile ATILIR;
-    /// applyNow sonrası Post edilen (yeni nesil) satırların flush'ı UI thread'inde applyNow'ın ARDINA sıralanır
-    /// (Dispatcher.InvokeAsync tek-thread FIFO — applyNow'ı ÖNceleyemez) → taze dokümana akar (dup/kayıp yok).</para></summary>
-    public void SeedRunDocument(Action<string> applyNow)
+    /// hot-path'i WPF rebuild süresince bloklanmaz; store yalnız büyüdüğünden kilit dışında okunan dilim de aynı satırlardır.
+    /// Güvenlik: reseed'den ÖNCE drenajlanan (eski nesil) satırlar, koşullarına bakılmaksızın MainWindow.AppendConsoleBatch'te
+    /// <c>batchGen &lt; CurrentReseedGen</c> ile ATILIR; applyNow sonrası Post edilen (yeni nesil) satırların flush'ı UI
+    /// thread'inde applyNow'ın ARDINA sıralanır (Dispatcher.InvokeAsync tek-thread FIFO — applyNow'ı ÖNceleyemez) → taze
+    /// dokümana akar (dup/kayıp yok).</para></summary>
+    public void SeedRunDocument(Action<NarrativeSnapshot> applyNow)
     {
-        string snapshot;
+        NarrativeSnapshot snapshot;
         lock (_gate)
         {
-            snapshot = _runText.ToString();
+            snapshot = TakeNarrativeSnapshot();
             _console.PostReseedDrop();
         }
         applyNow(snapshot); // [D4 review §1] _gate DIŞINDA — hot-path'i WPF rebuild boyunca bloklamaz (guard güvenli kılar)
     }
+
+    /// <summary>Anlatının anlık görüntüsü: store + o anki satır sayısı. Çağıran <c>_gate</c>'i tutar — sayı ile sentinel'in
+    /// kanaldaki yeri birlikte okunmalıdır (<see cref="SeedRunDocument"/>).</summary>
+    private NarrativeSnapshot TakeNarrativeSnapshot() => new(Narrative, Narrative.Count);
 
     /// <summary>[D4/Solution B] Proje kartına tıklama akışının tohumlama metodu — bkz. <see cref="SeedRunDocument"/>'ın
     /// XML yorumu (aynı senkron doküman-set + drop-only sentinel + generation guard gerekçesi, proje dokümanı için).

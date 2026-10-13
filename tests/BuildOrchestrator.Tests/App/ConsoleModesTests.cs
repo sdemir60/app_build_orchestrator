@@ -135,9 +135,9 @@ public class ConsoleModesTests
         var view = new ConsoleView();
         var header = new ConsoleHeader();
 
-        // Önceki anlatı/run içeriği + gövdeye senkron kur.
+        // Önceki anlatı/run içeriği + gövdeye senkron kur (kabuğun anlatıya dönüş yolu: ShowRunConsole).
         vm.OnEvent(new SyncProgressEvent("Sync complete — 7 changed projects, 14 to build", "info"));
-        view.ShowRunDocument(vm.GetRunDocumentText());
+        vm.SeedRunDocument(view.ShowRunDocument);
         const string previousRunText = "Sync complete — 7 changed projects";
         Assert.Contains(previousRunText, view.Document.Text);
 
@@ -506,5 +506,26 @@ public class ConsoleModesTests
 
         // ActiveProjectId null (run modu) → aktif tampon = run dokümanı; sayaç satır satır artar.
         Assert.Equal(3, vm.GetActiveLineCount());
+    }
+
+    /// <summary>
+    /// [idle-memory · dalga 1] Çok satırlı bir anlatı satırı (çok satırlı hata mesajı — motorun <c>ex.Message</c>'ı, git stderr)
+    /// belgede kaç satırsa "N lines" o kadar sayar ve anlatı onu o satırlar olarak tutar.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eskiden sayaç GİRDİ başına birdi: iki satırlık bir hata belgede iki satır, başlıkta bir
+    /// satırdı. Değişme gerekçesi: anlatının tek sahibi (<c>NarrativeStore</c>) aynı zamanda konsolun chunk loader indeksidir ve
+    /// indeks belge satırıyla birebir yürümek zorundadır (kırpılan belge satırı sayısı indekse eklenir; ayrışırsa yukarı
+    /// kaydırma tekrar ya da delik getirir). Store çok satırlı girdiyi belgenin ayraç kuralıyla böler; sayaç da onu sayar.</para>
+    /// </summary>
+    [Fact]
+    public async Task GetActiveLineCount_counts_the_lines_a_multi_line_narrative_entry_shows()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe); // hiç başlatılmadı — OnEvent engine'e dokunmaz
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new ErrorEvent("runFailed", "first line\r\n   at Second.Line()"));
+
+        Assert.Equal(2, vm.GetActiveLineCount());
+        Assert.Equal("[error] runFailed: first line\n   at Second.Line()\n", vm.GetRunDocumentText());
     }
 }

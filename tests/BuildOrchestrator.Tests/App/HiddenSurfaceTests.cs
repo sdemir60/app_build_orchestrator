@@ -182,9 +182,9 @@ public class HiddenSurfaceTests
 
     /// <summary>
     /// [perf Faz A · A2] <b>Gizli pencerede konsol belgesine yazılmaz.</b> Tepsideyken derlenen bir koşunun satırları
-    /// kimsenin görmediği AvalonEdit belgesine basılıyor ve her basış görünmeyen bir düzen işini zorluyordu. Metin VM
-    /// tamponunda zaten durur (<c>OnProjectLog</c> run metnine yazar); pencere dönünce belge o TAM metinden BİR kez
-    /// kurulur. Pompa bu fixture'da hiç tick etmez (<see cref="MainWindowHost.NeverTickingBatcher"/>): batch
+    /// kimsenin görmediği AvalonEdit belgesine basılıyor ve her basış görünmeyen bir düzen işini zorluyordu. Metin modelde
+    /// zaten durur (<c>OnProjectLog</c> anlatı store'una yazar); pencere dönünce belge modelden BİR kez kurulur. Pompa bu
+    /// fixture'da hiç tick etmez (<see cref="MainWindowHost.NeverTickingBatcher"/>): batch
     /// üretimdeki hedefe (<c>MainWindow.AppendConsoleBatch</c>) pompanın yaptığı gibi test tarafından verilir.
     /// </summary>
     [StaFact]
@@ -209,7 +209,7 @@ public class HiddenSurfaceTests
     /// <summary>
     /// Boşta açılışta overlay'de "ready" durur ve belgeye gelen İLK anlatı satırı onu siler
     /// (<c>AppendNarrativeBatch</c> → <c>ClearReadyText</c>). Gizliyken batch'ler belgeye hiç girmediği için o yol
-    /// çalışmaz; dönüşte belgeyi tam metinle kuran yol "ready"yi kendisi silmezse tepsiden başlatılan İLK derleme dolu
+    /// çalışmaz; dönüşte belgeyi modelden kuran yol "ready"yi kendisi silmezse tepsiden başlatılan İLK derleme dolu
     /// bir konsolun altında "ready" gösterirdi.
     /// </summary>
     [StaFact]
@@ -234,7 +234,7 @@ public class HiddenSurfaceTests
     }
 
     /// <summary>
-    /// Yeni işlem konsolu temizler (<c>ConsoleCleared</c> → <c>ClearRunDocument</c>); gizli pencerede belgeye
+    /// Yeni işlem konsolu temizler (<c>ConsoleCleared</c> → belge boş anlatıya bağlanır); gizli pencerede belgeye
     /// dokunulmaz — temizlik de dönüşteki tek kurulumun işidir ve belge modelin o anki hâlinden kurulur.
     /// </summary>
     [StaFact]
@@ -244,7 +244,7 @@ public class HiddenSurfaceTests
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
         MainWindowHost.AcceptSends(vm);
         var console = window.Shell.ConsoleViewControl;
-        console.ShowRunDocument("Build succeeded\n"); // önceki işlemin satırı ekranda (OperationConsoleClearTests deseni)
+        console.ShowRunDocument(NarrativeSnapshots.FromText("Build succeeded\n")); // önceki işlemin satırı ekranda (OperationConsoleClearTests deseni)
         Assert.Contains("Build succeeded", console.EditorControl.Document.Text); // ön-koşul
         window.SetSurfaceHidden(true);
         int replacedBefore = console.RunDocumentReplacedCount;
@@ -294,9 +294,9 @@ public class HiddenSurfaceTests
     /// [perf Faz A · final · M2] <b>Gösterim ile dönüş kurulumu arasında gelen batch bayat belgeye basılmaz.</b> Dönüş
     /// kurulumu (<c>ResyncAfterShow</c>) Loaded önceliğiyle kuyruklanır; pompanın Normal öncelikli batch'i ondan ÖNCE
     /// koşabilir. O anda belge hâlâ gizlenmeden önceki hâlindedir: batch ona basılsaydı boşa giderdi (dönüş kurulumu belgeyi
-    /// tam metinden yeniden kurar) ve belge kısa süre aradaki satırlar eksik kalırdı. Kapı bu yüzden yalnız pencerenin
-    /// gizliliğine değil ekranın bayatlığına da bakar: bayrak kalkık kaldıkça batch yalnız modelde (<c>RunViewModel</c>
-    /// tamponu) durur ve dönüş kurulumu hepsini TEK seferde yazar.
+    /// modelden yeniden kurar) ve belge kısa süre aradaki satırlar eksik kalırdı. Kapı bu yüzden yalnız pencerenin
+    /// gizliliğine değil ekranın bayatlığına da bakar: bayrak kalkık kaldıkça batch yalnız modelde (<c>RunViewModel</c>'in
+    /// anlatı store'u) durur ve dönüş kurulumu hepsini TEK seferde yazar.
     /// </summary>
     [StaFact]
     public void A_console_batch_that_arrives_between_the_show_and_the_resync_is_left_for_the_single_rebuild()
@@ -331,7 +331,7 @@ public class HiddenSurfaceTests
     }
 
     /// <summary>
-    /// [perf Faz A · final · O1] Belgeyi modelin tam metninden kuran görünür bir yol bayrağı da düşürür. Gösterimden sonra
+    /// [perf Faz A · final · O1] Belgeyi modelden kuran görünür bir yol bayrağı da düşürür. Gösterimden sonra
     /// ama dönüş kurulumundan önce bir mod geçişi (proje kartı kalkar → <c>ShowRunConsole</c>) belgeyi zaten kurar; bayrak
     /// yerinde kalsaydı dönüş kurulumu belgeyi tilt sürerken ikinci kez, tilt'siz kurardı.
     /// </summary>
@@ -1363,7 +1363,7 @@ public class HiddenSurfaceTests
 
     /// <summary>
     /// [perf Faz A · A8 · Review Focus 1] <b>Gizle → göster → gizle → göster konsolu çiftlemez.</b> Her gösterimde konsol belgesi
-    /// modelin O ANKİ tam metninden BİR kez kurulur; gizliyken gelen batch'ler belgeye hiç inmez (model zaten tutar), görünürken
+    /// modelin O ANKİ hâlinden BİR kez kurulur; gizliyken gelen batch'ler belgeye hiç inmez (model zaten tutar), görünürken
     /// gelenler bir kez eklenir ve kurulumdan önce okunmuş uçuştaki bayat batch kurulumdan sonra gelse de düşer. Her geçişte
     /// belgenin satır sayısı modelinkine eşittir, hiçbir satır iki kez ya da eksik durmaz. (Bayat batch'in düşme kuralının kendisi
     /// <see cref="A_batch_stamped_before_the_rebuild_on_show_is_dropped_instead_of_landing_twice"/>'ta pinlidir.)
@@ -1412,7 +1412,7 @@ public class HiddenSurfaceTests
         window.SetSurfaceHidden(false);                               // gösterim 1
         DispatcherPump.PumpUntil(() => console.RunDocumentReplacedCount == 1, TimeSpan.FromSeconds(2));
         Assert.Equal(1, console.RunDocumentReplacedCount);
-        AssertConsoleMatchesModel();                                  // belge modelin tam metninden bir kez kuruldu
+        AssertConsoleMatchesModel();                                  // belge modelden bir kez kuruldu
         window.AppendConsoleBatch(inFlight, inFlightGen);             // uçuştaki bayat batch kurulumdan SONRA gelir
         AssertConsoleMatchesModel();                                  // ikinci kez inmez
 
