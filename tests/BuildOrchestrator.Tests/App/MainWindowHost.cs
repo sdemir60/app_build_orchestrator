@@ -127,7 +127,7 @@ internal static class MainWindowHost
         vm.RootPath = @"C:\src\OSYS";
         var projectNodes = nodes.Select((n, i) => Node(n.Name, i, n.Layer)).ToList();
         vm.OnEvent(new WorkspaceTopologyEvent(projectNodes, [], [], []));
-        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, projectNodes.Count, 0)); // → Idle
+        vm.OnEvent(SyncCompleted(projectNodes.Count)); // → Idle
         return (window, vm, window.Shell.ProjectsList);
     }
 
@@ -323,6 +323,12 @@ internal static class MainWindowHost
         }
     }
 
+    /// <summary>Motorun "Sync bitti" cevabı (<c>syncCompleted</c>): <paramref name="projectCount"/> proje, döngü yok. Olay TEK
+    /// yerde kurulur — fixture'ın açılış Sync'i (<see cref="NewWithProjectsAndClock"/>), <see cref="ReplySync"/> ve bitişi tek
+    /// başına süren testler aynı olayı kullanır (kopya YASAK).</summary>
+    public static SyncCompletedEvent SyncCompleted(int projectCount = 1) =>
+        new("main", "sha1234", false, projectCount, 0);
+
     /// <summary>[task 3] Motorun bir Sync'e cevabı: başlangıç, verilen topoloji (<see cref="Node"/> kuralıyla,
     /// <see cref="NewWithProjects"/> ile AYNI yapı üretilebilsin diye), tamamlanma.</summary>
     public static void ReplySync(RunViewModel vm, params (string Name, string? Layer)[] nodes)
@@ -331,7 +337,7 @@ internal static class MainWindowHost
         ArgumentNullException.ThrowIfNull(nodes);
         vm.OnEvent(new SyncStartedEvent(vm.RootPath, "main"));
         vm.OnEvent(new WorkspaceTopologyEvent([.. nodes.Select((n, i) => Node(n.Name, i, n.Layer))], [], [], []));
-        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, nodes.Length, 0));
+        vm.OnEvent(SyncCompleted(nodes.Length));
     }
 
     /// <summary>[perf Faz A temizlik] <c>ReplySync</c>'in yalnız adları alan hâli: <c>NewWithProjects</c>'in adlı aşırı yüklemesiyle

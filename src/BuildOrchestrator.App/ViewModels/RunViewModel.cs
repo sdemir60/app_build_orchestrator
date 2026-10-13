@@ -2592,20 +2592,43 @@ public sealed partial class RunViewModel : ObservableObject
 
     private int _endedRunSerial;
 
+    /// <summary><b>"Bir işlem bitti" sinyali:</b> koşu, Sync, Clean ya da Optimize BİTTİĞİNDE bir artar — hangi yoldan biterse
+    /// bitsin: tamamlanma, hata ya da ret, motor kaybı. Yazıcısı tektir (<see cref="MarkOperationEnded"/>); işlemin bitiş
+    /// noktaları onu çağırır: koşu <see cref="MarkRunEnded"/>, Sync <c>OnSyncCompleted</c> / <c>TryConsumeSyncFailure</c> /
+    /// motor kaybı, Clean ve Optimize yüzeylerini bırakan <c>ReleaseCleanSurface</c> / <c>ReleaseOptimizeSurface</c>. Artış,
+    /// işlemin kendi meşguliyet bayrağı bırakıldıktan SONRA yazılır.
+    /// <para>Hiç BAŞLAMAMIŞ bir işlem sayılmaz: gönderimi düşen istek, boştaki motor kaybı ve koşuya dönüşmeden düşen planlama
+    /// hatası sinyali değiştirmez. checkout ve pull işlem değildir — bir Sync'e zincirlenirlerse o Sync'in bitişi artırır.
+    /// Bellek trimi gibi işlem sonu işleri bunu dinler; koşunun kimliği için bkz. <see cref="EndedRunSerial"/>.</para></summary>
+    internal int EndedOperationSerial
+    {
+        get => _endedOperationSerial;
+        private set => SetProperty(ref _endedOperationSerial, value);
+    }
+
+    private int _endedOperationSerial;
+
+    /// <summary><see cref="EndedOperationSerial"/>'ın TEK yazıcısı — bir işlemin bitiş noktaları bunu çağırır.</summary>
+    private void MarkOperationEnded() => EndedOperationSerial++;
+
     /// <summary>
     /// [perf Faz C · C4] Koşunun HER bitiş yolu buradan geçer: <c>runCompleted</c> (<see cref="OnRunCompleted"/> — Stop'un bitişi
     /// dahil: <c>runStopped</c> koşuyu bitirmez, <see cref="IsRunInFlight"/> <c>runCompleted</c>'a dek sürer), koşu-bitiren hata
     /// (<see cref="OnError"/>) ve motor kaybı (<see cref="ReleaseAfterEngineLoss"/>). Önce canlı tampon bırakılır
     /// (<see cref="ReleaseLiveLinesWhenIdle"/>; bekleyen bir log yüklemesi varsa yüklemenin sonuna ertelenir), SONRA "koşu bitti"
-    /// sinyali yazılır (<see cref="EndedRunSerial"/>). Koşu yokken çağrılırsa (motor boştayken gitti, planlama düştü) sinyal
-    /// değişmez. Bekleyen koşu-başlangıç akış durumu da burada bırakılır (<see cref="ForgetPendingRunStart"/>): önizlemesine
-    /// varmadan biten koşunun başlangıç, kırpma ve uyarı satırları sonraki bir Sync önizlemesine sızmaz.
+    /// sinyali yazılır (<see cref="EndedRunSerial"/>) ve işlemin bitişi bildirilir (<see cref="EndedOperationSerial"/>). Koşu
+    /// yokken çağrılırsa (motor boştayken gitti, planlama düştü) ya da aynı koşunun ikinci bitişinde (<c>runCompleted</c>'dan sonra
+    /// motor kaybı) iki sinyal de değişmez: bitecek bir koşu kalmamıştır. Bekleyen koşu-başlangıç akış durumu da burada bırakılır
+    /// (<see cref="ForgetPendingRunStart"/>): önizlemesine varmadan biten koşunun başlangıç, kırpma ve uyarı satırları sonraki
+    /// bir Sync önizlemesine sızmaz.
     /// </summary>
     private void MarkRunEnded()
     {
         ForgetPendingRunStart();
         ReleaseLiveLinesWhenIdle();
+        if (EndedRunSerial == RunSerial) return; // bitecek koşu yok ya da bu koşunun bitişi zaten işaretli
         EndedRunSerial = RunSerial;
+        MarkOperationEnded();
     }
 
     /// <summary>[T8 fix round 1 · I1] Bu koşuya ait olmayan bir koşu-sonu olayı: başka bir koşunun id'si, ya da
@@ -2762,8 +2785,11 @@ public sealed partial class RunViewModel : ObservableObject
         MarkRunEnded(); // [perf Faz C · C4] motor gitti: koşunun bitişi burasıdır (tampon + sinyal)
         // [C2 fold — A5 review] Engine Sync ortasında ölürse hiçbir syncCompleted/Sync-hatası gelmez; faz
         // Syncing'de asılı kalır ve _syncInFlight sızardı. RunEndingErrorCodes deseniyle simetrik olarak burada
-        // da uçuştaki Sync serbest bırakılır.
+        // da uçuştaki Sync serbest bırakılır. [EndedOperationSerial] Bu yol boştaki motorda da koşar (Restart): bitişi
+        // yalnız bırakılan bir Sync varsa bildirilir, bayraklar silinmeden ÖNCE okunur.
+        bool syncWasBusy = SyncBusy;
         ReleaseSyncPhase();
+        if (syncWasBusy) MarkOperationEnded();
         // [clean] Aynı gerekçe: motor Clean ORTASINDA ölürse hiçbir cleanCompleted/clean-hatası gelmez ve
         // bayrak sızarsa yeniden başlatılan motorda da düğmeler kilitli kalırdı.
         ReleaseCleanSurface();

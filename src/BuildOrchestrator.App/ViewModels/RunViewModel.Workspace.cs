@@ -373,13 +373,19 @@ public sealed partial class RunViewModel
 
     /// <summary>[clean guard] Uçuştaki Clean'i serbest bırakır: İKİ bayrak da temizlenir (motor Clean'e HİÇ
     /// başlayamadan ölmüş olabilir, o hâlde uçuş bayrağı hiç kurulmamıştır) ve kapılar tek yerden açılır.
-    /// Çağıranlar: <see cref="OnCleanCompleted"/>, <see cref="TryConsumeCleanFailure"/> ve
-    /// <see cref="RunViewModel.ReleaseAfterEngineLoss"/> (motor mid-clean ölürse kapı sızmaz).</summary>
+    /// Çağıranlar: tamamlanmanın Sync'e devri (<see cref="OnCleanCompletedAsync"/>), <see cref="TryConsumeCleanFailure"/> ve
+    /// <see cref="RunViewModel.ReleaseAfterEngineLoss"/> (motor mid-clean ölürse kapı sızmaz).
+    /// <para><b>Clean'in BİTİŞ noktası da burasıdır</b> (<see cref="RunViewModel.EndedOperationSerial"/>): tamamlanma, hata/ret
+    /// ve motor kaybı hep buradan geçer. Yüzey meşgulken bırakılırsa işlemin bitişi bildirilir; boştaki bir bırakma (Restart'ın
+    /// boşta çalıştırdığı motor-kaybı yolu) bir şey bitirmez. Gönderimi düşen istek burayı DEĞİL <see cref="ReleaseCleanRequest"/>'i
+    /// kullanır: o iş hiç başlamadı.</para></summary>
     private void ReleaseCleanSurface()
     {
+        bool wasBusy = CleanBusy; // bayraklar silinmeden ÖNCE okunur
         _cleanInFlight = false;
         _cleanRequested = false;
         NotifySyncGatedCommands();
+        if (wasBusy) MarkOperationEnded();
     }
 
     /// <summary>[clean guard] İstek penceresini kapatır: gönderim SENKRON düştüğünde (motor hazır değil/ölü)
@@ -427,13 +433,19 @@ public sealed partial class RunViewModel
     private Task OnOptimizeCompletedAsync() => HandOverToSyncAsync(_optimizeStartedAtMs, ReleaseOptimizeSurface);
 
     /// <summary>[optimize guard] Uçuştaki Optimize'ı serbest bırakır: İKİ bayrak da temizlenir (motor işe HİÇ
-    /// başlayamadan ölmüş olabilir) ve kapılar tek yerden açılır. Çağıranlar: <see cref="OnOptimizeCompletedAsync"/>,
-    /// <see cref="TryConsumeOptimizeFailure"/> ve <see cref="RunViewModel.ReleaseAfterEngineLoss"/>.</summary>
+    /// başlayamadan ölmüş olabilir) ve kapılar tek yerden açılır. Çağıranlar: tamamlanmanın Sync'e devri
+    /// (<see cref="OnOptimizeCompletedAsync"/>), <see cref="TryConsumeOptimizeFailure"/> ve
+    /// <see cref="RunViewModel.ReleaseAfterEngineLoss"/>.
+    /// <para><b>Optimize'ın BİTİŞ noktası da burasıdır</b> — <see cref="ReleaseCleanSurface"/>'in birebir ikizi
+    /// (<see cref="RunViewModel.EndedOperationSerial"/>): meşgulken bırakılırsa işlemin bitişi bildirilir, boştaki bırakma ve
+    /// gönderimi düşen istek (<see cref="ReleaseOptimizeRequest"/>) bildirmez.</para></summary>
     private void ReleaseOptimizeSurface()
     {
+        bool wasBusy = OptimizeBusy; // bayraklar silinmeden ÖNCE okunur
         _optimizeInFlight = false;
         _optimizeRequested = false;
         NotifySyncGatedCommands();
+        if (wasBusy) MarkOperationEnded();
     }
 
     /// <summary>[optimize guard] İstek penceresini kapatır: gönderim SENKRON düştüğünde çağrılır — o yolda
@@ -832,6 +844,9 @@ public sealed partial class RunViewModel
         // Sync başarıyla bitti: durumlar kesin bilinir (degrade dahil). [review I2] Sessiz Sync fazı olduğu yerde
         // bırakır (Done/Stopped özeti "Ready"ye dönmez); yalnız Boot (henüz hiç Sync'lenmemiş) Idle'a çıkar.
         if (visible || Phase == AppPhase.Boot) Phase = AppPhase.Idle;
+        // [EndedOperationSerial] Bitişin işareti syncCompleted olayının kendisidir (meşgul bayrağı değil): bayrak bırakıldı ve
+        // faz yazıldı, bitiş EN SON bildirilir.
+        MarkOperationEnded();
     }
 
     /// <summary>[C2 fold — A5 review] Uçuştaki Sync'i serbest bırakır: <see cref="_syncInFlight"/> temizlenir ve
@@ -900,6 +915,7 @@ public sealed partial class RunViewModel
         // bırakan 4. geçiştir (diğer üçü OnSyncStarted/ReleaseSyncPhase'in iki çağrı yeri) — Fix wave 1 bunu
         // kaçırmıştı, butonlar bir sonraki ilgisiz bildirime kadar stale-disabled kalıyordu.
         NotifySyncGatedCommands();
+        MarkOperationEnded(); // [EndedOperationSerial] syncCompleted artık gelmeyecek: Sync'e atfedilen hata onun bitişidir
         return true;
     }
 
