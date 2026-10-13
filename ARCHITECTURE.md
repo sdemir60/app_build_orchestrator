@@ -2075,6 +2075,13 @@ Arguments are passed through `ProcessRunner`'s `ArgumentList` — manual string 
 line must be assembled by hand, escaping follows the `CreateProcessW`/MSVCRT rules including the
 backslash-before-quote counting.
 
+A child's exit code is read in one place, `ProcessExit` — for `ProcessRunner` (git, vswhere) and for the `MSBuild.exe`
+children alike. `Process.WaitForExitAsync` returns on the `Exited` event, while `ExitCode` asks the process's own
+handle; the two can disagree for a moment — on the CI runner a wait returned and `ExitCode` then threw "Process must
+exit before requested information can be determined". So the exit code is read once that handle confirms the exit,
+polled briefly and bounded by the caller's cancellation and timeout; on the ordinary path the confirmation is
+immediate.
+
 ### 9.3 Restore
 
 `msbuild -t:restore -p:RestorePackagesConfig=true -p:SolutionDir=<dir>\`. There is **no dependency on
@@ -6007,15 +6014,16 @@ A third category, `LocalOnly`, marks a test that cannot run on the hosted CI run
 runner cannot hold, say. Only CI's filter excludes it (`Category!=Acceptance&Category!=LocalOnly`, §18); the local
 command above runs it, and the local full run stays the gate. A test is never loosened or deleted to make CI green.
 The trait goes on a whole class when its assertions are wall-clock budgets (`UiResponsivenessBudgetTests`) and on a
-single method when only that method depends on a clock or a capacity the runner cannot keep steady. Three methods
+single method when only that method depends on a clock or a capacity the runner cannot keep steady. Four methods
 carry it that way, each in a class whose other tests stay in CI: the popover's real pop-in (`PopoverTests`), which
-waits for the live animation to bring the popover to full opacity and then checks how long that took, and the
-console's transition hand-back (`ConsoleTiltInTests`), which waits for the live transition to end and expects the
-real editor back at full opacity — both wait on a real animation clock whose timing on a shared runner is not steady
-enough for the windows they allow — and the cycle group-start surface hash (`CycleRoundsTests`), which proves the
+waits for the live animation to bring the popover to full opacity and then checks how long that took, and two of the
+console's transition tests (`ConsoleTiltInTests`) — the hand-back, which waits for the live transition to end and
+expects the real editor back at full opacity, and the live-output check, which waits for that same end before it
+shows that appended lines do not replay the transition — all three wait on a real animation clock whose timing on a
+shared runner is not steady enough for the windows they allow — and the cycle group-start surface hash (`CycleRoundsTests`), which proves the
 producers are read in parallel by having two reads meet within 50 ms. That meeting needs the thread pool to hand the
 loop a second thread in time; a loaded shared runner could not, and the same test fails locally once the process is
-pinned to a single core. The local run still executes all three, and it stays the gate.
+pinned to a single core. The local run still executes all four, and it stays the gate.
 
 Test counts are deliberately not recorded here — run the suite for the current number.
 
@@ -6655,6 +6663,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Restore evidence — whether a `packages.config` restore can be skipped — and its `decision.log` line | `Core/MsBuild/RestoreEvidence.cs` |
 | Output encoding | `Core/MsBuild/MsBuildOutputEncoding.cs` |
 | Process launching, argument list discipline, command-line escaping | `Core/Processes/ProcessRunner.cs`, `WindowsCommandLine.cs` |
+| A child's exit code, read once its own handle confirms the exit (git, vswhere and `MSBuild.exe` children) | `Core/Processes/ProcessExit.cs` |
 
 **Git**
 
