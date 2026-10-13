@@ -1,4 +1,5 @@
 using BuildOrchestrator.App.Services;
+using BuildOrchestrator.Core.Diagnostics;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -15,6 +16,8 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 public class DiagnosticsReportTests
 {
+    private const long Mb = 1024 * 1024;
+
     private static DiagnosticsInput Full() => new(
         Product: "Build Orchestrator",
         Version: "1.0.0+it5",
@@ -23,6 +26,7 @@ public class DiagnosticsReportTests
         EnginePid: 4242,
         Runtime: ".NET 10.0.0",
         Os: "Microsoft Windows 10.0.26200",
+        Memory: new MemoryReading(PrivateBytes: 309 * Mb, CommittedBytes: 250 * Mb, HeapBytes: 8 * Mb),
         MsBuild: @"C:\VS\MSBuild.exe (v17.9.8)",
         RepositoryRoot: @"D:\repo",
         StateFile: @"C:\state\ui-state.json",
@@ -40,13 +44,39 @@ public class DiagnosticsReportTests
         Assert.Equal(["1.0.0+it5", "1.0.0+engine", "© 2026 Delta Yazılım"], s.Identity.Select(l => l.Value));
     }
 
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — idle-memory spec §6.6]</b> RUNTIME grubu: Engine PID · .NET runtime · OS · App private · GC committed ·
+    /// Managed heap — bellek değerleri MB.
+    /// <para><b>Eski iddia</b> (<c>The_runtime_group_is_engine_pid_dotnet_runtime_and_os</c>): grup yalnız üç satırdı (Engine PID ·
+    /// .NET runtime · OS). <b>Değişme gerekçesi (boşta bellek ölçüm raporu, 2026-10-13):</b> motorun bellek satırı vardı, App'in
+    /// yoktu — App'in koşu sonrası 798 MB özel belleği ancak dış araçlarla (sayaçlar, yığın dökümü) görüldü; destek talebine
+    /// yapıştırılan tanı metni App'in belleğini hiç taşımıyordu. Üç satır motorun bellek satırının
+    /// (<c>memory: private=… committed=… heap=…</c>) App'teki eşidir: aynı okuma, aynı MB kuralı (<see cref="MemoryLine"/>).</para>
+    /// </summary>
     [Fact]
-    public void The_runtime_group_is_engine_pid_dotnet_runtime_and_os()
+    public void The_runtime_group_is_engine_pid_dotnet_runtime_os_and_the_app_memory()
     {
         var s = DiagnosticsReport.Compose(Full());
 
-        Assert.Equal(["Engine PID", ".NET runtime", "OS"], s.Runtime.Select(l => l.Label));
-        Assert.Equal(["4242", ".NET 10.0.0", "Microsoft Windows 10.0.26200"], s.Runtime.Select(l => l.Value));
+        Assert.Equal(["Engine PID", ".NET runtime", "OS", "App private", "GC committed", "Managed heap"],
+            s.Runtime.Select(l => l.Label));
+        Assert.Equal(["4242", ".NET 10.0.0", "Microsoft Windows 10.0.26200", "309 MB", "250 MB", "8 MB"],
+            s.Runtime.Select(l => l.Value));
+    }
+
+    /// <summary>[idle-memory · spec §6.6] Bellek satırlarının sayısı motorun bellek satırıyla AYNI kuraldan gelir
+    /// (<see cref="MemoryLine.Megabytes"/>): yarım MB sıfırdan uzağa yuvarlanır (2,5 MB → 3; tam sayı bölmesi ya da bankacı
+    /// yuvarlaması 2 verirdi) ve büyük değer binlik ayırıcı almaz — App kendi yuvarlamasını yazmaz.</summary>
+    [Fact]
+    public void The_memory_rows_round_like_the_engine_memory_line()
+    {
+        var s = DiagnosticsReport.Compose(Full() with
+        {
+            Memory = new MemoryReading(PrivateBytes: 5L * 1024 * Mb, CommittedBytes: 5 * Mb / 2, HeapBytes: Mb / 2 - 1),
+        });
+
+        Assert.Equal(["5120 MB", "3 MB", "0 MB"],
+            s.Runtime.Where(l => l.Label is "App private" or "GC committed" or "Managed heap").Select(l => l.Value));
     }
 
     /// <summary>

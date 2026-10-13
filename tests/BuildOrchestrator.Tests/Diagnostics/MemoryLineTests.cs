@@ -16,10 +16,24 @@ namespace BuildOrchestrator.Tests.Diagnostics;
 /// <summary>
 /// [PERF Faz C/C3] Bellek tanı satırının biçimi ve süreç okuması. Biçim <see cref="MemoryLine"/>'da TEK yerdedir; testler
 /// ikinci bir kopya tutmaz, yalnız sözleşmeyi sabitler: alan sırası, birim, yuvarlama, kültürsüzlük, hata yutma.
+///
+/// <para>[idle-memory · spec §6.6] Okuma (<see cref="MemoryLine.Read"/>) ve MB biçimi (<see cref="MemoryLine.Megabytes"/>) da
+/// tektir: satır ve App'in tanı satırları (About → Environment) ikisini de kullanır — iki yüzeyin sayıları aynı kuralla
+/// yazılır.</para>
 /// </summary>
 public class MemoryLineTests
 {
     private const long Mb = 1024 * 1024;
+
+    /// <summary>Yuvarlama tablosu — satır ve MB biçimi AYNI tabloyla sınanır (tablo tek yerde).</summary>
+    public static TheoryData<long, string> Rounding => new()
+    {
+        { 0L, "0" },
+        { Mb / 2 - 1, "0" },
+        { Mb / 2, "1" },
+        { 5 * Mb / 2, "3" },
+        { 5L * 1024 * Mb, "5120" },
+    };
 
     /// <summary>Üç değer sabit sırayla (private, committed, heap) ve MB olarak yazılır; satır <see cref="MemoryLine.Prefix"/> ile başlar.</summary>
     [Fact]
@@ -36,13 +50,16 @@ public class MemoryLineTests
     /// aşan bayt sayısı (5 GB) taşmaz ve binlik ayırıcı almaz.
     /// </summary>
     [Theory]
-    [InlineData(0L, "0")]
-    [InlineData(Mb / 2 - 1, "0")]
-    [InlineData(Mb / 2, "1")]
-    [InlineData(5 * Mb / 2, "3")]
-    [InlineData(5L * 1024 * Mb, "5120")]
+    [MemberData(nameof(Rounding))]
     public void Format_rounds_each_value_half_away_from_zero_without_digit_grouping(long bytes, string expected) =>
         Assert.Equal($"memory: private={expected} committed={expected} heap={expected}", MemoryLine.Format(bytes, bytes, bytes));
+
+    /// <summary>[idle-memory · spec §6.6] MB biçimi tek başına da satırınkiyle AYNI kuraldır: App'in tanı satırları (About →
+    /// Environment) sayıyı buradan alır, kendi yuvarlamasını yazmaz.</summary>
+    [Theory]
+    [MemberData(nameof(Rounding))]
+    public void Megabytes_rounds_half_away_from_zero_without_digit_grouping_like_the_line(long bytes, string expected) =>
+        Assert.Equal(expected, MemoryLine.Megabytes(bytes));
 
     /// <summary>Süreç okuması AYNI biçimi üretir; çalışan bir süreç en az bir MB özel bellek tutar.</summary>
     [Fact]
@@ -53,6 +70,19 @@ public class MemoryLineTests
         var match = Regex.Match(line, @"^memory: private=(\d+) committed=(\d+) heap=(\d+)$");
         Assert.True(match.Success, line);
         Assert.True(long.Parse(match.Groups[1].Value) >= 1, "a running process holds at least a megabyte of private bytes: " + line);
+    }
+
+    /// <summary>[idle-memory · spec §6.6] Süreç okumasının kendisi (satırı ve App'in tanı satırlarını besleyen TEK okuma): çalışan
+    /// bir süreç en az bir MB özel bellek ve boş olmayan bir yönetilen yığın tutar; GC'nin taahhüdü negatif olamaz (hiç GC
+    /// olmadıysa 0).</summary>
+    [Fact]
+    public void Read_samples_this_process()
+    {
+        var reading = MemoryLine.Read();
+
+        Assert.True(reading.PrivateBytes >= Mb, $"a running process holds at least a megabyte of private bytes: {reading}");
+        Assert.True(reading.HeapBytes > 0, $"a running process has a managed heap: {reading}");
+        Assert.True(reading.CommittedBytes >= 0, reading.ToString());
     }
 
     [Fact]
