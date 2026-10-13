@@ -2078,9 +2078,9 @@ backslash-before-quote counting.
 A child's exit code is read in one place, `ProcessExit` — for `ProcessRunner` (git, vswhere) and for the `MSBuild.exe`
 children alike. `Process.WaitForExitAsync` returns on the `Exited` event, while `ExitCode` asks the process's own
 handle; the two can disagree for a moment — on the CI runner a wait returned and `ExitCode` then threw "Process must
-exit before requested information can be determined". So the exit code is read once that handle confirms the exit,
-polled briefly and bounded by the caller's cancellation and timeout; on the ordinary path the confirmation is
-immediate.
+exit before requested information can be determined". So the exit code is read once that handle confirms the exit;
+when it has not yet, the wait is on the process's own kernel object together with the caller's cancellation (its
+timeout included) — no polling, no sleep (D8). On the ordinary path the confirmation is immediate.
 
 ### 9.3 Restore
 
