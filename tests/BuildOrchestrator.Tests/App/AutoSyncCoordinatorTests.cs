@@ -104,7 +104,7 @@ public sealed class AutoSyncCoordinatorTests
         /// <param name="headFromDisk">[reftable · tag çakışması] HEAD <see cref="Head"/>'den değil, koordinatörün ÜRETİMDEKİ
         /// okuyucusuyla diskten okunur (<see cref="SyncedOnDisk"/>).</param>
         public Harness(Func<IHeadWatcher>? newWatcher = null, bool headFromDisk = false) =>
-            Coordinator = new AutoSyncCoordinator(Port, action => action(), headFromDisk ? null : _ => Head, newWatcher);
+            Coordinator = new AutoSyncCoordinator(Port, action => action(), headFromDisk ? null : _ => Task.FromResult(Head), newWatcher);
 
         /// <summary>Koordinatörü (ve gerçek izleyiciyi) bırakır — diskteki bir repoya bağlanan testler kullanır.</summary>
         public void Dispose() => Coordinator.Dispose();
@@ -569,6 +569,66 @@ public sealed class AutoSyncCoordinatorTests
 
         Assert.Equal([SilentSyncReason.Refresh], h.Port.Silent);
         Assert.Empty(h.Port.BranchChanges);
+    }
+
+    // ---------------------------------------------------------------- [reftable] HEAD okunurken araya giren olaylar
+
+    /// <summary>HEAD'i okuması test bitirene dek süren koordinatör (reftable'da okuma bir git process'idir): son Sync main@A,
+    /// eşik geçmiş.</summary>
+    private static (FakePort Port, AutoSyncCoordinator Coordinator, TaskCompletionSource<HeadState?> Read) SlowHeadRead()
+    {
+        var read = new TaskCompletionSource<HeadState?>();
+        var port = new FakePort();
+        port.Synced("main", ShaA);
+        port.Now += AutoSyncCoordinator.ActivationQuietMs + 1;
+        return (port, new AutoSyncCoordinator(port, action => action(), _ => read.Task), read);
+    }
+
+    /// <summary>Pencereye dönüşün HEAD okuması sürerken build başladı: karar okuma ÖNCESİNİN kapılarıyla verilmez — tetik
+    /// saklanır, build bitince değerlendirilir. Kusurlu hâlde okuma bitince build'in ortasında Sync isteniyordu.</summary>
+    [Fact]
+    public async Task A_window_return_whose_head_read_outlives_a_build_start_waits_for_the_build()
+    {
+        var (port, coordinator, read) = SlowHeadRead();
+
+        var evaluation = coordinator.WindowActivatedAsync();
+        port.IsRunInFlight = true; // okuma sürerken build başladı
+        read.SetResult(new HeadState("feature", ShaB));
+        await evaluation;
+
+        Assert.Equal(0, port.SyncCount);
+        Assert.NotNull(coordinator.PendingTrigger);
+    }
+
+    /// <summary>İzleyicinin branch değişimi tetiğinin HEAD okuması sürerken build başladı: build sürerken branch değişimi gibi
+    /// koşu bir kez nazikçe kesilir. Kusurlu hâlde kesme dalı atlanıyor, build'in ortasında bir bölüm açılmak isteniyordu.</summary>
+    [Fact]
+    public async Task A_branch_switch_whose_head_read_outlives_a_build_start_interrupts_the_build()
+    {
+        var (port, coordinator, read) = SlowHeadRead();
+
+        var evaluation = coordinator.HeadTriggerAsync(HeadMove.BranchSwitch);
+        port.IsRunInFlight = true;
+        read.SetResult(new HeadState("feature", ShaB));
+        await evaluation;
+
+        Assert.Equal(1, port.Interrupts);
+        Assert.Equal(0, port.SyncCount);
+    }
+
+    /// <summary>HEAD okuması sürerken koordinatör kapandı (kabuk kapanıyor ya da çıkış istendi): okuma bitince hiçbir şey
+    /// gönderilmez.</summary>
+    [Fact]
+    public async Task A_head_read_that_outlives_the_coordinator_sends_nothing()
+    {
+        var (port, coordinator, read) = SlowHeadRead();
+
+        var evaluation = coordinator.WindowActivatedAsync();
+        coordinator.Dispose();
+        read.SetResult(new HeadState("feature", ShaB));
+        await evaluation;
+
+        Assert.Equal(0, port.SyncCount);
     }
 
     /// <summary>[tag çakışması] Pencereye dönüş, aynı adlı bir tag'le çakışan bir branch'te sessiz yeniler. Ölçülen kusur:

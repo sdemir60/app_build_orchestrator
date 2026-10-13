@@ -83,11 +83,11 @@ internal sealed class AutoSyncCoordinator : IDisposable
     /// <see cref="HeadSource.ReadAsync"/>: dosyadan, reftable repoda git'e sorarak.</param>
     /// <param name="newWatcher">İzleyici fabrikası (verilmezse <see cref="HeadWatcher"/>).</param>
     public AutoSyncCoordinator(IAutoSyncPort port, Action<Action> post,
-        Func<string?, HeadState?>? readHead = null, Func<IHeadWatcher>? newWatcher = null)
+        Func<string?, Task<HeadState?>>? readHead = null, Func<IHeadWatcher>? newWatcher = null)
     {
         _port = port;
         _post = post;
-        _readHead = readHead is null ? ReadHeadAsync : gitDir => Task.FromResult(readHead(gitDir));
+        _readHead = readHead ?? ReadHeadAsync;
         _newWatcher = newWatcher ?? (() => new HeadWatcher());
     }
 
@@ -273,7 +273,17 @@ internal sealed class AutoSyncCoordinator : IDisposable
         var reference = BranchReference(trigger, last);
         if (summary is null && trigger.IsActivation && _port.LastSyncAtMs is { } at && _port.NowMs() - at < ActivationQuietMs) return;
 
+        string root = _root;
         var head = await _readHead(_gitDir);
+        // [reftable] HEAD git'e sorulduysa okuma zaman aldı ve yukarıdaki kapılar bayatlamış olabilir. Koordinatör kapandıysa ya
+        // da kök değiştiyse tetik artık geçersizdir; bu arada bir koşu ya da iş başladıysa tetik kapılardan BAŞTAN geçer (koşu
+        // kesme dalı dahil) — yoksa koşunun ortasında bir Sync istenir, kesilmesi gereken koşu kesilmezdi.
+        if (_disposed || !string.Equals(root, _root, StringComparison.OrdinalIgnoreCase)) return;
+        if (_port.IsRunInFlight || _port.IsWorkspaceBusy)
+        {
+            await EvaluateAsync(trigger);
+            return;
+        }
         if (head is null)
         {
             if (summary is null && trigger.RunEnded) return;
