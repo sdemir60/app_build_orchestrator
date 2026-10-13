@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using BuildOrchestrator.Core.Processes;
 
 namespace BuildOrchestrator.Core.ProcessControl;
 
@@ -27,8 +28,7 @@ public sealed class JobChildProcess : IDisposable
         try
         {
             var process = Process.GetProcessById(Pid);
-            await process.WaitForExitAsync(ct);
-            return process.ExitCode;
+            return await ProcessExit.WaitForExitCodeAsync(process, ct);
         }
         catch (ArgumentException)
         {

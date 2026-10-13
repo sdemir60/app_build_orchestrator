@@ -46,9 +46,10 @@ public sealed class ProcessRunner : IProcessRunner
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeoutCts.CancelAfter(spec.Timeout ?? DefaultTimeout);
+        int exitCode;
         try
         {
-            await process.WaitForExitAsync(timeoutCts.Token);
+            exitCode = await ProcessExit.WaitForExitCodeAsync(process, timeoutCts.Token);
         }
         catch (OperationCanceledException)
         {
@@ -62,7 +63,7 @@ public sealed class ProcessRunner : IProcessRunner
             string errText = await ReadBoundedAsync(stderrTask, postKillCts.Token);
             return new ProcessResult(-1, outText, errText, sw.Elapsed, TimedOut: true);
         }
-        return new ProcessResult(process.ExitCode, await stdoutTask, await stderrTask, sw.Elapsed, TimedOut: false);
+        return new ProcessResult(exitCode, await stdoutTask, await stderrTask, sw.Elapsed, TimedOut: false);
     }
 
     private static async Task<string> ReadBoundedAsync(Task<string> read, CancellationToken ct)
