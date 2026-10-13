@@ -2,6 +2,17 @@
 
 Release notes for Build Orchestrator, newest version first. The What's new window in the app reads this file.
 
+## [1.9.0] - 2026-10-13
+
+### Added
+
+- Repositories in git's newer reftable format are fully supported. Returning to the window refreshes quietly, a branch switch made outside the tool opens a Switched to section in the console, a commit made during a build is picked up when the build ends, and an unfinished cherry-pick or revert holds back automatic refreshes as it does elsewhere.
+
+### Fixed
+
+- When a tag has the same name as the checked-out branch, returning to the window or finishing a build no longer starts the console over as if the branch had changed, and the branch chip, the branch list, the N behind count and pull work as they should.
+- What's new opens at the top with the newest version instead of scrolled to the bottom of the list.
+
 ## [1.8.1] - 2026-10-12
 
 ### Fixed
