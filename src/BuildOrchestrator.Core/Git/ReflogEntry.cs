@@ -40,8 +40,14 @@ public static class ReflogEntry
         int tab = lastLine.IndexOf('\t');
         if (tab < 0) return HeadMove.Other; // bozuk satır — TAB yok
 
-        string message = lastLine[(tab + 1)..];
+        return ClassifyMessage(lastLine[(tab + 1)..]);
+    }
 
+    /// <summary>[reftable] Reflog satırının yalnız mesajı (TAB'den sonrası) — sınıflandırmanın TEK kuralı. reftable repoda
+    /// reflog dosya değildir; izleyici mesajları git'ten alır (<see cref="GitService.GetHeadReflogMessagesAsync"/>) ve
+    /// doğrudan buraya verir.</summary>
+    public static HeadMove ClassifyMessage(string message)
+    {
         if (message.StartsWith(CommitPrefix, StringComparison.Ordinal)) return HeadMove.Commit;
 
         if (message.StartsWith(CheckoutMovingFromPrefix, StringComparison.Ordinal))

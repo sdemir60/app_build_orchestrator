@@ -135,6 +135,24 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
         return head.Success ? new HeadState(branch.Value, head.Value) : null;
     }
 
+    /// <summary>[reftable] HEAD reflog'unun mesajları, en yeniden eskiye (<c>git reflog --format=%gs</c>). Reflog'u dosya
+    /// olarak tutmayan reftable repoda HEAD izleyicisinin okuduğu kaynaktır (normal repoda <c>logs/HEAD</c> dosyadan
+    /// okunur). Boş mesajlı kayıtlar da listede durur: izleyici "kaç yeni hareket var" sorusunu sayıdan cevaplar. Henüz
+    /// commit'i olmayan bir repoda git hata döner — <see cref="GitResult{T}.Fail"/>.</summary>
+    public async Task<GitResult<IReadOnlyList<string>>> GetHeadReflogMessagesAsync(CancellationToken ct = default)
+    {
+        var outcome = await CommandLineTool.RunAsync(_runner, CommandLineTool.Git, _gitExecutable, ["reflog", "--format=%gs"], _repoRoot, CommandTimeout, ct);
+        if (!outcome.Success) return GitResult<IReadOnlyList<string>>.Fail(outcome.Error!);
+
+        var r = outcome.Value!;
+        if (r.ExitCode != 0) return GitResult<IReadOnlyList<string>>.Fail(CommandLineTool.DescribeFailure(CommandLineTool.Git, r));
+
+        // Her kayıt bir satırdır; çıktının sonundaki satır sonu bir kayıt değildir (boş mesajlı kayıt ise boş bir satırdır).
+        string[] lines = r.StandardOutput.Split('\n');
+        int count = lines[^1].Length == 0 ? lines.Length - 1 : lines.Length;
+        return GitResult<IReadOnlyList<string>>.Ok([.. lines.Take(count).Select(line => line.TrimEnd('\r'))]);
+    }
+
     /// <summary>Working-tree + staged değişiklikler (`git status --porcelain -z`'den path listesi). Temiz repo → boş liste.
     /// <para><c>-z</c> ZORUNLUDUR: onsuz git ASCII dışı baytları (<c>core.quotepath</c> varsayılanı) tırnaklı sekizlik
     /// kaçışlarla yazar — <c>src/Işık.cs</c> <c>"src/I\305\237\304\261k.cs"</c> olur, diskteki hiçbir yolla

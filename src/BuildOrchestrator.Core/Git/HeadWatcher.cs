@@ -1,4 +1,5 @@
 using System.Text;
+using BuildOrchestrator.Core.Processes;
 
 namespace BuildOrchestrator.Core.Git;
 
@@ -24,6 +25,14 @@ public interface IHeadWatcher : IDisposable
 /// satır bir commit olsa da branch değişmiştir. Pencerede eklenen bütün satırlar okunur (izleyici son okuduğu
 /// uzunluğu tutar). Dosya kısaldıysa (reflog expire / yeniden yazım) yalnız son satır sınıflanır; okunamazsa
 /// <see cref="HeadMove.Other"/> — güvenli yön: koordinatör kararı HEAD'e bakarak verir.</para>
+///
+/// <para>[reftable] Ref'leri tablolarda tutan repoda (<see cref="HeadReader.IsReftable"/>) <c>logs</c> klasörü yoktur:
+/// izleyici <c>reftable\tables.list</c>'i izler (git her ref değişikliğinde onu yeniden yazar) ve pencere kapanınca
+/// HEAD'in reflog mesajlarını git'ten alır (<see cref="GitService.GetHeadReflogMessagesAsync"/>, git dizininin içinden —
+/// linked worktree'nin kendi tablosu da orada). Yeni hareketler kayıt SAYISININ artışıdır ve dosyadakiyle aynı kural
+/// uygulanır: en güçlüsü; sayı azaldıysa ya da taban bilinmiyorsa yalnız en yenisi; okunamazsa Other. Tablo listesi HEAD'e
+/// dokunmayan değişikliklerde de yenilenir (fetch'in uzak ref'leri, yeni branch ya da tag) — reflog büyümediği için çağrı
+/// yapılmaz.</para>
 /// </summary>
 public sealed class HeadWatcher : IHeadWatcher
 {
@@ -33,12 +42,30 @@ public sealed class HeadWatcher : IHeadWatcher
     private const string LogsFolder = "logs";
     private const string HeadLog = "HEAD";
 
+    /// <summary>[reftable] Tabloların klasörü ve git'in her ref değişikliğinde yeniden yazdığı liste dosyası.</summary>
+    private const string ReftableFolder = "reftable";
+    private const string TablesList = "tables.list";
+
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
     private readonly object _gate = new();
     private FileSystemWatcher? _watcher;
     private SettleDebouncer? _debouncer;
     private string _logPath = string.Empty;
     private long _offset;
+
+    /// <summary>[reftable] İzlenen git dizini (reflog git'e buradan sorulur).</summary>
+    private string _gitDir = string.Empty;
+
+    /// <summary>[reftable] Son okumada HEAD reflog'undaki kayıt sayısı; ilk okumaya dek <see cref="_reflogBaseline"/>.</summary>
+    private int? _reflogCount;
+
+    /// <summary>[reftable] Başlangıçtaki kayıt sayısı — <see cref="Start"/> onu arka planda ister (çağıran UI thread'i bir
+    /// git process'ini beklemez); ilk pencere kapanınca okunur.</summary>
+    private Task<int?>? _reflogBaseline;
+
+    /// <summary>İzleyici hareket saymaya hazır: reftable'da başlangıç sayımı bitti (normal repoda hemen). Bundan önceki bir
+    /// hareket tabana karışabilir ve ilk pencerede yalnız en yeni kayıt sınıflanır. Testler değişikliği bundan sonra yapar.</summary>
+    internal Task Ready => _reflogBaseline ?? Task.CompletedTask;
 
     /// <summary>[final review M6] Son okuma yarım bir satırla bittiyse dosyanın o anki uzunluğu; bitmediyse <c>null</c>.</summary>
     private long? _partialTailAt;
@@ -59,7 +86,12 @@ public sealed class HeadWatcher : IHeadWatcher
     {
         Stop();
         UnavailableReason = null;
+        return HeadReader.IsReftable(gitDir) ? StartOnTables(gitDir, onSettled) : StartOnReflogFile(gitDir, onSettled);
+    }
 
+    /// <summary>Normal (files) repo: <c>logs\HEAD</c>'e eklenen satırlar okunur.</summary>
+    private bool StartOnReflogFile(string gitDir, Action<HeadMove> onSettled)
+    {
         string logsDir = Path.Combine(gitDir, LogsFolder);
         if (!Directory.Exists(logsDir))
         {
@@ -69,10 +101,35 @@ public sealed class HeadWatcher : IHeadWatcher
 
         _logPath = Path.Combine(logsDir, HeadLog);
         _offset = LengthOrZero(_logPath);
-        _debouncer = new SettleDebouncer(SettleDelay, _delay, () => Settle(onSettled));
+        return Watch(logsDir, HeadLog, () => Settle(onSettled));
+    }
+
+    /// <summary>[reftable] Tablo listesi izlenir, hareketler git'in reflog'undan okunur (<see cref="ReadNewTableMove"/>).</summary>
+    private bool StartOnTables(string gitDir, Action<HeadMove> onSettled)
+    {
+        string tablesDir = Path.Combine(gitDir, ReftableFolder);
+        if (!Directory.Exists(tablesDir))
+        {
+            UnavailableReason = "no reftable folder";
+            return false;
+        }
+
+        _gitDir = gitDir;
+        _reflogCount = null;
+        _reflogBaseline = Task.Run(() => ReadReflog(gitDir)?.Count);
+        return Watch(tablesDir, TablesList, () =>
+        {
+            if (ReadNewTableMove() is { } move) onSettled(move);
+        });
+    }
+
+    /// <summary>Tek dosyanın Windows bildirimini kurar; her yazım sessizlik penceresini yeniden kurar. İki kipin ortak yolu.</summary>
+    private bool Watch(string folder, string file, Action onSettled)
+    {
+        _debouncer = new SettleDebouncer(SettleDelay, _delay, onSettled);
         try
         {
-            var watcher = new FileSystemWatcher(logsDir, HeadLog)
+            var watcher = new FileSystemWatcher(folder, file)
             {
                 IncludeSubdirectories = false,
                 NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName | NotifyFilters.CreationTime,
@@ -161,6 +218,35 @@ public sealed class HeadWatcher : IHeadWatcher
             _offset = LengthOrZero(_logPath);
             return HeadMove.Other;
         }
+    }
+
+    /// <summary>[reftable] Son okumadan bu yana HEAD reflog'una eklenen kayıtların en güçlü hareketi; eklenen yoksa
+    /// <c>null</c>. Kural <see cref="ReadNewMoveLocked"/>'ınkiyle aynıdır, ölçü satır yerine kayıt sayısıdır.</summary>
+    private HeadMove? ReadNewTableMove()
+    {
+        lock (_gate)
+        {
+            int? known = _reflogCount ?? _reflogBaseline?.GetAwaiter().GetResult();
+            var messages = ReadReflog(_gitDir);
+            if (messages is null) return HeadMove.Other; // okunamadı — güvenli yön (dosya kipindeki IO hatası gibi)
+            _reflogCount = messages.Count;
+
+            int added = known is { } before ? messages.Count - before : -1;
+            if (added == 0) return null; // tablo yenilendi ama HEAD oynamadı (fetch, yeni branch ya da tag)
+            if (added < 0) return messages.Count > 0 ? ReflogEntry.ClassifyMessage(messages[0]) : null; // kısaldı / taban yok
+
+            HeadMove strongest = ReflogEntry.ClassifyMessage(messages[added - 1]); // en yeniden eskiye: önce en eski yeni kayıt
+            for (int i = added - 2; i >= 0; i--) strongest = HeadMoveRules.Stronger(strongest, ReflogEntry.ClassifyMessage(messages[i]));
+            return strongest;
+        }
+    }
+
+    /// <summary>[reftable] HEAD reflog mesajları (en yeniden eskiye); okunamazsa <c>null</c>. Pencere geri çağrısında ve
+    /// başlangıç tabanında — thread-pool'da — çağrılır, UI thread'inde değil.</summary>
+    private static IReadOnlyList<string>? ReadReflog(string gitDir)
+    {
+        var result = new GitService(new ProcessRunner(), gitDir).GetHeadReflogMessagesAsync().GetAwaiter().GetResult();
+        return result.Success ? result.Value : null;
     }
 
     private static long LengthOrZero(string path)
