@@ -149,9 +149,9 @@ public class ConsoleModesTests
         vm.OnEvent(new ProjectLogEvent("r1", projectId, 1, "Determining projects to restore..."));
         vm.OnEvent(new ProjectLogEvent("r1", projectId, 2, "Restored A.csproj"));
         vm.SelectProject(projectId); // [D4 review §2] üretimde seçim load'dan önce kurulur (proje modu koşulu)
-        var load = vm.LoadProjectLogAsync(projectId);
-        vm.OnEvent(new ProjectLogChunkEvent(projectId, 0, "Determining projects to restore...\nRestored A.csproj\n",
-            IsLast: true, ThroughLineNumber: 2));
+        var (load, request) = ProjectLogIpc.Request(vm, projectId);
+        vm.OnEvent(ProjectLogIpc.Reply(request, projectId, "Determining projects to restore...\nRestored A.csproj\n",
+            through: 2));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
 
         // Tıklama anı: başlık + gövde SENKRON proje-loguna geçer (pump beklenmeden).
@@ -468,10 +468,12 @@ public class ConsoleModesTests
         };
 
     /// <summary>
-    /// <b>Logu olmayan bir projeye tıklamak da o projenin sayfasını AÇAR.</b> Eskiden motor
-    /// <c>logNotFound</c> dediğinde proje modu hiç kurulmuyor, konsol run anlatısında kalıyordu — atlanmış bir
+    /// <b>Logu olmayan bir projeye tıklamak da o projenin sayfasını AÇAR.</b> Eskiden motor "log yok"
+    /// dediğinde proje modu hiç kurulmuyor, konsol run anlatısında kalıyordu — atlanmış bir
     /// projenin log dosyası HİÇ yazılmadığı için (gerekçe yalnız <c>decision.log</c>'a gider) bu, en sık
     /// tıklanan durumdu ve tıklama "hiçbir şey yapmıyor" gibi görünüyordu.
+    /// <para>[DEĞİŞEN KURULUM — idle-memory I1] "Log yok" cevabı eskiden <c>error(logNotFound)</c>'du; artık isteğin kimliğini
+    /// yankılayan tek, boş, bayraklı bir chunk'tır. İddia aynı.</para>
     /// </summary>
     [Fact]
     public async Task Clicking_a_project_without_a_log_still_opens_its_page()
@@ -482,8 +484,8 @@ public class ConsoleModesTests
         vm.OnEvent(new ProjectSkippedEvent("r1", projectId, SkipReasons.UpToDate));
 
         vm.SelectProject(projectId);
-        var load = vm.LoadProjectLogAsync(projectId);
-        vm.OnEvent(new ErrorEvent("logNotFound", projectId));
+        var (load, request) = ProjectLogIpc.Request(vm, projectId);
+        vm.OnEvent(ProjectLogIpc.NotFound(request, projectId));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Equal(projectId, vm.ActiveProjectId);

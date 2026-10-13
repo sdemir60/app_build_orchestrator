@@ -405,10 +405,12 @@ public enum ConsoleSelection { ShowRun, LoadProjectLog }
 /// koşu anlatısı (<see cref="Narrative"/>) kendi iç kilidiyle korunur ve yazımı yine <c>_gate</c> altındadır (pompaya gönderimle
 /// AYNI bölümde).</para>
 ///
-/// <para><b>Log dikişi [T28]:</b> <see cref="LoadProjectLogAsync"/> bir proje için diskteki snapshot'ı ister;
-/// gelen <c>ProjectLogChunkEvent</c>'ler sırayla biriktirilir, SON chunk'ta (<c>IsLast</c>) o ana kadar
+/// <para><b>Log dikişi [T28]:</b> <see cref="LoadProjectLogAsync"/> bir proje için diskteki snapshot'ı kendi istek kimliğiyle
+/// ister; o kimliği yankılayan <c>ProjectLogChunkEvent</c>'ler sırayla biriktirilir (başka bir isteğin gecikmiş cevabı yok sayılır),
+/// SON chunk'ta (<c>IsLast</c>) o ana kadar
 /// tamponlanmış canlı <c>projectLog</c> satırlarından yalnız <c>LineNumber &gt; ThroughLineNumber</c> olanlar
-/// (tekrar YOK) eklenir ve konsol proje moduna geçer. Canlı satırlar (<c>_liveLines</c>) yalnız bekleyen yüklemenin projesi
+/// (tekrar YOK) eklenir ve konsol proje moduna geçer — "log yok" cevabı da boş bir snapshot olarak aynı yoldan. Canlı satırlar
+/// (<c>_liveLines</c>) yalnız bekleyen yüklemenin projesi
 /// için, istekten sonra tamponlanır ve yüklemenin sonunda bırakılır (<see cref="CompletePendingLoad"/>).</para>
 /// </summary>
 public sealed partial class RunViewModel : ObservableObject
@@ -452,6 +454,9 @@ public sealed partial class RunViewModel : ObservableObject
     internal NarrativeStore Narrative { get; } = new();
 
     private PendingLoad? _pendingLoad; // yalnız UI thread'inde YAZILIR (LoadProjectLogAsync, CompletePendingLoad); OnProjectLog arka plandan okur
+    // [idle-memory · I1] Son proje log isteğinin kimliği — her yükleme bir artırır (ilk istek 1; 0 "kimliksiz" demektir ve hiçbir
+    // isteğe verilmez). Yalnız UI thread'inde yazılır (LoadProjectLogAsync).
+    private int _lastLogRequestId;
 
     private string? _currentRunId;
     // [Task 2 review fix M-2] Bu run'ın modu — TEK yazıcı OnRunStarted'dır (koşulsuz, moddan bağımsız döngüyle
@@ -2698,19 +2703,9 @@ public sealed partial class RunViewModel : ObservableObject
     private void OnError(ErrorEvent e)
     {
         AppendRunLine($"[error] {e.Code}: {e.Message}");
-        // [Fix wave 1(It-3), Finding 2] logNotFound (ör. Skipped/cycle üyesi proje kartına tıklama — hiç log
-        // dosyası yok) OnError'da hiç ele alınmıyordu: bekleyen LoadProjectLogAsync'in Completion'ı asla
-        // tamamlanmaz, await SONSUZA DEK asılı kalırdı. ErrorEvent'te ProjectId yok (kontrat sabit) — eldeki
-        // TEK bekleyen yüklemeyi (varsa) burada çözüyoruz; proje modu hiç kurulmadığından ActiveProjectId
-        // dokunulmadan kalır (run dokümanı gösterilmeye devam eder).
-        if (e.Code == "logNotFound" && _pendingLoad is { } pending)
-        {
-            // [her projenin sayfası var] Log YOKSA da proje moduna geçilir: sayfa boş kalmaz, o projenin O ANKi
-            // durumunu anlatan metni gösterir (Console.ConsoleEmptyState.ForEmptyLog). Eskiden mod hiç kurulmuyor,
-            // kullanıcı run anlatısına bakıyordu — tıklama "hiçbir şey yapmıyor" gibi görünüyordu.
-            EnterProjectMode(pending.ProjectId);
-            CompletePendingLoad(pending); // [perf Faz C · C4] yüklemenin sonu: dikiş yanıtıyla aynı kural (canlı tampon bırakılır)
-        }
+        // [idle-memory · I1] Proje log yüklemesinin hiçbir sonu buradan geçmez: motorun "log yok" cevabı artık isteğin kimliğini
+        // taşıyan bir chunk'tır ve dikişte biter (OnProjectLogChunk). Eskiden error(logNotFound) olarak gelir ve — ne istek ne
+        // proje taşıdığı için — bekleyen HER yüklemeyi dikmeden bitirirdi.
         // [B1] REDDEDİLEN bir başlatma isteği (runInProgress) kendi "starting" bayrağını BIRAKMALIDIR. Motor run
         // slotunu (_runActive) tüm event'ler yazıldıktan SONRA bırakır (ExecuteRunAsync'in finally'si), yani
         // runCompleted App'e ulaştıktan sonra kısa bir pencere boyunca slot HÂLÂ doludur — butonlar tam o anda
@@ -2724,7 +2719,7 @@ public sealed partial class RunViewModel : ObservableObject
         if (TryConsumeOptimizeFailure(e.Code, e.Message)) return;
         if (TryConsumeCheckoutFailure(e.Code)) return;
         if (e.Code == RunInProgressCode) IsStarting = false;
-        if (!RunEndingErrorCodes.Contains(e.Code)) return; // runInProgress/logNotFound/... aktif run'ı ETKİLEMEZ
+        if (!RunEndingErrorCodes.Contains(e.Code)) return; // runInProgress/badCommand/... aktif run'ı ETKİLEMEZ
         // [A5/T69 · Fix wave 1, Finding 2] Sync fazını bırakır ve hatanın KAYNAĞINI ayırt eder: kod Sync'ten
         // geldiyse (uçuşta bir Sync var ve run planlama penceresinde DEĞİL) run state'ine DOKUNULMAZ — Sync
         // salt-okurdur ve koşan bir run sırasında da tetiklenebilir. Gerekçe: RunViewModel.Workspace.cs.
@@ -2930,8 +2925,8 @@ public sealed partial class RunViewModel : ObservableObject
             // istekten önceki bir satırın tamponlanması, zararsızdır: dikişin eşiği onu ayıklar). Bırakma yüklemenin sonundadır
             // (CompletePendingLoad). Cevabı artık beklenmeyen ama silahlı kalan yükleme (gönderim düştü, motor gitti) de
             // tamponlar — gecikmiş bir chunk hâlâ dikilebilir; üst sınır o projenin istekten sonraki satırlarıdır, sonraki
-            // yükleme ya da yeni işlem bırakır (bilinçli sınır).
-            if (_pendingLoad is { } pending && string.Equals(pending.ProjectId, e.ProjectId, StringComparison.OrdinalIgnoreCase))
+            // yükleme ya da yeni işlem bırakır (bilinçli sınır). Proje eşleşmesi TEK yüklemdir (PendingLoad.IsFor).
+            if (_pendingLoad is { } pending && pending.IsFor(e.ProjectId))
             {
                 if (!_liveLines.TryGetValue(e.ProjectId, out var list)) _liveLines[e.ProjectId] = list = [];
                 list.Add(e);
@@ -3192,7 +3187,8 @@ public sealed partial class RunViewModel : ObservableObject
 
     /// <summary>[D4 review §2/§3] <see cref="LoadProjectLogAsync"/> bittikten sonra proje-log gösterilmeli mi:
     /// yalnız (guard1) yükleme proje modunu GERÇEKTEN kurduysa — <see cref="ActiveProjectId"/>==<paramref name="projectId"/>,
-    /// yani log vardı ve §2 koşullu-set'i modu kurdu (no-log/skipped/deselect-mid-load'da kurulmaz) — VE (guard2)
+    /// yani cevap dikildi ("log yok" cevabı dahil) ve §2 koşullu-set'i modu kurdu (deselect-mid-load'da ve cevabı gelmeyen,
+    /// gönderimi düşen yüklemede kurulmaz) — VE (guard2)
     /// seçim HÂLÂ o projede ise (arada başka karta/deselect'e geçilmedi). §2 donma yarışı: deselect'te ActiveProjectId
     /// zaten null kaldığından guard1 tek başına da yakalar; iki guard MainWindow'daki üretim sırasını birebir yansıtır
     /// (guard'lar burada toplanır — caller yalnız kararı uygular).</summary>
@@ -3201,10 +3197,11 @@ public sealed partial class RunViewModel : ObservableObject
         && string.Equals(SelectedProjectId, projectId, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// [T28 dikişi] <c>getProjectLog</c> gönderir; gelen chunk'lar sırayla biriktirilir. SON chunk'ta
+    /// [T28 dikişi] <c>getProjectLog</c>'u kendi kimliğiyle gönderir; o kimliği taşıyan chunk'lar sırayla biriktirilir. SON chunk'ta
     /// (<c>IsLast</c>) istekten sonra tamponlanmış canlı <c>projectLog</c> satırlarından yalnız
     /// <c>LineNumber &gt; ThroughLineNumber</c> olanlar (tekrar YOK, kayıp YOK) chunk geçmişinin ardına
-    /// eklenir ve konsol proje moduna geçer. SendAsync engine hazır değilken senkron fırlarsa yutulur — UI
+    /// eklenir ve konsol proje moduna geçer — motorun "log yok" cevabı da böyle biter (bkz. <see cref="OnProjectLogChunk"/>).
+    /// SendAsync engine hazır değilken senkron fırlarsa yutulur — UI
     /// tıklaması çökmemeli; dikiş silahlı kalır ve gecikmiş bir chunk'la yine tamamlanabilir.
     /// </summary>
     public async Task LoadProjectLogAsync(string projectId)
@@ -3212,18 +3209,19 @@ public sealed partial class RunViewModel : ObservableObject
         // [Fix wave 1(It-3), Finding 2] Yeni bir yükleme, henüz tamamlanmamış eski bir _pendingLoad'ın yerini
         // alırsa eskisini burada çözüyoruz — aksi halde eski awaiter'ın Completion'ı ASLA tamamlanmaz (leak).
         if (_pendingLoad is { } previous) CompletePendingLoad(previous);
-        var pending = new PendingLoad(projectId);
+        // [idle-memory · I1] Her istek yeni bir kimlik alır: eskisinin gecikmiş cevabı bu yüklemeyle eşleşmez (PendingLoad.IsAnsweredBy).
+        var pending = new PendingLoad(projectId, ++_lastLogRequestId);
         bool wasPending = HasPendingLogLoad;
         // [idle-memory] İstek gönderilmeden ÖNCE kurulur: OnProjectLog dikişin kuyruğunu buna bakarak tamponlar (gerekçe orada).
         _pendingLoad = pending;
         NotifyPendingLogLoad(wasPending);
-        var send = SendToEngineAsync(new GetProjectLogCommand(projectId));
+        var send = SendToEngineAsync(new GetProjectLogCommand(projectId, pending.RequestId));
         try { await send; }
         catch (Exception ex)
         {
             AppendRunLine($"[error] could not load project log: {ex.Message}");
-            // [her projenin sayfası var] Proje moduna BURADA GEÇİLMEZ — <c>logNotFound</c> dalının aksine.
-            // Fark cevabın kendisindedir: <c>logNotFound</c> motorun KESİN cevabıdır ("log yok"), gönderim
+            // [her projenin sayfası var] Proje moduna BURADA GEÇİLMEZ — motorun "log yok" cevabının aksine.
+            // Fark cevabın kendisindedir: "log yok" motorun KESİN cevabıdır (dikilir ve sayfayı açar), gönderim
             // hatası ise hiç cevap DEĞİLDİR — istek yola bile çıkmadı ve `_pendingLoad` bilerek yaşatılıyor,
             // çünkü gecikmiş bir chunk hâlâ dikişi tamamlayabilir. Burada modu kurmak, kullanıcı arada kartı
             // bıraksa bile ActiveProjectId'yi o projede TAKILI bırakır ve run konsolu sessizce donar (ölçüldü:
@@ -3231,9 +3229,9 @@ public sealed partial class RunViewModel : ObservableObject
             // [Fix wave 2, Finding 2] SendAsync engine ölüyken/hiç başlamamışken SENKRON fırlar (writer null) —
             // bu catch `await` HİÇBİR suspension olmadan senkron çalışır. Önceden Completion burada asla
             // tamamlanmıyordu: hiçbir yanıt/event gelmeyeceğinden aşağıdaki `await pending.Completion.Task`
-            // SONSUZA DEK asılı kalırdı (kart tıklaması hang). BİLEREK `_pendingLoad` null'LANMIYOR (OnError'ın
-            // logNotFound dalının aksine): mevcut testler (ör. stitch testleri) engine hiç başlatılmadan aynı
-            // senkron fırlamaya dayanır ve sonrasında gelen bir ProjectLogChunkEvent'in _pendingLoad üzerinden
+            // SONSUZA DEK asılı kalırdı (kart tıklaması hang). BİLEREK `_pendingLoad` null'LANMIYOR (bir cevabın
+            // aksine): mevcut testler (ör. stitch testleri) engine hiç başlatılmadan aynı
+            // senkron fırlamaya dayanır ve sonrasında gelen, bu isteğin kimliğini taşıyan bir ProjectLogChunkEvent'in
             // OnProjectLogChunk'ta hâlâ eşleşip dikişi tamamlamasını bekler — burada null'lamak o akışı kırardı.
             // [idle-memory] Silahlı kalır ama cevabı BEKLENMEZ: işlem sonu trimini tutmaz (HasPendingLogLoad).
             StopAwaitingReply(pending);
@@ -3276,11 +3274,17 @@ public sealed partial class RunViewModel : ObservableObject
     /// <summary>[Kısıt 4] MainWindow bu event'i (diğer tüm state event'leri gibi) UI thread'ine MARSHAL EDER —
     /// hem <see cref="ActiveProjectId"/> (WPF binding'e bağlı) yazdığı için, hem de proje başına yalnız birkaç
     /// chunk geldiğinden (LogChunker parça sayısı) marshal maliyeti A13.2'nin önlemeye çalıştığı "satır başına
-    /// Dispatcher" akışıyla KIYASLANAMAZ ölçüde küçüktür.</summary>
+    /// Dispatcher" akışıyla KIYASLANAMAZ ölçüde küçüktür.
+    /// <para>[idle-memory · I1] <b>Chunk bekleyen yüklemeyle yalnız isteğin kimliğinden eşleşir</b>
+    /// (<see cref="PendingLoad.IsAnsweredBy"/>); eşleşince yüklemenin projesi geçerlidir. <b>"Log yok" cevabı da buradan geçer:</b>
+    /// boş, son bir chunk'tır (<c>ThroughLineNumber</c> 0), yani boş bir snapshot — istekten sonra tamponlanan canlı satırlar her
+    /// cevaptaki gibi dikilir ve sayfa açılır (log da satır da yoksa kabuk projenin boş durum metnini gösterir). Eskiden
+    /// <c>error(logNotFound)</c> olarak geliyor, bekleyen HER yüklemeyi dikmeden bitiriyordu: istek ile cevap arasındaki satırlar
+    /// kayboluyor, başka bir projenin gecikmiş cevabı yeni yüklemeyi bitirip yanlış sayfayı açıyordu.</para></summary>
     private void OnProjectLogChunk(ProjectLogChunkEvent e)
     {
-        if (_pendingLoad is not { } pending || !string.Equals(pending.ProjectId, e.ProjectId, StringComparison.OrdinalIgnoreCase))
-            return; // bekleyen bir yükleme yok ya da başka bir projeye ait gecikmiş chunk — yok say
+        if (_pendingLoad is not { } pending || !pending.IsAnsweredBy(e))
+            return; // bekleyen bir yükleme yok ya da başka bir isteğin (gecikmiş, yerini yenisine bırakmış) cevabı — yok say
         pending.Assembly.Append(e.Text);
         if (!e.IsLast) return;
 
@@ -3294,12 +3298,12 @@ public sealed partial class RunViewModel : ObservableObject
         lock (_gate)
         {
             var stitched = new StringBuilder(pending.Assembly.ToString());
-            if (_liveLines.TryGetValue(e.ProjectId, out var buffered))
+            if (_liveLines.TryGetValue(pending.ProjectId, out var buffered))
                 foreach (var line in buffered.Where(l => l.LineNumber > e.ThroughLineNumber).OrderBy(l => l.LineNumber))
                     stitched.Append(line.Text).Append('\n');
             // Dikiş HER ZAMAN yapılır (log re-select için hazır kalsın — deselect edilmiş olsa bile).
-            _projectText[e.ProjectId] = stitched;
-            _projectLineCount[e.ProjectId] = CountLines(stitched); // [T56/3a] dikilmiş tam log satır sayısı
+            _projectText[pending.ProjectId] = stitched;
+            _projectLineCount[pending.ProjectId] = CountLines(stitched); // [T56/3a] dikilmiş tam log satır sayısı
             // [D4 review §2] ActiveProjectId (mod) YALNIZCA yükleme HÂLÂ isteniyorsa — kart hâlâ seçiliyse — kurulur.
             // Hızlı select→deselect'te (kart A seç → IPC dönmeden bırak/geri) gecikmiş chunk eskiden ActiveProjectId'yi
             // "A"ya set edip TAKILI bırakıyordu; AppendRunLine (ActiveProjectId null gate'i, ~satır 879) sonrasında
@@ -3307,15 +3311,15 @@ public sealed partial class RunViewModel : ObservableObject
             // OnProjectLogChunk da (marshal'lı) UI thread'inde → _gate altında okumak tutarlı (concurrency yok). Set
             // HÂLÂ aynı _gate + _projectText snapshot'ıyla birlikte → T3b üçüncü-aralık atomikliği KORUNUR (OnProjectLog
             // ya bu bloktan ÖNCE [satır snapshot'ta] ya da SONRA [ActiveProjectId güncel] koşar — üçüncü aralık yok).
-            EnterProjectMode(e.ProjectId);
+            EnterProjectMode(pending.ProjectId);
         }
         DebugAfterStitchLockExited?.Invoke(); // yalnız testler ayarlar — bkz. alan tanımı
         CompletePendingLoad(pending); // [perf Faz C · C4] dikiş bitti: yüklemenin sonu — canlı tampon burada bırakılır, koşu sürse de
     }
 
     /// <summary>
-    /// [perf Faz C · C4] <b>Bekleyen yüklemenin sonu — tek yer.</b> Üç çağıran: dikişin bitişi (<see cref="OnProjectLogChunk"/>),
-    /// motorun "log yok" yanıtı (<c>logNotFound</c>, <see cref="OnError"/>) ve yeni bir yüklemenin eskisinin yerini alması
+    /// [perf Faz C · C4] <b>Bekleyen yüklemenin sonu — tek yer.</b> İki çağıran: dikişin bitişi (<see cref="OnProjectLogChunk"/> —
+    /// motorun "log yok" yanıtı da bir dikiştir) ve yeni bir yüklemenin eskisinin yerini alması
     /// (<see cref="LoadProjectLogAsync"/>). Sıra her yerde aynıdır: bekleyen düşer, canlı satır tamponu bırakılır, yüklemenin
     /// bittiği bildirilir (<see cref="HasPendingLogLoad"/>: işlem sonu trimi bırakılmış tamponla yeniden sorar), awaiter serbest
     /// kalır.
@@ -3327,7 +3331,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// bırakılacak bir şey yoktur, yükleme varken kuyruk yanıta dek yaşamalıdır (yanıttan önce bırakılsaydı dikilen belge son
     /// satırlardan yoksun kalırdı). Tampon bekleyen düştükten SONRA ve <c>_gate</c> altında boşaltılır: arka plandaki
     /// <see cref="OnProjectLog"/> bekleyeni <c>_gate</c> altında okur — bu bölümden önce eklediği satır silinir, sonrası artık
-    /// eklenmez. Yalnız bekleyen BU yüklemeyse boşaltılır (yerini başkası almışsa tampon onundur); üç çağıran da güncel yüklemeyi
+    /// eklenmez. Yalnız bekleyen BU yüklemeyse boşaltılır (yerini başkası almışsa tampon onundur); iki çağıran da güncel yüklemeyi
     /// verir.</para>
     ///
     /// <para><b>"Uçuşta yükleme" ölçütü <see cref="_pendingLoad"/>'dur, <see cref="LoadProjectLogAsync"/>'in dönüşü değil.</b>
@@ -3375,8 +3379,9 @@ public sealed partial class RunViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Konsolu proje moduna alan TEK kapı. Üç çağıranı vardır ve üçü de aynı soruyu sorar: dikiş tamamlandı,
-    /// motor "log yok" dedi, ya da gönderim hiç gitmedi — <b>her üçünde de o projenin sayfası açılır</b>.
+    /// Konsolu proje moduna alan TEK kapı. Tek çağıranı dikiştir (<see cref="OnProjectLogChunk"/>) ve motorun "log yok" cevabı da
+    /// bir dikiştir — <b>log olsun olmasın o projenin sayfası açılır</b>. Gönderimi düşen bir yükleme (cevap yok) modu kurmaz
+    /// (<see cref="LoadProjectLogAsync"/>).
     ///
     /// <para><b>Kapı:</b> yükleme HÂLÂ isteniyorsa, yani kart hâlâ seçiliyse. Hızlı select→deselect'te gecikmiş
     /// bir cevap <see cref="ActiveProjectId"/>'yi kurup TAKILI bırakıyordu ve <see cref="AppendRunLine"/>
@@ -3394,14 +3399,33 @@ public sealed partial class RunViewModel : ObservableObject
                 ActiveProjectId = projectId;
     }
 
-    private sealed class PendingLoad(string projectId)
+    /// <summary>Bekleyen bir proje log yüklemesi. İki soruyu cevaplar ve her biri TEK yerde tanımlıdır: canlı bir satır bu
+    /// yüklemenin projesine mi ait (<see cref="IsFor"/> — tamponlama, <see cref="OnProjectLog"/>) ve bir cevap chunk'ı bu yüklemenin
+    /// isteğine mi ait (<see cref="IsAnsweredBy"/> — dikiş, <see cref="OnProjectLogChunk"/>).</summary>
+    private sealed class PendingLoad(string projectId, int requestId)
     {
         public string ProjectId { get; } = projectId;
+
+        /// <summary>[idle-memory · I1] Bu yüklemenin isteğinin kimliği (<see cref="GetProjectLogCommand.RequestId"/>) — motor
+        /// cevabın her chunk'ında yankılar.</summary>
+        public int RequestId { get; } = requestId;
+
         public StringBuilder Assembly { get; } = new();
         public TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         /// <summary>Cevap hâlâ bekleniyor mu: istek motora gitti ve motor duruyor. Gönderim düşünce ya da motor gidince false olur
         /// (<see cref="StopAwaitingReply"/>): dikiş silahlı kalır ama cevabı beklenmez (<see cref="HasPendingLogLoad"/>).</summary>
         public bool ReplyExpected { get; set; } = true;
+
+        /// <summary>Canlı bir satır bu yüklemenin projesine mi ait — tamponlamanın TEK yüklemi. Proje kimlikleri dosya yollarıdır:
+        /// <see cref="StringComparison.OrdinalIgnoreCase"/>.</summary>
+        public bool IsFor(string projectId) => string.Equals(ProjectId, projectId, StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>[idle-memory · I1] Bir cevap chunk'ı bu yüklemenin isteğine mi ait — dikişin TEK eşleşme kuralı: istek kimliği.
+        /// Proje adı yetmez: aynı projenin art arda iki isteğinde (P → Q → P, ya da P → bırak → P) ilkinin gecikmiş cevabı ikincinin
+        /// yüklemesine dikilir ve ikincinin tamponu ancak kendi isteğinden başladığı için arada loglanan satırlar sayfada sessiz bir
+        /// delik bırakırdı. "Log yok" cevabı da bir chunk'tır ve aynı kuraldan geçer — başka bir isteğin "log yok"u bekleyen
+        /// yüklemeyi bitiremez.</summary>
+        public bool IsAnsweredBy(ProjectLogChunkEvent reply) => reply.RequestId == RequestId;
     }
 }

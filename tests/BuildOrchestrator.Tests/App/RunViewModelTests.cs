@@ -612,10 +612,10 @@ public class RunViewModelTests
         // (OnSelectedProjectChangedAsync onu SelectedProjectId değişimiyle tetikler); proje modu ancak seçim hâlâ
         // o projedeyse kurulur. Testler bu koşulu birebir modellemeli.
         vm.SelectProject(projectId);
-        var load = vm.LoadProjectLogAsync(projectId); // pending state SENKRON kurulur (ilk await'e kadar)
+        var (load, request) = ProjectLogIpc.Request(vm, projectId); // pending state SENKRON kurulur (ilk await'e kadar)
         for (int i = 2; i <= 4; i++)                  // istekten sonra: line2 snapshot'ta da var, line3-4 yalnız tamponda
             vm.OnEvent(new ProjectLogEvent("r1", projectId, i, $"line{i}"));
-        vm.OnEvent(new ProjectLogChunkEvent(projectId, Sequence: 0, "line1\nline2\n", IsLast: true, ThroughLineNumber: 2));
+        vm.OnEvent(ProjectLogIpc.Reply(request, projectId, "line1\nline2\n", through: 2));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Equal("line1\nline2\nline3\nline4\n", vm.GetProjectDocumentText(projectId));
@@ -649,10 +649,10 @@ public class RunViewModelTests
         // ThroughLineNumber=0: disk chunk boş, dikiş TÜMÜYLE istekten sonra tamponlanan canlı satırlardan (line1, line2 —
         // kilit çalıştığı ANDA _liveLines'ta zaten var) üretilir; race-line3 kanca ile kilit KAPANDIKTAN SONRA
         // enjekte edilir — snapshot'ın parçası DEĞİLDİR, yalnız (fix ile) güncel ActiveProjectId sayesinde canlı eklenir.
-        var load = vm.LoadProjectLogAsync(projectId);
+        var (load, request) = ProjectLogIpc.Request(vm, projectId);
         vm.OnEvent(new ProjectLogEvent("r1", projectId, 1, "line1"));   // istekten sonra, snapshot'ın ötesinde
         vm.OnEvent(new ProjectLogEvent("r1", projectId, 2, "line2"));
-        vm.OnEvent(new ProjectLogChunkEvent(projectId, Sequence: 0, "", IsLast: true, ThroughLineNumber: 0));
+        vm.OnEvent(ProjectLogIpc.Reply(request, projectId, "", through: 0));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Equal("line1\nline2\nrace-line3\n", vm.GetProjectDocumentText(projectId));
@@ -690,9 +690,9 @@ public class RunViewModelTests
         vm.OnEvent(new ProjectLogEvent("r1", projectId, 1, "new-line1")); // istekten önce: diskte, snapshot'ta
 
         // Karta tıklama: disk snapshot ikinci run'ın 1. satırını kapatıyor (ThroughLineNumber=1)
-        var load = vm.LoadProjectLogAsync(projectId);
+        var (load, request) = ProjectLogIpc.Request(vm, projectId);
         vm.OnEvent(new ProjectLogEvent("r1", projectId, 2, "new-line2")); // istekten sonra: dikişin kuyruğu
-        vm.OnEvent(new ProjectLogChunkEvent(projectId, 0, "new-line1\n", IsLast: true, ThroughLineNumber: 1));
+        vm.OnEvent(ProjectLogIpc.Reply(request, projectId, "new-line1\n", through: 1));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
 
         var text = vm.GetProjectDocumentText(projectId);
@@ -700,17 +700,21 @@ public class RunViewModelTests
         Assert.DoesNotContain("old-line", text);
     }
 
-    [Fact] // [Fix wave 1(It-3), Finding 2] Skipped proje (cycle üyesi) hiç log dosyası taşımaz — Supervisor
-           // error(logNotFound) döner; pending Completion tamamlanmazsa await SONSUZA DEK asılı kalır.
-    public async Task LoadProjectLogAsync_completes_on_logNotFound_instead_of_hanging_forever()
+    /// <summary>[Fix wave 1(It-3), Finding 2] Skipped proje (cycle üyesi) hiç log dosyası taşımaz — motor "log yok" der; pending
+    /// Completion tamamlanmazsa await SONSUZA DEK asılı kalır.
+    /// <para>[DEĞİŞEN KURULUM — idle-memory I1] <b>Eski kurulum</b> (<c>..._completes_on_logNotFound_...</c>): motorun cevabı
+    /// <c>error(logNotFound)</c>'du. "Log yok" artık isteğin kimliğini yankılayan tek, boş, bayraklı bir chunk'tır (motor tarafı:
+    /// <c>ProjectLogStreamTests</c>) ve her cevap gibi dikilir. İddia aynı: yükleme biter, asılı kalmaz.</para></summary>
+    [Fact]
+    public async Task LoadProjectLogAsync_completes_on_a_no_log_answer_instead_of_hanging_forever()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         const string projectId = @"C:\p\skipped.csproj";
         vm.OnEvent(new ProjectSkippedEvent("r1", projectId, "bağımlılık döngüsünde"));
 
-        var load = vm.LoadProjectLogAsync(projectId);
-        vm.OnEvent(new ErrorEvent("logNotFound", projectId));
+        var (load, request) = ProjectLogIpc.Request(vm, projectId);
+        vm.OnEvent(ProjectLogIpc.NotFound(request, projectId));
 
         // Sınırlı bekleme [D8]: fix ÖNCESİ hiçbir şey Completion'ı tamamlamaz → WaitAsync timeout ile FAIL.
         await load.WaitAsync(TimeSpan.FromSeconds(5));
@@ -724,9 +728,9 @@ public class RunViewModelTests
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         const string projectId = @"C:\p\a.csproj";
 
-        var load = vm.LoadProjectLogAsync(projectId);
-        vm.OnEvent(new ProjectLogChunkEvent(projectId, 0, "line1\n", IsLast: false, ThroughLineNumber: 2));
-        vm.OnEvent(new ProjectLogChunkEvent(projectId, 1, "line2\n", IsLast: true, ThroughLineNumber: 2));
+        var (load, request) = ProjectLogIpc.Request(vm, projectId);
+        vm.OnEvent(ProjectLogIpc.Reply(request, projectId, "line1\n", through: 2, sequence: 0, isLast: false));
+        vm.OnEvent(ProjectLogIpc.Reply(request, projectId, "line2\n", through: 2, sequence: 1, isLast: true));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Equal("line1\nline2\n", vm.GetProjectDocumentText(projectId));
@@ -734,7 +738,10 @@ public class RunViewModelTests
 
     /// <summary>[idle-memory · kopya YASAK] Proje log isteği de motora her komutun yolundan gider: komut gözlemcisi
     /// (<c>DebugOnCommandSent</c>) onu da görür ve gönderimi aynı dikiş (<c>DebugSendOverride</c>) üstlenir. Yönlendirme iki yerde
-    /// ayrı yazılmıştı ve çoktan ayrışmıştı: istek gözlemciyi atlıyordu.</summary>
+    /// ayrı yazılmıştı ve çoktan ayrışmıştı: istek gözlemciyi atlıyordu.
+    /// <para>[DEĞİŞEN KURULUM — idle-memory I1] Gözlenen komut eskiden <c>new GetProjectLogCommand(projectId)</c>'ye EŞİTTİ; istek
+    /// artık kendi kimliğini taşır (her yükleme yeni bir kimlik), bu yüzden proje karşılaştırılır ve cevap o kimliği yankılar —
+    /// gözlenen isteğin gerçekten giden istek olduğunu cevabın yüklemeyi bitirmesi gösterir. İddia aynı.</para></summary>
     [Fact]
     public async Task LoadProjectLogAsync_sends_its_request_on_the_route_of_every_command()
     {
@@ -747,10 +754,107 @@ public class RunViewModelTests
 
         var load = vm.LoadProjectLogAsync(projectId);
 
-        Assert.Equal(new GetProjectLogCommand(projectId), Assert.Single(sent));   // KIRMIZI: istek gözlemciyi atlıyordu
+        var request = Assert.IsType<GetProjectLogCommand>(Assert.Single(sent));   // KIRMIZI: istek gözlemciyi atlıyordu
+        Assert.Equal(projectId, request.ProjectId);
         Assert.True(vm.HasPendingLogLoad);                                         // gönderim dikişten geçti: cevap bekleniyor
-        vm.OnEvent(new ErrorEvent("logNotFound", projectId));
+        vm.OnEvent(ProjectLogIpc.NotFound(request.RequestId, projectId));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    /// <summary>
+    /// [idle-memory · I1] <b>Yerini yenisine bırakmış bir isteğin gecikmiş cevabı yeni yüklemeye dikilmez: cevap isteğiyle
+    /// kimliğinden eşleşir.</b> Kart hızla P → Q → P seçilir ve ilk isteğin cevabı (snapshot 1. satıra kadar) üçüncü istek beklerken
+    /// gelir. Canlı satır tamponu yalnız bekleyen yüklemenin projesi için, istekten sonra tutulur — üçüncü isteğin tamponu p4'le
+    /// başlar. Eskiden chunk yalnız projesinden eşleşiyordu: ilk cevap P'nin YENİ yüklemesine dikiliyor, arada loglanan p2 ve p3
+    /// ne snapshot'ta ne tamponda olduğu için sayfada sessiz bir delik kalıyordu; üçüncü isteğin doğru cevabı da (yükleme bitmişti)
+    /// yok sayılıyordu.
+    /// </summary>
+    [Fact]
+    public async Task A_late_reply_to_a_superseded_request_is_not_stitched_into_the_newer_load()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        MainWindowHost.AcceptSends(vm);                                  // istekler motora gider: cevapları beklenir
+        const string p = @"C:\p\p.csproj", q = @"C:\p\q.csproj";
+        vm.OnEvent(new ProjectStartedEvent("r1", p, "P"));
+        vm.OnEvent(new ProjectLogEvent("r1", p, 1, "p1"));
+
+        vm.SelectProject(p);
+        var (_, first) = ProjectLogIpc.Request(vm, p);                   // P — istek 1
+        vm.OnEvent(new ProjectLogEvent("r1", p, 2, "p2"));
+        vm.SelectProject(q);
+        var (_, second) = ProjectLogIpc.Request(vm, q);                  // Q — istek 2, P'nin yüklemesi biter
+        vm.OnEvent(new ProjectLogEvent("r1", p, 3, "p3"));
+        vm.SelectProject(p);
+        var (load, third) = ProjectLogIpc.Request(vm, p);                // yine P — istek 3
+        vm.OnEvent(new ProjectLogEvent("r1", p, 4, "p4"));
+
+        // Motor cevapları istek sırasıyla yazar: istek 1'in snapshot'ı 1. satıra, istek 3'ünkü 3. satıra kadar.
+        vm.OnEvent(ProjectLogIpc.Reply(first, p, "p1\n", through: 1));
+        vm.OnEvent(ProjectLogIpc.Reply(second, q, "", through: 0));
+        vm.OnEvent(ProjectLogIpc.Reply(third, p, "p1\np2\np3\n", through: 3));
+        await load.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal("p1\np2\np3\np4\n", vm.GetProjectDocumentText(p));   // KIRMIZI: "p1\np4\n" — p2 ve p3 delikte
+        Assert.Equal(p, vm.ActiveProjectId);
+    }
+
+    /// <summary>
+    /// [idle-memory · I1] <b>Başka bir isteğin gecikmiş "log yok" cevabı bekleyen yüklemeyi bitirmez.</b> P'nin logu istenir (henüz
+    /// logu yok), cevap gelmeden Q seçilir; P'nin "log yok" cevabı Q beklerken gelir. Cevap isteğinin kimliğini taşır ve yok sayılır:
+    /// Q'nun yüklemesi kendi cevabını bekler ve onu diker.
+    /// <para>KIRMIZI (bugünkü telde gösterildi): "log yok" <c>error(logNotFound)</c> olarak geliyordu — ne istek ne proje taşıyordu
+    /// ve bekleyen HER yüklemeyi bitiriyordu: Q'nun yüklemesi P'nin cevabıyla bitti (Q'nun boş sayfası açıldı), Q'nun gerçek
+    /// chunk'ları yok sayıldı. Cevap artık isteğinin kimliğini taşıyan bir chunk'tır.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_late_no_log_answer_to_another_request_does_not_end_the_pending_load()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        MainWindowHost.AcceptSends(vm);
+        const string p = @"C:\p\p.csproj", q = @"C:\p\q.csproj";
+        vm.OnEvent(new ProjectStartedEvent("r1", q, "Q"));
+
+        vm.SelectProject(p);
+        var (_, first) = ProjectLogIpc.Request(vm, p);                   // P: henüz logu yok
+        vm.SelectProject(q);
+        var (load, second) = ProjectLogIpc.Request(vm, q);
+
+        vm.OnEvent(ProjectLogIpc.NotFound(first, p));                    // P'nin gecikmiş "log yok" cevabı
+        Assert.True(vm.HasPendingLogLoad);                               // Q'nun yüklemesi hâlâ kendi cevabını bekliyor
+        vm.OnEvent(ProjectLogIpc.Reply(second, q, "q1\n", through: 1));
+        await load.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal("q1\n", vm.GetProjectDocumentText(q));
+        Assert.Equal(q, vm.ActiveProjectId);
+    }
+
+    /// <summary>
+    /// [idle-memory · I1 · 104] <b>İstek ile "log yok" cevabı arasında gelen satırlar sayfadadır:</b> "log yok" boş bir snapshot'tır
+    /// (<c>Through 0</c>) ve her cevap gibi dikilir. Proje tam motorun cevabından sonra başladı: ilk satırı arka plan thread'inde
+    /// (marshal'sız) işlenir, cevap ise UI thread'ine sıralanır — App satırı cevaptan ÖNCE görür ve bekleyen yüklemenin tamponuna
+    /// alır. Eskiden "log yok" (<c>error(logNotFound)</c>) yüklemeyi dikmeden bitiriyor ve tamponu bırakıyordu: satır ne sayfada ne
+    /// tamponda kalıyordu (KIRMIZI bugünkü telde gösterildi: sayfa "").
+    /// </summary>
+    [Fact]
+    public async Task Lines_logged_between_the_request_and_a_no_log_answer_are_on_the_page()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        MainWindowHost.AcceptSends(vm);
+        const string p = @"C:\p\p.csproj";
+
+        vm.SelectProject(p);
+        var (load, request) = ProjectLogIpc.Request(vm, p);              // motor bu proje için henüz log görmedi
+        vm.OnEvent(new ProjectStartedEvent("r1", p, "P"));
+        vm.OnEvent(new ProjectLogEvent("r1", p, 1, "p1"));               // proje cevaptan hemen sonra başladı
+        vm.OnEvent(ProjectLogIpc.NotFound(request, p));                  // motorun cevabı: "log yok"
+        await load.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal("p1\n", vm.GetProjectDocumentText(p));              // KIRMIZI: "" — satır sayfada değildi
+        Assert.Equal(p, vm.ActiveProjectId);
+        Assert.Equal(0, vm.LiveLineCount);
     }
 
     // ---------------------------------------------------------------- 4) run dokümanı proje modunda bile birikir
@@ -765,8 +869,8 @@ public class RunViewModelTests
         vm.OnEvent(new ProjectStartedEvent("r1", a, "A"));
         vm.OnEvent(new ProjectStartedEvent("r1", b, "B"));
 
-        var load = vm.LoadProjectLogAsync(a);
-        vm.OnEvent(new ProjectLogChunkEvent(a, 0, "", IsLast: true, ThroughLineNumber: 0));
+        var (load, request) = ProjectLogIpc.Request(vm, a);
+        vm.OnEvent(ProjectLogIpc.Reply(request, a, "", through: 0));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
 
         // Artık proje modundayız (ActiveProjectId == a); B için gelen canlı satır YİNE run dokümanına düşmeli.
@@ -783,8 +887,8 @@ public class RunViewModelTests
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         const string a = @"C:\p\a.csproj";
         vm.SelectProject(a); // [D4 review §2] proje modu ancak seçim o projedeyken kurulur
-        var load = vm.LoadProjectLogAsync(a);
-        vm.OnEvent(new ProjectLogChunkEvent(a, 0, "", IsLast: true, ThroughLineNumber: 0));
+        var (load, request) = ProjectLogIpc.Request(vm, a);
+        vm.OnEvent(ProjectLogIpc.Reply(request, a, "", through: 0));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(a, vm.ActiveProjectId);
 
@@ -814,7 +918,7 @@ public class RunViewModelTests
         // (1) kart A seç → yükleme uçuşta (engine ölü → SendAsync senkron fırlar; pending yine de kurulur ve
         //     SendAsync-throws yolu onu BİLEREK null'LAMAZ — gecikmiş bir chunk hâlâ eşleşip dikişi tamamlayabilsin).
         vm.SelectProject(a);
-        var load = vm.LoadProjectLogAsync(a);
+        var (load, request) = ProjectLogIpc.Request(vm, a);
         await load.WaitAsync(TimeSpan.FromSeconds(5));
 
         // (2) IPC dönmeden kullanıcı A'yı bırakır.
@@ -822,7 +926,7 @@ public class RunViewModelTests
         Assert.Null(vm.SelectedProjectId);
 
         // (3) A'nın gecikmiş IsLast chunk'ı gelir — dikiş HER ZAMAN yapılır AMA seçim artık A değil → mod KURULMAZ.
-        vm.OnEvent(new ProjectLogChunkEvent(a, 0, "disk\n", IsLast: true, ThroughLineNumber: 0));
+        vm.OnEvent(ProjectLogIpc.Reply(request, a, "disk\n", through: 0));
         Assert.Null(vm.ActiveProjectId);                            // TAKILI DEĞİL (fix'siz kod burada "a" bırakır)
         Assert.Equal("disk\n", vm.GetProjectDocumentText(a));       // dikiş yine de hazır (re-select için)
 

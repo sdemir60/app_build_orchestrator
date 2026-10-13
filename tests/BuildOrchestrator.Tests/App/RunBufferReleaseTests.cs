@@ -20,7 +20,7 @@ namespace BuildOrchestrator.Tests.App;
 ///
 /// <para><b>Test yüzeyleri:</b> motor yoktur (<c>MainWindowHost</c>): <c>LoadProjectLogAsync</c>'in gönderimi senkron düşer
 /// ama dikiş silahlı kalır (gecikmiş bir chunk hâlâ eşleşir) ve motorun yanıtı (<c>ProjectLogChunkEvent</c>) testten
-/// verilir. Canlı satırlar üretim sırasıyla gelir: dikişin kuyruğu istekten SONRA loglanır, istekten önceki satır testin
+/// verilir — giden isteğin kimliğini yankılayarak (<c>ProjectLogIpc</c>). Canlı satırlar üretim sırasıyla gelir: dikişin kuyruğu istekten SONRA loglanır, istekten önceki satır testin
 /// verdiği disk metnindedir. Tepsi göstergesi headless'ta kurulmaz; çıkış bildirimini test
 /// <c>MainWindow.OnTrayIndicatorExitFinished</c>'a doğrudan verir (<c>OnGlobalHotkey</c> deseni). Fixture her pencereye boş bir toplayıcı takar (süitte gerçek agresif
 /// toplama koşmaz) ve açılış Sync'inin trimini dönmeden yürütür; toplamayı sayan testler kendi sahtesini takar
@@ -36,23 +36,22 @@ public class RunBufferReleaseTests
 {
     /// <summary>Bir proje logunu açar: kart seçilir, yükleme istenir ve motorun yanıtı gelir. Yanıtı ayrı vermek isteyen test
     /// <see cref="RequestProjectLog"/> ile <see cref="ReplyWithProjectLog"/>'u ayrı çağırır.</summary>
-    private static void OpenProjectLog(RunViewModel vm, string name, string diskText, int through)
-    {
-        RequestProjectLog(vm, name);
-        ReplyWithProjectLog(vm, name, diskText, through);
-    }
+    private static void OpenProjectLog(RunViewModel vm, string name, string diskText, int through) =>
+        ReplyWithProjectLog(vm, RequestProjectLog(vm, name), name, diskText, through);
 
-    /// <summary>Kart seçilir ve proje logu istenir; yanıt henüz gelmedi (gönderim düşer, dikiş silahlı kalır).</summary>
-    private static void RequestProjectLog(RunViewModel vm, string name)
+    /// <summary>Kart seçilir ve proje logu istenir; yanıt henüz gelmedi (gönderim düşer, dikiş silahlı kalır). Dönen değer motora
+    /// giden isteğin kimliğidir — motorun yanıtı onu yankılar (<see cref="ProjectLogIpc"/>).</summary>
+    private static int RequestProjectLog(RunViewModel vm, string name)
     {
         string id = MainWindowHost.IdOf(name);
         vm.SelectProject(id);
-        _ = vm.LoadProjectLogAsync(id);
+        return ProjectLogIpc.Request(vm, id).RequestId;
     }
 
-    /// <summary>Motorun yanıtı: diskteki snapshot <paramref name="through"/>. satıra kadar <paramref name="diskText"/>'tir.</summary>
-    private static void ReplyWithProjectLog(RunViewModel vm, string name, string diskText, int through) =>
-        vm.OnEvent(new ProjectLogChunkEvent(MainWindowHost.IdOf(name), 0, diskText, IsLast: true, ThroughLineNumber: through));
+    /// <summary>Motorun <paramref name="request"/> isteğine yanıtı: diskteki snapshot <paramref name="through"/>. satıra kadar
+    /// <paramref name="diskText"/>'tir.</summary>
+    private static void ReplyWithProjectLog(RunViewModel vm, int request, string name, string diskText, int through) =>
+        vm.OnEvent(ProjectLogIpc.Reply(request, MainWindowHost.IdOf(name), diskText, through));
 
     /// <summary>Gerçek toplama yerine sayaç: toplayıcının kaç kez çağrıldığını tutar.</summary>
     private sealed class CollectionCounter
@@ -80,25 +79,33 @@ public class RunBufferReleaseTests
     /// yüklemenin sonu tamponu boşaltır — koşu sürse de.</b> Dikişin tek ihtiyacı istekten sonra gelen satırlardır: motor her
     /// satırı olayını yaymadan ÖNCE diske yazar ve flush eder (<c>RunCoordinator.Emit</c>), yani App'in istekten önce gördüğü her
     /// satır snapshot'tadır (<c>LineNumber &lt;= ThroughLineNumber</c>). Eskiden koşunun her satırı koşu boyunca tamponda yaşardı.
+    /// <para>İki uç da pinlenir (final review 102): proje eşleşmesi harf duyarsızdır — kimlikler dosya yoludur, bekleyen yüklemenin
+    /// projesi başka bir yazımla gelse de tamponlanır (<c>PendingLoad.IsFor</c>); yanıttan SONRA gelen satır tampona değil açık
+    /// sayfaya gider.</para>
     /// </summary>
     [StaFact]
     public void Lines_are_kept_only_while_a_log_load_is_pending_and_only_for_its_project()
     {
         using var dir = new TempDir();
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null), ("B", null));
+        string a = MainWindowHost.IdOf("A");
         MainWindowHost.StartBuild(vm, "A", "B");
         MainWindowHost.LogLine(vm, "A", 1, "a1");
         MainWindowHost.LogLine(vm, "B", 1, "b1");
         Assert.Equal(0, vm.LiveLineCount);               // KIRMIZI: bugün 2 (koşu boyunca her satır)
 
-        RequestProjectLog(vm, "A");                      // yükleme bekliyor: yalnız A birikir
-        MainWindowHost.LogLine(vm, "A", 2, "a2");
+        int request = RequestProjectLog(vm, "A");        // yükleme bekliyor: yalnız A birikir
+        MainWindowHost.LogLine(vm, "a", 2, "a2");        // aynı proje, küçük harfli kimlik (C:\p\a.csproj): yine A'nındır
         MainWindowHost.LogLine(vm, "B", 2, "b2");
         Assert.Equal(1, vm.LiveLineCount);
 
-        ReplyWithProjectLog(vm, "A", "a1\n", through: 1); // dikiş: a2 eklenir, tampon boşalır
-        Assert.Equal("a1\na2\n", vm.GetProjectDocumentText(MainWindowHost.IdOf("A")));
+        ReplyWithProjectLog(vm, request, "A", "a1\n", through: 1); // dikiş: a2 eklenir, tampon boşalır
+        Assert.Equal("a1\na2\n", vm.GetProjectDocumentText(a));
         Assert.Equal(0, vm.LiveLineCount);               // koşu hâlâ sürüyor: bırakma yüklemenin sonundadır
+
+        MainWindowHost.LogLine(vm, "A", 3, "a3");        // yanıttan sonra: bekleyen yükleme yok, satır açık sayfaya gider
+        Assert.Equal(0, vm.LiveLineCount);
+        Assert.Equal("a1\na2\na3\n", vm.GetProjectDocumentText(a));   // sayfa a3 ile biter
         GC.KeepAlive(window);
     }
 
@@ -118,14 +125,14 @@ public class RunBufferReleaseTests
         using var dir = new TempDir();
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null), ("B", null));
         MainWindowHost.StartBuild(vm, "A", "B");
-        RequestProjectLog(vm, "A");                      // A'nın logu açılıyor: yanıt henüz yok
+        int request = RequestProjectLog(vm, "A");        // A'nın logu açılıyor: yanıt henüz yok
         MainWindowHost.LogLine(vm, "A", 1, "a line");    // istekten sonra: dikişin kuyruğu
         MainWindowHost.LogLine(vm, "B", 1, "b line");    // başka projenin satırı: tutulmaz
 
         MainWindowHost.FinishBuild(vm, "A", "B");
 
         Assert.Equal(1, vm.LiveLineCount);   // KIRMIZI (eski kural 2: B'nin satırı da tutuluyordu): yalnız A'nın kuyruğu dikişi bekler
-        ReplyWithProjectLog(vm, "A", "", through: 0);    // motorun snapshot'ı "a line"dan önce alındı
+        ReplyWithProjectLog(vm, request, "A", "", through: 0); // motorun snapshot'ı "a line"dan önce alındı
         Assert.Equal("a line\n", vm.GetProjectDocumentText(MainWindowHost.IdOf("A")));
         Assert.Equal(0, vm.LiveLineCount);   // dikiş bitti: biten koşudan geriye satır kalmadı
         GC.KeepAlive(window);
@@ -149,13 +156,13 @@ public class RunBufferReleaseTests
         string a = MainWindowHost.IdOf("A");
         MainWindowHost.StartBuild(vm, "A");
         MainWindowHost.LogLine(vm, "A", 1, "on disk");   // istekten önce: diskte, snapshot'ta — tamponlanmaz
-        RequestProjectLog(vm, "A");                      // yükleme istendi, yanıt henüz yok
+        int request = RequestProjectLog(vm, "A");        // yükleme istendi, yanıt henüz yok
         MainWindowHost.LogLine(vm, "A", 2, "tail");      // istekten sonra, snapshot'ın ötesinde: yalnız canlı tamponda
 
         MainWindowHost.CompleteRun(vm, 1);               // yanıttan ÖNCE koşu biter
 
         Assert.Equal(1, vm.LiveLineCount);               // KIRMIZI (eski kural 2): bırakma yanıtı bekler, kuyruk yerinde
-        ReplyWithProjectLog(vm, "A", "on disk\n", through: 1);   // motorun snapshot'ı 1. satıra kadar
+        ReplyWithProjectLog(vm, request, "A", "on disk\n", through: 1); // motorun snapshot'ı 1. satıra kadar
 
         Assert.Equal("on disk\ntail\n", vm.GetProjectDocumentText(a)); // kuyruk dikişe girdi: kayıp yok
         Assert.Equal(0, vm.LiveLineCount);               // yanıt döndü, bırakıldı
@@ -211,9 +218,9 @@ public class RunBufferReleaseTests
         MainWindowHost.LogLine(vm, "A", 1, "old line");
         // Yetim dikiş: kart seçilir, yükleme istenir, yanıt gelmeden kart bırakılır — gecikmiş yanıt dikişi yine yazar ama sayfa
         // açılmaz (RunViewModelTests'teki deselect deseni). Bu tamponu yalnız yeni işlemin temizliği boşaltır.
-        RequestProjectLog(vm, "A");
+        int orphan = RequestProjectLog(vm, "A");
         vm.SelectProject(null);
-        ReplyWithProjectLog(vm, "A", "old line\n", through: 1);
+        ReplyWithProjectLog(vm, orphan, "A", "old line\n", through: 1);
         Assert.Equal("old line\n", vm.GetProjectDocumentText(a));   // ön-koşul: proje tamponu dolu (eskiden hiç dolmuyordu — iddia boştu)
         Assert.Equal(1, vm.GetProjectLineCount(a));                 // ön-koşul: satır sayısı da
         RequestProjectLog(vm, "A");                                  // yeniden açılıyor: yanıt henüz yok
@@ -571,25 +578,27 @@ public class RunBufferReleaseTests
     /// Cevabı beklenen bir proje log yüklemesi trimi tutar: dikişin kuyruğu canlı tampondadır ve yükleme sürerken toplanmaz.
     /// Yüklemenin sonu — dikiş ya da motorun "log yok" yanıtı — trimi yeniden ister (Review Focus 2: bekleyen yükleme yüzünden
     /// ertelenen trim kaybolmaz).
+    /// <para>[DEĞİŞEN KURULUM — idle-memory I1] "Log yok" yanıtı eskiden <c>error(logNotFound)</c>'du; artık isteğin kimliğini
+    /// yankılayan tek, boş, bayraklı bir chunk'tır. İddia aynı.</para>
     /// </summary>
     [StaTheory]
-    [InlineData(true)]   // dikiş (ProjectLogChunkEvent)
-    [InlineData(false)]  // "log yok" (logNotFound)
+    [InlineData(true)]   // dikiş (snapshot'lı yanıt)
+    [InlineData(false)]  // "log yok" yanıtı
     public void A_pending_project_log_load_holds_the_trim_until_its_reply(bool stitched)
     {
         using var dir = new TempDir();
         var (window, vm, collections) = TrimHost(dir);
         MainWindowHost.AcceptSends(vm);                  // yükleme isteği gerçekten gider: cevap bekleniyor
         MainWindowHost.StartBuild(vm, "A");
-        RequestProjectLog(vm, "A");
+        int request = RequestProjectLog(vm, "A");
         Assert.True(vm.HasPendingLogLoad);               // ön-koşul
 
         MainWindowHost.CompleteRun(vm, 1);               // koşu yanıttan ÖNCE biter
         DispatcherPump.DrainToIdle();
         Assert.Equal(0, collections.Count);              // yükleme bekliyor
 
-        if (stitched) ReplyWithProjectLog(vm, "A", "on disk\n", through: 0);
-        else vm.OnEvent(new ErrorEvent("logNotFound", "no log for A"));
+        if (stitched) ReplyWithProjectLog(vm, request, "A", "on disk\n", through: 0);
+        else vm.OnEvent(ProjectLogIpc.NotFound(request, MainWindowHost.IdOf("A")));
         Assert.False(vm.HasPendingLogLoad);
         DispatcherPump.DrainToIdle();
         Assert.Equal(1, collections.Count);              // KIRMIZI: yüklemenin sonu trimi yeniden istemezse işlem trimsiz kalır
@@ -605,14 +614,14 @@ public class RunBufferReleaseTests
         var (window, vm, collections) = TrimHost(dir);
         string a = MainWindowHost.IdOf("A");
         MainWindowHost.StartBuild(vm, "A");
-        RequestProjectLog(vm, "A");                      // varsayılan host: gönderim senkron düşer
+        int request = RequestProjectLog(vm, "A");        // varsayılan host: gönderim senkron düşer
         Assert.False(vm.HasPendingLogLoad);              // cevap beklenmiyor
 
         MainWindowHost.CompleteRun(vm, 1);
         DispatcherPump.DrainToIdle();
         Assert.Equal(1, collections.Count);              // KIRMIZI: eski kural görünürde hiç toplamıyordu
 
-        ReplyWithProjectLog(vm, "A", "on disk\n", through: 0);   // yine de gecikmiş bir yanıt dikilir: yükleme silahlıydı
+        ReplyWithProjectLog(vm, request, "A", "on disk\n", through: 0); // yine de gecikmiş bir yanıt dikilir: yükleme silahlıydı
         Assert.Equal("on disk\n", vm.GetProjectDocumentText(a));
         GC.KeepAlive(window);
     }
@@ -632,7 +641,7 @@ public class RunBufferReleaseTests
         string a = MainWindowHost.IdOf("A");
         MainWindowHost.AcceptSends(vm);                  // istek motora gitti: cevap bekleniyor
         MainWindowHost.StartBuild(vm, "A");
-        RequestProjectLog(vm, "A");
+        int request = RequestProjectLog(vm, "A");
         Assert.True(vm.HasPendingLogLoad);               // ön-koşul
 
         if (restart) await vm.RestartEngineCommand.ExecuteAsync(null);
@@ -641,7 +650,7 @@ public class RunBufferReleaseTests
 
         Assert.Equal(1, collections.Count);              // KIRMIZI: cevabı gelmeyecek yükleme trimi sonsuza dek tutuyordu
         Assert.False(vm.HasPendingLogLoad);
-        ReplyWithProjectLog(vm, "A", "on disk\n", through: 0);   // yine de gecikmiş bir yanıt dikilir: yükleme silahlıydı
+        ReplyWithProjectLog(vm, request, "A", "on disk\n", through: 0); // yine de gecikmiş bir yanıt dikilir: yükleme silahlıydı
         Assert.Equal("on disk\n", vm.GetProjectDocumentText(a));
         GC.KeepAlive(window);
     }
@@ -698,9 +707,10 @@ public class RunBufferReleaseTests
     /// <para>[DEĞİŞEN KURULUM — idle-memory spec §6.2] <b>Eski kurulum</b> (<c>HiddenRunWithOneLine</c>): yükleme yoktu, satır
     /// koşu sürdüğü için tamponda bekleniyordu (koşunun her satırı tutuluyordu). Tampon artık yalnız bekleyen yüklemenin projesi
     /// için, istekten sonra gelen satırları tutar — motor her satırı olayından önce diske yazar (<c>RunCoordinator.Emit</c>),
-    /// istekten önceki satır snapshot'tadır. Ön-koşul bu yüzden üretim sırasıyla kurulur: önce istek, sonra satır.</para></summary>
-    private static (global::BuildOrchestrator.App.MainWindow window, RunViewModel vm, List<int> seen) HiddenRunWithAPendingLoadsTail(
-        TempDir dir)
+    /// istekten önceki satır snapshot'tadır. Ön-koşul bu yüzden üretim sırasıyla kurulur: önce istek, sonra satır. Dönen
+    /// <c>request</c> bekleyen isteğin kimliğidir: motorun (gecikmiş) yanıtı onu yankılar.</para></summary>
+    private static (global::BuildOrchestrator.App.MainWindow window, RunViewModel vm, List<int> seen, int request)
+        HiddenRunWithAPendingLoadsTail(TempDir dir)
     {
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
         var seen = new List<int>();
@@ -708,10 +718,10 @@ public class RunBufferReleaseTests
         MainWindowHost.AcceptSends(vm);      // istek motora gider: yanıt bekleniyor
         window.SetSurfaceHidden(true);
         MainWindowHost.StartBuild(vm, "A");
-        RequestProjectLog(vm, "A");
+        int request = RequestProjectLog(vm, "A");
         MainWindowHost.LogLine(vm, "A", 1, "a line");
         Assert.Equal(1, vm.LiveLineCount);   // ön-koşul: bekleyen yüklemenin kuyruğu tamponda
-        return (window, vm, seen);
+        return (window, vm, seen, request);
     }
 
     /// <summary>
@@ -726,11 +736,11 @@ public class RunBufferReleaseTests
     public void A_run_stopped_in_the_tray_under_reduced_motion_is_collected_once_when_it_completes()
     {
         using var dir = new TempDir();
-        var (window, vm, seen) = HiddenRunWithAPendingLoadsTail(dir);
+        var (window, vm, seen, request) = HiddenRunWithAPendingLoadsTail(dir);
 
         vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));   // faz Stopped: reduced-motion'da gösterge çıkışı ŞİMDİ biter
         window.OnTrayIndicatorExitFinished(vm.RunSerial);
-        ReplyWithProjectLog(vm, "A", "", through: 0);            // yanıt koşu dururken gelir: kuyruk dikilir
+        ReplyWithProjectLog(vm, request, "A", "", through: 0);   // yanıt koşu dururken gelir: kuyruk dikilir
         Assert.Equal(0, vm.LiveLineCount);                        // KIRMIZI (eski kural koşu uçuştayken bırakmazdı): yüklemenin sonu bırakır
         DispatcherPump.DrainToIdle();
         Assert.Empty(seen);                                       // koşu hâlâ uçuşta: runCompleted gelmedi
@@ -753,7 +763,7 @@ public class RunBufferReleaseTests
     public void A_run_that_fails_in_the_tray_is_collected_once_its_pending_load_has_released_the_tail()
     {
         using var dir = new TempDir();
-        var (window, vm, seen) = HiddenRunWithAPendingLoadsTail(dir);
+        var (window, vm, seen, request) = HiddenRunWithAPendingLoadsTail(dir);
 
         vm.OnEvent(new ErrorEvent("runFailed", "the build failed"));
         window.OnTrayIndicatorExitFinished(vm.RunSerial);
@@ -761,7 +771,7 @@ public class RunBufferReleaseTests
         Assert.Equal(1, vm.LiveLineCount);   // hata bitişi kuyruğu bırakmaz: dikiş onu bekliyor
         Assert.Empty(seen);                  // cevabı beklenen yükleme toplamayı tutar
 
-        ReplyWithProjectLog(vm, "A", "", through: 0);
+        ReplyWithProjectLog(vm, request, "A", "", through: 0);
         DispatcherPump.DrainToIdle();
 
         Assert.Equal(0, vm.LiveLineCount);   // yüklemenin sonu bıraktı
@@ -781,26 +791,28 @@ public class RunBufferReleaseTests
     public void A_run_whose_engine_dies_in_the_tray_is_collected_without_waiting_and_keeps_the_tail_for_a_late_chunk()
     {
         using var dir = new TempDir();
-        var (window, vm, seen) = HiddenRunWithAPendingLoadsTail(dir);
+        var (window, vm, seen, request) = HiddenRunWithAPendingLoadsTail(dir);
 
         vm.OnEngineExited(1);
         window.OnTrayIndicatorExitFinished(vm.RunSerial);
         DispatcherPump.DrainToIdle();
         Assert.Equal([1], seen);             // bir kez; cevabı gelmeyecek yükleme beklenmedi, kuyruğu tamponda
 
-        ReplyWithProjectLog(vm, "A", "", through: 0);   // motorun ölmeden yazdığı gecikmiş yanıt
+        ReplyWithProjectLog(vm, request, "A", "", through: 0); // motorun ölmeden yazdığı gecikmiş yanıt
         Assert.Equal("a line\n", vm.GetProjectDocumentText(MainWindowHost.IdOf("A")));   // kuyruk kayıpsız dikildi
         Assert.Equal(0, vm.LiveLineCount);   // yüklemenin sonu bıraktı
         GC.KeepAlive(window);
     }
 
     /// <summary>
-    /// [perf Faz C · M-1] Bekleyen yüklemenin "log yok" yanıtı (<c>logNotFound</c>) da yüklemenin sonudur: tampon yanıtla bırakılır —
+    /// [perf Faz C · M-1] Bekleyen yüklemenin "log yok" yanıtı da yüklemenin sonudur: tampon yanıtla bırakılır —
     /// dikiş yanıtıyla aynı kural (bekleyen yüklemenin sonu tek yerde) — koşu yanıttan önce bitmiş olsa da.
     /// <para>[DEĞİŞEN KURULUM — idle-memory spec §6.2] <b>Eski kurulum:</b> satır istekten ÖNCE loglanıyor ve tamponda bekleniyordu;
     /// eski kuralda koşunun bitişi bırakmayı yanıta ertelerdi. Tampon artık yalnız istekten sonra gelen satırları tutar — istekten
     /// önceki satır snapshot'tadır (motor satırı olayından önce diske yazar, <c>RunCoordinator.Emit</c>) — bu yüzden satır istekten
     /// SONRA gelir. İddia aynı: bırakma yanıtladır.</para>
+    /// <para>[DEĞİŞEN KURULUM — idle-memory I1] "Log yok" yanıtı eskiden <c>error(logNotFound)</c>'du; artık isteğin kimliğini
+    /// yankılayan tek, boş, bayraklı bir chunk'tır ve her yanıt gibi dikilir. İddia aynı.</para>
     /// </summary>
     [StaFact]
     public void A_log_not_found_reply_releases_the_buffer_of_a_run_that_ended_while_the_log_was_loading()
@@ -808,12 +820,12 @@ public class RunBufferReleaseTests
         using var dir = new TempDir();
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
         MainWindowHost.StartBuild(vm, "A");
-        RequestProjectLog(vm, "A");                      // yükleme istendi, yanıt henüz yok
+        int request = RequestProjectLog(vm, "A");        // yükleme istendi, yanıt henüz yok
         MainWindowHost.LogLine(vm, "A", 1, "a line");    // istekten sonra: canlı tamponda
         MainWindowHost.CompleteRun(vm, 1);               // yanıttan ÖNCE koşu biter
         Assert.Equal(1, vm.LiveLineCount);               // ön-koşul: bırakma yanıtı bekliyor
 
-        vm.OnEvent(new ErrorEvent("logNotFound", "no log for A"));
+        vm.OnEvent(ProjectLogIpc.NotFound(request, MainWindowHost.IdOf("A")));
 
         Assert.Equal(0, vm.LiveLineCount);   // (M-1 KIRMIZI'sı: logNotFound yanıtı ertelenen bırakmayı sormuyordu)
         GC.KeepAlive(window);

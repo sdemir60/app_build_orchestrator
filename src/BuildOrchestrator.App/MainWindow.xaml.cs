@@ -670,8 +670,8 @@ public partial class MainWindow : Window
 
     /// <summary>[D4/Solution B] Kart seçimi değişince konsol modunu senkron sürer. Seçim varsa: proje logunu
     /// (dikişli) YÜKLE, sonra başlık + gövde AYNI UI turunda proje-loguna geçir (reseed flicker YOK). Seçim
-    /// kalkınca (null): run anlatısına dön. logNotFound/skipped gibi durumlarda ActiveProjectId kurulmaz →
-    /// run modunda kalınır.
+    /// kalkınca (null): run anlatısına dön. Logu olmayan proje de sayfasını açar ("log yok" cevabı da dikilir); cevap
+    /// gelmediyse (gönderim düştü) ya da seçim arada değiştiyse ActiveProjectId kurulmaz → run modunda kalınır.
     ///
     /// <para>[perf Faz A · A2] <b>Gizli pencerede belge kurulmaz:</b> başlık ve VM tarafı yine güncellenir; belge yerine
     /// "ekran bayat" bayrağı kalkar (<c>_consoleStaleWhileHidden</c>) ve <see cref="ResyncAfterShow"/> dönüşte belgeyi
@@ -685,7 +685,7 @@ public partial class MainWindow : Window
             if (_vm.NextConsoleSelection(out var id) == ConsoleSelection.ShowRun) { ShowRunConsole(); return; }
 
             await _vm.LoadProjectLogAsync(id!);
-            // [D4 review §2/§3] Proje-log yalnız yükleme modu kurduysa (log vardı — guard1) VE seçim hâlâ o
+            // [D4 review §2/§3] Proje-log yalnız yükleme modu kurduysa (cevap dikildi, "log yok" dahil — guard1) VE seçim hâlâ o
             // projedeyse (guard2, arada select→deselect/başka-id olmadı) gösterilir; aksi halde run modunda kal
             // (§2 donma: deselect-mid-load'da ActiveProjectId zaten null kaldığından burada erken dönülür).
             if (!_vm.ShouldShowLoadedProject(id!)) return;
