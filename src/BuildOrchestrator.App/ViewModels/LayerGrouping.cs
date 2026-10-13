@@ -11,6 +11,11 @@ namespace BuildOrchestrator.App.ViewModels;
 /// (StickyLayerList'te başlıksız). Aksi halde satırlar <c>LayerName</c>'e göre gruplanır; grup sırası
 /// ilk-görülme (= build-order = <c>LayerIndex</c>) sırasıdır. Bir düğümün adı olmayan satırları (null/boş
 /// <c>LayerName</c>) tek bir isimsiz gruba düşer.</para>
+///
+/// <para><b>Grafın bantları da buradan türer</b> (<see cref="BandOf"/>): graf listenin EŞLENİĞİDİR — her bant
+/// listedeki bir grubun aynısıdır (aynı üyeler, aynı sıra). İkisi aynı bölme kuralını (<see cref="Partition"/>)
+/// paylaşır; graf için ikinci bir gruplama kuralı yazılmaz. Katman tanımı yokken liste tek düz listedir, graf da
+/// tek bant.</para>
 /// </summary>
 public static class LayerGrouping
 {
@@ -35,20 +40,43 @@ public static class LayerGrouping
         if (!anyNamed)
             return [new Group(null, rows.ToList())];
 
-        // "" sentinel'i = isimsiz (null LayerName); grup sırası ilk-görülme (build-order).
-        var order = new List<string>();
-        var buckets = new Dictionary<string, List<ProjectRowViewModel>>(StringComparer.Ordinal);
-        foreach (var row in rows)
-        {
-            string key = (layerById.TryGetValue(row.Id, out var name) ? name : null) ?? "";
-            if (!buckets.TryGetValue(key, out var list))
-            {
-                buckets[key] = list = [];
-                order.Add(key);
-            }
-            list.Add(row);
-        }
+        return Partition(rows, row => layerById.TryGetValue(row.Id, out var name) ? name : null)
+            .Select(bucket => new Group(bucket.Key.Length == 0 ? null : bucket.Key, bucket.Members))
+            .ToList();
+    }
 
-        return order.Select(k => new Group(k.Length == 0 ? null : k, buckets[k])).ToList();
+    /// <summary>Grafın bantları: düğüm Id → listede düşeceği grubun SIRASI (0'dan; üstteki grup 0). Bant içi sıra
+    /// topolojinin sırası, yani build-order'dır. Liste <see cref="Build"/>'in, graf bunun sonucunu çizer — ikisi
+    /// <see cref="Partition"/>'ı paylaştığı için bir proje listede hangi gruptaysa grafta o gruba karşılık gelen
+    /// banttadır.</summary>
+    public static IReadOnlyDictionary<string, int> BandOf(IReadOnlyList<ProjectNode> topology)
+    {
+        ArgumentNullException.ThrowIfNull(topology);
+
+        var buckets = Partition(topology, node => node.LayerName);
+        var bands = new Dictionary<string, int>(topology.Count, StringComparer.OrdinalIgnoreCase);
+        for (int band = 0; band < buckets.Count; band++)
+            foreach (var node in buckets[band].Members) bands[node.Id] = band;
+        return bands;
+    }
+
+    /// <summary>TEK bölme kuralı: öğeler katman ADINA göre kovalara ayrılır; adı olmayanlar (null/boş) tek bir
+    /// isimsiz kovada (<c>""</c>) toplanır. Kova sırası ilk görülme (build-order) sırasıdır, kova içinde giriş sırası
+    /// korunur. Ad, indeks DEĞİL: aynı adı taşıyan iki katman tek grup olur — liste böyle gösterir.</summary>
+    private static List<(string Key, List<T> Members)> Partition<T>(IEnumerable<T> items, Func<T, string?> layerNameOf)
+    {
+        var buckets = new List<(string Key, List<T> Members)>();
+        var byKey = new Dictionary<string, List<T>>(StringComparer.Ordinal);
+        foreach (var item in items)
+        {
+            string key = layerNameOf(item) ?? "";
+            if (!byKey.TryGetValue(key, out var members))
+            {
+                byKey[key] = members = [];
+                buckets.Add((key, members));
+            }
+            members.Add(item);
+        }
+        return buckets;
     }
 }

@@ -22,7 +22,7 @@ namespace BuildOrchestrator.App.ViewModels;
 public static class GraphBinder
 {
     /// <summary>Topolojiyi graf düğümlerine çevirir (build-order KORUNUR — bant-içi sıra da build-order'dır).
-    /// Katman = <see cref="LayerOf"/>, statü = <see cref="StatusOf"/> (satır Id ile eşlenir).
+    /// Bant = <see cref="Bands"/> (listenin grubunun eşleniği), statü = <see cref="StatusOf"/> (satır Id ile eşlenir).
     ///
     /// <para>[quiet] Kısa-ad öneki ve dep-hata bayrağı ARTIK TAŞINMAZ: v1.3.0 §2.3'te düğümün üstünde ad
     /// etiketi ve graf içi dep-issue rozeti yoktur, dolayısıyla grafın ikisini de okuyan bir yeri kalmadı.
@@ -34,7 +34,7 @@ public static class GraphBinder
         ArgumentNullException.ThrowIfNull(topology);
         ArgumentNullException.ThrowIfNull(rows);
 
-        var depth = TopologicalDepths(topology);
+        var bands = Bands(topology);
 
         var result = new List<GraphNode>(topology.Count);
         foreach (var node in topology)
@@ -48,7 +48,7 @@ public static class GraphBinder
             // Döngü üyeliği ayrı taşınır — yalnız küpü boyar, rengi ezmez.
             var visual = row?.VisualStatus ?? VisualStatus.Unknown;
             bool inCycle = row?.InCycle ?? node.InCycle;
-            result.Add(new GraphNode(node.Id, node.Name, LayerOf(node, depth), status, visual, inCycle));
+            result.Add(new GraphNode(node.Id, node.Name, bands[node.Id], status, visual, inCycle));
         }
         return result;
     }
@@ -72,65 +72,27 @@ public static class GraphBinder
         return edges;
     }
 
-    /// <summary>Her düğümün topolojik derinliği (Id → derinlik): bağımsız (topolojideki dep'i olmayan) düğüm 0,
-    /// aksi halde <c>1 + max(dep derinlikleri)</c>. Cycle'a karşı güvenli: geri kenar (ziyaret edilmekte olan
-    /// düğüme dönüş) 0 katkı sayılır → sonlu derinlik. Topoloji-dışı dep'ler yok sayılır. DAG için standart
-    /// en-uzun-yol; cycle üyeleri geri-kenar kırpmasıyla sonlu (paylaşımlı-derinlik SCC'si GEREKMEZ — burada
-    /// yalnız katman yerleşimi için; cycle STATÜSÜ <see cref="StatusOf"/>'tan gelir).</summary>
-    public static IReadOnlyDictionary<string, int> TopologicalDepths(IReadOnlyList<ProjectNode> topology)
+    /// <summary>Her düğümün bandı (Id → bant): listenin grubunun eşleniği — <see cref="LayerGrouping.BandOf"/>. Proje
+    /// listede hangi gruptaysa grafta o grubun bandındadır; katman tanımı yokken liste tek düz liste, graf tek
+    /// banttır (harici projeler varsa kendi <c>External</c> grupları/bantları üstte).
+    /// <para>Bant topolojik derinlikten TÜRETİLMEZ: derinlik bantları gerçek OSYS'te 28 bant verdi (177 düğüm), panele
+    /// sığdırma da düğümü 8 px tabanına indirdi — ve liste aynı anda tek düz liste gösteriyordu.</para></summary>
+    public static IReadOnlyDictionary<string, int> Bands(IReadOnlyList<ProjectNode> topology)
     {
         ArgumentNullException.ThrowIfNull(topology);
-        return DepthMemo.GetValue(topology, static t => { _depthComputations++; return ComputeDepths(t); });
+        return BandMemo.GetValue(topology, static t => { _bandComputations++; return LayerGrouping.BandOf(t); });
     }
 
-    /// <summary>[perf Faz B · B5] Topoloji REFERANSI başına bir kez hesaplanan derinlikler (<see cref="TopologicalDepths"/> ve
-    /// <see cref="Nodes"/> aynı önbellekten geçer). Topoloji yalnız Sync'te değişir — VM yeni bir liste atar, eskisini değiştirmez —
-    /// ama graf her statü değişiminde <see cref="Nodes"/>'u çağırır; derinlik her çağrıda baştan hesaplanıyordu. Anahtar
-    /// zayıf tutulur: eski topoloji gidince girdisi de gider. Döndürülen sözlük PAYLAŞIMLIDIR — salt okunurdur.</summary>
-    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<IReadOnlyList<ProjectNode>, IReadOnlyDictionary<string, int>> DepthMemo = new();
+    /// <summary>[perf Faz B · B5] Topoloji REFERANSI başına bir kez hesaplanan bantlar (<see cref="Bands"/> ve
+    /// <see cref="Nodes"/> aynı önbellekten geçer). Topoloji yalnız Sync'te değişir — VM yeni bir liste atar, eskisini
+    /// değiştirmez — ama graf her statü değişiminde <see cref="Nodes"/>'u çağırır. Anahtar zayıf tutulur: eski topoloji
+    /// gidince girdisi de gider. Döndürülen sözlük PAYLAŞIMLIDIR — salt okunurdur.</summary>
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<IReadOnlyList<ProjectNode>, IReadOnlyDictionary<string, int>> BandMemo = new();
 
-    /// <summary>[perf Faz B · B5 test yüzeyi] Derinliğin gerçekten HESAPLANDIĞI (önbellekten gelmediği) çağrı sayısı.
+    /// <summary>[perf Faz B · B5 test yüzeyi] Bantların gerçekten HESAPLANDIĞI (önbellekten gelmediği) çağrı sayısı.
     /// İş parçacığına özeldir: paralel koşan başka sınıfların graf çağrıları bir testin sayısını bozmaz.</summary>
-    [ThreadStatic] private static int _depthComputations;
-    internal static int DepthComputations => _depthComputations;
-
-    private static IReadOnlyDictionary<string, int> ComputeDepths(IReadOnlyList<ProjectNode> topology)
-    {
-        var byId = new Dictionary<string, ProjectNode>(StringComparer.OrdinalIgnoreCase);
-        foreach (var node in topology) byId[node.Id] = node;
-
-        var depth = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        var visiting = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        int Depth(string id)
-        {
-            if (depth.TryGetValue(id, out int cached)) return cached;
-            if (!byId.TryGetValue(id, out var node)) return 0; // topoloji-dışı — çağrılmamalı ama savunmacı
-            if (!visiting.Add(id)) return 0;                   // geri kenar (cycle) → 0 katkı, özyinelemeyi kır
-
-            int best = -1;
-            foreach (var depId in node.Dependencies)
-                if (byId.ContainsKey(depId))
-                    best = Math.Max(best, Depth(depId));
-
-            visiting.Remove(id);
-            int result = best < 0 ? 0 : best + 1;
-            depth[id] = result;
-            return result;
-        }
-
-        foreach (var node in topology) Depth(node.Id);
-        return depth;
-    }
-
-    /// <summary>Düğümün katmanı: açık <see cref="ProjectNode.LayerIndex"/> varsa o (katman patternleri
-    /// yapılandırılmış); yoksa <paramref name="topoDepth"/>'ten topolojik derinlik (<see cref="TopologicalDepths"/>).</summary>
-    public static int LayerOf(ProjectNode node, IReadOnlyDictionary<string, int> topoDepth)
-    {
-        ArgumentNullException.ThrowIfNull(node);
-        ArgumentNullException.ThrowIfNull(topoDepth);
-        return node.LayerIndex ?? (topoDepth.TryGetValue(node.Id, out int d) ? d : 0);
-    }
+    [ThreadStatic] private static int _bandComputations;
+    internal static int BandComputations => _bandComputations;
 
     /// <summary>Graf statüsü — eşleme TEK otoriteden (<see cref="ProjectRowViewModel.Status"/>) gelir:
     /// <list type="bullet">
