@@ -142,13 +142,14 @@ bir şey dediğinde yazılır. Sıradan işlerde `CHANGELOG.md`'ye ve `Directory
 4. **Numara tek yerde:** `Version` aynı değere çekilir (guard: CHANGELOG'daki en üst sürüm = `Version`).
 5. **Yayın:** `/release` (ya da elle `scripts/release.ps1 -Version X.Y.Z`), ana proje checkout'unda `develop`
    üzerinde: guard'lar (develop push'lu ve `origin/develop`'la eşit, **develop HEAD'inin `ci.yml` koşusu yeşil**,
-   `origin/main` develop'un atası) → build → `develop`'ta `release: vX.Y.Z` commit'i (bu commit için ayrı
-   branch açılmaz — tek istisna) → `main`'e `--no-ff` merge (`merge: release vX.Y.Z`) → merge commit'ine annotated
-   tag `vX.Y.Z` → `develop` `main`'e ff (develop = main) → `main`, `develop` ve tag tek atomik push. **Testleri lokal
-   koşmaz, CI koşar:** develop HEAD'inin `ci.yml` koşusu guard'dadır, tag'inki `release.yml`'de paketlemeden önce
-   koşar — orada kırmızı çıkarsa tag ve `main` origin'de kalır, Release açılmaz (`/release` skill'i adım 6). Tag'i
-   gören `release.yml` derler, testleri koşar, `scripts/package.ps1` ile paketler ve GitHub Release'i açar; senin
-   başka bir şey yapman gerekmez. Paket çıktıları `artifacts/` altındadır (ignore'lu). Script durursa ne yapılacağı `/release` skill'inde.
+   `origin/main` develop'un atası, `vX.Y.Z` tag'i yok, yayınlanacak bir şey var) → build → `develop`'ta
+   `release: vX.Y.Z` commit'i (bu commit için ayrı branch açılmaz — tek istisna) → `main`'e `--no-ff` merge
+   (`merge: release vX.Y.Z`) → `develop` `main`'e ff (develop = main) → `main` ve `develop` tek atomik push. **Tag'i
+   script atmaz, testleri lokal koşmaz:** `main`'e push GitHub'da `release.yml`'i başlatır — testler (`ci.yml`) → paket
+   (`scripts/package.ps1`) → tag (`scripts/release-tag.ps1`) → GitHub Release; tag yalnız yayınlanan sürümde olur.
+   Kırmızı biten koşuyu `release-retry.yml` bir kez yeniden dener; yine kırmızıysa Release olmaz — testte ya da pakette
+   düştüyse tag de olmaz ve `main`'de tag'siz bir merge kalır (`/release` skill'i adım 6). Senin başka bir şey yapman gerekmez. Paket çıktıları
+   `artifacts/` altındadır (ignore'lu). Script durursa ne yapılacağı `/release` skill'inde.
 
 Yayınlanmış bir sürümün notu yalnız yanlışsa düzeltilir.
 
@@ -178,8 +179,8 @@ kebab-case ve **İngilizce** (`scrollbar-restyle-plan` gibi; `plani`/`kayitlari`
 - Bir iş için kendi çalışma branch'ini `develop`'tan aç, task başına commit at, bitince `develop`'a merge + push.
 - Merge'ün geçtiğini **doğruladıktan sonra** branch'i local ve remote'tan sil.
 - **`main`'e yalnız `/release` (`scripts/release.ps1`) dokunur** — elle merge, commit ya da push yok. `main`'deki
-  her merge commit'i bir sürüm + tag'tir (ayrıntı "Sürüm çıkarma" adım 5; tek istisna: tag geri çekilip aynı sürüm
-  yeniden çıkarılınca önceki merge tag'siz kalır — `/release` skill'i adım 6). Doğrudan atılan tek commit
+  her merge commit'i bir sürüm denemesidir; tag'i GitHub, testler ve paket geçince koyar (ayrıntı "Sürüm çıkarma" adım
+  5). Tag'siz bir merge yalnız GitHub'da düşmüş denemedir — `/release` skill'i adım 6. Doğrudan atılan tek commit
   `release: vX.Y.Z`'dir; o da `develop`'ta atılır.
 - **Hotfix** de aynı yoldan geçer: `fix/x` → `develop`'a merge + push → `/release` (patch). `main` her zaman
   `develop`'ın tamamını alır; yalnız düzeltmeyi taşıyan ayrı bir sürüm çıkmaz — bilinçli sınır.
