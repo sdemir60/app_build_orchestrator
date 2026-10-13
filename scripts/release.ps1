@@ -1,23 +1,27 @@
 <# [yayin hatti] Tek komutla yayin - /release skill'inin mekanik yarisi. Gunluk is develop'ta; main yalniz surumleri tasir
-   ve ona yalniz bu script dokunur: main'deki her merge commit'i bir surum + tag'tir (kullanici karari 2026-09-30; tek istisna:
-   tag geri cekilip ayni surum yeniden cikarilinca onceki merge tag'siz kalir). Notu Claude yazmis olmali (CHANGELOG en ustte
-   "## [X.Y.Z] - <bugun>"). Akis:
+   ve ona yalniz bu script dokunur: main'deki her merge commit'i bir surum denemesidir (kullanici karari 2026-09-30). Tag'i bu
+   script ATMAZ: main'e push GitHub'da release.yml'i baslatir, testler ve paket gecince tag'i orada release-tag.ps1 koyar
+   (kullanici karari 2026-10-13) - tag yalniz testleri ve paketi gecmis surume konur; kirmizi bir test ya da dusen paket ne tag ne
+   Release birakir, o deneme main'de tag'siz bir merge olarak kalir. Notu Claude yazmis olmali (CHANGELOG en ustte "## [X.Y.Z] - <bugun>"). Akis:
      guard'lar (hicbir yazmadan once) -> Version'i yazar -> build -> develop'ta "release: vX.Y.Z" commit'i ->
-     main'e --no-ff merge ("merge: release vX.Y.Z") -> merge commit'ine annotated tag -> develop main'e ff (develop == main)
-     -> tek atomik push: main + develop + tag ya birlikte gider ya hicbiri.
+     main'e --no-ff merge ("merge: release vX.Y.Z") -> develop main'e ff (develop == main)
+     -> tek atomik push: main + develop ya birlikte gider ya hicbiri.
    Guard'lar: CHANGELOG'un en ust bolumu bu surum ve bugun; branch develop; agacta CHANGELOG/props disinda degisiklik yok;
    budayan fetch sonrasi develop ve main origin'de var, develop == origin/develop, yerel main (varsa) == origin/main,
-   origin/main develop'un atasi, main baska bir worktree'de acik degil; tag ne yerelde ne origin'de; bu checkout'tan calisan
-   uygulama yok; develop HEAD'inin ci.yml kosusu yesil (completed + success). Sorulamayan ata, worktree listesi, uzak tag ve
-   CI kosusu (git ya da API hatasi) gecmis sayilmaz, durdurur.
-   Testleri lokal KOSMAZ: develop HEAD'inin ci.yml kosusu yesil olmadan baslamaz (guard) ve release.yml tag'i yayindan once yine
-   test eder; kirmizi bir test orada durur - tag ve main origin'de kalir, Release acilmaz (SKILL adim 6).
+   origin/main develop'un atasi, main baska bir worktree'de acik degil; tag ne yerelde ne origin'de (surum yayinlanmamis);
+   yayinlanacak bir sey var (develop main'in onunde ya da agacta yayinin degisikligi); bu checkout'tan calisan uygulama yok;
+   develop HEAD'inin ci.yml kosusu yesil (completed + success). Sorulamayan ata, worktree listesi, origin ve CI kosusu (git ya
+   da API hatasi) gecmis sayilmaz, durdurur.
+   Testleri lokal KOSMAZ: develop HEAD'inin ci.yml kosusu yesil olmadan baslamaz (guard) ve release.yml main'in push'unu tag'den
+   once yine test eder; kirmizi bir test orada durur - main origin'de kalir, tag ve Release olmaz; release-retry.yml kosuyu bir
+   kez yeniden dener (SKILL adim 6).
    Build'de durursa hicbir sey commit/push edilmemistir. Release commit'inden sonra durursa (en olasi: push reddi - bu
    arada origin/develop ya da origin/main ilerledi) son satir yerel kurtarma komutlarini yazar. Push hata dondugunde once
-   origin'e tag sorulur: tag oradaysa yayin cikmistir ve kurtarma basilmaz; origin okunamazsa kurtarma once origin'e bakmayi ister.
+   origin'in main'i sorulur: yayinin merge'uyse push uygulanmistir ve kurtarma basilmaz; origin okunamazsa kurtarma once
+   origin'e bakmayi ister.
      release.ps1 -Version 1.8.0              (tam akis)
      release.ps1 -Version 1.8.0 -SkipCiCheck (develop'un CI kosusu sorulmaz - cevrimdisi/acil durum; uyari yazar)
-     release.ps1 -Version 1.8.0 -DryRun      (butun guard'lar, sonra cikis; dosyaya, branch'e, tag'e dokunmaz) #>
+     release.ps1 -Version 1.8.0 -DryRun      (butun guard'lar, sonra cikis; dosyaya ve branch'e dokunmaz) #>
 param(
     [Parameter(Mandatory = $true)][ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version,
     [switch]$SkipCiCheck,
@@ -26,16 +30,16 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'release-common.ps1')
 Set-Location $RepoRoot
-$tag = "v$Version"
-# Yazma evresinde (release commit'inden itibaren) dolar: o andan sonra duran adim yerelde commit/merge/tag birakir ve Fail son
+$tag = Get-VersionTag $Version
+# Yazma evresinde (release commit'inden itibaren) dolar: o andan sonra duran adim yerelde commit/merge birakir ve Fail son
 # satira onlari geri alan komutlari yazar. Sha'lar yayinin basladigi commit'lerdir; araya giren bir fetch onlari kaydirmaz.
 $script:Undo = $null
 function Fail([string]$why) {
     Write-Host "release: $why"
-    if ($script:Undo) { Write-Host "release: undo the local release (commit, merge, tag) with: $script:Undo" }
+    if ($script:Undo) { Write-Host "release: undo the local release (commit, merge) with: $script:Undo" }
     exit 1
 }
-# Yazan git komutlari: sifirdan farkli cikis kodu script'i durdurur (push edilmemis bir tag sessizce gecmez).
+# Yazan git komutlari: sifirdan farkli cikis kodu script'i durdurur (yarim kalan bir merge sessizce gecmez).
 function Invoke-Git { & git @args; if ($LASTEXITCODE -ne 0) { Fail "git $($args -join ' ') failed (exit $LASTEXITCODE)." } }
 
 # --- guard'lar: hicbir yazmadan once. -DryRun hepsini kosar ve yazmadan cikar (tek yazdigi fetch'in uzak izleme ref'leri).
@@ -74,12 +78,18 @@ foreach ($line in $worktrees) {
     if ($line -like 'worktree *') { $worktree = $line.Substring(9) }
     elseif ($line -eq 'branch refs/heads/main') { Fail "main is checked out in $worktree; the release switches to main here - move that worktree off main first." }
 }
+# Tag'i GitHub testler ve paket gecince koyar: varsa bu surum yayina cikmistir (ya da yuklemesi yarim kalmistir - SKILL adim 6)
+# ve numara bir daha kullanilmaz.
 if (git tag --list $tag) { Fail "tag $tag already exists." }
 # Uzak tag: fetch yalniz getirdigi tarihceye isaret eden tag'leri alir; origin'de erisilemeyen bir commit'e duran ayni ad
-# yerelde gorunmez ve push'ta reddedilirdi. ls-remote hatasi "tag yok" sayilmaz (dogrulanamayan yayin cikmaz).
-$remoteTag = & git ls-remote --tags origin "refs/tags/$tag"
-if ($LASTEXITCODE -ne 0) { Fail "git ls-remote failed (exit $LASTEXITCODE); cannot verify tag $tag on origin." }
-if ($remoteTag) { Fail "tag $tag already exists on origin." }
+# yerelde gorunmez. ls-remote hatasi "tag yok" sayilmaz (dogrulanamayan yayin cikmaz).
+try { $originRelease = Get-OriginRelease $tag }
+catch { Fail "cannot read origin ($($_.Exception.Message)); cannot verify tag $tag on origin." }
+if ($originRelease.TagCommit) { Fail "tag $tag already exists on origin." }
+# Yayinlanacak bir sey: develop main'in onunde ya da agacta yayinin degisikligi (CHANGELOG/props). Ikisi de yoksa onceki deneme
+# main'i zaten tasimistir (GitHub'da dustu, tag yok): commit, merge ve push bos gecer, GitHub degismeyen ref icin kosu acmaz -
+# script "pushed" deyip hicbir sey baslatmazdi. Ayni kod icin yol kosuyu yeniden denemektir; bir duzeltme once develop'a girer.
+if ($develop -eq $main -and -not (git status --porcelain)) { Fail "nothing to release: origin/main already has everything on develop. If the release workflow of $tag failed on GitHub, re-run its failed jobs there ($DefaultRepoUrl/actions); a fix goes to develop first." }
 # Calisan uygulama (CLAUDE.md "uygulama acikken build alma"): Release build, BU checkout'tan calisan Supervisor'in kilitli
 # binary'lerine carpar; tepsideki KURULU kopya baska klasordedir ve build'i kilitlemez - sonda yalniz repo kokunun altindaki
 # kopyalari sayar (konumu okunamayan sayilir). Sonda Version yazilmadan ONCE kosar; sonradan dusen build, aciklanmasi gereken
@@ -87,9 +97,10 @@ if ($remoteTag) { Fail "tag $tag already exists on origin." }
 $running = @(Get-RunningApp -UnderPath $RepoRoot)
 if ($running.Count -gt 0) { Fail "Build Orchestrator is running from this checkout or from a location that could not be read (pid $($running.Id -join ', ')); close it first (tray icon > Exit) - a copy running from this checkout keeps its binaries locked and the build would fail." }
 # develop'un CI'i: yayin, CI'in yesil gordugu commit'ten cikar (release commit'i yalniz CHANGELOG + Version ekler; release.yml
-# tag'i yine derleyip test eder). Kosu yoksa, bitmediyse ya da basarisizsa durur; sorulamazsa da (dogrulanamayan yayin cikmaz).
+# main'in push'unu tag'den once yine derleyip test eder). Kosu yoksa, bitmediyse ya da basarisizsa durur; sorulamazsa da
+# (dogrulanamayan yayin cikmaz).
 if ($SkipCiCheck) {
-    Write-Host "release: -SkipCiCheck - develop's CI run was not checked; the release workflow still builds and tests the tag."
+    Write-Host "release: -SkipCiCheck - develop's CI run was not checked; the release workflow still builds and tests main before it tags it."
 }
 else {
     try { $ci = Get-CiConclusion -RepoUrl $DefaultRepoUrl -Sha $develop }
@@ -107,36 +118,35 @@ if ($updated -ne $props) { [System.IO.File]::WriteAllText($propsPath, $updated, 
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'release-guard.ps1') -Tag $tag
 if ($LASTEXITCODE -ne 0) { exit 1 }
 
-# --- kapi: build (testler lokal kosmaz - CI'dadir: develop HEAD'inin ci.yml kosusu guard'da, tag'inki release.yml'de)
+# --- kapi: build (testler lokal kosmaz - CI'dadir: develop HEAD'inin ci.yml kosusu guard'da, main'inki release.yml'de)
 & dotnet build BuildOrchestrator.slnx -c Release
 if ($LASTEXITCODE -ne 0) { Fail 'build failed - nothing was committed or pushed.' }
 
-# --- develop'ta release commit'i -> main'e merge -> tag -> develop = main -> atomik push
-$script:Undo = "git switch develop; git tag -d $tag; git reset --soft $develop; git restore --staged .; git branch -f main $main"
+# --- develop'ta release commit'i -> main'e merge -> develop = main -> atomik push (tag'i GitHub koyar: release.yml)
+$script:Undo = "git switch develop; git reset --soft $develop; git restore --staged .; git branch -f main $main"
 Invoke-Git add CHANGELOG.md Directory.Build.props
 if (git status --porcelain) { Invoke-Git commit -q -m "release: $tag" }
 if (-not $localMain) { Invoke-Git branch -q --track main origin/main }
 Invoke-Git switch -q main
 Invoke-Git merge -q --no-ff develop -m "merge: release $tag"
-Invoke-Git tag -a $tag -m "$(Get-BuildProp 'Product') $Version - release notes in CHANGELOG.md"
 Invoke-Git switch -q develop
 Invoke-Git merge -q --ff-only main
 # --atomic: fetch ile push arasinda build dakikalar surebilir; origin/develop ya da origin/main bu arada ilerlerse o ref
-# reddedilir ve digerleri de gitmez (atomiksiz push reddedilmeyenleri yine gonderirdi: main + tag gider develop gitmez - yayin
-# cikar, develop ile main ayrisir).
-& git push --atomic origin main develop $tag
+# reddedilir ve digeri de gitmez (atomiksiz push reddedilmeyeni yine gonderirdi: main gider develop gitmez - yayin baslar,
+# develop ile main ayrisir).
+& git push --atomic origin main develop
 $pushExit = $LASTEXITCODE
 if ($pushExit -ne 0) {
     # "Hicbir sey gitmedi" origin'e bakilmadan soylenmez: sunucu atomik guncellemeyi uyguladiktan sonra baglanti koparsa git yine
-    # hata doner. Tag origin'deyse yayin cikmistir; kurtarma basilmaz (yerel develop/main/tag'i geri alirdi, sonraki pull da
-    # agactaki CHANGELOG/props degisikligine carpardi). origin okunamazsa kurtarma basilir ama once origin'e bakilmasi istenir
-    # (ls-remote hatasi "tag yok" sayilmaz).
-    $onOrigin = & git ls-remote --tags origin "refs/tags/$tag"
-    $lsExit = $LASTEXITCODE
-    if ($lsExit -ne 0) { Fail "push failed (git exit $pushExit) and origin cannot be read to check it (git ls-remote exit $lsExit); run the undo below only after seeing origin has no $tag - if it has, the release went out." }
-    if ($onOrigin) { $script:Undo = $null; Fail "push reported an error (git exit $pushExit) but origin has $tag - the push may have partially applied; check origin (git fetch) before undoing anything." }
+    # hata doner. origin'in main'i yayinin merge'uyse push uygulanmistir (atomik: develop da gitti) ve yayin GitHub'da baslamistir;
+    # kurtarma basilmaz (yerel develop/main'i geri alirdi, sonraki pull da agactaki degisiklige carpardi). origin okunamazsa
+    # kurtarma basilir ama once origin'e bakilmasi istenir (ls-remote hatasi "gitmedi" sayilmaz).
+    $released = git rev-parse refs/heads/main
+    try { $origin = Get-OriginRelease $tag }
+    catch { Fail "push failed (git exit $pushExit) and origin cannot be read to check it ($($_.Exception.Message)); run the undo below only after seeing origin's main is not $released - if it is, the release went out." }
+    if ($origin.Main -eq $released) { $script:Undo = $null; Fail "push reported an error (git exit $pushExit) but origin's main is the release merge - the push applied; GitHub tests it and tags $tag ($DefaultRepoUrl/actions)." }
     Fail "push refused (git exit $pushExit); --atomic: nothing reached origin - did origin/develop or origin/main move meanwhile?"
 }
 $script:Undo = $null
-Write-Host "release: $tag pushed (main, develop and the tag) - $DefaultRepoUrl/actions"
+Write-Host "release: $tag pushed (main and develop) - GitHub tests the merge, then tags it $tag and publishes the release: $DefaultRepoUrl/actions"
 exit 0

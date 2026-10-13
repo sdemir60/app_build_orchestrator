@@ -133,7 +133,8 @@ public class ReleaseScriptsTests
     /// <summary>Kurtarma satırının başı (release.ps1 <c>Fail</c>).</summary>
     private const string UndoLinePrefix = "release: undo ";
 
-    /// <summary>Push reddinde script'in "origin'e hiçbir şey gitmedi" iddiası — yalnız origin'de tag olmadığı GÖRÜLDÜYSE yazılır.</summary>
+    /// <summary>Push reddinde script'in "origin'e hiçbir şey gitmedi" iddiası — yalnız origin'deki main'in yayının merge'ü OLMADIĞI
+    /// GÖRÜLDÜYSE yazılır.</summary>
     private const string NothingReachedOrigin = "nothing reached origin";
 
     /// <summary>Script'in kurtarma satırındaki komutlar. Satır script'in SON <c>release:</c> satırıdır (git'in kendi hata satırları
@@ -153,6 +154,9 @@ public class ReleaseScriptsTests
             RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true,
             WorkingDirectory = workingDirectory,
         };
+        // Koşu runner'da GitHub'ın adım çıktı dosyasını miras alırdı: CI kipindeki guard oraya sandbox'ın tag'ini yazardı. Testler
+        // hermetiktir — dosyayı isteyen test (GuardOnMain) kendisi verir.
+        psi.Environment.Remove("GITHUB_OUTPUT");
         psi.ArgumentList.Add("-NoProfile"); psi.ArgumentList.Add("-ExecutionPolicy"); psi.ArgumentList.Add("Bypass");
         return psi;
     }
@@ -279,8 +283,7 @@ public class ReleaseScriptsTests
 
     /// <summary>Üç durumlu ata sorusu tek yerdedir (<c>Test-GitAncestor</c>, release-common.ps1): <c>git merge-base --is-ancestor</c>
     /// çıkışı 0 → <c>$true</c>, 1 → <c>$false</c>, diğeri (ref yok, sığ checkout) → istisna (<c>git exit N</c>). Sorulamayan ata ne
-    /// "ata" ne "değil" sayılır — çağıranlar (release.ps1'in ata guard'ı, release-guard.ps1'in <c>-RequireOnMain</c>'i) kendi
-    /// mesajıyla durur. Sorular geçici bir repoya sorulur: script kökü (<c>$RepoRoot</c>) dot-source'tan sonra oraya çevrilir.</summary>
+    /// "ata" ne "değil" sayılır — çağıran (release.ps1'in ata guard'ı) kendi mesajıyla durur. Sorular geçici bir repoya sorulur: script kökü (<c>$RepoRoot</c>) dot-source'tan sonra oraya çevrilir.</summary>
     [SkippableFact]
     public void The_ancestry_probe_answers_yes_or_no_and_throws_when_git_cannot_tell()
     {
@@ -583,7 +586,8 @@ public class ReleaseScriptsTests
     /// <summary>Kusur: sonda process'i yalnız ADA göre buluyordu — ilk kurulumdan sonra tepsideki KURULU kopya
     /// (<c>%LocalAppData%\BuildOrchestrator.App\current</c>) da <c>/release</c>'i durdururdu, oysa o kopyanın dosyaları bu
     /// checkout'un build'ini kilitlemez. release.ps1 sondaya repo kökünü verir (<c>-UnderPath</c>): kurulu kopya açıkken yayın
-    /// sonuna kadar gider (merge, develop ve tag origin'de).</summary>
+    /// sonuna kadar gider (merge ve develop origin'de; tag'i GitHub koyar — bkz.
+    /// <see cref="A_clean_release_merges_develop_into_main_and_leaves_the_tag_to_GitHub"/>).</summary>
     [SkippableFact]
     public void A_copy_installed_elsewhere_does_not_stop_the_release()
     {
@@ -595,7 +599,7 @@ public class ReleaseScriptsTests
         Assert.True(r.ExitCode == 0, r.Output);
         Assert.Equal(box.WorkHead, box.OriginMain);
         Assert.Equal(box.OriginMain, box.OriginDevelop);
-        Assert.Equal("tag", box.Git(box.Origin, "cat-file", "-t", "refs/tags/v1.8.0").Trim());
+        Assert.Equal("merge: release v1.8.0", box.Git(box.Origin, "log", "-1", "--format=%s", "main").Trim());
     }
 
     /// <summary>[final review #4] Sondanın verify-publish'teki kullanımı taşındıktan sonra da aynıdır: çalışan örnek varken hiçbir
@@ -633,21 +637,24 @@ public class ReleaseScriptsTests
         Assert.Equal(before, box.Snapshot()); // ne push ne release commit'i ne merge
     }
 
-    /// <summary>Kusur: push atomik değildi. Fetch ile push arasında build + tam süit dakikalar sürer; bu arada origin'de bir ref
-    /// ilerlerse git onu non-fast-forward diye reddeder ama diğerlerini GÖNDERİRDİ — ör. main + tag gider, develop gitmez (yayın
-    /// çıkar, develop ile main ayrışır) ya da tag, origin/main'in hiç görmediği bir merge'e gider. Push atomiktir: main, develop ve
-    /// tag ya birlikte gider ya hiçbiri. Yarış, release commit'inin hemen ardından origin'i ilerleten bir post-commit hook ile
-    /// (fetch'ten sonra, push'tan önce) deterministik kurulur; hem develop'un (olası yarış: biri develop'a iş itti) hem main'in
-    /// ilerlemesi denenir.
-    /// <para>Push reddinden sonra yerelde release commit'i, merge ve tag kalır; script'in son <c>release:</c> satırı onları geri alan
-    /// komutları verir. Test o komutları ÇALIŞTIRIR: develop ve main yayının başladığı commit'e döner, tag silinir, CHANGELOG bölümü
-    /// ve <c>Version</c> çalışma ağacında değişiklik olarak kalır (yazılmış not kaybolmaz). Komutlardan ÖNCE bir <c>fetch</c> koşar:
+    /// <summary>Kusur: push atomik değildi. Fetch ile push arasında build dakikalar sürebilir; bu arada origin'de bir ref
+    /// ilerlerse git onu non-fast-forward diye reddeder ama diğerlerini GÖNDERİRDİ — ör. main gider, develop gitmez (yayın
+    /// çıkar, develop ile main ayrışır). Push atomiktir: main ve develop ya birlikte gider ya hiçbiri. Yarış, release commit'inin
+    /// hemen ardından origin'i ilerleten bir post-commit hook ile (fetch'ten sonra, push'tan önce) deterministik kurulur; hem
+    /// develop'un (olası yarış: biri develop'a iş itti) hem main'in ilerlemesi denenir.
+    /// <para>Push reddinden sonra yerelde release commit'i ve merge kalır; script'in son <c>release:</c> satırı onları geri alan
+    /// komutları verir. Test o komutları ÇALIŞTIRIR: develop ve main yayının başladığı commit'e döner, CHANGELOG bölümü ve
+    /// <c>Version</c> çalışma ağacında değişiklik olarak kalır (yazılmış not kaybolmaz). Satırda tag komutu YOKTUR — yerelde
+    /// tag atılmaz (kullanıcı kararı 2026-10-13: tag'i GitHub, testler geçince koyar); eski satırın <c>git tag -d</c>'si artık
+    /// olmayan bir tag'i silmeye çalışıp hata basardı. Komutlardan ÖNCE bir <c>fetch</c> koşar:
     /// kullanıcı araya fetch/pull sokabilir ve o zaman isimler (<c>origin/develop</c>, <c>origin/main</c>) yarışan commit'e kayar —
     /// satırdaki sha'lar kaymaz. Sandbox'ta develop main'in önünde olduğundan yer değiştirmiş sha'lar da, isimli bir kurtarma da
     /// burada kırmızı verir.</para>
     /// <para><b>Değişen kural (kullanıcı kararı 2026-09-30: günlük iş develop'ta, main yalnız sürümler):</b> eski iddia "origin/main
-    /// ilerlerse main de tag de gitmez" idi — iki ref vardı, kurtarma elle yazılırdı (<c>git reset --soft origin/main</c>). Artık üç
-    /// ref gider, develop'un ilerlemesi asıl olası yarıştır ve kurtarma komutlarını script verir.</para></summary>
+    /// ilerlerse main de tag de gitmez" idi — iki ref vardı, kurtarma elle yazılırdı (<c>git reset --soft origin/main</c>). O kararla
+    /// üç ref gitti (main, develop, tag), develop'un ilerlemesi asıl olası yarış oldu ve kurtarma komutlarını script verdi.</para>
+    /// <para><b>Değişen kural (kullanıcı kararı 2026-10-13: tag'i GitHub, testler geçince koyar):</b> push üç ref'ten ikiye indi
+    /// (main, develop); kurtarma satırı yerelde olmayan bir tag'i silmeye çalışmaz.</para></summary>
     [SkippableTheory]
     [InlineData("develop")]
     [InlineData("main")]
@@ -665,11 +672,12 @@ public class ReleaseScriptsTests
         Assert.Equal(box.OtherHead, box.Git(box.Origin, "rev-parse", moved).Trim()); // yarış gerçekten kuruldu
         if (moved == "develop") Assert.Equal(mainBefore, box.OriginMain);             // öteki branch de gitmedi
         else Assert.Equal(developBefore, box.OriginDevelop);
-        Assert.Equal("", box.OriginTags);                                             // tag origin'e ULAŞMADI (atomik push)
+        Assert.Equal("", box.OriginTags);                                             // script tag atmaz (tag'i GitHub koyar)
         Assert.Contains(NothingReachedOrigin, r.Output, StringComparison.Ordinal);   // script de bunu origin'e bakıp söyler
 
         box.Git(box.Work, "fetch", "-q", "origin"); // kurtarmadan önce araya giren fetch: isim yarışan commit'e kayar
         Assert.Equal(box.OtherHead, box.Git(box.Work, "rev-parse", "refs/remotes/origin/" + moved).Trim());
+        Assert.DoesNotContain("git tag", UndoCommands(r.Output), StringComparison.Ordinal); // yerelde tag yok: silinecek tag de yok
         var undo = RunCommand(UndoCommands(r.Output), box.Work);
 
         Assert.True(box.CurrentBranch == "develop", undo.Output);
@@ -683,10 +691,13 @@ public class ReleaseScriptsTests
 
     /// <summary>Kusur: push sıfırdan farklı döndüğünde script "--atomic: nothing reached origin" diyor ve kurtarma satırını
     /// basıyordu. Oysa sunucu atomik güncellemeyi uyguladıktan sonra bağlantı koparsa git yine hata döner ve yayın origin'dedir:
-    /// kurtarma yerel develop/main/tag'i geri alır, ardından <c>git pull --ff-only</c> çalışma ağacındaki CHANGELOG/props
-    /// değişikliğine çarpar. Script "hiçbir şey gitmedi" demeden origin'e tag'i sorar (<c>git ls-remote</c>); tag oradaysa bunu
-    /// söyler ve kurtarma satırı BASMAZ. Gölge <c>git</c> push'u gerçekten yapar, yalnız çıkış kodunu bozar; tag sondası gerçek
-    /// origin'e sorar.</summary>
+    /// kurtarma yerel develop/main'i geri alır, ardından <c>git pull --ff-only</c> çalışma ağacındaki CHANGELOG/props
+    /// değişikliğine çarpar. Script "hiçbir şey gitmedi" demeden origin'e main'in ucunu sorar (<c>git ls-remote</c>); uç yayının
+    /// merge'üyse bunu söyler ve kurtarma satırı BASMAZ. Gölge <c>git</c> push'u gerçekten yapar, yalnız çıkış kodunu bozar; sonda
+    /// gerçek origin'e sorar.
+    /// <para><b>Değişen kural (kullanıcı kararı 2026-10-13: tag'i GitHub, testler geçince koyar):</b> eski sonda origin'e tag'i
+    /// sorardı ("but origin has v1.8.0"). Tag artık push edilmez; push'un uygulandığını gösteren origin'deki main'dir — atomik
+    /// push'ta main gittiyse develop da gitmiştir.</para></summary>
     [SkippableFact]
     public void A_push_that_errs_after_origin_took_the_release_says_so_and_prints_no_undo()
     {
@@ -696,18 +707,19 @@ public class ReleaseScriptsTests
         var r = RunRelease(box, gitShadow: PushAppliesButReportsAnError);
 
         Assert.Equal(1, r.ExitCode);
-        Assert.Equal("tag", box.Git(box.Origin, "cat-file", "-t", "refs/tags/v1.8.0").Trim()); // yayın gerçekten origin'de
-        Assert.Equal(box.LocalMain, box.OriginMain);
+        Assert.Equal(box.LocalMain, box.OriginMain); // yayın gerçekten origin'de
         Assert.Equal(box.LocalDevelop, box.OriginDevelop);
-        Assert.Contains("but origin has v1.8.0", r.Output, StringComparison.Ordinal);
+        Assert.Equal("", box.OriginTags);
+        Assert.Contains("but origin's main is the release merge", r.Output, StringComparison.Ordinal);
         Assert.DoesNotContain(NothingReachedOrigin, r.Output, StringComparison.Ordinal);
         Assert.DoesNotContain(UndoLinePrefix, r.Output, StringComparison.Ordinal);
     }
 
     /// <summary>Push düştükten sonra origin OKUNAMAZSA (ağ gitti) script "hiçbir şey gitmedi" diyemez: <c>ls-remote</c> hatası
-    /// "tag yok" sayılmaz (guard'lardaki kural). Kurtarma satırı yine son satırdır (büyük olasılıkla push gitmemiştir), ama
-    /// üstündeki satır önce origin'de tag'in olmadığını görmeyi söyler. Gölge <c>git</c> push'u hiç göndermez ve push'tan sonraki
-    /// <c>ls-remote</c>'u düşürür.</summary>
+    /// "gitmedi" sayılmaz (guard'lardaki kural). Kurtarma satırı yine son satırdır (büyük olasılıkla push gitmemiştir), ama
+    /// üstündeki satır önce origin'deki main'in yayının merge'ü OLMADIĞINI görmeyi söyler. Gölge <c>git</c> push'u hiç göndermez
+    /// ve push'tan sonraki <c>ls-remote</c>'u düşürür.
+    /// <para><b>Değişen kural (2026-10-13):</b> eski satır origin'de tag'in olmadığını görmeyi isterdi; tag artık push edilmez.</para></summary>
     [SkippableFact]
     public void A_failed_push_whose_outcome_cannot_be_read_asks_to_check_origin_before_the_undo()
     {
@@ -720,19 +732,26 @@ public class ReleaseScriptsTests
         Assert.Equal(1, r.ExitCode);
         Assert.Equal(originBefore, box.OriginRefs); // push gitmedi
         Assert.Contains("origin cannot be read", r.Output, StringComparison.Ordinal);
+        Assert.Contains($"origin's main is not {box.LocalMain}", r.Output, StringComparison.Ordinal);
         Assert.DoesNotContain(NothingReachedOrigin, r.Output, StringComparison.Ordinal);
         Assert.Contains("git reset --soft", UndoCommands(r.Output), StringComparison.Ordinal);
     }
 
     /// <summary>Temiz yayın: develop'taki <c>release: vX</c> commit'i main'e <c>--no-ff</c> merge edilir (<c>merge: release vX</c>),
-    /// annotated tag o merge commit'ine konur, develop main'e ilerler (develop == main) ve üç ref birlikte origin'e gider. main'in
-    /// ilk ebeveyni önceki sürüm, ikincisi develop'un release commit'idir — o da develop'un yayından önceki ucunun üstündedir
-    /// (son yayından beri develop'a giren iş main'e geçer); oturum develop'ta, ağaç temiz biter.
+    /// develop main'e ilerler (develop == main) ve iki ref birlikte origin'e gider. main'in ilk ebeveyni önceki sürüm, ikincisi
+    /// develop'un release commit'idir — o da develop'un yayından önceki ucunun üstündedir (son yayından beri develop'a giren iş
+    /// main'e geçer); oturum develop'ta, ağaç temiz biter. Tag ne yerelde ne origin'de atılır: main'e push GitHub'da yayını başlatır,
+    /// tag'i testler ve paket geçince orada <c>release-tag.ps1</c> koyar; çıktı bunu söyler.
     /// <para><b>Değişen kural (kullanıcı kararı 2026-09-30: günlük iş develop'ta, main yalnız sürümler):</b> eski iddia "release
     /// commit'i main'de atılır, tag o commit'tedir, main ve tag birlikte push edilir" idi. main'e artık yalnız bu script dokunur ve
-    /// main'deki her commit bir sürümün merge'üdür.</para></summary>
+    /// main'deki her commit bir sürümün merge'üdür.</para>
+    /// <para><b>Değişen kural (kullanıcı kararı 2026-10-13: tag'i GitHub, testler geçince koyar):</b> eski iddia "annotated tag
+    /// merge commit'ine konur ve main, develop ve tag birlikte gider" idi. Tag testten ÖNCE gidiyordu: tag'in koşusu kırmızı çıkarsa
+    /// tag origin'de Release'siz kalır, sürüm numarası yanardı. Ölçüm (2026-10-12): aynı commit (<c>cc49ff58</c>) GitHub'da üç ayrı
+    /// koşuda test edildi; main'in ci koşusu kırmızı, tag'inki yeşil çıktı — aynı tesadüf tag'in koşusuna denk gelseydi v1.8.1
+    /// Release'siz kalırdı.</para></summary>
     [SkippableFact]
-    public void A_clean_release_merges_develop_into_main_tags_the_merge_and_leaves_develop_equal_to_main()
+    public void A_clean_release_merges_develop_into_main_and_leaves_the_tag_to_GitHub()
     {
         RequirePowerShell();
         using var box = new ReleaseSandbox("1.8.0");
@@ -747,15 +766,60 @@ public class ReleaseScriptsTests
         Assert.Equal(mainBefore, box.Git(box.Origin, "rev-parse", "main^1").Trim());                    // ilk ebeveyn: önceki sürüm
         Assert.Equal("release: v1.8.0", box.Git(box.Origin, "log", "-1", "--format=%s", "main^2").Trim()); // ikinci: develop'un commit'i
         Assert.Equal(developBefore, box.Git(box.Origin, "rev-parse", "main^2^1").Trim());               // ...develop'un ucunda atıldı
-        Assert.Equal("tag", box.Git(box.Origin, "cat-file", "-t", "refs/tags/v1.8.0").Trim());          // annotated: tag nesnesi
-        Assert.Equal(main, box.Git(box.Origin, "rev-parse", "refs/tags/v1.8.0^{commit}").Trim());        // tag merge commit'inde
+        Assert.Equal("", box.OriginTags);                                                                 // tag'i GitHub koyar
+        Assert.Equal("", box.Git(box.Work, "tag", "--list").Trim());                                     // yerelde de tag yok
         Assert.Equal(main, box.OriginDevelop);                                                            // develop == main
         Assert.Equal(main, box.LocalDevelop);
         Assert.Equal(main, box.LocalMain);
         Assert.Equal("develop", box.CurrentBranch);
         Assert.Empty(box.StatusLines());
         Assert.Contains("<Version>1.8.0</Version>", File.ReadAllText(box.PropsPath), StringComparison.Ordinal);
+        Assert.Contains("then tags it v1.8.0", r.Output, StringComparison.Ordinal);
         Assert.Contains("https://github.com/sdemir60/app_build_orchestrator/actions", r.Output, StringComparison.Ordinal);
+    }
+
+    /// <summary>Önceki deneme GitHub'da düştüyse tag yoktur ama main develop'u zaten taşır. Aynı sürümle yeniden koşu ne commit ne
+    /// merge üretir ve push boş geçer — script "pushed" deyip hiçbir şey başlatmazdı (GitHub değişmeyen bir ref için koşu açmaz).
+    /// develop main'in önünde değilse ve ağaçta yayının değişikliği (CHANGELOG/props) yoksa script yazmadan durur ve yolu söyler:
+    /// aynı kod için Actions'ta düşen job'ları yeniden koşmak; bir düzeltme önce develop'a girer.</summary>
+    [SkippableFact]
+    public void A_second_run_with_nothing_new_on_develop_stops_and_points_at_the_rerun()
+    {
+        RequirePowerShell();
+        using var box = new ReleaseSandbox("1.8.0");
+        var first = RunRelease(box);
+        Assert.True(first.ExitCode == 0, first.Output);
+        string before = box.Snapshot();
+
+        var again = RunRelease(box);
+
+        Assert.Equal(1, again.ExitCode);
+        Assert.Contains("nothing to release", again.Output, StringComparison.Ordinal);
+        Assert.Contains("re-run its failed jobs", again.Output, StringComparison.Ordinal);
+        Assert.Equal(before, box.Snapshot());
+    }
+
+    /// <summary>Aynı guard'ın öteki dalı: develop main'in önünde değil ama ağaçta yayının değişikliği var — düşen denemeden sonra
+    /// ertesi gün yeniden tarihlenen CHANGELOG bölümü (SKILL adım 6). Yayınlanacak bir şey vardır: release commit'i o değişikliği
+    /// taşır, main'e yeni bir merge girer ve iki ref gider; önceki tag'siz merge main'de kalır.</summary>
+    [SkippableFact]
+    public void A_second_run_with_a_changed_changelog_merges_the_version_again()
+    {
+        RequirePowerShell();
+        using var box = new ReleaseSandbox("1.8.0");
+        var first = RunRelease(box);
+        Assert.True(first.ExitCode == 0, first.Output);
+        string earlier = box.OriginMain;
+        File.AppendAllText(box.ChangelogPath, "- Re-dated after a failed run.\n"); // ağaçta yalnız CHANGELOG değişikliği
+
+        var again = RunRelease(box);
+
+        Assert.True(again.ExitCode == 0, again.Output);
+        Assert.Equal(earlier, box.Git(box.Origin, "rev-parse", "main^1").Trim());                         // önceki deneme ilk ebeveyn
+        Assert.Equal("merge: release v1.8.0", box.Git(box.Origin, "log", "-1", "--format=%s", "main").Trim());
+        Assert.Equal("release: v1.8.0", box.Git(box.Origin, "log", "-1", "--format=%s", "main^2").Trim()); // değişikliği taşıyan commit
+        Assert.Equal(box.OriginMain, box.OriginDevelop);
+        Assert.Equal("", box.OriginTags);
     }
 
     /// <summary>Yayın develop'tan çıkar: başka bir branch'te (burada main) koşan script hiçbir şeye dokunmadan durur.
@@ -816,7 +880,8 @@ public class ReleaseScriptsTests
     }
 
     /// <summary><c>-SkipCiCheck</c> (çevrimdışı / acil durum) develop'un CI'ını HİÇ sormaz — ağa çıkan her çağrı düşecek şekilde
-    /// gölgelenir — ve bunu çıktıda söyler; yayın sonuna kadar gider (release.yml tag'i yine derleyip test eder).</summary>
+    /// gölgelenir — ve bunu çıktıda söyler; yayın sonuna kadar gider (release.yml main'in push'unu yine derleyip test eder, tag'i
+    /// ancak sonra koyar).</summary>
     [SkippableFact]
     public void SkipCiCheck_releases_without_asking_the_api_and_says_so()
     {
@@ -829,18 +894,19 @@ public class ReleaseScriptsTests
         Assert.DoesNotContain("NETWORK-TOUCHED", r.Output, StringComparison.Ordinal);
         Assert.Contains("CI run was not checked", r.Output, StringComparison.Ordinal);
         Assert.Equal(box.OriginMain, box.OriginDevelop);
-        Assert.Equal("tag", box.Git(box.Origin, "cat-file", "-t", "refs/tags/v1.8.0").Trim());
+        Assert.Equal("merge: release v1.8.0", box.Git(box.Origin, "log", "-1", "--format=%s", "main").Trim());
+        Assert.Equal("", box.OriginTags); // tag'i GitHub koyar (bkz. A_clean_release_merges_develop_into_main_and_leaves_the_tag_to_GitHub)
     }
 
     /// <summary>Yayın kapısı yalnız build'dir; testleri lokal koşmaz. Testler CI'dadır: develop HEAD'inin <c>ci.yml</c> koşusu yeşil
-    /// olmadan script başlamaz (guard) ve <c>release.yml</c> tag'i yayından önce yine derleyip test eder (<c>publish</c> ona
-    /// bağlıdır). Gölge <c>dotnet</c> çağrıları yazar: build koşar, <c>test</c> hiç koşmaz.
+    /// olmadan script başlamaz (guard) ve <c>release.yml</c> main'in push'unu yayından önce yine derleyip test eder (<c>publish</c>
+    /// ona bağlıdır). Gölge <c>dotnet</c> çağrıları yazar: build koşar, <c>test</c> hiç koşmaz.
     /// <para><b>Değişen kural (kullanıcı kararı 2026-10-12):</b> eski iddia "script build'den sonra filtreli tam süiti de koşar
     /// (<c>-SkipTests</c> ile atlanır); süit kırmızıysa hiçbir şey commit ya da push edilmez" idi. Süit bu makinede paralel
     /// koşuda gerçek motor testlerinden birini ~60 sn takıp düşürdü — her koşuda farklı biri, birbirinden ayrı iki commit'te
     /// (<c>e7bc4384</c> iki kez, <c>de57c62f</c> bir kez) ve düşen test tek başına 9/9 geçti — ve CI'ın aynı commit'te zaten yeşil
-    /// gördüğü bir sürümü engelledi. Kırmızı bir test artık tag'te <c>release.yml</c>'de durur: tag ve main origin'de kalır,
-    /// Release açılmaz (SKILL adım 6).</para></summary>
+    /// gördüğü bir sürümü engelledi. Kırmızı bir test artık <c>release.yml</c>'de durur: main origin'de kalır, tag ve Release
+    /// olmaz (SKILL adım 6).</para></summary>
     [SkippableFact]
     public void The_release_builds_but_leaves_the_tests_to_CI()
     {
@@ -954,37 +1020,126 @@ public class ReleaseScriptsTests
         Assert.Equal(before, box.Snapshot());
     }
 
-    /// <summary>Kusur: release.yml'in guard'ı yalnız tag == Version == CHANGELOG eşitliğine bakıyordu; elle itilen ve
-    /// origin/main'de OLMAYAN bir commit'e duran tag (bir iş branch'inden, push edilmemiş bir denemeden) aynı eşitliği
-    /// taşırsa yayın çıkardı. <c>-RequireOnMain</c> (CI'ın kipi) HEAD'in origin/main'in atası olmasını da ister. Yerel
-    /// <c>release.ps1</c> bu anahtarı vermez: orada guard release commit'inden önce koşar. develop'a push edilmiş ama main'e
-    /// girmemiş bir commit de yayın çıkarmaz: main yalnız sürümleri taşır, tag release.ps1'in main'deki merge'ündedir. Ata
-    /// sorulamazsa (<c>origin/main</c> yok) da reddeder — üç durum <c>Test-GitAncestor</c>'dadır.</summary>
+    /// <summary>release-guard.ps1'in CI kipi (<c>-OnMain</c>) — release.yml'in guard job'ı gibi: <c>-File</c> ile ve GITHUB_OUTPUT
+    /// dosyası ortamda. <c>-Command "…; exit $LASTEXITCODE"</c> kalıbı burada YANLIŞ olurdu: parametre bağlanamazsa (script
+    /// anahtarı tanımıyorsa) <c>$LASTEXITCODE</c> boş kalır ve süreç 0 ile biter — "geçti" iddiaları sebepsiz yeşil olurdu.</summary>
+    private static (int ExitCode, string Output) GuardOnMain(ReleaseSandbox box, string githubOutput)
+    {
+        var psi = NewPowerShell(box.Work);
+        psi.Environment["GITHUB_OUTPUT"] = githubOutput;
+        psi.ArgumentList.Add("-File"); psi.ArgumentList.Add(box.GuardScript); psi.ArgumentList.Add("-OnMain");
+        return Execute(psi);
+    }
+
+    /// <summary>CI kipi (<c>-OnMain</c>: release.yml'in guard job'ı ve release-tag.ps1): tag Version'dan çıkar; push edilen commit
+    /// (HEAD) origin'in main UCU olmalıdır. Push edilmemiş, develop'ta olup main'de olmayan ya da main'in GERİSİNDE kalmış bir commit
+    /// yayın çıkarmaz — sonuncusu, yeni bir sürüm itildikten sonra eski bir koşunun yeniden denenmesidir; geçseydi eski sürüm
+    /// yenisinin üstüne yayınlanırdı. Geçince tag'i GITHUB_OUTPUT'a yazar (<c>tag=vX.Y.Z</c> — publish job'ı okur); reddederse
+    /// yazmaz. origin okunamazsa reddeder (doğrulanamayan yayın çıkmaz). Origin'e <c>ls-remote</c> ile sorulur: runner'ın sığ
+    /// checkout'u tarihçe ve uzak izleme ref'i taşımaz. Yerel kip (<c>-Tag</c>, release.ps1) origin'e hiç sormaz.
+    /// <para><b>Değişen kural (kullanıcı kararı 2026-10-13: tag'i GitHub, testler geçince koyar):</b> eski kip <c>-RequireOnMain</c>
+    /// idi: tag push edilmişti ve guard tag'in commit'inin origin/main'in ATASI olmasını isterdi (tam tarihçe). Artık guard tag'den
+    /// önce koşar ve ata yetmez: main ilerlediyse eski commit'e konan tag "latest"i eski sürüme çevirirdi.</para></summary>
     [SkippableFact]
-    public void The_release_guard_on_CI_refuses_a_commit_that_origin_main_does_not_contain()
+    public void The_release_guard_on_CI_accepts_only_the_head_of_origin_main_and_hands_the_tag_on()
     {
         RequirePowerShell();
         using var box = new ReleaseSandbox("1.8.0");
         box.CommitTheNextVersionWithoutPushing();
-        string tag = "v" + box.NextVersion;
+        string output = box.Scratch("github-output.txt");
 
-        Assert.Equal(0, RunIn(box.Work, box.GuardScript, "-Tag", tag).ExitCode); // yerel kip: ata sorulmaz
-
-        var refused = RunIn(box.Work, box.GuardScript, "-Tag", tag, "-RequireOnMain");
-        Assert.Equal(1, refused.ExitCode);
-        Assert.Contains("origin/main", refused.Output, StringComparison.Ordinal);
+        Assert.Equal(0, RunIn(box.Work, box.GuardScript, "-Tag", "v" + box.NextVersion).ExitCode); // yerel kip: origin'e sorulmaz
+        Assert.Equal(1, GuardOnMain(box, output).ExitCode);                                         // push edilmemiş
 
         box.Git(box.Work, "push", "-q", "origin", "develop"); // develop'ta ama main'de değil: yine yayın yok
-        Assert.Equal(1, RunIn(box.Work, box.GuardScript, "-Tag", tag, "-RequireOnMain").ExitCode);
+        var onDevelop = GuardOnMain(box, output);
+        Assert.Equal(1, onDevelop.ExitCode);
+        Assert.Contains("is not the head of origin's main", onDevelop.Output, StringComparison.Ordinal);
+        Assert.False(File.Exists(output), "reddeden guard tag vermez");
 
-        box.Git(box.Work, "push", "-q", "origin", "HEAD:main"); // commit artık origin/main'de
-        var accepted = RunIn(box.Work, box.GuardScript, "-Tag", tag, "-RequireOnMain");
+        box.Git(box.Work, "push", "-q", "origin", "HEAD:main"); // commit artık origin'in main ucu
+        var accepted = GuardOnMain(box, output);
         Assert.True(accepted.ExitCode == 0, accepted.Output);
+        Assert.Equal("tag=v1.8.0", File.ReadAllText(output).Trim());
+        Assert.Equal((byte)'t', File.ReadAllBytes(output)[0]); // BOM'suz: ReadAllText BOM'u yutar, ilk anahtar bozulmasın
 
-        box.Git(box.Work, "update-ref", "-d", "refs/remotes/origin/main"); // ata sorulamaz (tarihçesi getirilmemiş checkout gibi)
-        var unknown = RunIn(box.Work, box.GuardScript, "-Tag", tag, "-RequireOnMain");
-        Assert.Equal(1, unknown.ExitCode);                                  // sorulamayan ata "ata" sayılmaz
-        Assert.Contains("cannot check the tagged commit against origin/main", unknown.Output, StringComparison.Ordinal);
+        box.AdvanceOrigin("main"); // yeni bir sürüm itildi: bu commit artık main'in ucu değil
+        Assert.Equal(1, GuardOnMain(box, output).ExitCode);
+
+        box.Git(box.Work, "remote", "set-url", "origin", box.Scratch("missing.git")); // origin okunamaz
+        var unknown = GuardOnMain(box, output);
+        Assert.Equal(1, unknown.ExitCode);
+        Assert.Contains("cannot read origin", unknown.Output, StringComparison.Ordinal);
+    }
+
+    /// <summary>CI kipi tag'e de bakar: <c>vX.Y.Z</c> origin'de BAŞKA bir commit'teyse sürüm yükseltilmemiştir — yayın çıkmaz
+    /// (Release o eski tag'e yüklenirdi). Tag bu commit'teyse geçer: publish job'ı tag'i attıktan sonra düşüp yeniden denenen koşu.</summary>
+    [SkippableFact]
+    public void The_release_guard_on_CI_refuses_a_version_whose_tag_sits_on_another_commit()
+    {
+        RequirePowerShell();
+        using var box = new ReleaseSandbox("1.8.0");
+        box.CommitTheNextVersionWithoutPushing();
+        box.Git(box.Work, "push", "-q", "origin", "HEAD:main");
+        box.TagAnUnreachableCommitOnOrigin("v1.8.0");
+        string output = box.Scratch("github-output.txt");
+
+        var elsewhere = GuardOnMain(box, output);
+        Assert.Equal(1, elsewhere.ExitCode);
+        Assert.Contains("v1.8.0 already exists on origin", elsewhere.Output, StringComparison.Ordinal);
+
+        box.Git(box.Origin, "tag", "-f", "v1.8.0", box.OriginMain); // tag bu commit'te: yeniden denenen koşu
+        var rerun = GuardOnMain(box, output);
+        Assert.True(rerun.ExitCode == 0, rerun.Output);
+    }
+
+    /// <summary>release-tag.ps1 (release.yml'in publish job'ı, testlerden ve paketten SONRA): önce CI kontrolünü yapar, sonra HEAD'e
+    /// annotated <c>vX.Y.Z</c> tag'ini koyup origin'e iter — tag yalnız testleri ve paketi geçmiş sürüme konur. Tag mesajı ürün adı +
+    /// sürüm; tag'i atan GitHub'ın bot kimliğidir (runner'da git kimliği tanımsızdır; kimlik tag'in ayrıntısıdır, script'tedir).
+    /// Yeniden denenen publish job'ında tag zaten bu commit'teyse dokunmaz ve başarılı çıkar (Release yüklemesi sürebilsin).</summary>
+    [SkippableFact]
+    public void The_tag_script_tags_the_head_of_main_and_leaves_a_rerun_alone()
+    {
+        RequirePowerShell();
+        using var box = new ReleaseSandbox("1.8.0");
+        box.CommitTheNextVersionWithoutPushing();
+        box.Git(box.Work, "push", "-q", "origin", "HEAD:main");
+        string head = box.WorkHead;
+
+        var first = RunIn(box.Work, box.TagScript);
+
+        Assert.True(first.ExitCode == 0, first.Output);
+        Assert.Equal("tag", box.Git(box.Origin, "cat-file", "-t", "refs/tags/v1.8.0").Trim()); // annotated: tag nesnesi
+        Assert.Equal(head, box.Git(box.Origin, "rev-parse", "refs/tags/v1.8.0^{commit}").Trim());
+        Assert.Equal("Sandbox 1.8.0 - release notes in CHANGELOG.md",
+            box.Git(box.Origin, "tag", "--list", "--format=%(contents:subject)", "v1.8.0").Trim());
+        Assert.Equal("github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>",
+            box.Git(box.Origin, "tag", "--list", "--format=%(taggername) %(taggeremail)", "v1.8.0").Trim());
+        string tagged = box.OriginRefs;
+
+        var rerun = RunIn(box.Work, box.TagScript);
+
+        Assert.True(rerun.ExitCode == 0, rerun.Output);
+        Assert.Contains("already on", rerun.Output, StringComparison.Ordinal);
+        Assert.Equal(tagged, box.OriginRefs);
+    }
+
+    /// <summary>Guard tutmazsa tag atılmaz: main bu commit'ten sonra ilerlediyse (yeni bir sürüm itildi) eski koşunun yeniden
+    /// denemesi ne yerelde ne origin'de tag bırakır ve düşer.</summary>
+    [SkippableFact]
+    public void The_tag_script_tags_nothing_when_main_has_moved_on()
+    {
+        RequirePowerShell();
+        using var box = new ReleaseSandbox("1.8.0");
+        box.CommitTheNextVersionWithoutPushing();
+        box.Git(box.Work, "push", "-q", "origin", "HEAD:main");
+        box.AdvanceOrigin("main");
+
+        var r = RunIn(box.Work, box.TagScript);
+
+        Assert.Equal(1, r.ExitCode);
+        Assert.Equal("", box.OriginTags);
+        Assert.Equal("", box.Git(box.Work, "tag", "--list").Trim());
     }
 
     /// <summary>release.ps1'in gerçek git akışı için izole ortam: bare origin (<c>main</c> ve onun bir commit önündeki
@@ -1007,6 +1162,9 @@ public class ReleaseScriptsTests
         public string Other => Path.Combine(_temp.Path, "other");
         public string ReleaseScript => Path.Combine(Work, "scripts", "release.ps1");
         public string GuardScript => Path.Combine(Work, "scripts", "release-guard.ps1");
+        public string TagScript => Path.Combine(Work, "scripts", "release-tag.ps1");
+        /// <summary>Sandbox kökünde, repoların DIŞINDA bir dosya yolu (ör. GitHub'ın <c>GITHUB_OUTPUT</c> dosyası).</summary>
+        public string Scratch(string name) => Path.Combine(_temp.Path, name);
         public string PropsPath => Path.Combine(Work, "Directory.Build.props");
         public string ChangelogPath => Path.Combine(Work, "CHANGELOG.md");
         /// <summary>CHANGELOG'un en üstüne (commit'siz) yazılan yeni sürüm.</summary>
@@ -1030,7 +1188,7 @@ public class ReleaseScriptsTests
             Configure(Work);
 
             Directory.CreateDirectory(Path.Combine(Work, "scripts"));
-            foreach (string script in new[] { "release.ps1", "release-guard.ps1", "release-common.ps1" })
+            foreach (string script in new[] { "release.ps1", "release-guard.ps1", "release-tag.ps1", "release-common.ps1" })
                 File.Copy(Path.Combine(Scripts, script), Path.Combine(Work, "scripts", script));
             File.WriteAllText(PropsPath,
                 "<Project><PropertyGroup><Version>1.7.0</Version><Product>Sandbox</Product><Company>Sandbox</Company></PropertyGroup></Project>\n");
@@ -1046,7 +1204,9 @@ public class ReleaseScriptsTests
             Git(Work, "commit", "-q", "-m", "feat: work since the last release");
             Git(Work, "push", "-q", "-u", "origin", "develop"); // origin: develop main'in bir commit önünde
 
-            Git(_temp.Path, "clone", "-q", Origin, Other);
+            // autocrlf clone ANINDA kapalı: sonradan kapatmak (Configure) checkout'un CRLF'e çevirdiği dosyaları "değişmiş" gösterir
+            // ve ikinci klon, CHANGELOG'u değiştiren bir commit'e geçemez (AdvanceOrigin, yayının merge'ü main'in ucuyken).
+            Git(_temp.Path, "clone", "-q", "-c", "core.autocrlf=false", Origin, Other);
             Configure(Other);
 
             string today = DateTime.Now.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);

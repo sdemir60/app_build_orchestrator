@@ -1,13 +1,16 @@
-# [yayin hatti] vX.Y.Z tag'i push edilince: guard -> (ci.yml: build + test) -> package.ps1 (publish + notlar + vpk pack,
-# onceki paketten delta) -> GitHub Release + asset'ler -> govde = CHANGELOG bolumu. Gizli anahtar gerekmez.
+# [yayin hatti] main'e push (main'i yalniz release.ps1 iter; her push bir surum denemesidir): guard (Version == CHANGELOG,
+# commit main'in ucu, tag baska yerde degil) -> ci (ci.yml: build + test) -> publish: package.ps1 (publish + notlar + vpk pack,
+# onceki paketten delta) -> release-tag.ps1 (tag - testler ve paket GECTIKTEN SONRA: kirmizi test ya da dusen paket tag birakmaz) ->
+# GitHub Release + asset'ler -> govde = CHANGELOG bolumu. Kirmizi biten kosuyu release-retry.yml bir kez yeniden dener.
+# Gizli anahtar gerekmez.
 name: release
 on:
   push:
-    tags: ['v*']
-# Varsayilan okuma: guard ve ci (tag'in kodunu derleyip kosturur) repoya yazamaz; yazma yalniz publish job'inda.
+    branches: [main]
+# Varsayilan okuma: guard ve ci (main'in kodunu derleyip kosturur) repoya yazamaz; yazma (tag + Release) yalniz publish job'inda.
 permissions:
   contents: read
-# Yayinlar sirayla: ikinci tag'in delta'si birincinin yuklenmemis paketine dayanmasin; kosan yayin iptal edilmez
+# Yayinlar sirayla: ikinci surumun delta'si birincinin yuklenmemis paketine dayanmasin; kosan yayin iptal edilmez
 # (yarim yuklenmis release kalmasin).
 concurrency:
   group: release
@@ -15,16 +18,18 @@ concurrency:
 jobs:
   guard:
     runs-on: windows-2025
+    # Tag Version'dan cikar; publish yukleme ve not adimlarinda bunu kullanir (ref adi artik "main"dir).
+    outputs:
+      tag: ${{ steps.guard.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0   # tam tarihce: -RequireOnMain tag'in commit'ini origin/main'e karsi sorar
-      - run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release-guard.ps1 -Tag ${{ github.ref_name }} -RequireOnMain
+      - id: guard
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release-guard.ps1 -OnMain
   ci:
     needs: guard
     uses: ./.github/workflows/ci.yml
   publish:
-    needs: ci
+    needs: [guard, ci]
     runs-on: windows-2025
     permissions:
       contents: write
@@ -35,7 +40,9 @@ jobs:
           global-json-file: global.json
       - run: dotnet tool restore
       - run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1 -DownloadPrevious -RepoUrl https://github.com/${{ github.repository }} -Token ${{ secrets.GITHUB_TOKEN }}
-      - run: dotnet vpk upload github --repoUrl https://github.com/${{ github.repository }} --token ${{ secrets.GITHUB_TOKEN }} --outputDir artifacts/velopack --publish --merge --releaseName "Build Orchestrator ${{ github.ref_name }}" --tag ${{ github.ref_name }}
-      - run: gh release edit ${{ github.ref_name }} --notes-file artifacts/notes.md
+      # Tag testlerden ve paketten SONRA, yuklemeden ONCE (kimligi ve mesaji script verir).
+      - run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release-tag.ps1
+      - run: dotnet vpk upload github --repoUrl https://github.com/${{ github.repository }} --token ${{ secrets.GITHUB_TOKEN }} --outputDir artifacts/velopack --publish --merge --releaseName "Build Orchestrator ${{ needs.guard.outputs.tag }}" --tag ${{ needs.guard.outputs.tag }}
+      - run: gh release edit ${{ needs.guard.outputs.tag }} --notes-file artifacts/notes.md
         env:
           GH_TOKEN: ${{ github.token }}
