@@ -930,8 +930,9 @@ public sealed partial class RunViewModel : ObservableObject
     /// çağrıda koşulsuz temizlenir: aksi halde İKİNCİ run'da (satır no'ları yeniden 1'den başlar) dikiş filtresi
     /// (LineNumber &gt; ThroughLineNumber) eski run'ın kuyruk satırlarını da geçirir ve OrderBy(LineNumber) eski+yeni'yi
     /// karıştırır (bozuk "tam log"). Canlı tamponda eski kuyruk ancak cevabı gelmemiş, silahlı kalmış bir yükleme üzerinden
-    /// kalabilir (yeni bir yükleme onu zaten bırakır — <see cref="CompletePendingLoad"/>); o yüklemenin gecikmiş chunk'ı yeni
-    /// run'da gelirse eski kuyruğu bu temizlik ayıklamış olur. runStarted'ı BEKLEMEDEN burada temizlenir: ProjectLogEvent
+    /// kalabilir (yeni bir yükleme onu zaten bırakır — <see cref="CompletePendingLoad"/>); cevabı artık beklenmeyen böyle bir
+    /// yükleme bu temizlikte biter, cevabı beklenenin gecikmiş chunk'ı yeni run'da gelirse eski kuyruğu bu temizlik ayıklamış olur
+    /// (<see cref="ClearConsoleForNewOperation"/>). runStarted'ı BEKLEMEDEN burada temizlenir: ProjectLogEvent
     /// marshal'sız işlendiğinden yeni run'ın ilk satırları, marshal'lı runStarted UI thread'ine düşmeden ÖNCE varabilir.</para>
     /// <para>[Fix wave 2, Finding 1] Gönderim SENKRON başarısız olursa (engine hiç başlamadı/öldü) IsStarting
     /// geri açılır — aksi halde hiçbir engine event'i gelmeyeceğinden buton kalıcı kilitli kalırdı.</para>
@@ -2787,7 +2788,8 @@ public sealed partial class RunViewModel : ObservableObject
     ///
     /// <para><b>[idle-memory] Proje log yüklemesi bırakılmaz, cevabı artık beklenmez</b> (<see cref="StopAwaitingReply"/>): gönderimi
     /// düşen yükleme gibi silahlı kalır — motorun ölmeden yazdığı gecikmiş bir chunk hâlâ dikilir — ama işlem sonu trimini tutmaz.
-    /// Tutsaydı başka bir log açılana dek her trimi (yeniden başlatmanın Sync'i dahil) kilitlerdi.</para></summary>
+    /// Tutsaydı başka bir log açılana dek her trimi (yeniden başlatmanın Sync'i dahil) kilitlerdi. Silahlı kalış en geç yeni işleme
+    /// dektir: <see cref="ClearConsoleForNewOperation"/> onu bitirir (awaiter serbest kalır, tampon bırakılır).</para></summary>
     private void ReleaseAfterEngineLoss()
     {
         // [E2/F3 fold] Terminal Phase kararı: engine run ORTASINDA (Phase=Running) ölürse Phase Running'de asılı
@@ -2924,8 +2926,8 @@ public sealed partial class RunViewModel : ObservableObject
             // onu görür; bayat bir okuma ancak istekten önce yayılmış — zaten snapshot'taki — bir satıra denk gelir (tersi,
             // istekten önceki bir satırın tamponlanması, zararsızdır: dikişin eşiği onu ayıklar). Bırakma yüklemenin sonundadır
             // (CompletePendingLoad). Cevabı artık beklenmeyen ama silahlı kalan yükleme (gönderim düştü, motor gitti) de
-            // tamponlar — gecikmiş bir chunk hâlâ dikilebilir; üst sınır o projenin istekten sonraki satırlarıdır, sonraki
-            // yükleme ya da yeni işlem bırakır (bilinçli sınır). Proje eşleşmesi TEK yüklemdir (PendingLoad.IsFor).
+            // tamponlar — gecikmiş bir chunk hâlâ dikilebilir; üst sınır o projenin istekten sonraki satırlarıdır, yükleme en geç
+            // yeni işlemde biter (ClearConsoleForNewOperation — bilinçli sınır). Proje eşleşmesi TEK yüklemdir (PendingLoad.IsFor).
             if (_pendingLoad is { } pending && pending.IsFor(e.ProjectId))
             {
                 if (!_liveLines.TryGetValue(e.ProjectId, out var list)) _liveLines[e.ProjectId] = list = [];
@@ -2969,9 +2971,15 @@ public sealed partial class RunViewModel : ObservableObject
     /// motorun <c>syncProgress</c> satırları bir önceki işlemin tortusunun ÜZERİNE yazılıyordu (kanıt:
     /// <see cref="RunViewModelStateTests.Sync_clears_the_console_and_stream_left_over_from_the_previous_operation"/>).
     /// Tasarım v1.13.2 "Konsol + event stream her işlemde temizlenir" kuralını Sync'i de kapsayacak şekilde
-    /// netleştirdi; blok burada adlandırılıp <see cref="SyncCoreAsync"/>'e de bağlandı.</para></summary>
+    /// netleştirdi; blok burada adlandırılıp <see cref="SyncCoreAsync"/>'e de bağlandı.</para>
+    /// <para>[idle-memory · final review 86/81] <b>Cevabı artık beklenmeyen bir proje log yüklemesi yeni işlemi geçemez</b> — burada
+    /// biter (<see cref="CompletePendingLoad"/>). Gönderimi düştü ya da motoru gitti (<see cref="StopAwaitingReply"/>): o isteğe
+    /// cevap yazacak motor yoktur; gecikmiş chunk'ının tek fırsatı motor kaybıyla bu sınır arasıdır. Bitmeseydi awaiter'ı hiç serbest
+    /// kalmaz ve projesinin satırları sonraki HER koşuda yeniden tamponlanırdı (<see cref="OnProjectLog"/>). Cevabı hâlâ beklenen
+    /// yükleme bitmez: motor komutları sırayla işler, isteğin cevabı yeni işlemin olaylarından önce gelir.</para></summary>
     private void ClearConsoleForNewOperation()
     {
+        if (_pendingLoad is { ReplyExpected: false } unanswered) CompletePendingLoad(unanswered);
         lock (_gate)
         {
             _liveLines.Clear();
@@ -3263,7 +3271,8 @@ public sealed partial class RunViewModel : ObservableObject
     /// (<see cref="LoadProjectLogAsync"/>: istek yola hiç çıkmadı) ve motor gitti (<see cref="ReleaseAfterEngineLoss"/>: cevabı
     /// yazacak motor yok). Bu bir son DEĞİLDİR (<see cref="CompletePendingLoad"/> değil): dikiş bilerek silahlı kalır (gecikmiş bir
     /// chunk hâlâ eşleşir, canlı tamponun bırakılması da onu bekler); yalnız yükleme işlem sonu trimini tutmaz olur
-    /// (<see cref="HasPendingLogLoad"/>) ve bu değişim bildirilir.</summary>
+    /// (<see cref="HasPendingLogLoad"/>) ve bu değişim bildirilir. Silahlı kalış en geç yeni işleme dektir
+    /// (<see cref="ClearConsoleForNewOperation"/> böyle bir yüklemeyi bitirir).</summary>
     private void StopAwaitingReply(PendingLoad pending)
     {
         bool wasPending = HasPendingLogLoad;
@@ -3318,9 +3327,10 @@ public sealed partial class RunViewModel : ObservableObject
     }
 
     /// <summary>
-    /// [perf Faz C · C4] <b>Bekleyen yüklemenin sonu — tek yer.</b> İki çağıran: dikişin bitişi (<see cref="OnProjectLogChunk"/> —
-    /// motorun "log yok" yanıtı da bir dikiştir) ve yeni bir yüklemenin eskisinin yerini alması
-    /// (<see cref="LoadProjectLogAsync"/>). Sıra her yerde aynıdır: bekleyen düşer, canlı satır tamponu bırakılır, yüklemenin
+    /// [perf Faz C · C4] <b>Bekleyen yüklemenin sonu — tek yer.</b> Üç çağıran: dikişin bitişi (<see cref="OnProjectLogChunk"/> —
+    /// motorun "log yok" yanıtı da bir dikiştir), yeni bir yüklemenin eskisinin yerini alması
+    /// (<see cref="LoadProjectLogAsync"/>) ve cevabı artık beklenmeyen yüklemeye yeni işlemin sınırı
+    /// (<see cref="ClearConsoleForNewOperation"/>). Sıra her yerde aynıdır: bekleyen düşer, canlı satır tamponu bırakılır, yüklemenin
     /// bittiği bildirilir (<see cref="HasPendingLogLoad"/>: işlem sonu trimi bırakılmış tamponla yeniden sorar), awaiter serbest
     /// kalır.
     ///
@@ -3331,15 +3341,15 @@ public sealed partial class RunViewModel : ObservableObject
     /// bırakılacak bir şey yoktur, yükleme varken kuyruk yanıta dek yaşamalıdır (yanıttan önce bırakılsaydı dikilen belge son
     /// satırlardan yoksun kalırdı). Tampon bekleyen düştükten SONRA ve <c>_gate</c> altında boşaltılır: arka plandaki
     /// <see cref="OnProjectLog"/> bekleyeni <c>_gate</c> altında okur — bu bölümden önce eklediği satır silinir, sonrası artık
-    /// eklenmez. Yalnız bekleyen BU yüklemeyse boşaltılır (yerini başkası almışsa tampon onundur); iki çağıran da güncel yüklemeyi
+    /// eklenmez. Yalnız bekleyen BU yüklemeyse boşaltılır (yerini başkası almışsa tampon onundur); üç çağıran da güncel yüklemeyi
     /// verir.</para>
     ///
     /// <para><b>"Uçuşta yükleme" ölçütü <see cref="_pendingLoad"/>'dur, <see cref="LoadProjectLogAsync"/>'in dönüşü değil.</b>
     /// Gönderim hatası ve motor kaybı bir son DEĞİLDİR: dikiş bilerek silahlı kalır (gecikmiş bir chunk hâlâ eşleşir) ve kuyruk ona
     /// aittir; orada yalnız cevabın beklenmediği işaretlenir (<see cref="StopAwaitingReply"/>) — gönderim hatasında awaiter da
     /// serbest kalır (istek yola hiç çıkmadı). Silahlı yükleme projesinin yeni satırlarını tamponlamayı sürdürür: üst sınır o
-    /// projenin istekten sonraki satırlarıdır; gecikmiş chunk, sonraki yükleme (bu metot) ya da yeni işlem bırakır
-    /// (<see cref="ClearConsoleForNewOperation"/> tamponu her zaman tümden temizler) — bilinçli sınır.</para>
+    /// projenin istekten sonraki satırlarıdır; yüklemeyi gecikmiş chunk ya da sonraki yükleme bitirir, en geç yeni işlem
+    /// (<see cref="ClearConsoleForNewOperation"/>: o isteğe cevap yazacak motor artık yoktur) — bilinçli sınır.</para>
     ///
     /// <para><b>[DEĞİŞEN KURAL — idle-memory dalga 1]</b> Eskiden koşunun HER satırı tamponlanır, koşu bitince — bekleyen yükleme
     /// yoksa — bırakılırdı (<c>ReleaseLiveLinesWhenIdle</c>: koşunun bitişi ve yüklemenin sonu, hangisi sonra gelirse): OSYS

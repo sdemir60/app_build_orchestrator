@@ -668,7 +668,7 @@ public class RunViewModelTests
         // yaymadan önce diske yazar, RunCoordinator.Emit). Eski run'ın tortusu tampona ancak cevabı gelmemiş, silahlı kalmış bir
         // yükleme üzerinden kalır: ilk run'da P'nin logu istenir (gönderim düşer, yükleme silahlı kalır) ve satırlar istekten sonra
         // gelir. İkinci run'da new-line1 istekten önce (snapshot'ta), new-line2 sonra (kuyruk). İddia aynı: eski satır sızmaz —
-        // yeni işlem tamponu temizler (aşağıdaki 0), karta tıklama da silahlı eski yüklemeyi bitirip tamponu bırakır.
+        // yeni işlem tamponu temizler ve cevabı artık beklenmeyen silahlı eski yüklemeyi bitirir (aşağıdaki 0; final review 86).
         await using var engine = new EngineHost(TestPaths.SupervisorExe); // hiç başlatılmadı — startRun senkron atılır, VM içinde yutulur
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         const string projectId = @"C:\p\a.csproj";

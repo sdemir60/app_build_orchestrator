@@ -805,6 +805,35 @@ public class RunBufferReleaseTests
     }
 
     /// <summary>
+    /// [idle-memory · final review 86/81] <b>Cevabı artık beklenmeyen bir yükleme yeni işlemi geçemez: yeni işlem onu bitirir.</b>
+    /// Motor giderken bekleyen yükleme silahlı kalır — motorun ölmeden yazdığı gecikmiş bir chunk hâlâ dikilir
+    /// (<see cref="A_run_whose_engine_dies_in_the_tray_is_collected_without_waiting_and_keeps_the_tail_for_a_late_chunk"/>) — ama
+    /// yeni bir işlemde o isteğe cevap yazacak motor yoktur. Eskiden yükleme orada da silahlı kalıyordu: awaiter'ı hiç serbest
+    /// kalmıyor (81) ve projesinin satırları sonraki HER koşuda yeniden tamponlanıyordu (86). Yeniden başlatılan motor fixture'da
+    /// kurulamaz (exe yok): yeni motorun koşuyu kabul etmesi gönderimin kabulüyle (<c>AcceptSends</c>) modellenir; sınır koşunun
+    /// tıklamasıdır (yeni bölüm, <c>ClearConsoleForNewOperation</c>).
+    /// </summary>
+    [StaFact]
+    public async Task A_new_operation_ends_a_project_log_load_whose_reply_is_no_longer_expected()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        MainWindowHost.AcceptSends(vm);                  // istek motora gitti: cevap bekleniyor
+        var (load, _) = ProjectLogIpc.Request(vm, MainWindowHost.IdOf("A"));
+        vm.OnEngineExited(1);                            // motor gitti: cevap gelmeyecek, yükleme silahlı kalır
+        Assert.False(vm.HasPendingLogLoad);              // ön-koşul: cevabı artık beklenmiyor
+
+        _ = vm.BuildCommand.ExecuteAsync(null);          // yeni işlem: yeniden başlatılan motorda bir koşu
+        MainWindowHost.StartBuild(vm, "A");
+        MainWindowHost.LogLine(vm, "A", 1, "a line");
+        MainWindowHost.FinishBuild(vm, "A");
+
+        Assert.Equal(0, vm.LiveLineCount);               // KIRMIZI: 1 — silahlı yükleme yeni koşunun satırını tamponluyordu
+        await load.WaitAsync(TimeSpan.FromSeconds(5));   // KIRMIZI: awaiter hiç serbest kalmıyordu (zaman aşımı)
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
     /// [perf Faz C · M-1] Bekleyen yüklemenin "log yok" yanıtı da yüklemenin sonudur: tampon yanıtla bırakılır —
     /// dikiş yanıtıyla aynı kural (bekleyen yüklemenin sonu tek yerde) — koşu yanıttan önce bitmiş olsa da.
     /// <para>[DEĞİŞEN KURULUM — idle-memory spec §6.2] <b>Eski kurulum:</b> satır istekten ÖNCE loglanıyor ve tamponda bekleniyordu;
