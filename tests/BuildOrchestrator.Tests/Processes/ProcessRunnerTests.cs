@@ -68,8 +68,9 @@ public class ProcessRunnerTests
     /// false'tu (SyncWorkspaceServiceTests'te bir git commit'i; aynı commit'in yeniden koşusu yeşildi). .NET'in Exited olayı ile
     /// <c>HasExited</c>'in sorduğu süreç tanıtıcısı runtime içinde nadiren ayrışıyor; yerelde 2000 süreçlik sondada üretilemedi
     /// (<see cref="Under_load_the_exit_code_is_always_readable_after_the_wait"/>). Çıkış kodu artık sürecin KENDİ tanıtıcısı çıkışı
-    /// onaylayana kadar beklenerek okunur: erken dönen bir bekleyiş istisna değil, birkaç milisaniyelik ek bekleme olur. Test erken
-    /// dönmüş bir bekleyişin ardını kurar — yardımcı, henüz koşan bir süreçte çağrılır.</summary>
+    /// onaylayana kadar beklenerek okunur — bekleme sürecin kernel nesnesinedir, yoklama değil (D8, <c>NoSleepPollTests</c>): erken
+    /// dönen bir bekleyiş istisna değil, kısa bir ek bekleme olur. Test erken dönmüş bir bekleyişin ardını kurar — yardımcı, henüz
+    /// koşan bir süreçte çağrılır.</summary>
     [Fact]
     public async Task The_exit_code_waits_for_the_process_to_confirm_its_exit_instead_of_throwing()
     {
