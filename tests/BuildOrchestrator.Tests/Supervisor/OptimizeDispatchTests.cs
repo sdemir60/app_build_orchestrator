@@ -114,7 +114,8 @@ public class OptimizeDispatchTests
             planner: (_, _) => throw new InvalidOperationException("bu testte run yok"),
             msbuildFactory: _ => throw new InvalidOperationException("bu testte run yok"),
             logFactory: startedAt => new RunLogWriter(box.LogsRoot, startedAt),
-            writer: writer, innerJob: job, nowMs: () => 0, console: _ => { });
+            writer: writer, innerJob: job, nowMs: () => 0, console: _ => { },
+            memoryTrim: SupervisorHostHarness.NoTrim);
 
         var host = new SupervisorHost(writer, new NdjsonReader(stdin), job, coordinator,
             ServicesWith(box, _ => Task.FromResult<IMsBuildInvoker>(invoker)));
@@ -156,7 +157,8 @@ public class OptimizeDispatchTests
             planner: (_, _) => { releasePlanner.Task.GetAwaiter().GetResult(); throw new InvalidOperationException("plan yok"); },
             msbuildFactory: _ => throw new InvalidOperationException("bu testte msbuild yok"),
             logFactory: startedAt => new RunLogWriter(box.LogsRoot, startedAt),
-            writer: writer, innerJob: job, nowMs: () => 0, console: _ => { });
+            writer: writer, innerJob: job, nowMs: () => 0, console: _ => { },
+            memoryTrim: SupervisorHostHarness.NoTrim);
 
         var host = new SupervisorHost(writer, new NdjsonReader(stdin), job, coordinator,
             ServicesWith(box, _ => Task.FromResult<IMsBuildInvoker>(invoker)));
@@ -194,7 +196,8 @@ public class OptimizeDispatchTests
             planner: (_, _) => throw new InvalidOperationException("bu testte run yok"),
             msbuildFactory: _ => throw new InvalidOperationException("bu testte run yok"),
             logFactory: startedAt => new RunLogWriter(box.LogsRoot, startedAt),
-            writer: writer, innerJob: job, nowMs: () => 0, console: _ => { });
+            writer: writer, innerJob: job, nowMs: () => 0, console: _ => { },
+            memoryTrim: SupervisorHostHarness.NoTrim);
 
         // Toolset fabrikası MsBuildResolveException DEĞİL, tamamen beklenmeyen bir hata fırlatır — servisin
         // kendi K-6 kapısı bunu yutmaz, host'un catch-all'ı tanımlı bir event'e çevirmelidir.

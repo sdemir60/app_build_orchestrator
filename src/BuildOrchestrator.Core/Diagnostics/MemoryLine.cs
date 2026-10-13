@@ -5,9 +5,9 @@ namespace BuildOrchestrator.Core.Diagnostics;
 
 /// <summary>
 /// [PERF Faz C/C3] Motorun bellek tanı satırı: <c>memory: private=&lt;MB&gt; committed=&lt;MB&gt; heap=&lt;MB&gt;</c>.
-/// Supervisor onu bir Sync bittiğinde ve bir koşu sona erdiğinde konsol (stderr) kanalına yazar; stdout YALNIZ
-/// NDJSON'dır. Satırın biçimi TEK yerdedir (kopya YASAK): onu okuyan test ya da ölçüm betiği <see cref="Prefix"/>
-/// ile tanır.
+/// Supervisor onu bir koşu sona erdiğinde ve bir Sync, Clean ya da Optimize bittiğinde konsol (stderr) kanalına yazar;
+/// stdout YALNIZ NDJSON'dır. Koşu slotu boşsa satırdan önce <see cref="MemoryTrim"/> toplar, yani satır toplamanın bıraktığı
+/// değeri taşır. Satırın biçimi TEK yerdedir (kopya YASAK): onu okuyan test ya da ölçüm betiği <see cref="Prefix"/> ile tanır.
 ///
 /// <para>Üç katman bilerek ayrıdır: <see cref="Format"/> SAFTIR (sayılar parametre, süreç okumaz — birim testi bayt
 /// verir, satırı görür); <see cref="Current"/> süreci okuyan ince katmandır; <see cref="Report"/> ikisini bir

@@ -119,7 +119,8 @@ public class ProjectLogStreamTests
                 writer: supervisorWriter,
                 innerJob: Job,
                 nowMs: () => Environment.TickCount64,
-                console: _ => { });
+                console: _ => { },
+                memoryTrim: SupervisorHostHarness.NoTrim);
             // [A5/T69] Sync/branch servisleri İZOLE köklerle bağlanır (bu harness onları kullanmaz, ama
             // kullanıcının gerçek cache dosyalarına hiçbir koşulda dokunulmamalıdır).
             // [optimize] Restore fabrikası da çağrılmamalıdır — çağrılırsa test sessizce geçmez.

@@ -145,6 +145,12 @@ public sealed record MsBuildToolset(IMsBuildInvoker Invoker, string MsBuildExePa
 /// <see cref="MachineResources.Snapshot"/>; seam yalnız test içindir — kırpma kararı, testin koştuğu makinenin o anki
 /// boş belleğine bağlanmasın diye testler sabit bir makine verir.
 /// </param>
+/// <param name="memoryTrim">
+/// [bellek trimi] İşlem sonu toplamasının dikişi (bkz. <see cref="TrimAndReportMemory"/>). Üretimde (null)
+/// <see cref="MemoryTrim.CollectAndRelease"/> — uygulamanın TEK toplama tanımı. Seam yalnız test içindir: bloklayan,
+/// sıkıştıran bir GC bütün test sürecini durdurur ve ~200 koordinatör testi her koşu bitişinde onu ödemesin diye testler
+/// bir sayaç ya da hiçbir şey yapmayan bir delege verir.
+/// </param>
 public sealed class RunCoordinator(
     Func<StartRunCommand, Action<string>, RunPlan> planner,
     Func<CancellationToken, Task<MsBuildToolset>> msbuildFactory,
@@ -158,7 +164,8 @@ public sealed class RunCoordinator(
     Func<TimeSpan, CancellationToken, Task>? retryDelay = null,
     InFlightLedger? inFlight = null,
     Func<string, string?>? apiSurface = null,
-    Func<(int Cores, long FreeBytes)>? machine = null) : IDisposable
+    Func<(int Cores, long FreeBytes)>? machine = null,
+    Action? memoryTrim = null) : IDisposable
 {
     private readonly object _gate = new();
     private readonly ICpuGovernor _cpu = cpuGovernor ?? innerJob;
@@ -169,6 +176,10 @@ public sealed class RunCoordinator(
     /// <summary>[API kısa devresi] Bir çıktı dosyasının yüzey özeti — üretimde <see cref="ApiSurfaceHash.OfFile"/>.
     /// Seam yalnız test içindir: gerçek PE üretmeden tur döngüsünün bayatlık kararı kurulabilsin.</summary>
     private readonly Func<string, string?> _apiSurface = apiSurface ?? ApiSurfaceHash.OfFile;
+
+    /// <summary>[bellek trimi] İşlem sonu toplaması — üretimde <see cref="MemoryTrim.CollectAndRelease"/>. Tek kullanıcısı
+    /// <see cref="TrimAndReportMemory"/>'dir.</summary>
+    private readonly Action _memoryTrim = memoryTrim ?? MemoryTrim.CollectAndRelease;
 
     // --- run yaşam döngüsü (hepsi _gate altında) ---
     private bool _runActive;            // startRun slotu dolu (planlama dahil) — A6
@@ -299,11 +310,27 @@ public sealed class RunCoordinator(
     public bool IsRunActive { get { lock (_gate) return _runActive; } }
 
     /// <summary>
-    /// [PERF Faz C/C3] Motorun bellek tanı satırını konsol (stderr) kanalına yazar: Sync bitişinde host, koşu
-    /// bitişinde koordinatörün kendisi çağırır — kanalın sahibi koordinatördür, host ikinci bir stderr bağı kurmaz.
-    /// Hata fırlatmaz (<c>MemoryLine.Report</c> yutar).
+    /// [bellek trimi] Motorun işlem sonu kapanışı: ÖNCE agresif toplama (<see cref="MemoryTrim.CollectAndRelease"/>), SONRA
+    /// bellek tanı satırı — satır böylece toplamanın bıraktığı değeri taşır. Koşu bitişinde koordinatörün kendisi, Sync /
+    /// Clean / Optimize bitişinde host çağırır; kanalın sahibi koordinatördür, host ikinci bir stderr bağı kurmaz.
+    ///
+    /// <para><b>Koşu slotu doluysa</b> (planlama dahil, bkz. <see cref="IsRunActive"/>) toplama ATLANIR, satır yine yazılır:
+    /// bloklayan GC uçuştaki koşunun IPC ve MSBuild pompalarını durdururdu. Host Sync'i koşu sürerken de koşturabilir; koşunun
+    /// kendi bitişi ise yuvayı bıraktıktan sonra çağırır ve o anda yeni bir <c>startRun</c> kabul edilmişse onun planlamasını da
+    /// bekletmez — atlanan toplamayı o koşunun kendi bitişi yapar.</para>
+    ///
+    /// <para>Toplama bir OPTİMİZASYONDUR: fırlatırsa hata yutulur, satırı ve çağıran işi (Sync, koşu kapanışı) bozmaz;
+    /// satırı yazan <c>MemoryLine.Report</c> da hata yutar.</para>
     /// </summary>
-    public void ReportMemory() => MemoryLine.Report(console);
+    public void TrimAndReportMemory()
+    {
+        if (!IsRunActive)
+        {
+            try { _memoryTrim(); }
+            catch (Exception) { /* trim bir optimizasyondur; raporu ve işi bozmaz */ }
+        }
+        MemoryLine.Report(console);
+    }
 
     /// <summary>
     /// [I2-K1] Aktif run'ın Stop'unu sahiplenir. <c>true</c> → <c>runStopped</c>'ı (in-flight sonuçları
@@ -690,9 +717,10 @@ public sealed class RunCoordinator(
                 _copyFloorDepth = 0;
                 _capDrained = false;
             }
-            // [PERF Faz C/C3] Koşu bitti ve yuva bırakıldı: bellek tanı satırı. Yuvadan SONRA yazılır — tanı hiçbir
-            // koşulda yuvayı tutmaz; normal çıkışların hepsi (tamamlanma, Stop, planFailed, beklenmeyen hata) tek satır bırakır.
-            ReportMemory();
+            // [PERF Faz C/C3 · bellek trimi] Koşu bitti ve yuva bırakıldı: önce toplama, sonra bellek tanı satırı. Yuvadan SONRA
+            // çalışır — kapanış hiçbir koşulda yuvayı tutmaz (bu arada yeni bir startRun kabul edildiyse toplama atlanır, bkz.
+            // TrimAndReportMemory); normal çıkışların hepsi (tamamlanma, Stop, planFailed, beklenmeyen hata) tek satır bırakır.
+            TrimAndReportMemory();
         }
     }
 

@@ -81,7 +81,7 @@ public class MemoryLineTests
 /// </summary>
 public class MemoryLineWiringTests
 {
-    private static bool IsMemoryLine(string line) => line.StartsWith(MemoryLine.Prefix, StringComparison.Ordinal);
+    internal static bool IsMemoryLine(string line) => line.StartsWith(MemoryLine.Prefix, StringComparison.Ordinal);
 
     /// <summary>Konsola TEK bellek satırı düşmüştür.</summary>
     private static void AssertSingleMemoryLine(List<string> console)
@@ -105,7 +105,8 @@ public class MemoryLineWiringTests
             planner: (_, _) => throw new InvalidOperationException("no run in this test"),
             msbuildFactory: _ => throw new InvalidOperationException("no run in this test"),
             logFactory: startedAt => new RunLogWriter(Path.Combine(sandbox, "logs"), startedAt),
-            writer: writer, innerJob: job, nowMs: () => 0, console: line => { lock (console) console.Add(line); });
+            writer: writer, innerJob: job, nowMs: () => 0, console: line => { lock (console) console.Add(line); },
+            memoryTrim: SupervisorHostHarness.NoTrim);
         var services = WorkspaceServices.Default(sandbox, _ => throw new NotSupportedException("no restore in this test"));
         if (configure is not null) services = configure(services);
         var host = new SupervisorHost(writer, new NdjsonReader(stdin), job, coordinator, services);

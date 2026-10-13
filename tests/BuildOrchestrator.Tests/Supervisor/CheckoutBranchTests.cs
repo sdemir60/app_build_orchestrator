@@ -106,7 +106,8 @@ public class CheckoutBranchTests
                 planner: (_, _) => { releasePlanning.Task.GetAwaiter().GetResult(); throw new InvalidOperationException("plan yok"); },
                 msbuildFactory: _ => throw new InvalidOperationException("bu testte msbuild yok"),
                 logFactory: startedAt => new RunLogWriter(Path.Combine(sandbox, "logs"), startedAt),
-                writer: writer, innerJob: job, nowMs: () => 0, console: _ => { });
+                writer: writer, innerJob: job, nowMs: () => 0, console: _ => { },
+                memoryTrim: SupervisorHostHarness.NoTrim);
 
             // startRun slotu SENKRON tutar; dispatch loop serildir — checkoutBranch okunduğunda run KESİNLİKLE aktiftir.
             var stdin = await SupervisorHostHarness.StdinWith(
@@ -141,7 +142,8 @@ public class CheckoutBranchTests
                 planner: (_, _) => throw new InvalidOperationException("bu testte run yok"),
                 msbuildFactory: _ => throw new InvalidOperationException("bu testte run yok"),
                 logFactory: startedAt => new RunLogWriter(Path.Combine(sandbox, "logs"), startedAt),
-                writer: writer, innerJob: job, nowMs: () => 0, console: _ => { });
+                writer: writer, innerJob: job, nowMs: () => 0, console: _ => { },
+                memoryTrim: SupervisorHostHarness.NoTrim);
             var services = WorkspaceServices.Default(sandbox, _ => throw new NotSupportedException("bu testte restore yok"))
                 with { Git = _ => throw new InvalidOperationException("beklenmeyen hata") };
 

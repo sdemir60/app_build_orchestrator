@@ -23,6 +23,14 @@ internal static class SupervisorHostHarness
     /// <summary>Host'un bir komut turunu bitirmesi için verilen üst sınır — aşılırsa test ASILMAZ, düşer.</summary>
     public static readonly TimeSpan Limit = TimeSpan.FromSeconds(60);
 
+    /// <summary>
+    /// [bellek trimi] Testlerin <c>RunCoordinator</c>'a verdiği "toplama yok" dikişi — TEK tanım (kopya YASAK). Üretim varsayılanı
+    /// (<c>MemoryTrim.CollectAndRelease</c>) bloklayan, sıkıştıran bir GC'dir ve bütün test sürecini durdurur; her koordinatör testi
+    /// koşu ya da Sync bitişinde onu ödese süit yavaşlar ve paralel koşan zamanlama testlerini bozar. Her test koordinatörü bunu
+    /// (ya da bir sayaç/kayıtçı) verir; üretim varsayılanını yalnız <c>RunCoordinatorMemoryTests</c> kaynaktan pinler.
+    /// </summary>
+    public static readonly Action NoTrim = static () => { };
+
     /// <summary>Verilen komutları NDJSON olarak yazıp başa saran bir stdin. Komutlar tükenince EOF gelir ve
     /// host düzenli çıkar — testin host'u durdurmak için ayrı bir sinyale ihtiyacı olmaz.</summary>
     public static async Task<MemoryStream> StdinWith(params IpcCommand[] commands)

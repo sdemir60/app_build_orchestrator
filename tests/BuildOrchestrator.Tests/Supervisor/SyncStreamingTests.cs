@@ -112,7 +112,8 @@ public class SyncStreamingTests
             planner: (_, _) => throw new InvalidOperationException("bu testte run yok"),
             msbuildFactory: _ => throw new InvalidOperationException("bu testte run yok"),
             logFactory: startedAt => new RunLogWriter(Path.Combine(sandbox, "logs"), startedAt),
-            writer: writer, innerJob: job, nowMs: () => 0, console: _ => { });
+            writer: writer, innerJob: job, nowMs: () => 0, console: _ => { },
+            memoryTrim: SupervisorHostHarness.NoTrim);
 
         // Sync servisi GERÇEK; yalnız git process runner'ı kapılı. Diğer fabrikalar bu testte kullanılmaz.
         var services = new WorkspaceServices(

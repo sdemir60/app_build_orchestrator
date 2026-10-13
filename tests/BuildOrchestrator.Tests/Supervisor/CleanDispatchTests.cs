@@ -111,7 +111,8 @@ public class CleanDispatchTests : IDisposable
             planner: (_, _) => { releasePlanning.Task.GetAwaiter().GetResult(); throw new InvalidOperationException("plan yok"); },
             msbuildFactory: _ => throw new InvalidOperationException("bu testte msbuild yok"),
             logFactory: startedAt => new RunLogWriter(Path.Combine(_sandbox, "logs"), startedAt),
-            writer: writer, innerJob: job, nowMs: () => 0, console: _ => { });
+            writer: writer, innerJob: job, nowMs: () => 0, console: _ => { },
+            memoryTrim: SupervisorHostHarness.NoTrim);
 
         // startRun SENKRON olarak slotu tutar ve döner; dispatch loop serildir, yani cleanWorkspace okunduğunda
         // run KESİNLİKLE aktiftir — yarış yok.
@@ -153,5 +154,6 @@ public class CleanDispatchTests : IDisposable
         planner: (_, _) => throw new InvalidOperationException("bu testte run yok"),
         msbuildFactory: _ => throw new InvalidOperationException("bu testte run yok"),
         logFactory: startedAt => new RunLogWriter(Path.Combine(_sandbox, "logs"), startedAt),
-        writer: writer, innerJob: job, nowMs: () => 0, console: _ => { });
+        writer: writer, innerJob: job, nowMs: () => 0, console: _ => { },
+        memoryTrim: SupervisorHostHarness.NoTrim);
 }

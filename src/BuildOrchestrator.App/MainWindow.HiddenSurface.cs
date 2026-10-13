@@ -1,5 +1,6 @@
 using System.Windows.Threading;
 using BuildOrchestrator.App.Controls;
+using BuildOrchestrator.Core.Diagnostics;
 
 namespace BuildOrchestrator.App;
 
@@ -100,7 +101,7 @@ public partial class MainWindow
     /// balonu gösterildikten sonra ve uygulama boştayken yapılır.</summary>
     internal Action MemoryCollector { get; set; } = CollectMemory;
 
-    private static void CollectMemory() => GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+    private static void CollectMemory() => MemoryTrim.CollectAndRelease();
 
     /// <summary>
     /// [perf Faz C · C4] Tepsi göstergesi çıkış sırasını tamamladı (<c>TrayBuildIndicatorController.ExitCompleted</c>: gösterge
