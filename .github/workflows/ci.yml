@@ -12,8 +12,11 @@ on:
 # workflow seviyesi okuma bunu sabitler. release.yml'den cagrildiginda cagiranin okuma iziniyle zaten kesisir.
 permissions:
   contents: read
+# Grup workflow adini da tasir: release.yml'den cagrildiginda github.* cagiranindir (workflow "release", ref main). Yalniz ref'ten
+# kurulsaydi main'de elle tetiklenen bir ci kosusu yayinin testlerini iptal ederdi (iptal "cancelled" biter, release-retry
+# yalniz "failure"da yeniden dener).
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   build-test:

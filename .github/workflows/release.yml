@@ -1,6 +1,6 @@
 # [yayin hatti] main'e push (main'i yalniz release.ps1 iter; her push bir surum denemesidir): guard (Version == CHANGELOG,
 # commit main'in ucu, tag baska yerde degil) -> ci (ci.yml: build + test) -> publish: package.ps1 (publish + notlar + vpk pack,
-# onceki paketten delta) -> release-tag.ps1 (tag - testler ve paket GECTIKTEN SONRA: tag yalniz yayinlanan surumde olur) ->
+# onceki paketten delta) -> release-tag.ps1 (tag - testler ve paket GECTIKTEN SONRA: kirmizi test ya da dusen paket tag birakmaz) ->
 # GitHub Release + asset'ler -> govde = CHANGELOG bolumu. Kirmizi biten kosuyu release-retry.yml bir kez yeniden dener.
 # Gizli anahtar gerekmez.
 name: release
@@ -40,11 +40,8 @@ jobs:
           global-json-file: global.json
       - run: dotnet tool restore
       - run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1 -DownloadPrevious -RepoUrl https://github.com/${{ github.repository }} -Token ${{ secrets.GITHUB_TOKEN }}
-      # Tag testlerden ve paketten SONRA, yuklemeden ONCE. Runner'da git kimligi tanimsiz: annotated tag icin burada verilir.
-      - run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release-tag.ps1
+      # Tag testlerden ve paketten SONRA, yuklemeden ONCE (kimligi ve mesaji script verir).
+      - run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release-tag.ps1
       - run: dotnet vpk upload github --repoUrl https://github.com/${{ github.repository }} --token ${{ secrets.GITHUB_TOKEN }} --outputDir artifacts/velopack --publish --merge --releaseName "Build Orchestrator ${{ needs.guard.outputs.tag }}" --tag ${{ needs.guard.outputs.tag }}
       - run: gh release edit ${{ needs.guard.outputs.tag }} --notes-file artifacts/notes.md
         env:

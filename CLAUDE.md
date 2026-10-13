@@ -146,7 +146,8 @@ bir şey dediğinde yazılır. Sıradan işlerde `CHANGELOG.md`'ye ve `Directory
    `release: vX.Y.Z` commit'i (bu commit için ayrı branch açılmaz — tek istisna) → `main`'e `--no-ff` merge
    (`merge: release vX.Y.Z`) → `develop` `main`'e ff (develop = main) → `main` ve `develop` tek atomik push. **Tag'i
    script atmaz, testleri lokal koşmaz:** `main`'e push GitHub'da `release.yml`'i başlatır — testler (`ci.yml`) → paket
-   (`scripts/package.ps1`) → tag (`scripts/release-tag.ps1`) → GitHub Release; tag yalnız yayınlanan sürümde olur.
+   (`scripts/package.ps1`) → tag (`scripts/release-tag.ps1`) → GitHub Release; tag yalnız testleri ve paketi geçmiş sürüme
+   konur.
    Kırmızı biten koşuyu `release-retry.yml` bir kez yeniden dener; yine kırmızıysa Release olmaz — testte ya da pakette
    düştüyse tag de olmaz ve `main`'de tag'siz bir merge kalır (`/release` skill'i adım 6). Senin başka bir şey yapman gerekmez. Paket çıktıları
    `artifacts/` altındadır (ignore'lu). Script durursa ne yapılacağı `/release` skill'inde.

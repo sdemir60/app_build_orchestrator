@@ -71,7 +71,7 @@ solution fresh).
 | Process control | Win32 job objects, `CreateProcessW`, `RegisterHotKey`, `WindowChrome`, DWM | P/Invoke in `Core/ProcessControl` and `App/Shell` |
 | Fonts | Geist / Geist Mono, static OTF, embedded | SIL OFL 1.1; variable fonts are not usable by WPF |
 | Installer and updates | Velopack 1.2 (library in the App, `vpk` CLI as a local tool) | Per-user installer, delta packages, GitHub Releases as the feed, install on exit (§12.5, §18) |
-| CI and release | GitHub Actions, GitHub Releases | Pinned `windows-2025` runner; a `v*` tag publishes (§18) |
+| CI and release | GitHub Actions, GitHub Releases | Pinned `windows-2025` runner; a push to `main` publishes, the tag follows the tests and the package (§18) |
 
 ---
 
@@ -6063,8 +6063,12 @@ release waits for: `release.ps1` refuses a `develop` whose run is not green. Tha
 filter: a `develop` head that changed only documentation would get no run, and the release would wait for one that
 never comes. The README's badge shows the release run of `main` — the released code — whichever branch is the
 repository's default. The runner is pinned to `windows-2025` rather than `windows-latest`, whose image moves under it; MSBuild is
-found there through `vswhere` as anywhere else. A newer push to the same ref cancels the older run, and the test
-results are kept as a TRX artifact. CI never publishes.
+found there through `vswhere` as anywhere else. A newer run of the workflow on the same ref cancels the older one,
+and the test results are kept as a TRX artifact. The concurrency group carries the workflow's name as well as the
+ref: a called workflow takes its caller's context, so the release's `ci` job runs as `release` on `main`, and a
+manual `ci` run on `main` — the default branch "Run workflow" offers — falls in a group of its own instead of
+cancelling a release's tests (a cancelled run would end `cancelled`, which the retry below does not re-run). CI
+never publishes.
 
 **Packaging** has one owner, `scripts/package.ps1`: the publish command is written there and nowhere else, and
 `verify-publish.ps1`, the release workflow and a local try-out all run it. It reads `Version`, `Product` and
@@ -6149,8 +6153,8 @@ the notes is scripted. The branches split the work: daily work lands on `develop
   `release: vX.Y.Z` on `develop` — the one commit made directly rather than through a work branch — merges `develop`
   into `main` with `--no-ff` (`merge: release vX.Y.Z`), fast-forwards `develop` to `main` and pushes `main` and
   `develop` in one `--atomic` push. It tags nothing: the push to `main` starts the release workflow, which tags the
-  merge only after the tests and the package (below), so a tag always marks a published version and a red run uses up
-  no version number. The script runs no tests itself: the CI run it requires green tested the very commit it
+  merge only after the tests and the package (below), so a red test or a failed package leaves no tag and uses up no
+  version number (an upload that fails after the tag is the one exception, below). The script runs no tests itself: the CI run it requires green tested the very commit it
   releases — the release commit changes `CHANGELOG.md` and `Version` and nothing else — and the release workflow tests
   `main` again before it tags anything. The `Acceptance` and `LocalOnly` categories, which CI leaves out, are not part
   of a release. The build takes time; should `origin/develop` or `origin/main` move meanwhile, both refs are refused
@@ -6166,18 +6170,19 @@ the notes is scripted. The branches split the work: daily work lands on `develop
   nothing but the fetched remote-tracking refs.
 - **`scripts/release-guard.ps1`** keeps the version consistent, in two modes. With `-Tag vX.Y.Z` — `release.ps1`,
   before its commit — it requires tag = `v` + `Version` = the top `CHANGELOG.md` version and asks `origin` nothing.
-  With `-OnMain` — the release workflow's guard job, and `release-tag.ps1` once more before it tags — it derives the
-  tag from `Version`, requires `Version` = the top section, and requires the pushed commit to be the head of
-  `origin`'s `main`: a commit never pushed, one only on `develop`, or an older release retried after `main` moved on
-  publishes nothing, since an old version would otherwise be published over a newer one. The tag must be absent or
-  already on this very commit (a retried run); on another commit it means the version was not raised. It asks
-  `origin` with `ls-remote`, since the runner's shallow checkout carries no history, refuses when `origin` cannot be
-  read, and writes `tag=vX.Y.Z` to the step's output for the publish job.
+  With `-OnMain` — the release workflow's guard job — it runs the release check: it derives the tag from `Version`,
+  requires `Version` = the top section, and requires the pushed commit to be the head of `origin`'s `main`: a commit
+  never pushed, one only on `develop`, or an older release retried after `main` moved on publishes nothing, since an
+  old version would otherwise be published over a newer one. The tag must be absent or already on this very commit
+  (a retried run); on another commit it means the version was not raised. It asks `origin` with `ls-remote`, since
+  the runner's shallow checkout carries no history, refuses when `origin` cannot be read, and writes `tag=vX.Y.Z` to
+  the step's output for the publish job.
 - **`scripts/release-tag.ps1`** runs only in the release workflow's publish job, after the tests and the package and
-  before the upload: it runs the guard in its `-OnMain` mode again (a retried publish job does not re-run the guard
-  job), puts the annotated tag `vX.Y.Z` (`<Product> X.Y.Z - release notes in CHANGELOG.md`) on the head and pushes
-  it. When `origin` already has the tag on this commit — the tag went out and a later step failed — it leaves it as
-  it is and succeeds, so the retried upload can go on.
+  before the upload: it runs the same release check again in its own process (a retried publish job does not re-run
+  the guard job), puts the annotated tag `vX.Y.Z` (`<Product> X.Y.Z - release notes in CHANGELOG.md`) on the head as
+  GitHub's bot — the runner has no git identity, and the identity is the tag's detail, kept with it — and pushes it.
+  When `origin` already has the tag on this commit — the tag went out and a later step failed — it leaves it as it is
+  and succeeds, so the retried upload can go on.
 - **`scripts/release-common.ps1`** is dot-sourced by the release scripts and by `verify-publish.ps1` and is the one
   place for what they share: the property reader, the `CHANGELOG.md` heading pattern and reader, the repository
   URL, the running-instance probe (`Get-RunningApp` — `release.ps1` asks it for a copy running from its own
@@ -6185,9 +6190,11 @@ the notes is scripted. The branches split the work: daily work lands on `develop
   and the measurement reads the live window, and skips its measurement), the removal of a version's earlier
   packages (`Remove-PackagedVersion`, for `package.ps1`), the ancestry check (`Test-GitAncestor` — an ancestor, not
   one, or a question git could not answer, which each caller turns into its own refusal; `release.ps1` asks it about
-  `origin/main` and `develop`), what `origin` holds for a version (`Get-OriginRelease` — the head of `main` and the
-  commit the version's tag points to, asked with `ls-remote`; an `origin` that cannot answer throws rather than read
-  as "absent"), and the GitHub API: one call
+  `origin/main` and `develop`), a version's tag name (`Get-VersionTag`, `v` + the version) and its agreement with
+  `Version` and the top `CHANGELOG.md` section (`Get-VersionProblems`), what `origin` holds for a version
+  (`Get-OriginRelease` — the head of `main` and the commit the version's tag points to, asked with `ls-remote`; an
+  `origin` that cannot answer throws rather than read as "absent"), the release workflow's check built on them
+  (`Get-MainRelease`, for the guard job and the tag script alike), and the GitHub API: one call
   (`Invoke-GitHubApi`, unauthenticated unless a token is given) behind the release count (`Get-ReleaseCount`) and the
   newest workflow run of a commit (`Get-CiConclusion`). Windows PowerShell 5.1 does not enumerate the JSON array
   `Invoke-RestMethod` returns, so the release count is taken from a variable — wrapped directly, an empty list would
@@ -6195,7 +6202,7 @@ the notes is scripted. The branches split the work: daily work lands on `develop
 - **`.github/workflows/release.yml`** runs on a push to `main`: `guard` (`release-guard.ps1 -OnMain`, handing the
   tag on as the job's output) → `ci` (`ci.yml` through `workflow_call`) → `publish` (`dotnet tool restore`,
   `package.ps1 -DownloadPrevious`, then `release-tag.ps1` — the tag, after the tests and the package and before
-  anything is uploaded; the runner has no git identity, so that step gives one — then `vpk upload github --publish
+  anything is uploaded — then `vpk upload github --publish
   --merge` onto the tag's release and `gh release edit --notes-file`, so the release text is the `CHANGELOG.md`
   section). The tag name comes from the guard's output, not from the ref, which is `main`. Releases run one at a
   time, and a running one is never cancelled — two releases in a row would otherwise race for the delta and could
@@ -6212,7 +6219,10 @@ pack` rejecting an argument) — and its one automatic retry fails as well, noth
 tag step leaves no tag: the version number is not used up, and `main` keeps an untagged merge — the only untagged
 step `main` can take, and a harmless one. A transient failure is answered by re-running the failed jobs in Actions:
 the tag script leaves a tag already on the commit, and `vpk upload --merge` accepts a release an earlier run left
-half-created. A failure that needs a code change is fixed on a branch and merged to `develop`, and once `develop`'s
+half-created. That holds while the release is not yet published: once `vpk upload --publish` has gone through and
+only the notes step failed, a re-run packages again, the download brings the same version back and `vpk pack`
+refuses a version equal to the one it holds — the run cannot turn green, so the notes are set by hand instead (the
+`CHANGELOG.md` section as the release text). A failure that needs a code change is fixed on a branch and merged to `develop`, and once `develop`'s
 CI is green `/release` runs again for the same version (its `CHANGELOG.md` date refreshed if the day changed); the
 new merge carries the tag. Running `/release` again with nothing new on `develop` stops with *nothing to release* —
 the same code is a re-run, not a new merge — and a retry after a newer release moved `main` on stops at the guard
@@ -6844,9 +6854,9 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Publish, release-note cut and Velopack pack — the one owner of the publish command; the previous package for the delta | `scripts/package.ps1` |
-| What the release scripts and `verify-publish.ps1` share: property reader, `CHANGELOG.md` heading pattern and reader, repository URL, running-instance probe (`Get-RunningApp`, optionally scoped to a folder), removal of a version's earlier packages (`Remove-PackagedVersion`), the three-way ancestry check (`Test-GitAncestor`), what `origin` holds for a version (`Get-OriginRelease`), the GitHub API call (`Invoke-GitHubApi`) with the release count (`Get-ReleaseCount`) and a commit's newest workflow run (`Get-CiConclusion`) | `scripts/release-common.ps1` |
+| What the release scripts and `verify-publish.ps1` share: property reader, `CHANGELOG.md` heading pattern and reader, repository URL, running-instance probe (`Get-RunningApp`, optionally scoped to a folder), removal of a version's earlier packages (`Remove-PackagedVersion`), the three-way ancestry check (`Test-GitAncestor`), a version's tag name and its agreement with `Version` and `CHANGELOG.md` (`Get-VersionTag`, `Get-VersionProblems`), what `origin` holds for a version (`Get-OriginRelease`), the release workflow's check (`Get-MainRelease`), the GitHub API call (`Invoke-GitHubApi`) with the release count (`Get-ReleaseCount`) and a commit's newest workflow run (`Get-CiConclusion`) | `scripts/release-common.ps1` |
 | Tag = `Version` = top `CHANGELOG.md` version (`-Tag`); in the release workflow (`-OnMain`) the tag from `Version`, the pushed commit the head of `origin`'s `main`, no tag on another commit, the tag handed on as the step's output | `scripts/release-guard.ps1` |
-| The version's annotated tag on the head of `main`, after the tests and the package — the guard first, a tag already on the commit left alone | `scripts/release-tag.ps1` |
+| The version's annotated tag on the head of `main`, after the tests and the package — the release check first (`Get-MainRelease`), tagged as GitHub's bot, a tag already on the commit left alone | `scripts/release-tag.ps1` |
 | One-command release from `develop`: guards (`develop`'s CI run green and something to release included), `Version`, build, release commit, `--no-ff` merge into `main`, `develop` fast-forwarded to `main`, one atomic push of `main` and `develop` — no tag; the undo line when it stops after the release commit, withheld when a push that reported an error left the release merge on `origin`'s `main` | `scripts/release.ps1` |
 | The `/release` request: order and commands; the note rules stay in `CLAUDE.md` | `.claude/skills/release/SKILL.md` |
 | End-to-end check of a publish output | `scripts/verify-publish.ps1` |

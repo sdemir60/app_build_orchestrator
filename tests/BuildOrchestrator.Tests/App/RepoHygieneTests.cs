@@ -36,12 +36,11 @@ public class RepoHygieneTests
         Assert.Equal("vpk", vpk.GetProperty("commands")[0].GetString());
     }
 
-    /// <summary>Workflow metni YAML yorumları atılmış olarak: iddialar yalnız GitHub'ın koşturduğu satırlara bakar — bir
-    /// yorumdaki anahtar adı (ör. <c># ... -OnMain ...</c>) adım silindiğinde testi yeşil tutmasın. Workflow'larda
-    /// tırnak içinde <c>#</c> yoktur; satır başındaki ya da boşluktan sonra gelen <c>#</c> yorum başlatır.</summary>
-    /// <summary>Workflow metni: YAML yorumları atılmış, satır sonları LF'e indirilmiş. Satır sonu normalizasyonu şart —
-    /// runner checkout'u CRLF verir ve <c>(?m)…$</c> .NET'te yalnız <c>\n</c> öncesini yakalar; ilk CI koşusunda
-    /// <see cref="CI_only_reads_the_repository"/> bu yüzden runner'da düşüp lokalde geçiyordu.</summary>
+    /// <summary>Workflow metni: YAML yorumları atılmış, satır sonları LF'e indirilmiş. Yorumlar atılır ki iddialar yalnız
+    /// GitHub'ın koşturduğu satırlara baksın — bir yorumdaki anahtar adı (ör. <c># ... -OnMain ...</c>) adım silindiğinde testi
+    /// yeşil tutmasın; workflow'larda tırnak içinde <c>#</c> yoktur, satır başındaki ya da boşluktan sonra gelen <c>#</c> yorum
+    /// başlatır. Satır sonu normalizasyonu şart — runner checkout'u CRLF verir ve <c>(?m)…$</c> .NET'te yalnız <c>\n</c> öncesini
+    /// yakalar; ilk CI koşusunda <see cref="CI_only_reads_the_repository"/> bu yüzden runner'da düşüp lokalde geçiyordu.</summary>
     private static string Workflow(string name) =>
         Regex.Replace(
             File.ReadAllText(Path.Combine(RepoPaths.RepoRoot, ".github", "workflows", name)).Replace("\r\n", "\n"),
@@ -85,6 +84,20 @@ public class RepoHygieneTests
         Assert.DoesNotContain("main", branches);
         Assert.Contains("pull_request:", ci, StringComparison.Ordinal);
         Assert.DoesNotMatch(@"(?m)^[ \t]+paths(-ignore)?:", ci); // her develop ucu koşu alır
+    }
+
+    /// <summary>Çağrılan workflow'un üst düzey <c>concurrency</c>'si ÇAĞIRANIN bağlamında değerlendirilir: release'in ci job'ı
+    /// <c>github.ref</c> = <c>refs/heads/main</c> ile koşar. Grup yalnız ref'ten kurulsaydı (<c>ci-${{ github.ref }}</c>) main'de
+    /// elle tetiklenen bir ci koşusu ("Run workflow" varsayılan branch'i, main'i önerir) aynı gruba düşer ve
+    /// <c>cancel-in-progress</c> yayının testlerini iptal ederdi; iptal edilen koşu <c>cancelled</c> biter, release-retry yalnız
+    /// <c>failure</c>'da yeniden dener — ne tag ne Release olur, kimse uyarılmaz. Grup workflow adını da taşır: reusable çağrıda
+    /// <c>github.workflow</c> çağıranın adıdır (release), elle ya da push'la koşan ci'da "ci". develop'a art arda gelen push'larda
+    /// eskisi yine iptal edilir (aynı grup).</summary>
+    [Fact]
+    public void A_manual_CI_run_never_cancels_the_tests_of_a_release()
+    {
+        string ci = Workflow("ci.yml");
+        Assert.Matches(@"(?m)^concurrency:[ \t]*\n[ \t]+group: ci-\$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}[ \t]*\n[ \t]+cancel-in-progress: true[ \t]*$", ci);
     }
 
     /// <summary>README'nin rozeti <c>main</c>'in yayın koşusunu (<c>release.yml</c>) gösterir — yayınlanan kodun build ve test
@@ -188,8 +201,8 @@ public class RepoHygieneTests
     /// <summary>Tag, yayının geri dönülmez adımıdır ve testlerle paketten SONRA gelir: publish job'ı ci'a bağlıdır, sırası
     /// package.ps1 → release-tag.ps1 → <c>vpk upload</c> → <c>gh release edit</c>. Kırmızı bir test ya da düşen paketleme tag
     /// bırakmaz (sürüm numarası yanmaz); tag'in yükleme ve notla eşleşmesi guard'ın verdiği aynı çıktıdan gelir — ref adından değil
-    /// (tetik artık main'dir; <c>github.ref_name</c> "main" olurdu). Runner'da git kimliği tanımsızdır: annotated tag için kimlik
-    /// tag adımında verilir.</summary>
+    /// (tetik artık main'dir; <c>github.ref_name</c> "main" olurdu). Tag adımı script'in tek satırıdır: tag'in kimliği ve mesajı
+    /// script'in işidir (<see cref="ReleaseScriptsTests"/> pinler), workflow'da ayrıca git ayarı yapılmaz.</summary>
     [Fact]
     public void The_tag_comes_after_the_tests_and_the_package_and_before_the_upload()
     {
@@ -204,7 +217,8 @@ public class RepoHygieneTests
         int notes = job.IndexOf("gh release edit", StringComparison.Ordinal);
         Assert.True(package > 0 && tag > package && upload > tag && notes > upload,
             $"publish sırası package → tag → upload → notes değil ({package}, {tag}, {upload}, {notes})");
-        Assert.Contains("git config user.email", job[package..tag], StringComparison.Ordinal);
+        Assert.Matches(@"(?m)^\s*- run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release-tag\.ps1[ \t]*$", job);
+        Assert.DoesNotContain("git config", job, StringComparison.Ordinal);
         Assert.Contains("--tag ${{ needs.guard.outputs.tag }}", job, StringComparison.Ordinal);
         Assert.Contains("gh release edit ${{ needs.guard.outputs.tag }}", job, StringComparison.Ordinal);
         Assert.DoesNotContain("github.ref_name", release, StringComparison.Ordinal);
@@ -212,10 +226,12 @@ public class RepoHygieneTests
 
     /// <summary>Kırmızı biten yayın BİR kez kendiliğinden yeniden denenir — yalnız düşen job'lar ("Re-run failed jobs"): runner'da
     /// tesadüfen düşen bir test yayını durdurmasın. İkinci deneme de kırmızıysa durur; gerçek hata insan ister. Workflow yalnız
-    /// koşuyu yeniden başlatma iznini alır (<c>actions: write</c>), repoya yazmaz.</summary>
+    /// koşuyu yeniden başlatma iznini alır (<c>actions: write</c>), repoya yazmaz. Yayın workflow'unu ADIYLA bulur
+    /// (<c>workflows: [release]</c>): release.yml'in adı değişirse tekrar sessizce ölürdü — ad da burada pinlenir.</summary>
     [Fact]
     public void A_failed_release_is_retried_once_on_its_failed_jobs()
     {
+        Assert.Matches(@"(?m)^name: release[ \t]*$", Workflow("release.yml"));
         string retry = Workflow("release-retry.yml");
         Assert.Matches(@"(?m)^[ \t]+workflow_run:[ \t]*\n[ \t]+workflows:[ \t]*\[release\][ \t]*\n[ \t]+types:[ \t]*\[completed\][ \t]*$", retry);
         Assert.Contains("github.event.workflow_run.conclusion == 'failure'", retry, StringComparison.Ordinal);

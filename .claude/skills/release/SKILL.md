@@ -61,7 +61,9 @@ GitHub'da düşmüş denemedir (adım 6).
    yanmamıştır. `main`'de tag'siz bir merge kalır — zararsızdır. Actions'taki `release` koşusunun log'una bak, sonra:
    - **Geçici hata** (ağ, GitHub API, runner, tesadüfen düşen test) → Actions'ta koşuyu aç, *Re-run jobs* → *Re-run
      failed jobs*. Tag zaten bu commit'teyse `release-tag.ps1` ona dokunmaz; `vpk upload --merge` yarım kalmış
-     release'i tolere eder.
+     release'i tolere eder. **İstisna:** Release yayınlanmışsa ve yalnız son adım (not, `gh release edit`) düştüyse
+     yeniden koşma — paketleme aynı sürümü geri indirir ve `vpk pack` eşit sürümü reddeder, koşu hiç yeşile dönmez. Notu
+     elle koy: GitHub'da Release'i düzenle, CHANGELOG'daki bölümü metin olarak yapıştır.
    - **Kodun değişmesi gerekiyor** → iş branch'inde düzelt, `develop`'a merge + push et, CI yeşil olunca `/release`'i
      **aynı sürümle** yeniden çalıştır (tag yok, numara yanmadı); CHANGELOG'daki tarih bugün değilse bugüne yenile.
      Yeni merge tag'i taşır; önceki tag'siz merge `main`'de kalır. (Tag yükleme adımında düşüp origin'de kaldıysa

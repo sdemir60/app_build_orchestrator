@@ -21,6 +21,11 @@ function Get-BuildProp([string]$Name) {
     return $node.InnerText
 }
 
+function Get-VersionTag([string]$Version) {
+    # Surumun tag adi: "v" onekli surum (v1.8.1). Tek yerde - release.ps1, release-guard.ps1 ve release-tag.ps1 buradan alir.
+    return "v$Version"
+}
+
 function Get-RunningApp([string]$ProcessName = 'BuildOrchestrator.App', [string]$UnderPath) {
     # Calisan uygulama ornekleri (yoksa bos). Uygulama tek-orneklidir (ikinci ornek mevcut pencereyi one getirip kapanir) ve
     # calisan Supervisor kendi binary'lerini kilitler (CLAUDE.md "uygulama acikken build alma"). Iki cagiran, iki soru:
@@ -74,6 +79,39 @@ function Get-OriginRelease([string]$Tag) {
     return [pscustomobject]@{ Main = $refs['refs/heads/main']; TagCommit = $tagCommit }
 }
 
+function Get-VersionProblems([string]$Tag) {
+    # Tag == Get-VersionTag(Directory.Build.props Version) == CHANGELOG en ust surum; uyusmayanlar metin olarak, tutarliysa hic.
+    # Cagiran @(...) ile sarar (tek elemanli sonuc dizi olarak gelmez).
+    $version = Get-BuildProp 'Version'
+    $expected = Get-VersionTag $version
+    $headings = (Read-Changelog).Headings
+    $top = if ($headings.Count -gt 0) { $headings[0].Version } else { '' }
+    if ($Tag -ne $expected) { "tag '$Tag' does not match Directory.Build.props Version '$version' (expected '$expected')" }
+    if ($top -ne $version) { "CHANGELOG.md top section is '$top', Directory.Build.props Version is '$version'" }
+}
+
+function Get-MainRelease {
+    # release.yml'in yayin kontrolu - guard job'i (release-guard.ps1 -OnMain) ve publish'teki release-tag.ps1 ayni process'te
+    # cagirir: yeniden denenen publish job'i guard job'ini kosmaz, kontrol tag'den once tekrarlanir; kural tek yerde, origin'e tek
+    # soru. Tag Version'dan cikar (Get-VersionTag); Version == CHANGELOG en ust; HEAD (push edilen commit) origin'in main UCU -
+    # push edilmemis, main'e girmemis ya da main'in gerisinde kalmis commit yayin cikarmaz (sonuncusu yeni bir surum itildikten sonra
+    # eski bir kosunun yeniden denenmesidir; gecseydi eski surum yenisinin ustune "latest" olurdu). Tag origin'de yoksa ya da bu
+    # commit'teyse (Tagged: tag atildi, sonraki adim dustu, kosu yeniden denendi) gecer; baska bir commit'teyse surum
+    # yukseltilmemistir. origin okunamazsa sorun yazilir: dogrulanamayan yayin cikmaz. Doner: Tag, Head, Tagged, Problems (bos = gecer).
+    $tag = Get-VersionTag (Get-BuildProp 'Version')
+    $problems = @(Get-VersionProblems $tag)
+    $head = git rev-parse HEAD
+    $tagged = $false
+    try {
+        $origin = Get-OriginRelease $tag
+        if ($origin.Main -ne $head) { $problems += "this commit ($head) is not the head of origin's main ($($origin.Main)); a release publishes main's head only - if main moved on, release the newer version" }
+        if ($origin.TagCommit -and $origin.TagCommit -ne $head) { $problems += "$tag already exists on origin at $($origin.TagCommit); a new release needs a new version" }
+        $tagged = $origin.TagCommit -eq $head
+    }
+    catch { $problems += "cannot read origin ($($_.Exception.Message)); the release cannot be verified" }
+    return [pscustomobject]@{ Tag = $tag; Head = $head; Tagged = $tagged; Problems = $problems }
+}
+
 function Invoke-GitHubApi([string]$RepoUrl, [string]$Path, [string]$Token) {
     # GitHub REST API'sine GET: RepoUrl web adresidir (https://github.com/<sahip>/<repo>), Path repo altindaki uc
     # ('releases?per_page=1' gibi). Acik repo kimliksiz okunur (saatte 60 istek); Token verilirse Bearer gider. GitHub
@@ -98,8 +136,8 @@ function Get-ReleaseCount([string]$RepoUrl, [string]$Token) {
 function Get-CiConclusion([string]$RepoUrl, [string]$Sha, [string]$Workflow = 'ci.yml') {
     # Bir commit'in en yeni workflow kosusu (release.ps1: develop HEAD'inin ci.yml'i yesil mi): kosu yoksa $null, varsa
     # Status (queued / in_progress / completed ...) ve Conclusion (success / failure / cancelled ...; kosu bitmeden bos).
-    # Ayni commit'in birden cok kosusu olabilir: ayni sha'nin birden cok ref'e itilmesi (yayin main ile develop'u ayni sha'da
-    # iter), PR, elle tetikleme ("Re-run" yeni kosu acmaz, ayni kosunun yeni denemesidir). API en yenisini basta verir,
+    # Ayni commit'in birden cok kosusu olabilir: push ile PR, elle tetikleme ("Re-run" yeni kosu acmaz, ayni kosunun yeni
+    # denemesidir). API en yenisini basta verir,
     # per_page=1 onu alir. workflow_runs cevabin bir OZELLIGIDIR (ust duzey dizi degil): bos dizi @() icinde bos kalir.
     $response = Invoke-GitHubApi $RepoUrl "actions/workflows/$Workflow/runs?head_sha=$Sha&per_page=1"
     $run = @($response.workflow_runs) | Select-Object -First 1

@@ -1,8 +1,8 @@
 <# [yayin hatti] Tek komutla yayin - /release skill'inin mekanik yarisi. Gunluk is develop'ta; main yalniz surumleri tasir
    ve ona yalniz bu script dokunur: main'deki her merge commit'i bir surum denemesidir (kullanici karari 2026-09-30). Tag'i bu
    script ATMAZ: main'e push GitHub'da release.yml'i baslatir, testler ve paket gecince tag'i orada release-tag.ps1 koyar
-   (kullanici karari 2026-10-13) - tag yalniz yayinlanan surumde olur; kirmizi bir kosu ne tag ne Release birakir, o deneme main'de
-   tag'siz bir merge olarak kalir. Notu Claude yazmis olmali (CHANGELOG en ustte "## [X.Y.Z] - <bugun>"). Akis:
+   (kullanici karari 2026-10-13) - tag yalniz testleri ve paketi gecmis surume konur; kirmizi bir test ya da dusen paket ne tag ne
+   Release birakir, o deneme main'de tag'siz bir merge olarak kalir. Notu Claude yazmis olmali (CHANGELOG en ustte "## [X.Y.Z] - <bugun>"). Akis:
      guard'lar (hicbir yazmadan once) -> Version'i yazar -> build -> develop'ta "release: vX.Y.Z" commit'i ->
      main'e --no-ff merge ("merge: release vX.Y.Z") -> develop main'e ff (develop == main)
      -> tek atomik push: main + develop ya birlikte gider ya hicbiri.
@@ -30,7 +30,7 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'release-common.ps1')
 Set-Location $RepoRoot
-$tag = "v$Version"
+$tag = Get-VersionTag $Version
 # Yazma evresinde (release commit'inden itibaren) dolar: o andan sonra duran adim yerelde commit/merge birakir ve Fail son
 # satira onlari geri alan komutlari yazar. Sha'lar yayinin basladigi commit'lerdir; araya giren bir fetch onlari kaydirmaz.
 $script:Undo = $null
@@ -78,7 +78,8 @@ foreach ($line in $worktrees) {
     if ($line -like 'worktree *') { $worktree = $line.Substring(9) }
     elseif ($line -eq 'branch refs/heads/main') { Fail "main is checked out in $worktree; the release switches to main here - move that worktree off main first." }
 }
-# Tag = yayinlanmis surum (tag'i GitHub, yayin gecince koyar): varsa bu surum cikmistir.
+# Tag'i GitHub testler ve paket gecince koyar: varsa bu surum yayina cikmistir (ya da yuklemesi yarim kalmistir - SKILL adim 6)
+# ve numara bir daha kullanilmaz.
 if (git tag --list $tag) { Fail "tag $tag already exists." }
 # Uzak tag: fetch yalniz getirdigi tarihceye isaret eden tag'leri alir; origin'de erisilemeyen bir commit'e duran ayni ad
 # yerelde gorunmez. ls-remote hatasi "tag yok" sayilmaz (dogrulanamayan yayin cikmaz).
