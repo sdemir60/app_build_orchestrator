@@ -1,5 +1,4 @@
 using System.Text;
-using BuildOrchestrator.Core.Processes;
 
 namespace BuildOrchestrator.Core.Git;
 
@@ -28,11 +27,12 @@ public interface IHeadWatcher : IDisposable
 ///
 /// <para>[reftable] Ref'leri tablolarda tutan repoda (<see cref="HeadReader.IsReftable"/>) <c>logs</c> klasörü yoktur:
 /// izleyici <c>reftable\tables.list</c>'i izler (git her ref değişikliğinde onu yeniden yazar) ve pencere kapanınca
-/// HEAD'in reflog mesajlarını git'ten alır (<see cref="GitService.GetHeadReflogMessagesAsync"/>, git dizininin içinden —
-/// linked worktree'nin kendi tablosu da orada). Yeni hareketler kayıt SAYISININ artışıdır ve dosyadakiyle aynı kural
-/// uygulanır: en güçlüsü; sayı azaldıysa ya da taban bilinmiyorsa yalnız en yenisi; okunamazsa Other. Tablo listesi HEAD'e
-/// dokunmayan değişikliklerde de yenilenir (fetch'in uzak ref'leri, yeni branch ya da tag) — reflog büyümediği için çağrı
-/// yapılmaz.</para>
+/// HEAD reflog'unun en yeni kayıtlarını git'ten alır (<see cref="GitService.GetHeadReflogAsync"/>, git dizininin içinden —
+/// linked worktree'nin kendi tablosu da orada). Yeni hareketler, son okumada en yeni olan kaydın ÜSTÜNDEKİ kayıtlardır
+/// (<see cref="ReflogRecord.Key"/>) ve dosyadakiyle aynı kural uygulanır: en güçlüsü; son kayıt bulunamazsa (taban yok,
+/// süresi dolup silindi, pencerede <see cref="ReflogWindow"/>'dan fazla hareket) yalnız en yenisi; okunamazsa Other. Tablo
+/// listesi HEAD'e dokunmayan değişikliklerde de yenilenir (fetch'in uzak ref'leri, yeni branch ya da tag) — en yeni kayıt
+/// aynı kaldığı için çağrı yapılmaz.</para>
 /// </summary>
 public sealed class HeadWatcher : IHeadWatcher
 {
@@ -53,19 +53,30 @@ public sealed class HeadWatcher : IHeadWatcher
     private string _logPath = string.Empty;
     private long _offset;
 
+    /// <summary>[reftable] Bir pencerede git'ten okunan en yeni reflog kaydı sayısı — reflog'un tamamı okunmaz.</summary>
+    internal const int ReflogWindow = 50;
+
     /// <summary>[reftable] İzlenen git dizini (reflog git'e buradan sorulur).</summary>
     private string _gitDir = string.Empty;
 
-    /// <summary>[reftable] Son okumada HEAD reflog'undaki kayıt sayısı; ilk okumaya dek <see cref="_reflogBaseline"/>.</summary>
-    private int? _reflogCount;
+    /// <summary>[reftable] Son okumada en yeni olan kaydın kimliği (reflog boşsa <c>null</c>); ilk pencereye dek
+    /// <see cref="_reflogBaseline"/> geçerlidir.</summary>
+    private string? _lastReflogKey;
 
-    /// <summary>[reftable] Başlangıçtaki kayıt sayısı — <see cref="Start"/> onu arka planda ister (çağıran UI thread'i bir
-    /// git process'ini beklemez); ilk pencere kapanınca okunur.</summary>
-    private Task<int?>? _reflogBaseline;
+    /// <summary>[reftable] <see cref="_lastReflogKey"/> bir okumadan geldi mi — gelmediyse taban kullanılır.</summary>
+    private bool _reflogRead;
 
-    /// <summary>İzleyici hareket saymaya hazır: reftable'da başlangıç sayımı bitti (normal repoda hemen). Bundan önceki bir
-    /// hareket tabana karışabilir ve ilk pencerede yalnız en yeni kayıt sınıflanır. Testler değişikliği bundan sonra yapar.</summary>
+    /// <summary>[reftable] Başlangıçta en yeni kaydın kimliği — <see cref="Start"/> onu arka planda ister (çağıran UI thread'i
+    /// bir git process'ini beklemez); ilk pencere kapanınca okunur.</summary>
+    private Task<string?>? _reflogBaseline;
+
+    /// <summary>İzleyici hareket görmeye hazır: reftable'da başlangıç okuması bitti (normal repoda hemen). O okuma bitmeden
+    /// olan bir hareket tabana karışır ve görülmez (pencereye dönüş güvenlik ağıdır). Testler değişikliği bundan sonra yapar.</summary>
     internal Task Ready => _reflogBaseline ?? Task.CompletedTask;
+
+    /// <summary>Bir pencere kapandı ve okundu — hareket olsun olmasın. Testler "hiçbir şey olmadı" iddiasını sabit bir
+    /// bekleme yerine bununla sınar.</summary>
+    internal event Action? WindowClosed;
 
     /// <summary>[final review M6] Son okuma yarım bir satırla bittiyse dosyanın o anki uzunluğu; bitmediyse <c>null</c>.</summary>
     private long? _partialTailAt;
@@ -115,11 +126,13 @@ public sealed class HeadWatcher : IHeadWatcher
         }
 
         _gitDir = gitDir;
-        _reflogCount = null;
-        _reflogBaseline = Task.Run(() => ReadReflog(gitDir)?.Count);
+        _lastReflogKey = null;
+        _reflogRead = false;
+        _reflogBaseline = Task.Run(() => ReadReflog(gitDir) is { Count: > 0 } records ? records[0].Key : null);
         return Watch(tablesDir, TablesList, () =>
         {
             if (ReadNewTableMove() is { } move) onSettled(move);
+            WindowClosed?.Invoke();
         });
     }
 
@@ -158,6 +171,7 @@ public sealed class HeadWatcher : IHeadWatcher
         HeadMove? move = ReadNewMove();
         if (move is { } settled) onSettled(settled);
         if (TakeRearm()) _debouncer?.Poke();
+        WindowClosed?.Invoke();
     }
 
     /// <summary>Son okuma yeni bir yarım kuyrukla bittiyse <c>true</c> (kuyruk başına bir kez).</summary>
@@ -208,10 +222,7 @@ public sealed class HeadWatcher : IHeadWatcher
             var lines = text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             if (lines.Length == 0) return null;
             if (truncated) return ReflogEntry.Classify(lines[^1]);
-
-            HeadMove strongest = ReflogEntry.Classify(lines[0]);
-            foreach (string line in lines.Skip(1)) strongest = HeadMoveRules.Stronger(strongest, ReflogEntry.Classify(line));
-            return strongest;
+            return HeadMoveRules.Strongest(lines.Select(ReflogEntry.Classify));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -220,32 +231,39 @@ public sealed class HeadWatcher : IHeadWatcher
         }
     }
 
-    /// <summary>[reftable] Son okumadan bu yana HEAD reflog'una eklenen kayıtların en güçlü hareketi; eklenen yoksa
-    /// <c>null</c>. Kural <see cref="ReadNewMoveLocked"/>'ınkiyle aynıdır, ölçü satır yerine kayıt sayısıdır.</summary>
+    /// <summary>[reftable] Son okumada en yeni olan kaydın üstüne eklenen kayıtların en güçlü hareketi; eklenen yoksa
+    /// <c>null</c>. Kural <see cref="ReadNewMoveLocked"/>'ınkiyle aynıdır, sınır satır yerine kaydın kimliğidir.</summary>
     private HeadMove? ReadNewTableMove()
     {
         lock (_gate)
         {
-            int? known = _reflogCount ?? _reflogBaseline?.GetAwaiter().GetResult();
-            var messages = ReadReflog(_gitDir);
-            if (messages is null) return HeadMove.Other; // okunamadı — güvenli yön (dosya kipindeki IO hatası gibi)
-            _reflogCount = messages.Count;
+            string? known = _reflogRead ? _lastReflogKey : _reflogBaseline?.GetAwaiter().GetResult();
+            var records = ReadReflog(_gitDir);
+            if (records is null) return HeadMove.Other; // okunamadı — güvenli yön (dosya kipindeki IO hatası gibi)
+            _reflogRead = true;
+            _lastReflogKey = records.Count > 0 ? records[0].Key : null;
+            if (records.Count == 0) return null;
 
-            int added = known is { } before ? messages.Count - before : -1;
-            if (added == 0) return null; // tablo yenilendi ama HEAD oynamadı (fetch, yeni branch ya da tag)
-            if (added < 0) return messages.Count > 0 ? ReflogEntry.ClassifyMessage(messages[0]) : null; // kısaldı / taban yok
-
-            HeadMove strongest = ReflogEntry.ClassifyMessage(messages[added - 1]); // en yeniden eskiye: önce en eski yeni kayıt
-            for (int i = added - 2; i >= 0; i--) strongest = HeadMoveRules.Stronger(strongest, ReflogEntry.ClassifyMessage(messages[i]));
-            return strongest;
+            int boundary = known is null ? -1 : IndexOfKey(records, known);
+            if (boundary == 0) return null; // en yeni kayıt aynı: HEAD oynamadı (fetch, yeni branch ya da tag)
+            // Sınır yoksa (taban yok, süresi dolup silindi, pencereden fazla hareket) yalnız en yenisi — dosyanın kısalması gibi.
+            var fresh = boundary > 0 ? records.Take(boundary) : records.Take(1);
+            return HeadMoveRules.Strongest(fresh.Reverse().Select(r => ReflogEntry.ClassifyMessage(r.Message)));
         }
     }
 
-    /// <summary>[reftable] HEAD reflog mesajları (en yeniden eskiye); okunamazsa <c>null</c>. Pencere geri çağrısında ve
-    /// başlangıç tabanında — thread-pool'da — çağrılır, UI thread'inde değil.</summary>
-    private static IReadOnlyList<string>? ReadReflog(string gitDir)
+    private static int IndexOfKey(IReadOnlyList<ReflogRecord> records, string key)
     {
-        var result = new GitService(new ProcessRunner(), gitDir).GetHeadReflogMessagesAsync().GetAwaiter().GetResult();
+        for (int i = 0; i < records.Count; i++)
+            if (string.Equals(records[i].Key, key, StringComparison.Ordinal)) return i;
+        return -1;
+    }
+
+    /// <summary>[reftable] HEAD reflog'unun en yeni kayıtları (en yeniden eskiye); okunamazsa <c>null</c>. Pencere geri
+    /// çağrısında ve başlangıç tabanında — thread-pool'da — çağrılır, UI thread'inde değil.</summary>
+    private static IReadOnlyList<ReflogRecord>? ReadReflog(string gitDir)
+    {
+        var result = GitService.InGitDirectory(gitDir).GetHeadReflogAsync(ReflogWindow).GetAwaiter().GetResult();
         return result.Success ? result.Value : null;
     }
 

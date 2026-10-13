@@ -1,4 +1,5 @@
-﻿using BuildOrchestrator.Core.Processes;
+﻿using System.Globalization;
+using BuildOrchestrator.Core.Processes;
 
 namespace BuildOrchestrator.Core.Git;
 
@@ -135,22 +136,59 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
         return head.Success ? new HeadState(branch.Value, head.Value) : null;
     }
 
-    /// <summary>[reftable] HEAD reflog'unun mesajları, en yeniden eskiye (<c>git reflog --format=%gs</c>). Reflog'u dosya
-    /// olarak tutmayan reftable repoda HEAD izleyicisinin okuduğu kaynaktır (normal repoda <c>logs/HEAD</c> dosyadan
-    /// okunur). Boş mesajlı kayıtlar da listede durur: izleyici "kaç yeni hareket var" sorusunu sayıdan cevaplar. Henüz
-    /// commit'i olmayan bir repoda git hata döner — <see cref="GitResult{T}.Fail"/>.</summary>
-    public async Task<GitResult<IReadOnlyList<string>>> GetHeadReflogMessagesAsync(CancellationToken ct = default)
+    /// <summary>[reftable] Git dizininin İÇİNDEN çalışan servis: ana repoda <c>.git</c>, linked worktree'de worktree'nin kendi
+    /// git dizini — git ikisinde de o dizinin HEAD'ini, reflog'unu ve ref'lerini verir, çalışma kopyasının kökü gerekmez.
+    /// reftable okumalarının (HEAD, reflog, yarıdaki işlemin ref'leri) TEK kurulumu.</summary>
+    public static GitService InGitDirectory(string gitDir, IProcessRunner? runner = null) =>
+        new(runner ?? new ProcessRunner(), gitDir);
+
+    /// <summary>[reftable] HEAD reflog'unun en yeni <paramref name="limit"/> kaydı, en yeniden eskiye: kimliği ve mesajı.
+    /// Reflog'u dosya olarak tutmayan reftable repoda HEAD izleyicisinin kaynağıdır (normal repoda <c>logs/HEAD</c> dosyadan
+    /// okunur). İzleyici yeni kayıtları son gördüğü kaydın kimliğinden bulur (<see cref="ReflogRecord.Key"/>).
+    /// <para><c>--no-show-signature</c> zorunludur: <c>log.showSignature=true</c> ayarlı bir makinede git her imzalı kayıt için
+    /// çıktıya bir doğrulama satırı ekler ve kayıtlar kayardı. Henüz commit'i olmayan repoda reflog yoktur: boş liste.</para></summary>
+    public async Task<GitResult<IReadOnlyList<ReflogRecord>>> GetHeadReflogAsync(int limit, CancellationToken ct = default)
     {
-        var outcome = await CommandLineTool.RunAsync(_runner, CommandLineTool.Git, _gitExecutable, ["reflog", "--format=%gs"], _repoRoot, CommandTimeout, ct);
-        if (!outcome.Success) return GitResult<IReadOnlyList<string>>.Fail(outcome.Error!);
+        var outcome = await CommandLineTool.RunAsync(_runner, CommandLineTool.Git, _gitExecutable,
+            ["reflog", "--no-show-signature", "--date=raw", "-n", limit.ToString(CultureInfo.InvariantCulture), "--format=%H%x09%gd%x09%gs"],
+            _repoRoot, CommandTimeout, ct);
+        if (!outcome.Success) return GitResult<IReadOnlyList<ReflogRecord>>.Fail(outcome.Error!);
 
         var r = outcome.Value!;
-        if (r.ExitCode != 0) return GitResult<IReadOnlyList<string>>.Fail(CommandLineTool.DescribeFailure(CommandLineTool.Git, r));
+        if (r.ExitCode != 0)
+        {
+            // Unborn HEAD'de git reflog'u bulamayıp hata verir — o, "hareket yok" demektir.
+            var head = await GetHeadCommitAsync(ct);
+            return head.Success && head.Value is null
+                ? GitResult<IReadOnlyList<ReflogRecord>>.Ok([])
+                : GitResult<IReadOnlyList<ReflogRecord>>.Fail(CommandLineTool.DescribeFailure(CommandLineTool.Git, r));
+        }
 
-        // Her kayıt bir satırdır; çıktının sonundaki satır sonu bir kayıt değildir (boş mesajlı kayıt ise boş bir satırdır).
-        string[] lines = r.StandardOutput.Split('\n');
-        int count = lines[^1].Length == 0 ? lines.Length - 1 : lines.Length;
-        return GitResult<IReadOnlyList<string>>.Ok([.. lines.Take(count).Select(line => line.TrimEnd('\r'))]);
+        var records = new List<ReflogRecord>();
+        foreach (string raw in r.StandardOutput.Split('\n'))
+        {
+            string line = raw.TrimEnd('\r');
+            string[] parts = line.Split('\t', 3);
+            if (parts.Length < 3) continue; // sondaki satır sonu (ya da beklenmeyen biçim)
+            // Kimlik satırın tamamı: commit + zaman + mesaj. Commit ve zaman tek başına yetmez — ilk commit ile aynı saniyede
+            // aynı commit'te bir branch'e geçiş, aynı commit'i ve aynı saniyeyi taşır (ölçüldü).
+            records.Add(new ReflogRecord(Key: line, Message: parts[2]));
+        }
+        return GitResult<IReadOnlyList<ReflogRecord>>.Ok(records);
+    }
+
+    /// <summary>[reftable] Ref var mı (<c>rev-parse -q --verify</c>): yoksa git sessizce exit=1 döner. reftable'da
+    /// <c>CHERRY_PICK_HEAD</c> ve <c>REVERT_HEAD</c> dosya değildir; yarıdaki işlemi yalnız git söyler.</summary>
+    public async Task<GitResult<bool>> HasRefAsync(string name, CancellationToken ct = default)
+    {
+        var outcome = await CommandLineTool.RunAsync(_runner, CommandLineTool.Git, _gitExecutable, ["rev-parse", "-q", "--verify", name], _repoRoot, CommandTimeout, ct);
+        if (!outcome.Success) return GitResult<bool>.Fail(outcome.Error!);
+
+        var r = outcome.Value!;
+        if (r.ExitCode == 0) return GitResult<bool>.Ok(true);
+        return IsUnbornHeadSignal(r)
+            ? GitResult<bool>.Ok(false)
+            : GitResult<bool>.Fail(CommandLineTool.DescribeFailure(CommandLineTool.Git, r));
     }
 
     /// <summary>Working-tree + staged değişiklikler (`git status --porcelain -z`'den path listesi). Temiz repo → boş liste.

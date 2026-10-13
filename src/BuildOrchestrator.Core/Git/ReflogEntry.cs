@@ -19,7 +19,17 @@ public static class HeadMoveRules
     /// <summary>İkisinden güçlüsü; eşitse <paramref name="later"/> (en son görülen) kalır.</summary>
     public static HeadMove Stronger(HeadMove earlier, HeadMove later) =>
         earlier.Weight() > later.Weight() ? earlier : later;
+
+    /// <summary>Bir penceredeki hareketlerin en güçlüsü — <see cref="Stronger"/>'ın eskiden yeniye katlanmışı. İzleyicinin iki
+    /// kipi (reflog dosyası, reftable) aynı kuralı buradan alır. Liste boş olamaz.</summary>
+    public static HeadMove Strongest(IEnumerable<HeadMove> oldestToNewest) => oldestToNewest.Aggregate(Stronger);
 }
+
+/// <summary>[reftable] Git'ten okunan bir HEAD reflog kaydı (<see cref="GitService.GetHeadReflogAsync"/>).</summary>
+/// <param name="Key">Kaydın kimliği: yeni commit + kaydın zamanı (saniye) + mesaj. İzleyici "son gördüğüm kayıttan sonra ne
+/// eklendi" sorusunu bununla cevaplar.</param>
+/// <param name="Message">Reflog mesajı (<see cref="ReflogEntry.ClassifyMessage"/>'ın girdisi).</param>
+public sealed record ReflogRecord(string Key, string Message);
 
 /// <summary>
 /// [Faz 2/T1] HEAD reflog'unun (<c>.git/logs/HEAD</c>) SON satırını sınıflandırır — saf metin ayrıştırması,
@@ -44,7 +54,7 @@ public static class ReflogEntry
     }
 
     /// <summary>[reftable] Reflog satırının yalnız mesajı (TAB'den sonrası) — sınıflandırmanın TEK kuralı. reftable repoda
-    /// reflog dosya değildir; izleyici mesajları git'ten alır (<see cref="GitService.GetHeadReflogMessagesAsync"/>) ve
+    /// reflog dosya değildir; izleyici kayıtları git'ten alır (<see cref="GitService.GetHeadReflogAsync"/>) ve mesajı
     /// doğrudan buraya verir.</summary>
     public static HeadMove ClassifyMessage(string message)
     {

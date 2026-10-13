@@ -45,6 +45,55 @@ public class HeadSourceTests
         Assert.Equal(new HeadState("feature/x", sha), head);
     }
 
+    /// <summary>[reftable] Git'e soran yol process'leri çağıranın thread'inde BAŞLATMAZ: çağıran kendiliğinden Sync'in UI
+    /// thread'idir ve bir process'in başlatılması bile onu bekletir. Kusurlu hâlde ilk git process'i çağıranın thread'inde
+    /// başlıyordu (ölçülen: başlatma başına birkaç ms, okuma başına iki process).</summary>
+    [Fact]
+    public void A_reftable_read_starts_git_off_the_calling_thread()
+    {
+        using var repo = GitTestRepo.Reftable();
+        repo.WriteFile("a.txt", "hello");
+        repo.CommitAll("c1");
+        var runner = new PoolRecordingRunner();
+        Task<HeadState?>? read = null;
+
+        var caller = new Thread(() => read = HeadSource.ReadAsync(GitDirectory.Resolve(repo.RootPath)!, runner)); // havuz dışı thread
+        caller.Start();
+        caller.Join();
+
+        Assert.NotNull(read!.GetAwaiter().GetResult());
+        Assert.NotEmpty(runner.StartedOnPool);
+        Assert.All(runner.StartedOnPool, Assert.True);
+    }
+
+    /// <summary>Gerçek <see cref="ProcessRunner"/>'a devreder; her process'in hangi thread türünde başlatıldığını kaydeder.</summary>
+    private sealed class PoolRecordingRunner : IProcessRunner
+    {
+        private readonly ProcessRunner _real = new();
+        public List<bool> StartedOnPool { get; } = [];
+
+        public Task<ProcessResult> RunAsync(ProcessSpec spec, CancellationToken ct = default)
+        {
+            lock (StartedOnPool) StartedOnPool.Add(Thread.CurrentThread.IsThreadPoolThread);
+            return _real.RunAsync(spec, ct);
+        }
+    }
+
+    /// <summary>[reftable] Linked worktree'nin HEAD'i, worktree'nin kendi git dizininden sorulur (ana repoyunkinden değil).</summary>
+    [Fact]
+    public async Task A_reftable_worktree_is_read_from_its_own_git_directory()
+    {
+        using var repo = GitTestRepo.Reftable();
+        repo.WriteFile("a.txt", "hello");
+        string sha = repo.CommitAll("c1");
+        repo.CreateBranch("wt");
+        string worktree = repo.AddWorktree("wt");
+
+        var head = await HeadSource.ReadAsync(GitDirectory.Resolve(worktree)!, new ProcessRunner());
+
+        Assert.Equal(new HeadState("wt", sha), head);
+    }
+
     /// <summary>reftable repoda detached HEAD: branch yok, commit var — dosyadan okunan detached HEAD'le aynı biçim.</summary>
     [Fact]
     public async Task A_detached_head_in_a_reftable_repository_has_no_branch()

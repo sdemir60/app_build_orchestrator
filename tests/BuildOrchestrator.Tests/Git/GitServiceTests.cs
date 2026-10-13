@@ -68,6 +68,40 @@ public class GitServiceTests
         Assert.Equal("feature/x", result.Value);
     }
 
+    /// <summary>[reftable · imza] HEAD reflog'unun kayıtları, git'in log çıktılarına imza doğrulamasını açan bir ayar
+    /// (<c>log.showSignature=true</c>) ve imzalı commit'lerle de yalnız kayıtlardır. Ölçülen kusur: git her imzalı kayıt için
+    /// çıktıya fazladan bir doğrulama satırı basıyordu; reftable izleyicisi hareketleri yanlış sayıyor ve sınıflıyordu
+    /// (build sürerken atılan tek commit build'i kesebiliyordu).</summary>
+    [Fact]
+    public async Task GetHeadReflogAsync_is_not_mixed_with_signature_lines()
+    {
+        using var repo = GitTestRepo.Reftable();
+        repo.SignCommitsAndShowSignatures();
+        repo.WriteFile("a.txt", "1");
+        repo.CommitAll("c1");
+        repo.WriteFile("a.txt", "2");
+        repo.CommitAll("c2");
+
+        var result = await new GitService(Runner, repo.RootPath).GetHeadReflogAsync(HeadWatcher.ReflogWindow);
+
+        Assert.True(result.Success, result.Error);
+        Assert.Equal(["commit: c2", "commit (initial): c1"], result.Value!.Select(r => r.Message));
+    }
+
+    /// <summary>[reftable] Henüz commit'i olmayan repoda reflog yoktur: git hata verse de sonuç boş listedir — izleyici bunu
+    /// "hareket yok" okur. Kusurlu hâlde hata olarak dönüyordu ve ilk commit'ten önceki her tablo değişikliği (ör. bir
+    /// branch adı değişimi) koşuyu kesebilecek bir "Other" hareketi üretiyordu.</summary>
+    [Fact]
+    public async Task GetHeadReflogAsync_is_empty_before_the_first_commit()
+    {
+        using var repo = GitTestRepo.Reftable();
+
+        var result = await new GitService(Runner, repo.RootPath).GetHeadReflogAsync(HeadWatcher.ReflogWindow);
+
+        Assert.True(result.Success, result.Error);
+        Assert.Empty(result.Value!);
+    }
+
     // ---- no-commits (fresh init, no commit yet) ----
 
     [Fact]

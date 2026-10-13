@@ -152,12 +152,81 @@ public sealed class HeadWatcherTests
         using var watcher = new HeadWatcher();
         Assert.True(watcher.Start(GitDir(repo), recorder.On), watcher.UnavailableReason);
         await watcher.Ready;
+        var closed = WindowClosed(watcher);
 
         repo.CreateBranch("other");
         GitTestRepo.RunGitAt(repo.RootPath, "tag", "v1");
 
-        await Task.Delay(HeadWatcher.SettleDelay + Quiet);
+        Assert.True(await Arrives(closed), "the table change never closed a window — the test saw nothing to judge");
         Assert.Empty(recorder.Calls);
+    }
+
+    /// <summary>[reftable] Henüz commit'i olmayan repoda reflog yoktur; HEAD'in branch'i değişse de (ilk commit'ten önce
+    /// <c>checkout -b</c>) çağrı yapılmaz. Kusurlu hâlde git'in "reflog yok" hatası "okunamadı" sayılıp <c>Other</c> üretiyordu —
+    /// koşu sürerken bu bir kesme isteği demekti.</summary>
+    [Fact]
+    public async Task In_a_reftable_repository_a_head_change_before_the_first_commit_fires_nothing()
+    {
+        using var repo = GitTestRepo.Reftable();
+        var recorder = new Recorder();
+        using var watcher = new HeadWatcher();
+        Assert.True(watcher.Start(GitDir(repo), recorder.On), watcher.UnavailableReason);
+        await watcher.Ready;
+        var closed = WindowClosed(watcher);
+
+        GitTestRepo.RunGitAt(repo.RootPath, "checkout", "-q", "-b", "other");
+
+        Assert.True(await Arrives(closed), "the HEAD change never closed a window — the test saw nothing to judge");
+        Assert.Empty(recorder.Calls);
+    }
+
+    /// <summary>[reftable] İzleyici commit'i olmayan repoda da kurulur (tablo klasörü init'te vardır) ve ilk commit'i görür.</summary>
+    [Fact]
+    public async Task In_a_reftable_repository_the_first_commit_settles_into_commit()
+    {
+        using var repo = GitTestRepo.Reftable();
+        var recorder = new Recorder();
+        using var watcher = new HeadWatcher();
+        Assert.True(watcher.Start(GitDir(repo), recorder.On), watcher.UnavailableReason);
+        await watcher.Ready;
+
+        repo.WriteFile("a.txt", "1");
+        repo.CommitAll("init");
+
+        await recorder.First.Task.WaitAsync(Ceiling);
+        Assert.Equal([HeadMove.Commit], recorder.Calls.ToArray());
+    }
+
+    /// <summary>[reftable] Linked worktree'nin kendi git dizini izlenir: worktree'de yapılan checkout (+ commit) tek çağrıda
+    /// branch değişimidir — worktree'nin HEAD'i ve reflog'u kendi tablosundadır.</summary>
+    [Fact]
+    public async Task In_a_reftable_worktree_a_checkout_settles_into_one_branch_switch()
+    {
+        using var repo = GitTestRepo.Reftable();
+        repo.WriteFile("a.txt", "1");
+        repo.CommitAll("init");
+        repo.CreateBranch("wt");
+        string worktree = repo.AddWorktree("wt");
+        var recorder = new Recorder();
+        using var watcher = new HeadWatcher();
+        Assert.True(watcher.Start(GitDirectory.Resolve(worktree)!, recorder.On), watcher.UnavailableReason);
+        await watcher.Ready;
+
+        GitTestRepo.RunGitAt(worktree, "checkout", "-q", "-b", "wt-feature");
+        File.WriteAllText(Path.Combine(worktree, "a.txt"), "2");
+        GitTestRepo.RunGitAt(worktree, "commit", "-q", "-am", "c1");
+
+        await recorder.First.Task.WaitAsync(Ceiling);
+        await Task.Delay(Quiet);
+        Assert.Equal([HeadMove.BranchSwitch], recorder.Calls.ToArray());
+    }
+
+    /// <summary>İzleyicinin bir sonraki pencereyi kapatıp okumasını bekleyen görev.</summary>
+    private static Task WindowClosed(HeadWatcher watcher)
+    {
+        var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        watcher.WindowClosed += () => closed.TrySetResult();
+        return closed.Task;
     }
 
     /// <summary>Reflog klasörü yoksa (henüz hiç ref hareketi olmamış bir git dizini) izleyici kurulmaz ve gerekçesini söyler.</summary>
