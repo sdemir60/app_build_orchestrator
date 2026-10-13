@@ -490,6 +490,9 @@ public class ConsoleModesTests
 
         Assert.Equal(projectId, vm.ActiveProjectId);
         Assert.True(vm.ShouldShowLoadedProject(projectId));
+        // Sayfanın metni boş: kabuk boş metinde projenin boş durum sayfasını kurar (MainWindow.ProjectDocumentLines) — "log yok"
+        // cevabı boş bir snapshot olarak dikilse de bu kural aynen işler [idle-memory I1].
+        Assert.Equal("", vm.GetProjectDocumentText(projectId));
         // Ve gerekçe satırda tutuluyor — sayfa metni onu okuyacak.
         var row = Assert.Single(vm.Projects);
         Assert.Equal(SkipReasons.UpToDate, row.SkipReason);
