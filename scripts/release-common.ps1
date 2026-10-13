@@ -1,9 +1,9 @@
 <#
- [yayin hatti] package.ps1, release-guard.ps1, release.ps1 ve verify-publish.ps1'in ORTAK parcalari: Directory.Build.props
- degerleri, CHANGELOG surum basliklari, GitHub API'si (release sayisi, bir commit'in CI kosusu), uc durumlu git ata sorusu,
- bir surumun onceki paketlerinin temizligi ve calisan uygulama ornegi sondasi tek yerde (dot-source edilir, tek basina
- calistirilmaz). Baslik bicimini uygulamanin kendi parser'i (ReleaseNotes.Parse) da okur; ReleaseScriptsTests ikisinin ayni
- bolumu verdigini pinler.
+ [yayin hatti] package.ps1, release-guard.ps1, release-tag.ps1, release.ps1 ve verify-publish.ps1'in ORTAK parcalari:
+ Directory.Build.props degerleri, CHANGELOG surum basliklari, GitHub API'si (release sayisi, bir commit'in CI kosusu), uc
+ durumlu git ata sorusu, origin'deki main ucu ve surum tag'i, bir surumun onceki paketlerinin temizligi ve calisan uygulama
+ ornegi sondasi tek yerde (dot-source edilir, tek basina calistirilmaz). Baslik bicimini uygulamanin kendi parser'i
+ (ReleaseNotes.Parse) da okur; ReleaseScriptsTests ikisinin ayni bolumu verdigini pinler.
 #>
 
 $RepoRoot = Split-Path $PSScriptRoot -Parent
@@ -49,12 +49,29 @@ function Get-RunningApp([string]$ProcessName = 'BuildOrchestrator.App', [string]
 function Test-GitAncestor([string]$Ancestor, [string]$Descendant) {
     # $Ancestor, $Descendant'in atasi mi (git merge-base --is-ancestor, repo $RepoRoot). Uc durum: cikis 0 = ata ($true), 1 = degil
     # ($false), digeri = sorulamadi (ref yok, sig checkout) -> throw "git exit N". Sorulamayan ata ne "ata" ne "degil" sayilir
-    # (dogrulanamayan yayin cikmaz); cagiran (release.ps1'in ata guard'i, release-guard.ps1 -RequireOnMain) kendi mesajini yazar.
+    # (dogrulanamayan yayin cikmaz); cagiran (release.ps1'in ata guard'i) kendi mesajini yazar.
     & git -C $RepoRoot merge-base --is-ancestor $Ancestor $Descendant
     $code = $LASTEXITCODE
     if ($code -eq 0) { return $true }
     if ($code -eq 1) { return $false }
     throw "git exit $code"
+}
+
+function Get-OriginRelease([string]$Tag) {
+    # origin'in main ucu (Main) ve $Tag'in gosterdigi commit (TagCommit; annotated tag'de soyulmus "^{}" satiri, hafif tag'de
+    # kendisi); yoksa $null. ls-remote dogrudan origin'e sorar: CI'in sig checkout'u tarihce ve uzak izleme ref'i tasimaz, yerel
+    # fetch ise yalniz getirdigi tarihceye isaret eden tag'leri alir. Sorulamazsa throw "git ls-remote exit N" - sorulamayan
+    # origin ne "var" ne "yok" sayilir (dogrulanamayan yayin cikmaz); cagiran kendi mesajini yazar. git calisma dizininde
+    # cagrilir (-C yok): cagiranlar repo kokune gecer ve testlerin git golgesi alt komutu ilk arguman olarak bekler.
+    $lines = @(& git ls-remote origin refs/heads/main "refs/tags/$Tag" "refs/tags/$Tag^{}")
+    if ($LASTEXITCODE -ne 0) { throw "git ls-remote exit $LASTEXITCODE" }
+    $refs = @{}
+    foreach ($line in $lines) {
+        $parts = "$line" -split "`t"
+        if ($parts.Count -eq 2) { $refs[$parts[1]] = $parts[0] }
+    }
+    $tagCommit = if ($refs.ContainsKey("refs/tags/$Tag^{}")) { $refs["refs/tags/$Tag^{}"] } else { $refs["refs/tags/$Tag"] }
+    return [pscustomobject]@{ Main = $refs['refs/heads/main']; TagCommit = $tagCommit }
 }
 
 function Invoke-GitHubApi([string]$RepoUrl, [string]$Path, [string]$Token) {
