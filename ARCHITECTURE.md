@@ -4946,11 +4946,11 @@ the run itself the camera stays still. (§2.3 puts a mono hint line in the botto
 the panel reads more quietly without it.)
 
 **Opening.** Whenever the graph is built — a Sync with a new structure, a Sync that starts the screen over, the
-Sync that follows a Clean — the nodes appear in build order, each one 9 ms after the one before, rising 5 px
-over 300 ms. The wave therefore runs top-down and left-to-right, the same direction the bands are read in. The
-whole wave is capped at 520 ms: on a graph too large for 9 ms a node the step shrinks to `520 / (n − 1)`, so the
-last node still starts on the cap — the same shape as the marking wave's and the neon chain's tempo (§14.5). The
-cap bounds the wave, not each node. Clamping every delay at 520 ms instead would bring every node past the 58th
+Sync that follows a Clean — the nodes appear in build order, each one 9 ms after the one before, settling
+from 5 px above over 300 ms. The wave therefore runs top-down and left-to-right, the same direction the bands
+are read in. The whole wave is capped at 520 ms: on a graph too large for 9 ms a node the step shrinks to
+`520 / (n − 1)`, so the last node still starts on the cap — the same shape as the marking wave's and the neon
+chain's tempo (§14.5). The cap bounds the wave, not each node. Clamping every delay at 520 ms instead would bring every node past the 58th
 in at once, which on a workspace of a couple of hundred projects is most of the graph: the top bands flow in
 and everything below them lands in a single frame. It is a hero (`sync-reveal`, shared with the project list),
 so it yields if another hero is already playing, and reduced motion places everything instantly.
@@ -5090,7 +5090,9 @@ Three pieces of shared machinery keep the copies from multiplying:
   exit animation, and no overlay has one of its own: overlays hide immediately, and the restart screen does not
   leave at all — the window closes under it.
 - **`RevealStagger`** owns the hero acquisition, generation stamping and guarded release of the opening
-  reveal. The *cadence* is deliberately not shared — the graph staggers by layer, the list by row (§13.2).
+  reveal, and the one motion both surfaces share: 300 ms, settling from 5 px above. The *cadence* is
+  deliberately not shared — the graph staggers node by node in build order, with the whole wave capped
+  (§13.6); the list row by row, 10 ms apart, each row's delay capped at 380 ms (§13.2).
 
 The branch popover and the update card derive from a common base that owns the open state, the
 refresh-then-animate-then-focus sequence, the Esc handling (a popover is a separate HWND, so the window-level Esc
