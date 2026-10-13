@@ -518,6 +518,31 @@ public class SyncWorkspaceServiceTests
         Assert.Single(events.OfType<WorkspaceTopologyEvent>()); // analiz yine tam koşar
     }
 
+    /// <summary>[tag çakışması] Checkout edilmiş branch'le aynı adı taşıyan bir tag varken de fetch degrade olmaz, mesafe
+    /// ölçülür ve tamamlanma olayı düz branch adını taşır. Ölçülen kusur: ad <c>heads/&lt;ad&gt;</c> okunuyordu; fetch olmayan
+    /// <c>refs/remotes/origin/heads/&lt;ad&gt;</c>'i arıyordu — her Sync "fetch failed" uyarısı yazıyor, <c>N behind</c>
+    /// chip'i hiç görünmüyor, branch chip'i <c>heads/…</c> gösteriyordu.</summary>
+    [Fact]
+    public async Task Sync_on_a_branch_named_like_a_tag_fetches_and_measures_behind()
+    {
+        using var origin = new GitTestRepo();
+        WriteWorkspace(origin);
+        origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
+        string cloneRoot = origin.CloneFull();
+        GitTestRepo.TagTheCheckedOutBranch(cloneRoot);
+        origin.WriteFile(Path.Combine("src", "A", "A.cs"), "public class A { int x; }");
+        origin.CommitAll("c2");
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, NewCacheRoot()).RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add);
+
+        var done = Assert.IsType<SyncCompletedEvent>(events[^1]);
+        Assert.False(done.FetchDegraded);
+        Assert.Equal(1, done.Behind);
+        Assert.Equal(branch, done.ActiveBranch);
+    }
+
     /// <summary>[spec 2026-09-18 §6.1] Tamamlanma olayı yerel HEAD'i ve checkout edilmiş branch'i taşır — App'in
     /// çift Sync kontrolü ve branch değeri buradan okunur.</summary>
     [Fact]

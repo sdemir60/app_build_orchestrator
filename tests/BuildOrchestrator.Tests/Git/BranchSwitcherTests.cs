@@ -121,7 +121,8 @@ public class BranchSwitcherTests
     [Fact]
     public async Task The_active_branch_is_already_on_and_runs_no_git_write()
     {
-        var runner = new FakeProcessRunner(FakeProcessRunner.Output("feature\n"));
+        // symbolic-ref -q HEAD'in gerçek çıktısı: tam ref (GitService.GetCurrentBranchAsync öneki atar).
+        var runner = new FakeProcessRunner(FakeProcessRunner.Output("refs/heads/feature\n"));
         var switcher = new BranchSwitcher(runner, @"C:\fake-root");
 
         var result = await switcher.SwitchAsync("feature", isRemote: false, stashIfDirty: false);
@@ -130,6 +131,27 @@ public class BranchSwitcherTests
         Assert.Equal("feature", result.Branch);
         Assert.DoesNotContain(runner.Calls, c => c.Arguments.Contains("checkout"));
         Assert.DoesNotContain(runner.Calls, c => c.Arguments.Contains("stash"));
+    }
+
+    /// <summary>[tag çakışması] Aynı adlı bir tag'le çakışan AKTİF branch'e geçiş de "zaten orada"dır: kirli ağaç stash'lenmez,
+    /// checkout koşmaz. Ölçülen kusur: aktif ad <c>heads/feature/x</c> okunuyordu ve kıyas tutmuyordu — "Stash and switch"
+    /// açıkken kullanıcının değişiklikleri hiçbir şeyi değiştirmeyen bir checkout için stash'leniyor, "Already on" ile biten
+    /// checkout ardından sahte bir "Switched to" bölümü açıyordu. (Branch listesinde de aktif işaret olmadığı için App'in
+    /// "aktif branch'e tıklama" kapısı tutmuyor, istek buraya geliyordu.)</summary>
+    [Fact]
+    public async Task The_active_branch_named_like_a_tag_is_already_on_and_its_dirty_tree_is_not_stashed()
+    {
+        using var repo = new GitTestRepo();
+        repo.WriteFile("a.txt", "one");
+        repo.CommitAll("first");
+        repo.CheckoutBranchNamedLikeATag("feature/x");
+        File.WriteAllText(Path.Combine(repo.RootPath, "a.txt"), "dirty edit");
+
+        var result = await Switcher(repo.RootPath).SwitchAsync("feature/x", isRemote: false, stashIfDirty: true);
+
+        Assert.Equal(CheckoutStatus.AlreadyOn, result.Status);
+        Assert.Equal("", GitTestRepo.RunGitAt(repo.RootPath, "stash", "list").Trim());
+        Assert.Equal("dirty edit", File.ReadAllText(Path.Combine(repo.RootPath, "a.txt")));
     }
 
     [Fact]

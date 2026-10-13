@@ -41,9 +41,9 @@
 
   <!-- ============================ FOOTER ============================ -->
   <!-- [§2.11] Yalnız sağda secondary Close — Copy diagnostics About'ta kalır, buraya gelmez. Şeridin padding'i
-       ve üst çizgisi kabuğundur. -->
+       ve üst çizgisi kabuğundur. Açılış odağı buraya iner (InitialFocusScope, NotesDialog.xaml.cs). -->
   <controls:ModalDialog.Footer>
-    <DockPanel>
+    <DockPanel x:Name="FooterBar">
       <Button DockPanel.Dock="Right" HorizontalAlignment="Right" Content="Close" Click="OnClose"
               Style="{DynamicResource Ds.Button.Secondary.Md}" />
     </DockPanel>

@@ -1,4 +1,5 @@
-﻿using BuildOrchestrator.Core.Processes;
+﻿using System.Globalization;
+using BuildOrchestrator.Core.Processes;
 
 namespace BuildOrchestrator.Core.Git;
 
@@ -101,20 +102,93 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
         return GitResult<string?>.Fail(CommandLineTool.DescribeFailure(CommandLineTool.Git, r));
     }
 
-    /// <summary>Checkout edilmiş branch adı. Normal → ad. Detached HEAD → <c>Ok(null)</c> (hata DEĞİL, edge).</summary>
+    /// <summary>Checkout edilmiş branch adı. Normal → ad. Detached HEAD → <c>Ok(null)</c> (hata DEĞİL, edge).
+    /// <para><b>Tam ref okunur, <c>--short</c> KULLANILMAZ:</b> git'in kısaltması, aynı adı taşıyan bir tag (ya da başka bir
+    /// ref) varken belirsizliği önlemek için <c>heads/&lt;ad&gt;</c> döner. O ad ne bir branch'tir ne de diskten okunan HEAD'le
+    /// aynıdır: pencereye her dönüş sahte bir "branch değişti" bölümü açıyordu, branch chip'i <c>heads/…</c> gösteriyordu,
+    /// branch listesinde aktif branch kalmıyordu, Sync'in fetch'i ve pull olmayan <c>refs/remotes/origin/heads/…</c>'yi
+    /// arıyordu, zaten açık branch'e geçiş "zaten orada" sayılmıyor ve kirli ağaç boşuna stash'leniyordu. Ad, disk
+    /// okuyucusuyla ORTAK kuraldan çıkar (<see cref="HeadReader.BranchOf"/>).</para></summary>
     public async Task<GitResult<string?>> GetCurrentBranchAsync(CancellationToken ct = default)
     {
-        var outcome = await CommandLineTool.RunAsync(_runner, CommandLineTool.Git, _gitExecutable, ["symbolic-ref", "--short", "-q", "HEAD"], _repoRoot, CommandTimeout, ct);
+        var outcome = await CommandLineTool.RunAsync(_runner, CommandLineTool.Git, _gitExecutable, ["symbolic-ref", "-q", "HEAD"], _repoRoot, CommandTimeout, ct);
         if (!outcome.Success) return GitResult<string?>.Fail(outcome.Error!);
 
         var r = outcome.Value!;
-        if (r.ExitCode == 0) return GitResult<string?>.Ok(r.StandardOutput.Trim());
+        if (r.ExitCode == 0) return GitResult<string?>.Ok(HeadReader.BranchOf(r.StandardOutput.Trim()));
 
         // symbolic-ref -q, HEAD detached olduğunda ve YALNIZ bu durumda sessizce exit=1 + BOŞ stderr
         // döner. Başka her kombinasyon (özellikle exit=128) gerçek bir git hatasıdır — Fail.
         if (IsUnbornHeadSignal(r)) return GitResult<string?>.Ok(null);
 
         return GitResult<string?>.Fail(CommandLineTool.DescribeFailure(CommandLineTool.Git, r));
+    }
+
+    /// <summary>[reftable] HEAD'in branch'i ve commit'i git'e sorularak (<see cref="GetCurrentBranchAsync"/> +
+    /// <see cref="GetHeadCommitAsync"/>) — <see cref="HeadReader.Read"/>'in dosyadan çıkardığı <see cref="HeadState"/>'in
+    /// aynısı: detached'ta branch <c>null</c>, unborn'da sha <c>null</c>. Sorgulardan biri başarısızsa <c>null</c>
+    /// (okunamadı). HEAD dosyası reftable'ın yer tutucusu olduğunda tek yol budur (<see cref="HeadSource"/>).</summary>
+    public async Task<HeadState?> GetHeadStateAsync(CancellationToken ct = default)
+    {
+        var branch = await GetCurrentBranchAsync(ct);
+        if (!branch.Success) return null;
+        var head = await GetHeadCommitAsync(ct);
+        return head.Success ? new HeadState(branch.Value, head.Value) : null;
+    }
+
+    /// <summary>[reftable] Git dizininin İÇİNDEN çalışan servis: ana repoda <c>.git</c>, linked worktree'de worktree'nin kendi
+    /// git dizini — git ikisinde de o dizinin HEAD'ini, reflog'unu ve ref'lerini verir, çalışma kopyasının kökü gerekmez.
+    /// reftable okumalarının (HEAD, reflog, yarıdaki işlemin ref'leri) TEK kurulumu.</summary>
+    public static GitService InGitDirectory(string gitDir, IProcessRunner? runner = null) =>
+        new(runner ?? new ProcessRunner(), gitDir);
+
+    /// <summary>[reftable] HEAD reflog'unun en yeni <paramref name="limit"/> kaydı, en yeniden eskiye: kimliği ve mesajı.
+    /// Reflog'u dosya olarak tutmayan reftable repoda HEAD izleyicisinin kaynağıdır (normal repoda <c>logs/HEAD</c> dosyadan
+    /// okunur). İzleyici yeni kayıtları son gördüğü kaydın kimliğinden bulur (<see cref="ReflogRecord.Key"/>).
+    /// <para><c>--no-show-signature</c> zorunludur: <c>log.showSignature=true</c> ayarlı bir makinede git her imzalı kayıt için
+    /// çıktıya bir doğrulama satırı ekler ve kayıtlar kayardı. Henüz commit'i olmayan repoda reflog yoktur: boş liste.</para></summary>
+    public async Task<GitResult<IReadOnlyList<ReflogRecord>>> GetHeadReflogAsync(int limit, CancellationToken ct = default)
+    {
+        var outcome = await CommandLineTool.RunAsync(_runner, CommandLineTool.Git, _gitExecutable,
+            ["reflog", "--no-show-signature", "--date=raw", "-n", limit.ToString(CultureInfo.InvariantCulture), "--format=%H%x09%gd%x09%gs"],
+            _repoRoot, CommandTimeout, ct);
+        if (!outcome.Success) return GitResult<IReadOnlyList<ReflogRecord>>.Fail(outcome.Error!);
+
+        var r = outcome.Value!;
+        if (r.ExitCode != 0)
+        {
+            // Unborn HEAD'de git reflog'u bulamayıp hata verir — o, "hareket yok" demektir.
+            var head = await GetHeadCommitAsync(ct);
+            return head.Success && head.Value is null
+                ? GitResult<IReadOnlyList<ReflogRecord>>.Ok([])
+                : GitResult<IReadOnlyList<ReflogRecord>>.Fail(CommandLineTool.DescribeFailure(CommandLineTool.Git, r));
+        }
+
+        var records = new List<ReflogRecord>();
+        foreach (string raw in r.StandardOutput.Split('\n'))
+        {
+            string line = raw.TrimEnd('\r');
+            string[] parts = line.Split('\t', 3);
+            if (parts.Length < 3) continue; // sondaki satır sonu (ya da beklenmeyen biçim)
+            // Kimlik satırın tamamı: commit + zaman + mesaj. Commit ve zaman tek başına yetmez — ilk commit ile aynı saniyede
+            // aynı commit'te bir branch'e geçiş, aynı commit'i ve aynı saniyeyi taşır (ölçüldü).
+            records.Add(new ReflogRecord(Key: line, Message: parts[2]));
+        }
+        return GitResult<IReadOnlyList<ReflogRecord>>.Ok(records);
+    }
+
+    /// <summary>[reftable] Ref var mı (<c>rev-parse -q --verify</c>): yoksa git sessizce exit=1 döner. reftable'da
+    /// <c>CHERRY_PICK_HEAD</c> ve <c>REVERT_HEAD</c> dosya değildir; yarıdaki işlemi yalnız git söyler.</summary>
+    public async Task<GitResult<bool>> HasRefAsync(string name, CancellationToken ct = default)
+    {
+        var outcome = await CommandLineTool.RunAsync(_runner, CommandLineTool.Git, _gitExecutable, ["rev-parse", "-q", "--verify", name], _repoRoot, CommandTimeout, ct);
+        if (!outcome.Success) return GitResult<bool>.Fail(outcome.Error!);
+
+        var r = outcome.Value!;
+        if (r.ExitCode == 0) return GitResult<bool>.Ok(true);
+        return IsUnbornHeadSignal(r)
+            ? GitResult<bool>.Ok(false)
+            : GitResult<bool>.Fail(CommandLineTool.DescribeFailure(CommandLineTool.Git, r));
     }
 
     /// <summary>Working-tree + staged değişiklikler (`git status --porcelain -z`'den path listesi). Temiz repo → boş liste.
@@ -171,9 +245,10 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
             string refName = line[..tab];
             string sha = line[(tab + 1)..].Trim();
 
-            if (refName.StartsWith("refs/heads/", StringComparison.Ordinal))
+            if (HeadReader.IsBranchRef(refName))
             {
-                string name = refName["refs/heads/".Length..];
+                // Ad, aktif branch'inkiyle AYNI kuraldan (GetCurrentBranchAsync) — aktif işareti bu eşitliğe dayanır.
+                string name = HeadReader.BranchOf(refName);
                 list.Add(new GitBranchInfo(name, sha, IsRemote: false, IsActive: active is not null && name == active));
             }
             else if (refName.StartsWith("refs/remotes/", StringComparison.Ordinal))

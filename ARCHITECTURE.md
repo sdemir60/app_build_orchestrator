@@ -2201,7 +2201,7 @@ The complete set of git invocations in the codebase:
 
 | Command | Mutates? |
 |---|---|
-| `rev-parse --verify -q HEAD` · `symbolic-ref --short -q HEAD` · `status --porcelain -z` · `rev-parse --is-shallow-repository` · `for-each-ref …` · `rev-parse --verify -q refs/{heads,remotes/origin}/<branch>` · `rev-list --count HEAD..<sha>` | no |
+| `rev-parse --verify -q HEAD` · `symbolic-ref -q HEAD` · `status --porcelain -z` · `rev-parse --is-shallow-repository` · `for-each-ref …` · `rev-parse --verify -q refs/{heads,remotes/origin}/<branch>` · `rev-list --count HEAD..<sha>` · `reflog --no-show-signature …` · `rev-parse -q --verify {CHERRY_PICK_HEAD,REVERT_HEAD}` | no |
 | `fetch origin <branch> --no-tags` | only `refs/remotes/*` |
 | `merge-base --is-ancestor` · `merge --ff-only` | external working copies when updates are on (§10.4), and the **main repository only when the user clicks the `N behind` chip** (§10.5) |
 | `stash push -u -m <message>` | the main repository, **only** when the user picks a branch on the branch chip, the tree is dirty and *Stash and switch branches* is on (§10.3) |
@@ -2218,6 +2218,22 @@ Some reads need no process at all. The HEAD watcher and the git-operation gate (
 as files: `.git` resolved to the real git directory (a folder, or a `gitdir:` file for a linked worktree or a
 submodule), `HEAD` and the ref it names (loose or packed), the last lines of `logs/HEAD`, and the presence of
 the operation markers. They run on every trigger, so they cost a file read rather than a `git` child.
+
+A repository in the reftable format keeps HEAD, its branches, tags and the reflog in its own tables: its `HEAD`
+file holds only a placeholder for older git versions (`ref: refs/heads/.invalid`), `CHERRY_PICK_HEAD` and
+`REVERT_HEAD` are not files, and there is no `logs` folder. The placeholder is never taken for a branch: it tells
+the format (`HeadReader.IsReftable`), and the three reads take another path there, each through git run inside the
+git directory (`GitService.InGitDirectory`, which also serves a linked worktree). HEAD is asked from git (`HeadSource`:
+`symbolic-ref` and `rev-parse`, started on the thread pool — the caller is the automatic Sync on the UI thread); the
+watcher follows `reftable/tables.list` and takes the newest entries of HEAD's reflog from git (`reflog
+--no-show-signature`, §10.3); and when `MERGE_MSG` appears, git is asked for `CHERRY_PICK_HEAD` and `REVERT_HEAD`
+(§10.3). Those processes run only in such a repository — a files repository still costs a file read.
+
+The checked-out branch is read from git as the full ref (`symbolic-ref -q HEAD`), never in git's short form,
+and its `refs/heads/` prefix is dropped by the one rule the file read and the branch list use too
+(`HeadReader.BranchOf`). The short form is not always the branch name: when a tag or another ref has the same name, git shortens to
+`heads/<name>`, which matches neither the branch list, the remote-tracking ref a pull merges, nor the HEAD read
+from disk — every return to the window would look like a branch change.
 
 `ls-tree` is not called: the signature does not read git (§7.1).
 
@@ -2386,12 +2402,22 @@ a long rebase produces one Sync. The reflog lines appended in that window are cl
 anything else (pull, merge, reset, rebase) — and the strongest wins. A line git is still writing when the window
 closes is not read in half: it waits, and the window opens once more on its own so the whole line is read even if
 its end brings no notification of its own. Visual Studio's background `fetch` and
-`status` do not write this file and trigger nothing. A return to the window is the second trigger: when more
+`status` do not write this file and trigger nothing. In a reftable repository (§10.1) the watcher follows
+`reftable/tables.list` instead, which git rewrites on every reference change, and reads the newest fifty entries of
+HEAD's reflog from git. The new entries are those above the one that was newest at the last read — an entry is known by
+its commit, time and message — and they are classified and weighed by the same rules; when that entry is gone (expired,
+or more than fifty moves at once) only the newest counts, as when the log file shrinks. A change that leaves HEAD
+alone (a fetch, a new branch or tag) adds no entry and triggers nothing, and neither does any change before the first
+commit, when there is no reflog yet. `--no-show-signature` keeps a machine that has `log.showSignature` on from mixing
+signature checks into the entries. A return to the window is the second trigger: when more
 than five seconds have passed since the last Sync started or ended, it runs a silent Sync even when HEAD has not
 moved, because files may have been edited elsewhere.
 
-Each trigger is weighed against the HEAD of the last Sync (§5.3, `syncCompleted`), read from disk:
+Each trigger is weighed against the HEAD of the last Sync (§5.3, `syncCompleted`), read from the git directory —
+or, in a reftable repository, from git (§10.1):
 
+- HEAD cannot be read — no git directory at the root, or git cannot answer → a return to the window runs a silent
+  Sync and the end of a run runs nothing;
 - the branch name differs → a new section (BranchChange), first line `Switched to …`;
 - branch and commit are the same and the trigger is a HEAD movement → nothing: the tool's own checkout and the
   Sync a pull chains are not followed by a second Sync;
@@ -2425,7 +2451,13 @@ first start more than three days after their run, the newest run's folder except
 **While git is mid-operation, the tool waits.** The git directory's markers say what is in progress:
 `MERGE_HEAD` (a merge waiting for conflict resolution), `rebase-merge\` or `rebase-apply\` (a rebase),
 `CHERRY_PICK_HEAD` and `REVERT_HEAD`, and `index.lock` (a git command running right now); a named operation
-wins over the lock. While one stands:
+wins over the lock. A reftable repository (§10.1) keeps `CHERRY_PICK_HEAD` and `REVERT_HEAD` in its tables; there a
+half-done cherry-pick or revert leaves only `MERGE_MSG` on disk — and so do a cherry-pick without a commit (`-n`) and
+a conflicted `merge --squash`, neither of which is an operation in progress, and the file stays even when their
+changes are thrown away. `MERGE_MSG` is therefore only a hint there: when it appears, git is asked for the two refs,
+and the answer is the one a files repository gives. The answer is kept until `MERGE_MSG` changes, so git runs once per
+half-done operation even though the gate is polled; in a files repository a lone `MERGE_MSG` is never looked at.
+While one stands:
 
 - an automatic Sync waits, and the event stream says `waiting for git — <reason>` once per operation;
 - the branch chip carries an amber dot, and its tooltip names the operation (`Merge in progress — finish or
@@ -3906,7 +3938,7 @@ window is resized; the arithmetic lives in one pure function (`DialogSize`). The
 same way: a scrim press closes the dialog while a press inside the frame never reaches the scrim, Esc closes it
 and is marked handled, the scrim is a cyclic focus scope so Tab cannot escape to the window behind, and opening
 lays the dialog out before moving keyboard focus inside — to the first control of a subtree the dialog names
-(Settings names the page it opens on), or else to the first control of the dialog — because before layout,
+(Settings names the page it opens on, What's new its footer), or else to the first control of the dialog — because before layout,
 focus navigation finds nothing and focus would stay on the dialog itself. Every modal enters with a 180 ms fade and a 6 px rise, the
 duration read from the `Duration.Base` token and snapping to the end state under reduced motion. The dialog's
 typography (the UI font and `text-primary`) is set on the dialog rather than the frame, because the slot content
@@ -4188,7 +4220,9 @@ hairline and another 22 px. The three newest versions are open; the rest fold un
 button with a down chevron, placed in the notes column of the same two-column grid below its own hairline and
 aligned flush with the note text (its own left padding cancelled by a negative margin); the fold returns on
 the next open. The footer carries only *Close* — *Copy diagnostics* stays on About, where the rest of the
-diagnostics live.
+diagnostics live. Every open starts the body at its top, on the newest version, and puts the opening focus on
+*Close*: the dialog's first control is the *Earlier versions* button at the foot of the list, and WPF scrolls a
+control that takes focus into view, so focusing it would open the body scrolled to its bottom.
 
 **The notes come from `CHANGELOG.md` at the repository root**, the single source — no list is kept in code.
 The App embeds the file as a resource and `ReleaseNotes` parses it on first use: a `## [x.y.z] - yyyy-MM-dd`
@@ -6197,8 +6231,9 @@ do, and how the interface works around each — useful to know before attempting
 - **A rebase interrupts a run in flight.** A rebase moves HEAD once per replayed commit; the watcher folds those
   writes into one trigger, but a run in flight is interrupted by it like any other HEAD movement that is not a
   plain commit.
-- **The HEAD watcher needs a reflog.** It follows `logs/HEAD`; a repository that has no commit yet has no
-  reflog folder, so the watcher cannot start and says so once. Returning to the window retries it, and the
+- **The HEAD watcher needs a reflog.** In the files format it follows `logs/HEAD`; a repository that has no commit
+  yet has no reflog folder, so the watcher cannot start and says so once (a reftable repository has its table folder
+  from the start, §10.1). Returning to the window retries it, and the
   window-activation Sync covers changes in the meantime.
 - **An automatic Sync does not fetch.** Its `N behind` distance is measured against the last remote state the
   repository already has; the Sync button and a pull refresh it from the network.
@@ -6575,14 +6610,15 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 
 | Behaviour | File |
 |---|---|
-| All read-only git invocations (HEAD, status, refs, distance, fetch) | `Core/Git/GitService.cs` |
+| All read-only git invocations (HEAD, status, refs, distance, fetch, HEAD's reflog) | `Core/Git/GitService.cs` |
 | The only mutating git surface: the fast-forward (dirty gate → fetch → is-ancestor → `merge --ff-only`, `FastForwardUpdater`) and the branch switch (dirty gate → optional `stash push -u` → `checkout`, `BranchSwitcher`) | `Core/Git/RepositoryWriter.cs` |
 | Git directory resolution (`.git` folder or `gitdir:` file) | `Core/Git/GitDirectory.cs` |
-| HEAD and its ref read from files (loose, packed, linked-worktree common dir) | `Core/Git/HeadReader.cs` |
-| Operation markers (merge, rebase, cherry-pick, revert, `index.lock`) | `Core/Git/GitOperationProbe.cs` |
+| HEAD and its ref read from files (loose, packed, linked-worktree common dir; a reftable placeholder reads as unknown), the format question (reftable or not) and the branch-name rule the git query shares | `Core/Git/HeadReader.cs` |
+| HEAD for the automatic Sync: from the file, or asked from git in a reftable repository | `Core/Git/HeadSource.cs` |
+| Operation markers (merge, rebase, cherry-pick, revert, `index.lock`; in a reftable repository `MERGE_MSG`, then the two refs asked from git, kept until the file changes) | `Core/Git/GitOperationProbe.cs` |
 | Tooltip, Build warning, Sync warning and stuck-lock texts for an operation in progress, and the 30 s threshold | `Core/Git/GitOperationText.cs` |
 | Reflog line classification (commit, checkout, other) and the strength order | `Core/Git/ReflogEntry.cs` |
-| The HEAD watcher on `logs/HEAD` and its 1.5 s settle window | `Core/Git/HeadWatcher.cs`, `Core/Git/SettleDebouncer.cs` |
+| The HEAD watcher on `logs/HEAD` (in a reftable repository on `reftable/tables.list`, with HEAD's reflog taken from git) and its 1.5 s settle window | `Core/Git/HeadWatcher.cs`, `Core/Git/SettleDebouncer.cs` |
 | Revision text shortening (only a full 40-hex sha is cut to 7) | `Core/Git/RevisionText.cs` |
 | The `N behind` chip's command handler (main repository fast-forward) | `Supervisor/SupervisorHost.cs` |
 | Automatic Sync decision: triggers (HEAD watcher, window activation, end of run), the one pending trigger, the double-Sync check, the interrupt request | `App/Services/AutoSyncCoordinator.cs` |
