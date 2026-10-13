@@ -751,7 +751,7 @@ by a plan without a cycle, where no member exists.
 ### 6.6 Layers
 
 Layers are optional and **empty by default** — with no patterns configured the list is a single flat list in
-build order.
+build order, and the graph a single band (§13.6).
 
 Projects from an external root (§10.4) are the one exception: they occupy a **reserved layer** named
 `External` at index −1, which is why they sit above every configured layer and above `Other`, and why they
@@ -4598,11 +4598,18 @@ that stays on the fitted view unless you select something or move it yourself, a
 operation starts. The point is that a 100-project workspace should read at a
 glance instead of demanding to be studied.
 
-**Layout is a function of the panel.** Nodes sit in horizontal bands ordered by build sequence — layer 0 on
-top, and inside a band the first project to build sits leftmost — so reading top-down and left-to-right is
-reading the build order. The node pitch is searched, not fixed: `QuietGraphLayout` walks from 44 px down to
-5 px in half-pixel steps and takes the first value where every band, plus a `0.7 × pitch` gap between bands,
-fits the panel height. A band whose last row is short is centred against the rows above it, and the whole
+**Layout is a function of the panel.** Nodes sit in horizontal bands ordered by build sequence — the first group
+to build on top, and inside a band the first project to build sits leftmost — so reading top-down and
+left-to-right is reading the build order. **A band is one of the project list's groups**: the same members in the
+same order, cut by the one grouping rule the list uses (`LayerGrouping`), so the two surfaces cannot disagree about
+where a project belongs — two layers that share a name are one group in the list and therefore one band. With no
+layers configured the list is a single flat list and the graph a single band; external projects, when there are
+any, keep their `External` band on top, as they keep their group at the top of the list. Bands are never derived
+from dependency depth: a real workspace's dependency chain can run dozens of projects deep, and a band per level
+would shrink every node to the size floor in a column a fraction of the panel wide. The node pitch is searched,
+not fixed: `QuietGraphLayout` walks from 44 px down to 5 px in half-pixel steps and takes the first value where
+every band, plus a `0.7 × pitch` gap between bands, fits the panel height. A band whose last row is short is
+centred against the rows above it, and the whole
 block is centred in the content box — a symmetric 36 px inset on every side, which is what makes the graph
 read as a picture with a margin rather than as a panel that has been filled to the edges. That inset is a
 single source: the overlay layer clamps to it as well, so a label never ends up hugging a corner. The consequence is
@@ -6680,7 +6687,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Warning-triangle text (one line, strongest reason wins) | `App/ViewModels/RowWarning.cs` |
 | Operation pill wording (`SYNC` · `BUILD` · `REBUILD` · `CLEAN` · `DEEP CLEAN` · `OPTIMIZE` · `RESOLVE` · `SWITCHING BRANCH`) | `App/ViewModels/OperationLabel.cs` |
 | Status counters | `App/ViewModels/RunCounters.cs` |
-| Layer grouping (from topology only — no regex in the App) | `App/ViewModels/LayerGrouping.cs` |
+| Layer grouping — the list's groups and the graph's bands, one rule (from topology only — no regex in the App) | `App/ViewModels/LayerGrouping.cs` |
 | Graph feed construction | `App/ViewModels/GraphBinder.cs` |
 | Interaction copy (console notes, empty states, the discovery blocks' texts and counter line); the list-state decision (`ListInvite.Resolve`) | `App/ViewModels/InteractionText.cs` |
 | Discovery state while a Sync finds the project set — when it opens and closes, the cumulative counter, the breakdown snapshot | `App/ViewModels/RunViewModel.Discovery.cs`; opened in `RunViewModel.cs` (`SyncCoreAsync`), closed in `RunViewModel.Workspace.cs` (`OnWorkspaceTopology`, `EndSyncMode`) |
