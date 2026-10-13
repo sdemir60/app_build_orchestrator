@@ -123,6 +123,18 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
         return GitResult<string?>.Fail(CommandLineTool.DescribeFailure(CommandLineTool.Git, r));
     }
 
+    /// <summary>[reftable] HEAD'in branch'i ve commit'i git'e sorularak (<see cref="GetCurrentBranchAsync"/> +
+    /// <see cref="GetHeadCommitAsync"/>) — <see cref="HeadReader.Read"/>'in dosyadan çıkardığı <see cref="HeadState"/>'in
+    /// aynısı: detached'ta branch <c>null</c>, unborn'da sha <c>null</c>. Sorgulardan biri başarısızsa <c>null</c>
+    /// (okunamadı). HEAD dosyası reftable'ın yer tutucusu olduğunda tek yol budur (<see cref="HeadSource"/>).</summary>
+    public async Task<HeadState?> GetHeadStateAsync(CancellationToken ct = default)
+    {
+        var branch = await GetCurrentBranchAsync(ct);
+        if (!branch.Success) return null;
+        var head = await GetHeadCommitAsync(ct);
+        return head.Success ? new HeadState(branch.Value, head.Value) : null;
+    }
+
     /// <summary>Working-tree + staged değişiklikler (`git status --porcelain -z`'den path listesi). Temiz repo → boş liste.
     /// <para><c>-z</c> ZORUNLUDUR: onsuz git ASCII dışı baytları (<c>core.quotepath</c> varsayılanı) tırnaklı sekizlik
     /// kaçışlarla yazar — <c>src/Işık.cs</c> <c>"src/I\305\237\304\261k.cs"</c> olur, diskteki hiçbir yolla

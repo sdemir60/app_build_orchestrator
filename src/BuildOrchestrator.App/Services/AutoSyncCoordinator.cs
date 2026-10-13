@@ -73,21 +73,21 @@ internal sealed class AutoSyncCoordinator : IDisposable
 
     private readonly IAutoSyncPort _port;
     private readonly Action<Action> _post;
-    private readonly Func<string?, HeadState?> _readHead;
+    private readonly Func<string?, Task<HeadState?>> _readHead;
     private readonly Func<IHeadWatcher> _newWatcher;
 
     /// <param name="port">VM köprüsü.</param>
     /// <param name="post">UI thread'ine taşıma (üretimde <c>Dispatcher.InvokeAsync</c>) — izleyicinin geri
     /// çağrısı ve meşguliyet bitişindeki yeniden değerlendirme bundan geçer.</param>
-    /// <param name="readHead">Git dizininden HEAD (verilmezse <see cref="HeadReader.Read"/>); git dizini yoksa
-    /// argüman <c>null</c>'dır.</param>
+    /// <param name="readHead">Test dikişi: git dizininden HEAD (git dizini yoksa argüman <c>null</c>'dır). Verilmezse
+    /// <see cref="HeadSource.ReadAsync"/>: dosyadan, reftable repoda git'e sorarak.</param>
     /// <param name="newWatcher">İzleyici fabrikası (verilmezse <see cref="HeadWatcher"/>).</param>
     public AutoSyncCoordinator(IAutoSyncPort port, Action<Action> post,
         Func<string?, HeadState?>? readHead = null, Func<IHeadWatcher>? newWatcher = null)
     {
         _port = port;
         _post = post;
-        _readHead = readHead ?? ReadHeadFromDisk;
+        _readHead = readHead is null ? ReadHeadAsync : gitDir => Task.FromResult(readHead(gitDir));
         _newWatcher = newWatcher ?? (() => new HeadWatcher());
     }
 
@@ -209,9 +209,14 @@ internal sealed class AutoSyncCoordinator : IDisposable
             _reevaluationQueued = false;
             if (_pending is not { } pending || _port.IsWorkspaceBusy) return;
             _pending = null;
-            _ = EvaluateAsync(pending);
+            Reevaluation = EvaluateAsync(pending);
         });
     }
+
+    /// <summary>Meşguliyet bitişinde kuyruklanan son yeniden değerlendirme (<see cref="OnWorkspaceIdle"/>). Üretimde kimse
+    /// beklemez (ateşle-unut); HEAD'i git'e sorarak okuyan bir repoda (reftable) değerlendirme bir process'i bekler ve testler
+    /// sonucu bununla bekler.</summary>
+    internal Task Reevaluation { get; private set; } = Task.CompletedTask;
 
     /// <summary>
     /// Kararın kendisi (spec §6.1 · §6.2 · karar 11), sırasıyla:
@@ -227,9 +232,9 @@ internal sealed class AutoSyncCoordinator : IDisposable
     /// bildirimini atar ve tetik normal yoldan değerlendirilir.</item>
     /// <item>Hiç Sync tamamlanmamış → hiçbir şey: kıyaslanacak HEAD yok ve ilk bölümü açılış Sync'i açar.</item>
     /// <item>Pencereye dönüş ve son Sync'ten <see cref="ActivationQuietMs"/> geçmemiş → hiçbir şey.</item>
-    /// <item>HEAD okunamıyor → sessiz yenileme (güvenli yön); koşu bitişinin güvenlik ağı tetiğinde hiçbir şey. HEAD'i
-    /// dosyadan okunamayan reftable repo da buraya düşer (<see cref="HeadReader"/>): orada dışarıdan bir branch değişimi
-    /// bölüm açmaz, sessiz Sync onu yerinde tazeler.</item>
+    /// <item>HEAD okunamıyor → sessiz yenileme (güvenli yön); koşu bitişinin güvenlik ağı tetiğinde hiçbir şey. (reftable
+    /// repoda HEAD dosyası yer tutucudur; HEAD git'e sorularak okunur — <see cref="HeadSource"/> — ve bu yola yalnız git de
+    /// cevap veremezse düşülür.)</item>
     /// <item>Branch adı farklı → yeni bölüm (<see cref="SyncMode.BranchChange"/>), ilk satır yeni branch. Kıyasın
     /// tabanı <see cref="BranchReference"/>: beklerken bölümsüz bir Sync'in yuttuğu değişim de bölüm açar.</item>
     /// <item>HEAD (branch + commit) son Sync'tekiyle aynı ve tetik bir HEAD hareketi → hiçbir şey (çift Sync yok).</item>
@@ -268,7 +273,7 @@ internal sealed class AutoSyncCoordinator : IDisposable
         var reference = BranchReference(trigger, last);
         if (summary is null && trigger.IsActivation && _port.LastSyncAtMs is { } at && _port.NowMs() - at < ActivationQuietMs) return;
 
-        var head = _readHead(_gitDir);
+        var head = await _readHead(_gitDir);
         if (head is null)
         {
             if (summary is null && trigger.RunEnded) return;
@@ -344,10 +349,12 @@ internal sealed class AutoSyncCoordinator : IDisposable
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
     }
 
-    private static HeadState? ReadHeadFromDisk(string? gitDir)
+    /// <summary>Üretimin HEAD okuması (<see cref="HeadSource.ReadAsync"/>). Normal repoda dosya okuması senkron tamamlanır ve
+    /// değerlendirme hiç beklemez; reftable repoda git'e sorulur ve değerlendirme o process'i bekler (UI thread'i bloklamadan).</summary>
+    private static async Task<HeadState?> ReadHeadAsync(string? gitDir)
     {
         if (gitDir is null) return null;
-        try { return HeadReader.Read(gitDir); }
+        try { return await HeadSource.ReadAsync(gitDir); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
     }
 
