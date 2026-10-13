@@ -46,8 +46,13 @@ internal static class MainWindowHost
     /// <param name="nowMs">[perf Faz A · A6] VM'in elapsed/bekçi saati (<c>RunViewModel</c> ctor'unun <c>nowMs</c>'i). Verilmezse
     /// üretimdeki <c>Environment.TickCount64</c>; canlı süreleri ve motor sessizlik bekçisini saati ileri alarak sınayan
     /// testler saati kendisi sürer.</param>
+    /// <param name="productionMemoryCollector">[idle-memory] Pencere işlem sonu bellek trimini GERÇEK toplayıcıyla mı yapsın.
+    /// Varsayılan <c>false</c>: pencere kurulur kurulmaz boş bir toplayıcı takılır (<see cref="NoMemoryCollection"/>) — trim
+    /// her işlem bitişinde (görünür pencerede de) toplar ve süit gerçek agresif GC'yi her testte koştururdu. Üretim
+    /// toplayıcısını isteyen tek test onun geçerliliğini sınayandır (<c>RunBufferReleaseTests</c>).</param>
     public static (MainWindow window, RunViewModel vm) New(TempDir uiStateDir, Action<RunViewModel>? beforeVm = null,
-        UiState? saved = null, AutostartService? autostart = null, Func<long>? nowMs = null)
+        UiState? saved = null, AutostartService? autostart = null, Func<long>? nowMs = null,
+        bool productionMemoryCollector = false)
     {
         ArgumentNullException.ThrowIfNull(uiStateDir);
         var engine = new EngineHost(Path.Combine(AppContext.BaseDirectory, "no-such-supervisor.exe"));
@@ -62,8 +67,15 @@ internal static class MainWindowHost
         beforeVm?.Invoke(vm);
         var store = UiStateStore(uiStateDir);
         if (saved is not null) store.Save(saved);
-        return (new MainWindow(engine, vm, batcher, DsResources.NewScope(), store, autostart), vm);
+        var window = new MainWindow(engine, vm, batcher, DsResources.NewScope(), store, autostart);
+        if (!productionMemoryCollector) window.MemoryCollector = NoMemoryCollection;
+        return (window, vm);
     }
+
+    /// <summary>[idle-memory] Fixture pencerelerinin bellek toplayıcısı: hiçbir şey yapmaz. Trim kararı ve zamanlaması aynen
+    /// koşar, yalnız gerçek toplama yapılmaz (<see cref="New"/>'ün <c>productionMemoryCollector</c>'ı). Toplamayı sayan testler
+    /// kendi sahtesini fixture'DAN SONRA takar.</summary>
+    private static readonly Action NoMemoryCollection = static () => { };
 
     /// <summary>[design v1.23/v1.24 review C13] <see cref="New"/> + <see cref="Realize"/> (üretimin açılış boyutunda):
     /// realize edilmiş kabuk ve VM'i, veri akmadan. Böyle bir kabukla başlayan testlerin TEK kurulumu —
@@ -118,7 +130,11 @@ internal static class MainWindowHost
 
     /// <summary>[perf Faz A · A6] <see cref="NewWithProjects"/> + VM'in elapsed/bekçi saati ENJEKTE: canlı süreleri ve motor
     /// sessizlik bekçisini saati ileri alarak sınayan testler içindir (<see cref="New"/>'ün <c>nowMs</c>'i; <c>null</c> ⇒ üretim
-    /// saati). Gövde TEK yerdedir: <see cref="NewWithProjects"/> buna devreder.</summary>
+    /// saati). Gövde TEK yerdedir: <see cref="NewWithProjects"/> buna devreder.
+    /// <para>[idle-memory] Açılış Sync'i bir işlem bitişidir ve pencerenin işlem sonu bellek trimini ister. Fixture pencereyi
+    /// OTURMUŞ döndürür: o trim fixture dönmeden (boş toplayıcıyla) yürür — pay sıfırlanır, kuyruk boşaltılır, üretim payı geri
+    /// konur. Test böylece trim edilmemiş bir işlemle başlamaz ve fixture'ın zamanlayıcısı testin içine (ya da paylaşılan STA
+    /// dispatcher'ında sonraki bir teste) sızmaz.</para></summary>
     public static (MainWindow window, RunViewModel vm, StickyLayerList list) NewWithProjectsAndClock(
         TempDir uiStateDir, Func<long>? nowMs, params (string Name, string? Layer)[] nodes)
     {
@@ -127,7 +143,11 @@ internal static class MainWindowHost
         vm.RootPath = @"C:\src\OSYS";
         var projectNodes = nodes.Select((n, i) => Node(n.Name, i, n.Layer)).ToList();
         vm.OnEvent(new WorkspaceTopologyEvent(projectNodes, [], [], []));
+        var grace = window.TrimGraceAfterFinale;
+        window.TrimGraceAfterFinale = TimeSpan.Zero;
         vm.OnEvent(SyncCompleted(projectNodes.Count)); // → Idle
+        DispatcherPump.DrainToIdle();
+        window.TrimGraceAfterFinale = grace;
         return (window, vm, window.Shell.ProjectsList);
     }
 

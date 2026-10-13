@@ -1,5 +1,7 @@
 using System.Windows.Threading;
 using BuildOrchestrator.App.Controls;
+using BuildOrchestrator.App.Services;
+using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Core.Diagnostics;
 
 namespace BuildOrchestrator.App;
@@ -19,7 +21,8 @@ namespace BuildOrchestrator.App;
 /// (<see cref="_listStaleWhileHidden"/>) · 200 ms'lik tikin gövdesi (<see cref="_tickStaleWhileHidden"/>; motor sessizlik
 /// bekçisi hariç — o gizliyken de koşar) · sticky şerit, Build menüsü, alt çubuğun sayaç chip'leri, proje satırları ve olay
 /// akışı satırları (her biri kendi bayrağıyla, kalıtsal sinyalin değişiminde <c>OnPropertyChanged</c> ile dönüşte tek geçişte
-/// yetişir) · tepside biten koşunun bellek toplaması (<see cref="CollectAfterRunWhenDue"/>: yalnız gizliyken).</para>
+/// yetişir) · işlem sonu bellek trimi (<see cref="RequestTrimWhenDue"/>: gizliyken pay beklenmez ve tepside biten koşu gösterge
+/// çıkışını bekler; görünürken bitiş finali ve pay beklenir).</para>
 ///
 /// <para><b>Üretim kablajı:</b> <c>IsVisibleChanged</c> (ctor'da tek abonelik) ve <see cref="StartInTray"/>
 /// (pencere hiç gösterilmediği için olay ateşlenmez). Testler <see cref="SetSurfaceHidden"/>'ı doğrudan çağırır
@@ -59,6 +62,11 @@ public partial class MainWindow
     /// sürmelidir; koşu ortasında çağrılsaydı pencere geri geldiğinde graf filtreyi koşu sürerken uygulamış olurdu.</para>
     ///
     /// <para><b>Görününce</b> dönüş kurulumu (<see cref="ResyncAfterShow"/>) ilk layout turundan SONRA koşar.</para>
+    ///
+    /// <para><b>İşlem sonu bellek trimi</b> iki yönde de yeniden sorulur (<see cref="RequestTrimWhenDue"/>). Gizlenince görünür
+    /// yolun payı durur: trim edilmemiş bitmiş bir işlem varsa pay beklenmeden boşta toplanır — gizlide duraklama görünmez.
+    /// Görününce tepside biten koşunun kaydı silinir (<see cref="_runEndedHidden"/>): görünür pencerede gösterge yoktur, o
+    /// çıkış trimin önünde beklenmez; trim görünür yoldan (final ve pay) yapılır.</para>
     /// </summary>
     internal void SetSurfaceHidden(bool hidden)
     {
@@ -67,74 +75,168 @@ public partial class MainWindow
         if (!hidden)
         {
             Dispatcher.InvokeAsync(ResyncAfterShow, DispatcherPriority.Loaded);
+            _runEndedHidden = 0;
+            RequestTrimWhenDue();
             return;
         }
         _choreographer.Cancel(_vm.Projects);
         if (Shell.GraphHost.IsEndFinalePlaying) Shell.GraphHost.CancelEndFinale();
+        _trimGrace?.Stop();
+        RequestTrimWhenDue();
     }
 
-    /// <summary>
-    /// [perf Faz C · C4] <b>Tepside biten koşunun ardından tek seferlik bellek toplaması.</b> Koşu tepsideyken bitti ve tepsi
-    /// göstergesi çıkışını tamamladı: ekranda bu koşuya ait hiçbir şey kalmadı ve koşunun atıkları (canlı satır tamponu
-    /// bırakılmıştır — <c>RunViewModel.LiveLineCount</c>) ölü yük olarak durur; toplama onları geri verir.
-    ///
-    /// <para><b>İki sinyalin birleşimi; hangisi sonra gelirse toplamayı o ister</b> (<see cref="CollectAfterRunWhenDue"/>): koşu
-    /// bitti (<c>RunViewModel.EndedRunSerial</c> — HER bitiş yolunda, tampon bırakıldıktan sonra; ctor aboneliği) VE gösterge
-    /// çıkışını bitirdi (<see cref="OnTrayIndicatorExitFinished"/> — gizlenme ve sonuç balonundan sonra). Sıra koşuya göre değişir:
-    /// normalde koşu önce biter; reduced-motion'da tepside Stop'ta gösterge <c>runStopped</c> anında çıkar, koşu ise
-    /// <c>runCompleted</c> ile sonra biter.</para>
-    ///
-    /// <para><b>Koşu başına bir kez, koşu kimliğine bağlı</b> (<c>RunViewModel.RunSerial</c>): yeni koşu yeni kimlik getirir, aynı
-    /// koşunun ikinci sinyali yeniden toplamaz. Pencere görünürken hiç toplanmaz.</para>
-    /// </summary>
-    private int _collectedRun;
+    // ---------------------------------------------------------------- [idle-memory · dalga 1] işlem sonu bellek trimi
+
+    /// <summary>İşlem sonu bellek triminin saf kararı (<see cref="RequestTrimWhenDue"/>): işlem başına en fazla bir trim ve
+    /// hangi koşullarda.</summary>
+    private readonly MemoryTrimRule _trimRule = new();
 
     /// <summary>Göstergesi çıkışını bitirmiş koşunun kimliği — bildirimin taşıdığı değer (çıkış BAŞLADIĞI andaki <c>RunViewModel.RunSerial</c>; koşu sürüyorsa o
     /// koşu, bittiyse biten koşu: kimlik yalnız yeni bir koşu başlarken artar).</summary>
     private int _indicatorExitedRun;
 
-    /// <summary>[perf Faz C · C4] Toplamanın TEK gerçek çağrısı; ne zaman çağrılacağına <see cref="CollectAfterRunWhenDue"/> karar
-    /// verir. Testler sayaçlı bir sahteyle değiştirir; gerçek toplamayı yalnız üretim toplayıcısının geçerliliğini sınayan test
-    /// bir kez koşturur. <b>Bloklayan</b> agresif toplama: <see cref="GCCollectionMode.Aggressive"/> yalnız <c>blocking: true</c> ile
-    /// geçerlidir (<c>blocking: false</c> her çağrıda <see cref="ArgumentException"/> fırlatır); nesil 2 sıkıştırılır ve boşalan
-    /// bellek işletim sistemine geri verilir. Toplama süresince UI thread'i durur — bu yüzden yalnız pencere gizliyken, sonuç
-    /// balonu gösterildikten sonra ve uygulama boştayken yapılır.</summary>
+    /// <summary>Yüzey gizliyken (tepsideyken) BİTEN son koşunun kimliği (<c>RunViewModel.EndedRunSerial</c>); 0 = yok. Gösterge
+    /// çıkışını YALNIZ böyle bir koşu bekler: gösterge tepside biten koşunundur, görünürde biten koşunun çıkışı hiç gelmez. Kayıt
+    /// koşunun bitiş bildiriminde alınır — VM onu işlemin bitişinden ÖNCE bildirir, trim kararı kaydı hazır bulur. Pencere görününce
+    /// silinir (<see cref="SetSurfaceHidden"/>).</summary>
+    private int _runEndedHidden;
+
+    /// <summary>[test yüzeyi] Görünür pencerede trimin, en son sinyalden (tipik olarak bitiş finalinin sonundan) sonraki payı.
+    /// Sayının TEK tanımı <see cref="MemoryTrimRule.GraceAfterFinale"/>'dır. Sıfır ya da negatif ⇒ zamanlayıcı yok: yürütme hemen
+    /// boşta kuyruğa düşer (testler <c>DrainToIdle</c> ile boşaltır — boşaltma zamanlayıcı ateşlemez).</summary>
+    internal TimeSpan TrimGraceAfterFinale { get; set; } = MemoryTrimRule.GraceAfterFinale;
+
+    /// <summary>Görünür yolun pay zamanlayıcısı — ilk görünür istekte kurulur; her istek baştan başlatır, dolunca yürütmeyi
+    /// kuyruklar. Gizlenme ve pencerenin kapanışı durdurur.</summary>
+    private DispatcherTimer? _trimGrace;
+
+    /// <summary>Boşta kuyrukta bekleyen yürütme (<see cref="TrimIfStillDue"/>) — kuyrukta aynı anda tek yürütme bulunur.</summary>
+    private DispatcherOperation? _queuedTrim;
+
+    /// <summary>[perf Faz C · C4] Toplamanın TEK gerçek çağrısı: <see cref="MemoryTrim.CollectAndRelease"/>'e devreder (ne yaptığı ve
+    /// neden bloklayıcı olduğu orada yazılıdır). Ne zaman çağrılacağına <see cref="RequestTrimWhenDue"/> karar verir. Testler sahteyle
+    /// değiştirir.</summary>
     internal Action MemoryCollector { get; set; } = CollectMemory;
 
     private static void CollectMemory() => MemoryTrim.CollectAndRelease();
 
     /// <summary>
     /// [perf Faz C · C4] Tepsi göstergesi çıkış sırasını tamamladı (<c>TrayBuildIndicatorController.ExitCompleted</c>: gösterge
-    /// gizlendi, sonuç balonu gösterildi) — toplamanın gösterge sinyali. Çıkış sırasında pencere geri geldiyse bildirim yine gelir
-    /// ama kullanıcı ekrandadır: o yolda toplanmaz. <c>internal</c>: test yüzeyi — headless'ta gösterge hiç kurulmaz
-    /// (<c>OnSourceInitialized</c> koşmaz), testler bildirimi doğrudan verir.
+    /// gizlendi, sonuç balonu gösterildi) — trimin gösterge sinyali: tepside biten koşunun trimi bunu bekler. Çıkış sırasında
+    /// pencere geri geldiyse bildirim yine gelir; o zaman trim görünür yoldan (final ve pay) yapılır. <c>internal</c>: test yüzeyi —
+    /// headless'ta gösterge hiç kurulmaz (<c>OnSourceInitialized</c> koşmaz), testler bildirimi doğrudan verir.
     /// </summary>
     /// <param name="run">Göstergenin çıkışı BAŞLADIĞI andaki koşu kimliği (<c>TrayBuildIndicatorController</c> taşır). Burada
     /// <c>RunSerial</c> okunmaz: bildirim nefesten sonra gelir ve o ana kadar yeni bir koşu başlamış olabilir.</param>
     internal void OnTrayIndicatorExitFinished(int run)
     {
         _indicatorExitedRun = run;
-        CollectAfterRunWhenDue();
+        RequestTrimWhenDue();
     }
 
     /// <summary>
-    /// İki sinyal de buraya gelir. Toplama yalnız biten koşunun göstergesi de çıktıysa, bu koşu için henüz toplanmadıysa ve pencere
-    /// GİZLİYSE istenir. Toplamanın kendisi <see cref="DispatcherPriority.ApplicationIdle"/> ile ertelenir: reduced-motion'da iki
-    /// sinyal de koşu bitişinin içinde eşzamanlı gelebilir ve bloklayan toplama koşu bitişinin kalan işini (yüzey yenilemesi,
-    /// bekleyen Sync) bekletmemelidir. Ertelenen iş koşulu yeniden sorar (<see cref="CollectWhileHidden"/>).
+    /// [idle-memory · dalga 1] <b>İşlem sonu bellek trimi.</b> Bir işlem (koşu, Sync, Clean, Optimize) bitince, uygulama sakinken
+    /// BİR kez toplanır (<see cref="MemoryCollector"/>): işlemin atıkları (bırakılmış canlı satır tamponu, koşu boyunca biriken
+    /// nesneler) ölü yük olarak kalmaz. Kararı saf kural verir (<see cref="MemoryTrimRule"/>); burası sinyalleri toplar, zamanlar
+    /// ve yürütür.
+    ///
+    /// <para><b>Beş sinyal buraya gelir; hangisi en son gelirse trimi o ister:</b> işlem bitti
+    /// (<c>RunViewModel.EndedOperationSerial</c>), grafın bitiş finali bitti (<c>GraphView.EndFinaleFinished</c>), tepsi göstergesi
+    /// çıkışını bitirdi (<see cref="OnTrayIndicatorExitFinished"/>), yüzey gizlendi ya da göründü (<see cref="SetSurfaceHidden"/>) ve
+    /// cevabı beklenen proje log yüklemesi bitti (<c>RunViewModel.HasPendingLogLoad</c>).</para>
+    ///
+    /// <para><b>Zamanlama:</b> gizliyken pay beklenmez (duraklama görünmez): yürütme boşta kuyruğa düşer
+    /// (<see cref="DispatcherPriority.ApplicationIdle"/>) — reduced-motion'da sinyaller koşu bitişinin içinde eşzamanlı gelebilir ve
+    /// bloklayan toplama bitişin kalan işini (yüzey yenilemesi, bekleyen Sync) bekletmemelidir. Görünürken pay
+    /// (<see cref="TrimGraceAfterFinale"/>) beklenir ve her yeni istek payı baştan başlatır; pay dolunca yürütme yine boşta kuyruğa
+    /// düşer. Kuyrukta aynı anda tek yürütme bulunur.</para>
+    ///
+    /// <para><b>Yürütme koşulları yeniden sorar</b> (<see cref="ShouldTrimNow"/>, istekteki soru) ve işlemi ancak toplama GERÇEKTEN
+    /// yürütülünce tüketir (<see cref="MemoryTrimRule.MarkTrimmed"/>): arada yeni bir işlem başladıysa, final oynuyorsa ya da bir log
+    /// yüklemesi bekliyorsa vazgeçer ve işlem sıradaki sinyale kadar uygun kalır. Bu, koşunun bitiş sırasını da güvenli kılar: bitiş
+    /// sinyali finalden ÖNCE gelir (<c>MarkRunEnded</c>, ardından <c>Phase = Done</c> finali başlatır), ilk pay finalin ortasında
+    /// dolabilir — yürütme finali oynarken bulup vazgeçer, trimi finalin bitişi yeniden ister.</para>
     /// </summary>
-    private void CollectAfterRunWhenDue()
+    internal void RequestTrimWhenDue()
     {
-        int run = _vm.EndedRunSerial;
-        if (run != _indicatorExitedRun || run == _collectedRun || !IsSurfaceHidden) return;
-        _collectedRun = run;
-        Dispatcher.InvokeAsync(CollectWhileHidden, DispatcherPriority.ApplicationIdle);
+        if (!ShouldTrimNow()) return;
+        if (IsSurfaceHidden || TrimGraceAfterFinale <= TimeSpan.Zero)
+        {
+            _trimGrace?.Stop();
+            QueueTrim();
+            return;
+        }
+        // Görünür yol: pay en son sinyalden sayılır. Kuyruktaki bir yürütme (gizliyken ya da dolmuş bir payla kuyruklanmış) payı
+        // atlamasın diye geri alınır; yürütmeyi payın sonu yeniden kuyruklar.
+        _queuedTrim?.Abort();
+        _queuedTrim = null;
+        _trimGrace ??= NewTrimGraceTimer();
+        _trimGrace.Stop();
+        _trimGrace.Interval = TrimGraceAfterFinale;
+        _trimGrace.Start();
     }
 
-    /// <summary>Boşta ertelenen toplama: arada pencere geri geldiyse ya da yeni bir koşu başladıysa toplamaz.</summary>
-    private void CollectWhileHidden()
+    private DispatcherTimer NewTrimGraceTimer()
     {
-        if (IsSurfaceHidden && !_vm.IsRunInFlight) MemoryCollector();
+        var timer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher);
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            QueueTrim();
+        };
+        return timer;
+    }
+
+    /// <summary>Yürütmeyi boşta kuyruğa alır — kuyrukta bekleyen varsa ikincisi alınmaz.</summary>
+    private void QueueTrim()
+    {
+        if (_queuedTrim is { Status: DispatcherOperationStatus.Pending }) return;
+        _queuedTrim = Dispatcher.InvokeAsync(TrimIfStillDue, DispatcherPriority.ApplicationIdle);
+    }
+
+    /// <summary>Boşta ertelenen yürütme: koşullar yeniden sorulur; tutuyorsa işlem trim edilmiş sayılır ve toplanır.</summary>
+    private void TrimIfStillDue()
+    {
+        _queuedTrim = null;
+        if (!ShouldTrimNow()) return;
+        _trimRule.MarkTrimmed(_vm.EndedOperationSerial);
+        MemoryCollector();
+    }
+
+    /// <summary>İstek ve yürütme AYNI soruyu sorar. Gösterge çıkışı yalnız tepside biten son koşu için ve onun çıkışı henüz
+    /// gelmediyse beklenir (<see cref="_runEndedHidden"/>); Sync/Clean/Optimize bitişi de son koşu tepside bitip çıkışı hâlâ
+    /// beklenirken bekler — çıkıştan sonraki tek trim ikisini de kapsar.</summary>
+    private bool ShouldTrimNow() => _trimRule.ShouldTrim(
+        endedOperation: _vm.EndedOperationSerial,
+        operationInFlight: _vm.IsOperationInFlight,
+        pendingLogLoad: _vm.HasPendingLogLoad,
+        surfaceHidden: IsSurfaceHidden,
+        finalePlaying: Shell.GraphHost.IsEndFinalePlaying,
+        awaitingTrayIndicator: _runEndedHidden != 0 && _runEndedHidden == _vm.EndedRunSerial
+                               && _indicatorExitedRun != _runEndedHidden);
+
+    /// <summary>VM'in trim sinyalleri (ctor aboneliği): koşu bittiyse yüzey o an gizli miydi kaydedilir; işlemin bitişi ve
+    /// log yüklemesinin değişimi trimi yeniden sorar.</summary>
+    private void OnVmPropertyChangedForTrim(string? propertyName)
+    {
+        switch (propertyName)
+        {
+            case nameof(RunViewModel.EndedRunSerial):
+                if (IsSurfaceHidden) _runEndedHidden = _vm.EndedRunSerial;
+                break;
+            case nameof(RunViewModel.EndedOperationSerial):
+            case nameof(RunViewModel.HasPendingLogLoad):
+                RequestTrimWhenDue();
+                break;
+        }
+    }
+
+    /// <summary>Pencere kapandı: pay zamanlayıcısı durur, kuyruktaki yürütme geri alınır.</summary>
+    private void StopMemoryTrim()
+    {
+        _trimGrace?.Stop();
+        _queuedTrim?.Abort();
+        _queuedTrim = null;
     }
 
     /// <summary>Gizliyken konsol belgesine yazılmayan bir batch, temizlik ya da mod geçişi oldu (seçim yolu:

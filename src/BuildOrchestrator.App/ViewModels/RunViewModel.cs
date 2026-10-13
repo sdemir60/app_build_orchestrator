@@ -1883,7 +1883,9 @@ public sealed partial class RunViewModel : ObservableObject
 
     /// <summary>[task 3 testleri] YALNIZ testler ayarlar: gönderimi motorun yerine bu yapar. Başlatılmamış bir
     /// motorla gönderim hep düşer; gerçek bir Supervisor ise kendi cevabını pencereye ASENKRON akıtıp testle
-    /// yarışır. Bu seam "gönderim başarılı, cevabı test verir" yolunu motorsuz kurar. Üretimde hep null.</summary>
+    /// yarışır. Bu seam "gönderim başarılı, cevabı test verir" yolunu motorsuz kurar. Üretimde hep null.
+    /// <para>Proje log isteği de (<see cref="LoadProjectLogAsync"/>, kendi hata satırıyla) bu dikişten geçer: cevabı beklenen
+    /// bir yükleme (<see cref="HasPendingLogLoad"/>) ancak böyle kurulur.</para></summary>
     internal Func<IpcCommand, Task>? DebugSendOverride;
 
     // ---------------------------------------------------------------- elapsed
@@ -2582,8 +2584,9 @@ public sealed partial class RunViewModel : ObservableObject
     internal int RunSerial { get; private set; }
 
     /// <summary>[perf Faz C · C4] <b>"Koşu bitti" sinyali:</b> biten son koşunun kimliği (<see cref="RunSerial"/>). Yalnız
-    /// <see cref="MarkRunEnded"/> yazar, canlı tampon bırakıldıktan SONRA. Pencere bunu dinler: tepside biten koşunun bellek
-    /// toplaması (<c>MainWindow.HiddenSurface</c>) bu sinyal ile göstergenin çıkış bildiriminin birleşimidir.</summary>
+    /// <see cref="MarkRunEnded"/> yazar: canlı tampon bırakıldıktan SONRA ve <see cref="EndedOperationSerial"/>'dan ÖNCE (bildirim
+    /// sırası da budur). Pencere bunu dinler: koşu tepside (yüzey gizliyken) bittiyse kaydeder ve işlem sonu bellek trimi
+    /// (<c>MainWindow.RequestTrimWhenDue</c>) o koşu için göstergenin çıkış bildirimini de bekler.</summary>
     internal int EndedRunSerial
     {
         get => _endedRunSerial;
@@ -3160,8 +3163,11 @@ public sealed partial class RunViewModel : ObservableObject
         // alırsa eskisini burada çözüyoruz — aksi halde eski awaiter'ın Completion'ı ASLA tamamlanmaz (leak).
         if (_pendingLoad is { } previous) CompletePendingLoad(previous);
         var pending = new PendingLoad(projectId);
+        bool wasPending = HasPendingLogLoad;
         _pendingLoad = pending;
-        try { await _engine.SendAsync(new GetProjectLogCommand(projectId)); }
+        NotifyPendingLogLoad(wasPending);
+        var command = new GetProjectLogCommand(projectId);
+        try { await (DebugSendOverride?.Invoke(command) ?? _engine.SendAsync(command)); }
         catch (Exception ex)
         {
             AppendRunLine($"[error] could not load project log: {ex.Message}");
@@ -3178,9 +3184,30 @@ public sealed partial class RunViewModel : ObservableObject
             // logNotFound dalının aksine): mevcut testler (ör. stitch testleri) engine hiç başlatılmadan aynı
             // senkron fırlamaya dayanır ve sonrasında gelen bir ProjectLogChunkEvent'in _pendingLoad üzerinden
             // OnProjectLogChunk'ta hâlâ eşleşip dikişi tamamlamasını bekler — burada null'lamak o akışı kırardı.
+            // [idle-memory] Silahlı kalır ama cevabı BEKLENMEZ: işlem sonu trimini tutmaz (HasPendingLogLoad).
+            wasPending = HasPendingLogLoad;
+            pending.SendFailed = true;
+            NotifyPendingLogLoad(wasPending);
             pending.Completion.TrySetResult();
         }
         await pending.Completion.Task;
+    }
+
+    /// <summary>
+    /// [idle-memory] Cevabı BEKLENEN bir proje log yüklemesi var mı: istek motora gitti, dikiş ya da "log yok" yanıtı henüz
+    /// gelmedi. İşlem sonu bellek trimi (<c>MainWindow.RequestTrimWhenDue</c>) bunu bekler — dikişin kuyruğu canlı tampondadır —
+    /// ve yüklemenin sonunda yeniden sorar; bu yüzden BİLDİRİMLİDİR: yükleme başlayınca, gönderimi düşünce ve bitince
+    /// (<see cref="CompletePendingLoad"/>, yerini yenisi aldığında dahil) değer değiştiyse bildirilir (<see cref="NotifyPendingLogLoad"/>).
+    /// <para><b>Gönderimi düşen yükleme sayılmaz:</b> dikiş bilerek silahlı kalır (<see cref="_pendingLoad"/>: gecikmiş bir chunk
+    /// hâlâ eşleşir, canlı tamponun bırakılması da onu bekler) ama cevap hiç gelmeyebilir — sayılsaydı tek bir düşen gönderim,
+    /// başka bir log açılana dek her trimi kilitlerdi.</para>
+    /// </summary>
+    internal bool HasPendingLogLoad => _pendingLoad is { SendFailed: false };
+
+    /// <summary><see cref="HasPendingLogLoad"/> bildiriminin TEK noktası: değer <paramref name="before"/>'dan farklıysa bildirir.</summary>
+    private void NotifyPendingLogLoad(bool before)
+    {
+        if (HasPendingLogLoad != before) OnPropertyChanged(nameof(HasPendingLogLoad));
     }
 
     /// <summary>[Kısıt 4] MainWindow bu event'i (diğer tüm state event'leri gibi) UI thread'ine MARSHAL EDER —
@@ -3252,14 +3279,17 @@ public sealed partial class RunViewModel : ObservableObject
     /// [perf Faz C · C4] <b>Bekleyen yüklemenin sonu — tek yer.</b> Üç çağıran: dikişin bitişi (<see cref="OnProjectLogChunk"/>),
     /// motorun "log yok" yanıtı (<c>logNotFound</c>, <see cref="OnError"/>) ve yeni bir yüklemenin eskisinin yerini alması
     /// (<see cref="LoadProjectLogAsync"/>). Sıra her yerde aynıdır: bekleyen düşer, ertelenmiş tampon bırakması yeniden sorulur
-    /// (koşu bitmişse şimdi yapılır — <see cref="ReleaseLiveLinesWhenIdle"/>), awaiter serbest kalır. Gönderim hatası bir son
-    /// DEĞİLDİR: istek yola çıkmadı ve dikiş bilerek silahlı kalır (gecikmiş bir chunk hâlâ eşleşir); orada yalnız awaiter
-    /// serbest kalır.
+    /// (koşu bitmişse şimdi yapılır — <see cref="ReleaseLiveLinesWhenIdle"/>), yüklemenin bittiği bildirilir
+    /// (<see cref="HasPendingLogLoad"/>: işlem sonu trimi bırakılmış tamponla yeniden sorar), awaiter serbest kalır. Gönderim
+    /// hatası bir son DEĞİLDİR: istek yola çıkmadı ve dikiş bilerek silahlı kalır (gecikmiş bir chunk hâlâ eşleşir); orada yalnız
+    /// cevap beklenmediği işaretlenir ve awaiter serbest kalır.
     /// </summary>
     private void CompletePendingLoad(PendingLoad pending)
     {
+        bool wasPending = HasPendingLogLoad;
         if (ReferenceEquals(_pendingLoad, pending)) _pendingLoad = null;
         ReleaseLiveLinesWhenIdle();
+        NotifyPendingLogLoad(wasPending);
         pending.Completion.TrySetResult();
     }
 
@@ -3307,5 +3337,9 @@ public sealed partial class RunViewModel : ObservableObject
         public string ProjectId { get; } = projectId;
         public StringBuilder Assembly { get; } = new();
         public TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>İstek motora hiç gitmedi (gönderim düştü): dikiş silahlı kalır ama cevabı beklenmez
+        /// (<see cref="HasPendingLogLoad"/>).</summary>
+        public bool SendFailed { get; set; }
     }
 }

@@ -286,7 +286,9 @@ public class OperationEndSignalTests
 
     /// <summary>Bakım işinin bitişi, konsol korunarak bir Sync zincirler: iki ayrı bitiş, iki ayrı artış. İlk artışta zincirli
     /// Sync kapıyı çoktan devralmıştır (bırakma Sync devralındıktan SONRA yapılır) — sinyali dinleyen, işi uçuşta görüp ilkinde
-    /// bekler ve zincirin Sync'inin bitişinde tetiklenir.</summary>
+    /// bekler ve zincirin Sync'inin bitişinde tetiklenir. Bu, aşağıdaki sıra değişmezinin (artış anında biten iş uçuşta değildir)
+    /// belgelenmiş istisnasıdır: işin KENDİ bayrağı artıştan önce bırakılmıştır, uçuşta olan zincirin Sync'idir; zincirin sonunda
+    /// (ikinci artış) uçuşta hiçbir şey kalmaz.</summary>
     [StaTheory]
     [InlineData("clean")]
     [InlineData("optimize")]
@@ -295,11 +297,7 @@ public class OperationEndSignalTests
         using var dir = new TempDir();
         var (window, vm, before) = NewHost(dir);
         MainWindowHost.AcceptSends(vm);                  // zincirin Sync komutu da gider: kapı motorun cevabını bekler
-        bool syncBusyAtFirstBump = false;
-        vm.PropertyChanged += (_, e) =>
-        {
-            if (e.PropertyName == nameof(RunViewModel.EndedOperationSerial)) syncBusyAtFirstBump |= vm.SyncBusy;
-        };
+        var recorder = new BumpRecorder(vm);
         await Click(vm, work);
         EngineStarts(vm, work);
 
@@ -307,12 +305,15 @@ public class OperationEndSignalTests
 
         Assert.Equal(before + 1, vm.EndedOperationSerial);
         Assert.False(Busy(vm, work));
-        Assert.True(syncBusyAtFirstBump);                // bırakma anında zincirli Sync kapıyı tutuyordu
+        var job = Assert.Single(recorder.AtBump);
+        Assert.True(job.Sync);                                      // bırakma anında zincirli Sync kapıyı tutuyordu
+        Assert.False(work == "clean" ? job.Clean : job.Optimize);   // işin kendi bayrağı artıştan ÖNCE bırakıldı
 
         MainWindowHost.ReplySync(vm, ("A", null));       // motorun Sync cevabı: başlangıç, topoloji, bitiş
 
         Assert.Equal(before + 2, vm.EndedOperationSerial);
         Assert.False(vm.SyncBusy);
+        Assert.False(recorder.AtBump[1].AnyInFlight);    // zincirin sonunda uçuşta iş yok
         GC.KeepAlive(window);
     }
 
@@ -344,6 +345,115 @@ public class OperationEndSignalTests
         await vm.RestartEngineCommand.ExecuteAsync(null);   // var olmayan exe: preflight düşer, bırakma yolu yine koşar
 
         Assert.Equal(before, vm.EndedOperationSerial);
+        GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- sıra değişmezleri (sinyali dinleyen kabuk bunlara dayanır)
+
+    /// <summary>Her bildirimin adını sırasıyla, sinyalin her artışında da VM'in o anki uçuş bayraklarını kaydeder.</summary>
+    private sealed class BumpRecorder
+    {
+        public List<string?> Notified { get; } = [];
+
+        public List<(bool Run, bool Sync, bool Clean, bool Optimize, bool AnyInFlight)> AtBump { get; } = [];
+
+        public BumpRecorder(RunViewModel vm) => vm.PropertyChanged += (_, e) =>
+        {
+            Notified.Add(e.PropertyName);
+            if (e.PropertyName == nameof(RunViewModel.EndedOperationSerial))
+                AtBump.Add((vm.IsRunInFlight, vm.SyncBusy, vm.CleanBusy, vm.OptimizeBusy, vm.IsOperationInFlight));
+        };
+    }
+
+    /// <summary>Bitişi sınanacak işlemi uçuşa alır: koşu başladı, Sync başladı ya da bakım işi tıklandı ve motor başlattı.</summary>
+    private static async Task BeginOperation(RunViewModel vm, string operation)
+    {
+        switch (operation)
+        {
+            case "run":
+                MainWindowHost.PreviewBuild(vm, "A");
+                MainWindowHost.StartBuild(vm, "A");
+                break;
+            case "sync":
+                vm.OnEvent(new SyncStartedEvent(vm.RootPath, "main"));
+                break;
+            default:
+                await Click(vm, operation);
+                EngineStarts(vm, operation);
+                break;
+        }
+    }
+
+    /// <summary>Uçuştaki işlemi verilen yoldan bitirir: tamamlanma, işlemin kendi hatası ya da motor kaybı.</summary>
+    private static void EndOperation(RunViewModel vm, string operation, string ending)
+    {
+        switch (ending)
+        {
+            case "loses the engine": vm.OnEngineExited(1); break;
+            case "completes" when operation == "run": MainWindowHost.FinishBuild(vm, "A"); break;
+            case "completes" when operation == "sync": vm.OnEvent(MainWindowHost.SyncCompleted()); break;
+            case "fails" when operation == "run": vm.OnEvent(new ErrorEvent("runFailed", "the build failed")); break;
+            case "fails" when operation == "sync": vm.OnEvent(new ErrorEvent("planFailed", "git fetch origin failed")); break;
+            case "fails": vm.OnEvent(new ErrorEvent($"{operation}Failed", "something went wrong")); break;
+            default: throw new ArgumentOutOfRangeException(nameof(ending), ending, null);
+        }
+    }
+
+    /// <summary>
+    /// [sıra değişmezi] Sinyal artarken biten işlem ARTIK uçuşta değildir: kendi meşguliyet bayrağı artıştan ÖNCE bırakılır.
+    /// Bitişi dinleyen (işlem sonu bellek trimi) artış anında "uçuşta işlem var" görseydi bekler ve o işlem için kimse yeniden
+    /// sormazdı — trim sessizce kaybolurdu. Tek istisna bakım işinin zincirli Sync'idir
+    /// (<see cref="A_maintenance_job_and_its_chained_sync_end_separately"/>): orada Sync kapıyı devralmıştır ve kendi bitişi
+    /// yeniden sorar.
+    /// </summary>
+    [StaTheory]
+    [InlineData("run", "completes")]
+    [InlineData("run", "fails")]
+    [InlineData("run", "loses the engine")]
+    [InlineData("sync", "completes")]
+    [InlineData("sync", "fails")]
+    [InlineData("sync", "loses the engine")]
+    [InlineData("clean", "fails")]
+    [InlineData("clean", "loses the engine")]
+    [InlineData("optimize", "fails")]
+    [InlineData("optimize", "loses the engine")]
+    public async Task When_the_serial_bumps_the_ended_operation_is_no_longer_in_flight(string operation, string ending)
+    {
+        using var dir = new TempDir();
+        var (window, vm, before) = NewHost(dir);
+        await BeginOperation(vm, operation);
+        Assert.True(vm.IsOperationInFlight);             // ön-koşul: işlem uçuşta
+        var recorder = new BumpRecorder(vm);
+
+        EndOperation(vm, operation, ending);
+
+        Assert.Equal(before + 1, vm.EndedOperationSerial);
+        var atBump = Assert.Single(recorder.AtBump);
+        Assert.False(atBump.AnyInFlight, $"{operation} {ending}: artış anında işlem hâlâ uçuşta görünüyordu");
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[sıra değişmezi] Bir koşunun bitişinde "koşu bitti" (<see cref="RunViewModel.EndedRunSerial"/>) "işlem bitti"den
+    /// (<see cref="RunViewModel.EndedOperationSerial"/>) ÖNCE bildirilir. Kabuk koşunun tepside bitip bitmediğini ilk bildirimde
+    /// kaydeder ve trimi ikincisinde o kayda göre ister (tepside biten koşu gösterge çıkışını bekler); sıra dönseydi trim kararı
+    /// bir önceki koşunun kaydıyla verilirdi.</summary>
+    [StaTheory]
+    [InlineData("completes")]
+    [InlineData("fails")]
+    [InlineData("loses the engine")]
+    public async Task A_run_end_announces_the_run_before_the_operation(string ending)
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = NewHost(dir);
+        await BeginOperation(vm, "run");
+        var recorder = new BumpRecorder(vm);
+
+        EndOperation(vm, "run", ending);
+
+        var ends = recorder.Notified
+            .Where(n => n is nameof(RunViewModel.EndedRunSerial) or nameof(RunViewModel.EndedOperationSerial))
+            .ToList();
+        Assert.Equal([nameof(RunViewModel.EndedRunSerial), nameof(RunViewModel.EndedOperationSerial)], ends);
         GC.KeepAlive(window);
     }
 }

@@ -572,6 +572,13 @@ public sealed partial class RunViewModel
     /// bunu motor erişilebilirliğiyle birlikte sorar (<see cref="WorkspaceGateOpen"/>).</summary>
     private bool WorkspaceIdle => !IsMidRunLocked && !WorkspaceBusy;
 
+    /// <summary>Bir İŞLEM uçuşta mı: koşu (<see cref="IsRunInFlight"/> — planlama dahil, <c>runCompleted</c>'a dek) ya da
+    /// workspace işi (<see cref="WorkspaceBusy"/>: Sync, Clean, Optimize, checkout, pull). "Uygulama boşta mı" sorusunun TEK
+    /// tanımı (kopya YASAK): kendiliğinden Sync tetiği bununla bekletilir (<c>IAutoSyncPort.IsWorkspaceBusy</c>) ve işlem sonu
+    /// bellek trimi bununla ertelenir (<c>MainWindow.RequestTrimWhenDue</c>). <see cref="WorkspaceIdle"/>'dan farkı koşunun
+    /// <c>runCompleted</c>'a dek sürmesidir: Stop'un kilidi düşürdüğü aralıkta da koşu bitmemiştir.</summary>
+    internal bool IsOperationInFlight => IsRunInFlight || WorkspaceBusy;
+
     /// <summary>
     /// [final review O1] "Workspace meşguliyeti değişti" bildiriminin TEK noktası — Sync/Clean/Optimize/checkout/pull
     /// bayraklarının her geçişi (<see cref="NotifySyncGatedCommands"/>), koşu kilidinin her geçişi

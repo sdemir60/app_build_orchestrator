@@ -408,12 +408,11 @@ public partial class MainWindow : Window
         {
             if (e.PropertyName == nameof(RunViewModel.SelectedProjectId)) UpdateFrontierSelection();
         };
-        // [perf Faz C · C4] "Koşu bitti" sinyali: tepside biten koşunun bellek toplaması iki sinyalin birleşimidir
-        // (MainWindow.HiddenSurface — CollectAfterRunWhenDue); bu, koşu tarafı.
-        _vm.PropertyChanged += (_, e) =>
-        {
-            if (e.PropertyName == nameof(RunViewModel.EndedRunSerial)) CollectAfterRunWhenDue();
-        };
+        // [idle-memory · dalga 1] İşlem sonu bellek trimi (MainWindow.HiddenSurface — RequestTrimWhenDue): VM'in sinyalleri
+        // (işlem bitti, koşu tepside mi bitti, log yüklemesi bitti) ve grafın bitiş finalinin sonu. Öbür iki sinyal kendi
+        // yerinde bağlanır: gösterge çıkışı SetUpTrayBuildIndicator'da, yüzeyin gizlenip görünmesi SetSurfaceHidden'da.
+        _vm.PropertyChanged += (_, e) => OnVmPropertyChangedForTrim(e.PropertyName);
+        Shell.GraphHost.EndFinaleFinished += RequestTrimWhenDue;
         Shell.ConsoleHeaderControl.BackRequested += (_, _) => OnBack();
         // Liste ↔ graf karşılıklı hover: bir yüzeydeki imleç, öbüründe standart hover olarak yansır.
         Graph.GraphHoverEcho.Wire(_vm, Shell.GraphHost);
@@ -425,7 +424,7 @@ public partial class MainWindow : Window
             if (_vm.GetActiveLineCount() == 0) Shell.ConsoleViewControl.ShowReady();
             await StartEngineAsync();
         };
-        Closed += (_, _) => { _consoleCts.Cancel(); _console.Complete(); _elapsedTimer.Stop(); TrackHeaderRow(null); };
+        Closed += (_, _) => { _consoleCts.Cancel(); _console.Complete(); _elapsedTimer.Stop(); StopMemoryTrim(); TrackHeaderRow(null); };
 
         // [M-3 fix wave] Oturum kapanışı Closing'i tetikler ama e.Cancel'i YOK SAYAR — _exiting hâlâ false ise
         // OnClosing tray'e düşer ve K5 balloon'unu yakabilir. SessionEnding (Closing'den ÖNCE) _exiting'i erken set eder.
@@ -1374,8 +1373,8 @@ public partial class MainWindow : Window
             // [K-14] Kaybolma ile bildirim üst üste binmesin diye araya giren nefes. Süre token'dan gelir ve
             // reduced-motion'da kendiliğinden sıfırlanır — kod tarafında ms literali yoktur.
             ExitBreath = () => Task.Delay(MotionTokens.ResolveSlow(this).TimeSpan),
-            // [perf Faz C · C4] Çıkış sırası bitince (gösterge gizlendi, balon gösterildi): tepside biten koşunun bellek
-            // toplamasının gösterge sinyali (koşu sinyali ctor'daki EndedRunSerial aboneliğidir).
+            // [perf Faz C · C4 · idle-memory] Çıkış sırası bitince (gösterge gizlendi, balon gösterildi): işlem sonu bellek
+            // triminin gösterge sinyali — tepside biten koşunun trimi bunu bekler (öbür sinyaller: RequestTrimWhenDue).
             ExitCompleted = OnTrayIndicatorExitFinished,
         };
         _trayIndicator = controller;
