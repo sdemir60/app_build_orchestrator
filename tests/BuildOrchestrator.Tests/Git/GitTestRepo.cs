@@ -162,6 +162,11 @@ public sealed class GitTestRepo : IDisposable
     /// fixture'ına bağlı olmayan yardımcı (ör. <see cref="CloneFull"/>'un döndürdüğü klon dizininde remote
     /// URL'sini bozmak — Task 5 offline-degrade testi). Instance metodu <see cref="RunGit"/> bunu sarmalar.
     /// </summary>
+    /// <summary>Başarısız olması BEKLENEN bir git komutu (ör. çakışmayla yarıda kalan cherry-pick): çıkış kodunu döner,
+    /// fırlatmaz — <see cref="RunGitAt"/> ise her sıfır dışı çıkışı fixture hatası sayar.</summary>
+    public static int RunGitAllowingFailure(string workingDirectory, params string[] args) =>
+        new ProcessRunner().RunAsync(new ProcessSpec("git", args, workingDirectory)).GetAwaiter().GetResult().ExitCode;
+
     public static string RunGitAt(string workingDirectory, params string[] args)
     {
         var result = new ProcessRunner().RunAsync(new ProcessSpec("git", args, workingDirectory)).GetAwaiter().GetResult();
