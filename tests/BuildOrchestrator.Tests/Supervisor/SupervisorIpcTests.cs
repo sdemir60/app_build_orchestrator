@@ -98,9 +98,12 @@ public class SupervisorIpcTests
     // [T28] getProjectLog artık AKTİF run'ın dizininden okur (bkz. RunCoordinator.TryGetProjectLogSnapshot) —
     // gerçek run/chunk/dikiş davranışı ProjectLogStreamTests.cs'te (in-process, sahte invoker, gerçek writer)
     // test edilir. Burada yalnız gerçek Supervisor process'i üzerinden "hiç run koşmadıysa bilinmeyen proje
-    // logNotFound döner + stdout NDJSON kalır" wiring'i doğrulanır (D4).
+    // 'log yok' cevabı alır + stdout NDJSON kalır" wiring'i doğrulanır (D4).
+    // [idle-memory · I1 · DEĞİŞEN KURAL] Eski iddia (..._errors_and_stdout_stays_ndjson): cevap error(logNotFound). "Log yok"
+    // artık isteğin kimliğini yankılayan tek, boş, bayraklı bir chunk'tır — gerekçe ProjectLogStreamTests'in
+    // Unknown_project_log_is_answered_with_one_empty_not_found_chunk testinde.
     [Fact]
-    public async Task GetProjectLog_of_unknown_project_before_any_run_errors_and_stdout_stays_ndjson()
+    public async Task GetProjectLog_of_unknown_project_before_any_run_answers_not_found_and_stdout_stays_ndjson()
     {
         using var sandbox = new SupervisorSandbox();
         using var p = Process.Start(sandbox.Psi())!;
@@ -111,9 +114,10 @@ public class SupervisorIpcTests
         // KENDİ enjekte edilebilir timeout'unu kullanır) — burada yalnız test beklemesi genişletiliyor.
         Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(30)));
 
-        await writer.WriteAsync(new GetProjectLogCommand(@"d:\yok\yok.csproj"));
-        var err = Assert.IsType<ErrorEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
-        Assert.Equal("logNotFound", err.Code);
+        await writer.WriteAsync(new GetProjectLogCommand(@"d:\yok\yok.csproj", RequestId: 3));
+        var reply = Assert.IsType<ProjectLogChunkEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.True(reply.NotFound);
+        Assert.Equal(3, reply.RequestId);
 
         await writer.WriteAsync(new ShutdownCommand());
         string rest = await p.StandardOutput.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(5));

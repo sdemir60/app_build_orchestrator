@@ -392,13 +392,17 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
     /// sayısı (<c>ThroughLineNumber</c>) birlikte gelir — App bunu canlı <c>projectLog</c> akışıyla dikiş
     /// noktası olarak kullanır (<c>LineNumber &lt;= ThroughLineNumber</c> olanlar zaten bu chunk'larda vardır).
     /// Her chunk AYNI ThroughLineNumber'ı taşır — o, chunk'ı değil SNAPSHOT'ı tanımlar.
+    /// <para>[idle-memory · I1] Her chunk isteğin kimliğini de yankılar (<see cref="GetProjectLogCommand.RequestId"/>): App cevabı
+    /// isteğiyle yalnız bundan eşleştirir. <b>Log yoksa cevap da bir chunk'tır</b> — tek, boş, son, <c>ThroughLineNumber</c> 0 ve
+    /// <c>NotFound</c> bayraklı: boş bir snapshot. Ayrı bir yol yoktur: koordinatör "log yok"ta boş metin ve 0 verir, chunker boş
+    /// metni tek bir son chunk'a çevirir. Eskiden cevap <c>error(logNotFound)</c>'du; ne isteği taşıyordu ne dikişten geçiyordu.</para>
     /// </summary>
     private async Task SendProjectLogAsync(GetProjectLogCommand g, CancellationToken ct)
     {
-        if (!coordinator.TryGetProjectLogSnapshot(g.ProjectId, out string text, out int throughLineNumber))
-        { await writer.WriteAsync(new ErrorEvent("logNotFound", g.ProjectId), ct); return; }
+        bool found = coordinator.TryGetProjectLogSnapshot(g.ProjectId, out string text, out int throughLineNumber);
         foreach (var c in LogChunker.Chunk(text))
-            await writer.WriteAsync(new ProjectLogChunkEvent(g.ProjectId, c.Sequence, c.Text, c.IsLast, throughLineNumber), ct);
+            await writer.WriteAsync(new ProjectLogChunkEvent(g.ProjectId, c.Sequence, c.Text, c.IsLast, throughLineNumber,
+                g.RequestId, NotFound: !found), ct);
     }
 
     /// <summary>

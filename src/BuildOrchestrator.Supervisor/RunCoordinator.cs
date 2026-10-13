@@ -240,7 +240,8 @@ public sealed class RunCoordinator(
     /// <see cref="RunLogWriter.ReadProjectLogFromDisk"/>) — dizin hâlâ diskte durduğu için sonradan bir proje
     /// kartına tıklamak yine çalışır. <see cref="RunLogWriter"/>'ın KENDİSİ asla dışarı verilmez: host onun
     /// yaşam döngüsüne (ne zaman Dispose edileceğine) müdahale etmemeli. Hiç run koşmadıysa ya da proje o run'da
-    /// hiç loglanmadıysa <c>false</c> döner.
+    /// hiç loglanmadıysa <c>false</c> döner — metin o zaman boş, satır no 0'dır: host "log yok" cevabını bundan, boş bir
+    /// snapshot olarak yazar (<c>SupervisorHost.SendProjectLogAsync</c>).
     ///
     /// <para>[Task 18] Gerçek disk okuması (<c>File.ReadAllText</c> / <c>ProjectLogFile.Snapshot</c>'ın
     /// FileStream'i) kilit DIŞINDA yapılır: kilit altında yalnız "hangi kaynaktan okunacağı" (canlı writer
