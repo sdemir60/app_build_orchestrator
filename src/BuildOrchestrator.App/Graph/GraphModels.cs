@@ -6,7 +6,7 @@ namespace BuildOrchestrator.App.Graph;
 // StatusGlyph'in graf-dışı ilk tüketicisi D1'dir. Buradaki kullanımlar için yukarıdaki using yeterlidir.
 
 /// <summary>
-/// [quiet] Graf düğümü — kimlik (proje Id'si), görünen ad, katman indeksi ve statü. Hepsi bu kadardır.
+/// [quiet] Graf düğümü — kimlik (proje Id'si), görünen ad, bant ve statü. Hepsi bu kadardır.
 ///
 /// <para><b>Kimlik <see cref="Id"/>'dir, <see cref="Name"/> DEĞİL.</b> Ad benzersiz değildir: iki ayrı proje
 /// aynı <c>AssemblyName</c>'i üretebilir (ör. bir harici kart, ana repo kökünde zaten duran bir solution'ın
@@ -36,6 +36,8 @@ namespace BuildOrchestrator.App.Graph;
 /// <param name="Id">Düğümün KİMLİĞİ — proje Id'si (tam csproj yolu). Yerleşim, slot haritası, kenarlar,
 /// seçim, hover, filtre ve işaretleme kümelerinin tamamı bunu anahtarlar.</param>
 /// <param name="Name">Görünen ad (<c>AssemblyName</c>) — BENZERSİZ DEĞİLDİR, yalnız etiket olarak kullanılır.</param>
+/// <param name="Layer">Bant — düğümün proje listesindeki grubunun sırası (0 en üstte). Graf bantları listenin
+/// gruplarının eşleniğidir; değeri <see cref="ViewModels.GraphBinder.Bands"/> verir.</param>
 /// <param name="Visual">Tek renk kanalı — <see cref="VisualStatuses"/> tablosuyla boyanır.</param>
 /// <param name="InCycle">[design v1.20.0 §2.3] Düğüm kalıcı bir bağımlılık döngüsünün üyesi mi. Bir RENK
 /// KANALI değildir: yalnız küpü boyar (<see cref="VisualStatuses.NodeCoreBrushKey"/>) — üyede küp her durumda
