@@ -136,13 +136,21 @@ public class ConsoleTiltInTests
     /// <summary>
     /// [animasyon spec §2.1/§3] Geçiş YALNIZ log bloğu remount edildiğinde oynar. Canlı bir satır eklemek onu
     /// YENİDEN TETİKLEMEZ — konsolun canlı satırları animasyonsuzdur.
+    /// <para><b><c>LocalOnly</c>:</b> ön koşulu, açılış geçişinin GERÇEK animasyonla bitmesidir (<c>PumpUntil</c>, 3 sn) —
+    /// <see cref="The_transition_hands_the_panel_back_to_the_real_editor"/> ile aynı bekleyiş. CI'da (main <c>cc49ff58</c>,
+    /// 2026-10-12) "Collapsed beklenirken Visible" ile düştü: <c>PumpUntil</c> süre dolunca sessizce döner, geçiş paylaşılan
+    /// runner'da 3 sn'de bitmemişse canlı satır geçişi yeniden oynatmış gibi görünür. Lokalde normal ve tek çekirdekte 8/8 geçti;
+    /// gerçek bir yeniden oynatma her koşuda düşerdi. Ön koşul artık ayrı iddia edilir (bir daha düşerse mesaj sebebi söyler).
+    /// Eşik GEVŞETİLMEZ: yalnız bu metot CI filtresinden çıkar, lokal tam süit onu koşturmaya devam eder.</para>
     /// </summary>
     [StaFact]
+    [Trait("Category", "LocalOnly")]
     public void Live_output_never_replays_the_transition()
     {
         var view = Realized();
         view.ShowRunDocument("first\n");
         DispatcherPump.PumpUntil(() => view.Tilt3D.Visibility == Visibility.Collapsed, TimeSpan.FromSeconds(3));
+        Assert.True(view.Tilt3D.Visibility == Visibility.Collapsed, "ön koşul: açılış geçişi 3 sn içinde bitmedi");
 
         view.AppendBatch("second\n");
         view.AppendNarrativeBatch("third\n");
