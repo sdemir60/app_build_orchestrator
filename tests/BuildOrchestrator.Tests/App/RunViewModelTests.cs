@@ -588,23 +588,33 @@ public class RunViewModelTests
 
     // ---------------------------------------------------------------- 3) log yükleme dikişi
 
+    /// <summary>
+    /// Dikiş tamponun yalnız <c>ThroughLineNumber</c>'ın ötesindeki satırlarını ekler: tekrar yok, kayıp yok.
+    /// <para>[DEĞİŞEN KURULUM — idle-memory spec §6.2] <b>Eski kurulum:</b> dört satırın hepsi istekten ÖNCE loglanıyor ve
+    /// tamponda bekleniyordu; snapshot (Through 2) App'in istekten önce gördüğü 3. ve 4. satırı içermiyordu. Üretimde bu durum
+    /// yoktur: motor her satırı olayını yaymadan önce diske yazar ve flush eder (<c>RunCoordinator.Emit</c>), yani istekten önce
+    /// gelen satır snapshot'tadır — ve tampon artık yalnız bekleyen yüklemenin projesi için, istekten sonra gelen satırları tutar.
+    /// Üretim sırası: line1 istekten önce (yalnız diskte); line2 istekten sonra ama motorun snapshot'ından önce (hem tamponda hem
+    /// snapshot'ta — eşik ayıklar: tekrar yok); line3-4 snapshot'tan sonra (yalnız tamponda — eklenir: kayıp yok). İddia aynı.</para>
+    /// </summary>
     [Fact]
     public async Task LoadProjectLogAsync_stitches_only_buffered_lines_after_ThroughLineNumber_no_duplicates()
     {
-        // Engine hiç başlatılmadı: LoadProjectLogAsync'in SendAsync'i senkron fırlar ve VM içinde yutulur —
-        // dikiş TAMAMEN yerel state'ten (buffered projectLog + chunk) üretilir, gerçek IPC gerekmez.
+        // Engine hiç başlatılmadı: LoadProjectLogAsync'in SendAsync'i senkron fırlar ve VM içinde yutulur — yükleme silahlı
+        // kalır, dikiş yerel state'ten (istekten sonra tamponlanan projectLog + chunk) üretilir, gerçek IPC gerekmez.
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         const string projectId = @"C:\p\a.csproj";
         vm.OnEvent(new ProjectStartedEvent("r1", projectId, "A"));
-        for (int i = 1; i <= 4; i++)
-            vm.OnEvent(new ProjectLogEvent("r1", projectId, i, $"line{i}"));
+        vm.OnEvent(new ProjectLogEvent("r1", projectId, 1, "line1"));   // istekten önce: diskte, tamponlanmaz
 
         // [D4 review §2] Üretimde kart seçimi (SelectedProjectId) LoadProjectLogAsync'ten ÖNCE kurulur
         // (OnSelectedProjectChangedAsync onu SelectedProjectId değişimiyle tetikler); proje modu ancak seçim hâlâ
         // o projedeyse kurulur. Testler bu koşulu birebir modellemeli.
         vm.SelectProject(projectId);
         var load = vm.LoadProjectLogAsync(projectId); // pending state SENKRON kurulur (ilk await'e kadar)
+        for (int i = 2; i <= 4; i++)                  // istekten sonra: line2 snapshot'ta da var, line3-4 yalnız tamponda
+            vm.OnEvent(new ProjectLogEvent("r1", projectId, i, $"line{i}"));
         vm.OnEvent(new ProjectLogChunkEvent(projectId, Sequence: 0, "line1\nline2\n", IsLast: true, ThroughLineNumber: 2));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -622,22 +632,26 @@ public class RunViewModelTests
         // TAM O aralığın (artık fix ile var OLMAYAN) sınırında senkron (tek thread, sleep/poll YOK — D8) bir
         // canlı satır enjekte ederek bunu kanıtlar: fix'ten ÖNCE bu satır kaybolur, fix'ten SONRA (atama artık
         // kilit içinde olduğundan kanca zaten güncellenmiş ActiveProjectId'yi görür) satır projeye düşer.
+        // [DEĞİŞEN KURULUM — idle-memory spec §6.2] Eskiden line1-2 istekten ÖNCE loglanıyor ve tampondan dikiliyordu. Tampon
+        // artık yalnız bekleyen yüklemenin projesi için, istekten sonra gelen satırları tutar — istekten önceki satır snapshot'tadır
+        // (motor satırı olayını yaymadan önce diske yazar, RunCoordinator.Emit). Üretim sırası: istek, motor boş bir snapshot alır
+        // (Through 0), line1-2 ondan sonra gelir. İddia aynı.
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         const string projectId = @"C:\p\a.csproj";
         vm.OnEvent(new ProjectStartedEvent("r1", projectId, "A"));
-        vm.OnEvent(new ProjectLogEvent("r1", projectId, 1, "line1"));
-        vm.OnEvent(new ProjectLogEvent("r1", projectId, 2, "line2"));
 
         vm.DebugAfterStitchLockExited = () => vm.OnEvent(new ProjectLogEvent("r1", projectId, 3, "race-line3"));
 
         // [D4 review §2] Seçim üretimde load'dan önce kurulur; proje modu (ActiveProjectId) ancak seçim hâlâ
         // o projedeyken kurulur — bu test tam da o modun kurulduğunu (race-line3'ün projeye düşmesi) doğrular.
         vm.SelectProject(projectId);
-        // ThroughLineNumber=0: disk chunk boş, dikiş TÜMÜYLE tamponlanmış canlı satırlardan (line1, line2 —
+        // ThroughLineNumber=0: disk chunk boş, dikiş TÜMÜYLE istekten sonra tamponlanan canlı satırlardan (line1, line2 —
         // kilit çalıştığı ANDA _liveLines'ta zaten var) üretilir; race-line3 kanca ile kilit KAPANDIKTAN SONRA
         // enjekte edilir — snapshot'ın parçası DEĞİLDİR, yalnız (fix ile) güncel ActiveProjectId sayesinde canlı eklenir.
         var load = vm.LoadProjectLogAsync(projectId);
+        vm.OnEvent(new ProjectLogEvent("r1", projectId, 1, "line1"));   // istekten sonra, snapshot'ın ötesinde
+        vm.OnEvent(new ProjectLogEvent("r1", projectId, 2, "line2"));
         vm.OnEvent(new ProjectLogChunkEvent(projectId, Sequence: 0, "", IsLast: true, ThroughLineNumber: 0));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -648,26 +662,36 @@ public class RunViewModelTests
            // eski run'ın _liveLines/_projectText'te kalan tortusu yeni dikişe SIZMAMALI.
     public async Task Second_Rebuild_clears_stitch_buffers_so_old_run_lines_do_not_leak_into_new_stitch()
     {
+        // [DEĞİŞEN KURULUM — idle-memory spec §6.2] Eskiden ilk run'ın satırları yüklemesiz tamponlanıyordu (koşunun her satırı
+        // tutulurdu) ve ikinci run'ın iki satırı da istekten ÖNCE loglanıp tampondan dikiliyordu. Tampon artık yalnız bekleyen
+        // yüklemenin projesi için, istekten sonra gelen satırları tutar — istekten önceki satır snapshot'tadır (motor satırı olayını
+        // yaymadan önce diske yazar, RunCoordinator.Emit). Eski run'ın tortusu tampona ancak cevabı gelmemiş, silahlı kalmış bir
+        // yükleme üzerinden kalır: ilk run'da P'nin logu istenir (gönderim düşer, yükleme silahlı kalır) ve satırlar istekten sonra
+        // gelir. İkinci run'da new-line1 istekten önce (snapshot'ta), new-line2 sonra (kuyruk). İddia aynı: eski satır sızmaz —
+        // yeni işlem tamponu temizler (aşağıdaki 0), karta tıklama da silahlı eski yüklemeyi bitirip tamponu bırakır.
         await using var engine = new EngineHost(TestPaths.SupervisorExe); // hiç başlatılmadı — startRun senkron atılır, VM içinde yutulur
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         const string projectId = @"C:\p\a.csproj";
 
-        // --- ilk run: P için 1..4 satır, run tamamlanır ---
+        // --- ilk run: P'nin logu istenir (yanıt gelmez, yükleme silahlı kalır), 1..4 satır istekten sonra gelir, run tamamlanır ---
         await vm.RebuildCommand.ExecuteAsync(null);
         vm.OnEvent(new ProjectStartedEvent("r1", projectId, "A"));
+        await vm.LoadProjectLogAsync(projectId);
         for (int i = 1; i <= 4; i++)
             vm.OnEvent(new ProjectLogEvent("r1", projectId, i, $"old-line{i}"));
         vm.OnEvent(new ProjectSucceededEvent("r1", projectId, 100));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 100));
+        Assert.Equal(4, vm.LiveLineCount); // ön-koşul: eski run'ın kuyruğu tamponda — sızma tehdidi gerçek
 
         // --- ikinci Rebuild: proje log dosyası sıfırdan yazılıyor, satır no'ları yeniden 1'den başlıyor ---
         await vm.RebuildCommand.ExecuteAsync(null); // buffer'lar burada temizlenmeli (fix ÖNCESİ: temizlenmez)
+        Assert.Equal(0, vm.LiveLineCount);
         vm.OnEvent(new ProjectStartedEvent("r1", projectId, "A"));
-        for (int i = 1; i <= 2; i++)
-            vm.OnEvent(new ProjectLogEvent("r1", projectId, i, $"new-line{i}"));
+        vm.OnEvent(new ProjectLogEvent("r1", projectId, 1, "new-line1")); // istekten önce: diskte, snapshot'ta
 
         // Karta tıklama: disk snapshot ikinci run'ın 1. satırını kapatıyor (ThroughLineNumber=1)
         var load = vm.LoadProjectLogAsync(projectId);
+        vm.OnEvent(new ProjectLogEvent("r1", projectId, 2, "new-line2")); // istekten sonra: dikişin kuyruğu
         vm.OnEvent(new ProjectLogChunkEvent(projectId, 0, "new-line1\n", IsLast: true, ThroughLineNumber: 1));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
 

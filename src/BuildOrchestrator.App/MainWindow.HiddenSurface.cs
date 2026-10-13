@@ -136,8 +136,8 @@ public partial class MainWindow
 
     /// <summary>
     /// [idle-memory · dalga 1] <b>İşlem sonu bellek trimi.</b> Bir işlem (koşu, Sync, Clean, Optimize) bitince, uygulama sakinken
-    /// BİR kez toplanır (<see cref="MemoryCollector"/>): işlemin atıkları (bırakılmış canlı satır tamponu, koşu boyunca biriken
-    /// nesneler) ölü yük olarak kalmaz. Kararı saf kural verir (<see cref="MemoryTrimRule"/>); burası sinyalleri toplar, zamanlar
+    /// BİR kez toplanır (<see cref="MemoryCollector"/>): işlemin atıkları (koşu boyunca üretilip bırakılan nesneler) ölü yük
+    /// olarak kalmaz. Kararı saf kural verir (<see cref="MemoryTrimRule"/>); burası sinyalleri toplar, zamanlar
     /// ve yürütür.
     ///
     /// <para><b>Altı sinyal buraya gelir; hangisi en son gelirse trimi o ister:</b> işlem bitti

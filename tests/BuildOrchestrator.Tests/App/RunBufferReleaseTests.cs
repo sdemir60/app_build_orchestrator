@@ -6,20 +6,23 @@ using BuildOrchestrator.Contracts.Ipc;
 namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
-/// [perf Faz C · C4 · idle-memory dalga 1] <b>Biten koşunun tamponları bırakılır; her işlemin ardından bellek bir kez
-/// toplanır.</b> OSYS büyüklüğünde bir koşu yüz binlerce satır nesnesini canlı satır tamponunda (<c>RunViewModel</c>
-/// <c>_liveLines</c>) biriktirir; tampon yalnız koşu SÜRERKEN, bir proje logu açılırken diskteki snapshot'ın ötesindeki kuyruğu
-/// dikmek için vardır. Koşu bitince disk tamdır ve tampon ölü yüktür; açık projenin metin tamponu da yalnız ekrandaki sayfa
-/// için yaşar. Bu dosya üç şeyi pinler: (1) bırakma — koşu sonu, bekleyen dikişe saygı, proje değişimi; (2) bırakmanın yeni
-/// işlemin temizliğini DEĞİŞTİRMEDİĞİ; (3) işlem sonu tek seferlik toplama (bellek trimi): bir işlem (koşu, Sync, Clean,
-/// Optimize) bitti, uçuşta işlem ve cevabı beklenen log yüklemesi yok; pencere görünürse bitiş finali bitti ve pay geçti,
-/// gizliyse tepside biten koşunun göstergesi çıkışını tamamladı. Ayrıca Faz A2'den ertelenen boşluğu kapatır: gizli konsol
-/// yetişmesinin PROJE LOGU kolu.
+/// [perf Faz C · C4 · idle-memory dalga 1] <b>Koşunun tamponları ölü yük olarak kalmaz; her işlemin ardından bellek bir kez
+/// toplanır.</b> Canlı satır tamponu (<c>RunViewModel</c> <c>_liveLines</c>) yalnız bir proje logu açılırken diskteki
+/// snapshot'ın ötesindeki kuyruğu dikmek için vardır ve yalnız bekleyen yüklemenin projesi için, yükleme süresince tutulur
+/// (spec §6.2): motor her satırı olayını yaymadan ÖNCE diske yazar, yani istekten önce gelen satır zaten snapshot'tadır. Eskiden
+/// koşunun HER satırını tutuyor ve koşu bitince bırakıyordu — OSYS büyüklüğünde bir koşuda yüz binlerce satır nesnesi koşu
+/// boyunca. Açık projenin metin tamponu da yalnız ekrandaki sayfa için yaşar. Bu dosya üç şeyi pinler: (1) bırakma — canlı
+/// tampon yüklemenin sonunda (dikiş ya da "log yok"; koşunun bitişi bir bırakma noktası değildir), proje tamponu proje
+/// değişiminde; (2) bırakmanın yeni işlemin temizliğini DEĞİŞTİRMEDİĞİ; (3) işlem sonu tek seferlik toplama (bellek trimi):
+/// bir işlem (koşu, Sync, Clean, Optimize) bitti, uçuşta işlem ve cevabı beklenen log yüklemesi yok; pencere görünürse bitiş
+/// finali bitti ve pay geçti, gizliyse tepside biten koşunun göstergesi çıkışını tamamladı. Ayrıca Faz A2'den ertelenen
+/// boşluğu kapatır: gizli konsol yetişmesinin PROJE LOGU kolu.
 ///
 /// <para><b>Test yüzeyleri:</b> motor yoktur (<c>MainWindowHost</c>): <c>LoadProjectLogAsync</c>'in gönderimi senkron düşer
 /// ama dikiş silahlı kalır (gecikmiş bir chunk hâlâ eşleşir) ve motorun yanıtı (<c>ProjectLogChunkEvent</c>) testten
-/// verilir. Tepsi göstergesi headless'ta kurulmaz; çıkış bildirimini test <c>MainWindow.OnTrayIndicatorExitFinished</c>'a
-/// doğrudan verir (<c>OnGlobalHotkey</c> deseni). Fixture her pencereye boş bir toplayıcı takar (süitte gerçek agresif
+/// verilir. Canlı satırlar üretim sırasıyla gelir: dikişin kuyruğu istekten SONRA loglanır, istekten önceki satır testin
+/// verdiği disk metnindedir. Tepsi göstergesi headless'ta kurulmaz; çıkış bildirimini test
+/// <c>MainWindow.OnTrayIndicatorExitFinished</c>'a doğrudan verir (<c>OnGlobalHotkey</c> deseni). Fixture her pencereye boş bir toplayıcı takar (süitte gerçek agresif
 /// toplama koşmaz) ve açılış Sync'inin trimini dönmeden yürütür; toplamayı sayan testler kendi sahtesini takar
 /// (<c>MainWindow.MemoryCollector</c>). Toplama uygulama boştayken ertelendiği için testler sinyalden sonra dispatcher'ı
 /// boşaltır (<c>DispatcherPump.DrainToIdle</c>); boşaltma zamanlayıcı ATEŞLEMEZ, bu yüzden görünür yolu boşaltmayla süren testler
@@ -72,19 +75,59 @@ public class RunBufferReleaseTests
         return (window, vm, collections);
     }
 
+    /// <summary>
+    /// [idle-memory · spec §6.2] <b>Canlı satır yalnız bekleyen bir log yüklemesi varken ve yalnız onun projesi için tutulur;
+    /// yüklemenin sonu tamponu boşaltır — koşu sürse de.</b> Dikişin tek ihtiyacı istekten sonra gelen satırlardır: motor her
+    /// satırı olayını yaymadan ÖNCE diske yazar ve flush eder (<c>RunCoordinator.Emit</c>), yani App'in istekten önce gördüğü her
+    /// satır snapshot'tadır (<c>LineNumber &lt;= ThroughLineNumber</c>). Eskiden koşunun her satırı koşu boyunca tamponda yaşardı.
+    /// </summary>
     [StaFact]
-    public void A_finished_run_releases_its_live_line_buffer()
+    public void Lines_are_kept_only_while_a_log_load_is_pending_and_only_for_its_project()
     {
         using var dir = new TempDir();
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null), ("B", null));
         MainWindowHost.StartBuild(vm, "A", "B");
-        MainWindowHost.LogLine(vm, "A", 1, "a line");
-        MainWindowHost.LogLine(vm, "B", 1, "b line");
-        Assert.Equal(2, vm.LiveLineCount);   // ön-koşul: koşu sürerken tampon dolu — açılan bir proje logu kuyruğunu buradan alır
+        MainWindowHost.LogLine(vm, "A", 1, "a1");
+        MainWindowHost.LogLine(vm, "B", 1, "b1");
+        Assert.Equal(0, vm.LiveLineCount);               // KIRMIZI: bugün 2 (koşu boyunca her satır)
+
+        RequestProjectLog(vm, "A");                      // yükleme bekliyor: yalnız A birikir
+        MainWindowHost.LogLine(vm, "A", 2, "a2");
+        MainWindowHost.LogLine(vm, "B", 2, "b2");
+        Assert.Equal(1, vm.LiveLineCount);
+
+        ReplyWithProjectLog(vm, "A", "a1\n", through: 1); // dikiş: a2 eklenir, tampon boşalır
+        Assert.Equal("a1\na2\n", vm.GetProjectDocumentText(MainWindowHost.IdOf("A")));
+        Assert.Equal(0, vm.LiveLineCount);               // koşu hâlâ sürüyor: bırakma yüklemenin sonundadır
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// <b>Biten koşudan geriye canlı satır kalmaz:</b> koşu bir proje logu yüklenirken biterse tamponda yalnız o yüklemenin
+    /// projesinin kuyruğu (A) vardır — başka projenin satırı (B) hiç tutulmamıştır — ve kuyruk dikişe dek yaşar; dikiş bitince
+    /// tampon boşalır.
+    /// <para>[DEĞİŞEN KURAL — idle-memory spec §6.2] <b>Eski iddia</b> (<c>A_finished_run_releases_its_live_line_buffer</c>):
+    /// "koşu sürerken tampon her projenin her satırını tutar (ön-koşul 2 — açılan bir proje logu kuyruğunu buradan alır), koşu
+    /// bitince bırakılır (0)". <b>Neden değişti:</b> motor her satırı olayını yaymadan ÖNCE diske yazar ve flush eder
+    /// (<c>RunCoordinator.Emit</c>), yani istekten önce gelen her satır snapshot'tadır; dikişe yalnız istekten sonraki satırlar
+    /// gerekir. Tampon artık koşunun değil bekleyen yüklemenindir: bırakma noktası koşunun bitişi değil yüklemenin sonudur.</para>
+    /// </summary>
+    [StaFact]
+    public void A_finished_run_keeps_only_the_pending_loads_tail_until_the_stitch()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null), ("B", null));
+        MainWindowHost.StartBuild(vm, "A", "B");
+        RequestProjectLog(vm, "A");                      // A'nın logu açılıyor: yanıt henüz yok
+        MainWindowHost.LogLine(vm, "A", 1, "a line");    // istekten sonra: dikişin kuyruğu
+        MainWindowHost.LogLine(vm, "B", 1, "b line");    // başka projenin satırı: tutulmaz
 
         MainWindowHost.FinishBuild(vm, "A", "B");
 
-        Assert.Equal(0, vm.LiveLineCount);   // KIRMIZI: bugün tampon bir sonraki işleme dek yaşar
+        Assert.Equal(1, vm.LiveLineCount);   // KIRMIZI (eski kural 2: B'nin satırı da tutuluyordu): yalnız A'nın kuyruğu dikişi bekler
+        ReplyWithProjectLog(vm, "A", "", through: 0);    // motorun snapshot'ı "a line"dan önce alındı
+        Assert.Equal("a line\n", vm.GetProjectDocumentText(MainWindowHost.IdOf("A")));
+        Assert.Equal(0, vm.LiveLineCount);   // dikiş bitti: biten koşudan geriye satır kalmadı
         GC.KeepAlive(window);
     }
 
@@ -93,6 +136,10 @@ public class RunBufferReleaseTests
     /// (snapshot'ın ötesindeki satırlar yalnız orada durur): yanıttan önce bırakılsaydı dikilen belge son satırlardan yoksun
     /// kalırdı. Bırakma yanıt dikildikten sonra olur. "Uçuşta" ölçütü <c>LoadProjectLogAsync</c>'in dönüşü değil bekleyen
     /// dikiştir: gönderim düşse bile dikiş silahlı kalır ve kuyruk ona aittir.
+    /// <para>[DEĞİŞEN KURULUM — idle-memory spec §6.2] <b>Eski kurulum:</b> iki satır da istekten ÖNCE loglanıyor, ikisi de
+    /// tamponda bekleniyordu (ön-koşul 2). Tampon artık yalnız istekten sonra gelen satırları tutar: motor her satırı olayını
+    /// yaymadan önce diske yazar (<c>RunCoordinator.Emit</c>), istekten önceki satır ("on disk") snapshot'tadır. Kurulum üretim
+    /// sırasına çekildi — kuyruk satırı istekten SONRA gelir; iddia aynı: kayıp yok, bırakma yanıttan sonra.</para>
     /// </summary>
     [StaFact]
     public void A_run_that_ends_while_a_project_log_is_loading_keeps_its_tail_for_the_stitch_and_releases_it_after_the_reply()
@@ -101,17 +148,17 @@ public class RunBufferReleaseTests
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
         string a = MainWindowHost.IdOf("A");
         MainWindowHost.StartBuild(vm, "A");
-        MainWindowHost.LogLine(vm, "A", 1, "on disk");
-        MainWindowHost.LogLine(vm, "A", 2, "tail");      // snapshot'ın ötesinde: yalnız canlı tamponda
+        MainWindowHost.LogLine(vm, "A", 1, "on disk");   // istekten önce: diskte, snapshot'ta — tamponlanmaz
         RequestProjectLog(vm, "A");                      // yükleme istendi, yanıt henüz yok
+        MainWindowHost.LogLine(vm, "A", 2, "tail");      // istekten sonra, snapshot'ın ötesinde: yalnız canlı tamponda
 
         MainWindowHost.CompleteRun(vm, 1);               // yanıttan ÖNCE koşu biter
 
-        Assert.Equal(2, vm.LiveLineCount);               // bırakma yanıtı bekler: kuyruk yerinde
+        Assert.Equal(1, vm.LiveLineCount);               // KIRMIZI (eski kural 2): bırakma yanıtı bekler, kuyruk yerinde
         ReplyWithProjectLog(vm, "A", "on disk\n", through: 1);   // motorun snapshot'ı 1. satıra kadar
 
         Assert.Equal("on disk\ntail\n", vm.GetProjectDocumentText(a)); // kuyruk dikişe girdi: kayıp yok
-        Assert.Equal(0, vm.LiveLineCount);               // KIRMIZI: yanıt döndü, bırakılmalı
+        Assert.Equal(0, vm.LiveLineCount);               // yanıt döndü, bırakıldı
         GC.KeepAlive(window);
     }
 
@@ -145,8 +192,13 @@ public class RunBufferReleaseTests
 
     /// <summary>
     /// Pin (davranış DEĞİŞMEZ): yeni işlem tamponların tümünü tek adımda temizler ve <c>ConsoleCleared</c>'i bildirir —
-    /// bırakma bunun yerine geçmez ve onu eksiltmez. Bırakma burada ertelenmiş durumdadır (bekleyen dikiş), yani
-    /// temizlenecek bir şey gerçekten vardır.
+    /// bırakma bunun yerine geçmez ve onu eksiltmez. Canlı tampon burada gerçekten doludur: yeniden açılan yükleme yanıtını
+    /// bekliyor ve istekten sonra gelen satır onun kuyruğudur, yani temizlenecek bir şey vardır.
+    /// <para>[DEĞİŞEN KURULUM — idle-memory spec §6.2] <b>Eski kurulum:</b> canlı tamponun ön-koşulu istekten ÖNCE loglanan
+    /// "old line"dan geliyordu (koşu boyunca her satır tutuluyordu). Tampon artık yalnız bekleyen yüklemenin projesi için,
+    /// istekten sonra gelen satırları tutar — istekten önceki satır snapshot'tadır (motor satırı olayından önce diske yazar,
+    /// <c>RunCoordinator.Emit</c>). Ön-koşul üretim sırasıyla kurulur: yeniden açılan yüklemenin isteğinden SONRA bir satır
+    /// gelir. İddia aynı.</para>
     /// </summary>
     [StaFact]
     public void A_new_operation_still_clears_every_console_buffer_in_one_step()
@@ -165,8 +217,9 @@ public class RunBufferReleaseTests
         Assert.Equal("old line\n", vm.GetProjectDocumentText(a));   // ön-koşul: proje tamponu dolu (eskiden hiç dolmuyordu — iddia boştu)
         Assert.Equal(1, vm.GetProjectLineCount(a));                 // ön-koşul: satır sayısı da
         RequestProjectLog(vm, "A");                                  // yeniden açılıyor: yanıt henüz yok
+        MainWindowHost.LogLine(vm, "A", 2, "tail line");             // istekten sonra: dikişin kuyruğu, canlı tamponda
         MainWindowHost.CompleteRun(vm, 1);               // dikiş bekliyor: canlı tampon yerinde
-        Assert.Equal(1, vm.LiveLineCount);               // ön-koşul: temizlenecek canlı satır var
+        Assert.Equal(1, vm.LiveLineCount);               // ön-koşul: temizlenecek canlı satır var (KIRMIZI, eski kural 2: "old line" da tutuluyordu)
         Assert.Contains("old line", vm.GetRunDocumentText());
         int cleared = 0; vm.ConsoleCleared += (_, _) => cleared++;
 
@@ -639,17 +692,25 @@ public class RunBufferReleaseTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>Tepside süren bir koşu: pencere gizli, A'nın bir satırı canlı tamponda. Toplayıcı sahtedir ve çağrıldığı andaki
-    /// canlı tampon boyunu kaydeder — "bırakma → toplama" sırası böyle gözlenir.</summary>
-    private static (global::BuildOrchestrator.App.MainWindow window, RunViewModel vm, List<int> seen) HiddenRunWithOneLine(TempDir dir)
+    /// <summary>Tepside süren bir koşu ve bekleyen bir proje log yüklemesi: pencere gizli, A'nın logu istendi (istek motora gitti,
+    /// yanıt bekleniyor) ve istekten sonra gelen bir satırı — dikişin kuyruğu — canlı tamponda. Toplayıcı sahtedir ve çağrıldığı
+    /// andaki canlı tampon boyunu kaydeder — "bırakma → toplama" sırası böyle gözlenir.
+    /// <para>[DEĞİŞEN KURULUM — idle-memory spec §6.2] <b>Eski kurulum</b> (<c>HiddenRunWithOneLine</c>): yükleme yoktu, satır
+    /// koşu sürdüğü için tamponda bekleniyordu (koşunun her satırı tutuluyordu). Tampon artık yalnız bekleyen yüklemenin projesi
+    /// için, istekten sonra gelen satırları tutar — motor her satırı olayından önce diske yazar (<c>RunCoordinator.Emit</c>),
+    /// istekten önceki satır snapshot'tadır. Ön-koşul bu yüzden üretim sırasıyla kurulur: önce istek, sonra satır.</para></summary>
+    private static (global::BuildOrchestrator.App.MainWindow window, RunViewModel vm, List<int> seen) HiddenRunWithAPendingLoadsTail(
+        TempDir dir)
     {
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
         var seen = new List<int>();
         window.MemoryCollector = () => seen.Add(vm.LiveLineCount);
+        MainWindowHost.AcceptSends(vm);      // istek motora gider: yanıt bekleniyor
         window.SetSurfaceHidden(true);
         MainWindowHost.StartBuild(vm, "A");
+        RequestProjectLog(vm, "A");
         MainWindowHost.LogLine(vm, "A", 1, "a line");
-        Assert.Equal(1, vm.LiveLineCount);   // ön-koşul: koşu sürerken tampon dolu
+        Assert.Equal(1, vm.LiveLineCount);   // ön-koşul: bekleyen yüklemenin kuyruğu tamponda
         return (window, vm, seen);
     }
 
@@ -657,62 +718,89 @@ public class RunBufferReleaseTests
     /// [perf Faz C · M-2] Toplama iki sinyalin birleşimidir — koşu bitti VE gösterge çıkışını bitirdi — ve hangisi sonra gelirse
     /// toplamayı o ister. Reduced-motion'da tepside Stop'ta gösterge <c>runStopped</c> anında çıkar (faz <c>Stopped</c>) ama koşu
     /// <c>runCompleted</c>'a dek uçuştadır: bitiş sinyali sonra gelir ve toplamayı o ister — bir kez, bırakılmış tamponla.
+    /// <para>[DEĞİŞEN KURAL — idle-memory spec §6.2] <b>Eski iddia:</b> tamponu koşunun bitişi bırakıyordu (toplamadan hemen önce).
+    /// Tampon artık bekleyen yüklemenindir ve onu yüklemenin sonu bırakır — koşu sürerken de: yanıt koşu dururken gelir, kuyruğu
+    /// dikilir ve tampon o anda boşalır. Toplamayı yine koşunun bitişi ister.</para>
     /// </summary>
     [StaFact]
     public void A_run_stopped_in_the_tray_under_reduced_motion_is_collected_once_when_it_completes()
     {
         using var dir = new TempDir();
-        var (window, vm, seen) = HiddenRunWithOneLine(dir);
+        var (window, vm, seen) = HiddenRunWithAPendingLoadsTail(dir);
 
         vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));   // faz Stopped: reduced-motion'da gösterge çıkışı ŞİMDİ biter
         window.OnTrayIndicatorExitFinished(vm.RunSerial);
+        ReplyWithProjectLog(vm, "A", "", through: 0);            // yanıt koşu dururken gelir: kuyruk dikilir
+        Assert.Equal(0, vm.LiveLineCount);                        // KIRMIZI (eski kural koşu uçuştayken bırakmazdı): yüklemenin sonu bırakır
         DispatcherPump.DrainToIdle();
         Assert.Empty(seen);                                       // koşu hâlâ uçuşta: runCompleted gelmedi
 
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 0, 0, 0, 100));
         DispatcherPump.DrainToIdle();
 
-        Assert.Equal([0], seen);   // KIRMIZI: runCompleted toplamayı yeniden sormuyordu — o koşu hiç toplanmıyordu
+        Assert.Equal([0], seen);   // (M-2 KIRMIZI'sı: runCompleted toplamayı yeniden sormuyordu — o koşu hiç toplanmıyordu)
         GC.KeepAlive(window);
     }
 
-    /// <summary>[perf Faz C · C4] Koşu-bitiren hata (<c>runFailed</c>) da bir koşu bitişidir: <c>runCompleted</c> gelmez, tampon yine
-    /// bırakılır ve tepside toplama bırakılmış tamponla olur.</summary>
+    /// <summary>[perf Faz C · C4] Koşu-bitiren hata (<c>runFailed</c>) da bir koşu bitişidir: <c>runCompleted</c> gelmez ve tepside
+    /// toplama yine bir kez, bırakılmış tamponla olur.
+    /// <para>[DEĞİŞEN KURAL — idle-memory spec §6.2] <b>Eski iddia</b>
+    /// (<c>A_run_that_fails_in_the_tray_releases_its_buffer_before_the_collection</c>): "hata bitişi tamponu bırakır, toplama onun
+    /// ardından gelir". Tampon artık koşunun değil bekleyen yüklemenindir (motor satırı olayından önce diske yazar; dikişe yalnız
+    /// istekten sonraki satırlar gerekir): hata bitişi dikişin kuyruğunu bırakmaz — yanıt hâlâ gelecek — ve cevabı beklenen yükleme
+    /// toplamayı tutar. Yanıt kuyruğu dikip tamponu bırakınca toplama istenir: bırakma yine toplamadan önce.</para></summary>
     [StaFact]
-    public void A_run_that_fails_in_the_tray_releases_its_buffer_before_the_collection()
+    public void A_run_that_fails_in_the_tray_is_collected_once_its_pending_load_has_released_the_tail()
     {
         using var dir = new TempDir();
-        var (window, vm, seen) = HiddenRunWithOneLine(dir);
+        var (window, vm, seen) = HiddenRunWithAPendingLoadsTail(dir);
 
         vm.OnEvent(new ErrorEvent("runFailed", "the build failed"));
         window.OnTrayIndicatorExitFinished(vm.RunSerial);
         DispatcherPump.DrainToIdle();
+        Assert.Equal(1, vm.LiveLineCount);   // hata bitişi kuyruğu bırakmaz: dikiş onu bekliyor
+        Assert.Empty(seen);                  // cevabı beklenen yükleme toplamayı tutar
 
-        Assert.Equal(0, vm.LiveLineCount);   // KIRMIZI: hata bitişinde tampon bırakılmıyordu
+        ReplyWithProjectLog(vm, "A", "", through: 0);
+        DispatcherPump.DrainToIdle();
+
+        Assert.Equal(0, vm.LiveLineCount);   // yüklemenin sonu bıraktı
         Assert.Equal([0], seen);             // bir kez ve bırakılmış tamponla
         GC.KeepAlive(window);
     }
 
-    /// <summary>[perf Faz C · C4] Motor kaybı da bir koşu bitişidir: tampon bırakılır ve tepside toplama bırakılmış tamponla
-    /// olur.</summary>
+    /// <summary>[perf Faz C · C4] Motor kaybı da bir koşu bitişidir: tepside toplama bir kez olur.
+    /// <para>[DEĞİŞEN KURAL — idle-memory spec §6.2] <b>Eski iddia</b>
+    /// (<c>A_run_whose_engine_dies_in_the_tray_releases_its_buffer_before_the_collection</c>): "motor kaybı tamponu bırakır,
+    /// toplama bırakılmış tamponla olur". Tampon artık bekleyen yüklemenindir (motor satırı olayından önce diske yazar; dikişe yalnız
+    /// istekten sonraki satırlar gerekir) ve motor kaybı yüklemenin sonu DEĞİLDİR: yükleme silahlı kalır — motorun ölmeden yazdığı
+    /// gecikmiş bir chunk hâlâ dikilir — ama cevabı artık beklenmediği için toplamayı tutmaz. Kuyruk bu yüzden toplamada hâlâ
+    /// tampondadır (bilinçli sınır: o projenin istekten sonraki satırları; gecikmiş chunk, sonraki yükleme ya da yeni işlem bırakır)
+    /// ve gecikmiş chunk onu kayıpsız diker.</para></summary>
     [StaFact]
-    public void A_run_whose_engine_dies_in_the_tray_releases_its_buffer_before_the_collection()
+    public void A_run_whose_engine_dies_in_the_tray_is_collected_without_waiting_and_keeps_the_tail_for_a_late_chunk()
     {
         using var dir = new TempDir();
-        var (window, vm, seen) = HiddenRunWithOneLine(dir);
+        var (window, vm, seen) = HiddenRunWithAPendingLoadsTail(dir);
 
         vm.OnEngineExited(1);
         window.OnTrayIndicatorExitFinished(vm.RunSerial);
         DispatcherPump.DrainToIdle();
+        Assert.Equal([1], seen);             // bir kez; cevabı gelmeyecek yükleme beklenmedi, kuyruğu tamponda
 
-        Assert.Equal(0, vm.LiveLineCount);   // KIRMIZI: motor kaybında tampon bırakılmıyordu
-        Assert.Equal([0], seen);
+        ReplyWithProjectLog(vm, "A", "", through: 0);   // motorun ölmeden yazdığı gecikmiş yanıt
+        Assert.Equal("a line\n", vm.GetProjectDocumentText(MainWindowHost.IdOf("A")));   // kuyruk kayıpsız dikildi
+        Assert.Equal(0, vm.LiveLineCount);   // yüklemenin sonu bıraktı
         GC.KeepAlive(window);
     }
 
     /// <summary>
-    /// [perf Faz C · M-1] Bekleyen yüklemenin "log yok" yanıtı (<c>logNotFound</c>) da yüklemenin sonudur: koşu yanıttan önce
-    /// bittiyse ertelenen bırakma yanıtla yapılır — dikiş yanıtıyla aynı kural (bekleyen yüklemenin sonu tek yerde).
+    /// [perf Faz C · M-1] Bekleyen yüklemenin "log yok" yanıtı (<c>logNotFound</c>) da yüklemenin sonudur: tampon yanıtla bırakılır —
+    /// dikiş yanıtıyla aynı kural (bekleyen yüklemenin sonu tek yerde) — koşu yanıttan önce bitmiş olsa da.
+    /// <para>[DEĞİŞEN KURULUM — idle-memory spec §6.2] <b>Eski kurulum:</b> satır istekten ÖNCE loglanıyor ve tamponda bekleniyordu;
+    /// eski kuralda koşunun bitişi bırakmayı yanıta ertelerdi. Tampon artık yalnız istekten sonra gelen satırları tutar — istekten
+    /// önceki satır snapshot'tadır (motor satırı olayından önce diske yazar, <c>RunCoordinator.Emit</c>) — bu yüzden satır istekten
+    /// SONRA gelir. İddia aynı: bırakma yanıtladır.</para>
     /// </summary>
     [StaFact]
     public void A_log_not_found_reply_releases_the_buffer_of_a_run_that_ended_while_the_log_was_loading()
@@ -720,14 +808,14 @@ public class RunBufferReleaseTests
         using var dir = new TempDir();
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
         MainWindowHost.StartBuild(vm, "A");
-        MainWindowHost.LogLine(vm, "A", 1, "a line");
         RequestProjectLog(vm, "A");                      // yükleme istendi, yanıt henüz yok
+        MainWindowHost.LogLine(vm, "A", 1, "a line");    // istekten sonra: canlı tamponda
         MainWindowHost.CompleteRun(vm, 1);               // yanıttan ÖNCE koşu biter
         Assert.Equal(1, vm.LiveLineCount);               // ön-koşul: bırakma yanıtı bekliyor
 
         vm.OnEvent(new ErrorEvent("logNotFound", "no log for A"));
 
-        Assert.Equal(0, vm.LiveLineCount);   // KIRMIZI: logNotFound yanıtı ertelenen bırakmayı sormuyordu
+        Assert.Equal(0, vm.LiveLineCount);   // (M-1 KIRMIZI'sı: logNotFound yanıtı ertelenen bırakmayı sormuyordu)
         GC.KeepAlive(window);
     }
 
@@ -757,8 +845,8 @@ public class RunBufferReleaseTests
     /// <summary>
     /// [perf Faz A · A2'den ertelenen] Gizli konsol yetişmesinin PROJE LOGU kolu: pencere gizliyken bir projenin logu açıkken
     /// satırlar gelir ve koşu biter; dönüşte proje belgesi <b>tilt'siz</b> ve <b>kayıpsız</b> modelin tam metninden bir kez
-    /// kurulur. Faz C'de koşu sonu canlı tamponu bırakır — açık projenin metin tamponu (<c>_projectText</c>) bundan etkilenmez
-    /// ve dönüş kurulumunun kaynağı odur; bu test o bağı da korur.
+    /// kurulur. Açık sayfanın canlı satırları doğrudan projenin metin tamponuna (<c>_projectText</c>) gider ve dönüş kurulumunun
+    /// kaynağı odur; canlı satır tamponu bu akışta hiç dolmaz (bekleyen yükleme yok — spec §6.2). Bu test o bağı da korur.
     /// </summary>
     [StaFact]
     public void A_project_log_open_while_a_run_ends_hidden_is_rebuilt_whole_and_without_the_tilt_on_show()
@@ -777,8 +865,8 @@ public class RunBufferReleaseTests
         MainWindowHost.LogLine(vm, "A", 1, "first");
         window.AppendConsoleBatch("first\n", window.ConsoleReseedGen);   // pompanın batch'i: gizliyken belgeye basılmaz, "ekran bayat" kalkar
         MainWindowHost.LogLine(vm, "A", 2, "second");
-        MainWindowHost.FinishBuild(vm, "A");                             // koşu gizliyken biter: canlı tampon bırakılır
-        Assert.Equal(0, vm.LiveLineCount);                               // KIRMIZI: bırakma bugün yok (dönüş kurulumu ondan bağımsız)
+        MainWindowHost.FinishBuild(vm, "A");                             // koşu gizliyken biter
+        Assert.Equal(0, vm.LiveLineCount);                               // canlı tampon boş: bekleyen yükleme yok (dönüş kurulumu ondan bağımsız)
         Assert.Equal(textBefore, console.EditorControl.Document.Text);   // gizliyken belgeye hiçbir satır basılmadı (yerinde ekleme de yok)
 
         window.SetSurfaceHidden(false);

@@ -141,14 +141,17 @@ public class ConsoleModesTests
         const string previousRunText = "Sync complete — 7 changed projects";
         Assert.Contains(previousRunText, view.Document.Text);
 
-        // Bir kart seçilmiş gibi: canlı log tamponlanır ve dikişle ActiveProjectId kurulur (kart-tıklaması yolu).
+        // Bir kart seçilmiş gibi: istekten önce gelen satırlar diskte ve motorun snapshot'ındadır (motor satırı olayını
+        // yaymadan önce diske yazar) — dikiş onları chunk'tan alır ve ActiveProjectId'yi kurar (kart-tıklaması yolu). Canlı
+        // satır tamponu yalnız istekten sonra gelenleri tutar (idle-memory spec §6.2).
         const string projectId = @"C:\p\a.csproj";
         vm.OnEvent(new ProjectStartedEvent("r1", projectId, "A"));
         vm.OnEvent(new ProjectLogEvent("r1", projectId, 1, "Determining projects to restore..."));
         vm.OnEvent(new ProjectLogEvent("r1", projectId, 2, "Restored A.csproj"));
         vm.SelectProject(projectId); // [D4 review §2] üretimde seçim load'dan önce kurulur (proje modu koşulu)
         var load = vm.LoadProjectLogAsync(projectId);
-        vm.OnEvent(new ProjectLogChunkEvent(projectId, 0, "", IsLast: true, ThroughLineNumber: 0));
+        vm.OnEvent(new ProjectLogChunkEvent(projectId, 0, "Determining projects to restore...\nRestored A.csproj\n",
+            IsLast: true, ThroughLineNumber: 2));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
 
         // Tıklama anı: başlık + gövde SENKRON proje-loguna geçer (pump beklenmeden).
