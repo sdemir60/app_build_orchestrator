@@ -13,7 +13,8 @@ public sealed record HeadState(string? Branch, string? Sha);
 /// gösterdiği yoldan) okunur — worktree'ler kendi <c>refs/heads</c>'ini taşımaz.
 /// <para>[reftable] Ref'leri tablo dosyalarında tutan repoda <c>HEAD</c> dosyası yalnız bir yer tutucudur
 /// (<see cref="ReftableHeadPlaceholder"/>) ve gerçek HEAD dosyadan okunamaz: <see cref="Read"/> <c>null</c> ("okunamadı")
-/// döner. Okuyucu saf dosya okuması kalır — tabloyu çözmek için process açılmaz.</para>
+/// döner. Okuyucu saf dosya okuması kalır — tabloyu çözmek için process açılmaz; böyle bir repoda HEAD'i git'e sormak
+/// <see cref="HeadSource"/>'un kararıdır, biçimin kendisi <see cref="IsReftable"/>'dan okunur.</para>
 /// </summary>
 public static class HeadReader
 {
@@ -27,22 +28,15 @@ public static class HeadReader
 
     public static HeadState? Read(string gitDir)
     {
-        if (string.IsNullOrWhiteSpace(gitDir)) return null;
+        string? content = ReadHeadFile(gitDir);
+        if (content is null) return null;
 
-        string headPath = Path.Combine(gitDir, "HEAD");
-        if (!File.Exists(headPath)) return null;
-
-        string content = File.ReadAllText(headPath).Trim();
-        if (content.Length == 0) return null;
-
-        if (!content.StartsWith(RefPrefix, StringComparison.Ordinal))
+        if (SymbolicTarget(content) is not { } refName)
             return new HeadState(Branch: null, Sha: content); // detached — içerik doğrudan sha
 
-        string refName = content[RefPrefix.Length..].Trim();
-        // [reftable] Yer tutucu bir branch değildir: HEAD bu biçimde dosyadan okunamaz. Koordinatör "okunamadı"yı güvenli
-        // yönde ele alır (pencereye dönüş sessiz yeniler, koşu bitişi Sync başlatmaz); yer tutucuyu branch adı saymak her
+        // [reftable] Yer tutucu bir branch değildir: HEAD bu biçimde dosyadan okunamaz. Yer tutucuyu branch adı saymak her
         // dönüşte motorun bildirdiği gerçek adla kıyaslanıp sahte bir "branch değişti" bölümü açıyordu.
-        if (string.Equals(refName, ReftableHeadPlaceholder, StringComparison.Ordinal)) return null;
+        if (IsPlaceholder(refName)) return null;
         string branch = BranchOf(refName);
 
         string commonDir = ResolveCommonDir(gitDir);
@@ -60,6 +54,37 @@ public static class HeadReader
 
     /// <summary>Ref yerel bir branch mı (<c>refs/heads/…</c>) — <see cref="BranchOf"/>'un öneki tek yerde durur.</summary>
     internal static bool IsBranchRef(string refName) => refName.StartsWith(BranchRefPrefix, StringComparison.Ordinal);
+
+    /// <summary>[reftable] Repo ref'lerini tablolarda mı tutuyor: <c>HEAD</c> dosyası reftable'ın yer tutucusunu gösteriyor
+    /// (ana repoda da, linked worktree'nin kendi git dizininde de). Biçim sorusunun TEK cevabı — HEAD'in nereden okunacağı
+    /// (<see cref="HeadSource"/>), izleyicinin neyi izleyeceği (<see cref="HeadWatcher"/>) ve yarıdaki işlemin işaretleri
+    /// (<see cref="GitOperationProbe"/>) buna bakar. Okunamayan bir dosya "hayır" sayılır.</summary>
+    public static bool IsReftable(string gitDir)
+    {
+        try
+        {
+            return ReadHeadFile(gitDir) is { } content && SymbolicTarget(content) is { } refName && IsPlaceholder(refName);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
+    }
+
+    /// <summary>Sembolik HEAD'in gösterdiği ref adı (<c>ref: …</c>); detached HEAD'de (içerik bir sha) <c>null</c>.</summary>
+    private static string? SymbolicTarget(string content) =>
+        content.StartsWith(RefPrefix, StringComparison.Ordinal) ? content[RefPrefix.Length..].Trim() : null;
+
+    /// <summary>[reftable] Ref, reftable'ın yer tutucusu mu — <see cref="Read"/> ile <see cref="IsReftable"/>'ın ortak sorusu.</summary>
+    private static bool IsPlaceholder(string refName) =>
+        string.Equals(refName, ReftableHeadPlaceholder, StringComparison.Ordinal);
+
+    /// <summary><c>HEAD</c> dosyasının kırpılmış içeriği; git dizini yoksa, dosya yoksa ya da boşsa <c>null</c>.</summary>
+    private static string? ReadHeadFile(string gitDir)
+    {
+        if (string.IsNullOrWhiteSpace(gitDir)) return null;
+        string headPath = Path.Combine(gitDir, "HEAD");
+        if (!File.Exists(headPath)) return null;
+        string content = File.ReadAllText(headPath).Trim();
+        return content.Length == 0 ? null : content;
+    }
 
     /// <summary>Linked worktree'de <c>commondir</c> dosyası ortak <c>.git</c>'e göreli/mutlak yolu taşır;
     /// dosya yoksa (normal repo) ref'ler zaten <paramref name="gitDir"/>'in kendisindedir.</summary>

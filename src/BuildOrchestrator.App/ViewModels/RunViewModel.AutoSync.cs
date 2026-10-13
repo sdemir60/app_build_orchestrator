@@ -27,12 +27,14 @@ public sealed partial class RunViewModel : IAutoSyncPort
 
     /// <summary>Kendiliğinden Sync'i açar: koordinatör kurulur ve izleyici bugünkü köke bağlanır. Kabuk bir kez
     /// çağırır; <paramref name="postToUi"/> izleyicinin thread-pool geri çağrısını UI thread'ine taşır.</summary>
-    /// <param name="readHead">Test dikişi: HEAD okuyucusu (verilmezse diskten, <see cref="Core.Git.HeadReader"/>).</param>
+    /// <param name="readHead">Test dikişi: HEAD okuyucusu (verilmezse <see cref="Core.Git.HeadSource"/>: dosyadan, reftable
+    /// repoda git'e sorarak).</param>
     /// <param name="newWatcher">Test dikişi: izleyici fabrikası (verilmezse gerçek <see cref="Core.Git.HeadWatcher"/>).</param>
     internal void EnableAutoSync(Action<Action> postToUi, Func<string?, Core.Git.HeadState?>? readHead = null,
         Func<Core.Git.IHeadWatcher>? newWatcher = null)
     {
-        _autoSync ??= new AutoSyncCoordinator(this, postToUi, readHead, newWatcher);
+        _autoSync ??= new AutoSyncCoordinator(this, postToUi,
+            readHead is null ? null : gitDir => Task.FromResult(readHead(gitDir)), newWatcher);
         _autoSync.Attach(RootPath);
     }
 

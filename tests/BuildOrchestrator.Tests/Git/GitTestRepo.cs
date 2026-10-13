@@ -164,11 +164,45 @@ public sealed class GitTestRepo : IDisposable
     /// </summary>
     public static string RunGitAt(string workingDirectory, params string[] args)
     {
-        var result = new ProcessRunner().RunAsync(new ProcessSpec("git", args, workingDirectory)).GetAwaiter().GetResult();
+        var result = Run("git", workingDirectory, args);
         if (result.ExitCode != 0)
             throw new InvalidOperationException(
                 $"git {string.Join(' ', args)} (cwd={workingDirectory}) başarısız (exit {result.ExitCode}): {result.StandardError}");
         return result.StandardOutput;
+    }
+
+    /// <summary>Başarısız olması BEKLENEN bir git komutu (ör. çakışmayla yarıda kalan cherry-pick): çıkış kodunu döner,
+    /// fırlatmaz — <see cref="RunGitAt"/> ise her sıfır dışı çıkışı fixture hatası sayar.</summary>
+    public static int RunGitAllowingFailure(string workingDirectory, params string[] args) =>
+        Run("git", workingDirectory, args).ExitCode;
+
+    /// <summary>Fixture'ın tek process çağrısı.</summary>
+    private static ProcessResult Run(string executable, string workingDirectory, string[] args) =>
+        new ProcessRunner().RunAsync(new ProcessSpec(executable, args, workingDirectory)).GetAwaiter().GetResult();
+
+    /// <summary>[imza] Commit'leri ssh anahtarıyla imzalar ve git'in log çıktılarına imza doğrulamasını açar
+    /// (<c>log.showSignature=true</c>) — bu ayarı global açmış bir kullanıcının makinesi. Anahtar repo DIŞINDA, kendi geçici
+    /// klasöründe üretilir (<see cref="CommitAll"/> onu commit'lemesin); <c>ssh-keygen</c> Git for Windows'un kendi
+    /// kopyasıdır (<c>usr\bin</c>).</summary>
+    public void SignCommitsAndShowSignatures()
+    {
+        string gitRoot = Path.GetFullPath(Path.Combine(RunGitAt(RootPath, "--exec-path").Trim(), "..", "..", ".."));
+        string sshKeygen = Path.Combine(gitRoot, "usr", "bin", "ssh-keygen.exe");
+        string keyDir = Path.Combine(Path.GetTempPath(), "gitsvc-key-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(keyDir);
+        _extraDirsToClean.Add(keyDir);
+        string key = Path.Combine(keyDir, "signing");
+        var generated = Run(sshKeygen, keyDir, ["-q", "-t", "ed25519", "-N", "", "-C", IdentityEmail, "-f", key]);
+        if (generated.ExitCode != 0) throw new InvalidOperationException($"ssh-keygen başarısız: {generated.StandardError}");
+        string allowedSigners = Path.Combine(keyDir, "allowed_signers");
+        File.WriteAllText(allowedSigners, IdentityEmail + " " + File.ReadAllText(key + ".pub"));
+
+        RunGit(RootPath, "config", "gpg.format", "ssh");
+        RunGit(RootPath, "config", "gpg.ssh.program", sshKeygen);
+        RunGit(RootPath, "config", "user.signingkey", key);
+        RunGit(RootPath, "config", "gpg.ssh.allowedSignersFile", allowedSigners);
+        RunGit(RootPath, "config", "commit.gpgsign", "true");
+        RunGit(RootPath, "config", "log.showSignature", "true");
     }
 
     public void Dispose()
