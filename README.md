@@ -752,7 +752,8 @@ The reasoning behind all three is in [`ARCHITECTURE.md` §11](ARCHITECTURE.md#11
 - **Automatic Syncs do not fetch.** Their `N behind` count is against the last remote state you fetched; press
   *Sync* or pull to refresh it.
 - **A brand-new repository is not watched until its first commit.** The HEAD watcher needs git's reflog, which
-  appears with the first commit; until then, switching back to the window keeps the list current.
+  appears with the first commit; until then, switching back to the window keeps the list current. (A repository in
+  git's newer reftable format is watched from the start.)
 - **`UseSharedCompilation=false` and `nodeReuse:false` are kept.** A compiler server with a private pipe could
   live inside the job, but measured on a real repository it saves about a tenth of a run while holding
   gigabytes of memory, so the flags stay off; a server *outside* the job would also bring back the risk of a

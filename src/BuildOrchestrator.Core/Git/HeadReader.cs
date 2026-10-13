@@ -31,13 +31,12 @@ public static class HeadReader
         string? content = ReadHeadFile(gitDir);
         if (content is null) return null;
 
-        if (!content.StartsWith(RefPrefix, StringComparison.Ordinal))
+        if (SymbolicTarget(content) is not { } refName)
             return new HeadState(Branch: null, Sha: content); // detached — içerik doğrudan sha
 
-        string refName = content[RefPrefix.Length..].Trim();
         // [reftable] Yer tutucu bir branch değildir: HEAD bu biçimde dosyadan okunamaz. Yer tutucuyu branch adı saymak her
         // dönüşte motorun bildirdiği gerçek adla kıyaslanıp sahte bir "branch değişti" bölümü açıyordu.
-        if (string.Equals(refName, ReftableHeadPlaceholder, StringComparison.Ordinal)) return null;
+        if (IsPlaceholder(refName)) return null;
         string branch = BranchOf(refName);
 
         string commonDir = ResolveCommonDir(gitDir);
@@ -64,12 +63,18 @@ public static class HeadReader
     {
         try
         {
-            return ReadHeadFile(gitDir) is { } content
-                && content.StartsWith(RefPrefix, StringComparison.Ordinal)
-                && string.Equals(content[RefPrefix.Length..].Trim(), ReftableHeadPlaceholder, StringComparison.Ordinal);
+            return ReadHeadFile(gitDir) is { } content && SymbolicTarget(content) is { } refName && IsPlaceholder(refName);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
     }
+
+    /// <summary>Sembolik HEAD'in gösterdiği ref adı (<c>ref: …</c>); detached HEAD'de (içerik bir sha) <c>null</c>.</summary>
+    private static string? SymbolicTarget(string content) =>
+        content.StartsWith(RefPrefix, StringComparison.Ordinal) ? content[RefPrefix.Length..].Trim() : null;
+
+    /// <summary>[reftable] Ref, reftable'ın yer tutucusu mu — <see cref="Read"/> ile <see cref="IsReftable"/>'ın ortak sorusu.</summary>
+    private static bool IsPlaceholder(string refName) =>
+        string.Equals(refName, ReftableHeadPlaceholder, StringComparison.Ordinal);
 
     /// <summary><c>HEAD</c> dosyasının kırpılmış içeriği; git dizini yoksa, dosya yoksa ya da boşsa <c>null</c>.</summary>
     private static string? ReadHeadFile(string gitDir)

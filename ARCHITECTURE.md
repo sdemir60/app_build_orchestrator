@@ -2201,7 +2201,7 @@ The complete set of git invocations in the codebase:
 
 | Command | Mutates? |
 |---|---|
-| `rev-parse --verify -q HEAD` · `symbolic-ref -q HEAD` · `status --porcelain -z` · `rev-parse --is-shallow-repository` · `for-each-ref …` · `rev-parse --verify -q refs/{heads,remotes/origin}/<branch>` · `rev-list --count HEAD..<sha>` · `reflog --format=%gs` | no |
+| `rev-parse --verify -q HEAD` · `symbolic-ref -q HEAD` · `status --porcelain -z` · `rev-parse --is-shallow-repository` · `for-each-ref …` · `rev-parse --verify -q refs/{heads,remotes/origin}/<branch>` · `rev-list --count HEAD..<sha>` · `reflog --no-show-signature …` · `rev-parse -q --verify {CHERRY_PICK_HEAD,REVERT_HEAD}` | no |
 | `fetch origin <branch> --no-tags` | only `refs/remotes/*` |
 | `merge-base --is-ancestor` · `merge --ff-only` | external working copies when updates are on (§10.4), and the **main repository only when the user clicks the `N behind` chip** (§10.5) |
 | `stash push -u -m <message>` | the main repository, **only** when the user picks a branch on the branch chip, the tree is dirty and *Stash and switch branches* is on (§10.3) |
@@ -2222,11 +2222,12 @@ the operation markers. They run on every trigger, so they cost a file read rathe
 A repository in the reftable format keeps HEAD, its branches, tags and the reflog in its own tables: its `HEAD`
 file holds only a placeholder for older git versions (`ref: refs/heads/.invalid`), `CHERRY_PICK_HEAD` and
 `REVERT_HEAD` are not files, and there is no `logs` folder. The placeholder is never taken for a branch: it tells
-the format (`HeadReader.IsReftable`), and the three reads take another path there. HEAD is asked from git
-(`HeadSource`: `symbolic-ref` and `rev-parse`, run inside the git directory, which also serves a linked worktree);
-the watcher follows `reftable/tables.list` and takes HEAD's reflog from git (`reflog --format=%gs`); and a
-cherry-pick or revert left half-done is recognised by `MERGE_MSG` (§10.3). Those processes run only in such a
-repository and only when a trigger fires — a files repository still costs a file read.
+the format (`HeadReader.IsReftable`), and the three reads take another path there, each through git run inside the
+git directory (`GitService.InGitDirectory`, which also serves a linked worktree). HEAD is asked from git (`HeadSource`:
+`symbolic-ref` and `rev-parse`, started on the thread pool — the caller is the automatic Sync on the UI thread); the
+watcher follows `reftable/tables.list` and takes the newest entries of HEAD's reflog from git (`reflog
+--no-show-signature`, §10.3); and when `MERGE_MSG` appears, git is asked for `CHERRY_PICK_HEAD` and `REVERT_HEAD`
+(§10.3). Those processes run only in such a repository — a files repository still costs a file read.
 
 The checked-out branch is read from git as the full ref (`symbolic-ref -q HEAD`), never in git's short form,
 and its `refs/heads/` prefix is dropped by the one rule the file read and the branch list use too
@@ -2402,9 +2403,13 @@ anything else (pull, merge, reset, rebase) — and the strongest wins. A line gi
 closes is not read in half: it waits, and the window opens once more on its own so the whole line is read even if
 its end brings no notification of its own. Visual Studio's background `fetch` and
 `status` do not write this file and trigger nothing. In a reftable repository (§10.1) the watcher follows
-`reftable/tables.list` instead, which git rewrites on every reference change, and takes the entries added to HEAD's
-reflog from git — counted against the last read, classified and weighed by the same rules; a change that leaves HEAD
-alone (a fetch, a new branch or tag) adds no entry and triggers nothing. A return to the window is the second trigger: when more
+`reftable/tables.list` instead, which git rewrites on every reference change, and reads the newest fifty entries of
+HEAD's reflog from git. The new entries are those above the one that was newest at the last read — an entry is known by
+its commit, time and message — and they are classified and weighed by the same rules; when that entry is gone (expired,
+or more than fifty moves at once) only the newest counts, as when the log file shrinks. A change that leaves HEAD
+alone (a fetch, a new branch or tag) adds no entry and triggers nothing, and neither does any change before the first
+commit, when there is no reflog yet. `--no-show-signature` keeps a machine that has `log.showSignature` on from mixing
+signature checks into the entries. A return to the window is the second trigger: when more
 than five seconds have passed since the last Sync started or ended, it runs a silent Sync even when HEAD has not
 moved, because files may have been edited elsewhere.
 
@@ -2446,11 +2451,13 @@ first start more than three days after their run, the newest run's folder except
 **While git is mid-operation, the tool waits.** The git directory's markers say what is in progress:
 `MERGE_HEAD` (a merge waiting for conflict resolution), `rebase-merge\` or `rebase-apply\` (a rebase),
 `CHERRY_PICK_HEAD` and `REVERT_HEAD`, and `index.lock` (a git command running right now); a named operation
-wins over the lock. A reftable repository (§10.1) keeps `CHERRY_PICK_HEAD` and `REVERT_HEAD` in its tables, so
-there a half-done cherry-pick or revert leaves only `MERGE_MSG` (with no `MERGE_HEAD`), and git's revert message
-(`This reverts commit …`) tells the two apart. A cherry-pick without a commit (`-n`) leaves the same trace, so in
-such a repository it counts as mid-operation until it is committed; in a files repository it does not, and a lone
-`MERGE_MSG` means nothing there. While one stands:
+wins over the lock. A reftable repository (§10.1) keeps `CHERRY_PICK_HEAD` and `REVERT_HEAD` in its tables; there a
+half-done cherry-pick or revert leaves only `MERGE_MSG` on disk — and so do a cherry-pick without a commit (`-n`) and
+a conflicted `merge --squash`, neither of which is an operation in progress, and the file stays even when their
+changes are thrown away. `MERGE_MSG` is therefore only a hint there: when it appears, git is asked for the two refs,
+and the answer is the one a files repository gives. The answer is kept until `MERGE_MSG` changes, so git runs once per
+half-done operation even though the gate is polled; in a files repository a lone `MERGE_MSG` is never looked at.
+While one stands:
 
 - an automatic Sync waits, and the event stream says `waiting for git — <reason>` once per operation;
 - the branch chip carries an amber dot, and its tooltip names the operation (`Merge in progress — finish or
@@ -6224,8 +6231,9 @@ do, and how the interface works around each — useful to know before attempting
 - **A rebase interrupts a run in flight.** A rebase moves HEAD once per replayed commit; the watcher folds those
   writes into one trigger, but a run in flight is interrupted by it like any other HEAD movement that is not a
   plain commit.
-- **The HEAD watcher needs a reflog.** It follows `logs/HEAD`; a repository that has no commit yet has no
-  reflog folder, so the watcher cannot start and says so once. Returning to the window retries it, and the
+- **The HEAD watcher needs a reflog.** In the files format it follows `logs/HEAD`; a repository that has no commit
+  yet has no reflog folder, so the watcher cannot start and says so once (a reftable repository has its table folder
+  from the start, §10.1). Returning to the window retries it, and the
   window-activation Sync covers changes in the meantime.
 - **An automatic Sync does not fetch.** Its `N behind` distance is measured against the last remote state the
   repository already has; the Sync button and a pull refresh it from the network.
@@ -6607,7 +6615,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Git directory resolution (`.git` folder or `gitdir:` file) | `Core/Git/GitDirectory.cs` |
 | HEAD and its ref read from files (loose, packed, linked-worktree common dir; a reftable placeholder reads as unknown), the format question (reftable or not) and the branch-name rule the git query shares | `Core/Git/HeadReader.cs` |
 | HEAD for the automatic Sync: from the file, or asked from git in a reftable repository | `Core/Git/HeadSource.cs` |
-| Operation markers (merge, rebase, cherry-pick, revert, `index.lock`; in a reftable repository `MERGE_MSG`) | `Core/Git/GitOperationProbe.cs` |
+| Operation markers (merge, rebase, cherry-pick, revert, `index.lock`; in a reftable repository `MERGE_MSG`, then the two refs asked from git, kept until the file changes) | `Core/Git/GitOperationProbe.cs` |
 | Tooltip, Build warning, Sync warning and stuck-lock texts for an operation in progress, and the 30 s threshold | `Core/Git/GitOperationText.cs` |
 | Reflog line classification (commit, checkout, other) and the strength order | `Core/Git/ReflogEntry.cs` |
 | The HEAD watcher on `logs/HEAD` (in a reftable repository on `reftable/tables.list`, with HEAD's reflog taken from git) and its 1.5 s settle window | `Core/Git/HeadWatcher.cs`, `Core/Git/SettleDebouncer.cs` |
