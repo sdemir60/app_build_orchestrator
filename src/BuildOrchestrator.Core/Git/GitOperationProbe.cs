@@ -18,16 +18,19 @@ public enum GitOperation
 /// sırasında da kısa süreliğine <c>index.lock</c> görülebilir, bu durumda asıl işlem (Merge) raporlanmalı,
 /// "sadece bir komut çalışıyor" (CommandRunning) değil.
 /// <para>[reftable] Ref'leri tablolarda tutan repoda (<see cref="HeadReader.IsReftable"/>) <c>CHERRY_PICK_HEAD</c> ve
-/// <c>REVERT_HEAD</c> tablodadır; yarıda kalan bir cherry-pick ya da revert diske yalnız <c>MERGE_MSG</c>'yi bırakır
-/// (<c>MERGE_HEAD</c>, rebase klasörleri ve <c>index.lock</c> orada da dosyadır). Hangisi olduğunu mesaj söyler: git'in revert
-/// mesajı <see cref="RevertMarker"/> taşır. Commit'siz bir cherry-pick'in (<c>-n</c>) de bıraktığı iz budur — reftable'da o
-/// da commit'lenene dek yarıda sayılır (normal repoda onun işareti yoktur). Kural yalnız reftable'da uygulanır: normal
-/// repoda tek başına bir <c>MERGE_MSG</c> işlem değildir.</para>
+/// <c>REVERT_HEAD</c> tablodadır (<c>MERGE_HEAD</c>, rebase klasörleri ve <c>index.lock</c> orada da dosyadır). Yarıda kalan
+/// bir cherry-pick ya da revert diske yalnız <c>MERGE_MSG</c>'yi bırakır — ama o dosya commit'siz bir cherry-pick'ten
+/// (<c>-n</c>) ve çakışmalı bir <c>merge --squash</c>'tan da kalır, değişiklikler atılsa da durur. Bu yüzden dosya yalnız bir
+/// İPUCUDUR: görülünce iki ref git'e sorulur (<see cref="GitService.HasRefAsync"/>) ve cevap normal repodakinin aynısıdır.
+/// Cevap, <c>MERGE_MSG</c> değişmedikçe yeniden sorulmaz (<see cref="_answer"/>): bir yarım işlem boyunca git bir kez çalışır
+/// — bu yol UI thread'inden çağrılır. Normal repoda tek başına bir <c>MERGE_MSG</c>'ye hiç bakılmaz.</para>
 /// </summary>
 public static class GitOperationProbe
 {
-    /// <summary>[reftable] Git'in revert mesajının satırı — yarıdaki işlemi cherry-pick'ten ayırır.</summary>
-    private const string RevertMarker = "This reverts commit ";
+    /// <summary>[reftable] Son sorulan <c>MERGE_MSG</c>'nin damgası (yol, yazım zamanı, uzunluk) ve git'in cevabı.</summary>
+    private static (string Path, DateTime WrittenUtc, long Length, GitOperation? Operation)? _answer;
+
+    private static readonly object AnswerGate = new();
 
     public static GitOperation Inspect(string gitDir)
     {
@@ -44,14 +47,33 @@ public static class GitOperationProbe
         return GitOperation.None;
     }
 
-    /// <summary>[reftable] Yarıda kalan cherry-pick ya da revert: <c>MERGE_MSG</c> duruyor (ve <c>MERGE_HEAD</c> yok —
-    /// yukarıda elendi). Normal repoda <c>null</c>; IO istisnaları çağırana sızar (<see cref="Inspect"/>'in sözleşmesi).</summary>
+    /// <summary>[reftable] Yarıda kalan cherry-pick ya da revert: <c>MERGE_MSG</c> duruyor (<c>MERGE_HEAD</c> yukarıda elendi)
+    /// ve git'in tablosunda <c>CHERRY_PICK_HEAD</c> ya da <c>REVERT_HEAD</c> var. Normal repoda ve işaretsiz durumda
+    /// <c>null</c>; IO istisnaları çağırana sızar (<see cref="Inspect"/>'in sözleşmesi).</summary>
     private static GitOperation? ReftablePickOrRevert(string gitDir)
     {
         string message = Path.Combine(gitDir, "MERGE_MSG");
         if (!File.Exists(message) || !HeadReader.IsReftable(gitDir)) return null;
-        return File.ReadAllText(message).Contains(RevertMarker, StringComparison.Ordinal)
-            ? GitOperation.Revert
-            : GitOperation.CherryPick;
+
+        var stamp = new FileInfo(message);
+        (string, DateTime, long) key = (message, stamp.LastWriteTimeUtc, stamp.Length);
+        lock (AnswerGate)
+        {
+            if (_answer is { } known && (known.Path, known.WrittenUtc, known.Length) == key) return known.Operation;
+        }
+
+        GitOperation? operation = AskGit(gitDir);
+        lock (AnswerGate) _answer = (key.Item1, key.Item2, key.Item3, operation);
+        return operation;
     }
+
+    /// <summary>İki ref'i git'e sorar — git dizininin içinden, thread-pool'da (çağıran UI thread'i bir senkronizasyon bağlamı
+    /// taşır; onu async zincirle bekletmek kilitlenme olurdu). Git cevap veremezse işlem yok sayılır.</summary>
+    private static GitOperation? AskGit(string gitDir) => Task.Run(async () =>
+    {
+        var git = GitService.InGitDirectory(gitDir);
+        if (await git.HasRefAsync("CHERRY_PICK_HEAD").ConfigureAwait(false) is { Success: true, Value: true }) return GitOperation.CherryPick;
+        if (await git.HasRefAsync("REVERT_HEAD").ConfigureAwait(false) is { Success: true, Value: true }) return GitOperation.Revert;
+        return (GitOperation?)null;
+    }).GetAwaiter().GetResult();
 }

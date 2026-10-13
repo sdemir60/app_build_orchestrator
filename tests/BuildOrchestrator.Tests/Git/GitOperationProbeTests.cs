@@ -127,6 +127,45 @@ public class GitOperationProbeTests
         Assert.Equal(GitOperation.Revert, GitOperationProbe.Inspect(GitDirectory.Resolve(repo.RootPath)!));
     }
 
+    /// <summary>[reftable] Commit'siz bir cherry-pick (<c>-n</c>) yarıda bir işlem DEĞİLDİR — normal repodaki gibi (orada
+    /// <c>CHERRY_PICK_HEAD</c> yazılmaz). Geride kalan <c>MERGE_MSG</c> tek başına bir şey söylemez: değişiklikler sonradan
+    /// atılırsa (<c>git restore</c>) dosya temiz ağaçta kalır ve <c>cherry-pick --abort</c> onu silmez. Kusurlu hâlde araç bu
+    /// durumda checkout/pull'u kilitliyor ve kendiliğinden Sync'i süresiz bekletiyordu.</summary>
+    [Fact]
+    public void In_a_reftable_repository_a_cherry_pick_without_a_commit_is_not_an_operation()
+    {
+        using var repo = ReftableWithBase();
+        repo.CreateBranch("side");
+        repo.Checkout("side");
+        repo.WriteFile("b.txt", "side");
+        repo.CommitAll("side");
+        repo.Checkout("-");
+        GitTestRepo.RunGitAt(repo.RootPath, "cherry-pick", "-n", "side");
+        string gitDir = GitDirectory.Resolve(repo.RootPath)!;
+        Assert.True(File.Exists(Path.Combine(gitDir, "MERGE_MSG"))); // ön-koşul: iz duruyor
+
+        Assert.Equal(GitOperation.None, GitOperationProbe.Inspect(gitDir));
+    }
+
+    /// <summary>[reftable] Çakışmalı bir <c>merge --squash</c> cherry-pick değildir — normal repodaki gibi işlem sayılmaz
+    /// (squash <c>MERGE_HEAD</c> yazmaz). Kusurlu hâlde geride kalan <c>MERGE_MSG</c> yüzünden "Cherry-pick in progress"
+    /// deniyordu.</summary>
+    [Fact]
+    public void In_a_reftable_repository_a_conflicted_squash_merge_is_not_a_cherry_pick()
+    {
+        using var repo = ReftableWithBase();
+        repo.CreateBranch("side");
+        repo.Checkout("side");
+        repo.WriteFile("a.txt", "side");
+        repo.CommitAll("side");
+        repo.Checkout("-");
+        repo.WriteFile("a.txt", "main");
+        repo.CommitAll("main");
+        Assert.NotEqual(0, GitTestRepo.RunGitAllowingFailure(repo.RootPath, "merge", "--squash", "side")); // ön-koşul: çakıştı
+
+        Assert.Equal(GitOperation.None, GitOperationProbe.Inspect(GitDirectory.Resolve(repo.RootPath)!));
+    }
+
     /// <summary>Normal (files) repoda yarıdaki cherry-pick'in ve revert'in işareti kendi dosyasıdır: tek başına bir
     /// <c>MERGE_MSG</c> işlem SAYILMAZ (ör. <c>cherry-pick -n</c> sonrası). reftable'ın kuralı buraya sızmaz.</summary>
     [Fact]
