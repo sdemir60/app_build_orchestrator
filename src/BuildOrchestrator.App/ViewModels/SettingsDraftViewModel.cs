@@ -82,10 +82,11 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
 
     /// <summary>[design v1.19.0 §2.9] General sayfasının grupları ve satırları — <see cref="GeneralSettingsCatalog"/>'tan
     /// doğar (sıra/metin burada yeniden yazılmaz).
-    /// <para>Altı anahtarın hepsi gerçektir. <c>Pull before build</c> (<see cref="PullExternalsBeforeBuild"/>) ve
-    /// <c>Stash and switch branches</c> (<see cref="StashOnBranchSwitch"/>) canlı VM değerinin taslak kopyasıdır; dört
-    /// kabuk anahtarı (<c>Start with Windows</c>, <c>Start minimized to tray</c>, <c>Close to tray</c>, <c>Show
-    /// notifications</c>) <see cref="ShellSwitches"/> tablosu üzerinden KALICIDIR: ctor'un <c>saved</c> parametresi
+    /// <para>Sekiz anahtarın hepsi gerçektir. <c>Pull before build</c> (<see cref="PullExternalsBeforeBuild"/>),
+    /// <c>Stash and switch branches</c> (<see cref="StashOnBranchSwitch"/>), <c>Resolve cycles at full priority</c>
+    /// (<see cref="ResolveAtFullPriority"/>) ve <c>Compact console</c> (<see cref="CompactConsole"/>) canlı VM değerinin
+    /// taslak kopyasıdır; dört kabuk anahtarı (<c>Start with Windows</c>, <c>Start minimized to tray</c>, <c>Close to
+    /// tray</c>, <c>Show notifications</c>) <see cref="ShellSwitches"/> tablosu üzerinden KALICIDIR: ctor'un <c>saved</c> parametresi
     /// onları tohumlar, <see cref="CommitAsync"/> yazar, <see cref="ToFile"/>/<see cref="LoadFrom"/> taşır, değişen değer
     /// konsola not düşer. <see cref="ClearAll"/> hepsini varsayılanına döndürür (prototip parity).</para>
     /// <para><b>[DEĞİŞEN KURAL — P3 2026-09-28 · P4 2026-09-29, kullanıcı kararları]</b> ESKİ: dört kabuk anahtarı
@@ -140,6 +141,14 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         set => GeneralRow(GeneralSetting.ResolveAtFullPriority).IsOn = value;
     }
 
+    /// <summary>[idle-memory · dalga 2 / spec §6.5] General sayfasının CONSOLE grubundaki <c>Compact console</c> satırının
+    /// KENDİSİ (<see cref="ResolveAtFullPriority"/> deseni). Varsayılan AÇIK; Save'e kadar yalnız taslaktır.</summary>
+    public bool CompactConsole
+    {
+        get => GeneralRow(GeneralSetting.CompactConsole).IsOn;
+        set => GeneralRow(GeneralSetting.CompactConsole).IsOn = value;
+    }
+
     /// <summary>Seçilmiş ama HENÜZ UYGULANMAMIŞ repo kökü. "Change…" yalnız burayı yazar; kök değişimi,
     /// satır reset'i ve Sync Save'e ertelenir — Cancel/Esc taslağı atar ve hiçbir iz kalmaz. Diyalog
     /// açılırken canlı <see cref="RunViewModel.RootPath"/> ile başlar.</summary>
@@ -154,6 +163,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// <param name="pullExternalsBeforeBuild">Canlı bayrağın taslak kopyası (varsayılan açık).</param>
     /// <param name="stashOnBranchSwitch">Canlı stash ayarının taslak kopyası (varsayılan kapalı).</param>
     /// <param name="resolveAtFullPriority">[RESOLVE Faz 4] Canlı Resolve tam öncelik ayarının taslak kopyası (varsayılan açık).</param>
+    /// <param name="compactConsole">[idle-memory · dalga 2] Canlı Compact console ayarının taslak kopyası (varsayılan açık).</param>
     /// <param name="saved">[P3 · P4] Kalıcı kabuk anahtarlarının (<see cref="ShellSwitches"/>) kayıtlı durumu — verildiyse
     /// <see cref="ShellSwitches.All"/>'daki HER satır <see cref="ShellSwitches.IsOn"/> ile tohumlanır; <c>null</c> ⇒
     /// satırlar zaten kendi katalog varsayılanındadır (<see cref="GeneralSettingRowViewModel"/> ctor'u).</param>
@@ -163,7 +173,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     public SettingsDraftViewModel(IReadOnlyList<LayerPattern>? initial, string? repositoryRoot,
         IReadOnlyList<ExternalProject>? initialExternals = null, bool pullExternalsBeforeBuild = true,
         bool stashOnBranchSwitch = false, UiState? saved = null, AutostartService? autostart = null,
-        bool resolveAtFullPriority = true)
+        bool resolveAtFullPriority = true, bool compactConsole = true)
     {
         _repositoryRoot = repositoryRoot;
         _openedWithoutWorkspace = string.IsNullOrWhiteSpace(repositoryRoot);
@@ -171,6 +181,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         PullExternalsBeforeBuild = pullExternalsBeforeBuild;
         StashOnBranchSwitch = stashOnBranchSwitch;
         ResolveAtFullPriority = resolveAtFullPriority;
+        CompactConsole = compactConsole;
         if (saved is not null)
             foreach (var s in ShellSwitches.All) GeneralRow(s.Setting).IsOn = ShellSwitches.IsOn(saved, s.Setting);
         _autostart = autostart;
@@ -252,7 +263,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     public SettingsFile ToFile()
     {
         var file = SettingsFile.From(RepositoryRoot, BuildPatterns(), BuildExternals(), PullExternalsBeforeBuild, StashOnBranchSwitch,
-            ResolveAtFullPriority);
+            ResolveAtFullPriority, CompactConsole);
         foreach (var s in ShellSwitches.All) s.WriteFile(file, GeneralRow(s.Setting).IsOn);
         return file;
     }
@@ -285,6 +296,8 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         if (file.StashOnBranchSwitch is { } stash) StashOnBranchSwitch = stash;
         // [RESOLVE Faz 4] Resolve tam öncelik AYNI kural: anahtar yoksa taslaktaki değer korunur.
         if (file.ResolveAtFullPriority is { } resolve) ResolveAtFullPriority = resolve;
+        // [idle-memory · dalga 2] Compact console AYNI kural: anahtar yoksa taslaktaki değer korunur.
+        if (file.CompactConsole is { } compact) CompactConsole = compact;
         // [P3 · P4] Kabuk anahtarları (ShellSwitches) AYNI kural: anahtar dosyada yoksa (ReadFile null) o satır
         // dokunulmaz kalır — pull/stash'in deseninin tablo üzerinden tekrarı.
         foreach (var s in ShellSwitches.All)
@@ -346,6 +359,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         state.UpdateExternals = PullExternalsBeforeBuild;
         state.StashOnBranchSwitch = StashOnBranchSwitch;
         state.ResolveAtFullPriority = ResolveAtFullPriority;
+        state.CompactConsole = CompactConsole;
         // [P4] Start with Windows YALNIZ diyaloğun açıldığı değerden farklıysa uygulanır: Windows kaydı anında yazılır
         // ve tercih değişir. Dokunulmadıysa ikisi de olduğu gibi kalır (Save'in gösterilen "kapalı"yı sessizce tercihe
         // yazması kullanıcının vermediği bir karar olurdu); kayıt yazılamadıysa tercih de değişmez.
@@ -363,7 +377,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
             ? ShellSwitches.StartWithWindows(state) : GeneralRow(s).IsOn));
         store.Save(state);
         await run.ApplySettingsAsync(patterns, RepositoryRoot, externals, PullExternalsBeforeBuild, StashOnBranchSwitch, settingNotes,
-            ResolveAtFullPriority);
+            ResolveAtFullPriority, CompactConsole);
     }
 
     /// <summary>Katalogdan satırları kurar; bağımlı satırın etkinliğini üst anahtara, pull satırını
@@ -396,6 +410,10 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         _generalRows[GeneralSetting.ResolveAtFullPriority].PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(GeneralSettingRowViewModel.IsOn)) OnPropertyChanged(nameof(ResolveAtFullPriority));
+        };
+        _generalRows[GeneralSetting.CompactConsole].PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(GeneralSettingRowViewModel.IsOn)) OnPropertyChanged(nameof(CompactConsole));
         };
         return groups;
     }

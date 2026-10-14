@@ -111,6 +111,11 @@ public sealed class UiState
     /// eski bir dosya onaylanmış varsayılanı alır.</summary>
     public bool? ResolveAtFullPriority { get; set; }
 
+    /// <summary>[idle-memory · dalga 2 / spec §6.5] Settings → General → CONSOLE → <c>Compact console</c>: konsol anlatısı
+    /// proje çıktısını kompakt mı göstersin. <see cref="UpdateExternals"/> ile AYNI gerekçeyle NULLABLE; yok ⇒ AÇIK
+    /// (MainWindow seed'i) — anahtarı taşımayan eski bir dosya varsayılanı alır.</summary>
+    public bool? CompactConsole { get; set; }
+
     /// <summary>[P4] Settings → General → STARTUP → <c>Start with Windows</c>: uygulamanın tercihi — Windows oturumu
     /// açılınca başlasın mı. Her açılış bu tercihi Windows'un başlangıç kaydıyla hizalar
     /// (<see cref="Services.AutostartService.Apply"/>); Save kaydı anında yazar. <see cref="UpdateExternals"/> ile AYNI

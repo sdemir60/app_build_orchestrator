@@ -896,6 +896,13 @@ public sealed partial class RunViewModel : ObservableObject
     /// <para><see cref="ObservablePropertyAttribute"/>: kalıcılık bu bildirimden sürer (MainWindow).</para></summary>
     [ObservableProperty] private bool _resolveAtFullPriority = true;
 
+    /// <summary>[idle-memory · dalga 2 / spec §6.5] Settings → General → CONSOLE "Compact console": konsol anlatısı proje
+    /// çıktısını kompakt mı göstersin — açık ⇒ hatalar tam, her projenin ilk uyarıları ve kalanın sayısı; kapalı ⇒ her
+    /// satır. Proje logu sayfası ve disk her zaman tamdır. <b>Varsayılan: evet.</b> Değişiklik bir SONRAKİ işlemde geçerli
+    /// olur (mevcut anlatı yeniden yazılmaz). Bayrak yalnız App içidir — motora GİTMEZ (komutlarda alanı yoktur).
+    /// <para><see cref="ObservablePropertyAttribute"/>: kalıcılık bu bildirimden sürer (MainWindow).</para></summary>
+    [ObservableProperty] private bool _compactConsole = true;
+
     /// <summary>[T12] Koşarken (veya planlama penceresinde) branch/configuration kontrolleri kilitli;
     /// perf chip'i CANLI kalır. UI <c>IsEnabled</c> bunu okur.</summary>
     public bool IsMidRunLocked => IsRunning || IsStarting;
