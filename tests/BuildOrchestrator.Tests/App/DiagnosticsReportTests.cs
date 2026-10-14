@@ -126,6 +126,24 @@ public class DiagnosticsReportTests
         Assert.Equal(DiagnosticsReport.Unknown, s.Runtime.Single(l => l.Label == "Engine PID").Value);
     }
 
+    /// <summary>
+    /// [idle-memory · final review (Tasks 9-10)] Bellek okunamazsa (<c>MemoryLine.TryRead</c> <c>null</c> döner) tanı ekranı yine
+    /// kurulur ve üç bellek satırı <see cref="DiagnosticsReport.Unknown"/> gösterir, satırlar KAYBOLMAZ — motor doğmamışken PID
+    /// satırının <c>—</c> olması gibi. Bir tanı, tanı ekranını bozamaz: eskiden okuma korumasızdı ve süreç sorgusu patlarsa About
+    /// hiç açılmazdı (motorun bellek satırı için <c>MemoryLine.Report</c> aynı güvenceyi baştan veriyordu).
+    /// </summary>
+    [Fact]
+    public void An_unreadable_memory_reads_as_unknown_on_its_three_rows_instead_of_breaking_the_report()
+    {
+        var s = DiagnosticsReport.Compose(Full() with { Memory = null });
+
+        Assert.All(new[] { "App private", "GC committed", "Managed heap" },
+            label => Assert.Equal(DiagnosticsReport.Unknown, s.Runtime.Single(l => l.Label == label).Value));
+        Assert.Equal("4242", s.Runtime.Single(l => l.Label == "Engine PID").Value); // öbür satırlar etkilenmez
+        Assert.Contains(DiagnosticsReport.ToText(s).Split(Environment.NewLine),
+            row => row.StartsWith("App private", StringComparison.Ordinal) && row.EndsWith(DiagnosticsReport.Unknown, StringComparison.Ordinal));
+    }
+
     [Fact]
     public void An_empty_repository_root_reads_as_no_repository()
         => Assert.Contains(DiagnosticsReport.Compose(Full() with { RepositoryRoot = "" }).Paths,

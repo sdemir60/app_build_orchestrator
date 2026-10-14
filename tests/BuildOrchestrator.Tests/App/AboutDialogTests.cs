@@ -498,9 +498,11 @@ public class AboutDialogTests
 
     /// <summary>
     /// [idle-memory · spec §6.6] RUNTIME grubu App'in belleğini taşır: <c>App private</c> · <c>GC committed</c> ·
-    /// <c>Managed heap</c>, MB. Değerler bu sürecin GERÇEK okumasıdır (<c>MemoryLine.Read</c>) — sahte ya da boş bir okuma
+    /// <c>Managed heap</c>, MB. Değerler bu sürecin GERÇEK okumasıdır (<c>MemoryLine.TryRead</c>) — sahte ya da boş bir okuma
     /// (0 MB) bağlantıyı kopuk bırakırdı: çalışan bir App en az bir MB özel bellek tutar. Okuma raporun kurulduğu anındır
     /// (açılış ve MSBuild çözülünce), canlı değildir.
+    /// <para>Satırların RUNTIME grubunda durduğu (başlıkların arasında) <see cref="The_environment_tab_draws_runtime_and_paths_groups_without_version_rows"/>'da
+    /// her RUNTIME satırı için zaten sınanır; burada tekrar edilmez (aynı gezinti iki testte yazılırdı).</para>
     /// </summary>
     [StaFact]
     public void The_runtime_group_shows_the_app_memory_in_megabytes_read_from_this_process()
@@ -509,8 +511,6 @@ public class AboutDialogTests
         using (scope)
         {
             Select(dialog, EnvironmentTab);
-            double runtimeTop = TopIn(VisibleText(dialog, DiagnosticsReport.RuntimeTitle), dialog);
-            double pathsTop = TopIn(VisibleText(dialog, DiagnosticsReport.PathsTitle), dialog);
             var texts = VisibleTexts(dialog);
 
             foreach (string label in new[] { "App private", "GC committed", "Managed heap" })
@@ -518,8 +518,7 @@ public class AboutDialogTests
                 var line = dialog.Diagnostics!.Runtime.Single(l => l.Label == label);
                 Assert.Matches(@"^\d+ MB$", line.Value);
                 Assert.Contains(line.Value, texts);
-                double y = TopIn(VisibleText(dialog, label), dialog);
-                Assert.True(y > runtimeTop && y < pathsTop, $"{label} RUNTIME grubunda değil");
+                Assert.NotNull(VisibleText(dialog, label)); // etiket çizili: tek ve görünür
             }
             string appPrivate = dialog.Diagnostics!.Runtime.Single(l => l.Label == "App private").Value;
             Assert.True(long.Parse(appPrivate[..appPrivate.IndexOf(' ')]) >= 1,
