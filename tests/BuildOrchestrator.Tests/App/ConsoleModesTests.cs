@@ -6,6 +6,7 @@ using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Tests.Supervisor;
+using ICSharpCode.AvalonEdit.Document;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -157,8 +158,8 @@ public class ConsoleModesTests
         // Tıklama anı: başlık + gövde SENKRON proje-loguna geçer (pump beklenmeden).
         header.ShowProjectLog(ConsoleHeaderRow.For("A", ProjectRowState.Started, inCycle: false,
             depIssues: null, namePrefix: ""), vm.GetActiveLineCount());
-        vm.SeedProjectDocument(projectId, text =>
-            view.PlayCascade(text.Length == 0 ? [] : text.TrimEnd('\n').Split('\n')));
+        // Sayfa kabuğun kuralıyla bölünür: konsolun TEK satır kuralı (testin kendi bölme kopyası yok — final review 90).
+        vm.SeedProjectDocument(projectId, text => view.PlayCascade(ConsoleLines.Split(text)));
 
         Assert.Equal(ConsoleHeader.HeaderMode.ProjectLog, header.Mode);
         Assert.DoesNotContain(previousRunText, view.Document.Text, StringComparison.Ordinal);
@@ -497,6 +498,70 @@ public class ConsoleModesTests
         var row = Assert.Single(vm.Projects);
         Assert.Equal(SkipReasons.UpToDate, row.SkipReason);
     }
+
+    // ---------------------------------------------------------------- proje sayfası konsolun satır kuralıyla bölünür
+
+    /// <summary>
+    /// [idle-memory · final review 90] <b>Proje sayfası konsolun TEK satır kuralıyla bölünür</b> (<see cref="ConsoleLines.Split"/>:
+    /// AvalonEdit'in ayraç kuralı) — anlatı store'u ve görünümün kırpması da onu kullanır; sayfanın backlog indeksi belge satırıyla
+    /// birebir yürür. <b>Fark 1 — sondaki boş satır:</b> bir derleme logunun boş bir satırla bitmesi sık görülür; sayfa onu da
+    /// gösterir ve sonradan gelen canlı satır boş satırın ALTINA düşer.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Kabuk sayfayı kendi kuralıyla bölüyordu (<c>TrimEnd('\n').Split('\n')</c>): sondaki BÜTÜN boş
+    /// satırlar düşüyordu, sonradan gelen canlı satır onların yerine oturuyordu — sayfanın ortasında logdaki bir satır eksik
+    /// kalıyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void A_project_page_keeps_the_empty_line_its_log_ends_with()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        var console = window.Shell.ConsoleViewControl;
+        var row = MainWindowHost.ProjectOf(vm, "A");
+        vm.ActiveProjectId = row.Id;                            // proje logu açık (motor round-trip'i yok: mod doğrudan kurulur)
+        MainWindowHost.LogLine(vm, "A", 1, "Build succeeded.");
+        MainWindowHost.LogLine(vm, "A", 2, "");                 // log boş bir satırla bitiyor
+        Assert.Equal("Build succeeded.\n\n", vm.GetProjectDocumentText(row.Id)); // ön-koşul
+
+        vm.SelectProject(row.Id);                               // kart seçildi → sayfa kurulur (PlayCascade)
+        window.AppendConsoleBatch("Time Elapsed 00:00:01.23\n", window.ConsoleReseedGen); // canlı satır, pompanın yolundan
+
+        Assert.Equal("Build succeeded.\n\nTime Elapsed 00:00:01.23\n", console.Document.Text); // KIRMIZI: bugün boş satır düşer
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [idle-memory · final review 90] <b>Fark 2 — tek başına '\r':</b> belge onu satır ayracı sayar, kabuğun eski kuralı saymıyordu
+    /// — sayfanın bir girdisi belgede iki satır olur ve backlog indeksi belgeden bir satır kayardı. Kayma, takip açıkken gelen canlı
+    /// satırlar sayfayı render dilimine kırpınca tepeye kaydırmada görünür: dikişte bir satır İKİ kez gelir. Kâhin AvalonEdit'in kendi
+    /// belgesidir: sayfa, log + canlı satırların belgede gösterdiği satırların aynısıdır — tekrar yok, kayıp yok.
+    /// </summary>
+    [StaFact]
+    public void A_lone_carriage_return_in_a_project_log_keeps_the_page_contiguous_when_scrolling_up()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        var console = window.Shell.ConsoleViewControl;
+        var row = MainWindowHost.ProjectOf(vm, "A");
+        vm.ActiveProjectId = row.Id;
+        for (int i = 0; i < 300; i++) // '\r' taşıyan satır render diliminin içinde (son 200)
+            MainWindowHost.LogLine(vm, "A", i + 1, i == 150 ? "restore 50%\rrestore 100%" : $"line{i}");
+        string log = vm.GetProjectDocumentText(row.Id);
+        vm.SelectProject(row.Id);                               // sayfa: son dilim belgede, öncesi backlog'da
+        console.StickToBottom = true;                           // kullanıcı dibe indi: takip açık, canlı satırlar sayfayı kırpar
+        string[] live = [.. Enumerable.Range(0, 60).Select(i => $"live{i}")];
+        foreach (var line in live) window.AppendConsoleBatch(line + "\n", window.ConsoleReseedGen);
+
+        console.EvaluateChunkScroll(100.0); // arm: kullanıcı tepeden uzaklaştı
+        console.EvaluateChunkScroll(0.0);   // tepeye kaydırma: önceki dilim backlog'dan
+
+        var oracle = new TextDocument(log + string.Concat(live.Select(line => line + "\n")));
+        Assert.Equal(LinesOf(oracle), LinesOf(console.Document)); // KIRMIZI: bugün dikişte line161 iki kez
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Belgenin gösterdiği satırlar — son satır ('\n' sonrası boş satır) hariç.</summary>
+    private static List<string> LinesOf(TextDocument document) =>
+        [.. document.Lines.Take(document.LineCount - 1).Select(document.GetText)];
 
     // ---------------------------------------------------------------- N lines = TAM tampon (Ek A #23)
 

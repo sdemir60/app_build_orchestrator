@@ -771,17 +771,16 @@ public partial class MainWindow : Window
     /// döner (bkz. <see cref="OnSelectedProjectChangedAsync"/>).</summary>
     private void OnBack() => _vm.SelectProject(null);
 
-    /// <summary>Dikilmiş proje-log metnini ('\n' sonekli) kaskat için satırlara böler; boş metin → boş dizi
-    /// (boş-durum metni ileride buradan gelebilir).</summary>
-    private static IReadOnlyList<string> SplitLogLines(string text) =>
-        text.Length == 0 ? [] : text.TrimEnd('\n').Split('\n');
-
     /// <summary>Proje-log belgesinin satırları: log BOŞSA sayfa boş bırakılmaz — o projenin O ANKİ durumunu anlatan
     /// metin (<see cref="ConsoleEmptyState"/>, saf karar); aksi halde dikilmiş log satırları. Kart seçimi
     /// (<see cref="OnSelectedProjectChangedAsync"/>) ile gizli pencere dönüşü (<see cref="ResyncAfterShow"/>) AYNI
-    /// kuralı kullanır (kopya YASAK). <paramref name="row"/> yoksa (proje topolojiden düşmüş) yalnız log satırları.</summary>
+    /// kuralı kullanır (kopya YASAK). <paramref name="row"/> yoksa (proje topolojiden düşmüş) yalnız log satırları.
+    /// <para>[idle-memory · final review 90] Log konsolun TEK satır kuralıyla bölünür (<see cref="ConsoleLines.Split"/>: belgenin
+    /// ayraç kuralı) — sayfanın backlog indeksi belge satırıyla birebir yürür. <b>[DEĞİŞEN KURAL]</b> Kabuk eskiden kendi kuralıyla
+    /// bölüyordu (<c>TrimEnd('\n').Split('\n')</c>): sondaki boş satırlar düşüyor, tek başına '\r' belgede iki satır olurken listede
+    /// bir girdi kalıyordu — indeks kayıyor, tepeye kaydırmada dikişte bir satır iki kez geliyordu (<c>ConsoleModesTests</c>).</para></summary>
     private static IReadOnlyList<string> ProjectDocumentLines(ProjectRowViewModel? row, string text) =>
-        text.Length == 0 && row is not null ? ConsoleEmptyState.ForEmptyLog(row) : SplitLogLines(text);
+        text.Length == 0 && row is not null ? ConsoleEmptyState.ForEmptyLog(row) : ConsoleLines.Split(text);
 
     /// <summary>[D1] VM'in katman gruplarını (topolojiden — App'te regex YOK) StickyLayerList'e verir.
     /// <see cref="ProjectRowViewModel"/> nesneleri satır olarak akar; isimsiz grup (null) StickyLayerList'te

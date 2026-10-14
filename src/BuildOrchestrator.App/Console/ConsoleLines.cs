@@ -4,8 +4,9 @@ namespace BuildOrchestrator.App.Console;
 
 /// <summary>
 /// [idle-memory · dalga 1] Konsolun satır sözleşmesinin TEK tanımı (kopya YASAK): metni satırlara bölme kuralı ve satırları
-/// '\n' SONEKLİ birleştirme. Anlatı store'u (<see cref="NarrativeStore"/>), görünümün satır listesi (<see cref="ListBacklog"/>)
-/// ve konsol görünümü bu iki yardımcıyı paylaşır.
+/// '\n' SONEKLİ birleştirme. Anlatı store'u (<see cref="NarrativeStore"/>), görünümün satır listesi (<see cref="ListBacklog"/>),
+/// konsol görünümü (kırpılan canlı kuyruk) ve kabuğun proje sayfası (logun sayfa satırları — <c>MainWindow.ProjectDocumentLines</c>)
+/// bu iki yardımcıyı paylaşır.
 ///
 /// <para><b>Ayraç kuralı AvalonEdit'inkidir:</b> <c>"\r\n"</c> TEK ayraçtır, tek başına <c>'\r'</c> ve <c>'\n'</c> birer
 /// ayraçtır. Belge satırları bu kuralla sayılır; backlog indeksleri belge satır numaralarıyla birebir yürüdüğü için bölme
