@@ -180,6 +180,9 @@ public sealed class SafeExitProcessTests
         // bir üye beklenmez, olsa da KILL_ON_JOB_CLOSE onu da toplar.
         var observed = members.Freeze();
         bool disposed = AppShutdown.WaitForAsyncDisposal(engine, AppShutdown.DisposalTimeout);
+        // [idle-memory · dalga 2] Motor runStarted'la sandbox'taki koşu klasörünü bildirdi ve VM anlatıyı oraya yaydı. Üretimde süreç
+        // burada biter ve tutamacı sistem kapatır; test sürecinde VM yaşar — spool sandbox silinmeden önce kapanır.
+        vm.Narrative.Clear();
         return new ExitOutcome(observed, ready.Pid, Stopwatch.StartNew(), disposed);
     }
 

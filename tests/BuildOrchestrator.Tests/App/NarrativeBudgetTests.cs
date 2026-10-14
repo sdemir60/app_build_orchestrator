@@ -7,23 +7,30 @@ namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
 /// [idle-memory · dalga 1 · spec §6.6] Koşu anlatısının bellek bütçesi — sentetik 100 k satırlık bir koşu (<c>projectLog</c>
-/// akışı; gerçek kabuk ve VM, motor yok).
+/// akışı; gerçek kabuk ve VM, motor yok). [dalga 2 · spec §6.3] Koşu, motorun yapacağı gibi bir koşu klasörü bildirir
+/// (<see cref="MainWindowHost.StartBuildWithLogDirectory"/>): VM anlatıyı oradaki dosyaya yayar.
 ///
-/// <para><b>Yapısal kilit (her koşuda):</b> anlatının bellekteki TEK kopyası VM'in store'udur (<see cref="NarrativeStore"/>):
+/// <para><b>Yapısal kilit (her koşuda):</b> anlatının TEK sahibi VM'in store'udur (<see cref="NarrativeStore"/>):
 /// her satır orada bir kez durur, görünüm kendi kopyasını tutmaz (kabuk konsolu açılışta store'a bağlar —
-/// <c>ConsoleView.BindNarrative</c>) ve canlı satır tamponu yükleme yokken boştur (<c>RunViewModel.LiveLineCount</c>). Yeni işlem
-/// her şeyi sıfırlar (spec §6.6 d): store, canlı satır tamponu, koşu metni ve konsol belgesi. Bir regresyon kilididir: dalga 1'in
-/// tek kopya ve tampon daraltma işiyle yeşildir; bağ ya da daraltma geri alınırsa kırmızıya döner.</para>
+/// <c>ConsoleView.BindNarrative</c>) ve canlı satır tamponu yükleme yokken boştur (<c>RunViewModel.LiveLineCount</c>). (c) Bellekte
+/// yalnız store'un penceresi kalır (<see cref="NarrativeStore.CharCount"/> ≤ <see cref="NarrativeStore.MemoryWindowLines"/> × en
+/// uzun satır) ve koşu klasöründeki dosya anlatının TAM satır sayısını tutar — koşunun sonu tamponu diske indirmiştir. Yeni işlem
+/// her şeyi sıfırlar (spec §6.6 d): store, spool, canlı satır tamponu, koşu metni ve konsol belgesi. Bir regresyon kilididir: tek
+/// kopya, tampon daraltma ve spool işiyle yeşildir; biri geri alınırsa kırmızıya döner.</para>
 ///
 /// <para><b>Ölçüm (kapılı, <c>BO_MEASURE_MEMORY=1</c>):</b> aynı koşu, ardından işlem sonu trimi (üretim toplayıcısı) →
-/// yönetilen yığının koşu öncesine göre büyümesi ≤ 1,2 × metin (satırların UTF-16 baytı). Metnin üstündeki pay store'un kendi
-/// yapısıdır (string başlıkları, satır dizisi) ve görünümün render dilimidir — ölçüldü (2026-10-13): 26,8 MB / 22,9 MB = 1,167.
+/// yönetilen yığının koşu öncesine göre büyümesi ≤ <see cref="BudgetBytes"/> (8 MB, sabit tavan — spec §6.6 dalga 2). Bellekte
+/// kalan: store'un penceresi, ofset indeksi (satır başına 8 B) ve görünümün render dilimi — metinden bağımsız.
+/// <b>[DEĞİŞEN BÜTÇE — dalga 2]</b> Eski iddia: büyüme ≤ 1,2 × metin (satırların UTF-16 baytı); metnin üstündeki pay store'un
+/// kendi yapısıydı (string başlıkları, satır dizisi) ve görünümün render dilimiydi — ölçüldü (2026-10-13): 26,8 MB / 22,9 MB =
+/// 1,167. Değişme gerekçesi: anlatının tamamı bellekteydi ve büyüme metinle orantılıydı; spool'la (spec §6.3) anlatı koşu
+/// klasöründeki dosyadadır, büyüme sabit bir tavanın altına iner — ölçüldü (2026-10-14, iki koşu): 1,80 ve 2,10 MB, metin 22,93 MB.
 /// Ölçüm üretimin TUTTUĞUNU ölçer: varsayılan fixture'ın pompası hiç tick etmez ve her satırın kanal kaydını tutar — ölçüldü,
-/// metnin ~%15'i (oran 1,318: bütçeyi bu artefakt aşardı); üretimde pompa kanalı ~50 ms'de bir boşaltır. Bu yüzden test
+/// metnin ~%15'i (dalga 1'de oran 1,318: bütçeyi bu artefakt aşardı); üretimde pompa kanalı ~50 ms'de bir boşaltır. Bu yüzden test
 /// pompayı kendisi sürer: <see cref="LinesPerTick"/> satırda bir tick; satırlar üretimdeki yoldan (pompa → Dispatcher →
 /// <c>AppendConsoleBatch</c>) belgeye gider ve görünüm render dilimine kırpar. Böylece görünümdeki bir kopya da sayıya girer:
-/// konsolun store bağı atlanınca görünüm kırpılan satırları kopyalar — ölçüldü, oran 2,301. Bütçe gevşetilmez; aşım raporlanır.
-/// Dalga 2 (diske yayılmış anlatı) bu bütçeyi sabit bir tavana indirir.</para>
+/// konsolun store bağı atlanınca görünüm kırpılan satırları kopyalar — ölçüldü (dalga 1), oran 2,301. Bütçe gevşetilmez; aşım
+/// raporlanır.</para>
 ///
 /// <para><b>Neden kapılı:</b> koşu ve tam toplamalar birkaç saniye sürer ve <c>GC.GetTotalMemory</c> SÜREÇ GENELİDİR — başka bir
 /// testin ayırması ölçüme girerdi (bu koleksiyon başka hiçbir koleksiyonla eşzamanlı koşmaz; yine de tek başına koşulur).
@@ -37,6 +44,9 @@ namespace BuildOrchestrator.Tests.App;
 public sealed class NarrativeBudgetTests(ITestOutputHelper output)
 {
     private const int Lines = 100_000;
+
+    /// <summary>[spec §6.6 · dalga 2] Spool'lu koşudan sonra yönetilen yığının en çok büyümesi: 8 MB — metinden bağımsız sabit tavan.</summary>
+    private const long BudgetBytes = 8L * 1024 * 1024;
 
     /// <summary>Ölçümde pompanın kaç satırda bir tick ettiği: kanal hiçbir an koşunun tamamını tutmaz (üretimde pompa ~50 ms'de
     /// bir boşaltır).</summary>
@@ -52,13 +62,16 @@ public sealed class NarrativeBudgetTests(ITestOutputHelper output)
         $"  D:\\repo\\Project{i % 200}\\File{i}.cs(12,5): warning CS1591: Missing XML comment for publicly visible type or member 'X{i}'";
 
     /// <summary>[final review "Tasks 9-10" hijyeni] Satır sayısı koşunun başlangıcından SONRAKİ taban üstüne sayılır: başlangıç bir
-    /// anlatı satırı yazsa da iddia "her <c>projectLog</c> satırı store'da bir kez"dir.</summary>
+    /// anlatı satırı yazsa da iddia "her <c>projectLog</c> satırı store'da bir kez"dir.
+    /// <para>[idle-memory · dalga 2 · spec §6.6 (c)] Koşu bir koşu klasörü bildirir: bellekte yalnız store'un penceresi kalır ve dosya
+    /// anlatının tam satır sayısını tutar. Pencere koşunun son satırlarıdır; sınır onların en uzunuyla hesaplanır.</para></summary>
     [StaFact]
     public void A_synthetic_run_leaves_one_copy_of_the_text_and_no_live_line_buffer()
     {
         using var dir = new TempDir();
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
-        MainWindowHost.StartBuild(vm, "A");
+        using var logs = new SpoolDir(vm.Narrative);
+        MainWindowHost.StartBuildWithLogDirectory(vm, logs.Path, "A");
         int baseline = vm.Narrative.Count;
         for (int i = 1; i <= Lines; i++) MainWindowHost.LogLine(vm, "A", i, Line(i));
         Assert.Equal(baseline + Lines, vm.Narrative.Count);            // her satır store'da bir kez
@@ -67,6 +80,11 @@ public sealed class NarrativeBudgetTests(ITestOutputHelper output)
 
         Assert.Equal(0, vm.LiveLineCount);                             // yükleme yok: canlı satır tamponu boş
         Assert.False(window.Shell.ConsoleViewControl.BacklogOwnsCopy); // görünüm anlatının kopyasını tutmaz
+        long windowBound = NarrativeStore.MemoryWindowLines * (long)Enumerable
+            .Range(Lines - NarrativeStore.MemoryWindowLines + 1, NarrativeStore.MemoryWindowLines).Max(i => Line(i).Length);
+        Assert.True(vm.Narrative.CharCount <= windowBound,              // (c) bellekte yalnız pencere
+            $"the store keeps {vm.Narrative.CharCount} characters in memory, the window holds at most {windowBound}");
+        Assert.Equal(vm.Narrative.Count, logs.ReadText().AsSpan().Count('\n')); // (c) dosya tam satır sayısında
         GC.KeepAlive(window);
     }
 
@@ -76,16 +94,19 @@ public sealed class NarrativeBudgetTests(ITestOutputHelper output)
     /// boşaltır, cevabı artık beklenmeyen proje log yüklemesini tamponuyla bitirir ve kabuk belgeyi boş store'a bağlar. Ön-koşullar
     /// her birinin önce DOLU olduğunu gösterir: belge koşunun kuyruğunu pompanın yolundan almıştır, tampon koşunun sonunda istenmiş
     /// (cevabı gelmemiş) bir proje logunun isteğinden sonraki satırını tutar.
+    /// <para>[idle-memory · dalga 2 · spec §6.3] Koşu anlatısını koşu klasörüne yaymıştır: yeni işlem spool'u da kapatır.</para>
     /// </summary>
     [StaFact]
     public async Task A_new_operation_after_a_synthetic_run_resets_the_store_the_live_buffer_the_run_text_and_the_document()
     {
         using var dir = new TempDir();
         var (window, vm, console, tick) = PumpedHost(dir, productionMemoryCollector: false);
-        RunSyntheticBuild(vm, console, tick);
+        using var logs = new SpoolDir(vm.Narrative);
+        RunSyntheticBuild(vm, console, tick, logs.Path);
         ProjectLogIpc.Request(vm, MainWindowHost.IdOf("A"));             // koşunun sonunda bir proje logu istendi; gönderim düştü
         MainWindowHost.LogLine(vm, "A", Lines + 1, "after the request"); // istekten sonra: canlı tamponda
         Assert.True(vm.Narrative.Count > Lines, "ön-koşul: koşunun anlatısı store'da");
+        Assert.True(vm.Narrative.IsSpooling, "ön-koşul: koşunun anlatısı koşu klasörüne yayılıyor");
         Assert.Equal(1, vm.LiveLineCount);                               // ön-koşul: tampon dolu
         Assert.NotEqual(0, console.Document.TextLength);                 // ön-koşul: belge koşunun kuyruğunu gösteriyor
 
@@ -93,6 +114,7 @@ public sealed class NarrativeBudgetTests(ITestOutputHelper output)
         await MainWindowHost.StartSync(vm, SyncMode.Manual);             // yeni işlem: Sync düğmesi
 
         Assert.Equal(0, vm.Narrative.Count);
+        Assert.False(vm.Narrative.IsSpooling);
         Assert.Equal(0, vm.LiveLineCount);
         Assert.Equal("", vm.GetRunDocumentText());
         Assert.Equal(0, console.Document.TextLength);
@@ -109,31 +131,34 @@ public sealed class NarrativeBudgetTests(ITestOutputHelper output)
         var (growth, text) = await StaThread.RunAsync(MeasureRun, name: "narrative-budget-sta");
 
         output.WriteLine(string.Format(CultureInfo.InvariantCulture,
-            "managed growth {0:0.00} MB, text {1:0.00} MB, growth/text {2:0.000} (budget 1.200), {3} lines",
-            growth / BytesPerMb, text / BytesPerMb, (double)growth / text, Lines));
-        Assert.True(growth <= text * 12 / 10, string.Create(CultureInfo.InvariantCulture,
-            $"growth {growth / BytesPerMb:0.00} MB > 1.2 x text {text / BytesPerMb:0.00} MB"));
+            "managed growth {0:0.00} MB (budget {1:0.00} MB), text {2:0.00} MB, growth/text {3:0.000}, {4} lines",
+            growth / BytesPerMb, BudgetBytes / BytesPerMb, text / BytesPerMb, (double)growth / text, Lines));
+        Assert.True(growth <= BudgetBytes, string.Create(CultureInfo.InvariantCulture,
+            $"growth {growth / BytesPerMb:0.00} MB > budget {BudgetBytes / BytesPerMb:0.00} MB (text {text / BytesPerMb:0.00} MB)"));
     }
 
     /// <summary>Koşuyu sürer ve yönetilen yığının koşu öncesine göre büyümesini (trim sonrası) ve metnin baytını döner. Trim
     /// üretimin toplayıcısıyla yapılır (fixture'ın <c>productionMemoryCollector</c>'ı); test yalnız onu bir sayaçla sarar
-    /// [final review "Tasks 9-10" hijyeni: toplama ikinci kez yazılmaz].</summary>
+    /// [final review "Tasks 9-10" hijyeni: toplama ikinci kez yazılmaz]. Koşu bir koşu klasörü bildirir (anlatı diske yayılır);
+    /// klasörün dispose'u spool'u ölçümden SONRA kapatır.</summary>
     private static (long Growth, long Text) MeasureRun()
     {
         using var dir = new TempDir();
         var (window, vm, console, tick) = PumpedHost(dir, productionMemoryCollector: true);
+        using var logs = new SpoolDir(vm.Narrative);
         window.TrimGraceAfterFinale = TimeSpan.Zero; // pay sıfır: boşaltma zamanlayıcı ateşlemez, trim boşta kuyruktan yürür
         int trims = 0;
         var production = window.MemoryCollector;
         window.MemoryCollector = () => { trims++; production(); }; // üretimin toplaması + sayaç
 
         long before = GC.GetTotalMemory(forceFullCollection: true);
-        long text = RunSyntheticBuild(vm, console, tick);
+        long text = RunSyntheticBuild(vm, console, tick, logs.Path);
         DispatcherPump.DrainToIdle(); // işlem sonu trimi (pay sıfır: boşta kuyruktan)
 
         Assert.Equal(1, trims);                                                     // ön-koşul: ölçüm trimden sonra
         Assert.True(console.Document.LineCount <= ConsoleView.SeededDocumentLines, // ön-koşul: görünüm yalnız render dilimini tutar
             $"the console document holds {console.Document.LineCount} lines — the render slice was not trimmed");
+        Assert.True(vm.Narrative.IsSpooling, "ön-koşul: koşunun anlatısı koşu klasörüne yayıldı");
         long after = GC.GetTotalMemory(forceFullCollection: true);
         GC.KeepAlive(window);
         GC.KeepAlive(vm);
@@ -150,12 +175,13 @@ public sealed class NarrativeBudgetTests(ITestOutputHelper output)
         return (window, vm, window.Shell.ConsoleViewControl, tick);
     }
 
-    /// <summary>Sentetik koşuyu üretim yolundan sürer: her satır modele (<c>projectLog</c>), pompa her <see cref="LinesPerTick"/>
-    /// satırda bir tick eder ve batch belgeye iner; koşu biter ve son batch da teslim edilir. Dönen değer metnin UTF-16 baytıdır.</summary>
-    private static long RunSyntheticBuild(RunViewModel vm, ConsoleView console, SemaphoreSlim tick)
+    /// <summary>Sentetik koşuyu üretim yolundan sürer: koşu <paramref name="logDirectory"/>'yi koşu klasörü olarak bildirir, her satır
+    /// modele (<c>projectLog</c>), pompa her <see cref="LinesPerTick"/> satırda bir tick eder ve batch belgeye iner; koşu biter ve son
+    /// batch da teslim edilir. Dönen değer metnin UTF-16 baytıdır.</summary>
+    private static long RunSyntheticBuild(RunViewModel vm, ConsoleView console, SemaphoreSlim tick, string logDirectory)
     {
         long text = 0;
-        MainWindowHost.StartBuild(vm, "A");
+        MainWindowHost.StartBuildWithLogDirectory(vm, logDirectory, "A");
         for (int i = 1; i <= Lines; i++)
         {
             string line = Line(i);

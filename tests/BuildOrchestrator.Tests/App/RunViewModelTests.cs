@@ -1580,6 +1580,9 @@ public class RunViewModelTests
         Assert.Equal(2, vm.Projects.Count);
         Assert.All(vm.Projects, p => Assert.True(p.State is ProjectRowState.Succeeded or ProjectRowState.Failed));
         Assert.False(vm.IsRunning);
+        // [idle-memory · dalga 2] Motor runStarted'la sandbox'taki koşu klasörünü bildirdi ve VM anlatıyı oraya yaydı: spool, sandbox
+        // silinmeden önce kapanır — açık dosya klasörün silinmesini engellerdi (sandbox o hatayı yutar, klasör sızardı).
+        vm.Narrative.Clear();
     }
 
     // ---------------------------------------------------------------- 8) [Task 17] depIssue VM state
@@ -3174,15 +3177,19 @@ public class RunViewModelTests
 
     // ---------------------------------------------------------------- [T8 · spec §6.1 · §6.2 · karar 10] koşu sırasında branch
 
-    private const string RunLogDirectory = @"D:\logs\2026-09-19_10-00-00";
-
     /// <summary>Sync'lenmiş iki satırlı workspace'te B'yi derleyen bir koşu uçuşta; HEAD sahte ve <paramref name="head"/>
-    /// değişkeninden okunur, UI kuyruğu <paramref name="posted"/>'tır.</summary>
-    private static RunViewModel MidRunVm(EngineHost engine, Queue<Action> posted, Func<Core.Git.HeadState> head)
+    /// değişkeninden okunur, UI kuyruğu <paramref name="posted"/>'tır.
+    /// <para>[idle-memory · dalga 2] <paramref name="logDirectory"/> koşunun bildirdiği koşu klasörüdür; özet satırı onu yazar
+    /// ("logs: …") ve VM anlatıyı oraya yayar. Eskiden var olmayan sabit bir klasördü (<c>D:\logs\2026-09-19_10-00-00</c>): spool'la o
+    /// yol her koşuda konsola bir "could not be written" uyarısı düşürür, klasör bir makinede varsa oraya dosya yazardı. Özeti
+    /// sınamayan testler klasör vermez (<c>null</c> — spool yok); özeti sınayanlar geçici bir klasör verir ve testin açtığı yeni bölüm
+    /// spool'u kapatır.</para></summary>
+    private static RunViewModel MidRunVm(EngineHost engine, Queue<Action> posted, Func<Core.Git.HeadState> head,
+        string? logDirectory = null)
     {
         var vm = SyncedTwoRowVm(engine);
         vm.EnableAutoSync(posted.Enqueue, _ => head(), () => new FakeHeadWatcher());
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug", LogDirectory: RunLogDirectory));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug", LogDirectory: logDirectory));
         vm.OnEvent(new BuildPreviewEvent([ // motor runStarted'ın hemen ardından önizlemeyi yayınlar: kapsam = B
             new BuildPreviewItem(A, "A", false, Reason: WillBuildReason.UpToDate),
             new BuildPreviewItem(B, "B", true, Reason: WillBuildReason.SignatureChanged, OwnFilesChanged: true),
@@ -3223,8 +3230,9 @@ public class RunViewModelTests
     {
         using var sandbox = new SupervisorSandbox();
         await using var engine = await StartedEngineAsync(sandbox);
+        using var logs = new TempDir(); // koşu klasörü — testin açtığı yeni bölüm spool'u kapatır
         var posted = new Queue<Action>();
-        var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("feature", CommittedSha));
+        var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("feature", CommittedSha), logs.Path);
         var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
         vm.DebugOnCommandSent = sent.Enqueue;
         await vm.StopCommand.ExecuteAsync(null);
@@ -3242,7 +3250,7 @@ public class RunViewModelTests
 
         Assert.Single(sent.OfType<SyncWorkspaceCommand>());
         string text = vm.GetRunDocumentText().ReplaceLineEndings("\n");
-        Assert.DoesNotContain(Core.Planning.PlanProgressLines.RunInterruptedByBranchChange(0, 1, RunLogDirectory), text, StringComparison.Ordinal);
+        Assert.DoesNotContain(Core.Planning.PlanProgressLines.RunInterruptedByBranchChange(0, 1, logs.Path), text, StringComparison.Ordinal);
         Assert.StartsWith(Core.Planning.PlanProgressLines.SwitchedBranch("main", "feature", "2222222"), text, StringComparison.Ordinal);
         vm.DisableAutoSync();
     }
@@ -3274,8 +3282,9 @@ public class RunViewModelTests
     {
         using var sandbox = new SupervisorSandbox();
         await using var engine = await StartedEngineAsync(sandbox);
+        using var logs = new TempDir(); // koşu klasörü — özet onu yazar; testin açtığı yeni bölüm spool'u kapatır
         var posted = new Queue<Action>();
-        var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("feature", CommittedSha));
+        var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("feature", CommittedSha), logs.Path);
         var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
         vm.DebugOnCommandSent = sent.Enqueue;
 
@@ -3286,7 +3295,8 @@ public class RunViewModelTests
         Drain(posted);
 
         Assert.False(Assert.Single(sent.OfType<SyncWorkspaceCommand>()).Fetch);
-        string summary = Core.Planning.PlanProgressLines.RunInterruptedByBranchChange(0, 1, RunLogDirectory);
+        Assert.False(vm.Narrative.IsSpooling); // yeni bölüm koşunun spool'unu kapattı
+        string summary = Core.Planning.PlanProgressLines.RunInterruptedByBranchChange(0, 1, logs.Path);
         string switched = Core.Planning.PlanProgressLines.SwitchedBranch("main", "feature", "2222222");
         Assert.StartsWith(summary + "\n" + switched, vm.GetRunDocumentText().ReplaceLineEndings("\n"), StringComparison.Ordinal);
         vm.DisableAutoSync();

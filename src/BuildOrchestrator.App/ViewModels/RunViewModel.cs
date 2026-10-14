@@ -9,6 +9,7 @@ using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Formatting;
 using BuildOrchestrator.Core.Incremental;
+using BuildOrchestrator.Core.Logs;
 using BuildOrchestrator.Core.Paths;
 using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Core.ProcessControl;
@@ -436,7 +437,8 @@ public sealed partial class RunViewModel : ObservableObject
     // [Kısıt 4] _projectText/_liveLines HEM arka plan thread'inden (OnProjectLog — marshal YOK, A13.2) HEM UI
     // thread'inden (chunk/Get*DocumentText) dokunulur — düz Dictionary/StringBuilder thread-safe DEĞİLDİR, bu yüzden
     // tüm erişimler _gate altındadır. Anlatı (Narrative) kendi kilidini taşır; VM onu yine _gate altında yazar ve okur
-    // (sıra her yerde _gate → store kilidi). ActiveProjectId'nin kendisi (WPF binding'e bağlı [ObservableProperty])
+    // (sıra her yerde _gate → store kilidi). Tek istisna spool'un açılışıdır (BeginNarrativeSpool): satır eklemez, yalnız
+    // store kilidini alır — sıra yine tersine dönmez. ActiveProjectId'nin kendisi (WPF binding'e bağlı [ObservableProperty])
     // SADECE UI thread'inde yazılır (OnProjectLogChunk marshallı) — kilide gerek yok, yalnız OKUNURKEN arka plandan
     // (benign race: referans türü ataması atomiktir, en kötü tek satır yanlış hedefe gider — kabul edilebilir ölçek
     // [It-2 iskelesi]). _pendingLoad da aynı kuraldadır: UI thread'inde yazılır, OnProjectLog hangi projenin satırını
@@ -446,11 +448,15 @@ public sealed partial class RunViewModel : ObservableObject
     private readonly Dictionary<string, List<ProjectLogEvent>> _liveLines = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, int> _projectLineCount = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>[idle-memory · dalga 1 · spec §6.2] Koşu anlatısının bellekteki TEK sahibi: tüm projelerin satırları + anlatı
-    /// satırları, işlem boyunca. Konsol görünümü belgeyi bundan kurar ve geçmiş dilimini bundan ister — kopya tutmaz (kabuk
-    /// açılışta bağlar: <c>ConsoleView.BindNarrative</c>). "N lines" sayacı da budur (<see cref="GetActiveLineCount"/>: tam
-    /// anlatı, render dilimi DEĞİL — Ek A #23). Yazım <c>_gate</c> altında, pompaya gönderimle AYNI bölümdedir (reseed nesil
-    /// guard'ı ona dayanır — <see cref="SeedRunDocument"/>).</summary>
+    /// <summary>[idle-memory · dalga 1 · spec §6.2] Koşu anlatısının TEK sahibi: tüm projelerin satırları + anlatı satırları, işlem
+    /// boyunca. Konsol görünümü belgeyi bundan kurar ve geçmiş dilimini bundan ister — kopya tutmaz (kabuk açılışta bağlar:
+    /// <c>ConsoleView.BindNarrative</c>). "N lines" sayacı da budur (<see cref="GetActiveLineCount"/>: tam anlatı, render dilimi
+    /// DEĞİL — Ek A #23). Yazım <c>_gate</c> altında, pompaya gönderimle AYNI bölümdedir (reseed nesil guard'ı ona dayanır —
+    /// <see cref="SeedRunDocument"/>).
+    /// <para>[idle-memory · dalga 2 · spec §6.3] Koşu başlayınca koşu klasörüne yayılır (<see cref="BeginNarrativeSpool"/>): bellekte
+    /// yalnız son pencere kalır, öncesi o klasördeki dosyadan okunur. Spool'un uyarısını VM kendi bölümünde alır
+    /// (<see cref="AppendSpoolWarningLocked"/>), işlemin sonunda tamponu diske indirir (<see cref="MarkOperationEnded"/>); yeni bölüm
+    /// (<see cref="ClearConsoleForNewOperation"/>) store'u temizlerken spool'u da kapatır.</para></summary>
     internal NarrativeStore Narrative { get; } = new();
 
     private PendingLoad? _pendingLoad; // yalnız UI thread'inde YAZILIR (LoadProjectLogAsync, CompletePendingLoad); OnProjectLog arka plandan okur
@@ -2140,6 +2146,23 @@ public sealed partial class RunViewModel : ObservableObject
             AppendRunLine(warning);
         UpdateEta(); // runStarted anında henüz hiçbir completion yok → X/N fallback (ETA numarası YOK)
         RefreshRunSurface();
+        // [idle-memory · dalga 2 · spec §6.3] Anlatı koşu klasörüne yayılır — handler'ın SONUNDA: koşunun durumu (IsRunning/Phase/
+        // IsStarting) çoktan yazıldı; spool açılamasa da şerit "Starting"te kalamaz. Yukarıdaki satırlar dosyaya önce yazılır.
+        BeginNarrativeSpool(e.LogDirectory);
+    }
+
+    /// <summary>
+    /// [idle-memory · dalga 2 · spec §6.3] Koşunun anlatısını <c>runStarted</c>'ın bildirdiği koşu klasöründeki dosyaya yayar
+    /// (<see cref="RunLogPaths.NarrativeFileName"/>). Klasör yoksa ya da tam nitelikli değilse (boş/göreli — dosya adı sürecin çalışma
+    /// klasörüne düşerdi) spool açılmaz: anlatı Sync ve Clean'deki gibi bellekte kalır. Açılamazsa store bellekte devam eder ve
+    /// bölümün tek uyarısı konsola düşer. Temizlik bu çağrıdan ÖNCEDİR: koşunun bölümü <see cref="BeginRunAsync"/>'te açıldı,
+    /// <c>runStarted</c> onun ardından gelir — dosyaya yalnız bu bölümün satırları yazılır.
+    /// </summary>
+    private void BeginNarrativeSpool(string? logDirectory)
+    {
+        if (logDirectory is null || !Path.IsPathFullyQualified(logDirectory)) return;
+        if (Narrative.BeginSpool(Path.Combine(logDirectory, RunLogPaths.NarrativeFileName))) return;
+        lock (_gate) AppendSpoolWarningLocked();
     }
 
     /// <summary>[PERF Faz D / karar 10 · kırpma notu görünür] Motor işçi sayısını makineye göre kırptıysa kullanıcıya
@@ -2639,8 +2662,20 @@ public sealed partial class RunViewModel : ObservableObject
 
     private int _endedOperationSerial;
 
-    /// <summary><see cref="EndedOperationSerial"/>'ın TEK yazıcısı — bir işlemin bitiş noktaları bunu çağırır.</summary>
-    private void MarkOperationEnded() => EndedOperationSerial++;
+    /// <summary><see cref="EndedOperationSerial"/>'ın TEK yazıcısı — bir işlemin bitiş noktaları bunu çağırır.
+    /// <para>[idle-memory · dalga 2 · spec §6.3 · I9] Anlatı spool'unun tamponu da burada diske iner: koşunun sonu (<see cref="MarkRunEnded"/>)
+    /// ve açık spool'a ekleyen işlemlerin (Appended/Silent Sync) sonu. Yazıcı bölüm boyunca açık kalır ve süreç kapanırken
+    /// sonlandırıcı koşmaz — boşaltılmayan kuyruk dosyaya hiç inmezdi. Spool yoksa hiçbir şey yapmaz; boşaltma düşerse uyarısı
+    /// konsola düşer.</para></summary>
+    private void MarkOperationEnded()
+    {
+        lock (_gate)
+        {
+            Narrative.Flush();
+            AppendSpoolWarningLocked();
+        }
+        EndedOperationSerial++;
+    }
 
     /// <summary>
     /// [perf Faz C · C4] Koşunun HER bitiş yolu buradan geçer: <c>runCompleted</c> (<see cref="OnRunCompleted"/> — Stop'un bitişi
@@ -2946,6 +2981,8 @@ public sealed partial class RunViewModel : ObservableObject
             // backlog'unun belgeden hep ileride olması buna dayanır.
             if (ActiveProjectId is null || string.Equals(ActiveProjectId, e.ProjectId, StringComparison.OrdinalIgnoreCase))
                 _console.Post(e.Text);
+            // [idle-memory · dalga 2] Bu satırın spool yazımı düştüyse uyarısı satırın ARDINDAN gelir — store'da da pompada da.
+            AppendSpoolWarningLocked();
         }
     }
 
@@ -3013,9 +3050,29 @@ public sealed partial class RunViewModel : ObservableObject
         // böler, yani "N lines" ekrandaki satırları sayar.
         lock (_gate)
         {
-            Narrative.Append(text);
-            if (ActiveProjectId is null) _console.Post(text);
+            AppendRunLineLocked(text);
+            AppendSpoolWarningLocked();
         }
+    }
+
+    /// <summary>Bir anlatı satırının TEK yazımı (kilit altında): önce store, sonra — anlatı ekrandaysa — pompa.</summary>
+    private void AppendRunLineLocked(string text)
+    {
+        Narrative.Append(text);
+        if (ActiveProjectId is null) _console.Post(text);
+    }
+
+    /// <summary>
+    /// [idle-memory · dalga 2 · spec §6.3] Anlatı spool'unun bekleyen uyarısını (<see cref="NarrativeStore.TakeWarning"/>) bir anlatı
+    /// satırı olarak ekler — kilit altında ve çağıranın kendi satırını pompaya gönderdikten SONRA: store sırası pompa sırasıyla aynı
+    /// kalır (belgenin ilk satırı store indeksidir). Store dışarı çağırmaz — olay yok; uyarıyı VM alır: satır ekleyen iki yol
+    /// (<see cref="OnProjectLog"/>, <see cref="AppendRunLine"/>), açılamayan spool (<see cref="BeginNarrativeSpool"/>) ve işlemin sonundaki
+    /// boşaltma (<see cref="MarkOperationEnded"/>). Uyarı bölüm başına bir kezdir ve eklenirken ya spool kapanmıştır (yazım hatası) ya
+    /// da bölümün uyarısı alınmıştır: ekleme yeni bir uyarı doğurmaz.
+    /// </summary>
+    private void AppendSpoolWarningLocked()
+    {
+        if (Narrative.TakeWarning() is { } warning) AppendRunLineLocked(warning);
     }
 
     /// <summary>[T56/3a] Konsol başlığındaki "N lines" için AKTİF tampon (run ya da seçili proje) satır sayısı —

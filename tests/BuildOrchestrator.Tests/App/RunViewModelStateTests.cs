@@ -1,9 +1,12 @@
-﻿using BuildOrchestrator.App.Console;
+﻿using System.IO;
+using System.Text;
+using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Logs;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Tests.Supervisor;
 
@@ -444,6 +447,123 @@ public class RunViewModelStateTests
         // Asıl iddia stale içeriğin GİTMİŞ olması: önceki işlemin "Build succeeded" satırı bir daha görünmez.
         Assert.DoesNotContain("Build succeeded", vm.GetRunDocumentText());
         Assert.Equal(0, vm.StreamEventCount); // TrySendAsync hatası yalnız konsola yazar, stream'e dokunmaz
+    }
+
+    // ---------------------------------------------------------------- [idle-memory · dalga 2 · spec §6.3] koşu anlatısının spool'u
+
+    /// <summary>[spec §6.3 · I9] Koşu başlayınca — <c>runStarted</c> koşu klasörünü bildirir — anlatı o klasördeki dosyaya yayılır;
+    /// dosyanın adı üretimin TEK tanımıdır (<see cref="RunLogPaths.NarrativeFileName"/>). Koşu bitince dosya kuyruğuyla birlikte
+    /// TAMDIR: yazıcı bölüm boyunca açık kalır ve süreç kapanırken sonlandırıcı koşmaz — tampondaki kuyruk dosyaya ancak koşunun
+    /// sonundaki boşaltmayla iner. Ön-koşul kuyruğun o ana dek tamponda olduğunu gösterir.</summary>
+    [Fact]
+    public async Task A_run_spools_its_narrative_into_the_run_folder_and_flushes_the_tail_when_it_ends()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        using var logs = new SpoolDir(vm.Narrative);
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", LogDirectory: logs.Path));
+        vm.OnEvent(new ProjectLogEvent("r1", @"C:\p\a.csproj", 1, "Build succeeded"));
+
+        Assert.True(vm.Narrative.IsSpooling);
+        Assert.True(File.Exists(logs.FilePath));
+        Assert.Equal("", logs.ReadText()); // ön-koşul: kuyruk henüz yazıcının tamponunda
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 100));
+
+        Assert.Equal("Build succeeded\n", logs.ReadText());
+        Assert.Equal(vm.GetRunDocumentText(), logs.ReadText());
+    }
+
+    /// <summary>[spec §6.3 · K3] Koşu klasörü bilinmiyorsa anlatı tamamen bellekte kalır: spool açılmaz ve uyarı yazılmaz — Sync ve
+    /// Clean gibi. Boş ya da göreli bir klasör de "bilinmiyor"dur: dosya adı sürecin çalışma klasörüne düşerdi.</summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("logs")]
+    public async Task A_run_without_a_usable_log_directory_keeps_the_narrative_in_memory(string? logDirectory)
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", LogDirectory: logDirectory));
+        vm.OnEvent(new ProjectLogEvent("r1", @"C:\p\a.csproj", 1, "Build succeeded"));
+
+        Assert.False(vm.Narrative.IsSpooling);
+        Assert.Equal("Build succeeded\n", vm.GetRunDocumentText()); // uyarı satırı yok
+    }
+
+    /// <summary>[spec §6.3 · §6.6 (d)] Yeni bir işlem (Sync düğmesi) spool'u kapatır; dosya koşu klasöründe kalır — klasörle birlikte
+    /// budanır — ve kuyruğuyla tamdır. Kapalıdır: paylaşımsız açılabilir.</summary>
+    [Fact]
+    public async Task A_new_operation_closes_the_spool_and_leaves_the_file_in_the_run_folder()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        using var logs = new SpoolDir(vm.Narrative);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", LogDirectory: logs.Path));
+        vm.OnEvent(new ProjectLogEvent("r1", @"C:\p\a.csproj", 1, "Build succeeded"));
+        Assert.True(vm.Narrative.IsSpooling); // ön-koşul
+        MainWindowHost.AcceptSends(vm);
+
+        await MainWindowHost.StartSync(vm, SyncMode.Manual);
+
+        Assert.False(vm.Narrative.IsSpooling);
+        using (new FileStream(logs.FilePath, FileMode.Open, FileAccess.Read, FileShare.None)) { } // kapalı: başka tutamaç yok
+        Assert.Equal("Build succeeded\n", logs.ReadText());
+    }
+
+    /// <summary>[K1 · I6 · Q6] Açılamayan spool (koşu klasörü yok) konsola TEK İngilizce uyarı satırı düşürür, anlatı bellekte kalır
+    /// ve klasör yaratılmaz. Satır anlatının sıradan bir satırıdır ("warning:" öneki onu amber boyar).</summary>
+    [Fact]
+    public async Task A_spool_that_cannot_be_opened_says_so_once_on_the_console()
+    {
+        using var dir = new TempDir();
+        string missing = Path.Combine(dir.Path, "missing");
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", LogDirectory: missing));
+        vm.OnEvent(new ProjectLogEvent("r1", @"C:\p\a.csproj", 1, "Build succeeded"));
+
+        Assert.False(vm.Narrative.IsSpooling);
+        Assert.False(Directory.Exists(missing));
+        string warning = $"warning: console history could not be written to {Path.Combine(missing, RunLogPaths.NarrativeFileName)}"
+            + " — kept in memory (DirectoryNotFoundException)";
+        Assert.Equal(warning + "\nBuild succeeded\n", vm.GetRunDocumentText());
+    }
+
+    /// <summary>[I1 · I2 · Q6] Koşu ortasında spool yazımı düşerse uyarı satırı, yazımı düşüren satırın ARDINDAN gelir — store'da da
+    /// pompada da aynı sırayla. Store dışarı çağırmaz: uyarı bir alanda bekler, VM onu kendi satırını pompaya gönderdikten sonra AYNI
+    /// kilit bölümünde alır. Senkron bir olay uyarıyı pompaya satırdan ÖNCE sokardı (belge indeksi store indeksinden ayrışır, tepeye
+    /// kaydırma yanlış dilimi getirir) ve store kilidinin içinden VM kilidine uzanırdı (UI ↔ IPC kilitlenmesi). Hata IPC thread'inde
+    /// dışarı sızmaz: sonraki satır akmaya devam eder.</summary>
+    [Fact]
+    public async Task A_spool_write_failure_mid_run_is_reported_after_the_line_that_hit_it_in_store_and_pump_order()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var console = new ConsoleBatcher(_ => Task.CompletedTask); // pompa testin elinde: sonunda tek seferde boşaltılır
+        var vm = new RunViewModel(engine, console, () => "r1") { RootPath = @"D:\repo" };
+        using var logs = new SpoolDir(vm.Narrative);
+        FailingSpoolStream? stream = null;
+        vm.Narrative.OpenSpoolStream = path => stream = new FailingSpoolStream(NarrativeStore.OpenSpoolFile(path));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", LogDirectory: logs.Path));
+        vm.OnEvent(new ProjectLogEvent("r1", @"C:\p\a.csproj", 1, "before"));
+        Assert.True(vm.Narrative.IsSpooling); // ön-koşul
+
+        stream!.Fail = true; // disk doldu
+        string overflowing = new('x', 4096); // yazıcının tamponunu taşırır: yazım tam bu satırda düşer
+        vm.OnEvent(new ProjectLogEvent("r1", @"C:\p\a.csproj", 2, overflowing));
+        vm.OnEvent(new ProjectLogEvent("r1", @"C:\p\a.csproj", 3, "after"));
+
+        Assert.False(vm.Narrative.IsSpooling);
+        string warning = $"warning: console history could not be written to {logs.FilePath} — kept in memory (IOException)";
+        Assert.Equal(["before", overflowing, warning, "after"], vm.Narrative.Slice(0, vm.Narrative.Count));
+        console.Complete();
+        var pumped = new StringBuilder();
+        await console.PumpAsync((text, _) => pumped.Append(text), CancellationToken.None);
+        Assert.Equal(vm.GetRunDocumentText(), pumped.ToString()); // pompa sırası = store sırası
     }
 
     /// <summary>

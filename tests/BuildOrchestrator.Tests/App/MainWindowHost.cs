@@ -268,11 +268,24 @@ internal static class MainWindowHost
     /// (<see cref="SafeExitTests"/>) ve kabuk (<see cref="CloseToTrayTests"/>) testlerinin ORTAK başlangıcı — iki
     /// harness'ta ayrı ayrı yazılıyordu. <paramref name="names"/> koşunun proje adlarıdır (toplam proje = adet);
     /// verilmezse tek projelik koşu (eski davranış birebir). Aynı adlar <see cref="FinishBuild"/>'e verilir.</summary>
-    public static void StartBuild(RunViewModel vm, params string[] names)
+    public static void StartBuild(RunViewModel vm, params string[] names) => StartBuildIn(vm, logDirectory: null, names);
+
+    /// <summary>[idle-memory · dalga 2 · spec §6.3] <see cref="StartBuild"/> + motorun bildirdiği koşu klasörü
+    /// (<c>runStarted.LogDirectory</c>): VM koşu anlatısını o klasördeki dosyaya yayar. Ayrı adlıdır — <see cref="StartBuild"/>'e
+    /// <c>params</c>'tan önce isteğe bağlı bir klasör parametresi eklenemezdi: <c>StartBuild(vm, "A")</c> "A"yı klasör sanırdı.
+    /// Klasörü <see cref="SpoolDir"/> verir; dispose'u spool'u kapatır.</summary>
+    public static void StartBuildWithLogDirectory(RunViewModel vm, string logDirectory, params string[] names)
+    {
+        ArgumentNullException.ThrowIfNull(logDirectory);
+        StartBuildIn(vm, logDirectory, names);
+    }
+
+    /// <summary><see cref="StartBuild"/> ile <see cref="StartBuildWithLogDirectory"/>'nin TEK gövdesi: olay tek yerde kurulur.</summary>
+    private static void StartBuildIn(RunViewModel vm, string? logDirectory, string[] names)
     {
         ArgumentNullException.ThrowIfNull(vm);
         ArgumentNullException.ThrowIfNull(names);
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, Math.Max(names.Length, 1), 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, Math.Max(names.Length, 1), 1, "Debug", 0, LogDirectory: logDirectory));
     }
 
     /// <summary>[perf A1 fix 1] Koşu biter: her proje derlenir (<c>projectStarted</c> + <c>projectSucceeded</c>) ve

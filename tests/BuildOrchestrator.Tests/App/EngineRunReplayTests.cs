@@ -33,14 +33,17 @@ public class EngineRunReplayTests
         PlanOf([.. names.Select(n => Node(n, willBuild: false) with { WillBuildReason = WillBuildReason.UpToDate })]);
 
     /// <summary>Koordinatörü <paramref name="cmd"/> ile sonuna kadar koşturur ve yazdığı olayları döner. Varsayılan
-    /// sahte MSBuild her projeyi başarıyla derler; defter verilmezse koşu defterisizdir.</summary>
+    /// sahte MSBuild her projeyi başarıyla derler; defter verilmezse koşu defterisizdir.
+    /// <para>[idle-memory · dalga 2] <c>runStarted</c>'ın koşu klasörü olaydan düşülür: klasör atılan harness'indir ve VM oynatmada
+    /// anlatıyı oraya yayıp dosyayı test bitince de açık tutardı. Bu sınıf satırları ve akışı sınar, anlatı spool'unu değil; geri
+    /// kalan her olay motorun yazdığıdır.</para></summary>
     private static async Task<IReadOnlyList<IpcEvent>> RunEngineAsync(RunPlan plan, StartRunCommand cmd,
         FakeInvoker? invoker = null, BuildStateStore? store = null)
     {
         using var h = new Harness(plan, invoker ?? AllSucceed(), stateStore: store);
         await h.Sut.StartAsync(cmd, default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
-        return h.Events;
+        return [.. h.Events.Select(e => e is RunStartedEvent started ? started with { LogDirectory = null } : e)];
     }
 
     /// <summary>Koşudan önceki ekran: topoloji + Sync'in önizlemesi (planın kararı).</summary>
