@@ -311,6 +311,39 @@ public class ConsoleViewTests
         Assert.Equal(string.Concat(all.Select(l => l + "\n")), view.Document.Text); // KIRMIZI: son 200 satır hiç gelmezdi
     }
 
+    /// <summary>
+    /// [idle-memory · dalga 2 son inceleme · defter 2] <b>Boş dilim kuralının istisnası: store belgenin GERİSİNDEyse yüklenecek bir şey
+    /// yoktur ve indeks iner.</b> Pencere gizliyken yeni bir işlem anlatıyı temizler; belge dönüşe dek kurulmaz (bayat belge — kabuk onu
+    /// dönüşte modelden bir kez kurar). Bu sırada gelen bir tepeye kaydırma boş dilim alır: "aynı dilimi yeniden iste" kuralı burada
+    /// indeksi yerinde tutsaydı, yeni bölümün satırları gelince aynı indeks onların ortasını bayat belgenin tepesine dikerdi. İndeks
+    /// iner, belge bayat kalır ve dönüşte yeniden kurulur.
+    /// <para>KIRMIZI (<c>ConsoleView.PrependPreviousChunk</c>'ın "backlog belgenin gerisinde" dalı geçici olarak silindi): indeks eski
+    /// bölümün yerinde kalıyordu — yeni bölümün <c>new0..new299</c> satırları eski bölümün belgesine dikiliyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void A_document_left_over_a_narrative_cleared_while_hidden_takes_nothing_of_the_new_section_until_it_is_rebuilt()
+    {
+        var view = new ConsoleView();
+        view.Measure(new Size(800, 600));
+        view.Arrange(new Rect(0, 0, 800, 600));
+        view.UpdateLayout();
+        var store = new NarrativeStore();
+        foreach (int i in Enumerable.Range(0, 500)) store.Append($"old{i}");
+        view.ShowRunDocument(NarrativeSnapshots.Of(store)); // son 200 belgede: old300..old499
+        string stale = view.Document.Text;
+
+        store.Clear();                         // gizliyken yeni işlem: anlatı temizlendi, belge kurulmadı
+        ScrollUpToTheTop(view, attempts: 3);   // store belgenin gerisinde: yüklenecek yok, indeks iner
+        foreach (int i in Enumerable.Range(0, 400)) store.Append($"new{i}"); // yeni bölümün satırları (pencere hâlâ gizli)
+        ScrollUpToTheTop(view, attempts: 3);
+
+        Assert.Equal(stale, view.Document.Text); // KIRMIZI: new0..new299 bayat belgenin tepesine dikiliyordu
+
+        view.ReplaceRunDocument(NarrativeSnapshots.Of(store)); // dönüş: belge modelden bir kez kurulur (ResyncAfterShow)
+        Assert.EndsWith("new398\nnew399\n", view.Document.Text);    // yeni bölümün son dilimi
+        Assert.DoesNotContain("old", view.Document.Text);           // eski bölümden satır kalmadı
+    }
+
     /// <summary>Okuyucu tepeye <paramref name="attempts"/> kez kaydırır: her deneme önce tepeden uzaklaşır (arm), sonra tepeye döner —
     /// chunk loader'ın üretimdeki jesti (<see cref="ConsoleView.EvaluateChunkScroll"/>). Yüklenecek dilim kalmayınca deneme bir şey
     /// yapmaz.</summary>
