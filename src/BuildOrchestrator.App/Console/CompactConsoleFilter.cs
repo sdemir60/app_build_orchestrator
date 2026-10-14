@@ -26,7 +26,8 @@ namespace BuildOrchestrator.App.Console;
 ///
 /// <para><b>Bellek.</b> Bir uyarının kimliği metnin kendisi değil 64 bitlik parmak izidir (<see cref="Fingerprint"/>): binlerce
 /// uyarılı bir projede metinleri tutmak log hacmiyle orantılı bellek olurdu (spec §5 ilke 1). Projenin sayacı özetiyle birlikte düşer;
-/// özeti olmayan projede en çok <see cref="ShownWarningsPerProject"/> iz kalır ve yeni işlemde (<see cref="Reset"/>) o da gider.
+/// özeti olmayan projede en çok <see cref="ShownWarningsPerProject"/> iz kalır, bekleyen özeti boşaltılan projede (<see cref="DrainPending"/>)
+/// görülenlerin izi kalır — geç gelen tekrarlar için — ve yeni işlemde (<see cref="Reset"/>) hepsi gider.
 /// [fix 1 · M4] Sıcak yol ayırma yapmaz: gizlenen satır ve görülmüş uyarının tekrarı 0 bayttır; kod string'i yalnız projenin sayacına
 /// YENİ bir kod girerken üretilir.</para>
 ///
@@ -87,25 +88,34 @@ public sealed class CompactConsoleFilter
     }
 
     /// <summary>Proje bitti (başarı, hata ya da atlama): gizlenen uyarı varsa özet satırı, yoksa <c>null</c>. Özet üretilince projenin
-    /// sayacı düşer — aynı sonucun tekrarı özeti ikilemez.</summary>
-    public string? ProjectDone(string projectId, string name)
+    /// sayacı düşer — aynı sonucun tekrarı özeti ikilemez.
+    /// <para>[DEĞİŞEN KURULUM — dalga 2 son inceleme O7] Ad artık bir çözücüyle verilir ve YALNIZ özet üretilirken sorulur
+    /// (<see cref="ProjectHeader"/> ve <see cref="DrainPending"/> gibi); eskiden çağıran her proje sonucunda adı önceden çözüyordu — özet
+    /// düşmese de.</para></summary>
+    public string? ProjectDone(string projectId, Func<string, string> nameOf)
     {
+        ArgumentNullException.ThrowIfNull(nameOf);
         if (!_projects.TryGetValue(projectId, out var warnings) || warnings.Hidden == 0) return null;
         _projects.Remove(projectId);
-        return Summary(name, warnings);
+        return Summary(nameOf(projectId), warnings);
     }
 
     /// <summary>
     /// [fix 1 · M2] Koşu bitti: sonucu HİÇ gelmeyen projelerin (motor kaybı — motor uçuştaki projeler için sonuç yazmadan gitti) bekleyen
-    /// özetleri, projelerin ilk uyarı sırasıyla; özetlenen projenin sayacı düşer (<see cref="ProjectDone"/> gibi). Normal bitişte her proje
-    /// sonucunu almıştır: liste boştur. Adlar yalnız özet üretilirken sorulur.
+    /// özetleri, projelerin ilk uyarı sırasıyla. Normal bitişte her proje sonucunu almıştır: liste boştur. Adlar yalnız özet üretilirken
+    /// sorulur.
+    /// <para>[DEĞİŞEN KURAL — dalga 2 son inceleme · defter 8] Boşaltılan projenin yalnız gizlenen sayacı sıfırlanır (özetin sayısı ve
+    /// kodları); görülen uyarıların izi ve gösterilenlerin sayısı KALIR. Eski hâl projenin bütün durumunu atıyordu: okuma thread'i ölü
+    /// motorun stdout'unda kalan satırları motor kaybından SONRA da teslim edebilir — o geç tekrarlar yeni uyarı sayılıp "ilk 3" olarak
+    /// yeniden gösteriliyor, geç gelen bir sonuç da boşaltılmış uyarıları ikinci bir özette yeniden sayıyordu.</para>
     /// </summary>
     public IReadOnlyList<string> DrainPending(Func<string, string> nameOf)
     {
         ArgumentNullException.ThrowIfNull(nameOf);
         var pending = _projects.Where(p => p.Value.Hidden > 0).OrderBy(p => p.Value.Order).ToList();
-        foreach (var (projectId, _) in pending) _projects.Remove(projectId);
-        return [.. pending.Select(p => Summary(nameOf(p.Key), p.Value))];
+        string[] summaries = [.. pending.Select(p => Summary(nameOf(p.Key), p.Value))];
+        foreach (var (_, warnings) in pending) warnings.ForgetHidden();
+        return summaries;
     }
 
     /// <summary>Yeni işlem: bütün sayaçlar ve başlıklar sıfırlanır.</summary>
@@ -220,5 +230,12 @@ public sealed class CompactConsoleFilter
 
         /// <summary>Gizlenen tekil uyarılar, koda göre.</summary>
         public Dictionary<string, int> HiddenByCode { get; } = new(StringComparer.Ordinal);
+
+        /// <summary>Özetlenen gizli uyarıları unutur (<see cref="DrainPending"/>): görülenlerin izi ve gösterilenlerin sayısı kalır.</summary>
+        public void ForgetHidden()
+        {
+            Hidden = 0;
+            HiddenByCode.Clear();
+        }
     }
 }

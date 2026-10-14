@@ -335,6 +335,22 @@ public sealed class CloseToTrayTests
         Assert.Single(SourceGuard.ScanText(relative, source, new Regex(@"\.Shutdown\("), skipCommentLines: true));
     }
 
+    /// <summary>[kaynak · dalga 2 son inceleme · defter 1] Pencere son kez kapanırken konsol geçmişinin kuyruğunu diske indirmek
+    /// (<c>_vm.Narrative.Flush()</c>) <c>OnClosed</c>'un İLK deyimidir: ondan önce koşan bir bırakma (kısayol kaydı, tepsi simgesi, HEAD
+    /// izleyicisi) fırlatsaydı boşaltma hiç koşmaz, son satırlar dosyaya inmezdi. Boşaltma kendisi fırlatmaz (store her hatayı yutar).
+    /// Kural kaynakta pinlenir: bırakmaların fırlatmasını sağlayacak bir dikiş yoktur ve tepsi headless süitte kurulmaz —
+    /// <see cref="MainWindow_wires_the_tray_exit_item_to_the_safe_exit"/> ile AYNI desen; aradaki yorum satırları sayılmaz.
+    /// <para>KIRMIZI: boşaltma, kısayol ve tepsi bırakmalarından, HEAD izleyicisinden ve yoklama zamanlayıcısından SONRA geliyordu.</para></summary>
+    [Fact]
+    public void MainWindow_writes_the_console_history_tail_first_when_it_closes()
+    {
+        const string relative = "MainWindow.xaml.cs";
+        string source = File.ReadAllText(Path.Combine(RepoPaths.AppSrcRoot, relative));
+
+        Assert.Single(SourceGuard.ScanText(relative, source,
+            new Regex(@"protected override void OnClosed\(EventArgs e\)\s*\{(?:\s*//[^\n]*)*\s*_vm\.Narrative\.Flush\(\);")));
+    }
+
     /// <summary>[kaynak · final review F7] Pencereyi öne getiren çağrının (<see cref="MainWindow.BringForward"/>) TEK
     /// üretim değeri gösterimi kendi dispatcher turuna ERTELER: × yolunda çağrı <c>OnClosing</c>'in içinden gelir ve
     /// WPF, kapanış sürerken <c>Show</c>'u InvalidOperationException ile reddeder — senkron bir <c>ShowFromTray</c>

@@ -163,7 +163,9 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// <param name="pullExternalsBeforeBuild">Canlı bayrağın taslak kopyası (varsayılan açık).</param>
     /// <param name="stashOnBranchSwitch">Canlı stash ayarının taslak kopyası (varsayılan kapalı).</param>
     /// <param name="resolveAtFullPriority">[RESOLVE Faz 4] Canlı Resolve tam öncelik ayarının taslak kopyası (varsayılan açık).</param>
-    /// <param name="compactConsole">[idle-memory · dalga 2] Canlı Compact console ayarının taslak kopyası (varsayılan açık).</param>
+    /// <param name="compactConsole">[idle-memory · dalga 2] Canlı Compact console ayarının taslak kopyası. <c>null</c> ⇒ satır kataloğun
+    /// varsayılanında kalır (<see cref="GeneralSettingRowViewModel"/> ctor'u) — varsayılanın TEK tanımı kataloğun satırıdır, burada ikinci
+    /// bir literal yazılmaz (son inceleme · defter 12).</param>
     /// <param name="saved">[P3 · P4] Kalıcı kabuk anahtarlarının (<see cref="ShellSwitches"/>) kayıtlı durumu — verildiyse
     /// <see cref="ShellSwitches.All"/>'daki HER satır <see cref="ShellSwitches.IsOn"/> ile tohumlanır; <c>null</c> ⇒
     /// satırlar zaten kendi katalog varsayılanındadır (<see cref="GeneralSettingRowViewModel"/> ctor'u).</param>
@@ -173,7 +175,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     public SettingsDraftViewModel(IReadOnlyList<LayerPattern>? initial, string? repositoryRoot,
         IReadOnlyList<ExternalProject>? initialExternals = null, bool pullExternalsBeforeBuild = true,
         bool stashOnBranchSwitch = false, UiState? saved = null, AutostartService? autostart = null,
-        bool resolveAtFullPriority = true, bool compactConsole = true)
+        bool resolveAtFullPriority = true, bool? compactConsole = null)
     {
         _repositoryRoot = repositoryRoot;
         _openedWithoutWorkspace = string.IsNullOrWhiteSpace(repositoryRoot);
@@ -181,7 +183,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         PullExternalsBeforeBuild = pullExternalsBeforeBuild;
         StashOnBranchSwitch = stashOnBranchSwitch;
         ResolveAtFullPriority = resolveAtFullPriority;
-        CompactConsole = compactConsole;
+        if (compactConsole is { } compact) CompactConsole = compact;
         if (saved is not null)
             foreach (var s in ShellSwitches.All) GeneralRow(s.Setting).IsOn = ShellSwitches.IsOn(saved, s.Setting);
         _autostart = autostart;

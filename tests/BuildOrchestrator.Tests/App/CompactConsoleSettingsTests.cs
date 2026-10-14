@@ -56,6 +56,30 @@ public class CompactConsoleSettingsTests
         Assert.True(draft.GeneralRow(GeneralSetting.CompactConsole).IsOn);
     }
 
+    /// <summary>
+    /// [dalga 2 son inceleme · defter 12] Varsayılanın TEK tanımı kataloğun satırıdır (<see cref="GeneralSettingDefinition.Default"/>):
+    /// taze bir VM (ayar ve etkin kipi), taze bir taslak ve anahtarı taşımayan bir ui-state'ten açılan kabuk onu gösterir — kendi literalini
+    /// taşıyan bir yer kataloğun değeri değişince ondan ayrışır ve bu test kırmızı verir.
+    /// <para>KIRMIZI (katalog geçici olarak kapalıya çekildi): VM alanı, etkin kip ve kabuğun açılış seed'i kendi <c>true</c>'larını
+    /// gösteriyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void A_fresh_vm_a_fresh_draft_and_a_key_less_seed_show_the_catalogs_default()
+    {
+        bool catalog = GeneralSettingsCatalog.Definition(GeneralSetting.CompactConsole).Default;
+        var fresh = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1");
+        Assert.Equal(catalog, fresh.CompactConsole);
+        Assert.Equal(catalog, fresh.CompactConsoleInEffect);
+        Assert.Equal(catalog, new SettingsDraftViewModel(null, @"D:\repo").CompactConsole);
+
+        using var temp = new TempDir();
+        UiStateStore(temp).Save(new UiState());                   // anahtar yok
+        var (window, seeded) = New(temp, compactConsole: null);   // pencerenin KENDİ seed'i
+        Assert.Equal(catalog, seeded.CompactConsole);
+        Assert.Equal(catalog, seeded.CompactConsoleInEffect);
+        GC.KeepAlive(window);
+    }
+
     // ---------------------------------------------------------------- dosya biçimi
 
     /// <summary>Export anahtarı yazar, Import geri okur (<see cref="ResolveAtFullPrioritySettingsTests"/> deseni).

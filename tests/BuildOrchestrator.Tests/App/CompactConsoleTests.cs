@@ -329,8 +329,13 @@ public class CompactConsoleTests
     // ---------------------------------------------------------------- kip işlem başına
 
     /// <summary>[karar 8 · spec "bir sonraki işlemde" · preflight C4] Koşu ortasındaki Save koşunun kipini değiştirmez: süzgeç o koşu
-    /// boyunca aynı kalır ("ilk 3" kuralı ortada bozulmaz) ve başlık etiketi ekrandaki anlatının kipini söylemeye devam eder. Bir
-    /// sonraki işlem yeni kiple yazar.</summary>
+    /// boyunca aynı kalır ("ilk 3" kuralı ortada bozulmaz). Koşu bitince etkin kip ayarın kendisidir; bir sonraki işlem yeni kiple yazar.
+    /// <para><b>[DEĞİŞEN KURAL — dalga 2 son inceleme F1 · karar 204]</b> Eski iddia: koşu bittikten sonra da etkin kip — ve başlıktaki
+    /// <c>compact</c> etiketi — yeni bir işlem bölümünü açana dek eski kipte kalır ("yeni işlem yok: ekrandaki anlatı hâlâ kompakt
+    /// yazılmıştır"). Değişme gerekçesi: etiket ekrandaki metnin değil, konsolun BUNDAN SONRA yazacağı kipin göstergesidir (karar 204);
+    /// boştaki bir Save onu zaten hemen çeviriyordu, koşu ortasındaki Save ise koşu bitince bile çevirmiyordu — aynı etiket Save'in
+    /// zamanına göre iki ayrı şey söylüyordu. İşlem bitince uçuşta iş yoktur ve sıradaki çıktı (yeni bölüm ya da eklenen bir satır)
+    /// kaydedilen kiple yazılır.</para></summary>
     [Fact]
     public async Task A_save_during_a_run_keeps_its_mode_and_the_next_operation_takes_the_new_one()
     {
@@ -353,7 +358,7 @@ public class CompactConsoleTests
         string run = vm.GetRunDocumentText();
         Assert.Equal(1, Occurrences(run, "A: 2 more warnings — CS1591 ×2 — see the project log"));
         Assert.Equal(0, Occurrences(run, Succeeded));
-        Assert.True(vm.CompactConsoleInEffect);               // yeni işlem yok: ekrandaki anlatı hâlâ kompakt yazılmıştır
+        Assert.False(vm.CompactConsoleInEffect);              // koşu bitti: konsol bundan sonra kaydedilen kiple yazar
 
         _ = vm.BuildCommand.ExecuteAsync(null);               // yeni işlem: kip burada yakalanır
         Assert.False(vm.CompactConsoleInEffect);
@@ -361,6 +366,133 @@ public class CompactConsoleTests
         StartProject(vm, "A");
         LogLine(vm, "A", 1, Succeeded);
         Assert.Equal(1, Occurrences(vm.GetRunDocumentText(), Succeeded));
+    }
+
+    /// <summary>
+    /// [dalga 2 son inceleme F1 · karar 204] Başlıktaki <c>compact</c> etiketi konsolun BUNDAN SONRA yazacağı kipi gösterir: koşu ortasındaki
+    /// Save etiketi değiştirmez — koşunun kendi çıktısı yakaladığı kiple yazılmaya devam eder — ve koşu biter bitmez etiket kaydedilen kipe
+    /// döner; yeni bir işlem bölümü beklenmez.
+    /// <para>KIRMIZI: kip yalnız yeni bir bölümün başında yakalanıyordu — koşu bittikten sonra etiket, kaydedilen kip kapalıyken de
+    /// <c>compact</c> demeye devam ediyordu.</para>
+    /// </summary>
+    [StaFact]
+    public async Task A_save_during_a_run_shows_on_the_tag_once_the_run_has_ended()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = NewWithProjects(dir, ("A", null));
+        vm.CompactConsole = true;                             // fixture kapalı açar; üretimin varsayılanı
+        var tag = window.Shell.ConsoleHeaderControl.CompactText;
+        StartBuild(vm, "A");
+        StartProject(vm, "A");
+
+        await vm.ApplySettingsAsync([], vm.RootPath, [], compactConsole: false); // koşu ortasında Save
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(Visibility.Visible, tag.Visibility);    // koşu kendi kipinde
+        int before = vm.Narrative.Count;
+        Stream(vm, "A", [.. Enumerable.Range(1, 5).Select(i => WarningLine(i)), Succeeded]);
+        SucceedProject(vm, "A");
+        Assert.Equal(["building A", WarningLine(1), WarningLine(2), WarningLine(3), "A: 2 more warnings — CS1591 ×2 — see the project log"],
+            NarrativeSince(vm, before));                     // koşunun çıktısı bitene dek yakaladığı kiple
+
+        CompleteRun(vm, 1);
+        DispatcherPump.DrainToIdle();
+
+        Assert.Equal(Visibility.Collapsed, tag.Visibility);  // KIRMIZI: yeni bir bölüm açılana dek "compact" kalıyordu
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [F1 · fix 1 · M2] Koşunun bitişi motor kaybıyla gelse de sıra aynıdır: önce koşunun kendi çıktısı — sonucu hiç gelmeyen projenin
+    /// bekleyen özeti — koşunun yakaladığı kiple yazılır, ANCAK sonra etkin kip ayara döner. Kip bitişin başında dönseydi koşu ortasında
+    /// tam kipe geçen bir Save bekleyen özeti sessizce düşürürdü.
+    /// <para>KIRMIZI: kip koşu bitince hiç dönmüyordu.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_save_during_a_run_keeps_the_runs_mode_through_an_engine_loss_and_takes_effect_after_it()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"C:\src\OSYS" };
+        StartBuild(vm, "A");
+        StartProject(vm, "A");
+        Stream(vm, "A", [.. Enumerable.Range(1, 5).Select(i => WarningLine(i))]);
+        await vm.ApplySettingsAsync([], vm.RootPath, [], compactConsole: false); // koşu ortasında Save
+
+        vm.OnEngineExited(1);                                       // A'nın sonucu hiç gelmeyecek
+
+        Assert.Equal(1, Occurrences(vm.GetRunDocumentText(), "A: 2 more warnings — CS1591 ×2 — see the project log"));
+        Assert.False(vm.CompactConsoleInEffect);                    // KIRMIZI: koşu bittikten sonra da kompakt kalıyordu
+    }
+
+    // ---------------------------------------------------------------- motor kaybından sonra geç gelenler
+
+    /// <summary>
+    /// [dalga 2 son inceleme · defter 8] Motor kaybında (<c>OnEngineExited</c>) bekleyen özet yazılır; okuma thread'i ölü motorun
+    /// stdout'unda kalan satırları ondan SONRA da teslim edebilir. Projenin görülmüş uyarıları görülmüş kalır: geç gelen tekrar —
+    /// gösterilmiş ya da sayılmış — ne yeniden gösterilir ne yeniden sayılır, geç gelen sonuç da ikinci bir özet yazmaz.
+    /// <para>KIRMIZI: boşaltma projenin bütün durumunu (görülen uyarıların izleri dahil) atıyordu — geç tekrarlar yeni uyarı sayılıp
+    /// "ilk 3" olarak yeniden gösteriliyordu.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_late_repeat_after_an_engine_loss_is_not_shown_again()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        StartBuild(vm, "A");
+        StartProject(vm, "A");
+        Stream(vm, "A", [.. Enumerable.Range(1, 5).Select(i => WarningLine(i))]);
+        vm.OnEngineExited(1);                                       // bekleyen özet: "A: 2 more warnings"
+        int before = vm.Narrative.Count;
+
+        Stream(vm, "A", [WarningLine(1), WarningLine(5)], firstLineNumber: 6); // ölü motorun stdout kuyruğu: gösterilmiş + sayılmış
+        vm.OnEvent(new ProjectFailedEvent("r1", IdOf("A"), 100, "exit 1"));     // geç sonuç
+
+        Assert.Empty(NarrativeSince(vm, before));
+    }
+
+    /// <summary>
+    /// [defter 8] Motor kaybından sonra geç gelen YENİ bir uyarı ve geç sonuç: özet yalnız o geç uyarıyı sayar — boşaltılan özetin
+    /// saydıkları ikinci kez sayılmaz.
+    /// <para>KIRMIZI: boşaltmadan sonra tekrarlar yeni sayılıyordu — ikinci özet boşaltılan iki uyarıyı da sayıyordu ("3 more warnings").</para>
+    /// </summary>
+    [Fact]
+    public async Task A_late_warning_and_a_late_result_after_an_engine_loss_do_not_count_the_drained_warnings_again()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        StartBuild(vm, "A");
+        StartProject(vm, "A");
+        string[] warnings = [.. Enumerable.Range(1, 5).Select(i => WarningLine(i))];
+        Stream(vm, "A", warnings);
+        vm.OnEngineExited(1);                                       // bekleyen özet: "A: 2 more warnings"
+        int before = vm.Narrative.Count;
+
+        Stream(vm, "A", [.. warnings, WarningLine(6, "CS0168")], firstLineNumber: 6); // beş tekrar + bir yeni uyarı
+        vm.OnEvent(new ProjectFailedEvent("r1", IdOf("A"), 100, "exit 1"));
+
+        Assert.Equal(["A: 1 more warning — CS0168 ×1 — see the project log"], NarrativeSince(vm, before));
+    }
+
+    // ---------------------------------------------------------------- tam kip: her kayıt bir satır
+
+    /// <summary>
+    /// [dalga 2 son inceleme F4] Metni olmayan bir <c>projectLog</c> kaydı (konumsal kayıt — eksik alan <c>null</c> bağlanır) tam kipte
+    /// anlatıya BOŞ bir satır olarak girer, açık proje sayfasının aldığı gibi: kapalı kip "her satır"dır (spec §6.5) ve dalga 1'in
+    /// sözleşmesi de budur (store <c>null</c>'ı boş satır saklar). Metin <c>OnProjectLog</c>'un başında BİR kez normalleşir; süzgeç, anlatı
+    /// ve sayfa aynı metni görür.
+    /// <para>KIRMIZI: süzgecin "null = gizle" işareti tam kipte girdiye de uygulanıyordu — kayıt anlatıdan düşüyordu.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_project_log_line_without_text_is_an_empty_narrative_line_in_full_mode()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { CompactConsole = false };
+        StartBuild(vm, "A");
+        int before = vm.Narrative.Count;
+
+        vm.OnEvent(new ProjectLogEvent("r1", IdOf("A"), 1, null!)); // bozuk kayıt: metin alanı yok
+        LogLine(vm, "A", 2, Succeeded);
+
+        Assert.Equal(["", Succeeded], NarrativeSince(vm, before));
     }
 
     /// <summary>[spec §6.5 "sayaçlar işlem başında sıfırlanır" · preflight C9d] Yeni işlem süzgecin sayaçlarını ve başlıklarını

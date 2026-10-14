@@ -32,8 +32,8 @@ public class CompactConsoleFilterTests
         Assert.Null(f.LogLine("a", WarningLine(5, "MSB3277", "Found conflicts")));
         Assert.Equal(E, f.LogLine("a", E));                                 // hata hep geçer — tekrarı da; kota hatayı etkilemez
 
-        Assert.Equal("A: 2 more warnings — CS1591 ×1, MSB3277 ×1 — see the project log", f.ProjectDone("a", "A"));
-        Assert.Null(f.ProjectDone("b", "B"));                               // gizlenen uyarı yok
+        Assert.Equal("A: 2 more warnings — CS1591 ×1, MSB3277 ×1 — see the project log", f.ProjectDone("a", Named("A")));
+        Assert.Null(f.ProjectDone("b", Named("B")));                               // gizlenen uyarı yok
     }
 
     /// <summary>
@@ -64,7 +64,7 @@ public class CompactConsoleFilterTests
         Assert.Null(f.LogLine("a", "  " + inline[2]));
         Assert.Null(f.LogLine("a", "  " + inline[3]));
 
-        Assert.Equal("A: 1 more warning — CS0168 ×1 — see the project log", f.ProjectDone("a", "A")); // 2 değil
+        Assert.Equal("A: 1 more warning — CS0168 ×1 — see the project log", f.ProjectDone("a", Named("A"))); // 2 değil
     }
 
     /// <summary>Sayaçlar projeye aittir (kimlik harf duyarsız — Windows yolu) ve yeni işlemde (<see cref="CompactConsoleFilter.Reset"/>)
@@ -79,8 +79,8 @@ public class CompactConsoleFilterTests
 
         f.Reset();
         Assert.Equal(WarningLine(1), f.LogLine(@"C:\p\a.csproj", WarningLine(1)));      // yeni işlem: görülmüş uyarı ilk üç arasında yeniden görünür
-        Assert.Null(f.ProjectDone(@"C:\p\a.csproj", "A"));                 // önceki işlemin gizledikleri sayılmaz
-        Assert.Null(f.ProjectDone(@"C:\p\b.csproj", "B"));
+        Assert.Null(f.ProjectDone(@"C:\p\a.csproj", Named("A")));                 // önceki işlemin gizledikleri sayılmaz
+        Assert.Null(f.ProjectDone(@"C:\p\b.csproj", Named("B")));
     }
 
     /// <summary>Kodu olmayan uyarı (Supervisor'ın bağımlılık satırı) <c>other</c> sayılır; tek gizlenen uyarı tekil yazılır
@@ -90,7 +90,7 @@ public class CompactConsoleFilterTests
     {
         var f = new CompactConsoleFilter();
         for (int i = 1; i <= 4; i++) f.LogLine("a", $"warning: R{i} failed in this run — last successful output referenced (R{i})");
-        Assert.Equal("A: 1 more warning — other ×1 — see the project log", f.ProjectDone("a", "A"));
+        Assert.Equal("A: 1 more warning — other ×1 — see the project log", f.ProjectDone("a", Named("A")));
     }
 
     /// <summary>Özet en çok <see cref="CompactConsoleFilter.SummaryCodes"/> kod sayar: çoktan aza, eşitlikte alfabetik; toplam sayı
@@ -106,7 +106,7 @@ public class CompactConsoleFilterTests
         for (int i = 0; i < 2; i++) f.LogLine("a", WarningLine(++line, "CS0252"));
         for (int i = 0; i < 3; i++) f.LogLine("a", WarningLine(++line, "NU1903"));
 
-        Assert.Equal("A: 8 more warnings — NU1903 ×3, CS0252 ×2, MSB3277 ×2 — see the project log", f.ProjectDone("a", "A"));
+        Assert.Equal("A: 8 more warnings — NU1903 ×3, CS0252 ×2, MSB3277 ×2 — see the project log", f.ProjectDone("a", Named("A")));
     }
 
     /// <summary>[karar 3 · preflight C13] Uyarı kodu sınıflandırıcının TEK ayrıştırmasından gelir ve onun tanıdığı iki biçimi de tanır:
@@ -133,6 +133,10 @@ public class CompactConsoleFilterTests
         return code.ToString();
     }
 
+    /// <summary>[son inceleme O7] Her kimliğe aynı adı veren çözücü — süzgeç adı yalnız bir satır yazılırken sorar
+    /// (<see cref="CompactConsoleFilter.ProjectDone"/>, <see cref="CompactConsoleFilter.DrainPending"/>).</summary>
+    private static Func<string, string> Named(string name) => _ => name;
+
     /// <summary>[karar 6 · preflight C5] Özet satırı Warn rengindedir: sınıflandırıcı onu süzgecin TEK biçim tanımıyla tanır
     /// (<see cref="CompactConsoleFilter.IsSummary"/>) — ikinci bir literal yok. Benzer ama özet olmayan bir satır tanınmaz.</summary>
     [Fact]
@@ -140,7 +144,7 @@ public class CompactConsoleFilterTests
     {
         var f = new CompactConsoleFilter();
         for (int i = 1; i <= 5; i++) f.LogLine("a", WarningLine(i));
-        string summary = f.ProjectDone("a", "OSYS.Business.Customer")!;
+        string summary = f.ProjectDone("a", Named("OSYS.Business.Customer"))!;
 
         Assert.Equal("OSYS.Business.Customer: 2 more warnings — CS1591 ×2 — see the project log", summary);
         Assert.True(CompactConsoleFilter.IsSummary(summary));
@@ -152,7 +156,9 @@ public class CompactConsoleFilterTests
     /// <summary>[karar 7 · 10] Projenin başlığı (<c>building &lt;ad&gt;</c>) işlem başına BİR kez gelir — döngü turları onu
     /// yinelemez; özet üretilince projenin durumu düşer, aynı sonucun tekrarı (replay) özeti ikilemez; yeni işlem ikisini de sıfırlar.
     /// <para>[DEĞİŞEN KURULUM — fix 1 · M2b] Başlık adı artık bir çözücüyle verilir ve YALNIZ başlık üretilirken sorulur: ikinci turun
-    /// satırı ad aramaz (eskiden ad her satırda çağıranın önceden çözdüğü bir string'di). İddia aynı; sorulan adlar da pinlenir.</para></summary>
+    /// satırı ad aramaz (eskiden ad her satırda çağıranın önceden çözdüğü bir string'di). İddia aynı; sorulan adlar da pinlenir.</para>
+    /// <para>[DEĞİŞEN KURULUM — dalga 2 son inceleme O7] Özetin adı da aynı çözücüyle ve YALNIZ özet üretilirken sorulur: özeti olmayan
+    /// sonuç (replay) ad aramaz — eskiden çağıran her proje sonucunda adı önceden çözüyordu.</para></summary>
     [Fact]
     public void The_header_comes_once_per_operation_and_a_summary_is_produced_once()
     {
@@ -165,8 +171,9 @@ public class CompactConsoleFilterTests
         Assert.Equal([@"C:\p\a.csproj"], asked);
         for (int i = 1; i <= 4; i++) f.LogLine(@"C:\p\a.csproj", WarningLine(i));
 
-        Assert.Equal("A: 1 more warning — CS1591 ×1 — see the project log", f.ProjectDone(@"C:\P\A.CSPROJ", "A"));
-        Assert.Null(f.ProjectDone(@"C:\p\a.csproj", "A"));                  // replay: özet ikilenmez
+        Assert.Equal("A: 1 more warning — CS1591 ×1 — see the project log", f.ProjectDone(@"C:\P\A.CSPROJ", NameOf));
+        Assert.Null(f.ProjectDone(@"C:\p\a.csproj", NameOf));               // replay: özet ikilenmez, ad sorulmaz
+        Assert.Equal([@"C:\p\a.csproj", @"C:\P\A.CSPROJ"], asked);
 
         f.Reset();
         Assert.Equal("building A", f.ProjectHeader(@"C:\p\a.csproj", NameOf)); // yeni işlem
@@ -174,7 +181,10 @@ public class CompactConsoleFilterTests
 
     /// <summary>[fix 1 · M2] Koşunun sonunda, sonucu hiç gelmemiş (motor kaybı) ve uyarı gizlemiş projelerin bekleyen özetleri — projelerin
     /// ilk uyarı sırasıyla; adlar yalnız özet için sorulur. Sonucu gelmiş ya da gizlediği uyarı olmayan proje bekleyen değildir;
-    /// boşaltılan proje düşer: ikinci boşaltma — ve her projenin sonucunu almış normal bir bitiş — boştur.</summary>
+    /// boşaltılan projenin gizlenen sayacı sıfırlanır: ikinci boşaltma — ve her projenin sonucunu almış normal bir bitiş — boştur.
+    /// <para>[DEĞİŞEN İFADE — son inceleme · defter 8] Eskiden "boşaltılan proje düşer" deniyordu; artık yalnız gizlenen sayacı düşer,
+    /// görülenlerin izi geç gelen tekrarlar için kalır (VM düzeyinde: <c>CompactConsoleTests.A_late_repeat_after_an_engine_loss_…</c>).
+    /// Bu testin iddiası aynı.</para></summary>
     [Fact]
     public void The_pending_summaries_are_drained_once_in_first_warning_order()
     {
@@ -183,11 +193,11 @@ public class CompactConsoleFilterTests
         for (int i = 1; i <= 4; i++) f.LogLine("a", WarningLine(i));
         for (int i = 1; i <= 5; i++) f.LogLine("c", WarningLine(i));
         f.LogLine("d", WarningLine(1));                                    // gizlenen yok
-        Assert.NotNull(f.ProjectDone("c", "C"));                           // C sonucunu aldı
+        Assert.NotNull(f.ProjectDone("c", Named("C")));                           // C sonucunu aldı
 
         Assert.Equal(["B: 2 more warnings — CS1591 ×2 — see the project log", "A: 1 more warning — CS1591 ×1 — see the project log"],
             f.DrainPending(id => id.ToUpperInvariant()));
-        Assert.Empty(f.DrainPending(id => id));                            // boşaltılanlar düştü
+        Assert.Empty(f.DrainPending(id => id));                            // boşaltılanların gizlenen sayacı sıfırlandı
     }
 
     /// <summary>
@@ -206,7 +216,7 @@ public class CompactConsoleFilterTests
         for (int i = 1; i <= 3; i++) f.LogLine("a", WarningLine(i)); // uyarı kotası doldu
 
         Assert.Equal(error, f.LogLine("a", error));
-        Assert.Null(f.ProjectDone("a", "A"));                         // uyarı sayılmadı: gizlenen yok
+        Assert.Null(f.ProjectDone("a", Named("A")));                         // uyarı sayılmadı: gizlenen yok
     }
 
     /// <summary>[fix 1 · M3] Çok hedefli (multi-targeted) bir projede MSBuild'in bitiş özeti eke hedef çerçeveyi de yazar:
@@ -224,7 +234,7 @@ public class CompactConsoleFilterTests
         Assert.Null(f.LogLine("a", inline));
         Assert.Null(f.LogLine("a", "    " + inline.Trim() + @" [C:\x\A.csproj::TargetFramework=net8.0]")); // bitiş özeti
 
-        Assert.Equal("A: 1 more warning — CS1591 ×1 — see the project log", f.ProjectDone("a", "A"));
+        Assert.Equal("A: 1 more warning — CS1591 ×1 — see the project log", f.ProjectDone("a", Named("A")));
     }
 
     /// <summary>

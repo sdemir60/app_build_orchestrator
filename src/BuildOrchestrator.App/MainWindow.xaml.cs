@@ -210,8 +210,9 @@ public partial class MainWindow : Window
         _vm.StashOnBranchSwitch = saved.StashOnBranchSwitch ?? false;
         // [RESOLVE Faz 4 / karar 11] Resolve tam öncelik: hiç yazılmamışsa AÇIK — onaylanmış varsayılan; eski dosya da onu alır.
         _vm.ResolveAtFullPriority = saved.ResolveAtFullPriority ?? true;
-        // [idle-memory · dalga 2 / spec §6.5] Compact console: hiç yazılmamışsa AÇIK — onaylanmış varsayılan; eski dosya da onu alır.
-        _vm.CompactConsole = saved.CompactConsole ?? true;
+        // [idle-memory · dalga 2 / spec §6.5] Compact console: hiç yazılmamışsa kataloğun varsayılanı (onaylanmış değer: açık) — eski
+        // dosya da onu alır. Varsayılanın TEK tanımı kataloğun satırıdır; burada ikinci bir literal yazılmaz (son inceleme · defter 12).
+        _vm.CompactConsole = saved.CompactConsole ?? GeneralSettingsCatalog.Definition(GeneralSetting.CompactConsole).Default;
         _vm.PropertyChanged += OnWorkflowPreferenceChanged;
 
         // [design v1.11.0 §2.1] Title bar'ın mono bağlam metni (OSYS · main · main-2) KALDIRILDI — başlık
@@ -332,9 +333,10 @@ public partial class MainWindow : Window
         {
             if (e.PropertyName == nameof(RunViewModel.HasWorkspace)) Shell.SetHasWorkspace(_vm.HasWorkspace);
         };
-        // [idle-memory · dalga 2 · spec §6.5] Başlıktaki "compact" etiketi anlatıyı yazan ETKİN kipi izler — ayarın kendisini değil:
-        // değişiklik bir sonraki işlemde geçerli olur (RunViewModel.CompactConsoleInEffect). Açılış seed'i yukarıda yapıldı; değer
-        // burada bir kez itilir, sonrası bildirimle.
+        // [idle-memory · dalga 2 · spec §6.5 · karar 204] Başlıktaki "compact" etiketi konsolun BUNDAN SONRA yazacağı kipi izler
+        // (RunViewModel.CompactConsoleInEffect) — ayarın kendisini değil: değer işlemin başında yakalanır ve işlem uçuştayken değişmez,
+        // uçuşta işlem yokken ayarın kendisidir (boştaki Save'de hemen, işlem sürerken yapılan Save'de o işlem bitince). Açılış seed'i
+        // yukarıda yapıldı; değer burada bir kez itilir, sonrası bildirimle.
         Shell.ConsoleHeaderControl.SetCompact(_vm.CompactConsoleInEffect);
         _vm.PropertyChanged += (_, e) =>
         {
@@ -1605,16 +1607,18 @@ public partial class MainWindow : Window
     /// iptal edilen (tepsiye küçülen) kapatmalardan etkilenmez.</summary>
     protected override void OnClosed(EventArgs e)
     {
+        // [idle-memory · dalga 2 · inceleme M2] Konsol geçmişinin (koşu klasöründeki narrative.log) kuyruğu diske iner. Yazıcı bölüm
+        // boyunca açık kalır ve tamponunu işlem sonlarında boşaltır; son işlemden SONRA, işlem dışında eklenen satırlar (düşen bir
+        // gönderimin hata satırı, reddedilen bir checkout'un satırı) tamponda bekler ve süreç kapanırken sonlandırıcı koşmadığı için
+        // dosyaya hiç inmezdi. Pencere her tam çıkışta — tepsi → Exit, ×, güncelleme, oturum kapanışı — burada son kez kapanır.
+        // [son inceleme · defter 1] İLK deyimdir: aşağıdaki bırakmalardan biri fırlatsa boşaltma koşmazdı; boşaltma kendisi fırlatmaz
+        // (store her hatayı yutar). Sıra kaynakta pinli (CloseToTrayTests).
+        _vm.Narrative.Flush();
         if (Application.Current is { } app) app.SessionEnding -= OnSessionEnding; // [M-3 fix wave] (bkz. ctor: Application yoksa abonelik de yoktur)
         foreach (var registration in _hotkeys.Values) registration.Dispose();
         _tray?.Dispose();
         _vm.DisableAutoSync(); // HEAD izleyicisi bırakılır
         _vm.GitOperationPollTimer?.Stop(); // git işlemi yoklaması kapanan pencereyi tıklatmasın
-        // [idle-memory · dalga 2 · inceleme M2] Konsol geçmişinin (koşu klasöründeki narrative.log) kuyruğu diske iner. Yazıcı bölüm
-        // boyunca açık kalır ve tamponunu işlem sonlarında boşaltır; son işlemden SONRA, işlem dışında eklenen satırlar (düşen bir
-        // gönderimin hata satırı, reddedilen bir checkout'un satırı) tamponda bekler ve süreç kapanırken sonlandırıcı koşmadığı için
-        // dosyaya hiç inmezdi. Pencere her tam çıkışta — tepsi → Exit, ×, güncelleme, oturum kapanışı — burada son kez kapanır.
-        _vm.Narrative.Flush();
         // [tray indicator] Overlay AYRI bir top-level penceredir: kapatılmazsa uygulama kapanmaz.
         if (App.Motion is { } motion) motion.AnimationsEnabledChanged -= OnTrayIndicatorMotionChanged;
         _trayOverlay?.Close();

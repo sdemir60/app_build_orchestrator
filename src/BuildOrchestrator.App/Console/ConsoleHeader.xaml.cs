@@ -164,12 +164,13 @@ public partial class ConsoleHeader : UserControl
     /// <summary>Workspace var mı — sayacın görünürlüğüyle aynı başlangıç (XAML'de sayaç görünür).</summary>
     private bool _hasWorkspace = true;
 
-    /// <summary>Anlatıyı kompakt kip mi yazıyor (<see cref="SetCompact"/>).</summary>
+    /// <summary>Konsol bundan sonra kompakt mı yazıyor (<see cref="SetCompact"/>).</summary>
     private bool _compact;
 
-    /// <summary>[idle-memory · dalga 2 · spec §6.5] Anlatıyı yazan kip kompakt mı — kabuk bunu
-    /// <c>RunViewModel.CompactConsoleInEffect</c>'ten sürer: ayarın kendisi değil, ekrandaki anlatının ETKİN kipi (ayar bir sonraki
-    /// işlemde geçerli olur).</summary>
+    /// <summary>[idle-memory · dalga 2 · spec §6.5 · karar 204] Konsolun proje çıktısını BUNDAN SONRA yazacağı kip kompakt mı — kabuk bunu
+    /// <c>RunViewModel.CompactConsoleInEffect</c>'ten sürer: ayarın kendisi değil, etkin kip. İşlem uçuştayken o işlemin başında
+    /// yakaladığı kiptir; uçuşta işlem yokken ayarın kendisidir (boştaki Save'de hemen, işlem sürerken yapılan Save'de o işlem bitince).
+    /// Ekrandaki metnin hangi kiple yazıldığını söylemez: özet satırları kendini anlatır.</summary>
     public void SetCompact(bool compact)
     {
         _compact = compact;

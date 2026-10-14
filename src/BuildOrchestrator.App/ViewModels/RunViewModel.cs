@@ -462,23 +462,12 @@ public sealed partial class RunViewModel : ObservableObject
     /// temizlerken spool'u da kapatır.</para></summary>
     internal NarrativeStore Narrative { get; } = new();
 
-    /// <summary>[idle-memory · dalga 2 · spec §6.5] Kompakt konsolun süzgeci (<see cref="CompactConsoleFilter"/>): proje çıktısının
-    /// anlatıya giden hâli. Durumu işlemindir (<see cref="ClearConsoleForNewOperation"/> sıfırlar). Süzgeç kilitsizdir; her çağrı
-    /// <c>_gate</c> altındadır — satırlar IPC thread'inden (<see cref="OnProjectLog"/>), sonuçlar UI thread'inden
-    /// (<see cref="AppendCompactSummary"/>) gelir.</summary>
-    private readonly CompactConsoleFilter _compact = new();
-
-    /// <summary>[karar 8] Bu işlemin etkin kipi — <see cref="CompactConsoleInEffect"/>'in alanı, <c>_gate</c> altında. Başlangıç değeri
-    /// <see cref="CompactConsole"/>'unkidir (alan başlatıcısı <c>OnCompactConsoleChanged</c>'i çağırmaz).</summary>
-    private bool _compactInEffect = true;
-
-    /// <summary>[karar 10] Kompakt başlığın ve özetin proje adları (kimlik → ad), <c>_gate</c> altında: IPC thread'i satır listesine (UI
-    /// koleksiyonu) soramaz. İşlem başında satır listesinden, koşunun önizlemesinden doldurulur (<see cref="CompactNameLocked"/>).</summary>
-    private readonly Dictionary<string, string> _compactNames = new(StringComparer.OrdinalIgnoreCase);
-
-    /// <summary>[fix 1 · M2b] <see cref="CompactNameLocked"/>'ın süzgece verilen çözücüsü — ctor'da BİR kez kurulur: süzgeç adı yalnız
-    /// projenin ilk satırında sorar, satır başına ne arama ne kapanış ayrılır.</summary>
-    private readonly Func<string, string> _compactNameOf;
+    /// <summary>[idle-memory · dalga 2 · spec §6.5 · son inceleme O1] Kompakt konsolun TEK durumu (<see cref="CompactNarrative"/>): süzgeç,
+    /// etkin kip (<see cref="CompactConsoleInEffect"/>) ve proje adları — proje çıktısının anlatıya giden hâli. Durumu işlemindir
+    /// (<see cref="ClearConsoleForNewOperation"/> sıfırlar). Kilitsizdir; her çağrı <c>_gate</c> altındadır (sıra yine <c>_gate</c> →
+    /// store kilidi, kilit altında dışarı bildirim yok) — satırlar IPC thread'inden (<see cref="OnProjectLog"/>), sonuçlar ve işlem
+    /// sınırları UI thread'inden gelir. Açılıştaki etkin kip ayarın kendisidir (ctor).</summary>
+    private readonly CompactNarrative _compact;
 
     private PendingLoad? _pendingLoad; // yalnız UI thread'inde YAZILIR (LoadProjectLogAsync, CompletePendingLoad); OnProjectLog arka plandan okur
     // [idle-memory · I1] Son proje log isteğinin kimliği — her yükleme bir artırır (ilk istek 1; 0 "kimliksiz" demektir ve hiçbir
@@ -918,39 +907,40 @@ public sealed partial class RunViewModel : ObservableObject
 
     /// <summary>[idle-memory · dalga 2 / spec §6.5] Settings → General → CONSOLE "Compact console": konsol anlatısı proje
     /// çıktısını kompakt mı göstersin — açık ⇒ hatalar tam, her projenin ilk uyarıları ve kalanın sayısı; kapalı ⇒ her
-    /// satır. Proje logu sayfası ve disk her zaman tamdır. <b>Varsayılan: evet.</b> Değişiklik bir SONRAKİ işlemde geçerli
-    /// olur (mevcut anlatı yeniden yazılmaz). Bayrak yalnız App içidir — motora GİTMEZ (komutlarda alanı yoktur).
+    /// satır. Proje logu sayfası ve disk her zaman tamdır. Varsayılanın TEK tanımı kataloğun satırıdır
+    /// (<see cref="GeneralSettingsCatalog"/> — onaylanmış değer: açık). Değişiklik bir SONRAKİ işlemde geçerli olur (mevcut anlatı
+    /// yeniden yazılmaz; <see cref="CompactConsoleInEffect"/>). Bayrak yalnız App içidir — motora GİTMEZ (komutlarda alanı yoktur).
     /// <para><see cref="ObservablePropertyAttribute"/>: kalıcılık bu bildirimden sürer (MainWindow).</para></summary>
-    [ObservableProperty] private bool _compactConsole = true;
+    [ObservableProperty]
+    private bool _compactConsole = GeneralSettingsCatalog.Definition(GeneralSetting.CompactConsole).Default;
 
     /// <summary>
-    /// [idle-memory · dalga 2 · spec §6.5 · karar 8] Anlatıyı ŞU AN yazan kip — <see cref="CompactConsole"/>'un etkin değeri. Ayar bir
-    /// SONRAKİ işlemde geçerli olur: değer işlem başında yakalanır (<see cref="ClearConsoleForNewOperation"/>) ve işlem uçuştayken
-    /// değişmez — koşunun anlatısı tek kiple yazılır, süzgecin "ilk 3" sayımı ortada bozulmaz. İşlem yokken
-    /// (<see cref="IsOperationInFlight"/>) ayar değişince hemen geçer: sıradaki çıktı zaten bir sonraki işlemindir (Settings Save'i,
-    /// açılış seed'i). Başlıktaki <c>compact</c> etiketi bunu gösterir (MainWindow). Alanı <c>_gate</c> altındadır: IPC thread'i her
-    /// proje satırında okur (<see cref="OnProjectLog"/>).
+    /// [idle-memory · dalga 2 · spec §6.5 · karar 8 · karar 204] Konsolun proje çıktısını BUNDAN SONRA yazacağı kip —
+    /// <see cref="CompactConsole"/>'un etkin değeri; başlıktaki <c>compact</c> etiketi bunu gösterir (MainWindow). Ayar bir SONRAKİ işlemde
+    /// geçerli olur: değer her işlemin başında yakalanır (<see cref="ClearConsoleForNewOperation"/>) ve işlem uçuştayken değişmez — koşunun
+    /// anlatısı tek kiple yazılır, süzgecin "ilk 3" sayımı ortada bozulmaz. Uçuşta işlem yokken (<see cref="IsOperationInFlight"/>) değer
+    /// ayarın kendisidir (<see cref="RecaptureCompactWhenIdle"/>): ayar boşta değişince (Settings Save'i, açılış seed'i) ve son işlem
+    /// bitince — sıradaki çıktı (yeni bölüm ya da eklenen bir satır) kaydedilen kiple yazılır. Alanı <c>_gate</c> altındadır: IPC
+    /// thread'i her proje satırında okur (<see cref="OnProjectLog"/>).
     /// </summary>
     public bool CompactConsoleInEffect
     {
-        get { lock (_gate) return _compactInEffect; }
+        get { lock (_gate) return _compact.InEffect; }
     }
 
-    /// <summary>[karar 8] İşlem yokken ayar hemen etkin kip olur; işlem uçuştayken bir sonraki işlemin başını bekler.</summary>
-    partial void OnCompactConsoleChanged(bool value)
+    /// <summary>[karar 8] Ayar değişti: işlem yokken hemen etkin kip olur; işlem uçuştayken o işlemin sonunu bekler
+    /// (<see cref="MarkOperationEnded"/>).</summary>
+    partial void OnCompactConsoleChanged(bool value) => RecaptureCompactWhenIdle();
+
+    /// <summary>[karar 8 · dalga 2 son inceleme F1] Uçuşta işlem yoksa etkin kip ayarın kendisidir: yakalama kilit altında, bildirim
+    /// (kabuk başlığın etiketini tazeler) kilit DIŞINDA. İki çağıranı vardır — ayarın değişimi ve bir işlemin bitişi
+    /// (<see cref="MarkOperationEnded"/>); uçuştayken yeni değer o işlemin bitişini bekler.</summary>
+    private void RecaptureCompactWhenIdle()
     {
         if (IsOperationInFlight) return;
         bool changed;
-        lock (_gate) changed = CaptureCompactLocked(value);
-        if (changed) OnPropertyChanged(nameof(CompactConsoleInEffect)); // kilit DIŞINDA: kabuk başlığı tazeler
-    }
-
-    /// <summary>Etkin kipi yazar (kilit altında, UI thread'i); değiştiyse <c>true</c> — çağıran bildirimi kilit dışında yapar.</summary>
-    private bool CaptureCompactLocked(bool compact)
-    {
-        if (_compactInEffect == compact) return false;
-        _compactInEffect = compact;
-        return true;
+        lock (_gate) changed = _compact.Recapture(CompactConsole);
+        if (changed) OnPropertyChanged(nameof(CompactConsoleInEffect));
     }
 
     /// <summary>[T12] Koşarken (veya planlama penceresinde) branch/configuration kontrolleri kilitli;
@@ -983,7 +973,7 @@ public sealed partial class RunViewModel : ObservableObject
         _newRunId = newRunId;
         _nowMs = nowMs ?? (() => Environment.TickCount64);
         _osActions = osActions; // [E1/T67] null ise OS eylemleri güvenle no-op (test default'u); üretimde enjekte edilir
-        _compactNameOf = CompactNameLocked;
+        _compact = new CompactNarrative(CompactConsole); // [O2] açılıştaki etkin kip ayarın kendisidir — ikinci bir literal yok
     }
 
     // ---------------------------------------------------------------- komutlar
@@ -2266,8 +2256,7 @@ public sealed partial class RunViewModel : ObservableObject
     {
         // [idle-memory · dalga 2 · karar 10] Kompakt konsolun başlık/özet adları: koşunun projeleri artık biliniyor — satır listesinde
         // henüz olmayan yeni bir proje de (işlem başı listeden doldurur: ClearConsoleForNewOperation).
-        lock (_gate)
-            foreach (var item in e.Items) _compactNames[item.ProjectId] = item.Name;
+        lock (_gate) _compact.Name(e.Items.Select(item => (item.ProjectId, item.Name)));
         foreach (var item in e.Items)
         {
             var row = EnsureRow(item.ProjectId, item.Name, ProjectRowState.Pending);
@@ -2739,7 +2728,9 @@ public sealed partial class RunViewModel : ObservableObject
     /// ve açık spool'a ekleyen işlemlerin (Appended/Silent Sync) sonu. Yazıcı bölüm boyunca açık kalır ve süreç kapanırken
     /// sonlandırıcı koşmaz — boşaltılmayan kuyruk dosyaya hiç inmezdi. Son işlemden sonra, işlem dışında eklenen satırları kabuk
     /// penceresi son kez kapanırken boşaltır (<c>MainWindow.OnClosed</c>). Spool yoksa hiçbir şey yapmaz; boşaltma düşerse uyarısı
-    /// konsola düşer.</para></summary>
+    /// konsola düşer.</para>
+    /// <para>[idle-memory · dalga 2 son inceleme F1] Kompakt konsolun etkin kipi de burada ayara döner — uçuşta başka işlem kalmadıysa
+    /// (<see cref="RecaptureCompactWhenIdle"/>): işlem sürerken kaydedilen ayar o işlemin bitişinde geçerli olur.</para></summary>
     private void MarkOperationEnded()
     {
         lock (_gate)
@@ -2747,6 +2738,10 @@ public sealed partial class RunViewModel : ObservableObject
             Narrative.Flush();
             AppendSpoolWarningLocked();
         }
+        // [idle-memory · dalga 2 son inceleme F1 · karar 204] İşlem bitti: uçuşta başka işlem kalmadıysa etkin kip ayarın kendisidir —
+        // işlem sürerken yapılan bir Save burada geçerli olur ve başlığın etiketi onu hemen gösterir. Her işlem bitişi buradan geçer ve
+        // işlemin KENDİ çıktısı (motor kaybında bekleyen özetler: MarkRunEnded) bundan önce, yakaladığı kiple yazılmıştır.
+        RecaptureCompactWhenIdle();
         EndedOperationSerial++;
     }
 
@@ -2782,14 +2777,11 @@ public sealed partial class RunViewModel : ObservableObject
     private void AppendPendingCompactSummaries()
     {
         lock (_gate)
-        {
-            if (!_compactInEffect) return;
-            foreach (string summary in _compact.DrainPending(_compactNameOf))
+            foreach (string summary in _compact.Drain())
             {
                 AppendRunLineLocked(summary);
                 AppendSpoolWarningLocked();
             }
-        }
     }
 
     /// <summary>[T8 fix round 1 · I1] Bu koşuya ait olmayan bir koşu-sonu olayı: başka bir koşunun id'si, ya da
@@ -3045,6 +3037,9 @@ public sealed partial class RunViewModel : ObservableObject
     /// ObservableProperty/ObservableCollection'a ASLA dokunulmaz.</summary>
     private void OnProjectLog(ProjectLogEvent e)
     {
+        // [idle-memory · dalga 2 son inceleme F4] Metin BİR kez normalleşir: süzgeç, anlatı ve sayfa aynı metni görür. Metni olmayan
+        // bozuk bir kayıt (konumsal kayıt — eksik alan null bağlanır) her yerde boş bir satırdır; "null" yalnız süzgecin "gizle"sidir.
+        string text = e.Text ?? "";
         lock (_gate)
         {
             // [idle-memory · spec §6.2] Canlı satır YALNIZ bekleyen bir log yüklemesinin projesi için tamponlanır: dikişin tek
@@ -3067,15 +3062,9 @@ public sealed partial class RunViewModel : ObservableObject
             // Kompakt kipte süzülmüş hâliyle: projenin işlemdeki ilk satırından önce başlığı — aynı bölümde, pompadan geç gelebilen
             // projectStarted'a bağlı değil — sonra satırın kendisi ya da hiçbir şey. Süzgeç her satırı kipten (anlatı/proje) bağımsız
             // görür: sayaçları ekrandakine bağlı değildir. Gizlenen satır ne store'a ne pompaya gider (store sayısı postlanan anlatı
-            // satırı sayısıdır; null bir ekleme boş satır olurdu).
-            string? shown = e.Text;
-            if (_compactInEffect)
-            {
-                // [fix 1 · M2b] Ad tembel: yalnız projenin işlemdeki İLK satırında sorulur (çözücü bir kez kurulmuş alandır — satır
-                // başına kapanış ayrılmaz).
-                if (_compact.ProjectHeader(e.ProjectId, _compactNameOf) is { } header) AppendRunLineLocked(header);
-                shown = _compact.LogLine(e.ProjectId, e.Text);
-            }
+            // satırı sayısıdır). Ad tembeldir: yalnız başlık ya da özet yazılırken sorulur (CompactNarrative).
+            var (header, shown) = _compact.Line(e.ProjectId, text);
+            if (header is not null) AppendRunLineLocked(header);
 
             // [Fix wave 1, Finding 3] Post ARTIK AYNI kilit altında: eskiden kilit DIŞINDaydı, bu da
             // "buffer'a yazıldı ama kanala henüz post edilmedi" aralığını SeedRunDocument/SeedProjectDocument'ın
@@ -3090,32 +3079,27 @@ public sealed partial class RunViewModel : ObservableObject
             // süzülmez (karar 9 · preflight C1: süzülmüş metni postlamak sayfanın canlı satırlarını kaçırırdı).
             if (string.Equals(ActiveProjectId, e.ProjectId, StringComparison.OrdinalIgnoreCase))
             {
-                AppendProjectTextLocked(e.ProjectId, e.Text);
-                _console.Post(e.Text);
+                AppendProjectTextLocked(e.ProjectId, text);
+                _console.Post(text);
             }
             // [idle-memory · dalga 2] Bu satırın spool yazımı düştüyse uyarısı satırın ARDINDAN gelir — store'da da pompada da.
             AppendSpoolWarningLocked();
         }
     }
 
-    /// <summary>[karar 10] Kompakt başlığın ve özetin proje adı (kilit altında): işlemin ad haritası, yoksa projenin yoldan türeyen
-    /// görünen adı (<see cref="ProjectDisplayName.FromPath"/> — satır listesinin ve akışın da geri dönüşü); IPC thread'i satır
-    /// listesine soramaz.</summary>
-    private string CompactNameLocked(string projectId) =>
-        _compactNames.TryGetValue(projectId, out var name) ? name : ProjectDisplayName.FromPath(projectId);
-
     /// <summary>
     /// [idle-memory · dalga 2 · spec §6.5 · karar 11] Bir projenin sonucu geldi — başarı, hata ya da atlama ("her sonuç"): bu işlem
     /// kompakt yazılıyorsa ve süzgeç projenin uyarılarından bazılarını gizlediyse anlatıya TEK özet satırı düşer. Normal anlatı yolundan
     /// ve kilit altında: süzgece IPC thread'i de dokunur (preflight C3). Sıra güvenlidir: sonuç olayı pompadan gelir ve motor onu
     /// projenin satırlarından SONRA yazar, satırlar ise IPC thread'inde olay pompaya girmeden işlenmiştir — özet projenin satırlarının
-    /// ardındadır (araya başka projelerin satırları girebilir). Aynı sonucun tekrarı özeti ikilemez (süzgeç sayacı özetle düşer).
+    /// ardındadır (araya başka projelerin satırları girebilir). Aynı sonucun tekrarı özeti ikilemez (süzgeç sayacı özetle düşer). Ad
+    /// yalnız özet yazılırken sorulur (son inceleme O7): özeti olmayan sonuç ad aramaz.
     /// </summary>
     private void AppendCompactSummary(string projectId)
     {
         lock (_gate)
         {
-            if (!_compactInEffect || _compact.ProjectDone(projectId, CompactNameLocked(projectId)) is not { } summary) return;
+            if (_compact.Summary(projectId) is not { } summary) return;
             AppendRunLineLocked(summary);
             AppendSpoolWarningLocked();
         }
@@ -3162,10 +3146,7 @@ public sealed partial class RunViewModel : ObservableObject
             _projectText.Clear();
             Narrative.Clear();
             _projectLineCount.Clear();
-            compactChanged = CaptureCompactLocked(CompactConsole);
-            _compact.Reset();
-            _compactNames.Clear();
-            foreach (var row in Projects) _compactNames[row.Id] = row.Name;
+            compactChanged = _compact.BeginOperation(CompactConsole, Projects.Select(row => (row.Id, row.Name)));
             // Uçuştaki bayat batch'ler düşer (SeedRunDocument ile AYNI sentinel): temizlikten ÖNCE pompaya girmiş
             // bir önceki işlemin satırı, temizlikten SONRA ekrana sızamaz (nesil damgası — ConsoleBatcher).
             _console.PostReseedDrop();
