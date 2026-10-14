@@ -113,12 +113,14 @@ public partial class MainWindow
     /// <summary>Boşta kuyrukta bekleyen yürütme (<see cref="TrimIfStillDue"/>) — kuyrukta aynı anda tek yürütme bulunur.</summary>
     private DispatcherOperation? _queuedTrim;
 
-    /// <summary>[perf Faz C · C4] Toplamanın TEK gerçek çağrısı: <see cref="MemoryTrim.CollectAndRelease"/>'e devreder (ne yaptığı ve
-    /// neden bloklayıcı olduğu orada yazılıdır). Ne zaman çağrılacağına <see cref="RequestTrimWhenDue"/> karar verir. Testler sahteyle
-    /// değiştirir.</summary>
-    internal Action MemoryCollector { get; set; } = CollectMemory;
+    /// <summary>[test yüzeyi] Bir trim zamanlanmış mı: pay zamanlayıcısı çalışıyor ya da boşta bir yürütme kuyrukta. Kapanmış bir
+    /// pencerenin yeni trim İSTEMEDİĞİNİ ("zamanlayıcı yok") toplama sayısından önce, doğrudan sınar.</summary>
+    internal bool TrimScheduled => _trimGrace is { IsEnabled: true } || _queuedTrim is { Status: DispatcherOperationStatus.Pending };
 
-    private static void CollectMemory() => MemoryTrim.CollectAndRelease();
+    /// <summary>[perf Faz C · C4] Toplayıcı: App'teki tek çağrısı <see cref="MemoryTrim.CollectAndRelease"/> (ne yaptığı ve neden
+    /// bloklayıcı olduğu orada yazılıdır; aynı tanımı Supervisor da kullanır). Ne zaman çağrılacağına <see cref="RequestTrimWhenDue"/>
+    /// karar verir. Testler sahteyle değiştirir.</summary>
+    internal Action MemoryCollector { get; set; } = MemoryTrim.CollectAndRelease;
 
     /// <summary>
     /// [perf Faz C · C4] Tepsi göstergesi çıkış sırasını tamamladı (<c>TrayBuildIndicatorController.ExitCompleted</c>: gösterge
@@ -150,7 +152,8 @@ public partial class MainWindow
     /// (<see cref="DispatcherPriority.ApplicationIdle"/>) — reduced-motion'da sinyaller koşu bitişinin içinde eşzamanlı gelebilir ve
     /// bloklayan toplama bitişin kalan işini (yüzey yenilemesi, bekleyen Sync) bekletmemelidir. Görünürken pay
     /// (<see cref="TrimGraceAfterFinale"/>) beklenir ve her yeni istek payı baştan başlatır; pay dolunca yürütme yine boşta kuyruğa
-    /// düşer. Kuyrukta aynı anda tek yürütme bulunur.</para>
+    /// düşer. Kuyrukta aynı anda tek yürütme bulunur. Kapanan pencere hiç zamanlamaz: <see cref="StopMemoryTrim"/> sonrası her
+    /// istek sessizce düşer (<see cref="_trimStopped"/>).</para>
     ///
     /// <para><b>Yürütme koşulları yeniden sorar</b> (<see cref="ShouldTrimNow"/>, istekteki soru) ve işlemi ancak toplama GERÇEKTEN
     /// yürütülünce tüketir (<see cref="MemoryTrimRule.MarkTrimmed"/>): arada yeni bir işlem başladıysa, final oynuyorsa ya da bir log
@@ -160,7 +163,7 @@ public partial class MainWindow
     /// </summary>
     internal void RequestTrimWhenDue()
     {
-        if (!ShouldTrimNow()) return;
+        if (_trimStopped || !ShouldTrimNow()) return;
         if (IsSurfaceHidden || TrimGraceAfterFinale <= TimeSpan.Zero)
         {
             _trimGrace?.Stop();
@@ -188,10 +191,11 @@ public partial class MainWindow
         return timer;
     }
 
-    /// <summary>Yürütmeyi boşta kuyruğa alır — kuyrukta bekleyen varsa ikincisi alınmaz.</summary>
+    /// <summary>Yürütmeyi boşta kuyruğa alır — kuyrukta bekleyen varsa ikincisi alınmaz; pencere kapandıysa hiç alınmaz
+    /// (<see cref="_trimStopped"/>).</summary>
     private void QueueTrim()
     {
-        if (_queuedTrim is { Status: DispatcherOperationStatus.Pending }) return;
+        if (_trimStopped || _queuedTrim is { Status: DispatcherOperationStatus.Pending }) return;
         _queuedTrim = Dispatcher.InvokeAsync(TrimIfStillDue, DispatcherPriority.ApplicationIdle);
     }
 
@@ -199,7 +203,7 @@ public partial class MainWindow
     private void TrimIfStillDue()
     {
         _queuedTrim = null;
-        if (!ShouldTrimNow()) return;
+        if (_trimStopped || !ShouldTrimNow()) return;
         _trimRule.MarkTrimmed(_vm.EndedOperationSerial);
         MemoryCollector();
     }
@@ -235,9 +239,16 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>Pencere kapandı: pay zamanlayıcısı durur, kuyruktaki yürütme geri alınır.</summary>
+    /// <summary>Pencere kapandı mı (<see cref="StopMemoryTrim"/> yazar, geri dönüşü yok). Kapalı pencere yeni trim istemez ve
+    /// zamanlamaz: VM pencereden uzun yaşar — kapanıştan sonra gelen bir sinyal (motor çıkışı, geç bir işlem bitişi) aksi halde
+    /// yeni bir pay zamanlayıcısı kurar ve boşta bir yürütme kuyruklar, ölü pencere kapanan uygulamada bir toplama daha yapardı.</summary>
+    private bool _trimStopped;
+
+    /// <summary>Pencere kapandı: pay zamanlayıcısı durur, kuyruktaki yürütme geri alınır ve bir daha trim istenmez
+    /// (<see cref="_trimStopped"/>).</summary>
     private void StopMemoryTrim()
     {
+        _trimStopped = true;
         _trimGrace?.Stop();
         _queuedTrim?.Abort();
         _queuedTrim = null;
@@ -252,8 +263,10 @@ public partial class MainWindow
     /// dahil (<c>AppendConsoleBatch</c> kapısı: gizli YA DA bayrak kalkık) — bayat belgeye basılan bir batch, dönüş kurulumu
     /// belgeyi modelden yeniden kurunca boşa giderdi. Belgeyi modelden kuran görünür yollar, mod geçişi
     /// (<c>ShowRunConsole</c>) ve proje belgesi (<c>OnSelectedProjectChangedAsync</c>), bayrağı da düşürür: dönüş kurulumu o
-    /// belgeyi ikinci kez kurmaz. Temizlik (<c>ConsoleCleared</c>) düşürmez: belgeyi boşaltır ama boş anlatının "ready"
-    /// satırını kurmaz, onu dönüş kurulumu kurar.</para></summary>
+    /// belgeyi ikinci kez kurmaz. Temizlik (<c>ConsoleCleared</c>) bayrağı düşürmez: gizliyken belgeye HİÇ dokunmaz, yalnız bayrağı
+    /// kaldırır — VM anlatıyı çoktan boşaltmıştır, ekrandaki belge dönüşe dek bayat kalır (gizliyken ateşlenen bottom-anchor
+    /// zamanlayıcıları onu yine kırpabilir: <c>ConsoleView.TrimToRenderSlice</c> bunu taşır). Görünürken (gösterim ile dönüş kurulumu
+    /// arasındaki aralık dahil) belgeyi boş anlatıya bağlar ama boş anlatının "ready" satırını kurmaz, onu dönüş kurulumu kurar.</para></summary>
     private bool _consoleStaleWhileHidden;
 
     /// <summary>Gizliyken grafa itilmeyen bir statü, koşu fazı, seçim ya da filtre yenilemesi oldu

@@ -682,6 +682,38 @@ public class RunBufferReleaseTests
     }
 
     /// <summary>
+    /// [idle-memory · final review 85] <b>Kapanmış pencere YENİ trim istemez.</b> Kapanış yalnız o anda bekleyen payı ve kuyruktaki
+    /// yürütmeyi düşürüyordu; VM pencereden uzun yaşar (motor çıkışı, geç gelen bir işlem bitişi) ve kapanıştan SONRA gelen her sinyal
+    /// yeni bir pay zamanlayıcısı kurup boşta bir yürütme kuyruklardı — ölü pencere, uygulama kapanırken, bir toplama daha yapardı.
+    /// Kapanış artık bir kapıdır: trim isteği ve kuyruklama erken döner. Kapanıştan SONRA bir koşu biter; zamanlanan hiçbir şey ve
+    /// toplanan hiçbir şey olmamalıdır.
+    /// </summary>
+    [StaTheory]
+    [InlineData(0)]     // pay yok: yürütme boşta kuyruklanırdı
+    [InlineData(200)]   // pay zamanlayıcısı kurulurdu
+    public void A_closed_window_requests_no_new_trim(int graceMs)
+    {
+        using var dir = new TempDir();
+        var (window, vm, collections) = TrimHost(dir, grace: TimeSpan.FromMilliseconds(graceMs));
+        window.ShutdownApplication = () => { };
+        window.BringForward = () => { };
+        bool closed = false;
+        window.Closed += (_, _) => closed = true;
+        window.ExitFromTray();
+        window.Close();
+        Assert.True(closed);                             // ön-koşul: pencere gerçekten kapandı
+        Assert.False(window.TrimScheduled);              // ön-koşul: kapanış anında zamanlanmış bir şey yok
+
+        MainWindowHost.RunBuild(vm, "A");                // kapanıştan SONRA bir koşu biter: normalde trim ister
+
+        Assert.False(window.TrimScheduled);              // KIRMIZI: pay zamanlayıcısı kurulur / yürütme kuyruklanırdı
+        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(graceMs + 300));
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(0, collections.Count);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
     /// [perf Faz C · C-1] Üretim toplayıcısı (gerçek <c>GC.Collect</c>, bir kez) fırlatmaz. Agresif kip yalnız bloklayan biçimle
     /// geçerlidir; <c>blocking: false</c> her çağrıda <see cref="ArgumentException"/> fırlatıyordu ve süit bunu göremedi — diğer
     /// testler toplayıcıyı sayaçlı bir sahteyle değiştirir. Süitte gerçek toplama yalnız burada koşar.
