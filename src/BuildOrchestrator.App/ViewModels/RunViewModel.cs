@@ -2625,9 +2625,9 @@ public sealed partial class RunViewModel : ObservableObject
 
     /// <summary><b>"Bir işlem bitti" sinyali:</b> koşu, Sync, Clean ya da Optimize BİTTİĞİNDE bir artar — hangi yoldan biterse
     /// bitsin: tamamlanma, hata ya da ret, motor kaybı. Yazıcısı tektir (<see cref="MarkOperationEnded"/>); işlemin bitiş
-    /// noktaları onu çağırır: koşu <see cref="MarkRunEnded"/>, Sync <c>OnSyncCompleted</c> / <c>TryConsumeSyncFailure</c> /
-    /// motor kaybı, Clean ve Optimize yüzeylerini bırakan <c>ReleaseCleanSurface</c> / <c>ReleaseOptimizeSurface</c>. Artış,
-    /// işlemin kendi meşguliyet bayrağı bırakıldıktan SONRA yazılır.
+    /// noktaları onu çağırır: koşu <see cref="MarkRunEnded"/>, Sync <c>EndSync</c> (üç yol: <c>OnSyncCompleted</c> /
+    /// <c>TryConsumeSyncFailure</c> / motor kaybı), Clean ve Optimize yüzeylerini bırakan <c>ReleaseCleanSurface</c> /
+    /// <c>ReleaseOptimizeSurface</c>. Artış, işlemin kendi meşguliyet bayrağı bırakıldıktan SONRA yazılır.
     /// <para>Hiç BAŞLAMAMIŞ bir işlem sayılmaz: gönderimi düşen istek, boştaki motor kaybı ve koşuya dönüşmeden düşen planlama
     /// hatası sinyali değiştirmez. checkout ve pull işlem değildir — bir Sync'e zincirlenirlerse o Sync'in bitişi artırır.
     /// Bellek trimi gibi işlem sonu işleri bunu dinler; koşunun kimliği için bkz. <see cref="EndedRunSerial"/>.</para></summary>
@@ -2812,10 +2812,9 @@ public sealed partial class RunViewModel : ObservableObject
         // [C2 fold — A5 review] Engine Sync ortasında ölürse hiçbir syncCompleted/Sync-hatası gelmez; faz
         // Syncing'de asılı kalır ve _syncInFlight sızardı. RunEndingErrorCodes deseniyle simetrik olarak burada
         // da uçuştaki Sync serbest bırakılır. [EndedOperationSerial] Bu yol boştaki motorda da koşar (Restart): bitişi
-        // yalnız bırakılan bir Sync varsa bildirilir, bayraklar silinmeden ÖNCE okunur.
-        bool syncWasBusy = SyncBusy;
-        ReleaseSyncPhase();
-        if (syncWasBusy) MarkOperationEnded();
+        // yalnız uçuşta bir Sync varsa bildirilir (EndSync), yoksa yalnız bırakılır — bayraklar silinmeden ÖNCE okunur.
+        if (SyncBusy) EndSync();
+        else ReleaseSyncPhase();
         // [clean] Aynı gerekçe: motor Clean ORTASINDA ölürse hiçbir cleanCompleted/clean-hatası gelmez ve
         // bayrak sızarsa yeniden başlatılan motorda da düğmeler kilitli kalırdı.
         ReleaseCleanSurface();
@@ -2963,7 +2962,8 @@ public sealed partial class RunViewModel : ObservableObject
     /// <see cref="ClearStreamForNewOperation"/>'ın konsol eşi; ikisi birlikte "her işlemde temizlenir" kuralını
     /// oluşturur. <see cref="BeginRunAsync"/> (Build/Rebuild/Cycles) VE <see cref="SyncCoreAsync"/> (Sync)
     /// AYNI metodu paylaşır — inline kopya YASAK. <b>Koşulsuz "her işlemde" OKUMA:</b> <see cref="SyncCoreAsync"/> bu metodu
-    /// yalnız bölüm açan kiplerde (<see cref="SyncMode.Manual"/>, <see cref="SyncMode.BranchChange"/>) çağırır —
+    /// yalnız bölüm açan kiplerde (<see cref="SyncModeRules.ClearsConsole"/>: <see cref="SyncMode.Manual"/>,
+    /// <see cref="SyncMode.BranchChange"/>, <see cref="SyncMode.ConfigurationChange"/>) çağırır —
     /// nüans (Appended/Silent'ın geçmişi korumak için atlaması) <see cref="SyncCoreAsync"/>'in kendi XML
     /// doc'undadır.
     /// <para><b>[DEĞİŞEN KURAL — v1.13.2]</b> Bu gövde önceden yalnız <see cref="BeginRunAsync"/>'in İÇİNDE,

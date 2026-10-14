@@ -587,9 +587,12 @@ public sealed partial class RunViewModel
     private bool _operationInFlightNotified;
 
     /// <summary><see cref="IsOperationInFlight"/> bildiriminin TEK noktası — <see cref="OnWorkspaceBusyChanged"/>'in son adımı:
-    /// koşu kilidinin, koşunun bitişinin ve workspace bayraklarının her geçişi oraya iner, yani değerin her değişimi buradan geçer.
-    /// Yalnız değer son bildirilenden farklıysa bildirir: aynı değerde tekrar eden çağrılar (boştaki motor kaybının bırakmaları,
-    /// iç içe geçişler) bildirim üretmez.</summary>
+    /// koşu kilidinin, <c>runCompleted</c>'ın ve workspace bayraklarının geçişleri oraya iner. Yalnız değer son bildirilenden farklıysa
+    /// bildirir: aynı değerde tekrar eden çağrılar (boştaki motor kaybının bırakmaları, iç içe geçişler) bildirim üretmez.
+    /// <para>Değerin HER değişimi buradan geçmez: koşuyu bitiren hata ve motor kaybı, kilit zaten düşmüşken (ör. <c>runStopped</c>'tan
+    /// sonra) <c>runCompleted</c> beklemesini (<c>_awaitingRunCompleted</c>) bildirimsiz bırakabilir. Orada trimi
+    /// <see cref="RunViewModel.EndedOperationSerial"/> artışı ister (<c>MarkRunEnded</c>) ve bildirilen değer bir sonraki geçişte
+    /// yetişir. Bayat okuyan yoktur: tüketici (kabuk) değeri canlı okur, bildirim yalnız "yeniden sor" sinyalidir.</para></summary>
     private void NotifyOperationInFlight()
     {
         bool inFlight = IsOperationInFlight;
@@ -869,21 +872,47 @@ public sealed partial class RunViewModel
         LastSyncCompletedAtMs = _nowMs();
         _syncStreamLine = SyncStreamLine(e);
         SyncErrorMessage = null; // [E2/T10] Sync başarıyla bitti — varsa önceki hata metni temizlenir
-        ReleaseSyncPhase();    // [C2 fold] uçuş bayrağını normal yoldan da BURADAN temizle (tek yer)
-        // Sync başarıyla bitti: durumlar kesin bilinir (degrade dahil). [review I2] Sessiz Sync fazı olduğu yerde
-        // bırakır (Done/Stopped özeti "Ready"ye dönmez); yalnız Boot (henüz hiç Sync'lenmemiş) Idle'a çıkar.
-        if (visible || Phase == AppPhase.Boot) Phase = AppPhase.Idle;
-        // [EndedOperationSerial] Bitişin işareti syncCompleted olayının kendisidir (meşgul bayrağı değil): bayrak bırakıldı ve
-        // faz yazıldı, bitiş EN SON bildirilir.
+        // [C2 fold] uçuş bayrağı normal yoldan da BURADAN temizlenir (tek yer: EndSync). [EndedOperationSerial] Bitişin işareti
+        // syncCompleted olayının kendisidir (meşgul bayrağı değil): önce bayrak bırakılır ve faz yazılır, bitiş EN SON bildirilir.
+        EndSync(settlePhase: () =>
+        {
+            // Sync başarıyla bitti: durumlar kesin bilinir (degrade dahil). [review I2] Sessiz Sync fazı olduğu yerde
+            // bırakır (Done/Stopped özeti "Ready"ye dönmez); yalnız Boot (henüz hiç Sync'lenmemiş) Idle'a çıkar.
+            if (visible || Phase == AppPhase.Boot) Phase = AppPhase.Idle;
+        });
+    }
+
+    /// <summary>
+    /// [EndedOperationSerial · final review o1/62] <b>Sync'in BİTİŞ noktası</b> — <see cref="ReleaseCleanSurface"/> /
+    /// <see cref="ReleaseOptimizeSurface"/>'in Sync eşi: uçuştaki Sync'i bırakır (<see cref="ReleaseSyncPhase"/>), isteğe bağlı faz
+    /// kararını yazar ve işlemin bitişini bildirir (<see cref="MarkOperationEnded"/>). Sync'in üç bitiş yolu buradan geçer —
+    /// <c>syncCompleted</c> (<see cref="OnSyncCompleted"/>), Sync'e atfedilen hata (<see cref="TryConsumeSyncFailure"/>) ve motor
+    /// kaybı (<see cref="RunViewModel.ReleaseAfterEngineLoss"/>, yalnız uçuşta Sync varsa) — böylece bırakma ile bildirim arasındaki
+    /// SIRA yollar arasında ayrışamaz: <b>önce bırakma ve faz, bildirim EN SON</b>. Bitişi dinleyen artış anında "uçuşta işlem var"
+    /// görseydi bekler ve o işlem için kimse yeniden sormazdı (<c>OperationEndSignalTests</c> sırayı her yol için pinler).
+    /// </summary>
+    /// <param name="settlePhase">Bırakmadan SONRA, bildirimden ÖNCE çalışır: bitişin kendi faz kararı (<c>syncCompleted</c>'ın
+    /// Boot/görünür Sync → Idle'ı). Sıra bu parametrenin varlık sebebidir; bildirim fazı yazmadan önce giderse dinleyen eski fazı görür.</param>
+    /// <param name="failure">Sync'e atfedilen hatanın metni; <see cref="ReleaseSyncPhase"/> onu şeride yazar (sırası orada).</param>
+    private void EndSync(Action? settlePhase = null, string? failure = null)
+    {
+        ReleaseSyncPhase(failure);
+        settlePhase?.Invoke();
         MarkOperationEnded();
     }
 
     /// <summary>[C2 fold — A5 review] Uçuştaki Sync'i serbest bırakır: <see cref="_syncInFlight"/> temizlenir ve
-    /// faz <c>Syncing</c>'de ASILI kaldıysa elde topoloji varsa <c>Idle</c>, yoksa <c>Boot</c>'a düşürülür.
-    /// İki yerden çağrılır: (1) normal <see cref="OnSyncCompleted"/> (yalnız bayrağı temizler — çağıran fazı
-    /// zaten Idle yapar) ve (2) <see cref="OnEngineExited"/> — engine Sync ORTASINDA ölürse (ne syncCompleted
-    /// ne Sync-bitiren hata gelir) faz Syncing'de sonsuza dek asılı kalamaz ve bayrak sızmaz.</summary>
-    private void ReleaseSyncPhase()
+    /// faz <c>Syncing</c>'de ASILI kaldıysa elde topoloji varsa <c>Idle</c>, yoksa <c>Boot</c>'a düşürülür. Engine Sync ORTASINDA
+    /// ölürse (ne syncCompleted ne Sync-bitiren hata gelir) faz Syncing'de sonsuza dek asılı kalamaz ve bayrak sızmaz
+    /// (<c>OnEngineExited</c>, <c>RestartEngineAsync</c>).
+    /// <para><b>İşlemin bitişini BİLDİRMEZ</b> (<see cref="RunViewModel.EndedOperationSerial"/>): Sync'in üç bitiş yolu —
+    /// <c>syncCompleted</c> (<see cref="OnSyncCompleted"/>), Sync'e atfedilen hata (<see cref="TryConsumeSyncFailure"/>), uçuşta Sync
+    /// varken motor kaybı — <see cref="EndSync"/>'ten geçer. Bu metodu tek başına yalnız bitecek işlemi olmayan bırakma çağırır:
+    /// boştaki motor kaybı (Restart'ın geçtiği yol).</para></summary>
+    /// <param name="failure">Sync'e atfedilen hatanın metni (<see cref="TryConsumeSyncFailure"/>): bayraklar bırakıldıktan SONRA ve
+    /// kapılar duyurulmadan ÖNCE şeride yazılır (bu hatanın eski satır içi sırası aynen korunur) — duyurunun tüketicileri (kendiliğinden
+    /// Sync tetiği, şerit) metni hazır bulur.</param>
+    private void ReleaseSyncPhase(string? failure = null)
     {
         _syncInFlight = false;
         EndSyncMode(); // [spec 2026-09-18 §6.2] kip de bu Sync'le biter (motor kaybında da)
@@ -892,6 +921,7 @@ public sealed partial class RunViewModel
         _syncRequested = false;
         // [task 3] Sync topoloji getirmeden bittiyse (motor kaybı, topolojisiz tamamlanma) ekran boş kalmaz.
         EndPlanSurfaceRestart();
+        if (failure is not null) SyncErrorMessage = failure; // [E2/T10] şerit KIRMIZI "Sync failed — {reason}" gösterir (retry = Sync)
         if (Phase == AppPhase.Syncing) Phase = RestingPhase;
         // [Fix wave 1, C2 review Finding 1] OnSyncStarted'ın simetriği: hem normal syncCompleted hem
         // engine-ölümü-mid-sync (OnEngineExited) yolu BURADAN geçer — Sync/Rebuild/Cycles'ı tek yerden geri açar.
@@ -935,16 +965,11 @@ public sealed partial class RunViewModel
         // aitse uçuştaki Sync zaten kendi syncCompleted'ıyla fazı tazeleyecek.
         if (Phase == AppPhase.Syncing) Phase = RestingPhase;
         if (IsStarting) return false; // çakışan pencere → run tarafı seçilir (yukarıdaki gerekçe)
-        _syncInFlight = false;        // hata Sync'e ait: bu Sync bitti, run state'ine DOKUNULMAZ
-        EndSyncMode();
-        _syncRequested = false;       // [Sync guard] istek penceresinde düşen Sync de kapıyı geri açar
-        EndPlanSurfaceRestart();      // [task 3] düşen Sync'in boşalttığı ekran geri gelir
-        SyncErrorMessage = message;   // [E2/T10] şerit KIRMIZI "Sync failed — {reason}" gösterir (retry = Sync)
-        // [re-review C2, Finding 4] OnSyncStarted'ın simetriği burada da gerekir: bu, Sync yüzeyini serbest
-        // bırakan 4. geçiştir (diğer üçü OnSyncStarted/ReleaseSyncPhase'in iki çağrı yeri) — Fix wave 1 bunu
-        // kaçırmıştı, butonlar bir sonraki ilgisiz bildirime kadar stale-disabled kalıyordu.
-        NotifySyncGatedCommands();
-        MarkOperationEnded(); // [EndedOperationSerial] syncCompleted artık gelmeyecek: Sync'e atfedilen hata onun bitişidir
+        // Hata Sync'e ait: bu Sync bitti, run state'ine DOKUNULMAZ. Bırakma (istek penceresinde düşen Sync de kapıyı geri açar;
+        // düşen Sync'in boşalttığı ekran geri gelir; şerit KIRMIZI "Sync failed — {reason}" gösterir; kapı duyurusu — [re-review C2,
+        // Finding 4] OnSyncStarted'ın simetriği) ve [EndedOperationSerial] bildirim EndSync'te: syncCompleted artık gelmeyecek,
+        // Sync'e atfedilen hata onun bitişidir.
+        EndSync(failure: message);
         return true;
     }
 
