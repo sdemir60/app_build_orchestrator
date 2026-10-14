@@ -1,7 +1,6 @@
 using System.Globalization;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.ViewModels;
-using BuildOrchestrator.Core.Diagnostics;
 using Xunit.Abstractions;
 
 namespace BuildOrchestrator.Tests.App;
@@ -12,9 +11,9 @@ namespace BuildOrchestrator.Tests.App;
 ///
 /// <para><b>Yapısal kilit (her koşuda):</b> anlatının bellekteki TEK kopyası VM'in store'udur (<see cref="NarrativeStore"/>):
 /// her satır orada bir kez durur, görünüm kendi kopyasını tutmaz (kabuk konsolu açılışta store'a bağlar —
-/// <c>ConsoleView.BindNarrative</c>) ve canlı satır tamponu yükleme yokken boştur (<c>RunViewModel.LiveLineCount</c>). Bir
-/// regresyon kilididir: dalga 1'in tek kopya ve tampon daraltma işiyle yeşildir; bağ ya da daraltma geri alınırsa kırmızıya
-/// döner.</para>
+/// <c>ConsoleView.BindNarrative</c>) ve canlı satır tamponu yükleme yokken boştur (<c>RunViewModel.LiveLineCount</c>). Yeni işlem
+/// her şeyi sıfırlar (spec §6.6 d): store, canlı satır tamponu, koşu metni ve konsol belgesi. Bir regresyon kilididir: dalga 1'in
+/// tek kopya ve tampon daraltma işiyle yeşildir; bağ ya da daraltma geri alınırsa kırmızıya döner.</para>
 ///
 /// <para><b>Ölçüm (kapılı, <c>BO_MEASURE_MEMORY=1</c>):</b> aynı koşu, ardından işlem sonu trimi (üretim toplayıcısı) →
 /// yönetilen yığının koşu öncesine göre büyümesi ≤ 1,2 × metin (satırların UTF-16 baytı). Metnin üstündeki pay store'un kendi
@@ -52,19 +51,51 @@ public sealed class NarrativeBudgetTests(ITestOutputHelper output)
     private static string Line(int i) =>
         $"  D:\\repo\\Project{i % 200}\\File{i}.cs(12,5): warning CS1591: Missing XML comment for publicly visible type or member 'X{i}'";
 
+    /// <summary>[final review "Tasks 9-10" hijyeni] Satır sayısı koşunun başlangıcından SONRAKİ taban üstüne sayılır: başlangıç bir
+    /// anlatı satırı yazsa da iddia "her <c>projectLog</c> satırı store'da bir kez"dir.</summary>
     [StaFact]
     public void A_synthetic_run_leaves_one_copy_of_the_text_and_no_live_line_buffer()
     {
         using var dir = new TempDir();
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
         MainWindowHost.StartBuild(vm, "A");
+        int baseline = vm.Narrative.Count;
         for (int i = 1; i <= Lines; i++) MainWindowHost.LogLine(vm, "A", i, Line(i));
+        Assert.Equal(baseline + Lines, vm.Narrative.Count);            // her satır store'da bir kez
         MainWindowHost.FinishBuild(vm, "A");
         DispatcherPump.DrainToIdle();
 
-        Assert.Equal(Lines, vm.Narrative.Count);                       // her satır store'da bir kez
         Assert.Equal(0, vm.LiveLineCount);                             // yükleme yok: canlı satır tamponu boş
         Assert.False(window.Shell.ConsoleViewControl.BacklogOwnsCopy); // görünüm anlatının kopyasını tutmaz
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [idle-memory · spec §6.6 (d) · final review "Tasks 9-10"] <b>Yeni işlem her şeyi sıfırlar</b> — 100 k satırlık bir koşudan
+    /// sonra da: anlatı store'u, canlı satır tamponu, koşu metni ve konsol belgesi. Yeni işlemin (Sync düğmesi) temizliği store'u
+    /// boşaltır, cevabı artık beklenmeyen proje log yüklemesini tamponuyla bitirir ve kabuk belgeyi boş store'a bağlar. Ön-koşullar
+    /// her birinin önce DOLU olduğunu gösterir: belge koşunun kuyruğunu pompanın yolundan almıştır, tampon koşunun sonunda istenmiş
+    /// (cevabı gelmemiş) bir proje logunun isteğinden sonraki satırını tutar.
+    /// </summary>
+    [StaFact]
+    public async Task A_new_operation_after_a_synthetic_run_resets_the_store_the_live_buffer_the_run_text_and_the_document()
+    {
+        using var dir = new TempDir();
+        var (window, vm, console, tick) = PumpedHost(dir, productionMemoryCollector: false);
+        RunSyntheticBuild(vm, console, tick);
+        ProjectLogIpc.Request(vm, MainWindowHost.IdOf("A"));             // koşunun sonunda bir proje logu istendi; gönderim düştü
+        MainWindowHost.LogLine(vm, "A", Lines + 1, "after the request"); // istekten sonra: canlı tamponda
+        Assert.True(vm.Narrative.Count > Lines, "ön-koşul: koşunun anlatısı store'da");
+        Assert.Equal(1, vm.LiveLineCount);                               // ön-koşul: tampon dolu
+        Assert.NotEqual(0, console.Document.TextLength);                 // ön-koşul: belge koşunun kuyruğunu gösteriyor
+
+        MainWindowHost.AcceptSends(vm);
+        await MainWindowHost.StartSync(vm, SyncMode.Manual);             // yeni işlem: Sync düğmesi
+
+        Assert.Equal(0, vm.Narrative.Count);
+        Assert.Equal(0, vm.LiveLineCount);
+        Assert.Equal("", vm.GetRunDocumentText());
+        Assert.Equal(0, console.Document.TextLength);
         GC.KeepAlive(window);
     }
 
@@ -84,19 +115,45 @@ public sealed class NarrativeBudgetTests(ITestOutputHelper output)
             $"growth {growth / BytesPerMb:0.00} MB > 1.2 x text {text / BytesPerMb:0.00} MB"));
     }
 
-    /// <summary>Koşuyu sürer ve yönetilen yığının koşu öncesine göre büyümesini (trim sonrası) ve metnin baytını döner.</summary>
+    /// <summary>Koşuyu sürer ve yönetilen yığının koşu öncesine göre büyümesini (trim sonrası) ve metnin baytını döner. Trim
+    /// üretimin toplayıcısıyla yapılır (fixture'ın <c>productionMemoryCollector</c>'ı); test yalnız onu bir sayaçla sarar
+    /// [final review "Tasks 9-10" hijyeni: toplama ikinci kez yazılmaz].</summary>
     private static (long Growth, long Text) MeasureRun()
     {
         using var dir = new TempDir();
-        var tick = new SemaphoreSlim(0); // pompanın tick'i testin elinde: her Release bir tick
-        var (window, vm, _) = MainWindowHost.NewWithProjectsAndConsole(
-            dir, new ConsoleBatcher(ct => tick.WaitAsync(ct)), ("A", null));
-        var console = window.Shell.ConsoleViewControl;
+        var (window, vm, console, tick) = PumpedHost(dir, productionMemoryCollector: true);
         window.TrimGraceAfterFinale = TimeSpan.Zero; // pay sıfır: boşaltma zamanlayıcı ateşlemez, trim boşta kuyruktan yürür
         int trims = 0;
-        window.MemoryCollector = () => { trims++; MemoryTrim.CollectAndRelease(); }; // üretimin toplaması (+ sayaç)
+        var production = window.MemoryCollector;
+        window.MemoryCollector = () => { trims++; production(); }; // üretimin toplaması + sayaç
 
         long before = GC.GetTotalMemory(forceFullCollection: true);
+        long text = RunSyntheticBuild(vm, console, tick);
+        DispatcherPump.DrainToIdle(); // işlem sonu trimi (pay sıfır: boşta kuyruktan)
+
+        Assert.Equal(1, trims);                                                     // ön-koşul: ölçüm trimden sonra
+        Assert.True(console.Document.LineCount <= ConsoleView.RenderSliceLines + 1, // ön-koşul: görünüm yalnız render dilimini tutar
+            $"the console document holds {console.Document.LineCount} lines — the render slice was not trimmed");
+        long after = GC.GetTotalMemory(forceFullCollection: true);
+        GC.KeepAlive(window);
+        GC.KeepAlive(vm);
+        return (after - before, text);
+    }
+
+    /// <summary>Pompası testin elinde olan kabuk (tek proje "A"): her <c>Release</c> bir tick (<see cref="Deliver"/>).</summary>
+    private static (global::BuildOrchestrator.App.MainWindow Window, RunViewModel Vm, ConsoleView Console, SemaphoreSlim Tick)
+        PumpedHost(TempDir dir, bool productionMemoryCollector)
+    {
+        var tick = new SemaphoreSlim(0);
+        var (window, vm, _) = MainWindowHost.NewWithProjectsAndConsole(
+            dir, new ConsoleBatcher(ct => tick.WaitAsync(ct)), productionMemoryCollector, ("A", null));
+        return (window, vm, window.Shell.ConsoleViewControl, tick);
+    }
+
+    /// <summary>Sentetik koşuyu üretim yolundan sürer: her satır modele (<c>projectLog</c>), pompa her <see cref="LinesPerTick"/>
+    /// satırda bir tick eder ve batch belgeye iner; koşu biter ve son batch da teslim edilir. Dönen değer metnin UTF-16 baytıdır.</summary>
+    private static long RunSyntheticBuild(RunViewModel vm, ConsoleView console, SemaphoreSlim tick)
+    {
         long text = 0;
         MainWindowHost.StartBuild(vm, "A");
         for (int i = 1; i <= Lines; i++)
@@ -108,15 +165,7 @@ public sealed class NarrativeBudgetTests(ITestOutputHelper output)
         }
         MainWindowHost.FinishBuild(vm, "A");
         Deliver(tick, vm, console);
-        DispatcherPump.DrainToIdle(); // işlem sonu trimi (pay sıfır: boşta kuyruktan)
-
-        Assert.Equal(1, trims);                                                     // ön-koşul: ölçüm trimden sonra
-        Assert.True(console.Document.LineCount <= ConsoleView.RenderSliceLines + 1, // ön-koşul: görünüm yalnız render dilimini tutar
-            $"the console document holds {console.Document.LineCount} lines — the render slice was not trimmed");
-        long after = GC.GetTotalMemory(forceFullCollection: true);
-        GC.KeepAlive(window);
-        GC.KeepAlive(vm);
-        return (after - before, text);
+        return text;
     }
 
     /// <summary>Pompaya bir tick verir ve anlatının son satırı belgeye ulaşana dek pompalar: kanal boşalır, batch üretimdeki yoldan
