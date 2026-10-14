@@ -261,6 +261,53 @@ public class HiddenSurfaceTests
     }
 
     /// <summary>
+    /// [idle-memory · group B re-review · ÇÖKME YOLU] <b>Gizliyken yeni işlem anlatıyı boşaltırsa, bottom-anchor bekleme süresi dolunca
+    /// kırpma fırlatmaz ve dönüşte belge modelden doğru kurulur.</b> Kullanıcı yukarı kaydırıp pencereyi tepsiye indirir (takip
+    /// kapalı, belge render diliminin üstünde); gizliyken bir işlem başlar: VM anlatıyı boşaltır, kabuk belgeye dokunmaz (yalnız
+    /// bayat bayrağı). 5 sn'lik "elini çekti" zamanlayıcısı gizli pencerede de ateşlenir ve takibi geri getirir — kırpma, store'un
+    /// <c>Count</c>'u görünümün <c>_loadedFrom</c>'unun gerisinde iken kuyruğu okumaya kalkıp <c>ArgumentOutOfRangeException</c>
+    /// atıyordu; <c>DispatcherUnhandledException</c> işleyicisi olmadığı için süreç düşerdi. Bekleme dolması burada
+    /// <c>StickToBottom = true</c> ile verilir (zamanlayıcının bildirdiği olayın aynısı: <c>ForceStuck</c> → <c>Changed</c>).
+    /// </summary>
+    [StaFact]
+    public void A_console_cleared_while_hidden_survives_the_idle_resume_trim_and_the_document_is_rebuilt_on_show()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        MainWindowHost.AcceptSends(vm);
+        var console = window.Shell.ConsoleViewControl;
+        for (int i = 0; i < 300; i++)
+        {
+            MainWindowHost.LogLine(vm, "A", i + 1, $"old {i}");
+            window.AppendConsoleBatch($"old {i}\n", window.ConsoleReseedGen); // görünürken akış: takip açık, belge kırpılır
+        }
+        console.StickToBottom = false; // kullanıcı yukarıda okuyor
+        for (int i = 300; i < 600; i++)
+        {
+            MainWindowHost.LogLine(vm, "A", i + 1, $"old {i}");
+            window.AppendConsoleBatch($"old {i}\n", window.ConsoleReseedGen); // takip kapalı: belge kırpılmadan büyür
+        }
+        Assert.True(console.Document.LineCount > ConsoleView.RenderSliceLines + 1, "ön-koşul: takip kapalıyken belge kırpılmadı");
+        window.SetSurfaceHidden(true);
+        int replacedBefore = console.RunDocumentReplacedCount;
+        _ = vm.BuildCommand.ExecuteAsync(null); // temizlik ilk await'ten ÖNCE, senkron: VM anlatıyı boşaltır (işlemin "requested" satırı kalır)
+        Assert.True(vm.Narrative.Count < 300 - ConsoleView.RenderSliceLines, // görünümün belgesi store'un 100. satırında başlıyordu
+            $"ön-koşul: anlatı temizlenmedi ({vm.Narrative.Count} satır)");
+        Assert.Contains("old 599", console.Document.Text); // ön-koşul: ekrandaki belge bayat (gizliyken dokunulmadı)
+
+        var thrown = Record.Exception(() => console.StickToBottom = true); // bekleme doldu: takip geri geldi
+
+        Assert.Null(thrown); // KIRMIZI: bugün ArgumentOutOfRangeException
+        MainWindowHost.LogLine(vm, "A", 1, "new 0"); // yeni işlemin bir satırı daha gizliyken modele düştü (pompa batch'i gizliyken atılır)
+        window.SetSurfaceHidden(false);
+        DispatcherPump.PumpUntil(() => console.RunDocumentReplacedCount > replacedBefore, TimeSpan.FromSeconds(2));
+        Assert.Equal(replacedBefore + 1, console.RunDocumentReplacedCount);
+        Assert.DoesNotContain("old ", console.Document.Text);                  // bayat belge atıldı
+        Assert.Equal(vm.GetRunDocumentText(), console.Document.Text);          // dönüşte belge == model: ne eksik ne artık satır
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
     /// Göster → gizle, Loaded-öncelikli dönüş kurulumu koşmadan ÖNCE gelebilir (kullanıcı pencereyi hemen geri indirir).
     /// O koşu gizli bir ağaca kurmamalı ve "ekran bayat" bayraklarını silmemeli: bayrak erken silinirse sonraki GERÇEK
     /// gösterim bayat bir ekranla açılırdı (kendi kuyruğundaki kurulum bayrağı boş bulurdu).

@@ -195,6 +195,38 @@ public class ConsoleMemoryTests
     }
 
     /// <summary>
+    /// [idle-memory · group B re-review · ÇÖKME YOLU] <b>Store'u görünümün arkasından boşalan anlatı belgesi kırpılırken fırlatılmaz.</b>
+    /// m1 kırpmayı bottom-anchor zamanlayıcılarına (kaydırma sonrası 5 sn'lik bekleme, pill atlama penceresi) bağladı; zamanlayıcı
+    /// pencere GİZLİYKEN de ateşlenir. Gizli pencerede temizlik (<c>ConsoleCleared</c>) belgeye dokunmaz, yalnız "ekran bayat"
+    /// bayrağını kaldırır — oysa VM anlatıyı çoktan boşaltmıştır: store <c>Count</c> 0, görünüm hâlâ eski <c>_loadedFrom</c>'unda. Kırpma
+    /// "kaydedilmemiş kuyruğu" <c>excess − (Count − _loadedFrom)</c> ile hesaplıyordu; <c>Count &lt; _loadedFrom</c> iken kuyruğun
+    /// başlangıç satırı sıfır ya da negatif çıkar ve <c>GetLineByNumber</c> <c>ArgumentOutOfRangeException</c> atar. Dispatcher'da
+    /// <c>DispatcherUnhandledException</c> işleyicisi yoktur: süreç düşer.
+    /// <para>Kural: backlog belgenin gerisinde kalabilir (bayat belge); kırpılan satırların hiçbiri backlog'da sayılmaz ve eski
+    /// <c>LastLines</c> anlamı geçerlidir — hepsi kuyruktur (store bunu yok sayar). Belge render dilimine döner, hiçbir şey fırlamaz.</para>
+    /// </summary>
+    [StaFact]
+    public void Trimming_a_narrative_document_whose_store_was_cleared_behind_the_view_does_not_throw()
+    {
+        var store = new NarrativeStore();
+        var view = new ConsoleView { AnimationsEnabledProvider = () => false };
+        var window = DsResources.Realize(DsResources.NewHost(), view);
+        view.ReplaceRunDocument(NarrativeSnapshots.Of(store));
+        for (int batch = 0; batch < 6; batch++) NarrativeSnapshots.Deliver(store, view, Lines(50, batch)); // 300 satır: kırpma koştu, _loadedFrom > 0
+        view.StickToBottom = false; // kullanıcı yukarıda okuyor: takip kapalı, belge kırpılmaz
+        for (int batch = 6; batch < 12; batch++) NarrativeSnapshots.Deliver(store, view, Lines(50, batch)); // belge render diliminin üstüne büyür
+        Assert.True(view.Document.LineCount > ConsoleView.RenderSliceLines + 1, "ön-koşul: takip kapalıyken belge kırpılmadı");
+        store.Clear(); // gizliyken yeni işlem: VM anlatıyı boşalttı, görünüm yeniden bağlanmadı (kabuk yalnız bayat bayrağını kaldırdı)
+
+        var thrown = Record.Exception(() => view.StickToBottom = true); // bekleme doldu: takip geri geldi → kırpma sorulur
+
+        Assert.Null(thrown); // KIRMIZI: bugün ArgumentOutOfRangeException (GetLineByNumber(<= 0))
+        Assert.True(view.Document.LineCount <= ConsoleView.RenderSliceLines + 1,
+            $"the stale document still holds {view.Document.LineCount} lines after following resumed");
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
     /// [idle-memory · final review m2 + 91] <b>Büyük bir anlatı batch'inin görünümde kopyası üretilmez.</b> Batch belgeye eklenip
     /// render dilimine kırpılırken görünümün ayırdığı bellek, belgenin AYNI ekleme ve kırpma için kendi ayırdığını yarım kopyadan
     /// fazla aşmaz: ekleme metni ipe (rope) bir kez yazar, kırpma kesilen metni okumaz — anlatıda backlog store'dur, kırpılan satır

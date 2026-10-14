@@ -115,8 +115,9 @@ public partial class ConsoleView : UserControl
 
     /// <summary>Belgenin ilk satırının <see cref="_backlog"/>'daki index'i — yani "backlog'un kaçıncı satırına kadarı
     /// belgeye yüklendi". <c>[0.._loadedFrom)</c> belgede DEĞİLDİR (geçmiş). Liste backlog'unda bu index listenin sonuna
-    /// eşitse belgedeki her satır listenin ötesindeki canlı satırlardır; anlatıda store belgeden hep ileridedir (önce store,
-    /// sonra pompa) ve index doğrudan store indeksidir.</summary>
+    /// eşitse belgedeki her satır listenin ötesindeki canlı satırlardır; anlatıda store belgeden ileridedir (önce store,
+    /// sonra pompa) ve index doğrudan store indeksidir. Tek istisna gizliyken boşalan anlatıdır: store <c>Count</c>'u bu index'in
+    /// gerisine düşer ve belge dönüşteki yeniden kuruluma dek bayattır (<see cref="TrimToRenderSlice"/>).</summary>
     private int _loadedFrom;
 
     public ConsoleView()
@@ -390,9 +391,12 @@ public partial class ConsoleView : UserControl
     ///
     /// <para>Kırpılan satırların backlog'da ZATEN olan kısmı oradan belgeye yüklenmişti; geri kalanı hiç kaydedilmemiş CANLI
     /// satırlardır ve backlog'a verilir (<see cref="IConsoleBacklog.AcceptTrimmed"/>) — liste onları SONUNA ekler. Anlatının store'u
-    /// belgeden hep ileridedir (her satır önce store'a, sonra pompaya): kırpılan her satır zaten oradadır, o kuyruk hep boştur. Eski
-    /// kod canlı satırları hiç kaydetmiyor, index'i backlog'un uzunluğuna clamp'liyordu — o clamp tam da deliğin kendisiydi: canlı
-    /// kırpılan satır ne belgede ne backlog'da kalıyordu.</para>
+    /// belgeden ileridedir (her satır önce store'a, sonra pompaya): kırpılan her satır zaten oradadır, o kuyruk boştur. Tek istisna
+    /// store'u görünümün arkasından boşalan anlatıdır — gizli pencerede yeni işlem (<c>ConsoleCleared</c> belgeye dokunmaz, yalnız
+    /// bayat bayrağını kaldırır) — ve bottom-anchor zamanlayıcıları pencere gizliyken de ateşlenir: store belgenin gerisinde kalır
+    /// (<c>Count &lt; _loadedFrom</c>), kırpılanların hiçbiri backlog'da sayılmaz ve hepsi kuyruk olur (store yok sayar); belge
+    /// dönüşte zaten modelden yeniden kurulur. Eski kod canlı satırları hiç kaydetmiyor, index'i backlog'un uzunluğuna clamp'liyordu —
+    /// o clamp tam da deliğin kendisiydi: canlı kırpılan satır ne belgede ne backlog'da kalıyordu.</para>
     ///
     /// <para><b>Kırpılan metinden yalnız backlog'un ihtiyacı olan kuyruk okunur</b> — <c>Remove</c>'dan ÖNCE, belgenin satır
     /// sınırlarından. [idle-memory · final review 91] Eskiden kırpılan metnin TAMAMI okunuyordu (<c>GetText</c>): anlatıda hiç
@@ -404,10 +408,15 @@ public partial class ConsoleView : UserControl
         if (excess <= 0) return;
         var lastRemoved = document.GetLineByNumber(excess); // 1..excess satırları (ayraçlarıyla) silinir
         int length = lastRemoved.Offset + lastRemoved.TotalLength;
-        int unrecorded = excess - (_backlog.Count - _loadedFrom); // backlog'un ucunu aşan, hiç kaydedilmemiş satırlar
+        // Kırpılanların backlog'da ZATEN olan kısmı: belgenin ilk satırından backlog'un ucuna kalan satırlar. Alt sınır 0 şarttır:
+        // backlog belgenin GERİSİNDE olabilir (Count < _loadedFrom) — gizliyken temizlenen anlatının bayat belgesi — ve o zaman
+        // kırpılanların hiçbiri kayıtlı değildir, hepsi kuyruktur. Sınırsız hesap kuyruğun başlangıç satırını sıfıra ya da altına
+        // düşürür ve GetLineByNumber fırlatırdı (zamanlayıcıdan gelen kırpma sürecin dispatcher'ında yakalanmaz).
+        int recorded = Math.Clamp(_backlog.Count - _loadedFrom, 0, excess);
+        int unrecorded = excess - recorded; // backlog'un ucunu aşan, hiç kaydedilmemiş satırlar
         if (unrecorded > 0)
         {
-            int tailStart = document.GetLineByNumber(excess - unrecorded + 1).Offset;
+            int tailStart = document.GetLineByNumber(recorded + 1).Offset;
             _backlog.AcceptTrimmed(ConsoleLines.Split(document.GetText(tailStart, length - tailStart)));
         }
         document.Remove(0, length);
