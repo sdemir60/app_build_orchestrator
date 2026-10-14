@@ -237,6 +237,37 @@ public class ConsoleViewTests
     }
 
     /// <summary>
+    /// [idle-memory · dalga 2 · spec §6.3] <b>2.000 satırın üstündeki anlatıda tepeye kaydırma doğru dilimleri DİSKTEN getirir.</b>
+    /// Store anlatıyı koşu klasörüne yayar ve bellekte yalnız son <see cref="NarrativeStore.MemoryWindowLines"/> satırı tutar; görünüm
+    /// tepeye kaydıkça önceki dilimleri yine store'dan ister — en eskileri dosyadan, biri tahliye sınırını keserek (baş diskten, kuyruk
+    /// bellekten). Sonuç bitişik ve TAMDIR: tekrar yok, delik yok — kaydırılan hiçbir satır erişilmez olmaz.
+    /// </summary>
+    [StaFact]
+    public void Scrolling_up_a_spooled_narrative_brings_the_older_slices_back_from_disk()
+    {
+        var store = new NarrativeStore();
+        using var logs = new SpoolDir(store);
+        Assert.True(store.BeginSpool(logs.FilePath));
+        var all = Enumerable.Range(0, NarrativeStore.MemoryWindowLines + 1000).Select(i => $"spooled{i}").ToArray();
+        foreach (var line in all) store.Append(line);
+        Assert.True(store.Count - store.LinesInMemory > ConsoleView.RenderSliceLines, "ön-koşul: en eski dilimler yalnız diskte");
+        var view = new ConsoleView();
+        view.Measure(new Size(800, 600));
+        view.Arrange(new Rect(0, 0, 800, 600));
+        view.UpdateLayout();
+
+        view.ShowRunDocument(NarrativeSnapshots.Of(store)); // son 200 belgeye; öncesi store'da, en eskisi diskte
+        for (int chunk = 0; chunk <= all.Length / ConsoleView.RenderSliceLines
+            && !view.Document.Text.StartsWith("spooled0\n", StringComparison.Ordinal); chunk++)
+        {
+            view.EvaluateChunkScroll(100.0); // arm: kullanıcı tepeden uzaklaştı
+            view.EvaluateChunkScroll(0.0);   // tepe: önceki dilim
+        }
+
+        Assert.Equal(string.Concat(all.Select(l => l + "\n")), view.Document.Text); // bitişik ve TAM
+    }
+
+    /// <summary>
     /// Canlı anlatıda belgeden kırpılan satırlar tepeye kaydırınca DELİKSİZ geri gelir.
     ///
     /// <para><b>[DEĞİŞEN KURAL — idle-memory dalga 1]</b> Eski iddia: kırpılan canlı satırlar görünümün backlog'una

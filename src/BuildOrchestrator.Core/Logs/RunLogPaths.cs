@@ -12,6 +12,11 @@ public static class RunLogPaths
     /// durur; asıl karar yine <see cref="TryParseRunDirName"/>'dedir, bu yalnız listeyi daraltır.</summary>
     internal const string RunDirSearchPattern = RunDirPrefix + "*";
 
+    /// <summary>[idle-memory · dalga 2 · spec §6.3] Koşu klasöründeki anlatı dosyasının adı — TEK tanım. Dosyayı motor değil App
+    /// yazar: konsolun gösterdiği koşu anlatısı (<c>NarrativeStore</c>'un spool'u), <c>runStarted</c> klasörü bildirdiği andan
+    /// bölümün sonuna dek. Klasörün öteki dosyaları gibi saklama kuralıyla budanır.</summary>
+    public const string NarrativeFileName = "narrative.log";
+
     public static string DefaultLogsRoot => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BuildOrchestrator", "logs");
 

@@ -13,7 +13,9 @@ public interface IConsoleBacklog
     /// <summary>Satır sayısı.</summary>
     int Count { get; }
 
-    /// <summary>[from, to) satırlarını '\n' SONEKLİ birleştirir (<see cref="ConsoleLines.Join"/>); boş aralık ⇒ <c>""</c>.</summary>
+    /// <summary>[from, to) satırlarını '\n' SONEKLİ birleştirir (<see cref="ConsoleLines.Join"/>); boş aralık ⇒ <c>""</c>. Sonuç ya
+    /// TAM aralıktır ya <c>""</c> — asla kısmi metin: görünüm dikişi (yükleme indeksi, kaydırma telafisi) satır sayısını metinden değil
+    /// indekslerden hesaplar. Store'un diskten okuyamadığı bir aralık da <c>""</c>'dir (<see cref="NarrativeStore.Join"/>).</summary>
     string Join(int from, int to);
 
     /// <summary>Backlog kırpılan canlı satırları SAKLIYOR mu (<see cref="AcceptTrimmed"/> bir şey yapıyor mu): liste evet, store
