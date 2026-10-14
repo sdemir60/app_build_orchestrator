@@ -490,18 +490,18 @@ public class OperationEndSignalTests
 
     // ---------------------------------------------------------------- sıra değişmezleri (sinyali dinleyen kabuk bunlara dayanır)
 
-    /// <summary>Her bildirimin adını sırasıyla, sinyalin her artışında da VM'in o anki uçuş bayraklarını kaydeder.</summary>
+    /// <summary>Her bildirimin adını sırasıyla, sinyalin her artışında da VM'in o anki uçuş bayraklarını ve fazını kaydeder.</summary>
     private sealed class BumpRecorder
     {
         public List<string?> Notified { get; } = [];
 
-        public List<(bool Run, bool Sync, bool Clean, bool Optimize, bool AnyInFlight)> AtBump { get; } = [];
+        public List<(bool Run, bool Sync, bool Clean, bool Optimize, bool AnyInFlight, AppPhase Phase)> AtBump { get; } = [];
 
         public BumpRecorder(RunViewModel vm) => vm.PropertyChanged += (_, e) =>
         {
             Notified.Add(e.PropertyName);
             if (e.PropertyName == nameof(RunViewModel.EndedOperationSerial))
-                AtBump.Add((vm.IsRunInFlight, vm.SyncBusy, vm.CleanBusy, vm.OptimizeBusy, vm.IsOperationInFlight));
+                AtBump.Add((vm.IsRunInFlight, vm.SyncBusy, vm.CleanBusy, vm.OptimizeBusy, vm.IsOperationInFlight, vm.Phase));
         };
     }
 
@@ -572,6 +572,36 @@ public class OperationEndSignalTests
         Assert.Equal(before + 1, vm.EndedOperationSerial);
         var atBump = Assert.Single(recorder.AtBump);
         Assert.False(atBump.AnyInFlight, $"{operation} {ending}: artış anında işlem hâlâ uçuşta görünüyordu");
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [sıra değişmezi · wave 1 son temizlik C-M3] <b>Sync'in bitişinde önce faz oturur, bitiş EN SON bildirilir</b>
+    /// (<c>EndSync</c>: bırakma → <c>syncCompleted</c>'ın kendi faz kararı → <c>MarkOperationEnded</c>). Bitişi dinleyen artış anında
+    /// VM'in fazını okur; bildirim fazdan ÖNCE gitseydi yarım kalmış bir faz görürdü.
+    ///
+    /// <para><b>Neden boş bir topoloji:</b> topolojisi olan bir çözümde bırakmanın dinlenme fazı zaten <c>Idle</c>'dır ve iki sıra da
+    /// Idle verir — test vakumda yeşil kalırdı. Klasörün altında hiç proje yokken (<c>HasTopology</c> false) bırakma fazı <c>Boot</c>'a
+    /// indirir ve Idle'a çıkış YALNIZ <c>syncCompleted</c>'ın kendi kararıdır (<c>OnSyncCompleted</c>'ın <c>settlePhase</c>'i). Sıra
+    /// dönseydi artış anında faz <c>Boot</c> görünürdü.</para>
+    /// </summary>
+    [StaFact]
+    public void A_sync_completion_settles_the_phase_before_it_reports_the_end()
+    {
+        using var dir = new TempDir();
+        var (window, vm, before) = NewHost(dir);
+        var recorder = new BumpRecorder(vm);
+        vm.OnEvent(new SyncStartedEvent(vm.RootPath, "main"));
+        vm.OnEvent(new WorkspaceTopologyEvent([], [], [], []));   // çözümde hiç proje yok
+        Assert.Equal(AppPhase.Syncing, vm.Phase);                 // ön-koşul: görünür Sync fazı tutuyor
+        Assert.False(vm.HasTopology);                             // ön-koşul: bırakmanın dinlenme fazı Idle değil Boot
+
+        vm.OnEvent(MainWindowHost.SyncCompleted(projectCount: 0));
+
+        Assert.Equal(before + 1, vm.EndedOperationSerial);
+        var atBump = Assert.Single(recorder.AtBump);
+        Assert.Equal(AppPhase.Idle, atBump.Phase);                // bildirim anında faz çoktan Idle
+        Assert.Equal(AppPhase.Idle, vm.Phase);
         GC.KeepAlive(window);
     }
 

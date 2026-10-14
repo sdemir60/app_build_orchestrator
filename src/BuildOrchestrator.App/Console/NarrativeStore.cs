@@ -79,6 +79,10 @@ public sealed class NarrativeStore : IConsoleBacklog
         }
     }
 
-    /// <summary>Store kırpılan satırları zaten taşır — kopya tutulmaz (<see cref="IConsoleBacklog.AcceptTrimmed"/>).</summary>
+    /// <summary>Store kırpılan satırları SAKLAMAZ: belgedeki her anlatı satırı önce store'a yazılmıştır, kopyası tutulmaz — görünüm
+    /// de kırpılan metni onun için belgeden okumaz (<see cref="IConsoleBacklog.KeepsTrimmedLines"/>).</summary>
+    public bool KeepsTrimmedLines => false;
+
+    /// <summary>Kırpılan satırlar zaten store'dadır: yapılacak bir şey yok (<see cref="IConsoleBacklog.AcceptTrimmed"/>).</summary>
     public void AcceptTrimmed(IReadOnlyList<string> lines) { }
 }

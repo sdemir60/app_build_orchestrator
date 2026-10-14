@@ -11,6 +11,9 @@ public sealed class ListBacklog(IEnumerable<string> lines) : IConsoleBacklog
 
     public int Count => _lines.Count;
 
+    /// <summary>Liste kırpılan canlı satırları SAKLAR (<see cref="AcceptTrimmed"/>): başka hiçbir yerde durmazlar.</summary>
+    public bool KeepsTrimmedLines => true;
+
     public string Join(int from, int to) => ConsoleLines.Join(_lines, from, to);
 
     public void AcceptTrimmed(IReadOnlyList<string> lines) => _lines.AddRange(lines);

@@ -401,9 +401,11 @@ public partial class ConsoleView : UserControl
     /// belgeden ileridedir (her satır önce store'a, sonra pompaya): kırpılan her satır zaten oradadır, o kuyruk boştur. Tek istisna
     /// store'u görünümün arkasından boşalan anlatıdır — gizli pencerede yeni işlem (<c>ConsoleCleared</c> belgeye dokunmaz, yalnız
     /// bayat bayrağını kaldırır) — ve bottom-anchor zamanlayıcıları pencere gizliyken de ateşlenir: store belgenin gerisinde kalır
-    /// (<c>Count &lt; _loadedFrom</c>), kırpılanların hiçbiri backlog'da sayılmaz ve hepsi kuyruk olur (store yok sayar); belge
-    /// dönüşte zaten modelden yeniden kurulur. Eski kod canlı satırları hiç kaydetmiyor, index'i backlog'un uzunluğuna clamp'liyordu —
-    /// o clamp tam da deliğin kendisiydi: canlı kırpılan satır ne belgede ne backlog'da kalıyordu.</para>
+    /// (<c>Count &lt; _loadedFrom</c>), kırpılanların hiçbiri backlog'da sayılmaz ve hepsi kuyruk olur — ama store onu yok sayacağı için
+    /// kuyruk belgeden OKUNMAZ (<see cref="IConsoleBacklog.KeepsTrimmedLines"/>): bayat belgenin atılacak metnini <c>GetText</c> +
+    /// <c>Split</c> ile üretmek boşuna bir kopya olurdu; belge dönüşte zaten modelden yeniden kurulur. Eski kod canlı satırları hiç
+    /// kaydetmiyor, index'i backlog'un uzunluğuna clamp'liyordu — o clamp tam da deliğin kendisiydi: canlı kırpılan satır ne belgede
+    /// ne backlog'da kalıyordu.</para>
     ///
     /// <para><b>Kırpılan metinden yalnız backlog'un ihtiyacı olan kuyruk okunur</b> — <c>Remove</c>'dan ÖNCE, belgenin satır
     /// sınırlarından. [idle-memory · final review 91] Eskiden kırpılan metnin TAMAMI okunuyordu (<c>GetText</c>): anlatıda hiç
@@ -421,7 +423,8 @@ public partial class ConsoleView : UserControl
         // düşürür ve GetLineByNumber fırlatırdı (zamanlayıcıdan gelen kırpma sürecin dispatcher'ında yakalanmaz).
         int recorded = Math.Clamp(_backlog.Count - _loadedFrom, 0, excess);
         int unrecorded = excess - recorded; // backlog'un ucunu aşan, hiç kaydedilmemiş satırlar
-        if (unrecorded > 0)
+        // Kuyruk yalnız SAKLAYAN backlog için okunur: store yok sayar (bayat anlatı belgesinde de) ve okumak atılacak bir metni üretirdi.
+        if (unrecorded > 0 && _backlog.KeepsTrimmedLines)
         {
             int tailStart = document.GetLineByNumber(recorded + 1).Offset;
             _backlog.AcceptTrimmed(ConsoleLines.Split(document.GetText(tailStart, length - tailStart)));
@@ -666,8 +669,9 @@ public partial class ConsoleView : UserControl
     internal int RunDocumentReplacedCount { get; private set; }
 
     /// <summary>[test yüzeyi] Backlog görünümün KENDİ satır listesi mi (<see cref="ListBacklog"/>) — proje logunda öyledir;
-    /// anlatıda backlog VM'in store'udur ve bu <c>false</c>'tur (görünüm anlatının kopyasını tutmaz).</summary>
-    internal bool BacklogOwnsCopy => _backlog is ListBacklog;
+    /// anlatıda backlog VM'in store'udur ve bu <c>false</c>'tur (görünüm anlatının kopyasını tutmaz). Kırpılan satırları saklayan
+    /// backlog'un (<see cref="IConsoleBacklog.KeepsTrimmedLines"/>) aynı sorusudur — cevap TEK yerde durur.</summary>
+    internal bool BacklogOwnsCopy => _backlog.KeepsTrimmedLines;
 
     /// <summary>
     /// [idle-memory · dalga 1] Anlatı backlog'unu belgeyi YENİDEN KURMADAN bağlar: kabuk açılışta, belge henüz boşken VM'in

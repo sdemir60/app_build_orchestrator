@@ -101,7 +101,8 @@ public class MemoryLineTests
     /// Bir tanı, tanı ekranını bozamaz: süreç sorgusu patlarsa (izin, kapanan süreç) <c>TryRead</c> <c>null</c> döner, fırlatmaz.
     /// Eskiden About'un okuması <see cref="MemoryLine.Read"/>'i doğrudan çağırıyordu — fırlatsa diyalog hiç açılmazdı;
     /// <see cref="MemoryLine.Report"/> motorun satırı için aynı güvenceyi baştan veriyordu. Okuyucu parametreli aşırı yükleme
-    /// patlayan bir okumayı taklit etmenin tek yoludur (Core derlemesi internal'larını testlere açmaz).
+    /// patlayan bir okumayı taklit etmenin yoludur: <c>internal</c>'dır ve Core derlemesi internal'larını bu test derlemesine açar
+    /// (<c>InternalsVisibleTo</c>, Core.csproj).
     /// </summary>
     [Fact]
     public void TryRead_returns_null_instead_of_throwing_when_the_read_fails() =>

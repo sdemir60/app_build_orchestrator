@@ -16,8 +16,14 @@ public interface IConsoleBacklog
     /// <summary>[from, to) satırlarını '\n' SONEKLİ birleştirir (<see cref="ConsoleLines.Join"/>); boş aralık ⇒ <c>""</c>.</summary>
     string Join(int from, int to);
 
+    /// <summary>Backlog kırpılan canlı satırları SAKLIYOR mu (<see cref="AcceptTrimmed"/> bir şey yapıyor mu): liste evet, store
+    /// hayır — satırlar zaten onun içindedir. Görünüm kırpılan metnin kuyruğunu belgeden YALNIZ saklayan backlog için okur
+    /// (<c>ConsoleView.TrimToRenderSlice</c>): saklamayana vermek, atılacak bir metni boşuna üretmektir. Görünümün "kendi kopyasını
+    /// tutuyor mu" sorusu (<c>ConsoleView.BacklogOwnsCopy</c>) aynı cevaptır — soru TEK yerde durur.</summary>
+    bool KeepsTrimmedLines { get; }
+
     /// <summary>Canlı akışta belgenin başından kırpılan ve backlog'un ucunu AŞAN satırlar — hiç kaydedilmemiş CANLI satırlar.
     /// Liste onları sonuna ekler; store hiçbir şey yapmaz: belgedeki her anlatı satırı önce store'a yazılmıştır, kopyası
-    /// tutulmaz.</summary>
+    /// tutulmaz (<see cref="KeepsTrimmedLines"/> false).</summary>
     void AcceptTrimmed(IReadOnlyList<string> lines);
 }

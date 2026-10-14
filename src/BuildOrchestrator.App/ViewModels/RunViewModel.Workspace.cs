@@ -272,9 +272,11 @@ public sealed partial class RunViewModel
     /// <summary>[Sync guard] <see cref="SyncBusy"/>'nin değiştiği HER geçişte ona bağlı komutları TEK yerden
     /// yeniden sorgulatır: CommunityToolkit'in <c>RelayCommand</c>'ı <c>CommandManager.RequerySuggested</c>'a
     /// ABONE OLMAZ, yani bildirim elle gelmezse düğmeler gerçek pencerede stale (kalıcı pasif/aktif) kalır.
-    /// Çağrı yerleri: istek kurulumu/bırakılışı (<see cref="RunViewModel.SyncAsync"/>/
-    /// <see cref="ReleaseSyncRequest"/>), <see cref="OnSyncStarted"/>, <see cref="ReleaseSyncPhase"/> ve
-    /// <see cref="TryConsumeSyncFailure"/>. Liste burada tek yerde durur — her geçişte tek tek sayılmaz.</summary>
+    /// Çağrı yerleri: istek kurulumu/bırakılışı (<see cref="RunViewModel.SyncCoreAsync"/>/
+    /// <see cref="ReleaseSyncRequest"/>), <see cref="OnSyncStarted"/> ve <see cref="ReleaseSyncPhase"/>. Sync'in üç bitiş yolu
+    /// (<c>syncCompleted</c> → <see cref="OnSyncCompleted"/>, Sync'e atfedilen hata → <see cref="TryConsumeSyncFailure"/>, uçuşta
+    /// Sync varken motor kaybı) bu metoda kendileri varmaz: <see cref="EndSync"/> üzerinden <see cref="ReleaseSyncPhase"/>'e girer
+    /// ve duyuru oradan atılır. Liste burada tek yerde durur — her geçişte tek tek sayılmaz.</summary>
     private void NotifySyncGatedCommands()
     {
         SyncCommand.NotifyCanExecuteChanged();
@@ -923,8 +925,9 @@ public sealed partial class RunViewModel
         EndPlanSurfaceRestart();
         if (failure is not null) SyncErrorMessage = failure; // [E2/T10] şerit KIRMIZI "Sync failed — {reason}" gösterir (retry = Sync)
         if (Phase == AppPhase.Syncing) Phase = RestingPhase;
-        // [Fix wave 1, C2 review Finding 1] OnSyncStarted'ın simetriği: hem normal syncCompleted hem
-        // engine-ölümü-mid-sync (OnEngineExited) yolu BURADAN geçer — Sync/Rebuild/Cycles'ı tek yerden geri açar.
+        // [Fix wave 1, C2 review Finding 1] OnSyncStarted'ın simetriği: Sync'in üç bitiş yolu — normal syncCompleted,
+        // Sync'e atfedilen hata (TryConsumeSyncFailure) ve engine-ölümü-mid-sync (OnEngineExited) — EndSync üzerinden, boştaki
+        // motor kaybı doğrudan BURADAN geçer — Sync/Rebuild/Cycles'ı tek yerden geri açar.
         NotifySyncGatedCommands();
     }
 

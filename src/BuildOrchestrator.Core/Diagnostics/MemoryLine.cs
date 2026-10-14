@@ -72,9 +72,10 @@ public static class MemoryLine
 
     /// <summary>
     /// Okuyucuyu çağırandan alan aşırı yükleme: hata yutmanın TEK yeri (<see cref="TryRead()"/> buna devreder). Patlayan bir süreç
-    /// okumasını taklit etmenin tek yolu olduğu için testler kullanır — Core derlemesi internal'larını testlere açmaz.
+    /// okumasını taklit etmek için testler kullanır: <c>internal</c>'dır, çünkü Core derlemesi internal'larını test derlemesine açar
+    /// (<c>InternalsVisibleTo BuildOrchestrator.Tests</c>, Core.csproj); üretim çağıranı yalnız parametresiz <see cref="TryRead()"/>'tir.
     /// </summary>
-    public static MemoryReading? TryRead(Func<MemoryReading> read)
+    internal static MemoryReading? TryRead(Func<MemoryReading> read)
     {
         ArgumentNullException.ThrowIfNull(read);
         try { return read(); }
