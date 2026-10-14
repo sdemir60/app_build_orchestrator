@@ -646,8 +646,9 @@ down, but there is no field-level schema validation either.
 ### 5.5 Log delivery
 
 Live output arrives as `projectLog` lines carrying a per-project line number. The engine writes and flushes every
-line to its project's log file before it emits the event, so a line that reaches the App after it has asked for a
-log is either already in the snapshot the engine takes or past it, never lost between the two.
+line to its project's log file before it emits the event, so every line the App has received by the time it asks for
+a log is already in the snapshot the engine takes. Only a line that reaches the App after the request can be missing
+from the snapshot, and that one arrives live, so nothing is lost between the two.
 
 When a project is selected, the App requests `getProjectLog` and receives `projectLogChunk` events from disk, each
 stamped with the last line number that had been persisted at snapshot time. The App stitches the two streams on that
@@ -2959,12 +2960,12 @@ indicator finished its exit, the window was hidden or shown, a log reply arrived
 which is no operation, still releases the trim it held back).
 
 When the trim runs depends on whether anyone is looking. In a visible window it waits for the finale and then for a
-grace of 1.5 s (`MemoryTrimRule.GraceAfterFinale`), which every new signal restarts, and runs when the application is
-idle (`ApplicationIdle`); an operation with no finale, a Sync, waits only for the grace. A hidden window has nobody to
-pause, so the trim is queued for idle at once. Hiding the window drops the grace and queues a trim that is due; showing
-it forgets that the last run ended hidden, since a visible window has no indicator to wait for, and the trim then
-follows the visible rule. Closing the window stops it for good: a signal that arrives afterwards — the engine's exit, a
-late end — schedules nothing.
+grace of 1.5 s (`MemoryTrimRule.GraceAfterFinale`), which every signal that finds the trim due restarts, and runs when
+the application is idle (`ApplicationIdle`); an operation with no finale, a Sync, waits only for the grace. A hidden
+window has nobody to pause, so the trim is queued for idle at once. Hiding the window drops the grace and queues a trim
+that is due; showing it forgets that the last run ended hidden, since a visible window has no indicator to wait for, and
+the trim then follows the visible rule. Closing the window stops it for good: a signal that arrives afterwards — the
+engine's exit, a late end — schedules nothing.
 
 The decision is taken twice. The request asks the rule; the execution, queued for idle, asks again, and only an
 execution that really collects counts the operation as trimmed. A new operation that began in the meantime, a finale
@@ -4520,7 +4521,9 @@ lines.
   project page is refused, since the document's first line is taken as the store's first), and that bind is not a
   rebuild of the document. Every later setup of the narrative document — a new section, the return from a project
   page, the window coming back from the tray — rebinds it with a snapshot, the store plus its count at that instant
-  (`NarrativeSnapshot`), and seeds the document from the store's last 200 lines.
+  (`NarrativeSnapshot`), and seeds the document from the store's last 200 lines. The one exception is a new section in
+  a visible window: it binds the emptied store with a count of zero, on purpose (*A new section empties the narrative
+  in place*, below).
 - The documents keep **no undo history**. AvalonEdit records every insert and removal on the document's undo
   stack and keeps the removed text alive as rope slices, so with the default unbounded stack a trim released
   nothing: after a long visible run about half of the live managed heap was the whole narrative, retained behind
@@ -5812,17 +5815,17 @@ either one alone removed barely a sixth of it.
 **Stopping an infinite animation means removing its clock, not just detaching it.** `BeginAnimation(property,
 null)` only unhooks the clock from the property: the clock stays a root of the dispatcher's timing tree in the
 *active* state, and an active animation clock asks for a tick on every frame. The tree holds it weakly, so only a
-garbage collection would end it — and the application collects once per operation, after its end finale and a
-pause (§12.3), never on a clock's account, so an orphaned clock ticks until some collection happens to come. Measured:
-a run that ended while the window was visible left the breathing rows, the building rings, the ribbon's sweep and the
-graph's bead orbit behind as orphaned clocks; hidden to the tray three seconds later, the UI thread idled at about 118
-million cycles a second against 13 for the same window hidden mid-run, because in a hidden window every tick recommits
-the composition channel and wakes the thread at the display's refresh rate. Every owner of an infinite animation therefore keeps
-its clock in a `DecorativeClock` and stops by removing it from the tree (`ClockController.Remove`), the same
-discipline the carets' `CursorClock` already keeps; a shared clock — the bead orbits, the selection edges — is
-attached to each surface and removed from all of them at once. The proof at the scale of the whole shell is a
-real window, a run ending in view, the finale cut by hiding, and a timing tree with no live clock afterwards
-(`HiddenShellClockTests`); each owner is pinned on its own in `HiddenDecorativeClockTests`.
+garbage collection would end it — and the application collects once per operation (after its end finale and a pause in
+a visible window, with neither in the tray; §12.3), never on a clock's account, so an orphaned clock ticks until some
+collection happens to come. Measured: a run that ended while the window was visible left the breathing rows, the
+building rings, the ribbon's sweep and the graph's bead orbit behind as orphaned clocks; hidden to the tray three
+seconds later, the UI thread idled at about 118 million cycles a second against 13 for the same window hidden mid-run,
+because in a hidden window every tick recommits the composition channel and wakes the thread at the display's refresh
+rate. Every owner of an infinite animation therefore keeps its clock in a `DecorativeClock` and stops by removing it
+from the tree (`ClockController.Remove`), the same discipline the carets' `CursorClock` already keeps; a shared clock —
+the bead orbits, the selection edges — is attached to each surface and removed from all of them at once. The proof at
+the scale of the whole shell is a real window, a run ending in view, the finale cut by hiding, and a timing tree with no
+live clock afterwards (`HiddenShellClockTests`); each owner is pinned on its own in `HiddenDecorativeClockTests`.
 
 **The two carets share one clock, and it runs only while the window is active.** The console prompt's caret and
 the event stream's active-line caret are the one pair of infinite loops that is genuinely on screen for the whole
@@ -6453,7 +6456,7 @@ do, and how the interface works around each — useful to know before attempting
   in roughly 130 ms and a 1000-node one in roughly 300 ms. Below that the pitch keeps shrinking until nodes
   reach their 8 px floor, at which point a very large workspace is legible as a shape rather than as
   individual projects.
-- **The run's narrative stays in memory until the next operation clears it.** The view model's store holds every line
+- **The run's narrative stays in memory until a new section clears it.** The view model's store holds every line
   of the last operation — each project's MSBuild output and the application's own lines — from its first line until a
   new section starts, so after a long run that text stays resident while the application is idle; the operation-end
   trim (§12.3) compacts it but cannot release it. The console document holds only the render slice, and the older
@@ -6461,9 +6464,9 @@ do, and how the interface works around each — useful to know before attempting
 - **The memory trim is a pause.** The collection is blocking and compacting, so it stops the UI thread for as long as
   the live heap takes to mark and compact — the longer, the more the application still holds, which is why it is
   longest right after a large run. The application only chooses its moment: once per operation, in a visible window
-  after the end finale and a grace of 1.5 s, on an idle dispatcher (§12.3). A user who clicks inside that pause feels
-  it. A Sync ends with one like any other operation, the silent Sync that a window activation starts after a pause
-  included.
+  after the end finale and a grace (`MemoryTrimRule.GraceAfterFinale`), on an idle dispatcher (§12.3). A user who
+  clicks inside that pause feels it. A Sync ends with one like any other operation, the silent Sync that a window
+  activation starts after a pause included.
 - **The will-build preview can under-promise on cycles.** A run's own preview is projected through what that
   run has actually pre-skipped, so it never promises work the run skips up front; a project decided only at its turn
   (§8.3, §8.8) reads as the planner said until then. The remaining gap is the other

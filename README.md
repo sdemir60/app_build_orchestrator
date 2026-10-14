@@ -773,7 +773,9 @@ The reasoning behind all three is in [`ARCHITECTURE.md` §11](ARCHITECTURE.md#11
   blocking garbage collection to give back what the operation used — in a visible window after the closing lights
   (when the operation has them) and a short pause, in the tray as soon as the app is idle — for a run, once the
   corner mark has played out. It stops the interface for as long as it takes, so a click inside that moment waits;
-  and the last operation's console text stays in memory until the next operation starts.
+  and the last operation's console text stays in memory until a new console section opens — the next run, Clean or
+  Optimize, a Sync you press, a branch or Debug/Release change, or closing the workspace. A pull and every other
+  Sync add to that text instead.
 - **The IPC has no field-level schema validation.** A malformed *JSON* line is recoverable — the Supervisor
   answers `error(badCommand)` and keeps going — but a **framing** error (over-long or truncated line) is treated
   as unrecoverable: it writes `error(framing)` and exits with code 2, and the App reports the engine as dead.
