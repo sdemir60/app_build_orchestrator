@@ -1,5 +1,3 @@
-using System.Text.RegularExpressions;
-
 namespace BuildOrchestrator.App.Console;
 
 /// <summary>
@@ -26,10 +24,15 @@ public enum ConsoleLineType { Cmd, Info, Dim, Warn, Error }
 ///
 /// <para><b>[idle-memory · dalga 2 · spec §6.5] Kompakt konsolun da TEK sınıflandırıcısıdır.</b>
 /// <see cref="CompactConsoleFilter"/> bir proje satırının anlatıya gidip gitmeyeceğine buradaki tiple karar verir (hata, uyarı,
-/// gerisi) ve gizlediği uyarıyı buradaki kod çıkarımıyla sayar (<see cref="WarningCode"/>) — "uyarı nedir" sorusunun ikinci bir
-/// tanımı yoktur. Süzgecin kendi özet satırını ise süzgeç tanımlar; burası onu süzgece sorarak tanır.</para>
+/// gerisi) ve gizlediği uyarıyı AYNI ayrıştırmanın verdiği tanı koduyla sayar (<see cref="Classify(ReadOnlySpan{char}, out ReadOnlySpan{char})"/>)
+/// — "uyarı nedir" sorusunun ikinci bir tanımı yoktur. Süzgecin kendi özet satırını ise süzgeç tanımlar; burası onu süzgece sorarak
+/// tanır.</para>
+///
+/// <para><b>[fix 1 · M4] Ayırma yapmaz.</b> Kompakt konsol sınıflandırmayı IPC thread'inde, VM'in kilidi altında her proje satırında
+/// sorar (OSYS koşusunda ~390 k satır), renklendirici her çizilen satırda: satır bir span olarak okunur, kırpılmış kopyası ya da
+/// birleştirilmiş arama metni üretilmez.</para>
 /// </summary>
-public static partial class ConsoleLineClassifier
+public static class ConsoleLineClassifier
 {
     /// <summary>
     /// Uygulamanın KOMUT olarak bastığı satırların baş sözcükleri. <c>▸</c> öneki kaldırıldığı için komut
@@ -55,14 +58,25 @@ public static partial class ConsoleLineClassifier
     /// koşunun başarısı zaten şeritte, listede ve event stream'de üç ayrı yerde söyleniyor — konsolun ham
     /// çıktısında ayrıca renklenmesi gerekmiyor.</para>
     /// </summary>
-    public static ConsoleLineType Classify(string? text)
-    {
-        if (string.IsNullOrEmpty(text)) return ConsoleLineType.Info;
-        string content = text.TrimStart();
+    public static ConsoleLineType Classify(string? text) => Classify(text.AsSpan(), out _);
 
-        foreach (string head in CommandHeads)
-            if (content.StartsWith(head, StringComparison.OrdinalIgnoreCase))
-                return ConsoleLineType.Cmd;
+    /// <summary>
+    /// <see cref="Classify(string?)"/>'nin span hâli; satır MSBuild'in tanı satırıysa onun kodunu da verir (<c>CS1591</c>,
+    /// <c>MSB3277</c>, <c>NU1903</c>… — yoksa boş): kompakt konsol gizlediği uyarıyı bununla sayar. Kod satırın bir dilimidir —
+    /// string'e yalnız sayaca YENİ bir kod girerken çevrilir.
+    /// <para><b>[DEĞİŞEN KURAL — fix 1 · I1] Sıra:</b> uygulamanın kendi önekleri (<c>[error]</c>, <c>warning:</c>) ve kompakt özet
+    /// satırı, sonra MSBuild'in KANONİK tanı biçimi (<see cref="TryParseDiagnostic"/>), EN SONDA komut sözcükleri. <b>Eski sıra:</b>
+    /// komut sözcükleri en baştaydı ve tanı araması <c>": warning "</c>'ı <c>": error "</c>'dan önce, satırın her yerinde arıyordu.
+    /// <b>Değişme gerekçesi (inceleme I1):</b> kompakt kipte üç gerçek hata biçimi kayboluyordu — <c>MSBUILD : error MSB4166: …</c>
+    /// komut sözcüğüyle başladığı için komut; <c>… : error NU1605: Warning As Error: …</c> (SDK projelerinde varsayılan
+    /// warning-as-error) metindeki "Warning" yüzünden uyarı; alt kategorili <c>… : XamlCompiler error WMC1006: …</c> bilgi
+    /// sayılıyordu. Kanonik biçim türü İLK tanı sözcüğünden alır; metindeki sözcükler sayılmaz.</para>
+    /// </summary>
+    public static ConsoleLineType Classify(ReadOnlySpan<char> text, out ReadOnlySpan<char> code)
+    {
+        code = default;
+        ReadOnlySpan<char> content = text.TrimStart();
+        if (content.IsEmpty) return ConsoleLineType.Info;
 
         // Uygulamanın KENDİ önekleri — kaynağı biziz, tahmin yok.
         if (content.StartsWith("[hata]", StringComparison.Ordinal) ||
@@ -75,36 +89,88 @@ public static partial class ConsoleLineClassifier
         if (CompactConsoleFilter.IsSummary(content))
             return ConsoleLineType.Warn;
 
-        // MSBuild'in tanı satırı formatı: "<köken>: error <KOD>: <metin>" (kökensiz hâlde satır başında).
-        // "warning" ÖNCE bakılır: bağımlılık uyarısı ("warning: … failed in this run") ikisini de içerir ve
-        // turuncu olmalıdır.
-        if (HasDiagnostic(content, "warning")) return ConsoleLineType.Warn;
-        if (HasDiagnostic(content, "error")) return ConsoleLineType.Error;
+        // MSBuild'in kanonik tanı satırı — komut sözcüklerinden ÖNCE: "MSBUILD : error MSB1009: …" bir hatadır, komut değil.
+        if (TryParseDiagnostic(content, out var category, out code))
+            return category;
+
+        foreach (string head in CommandHeads)
+            if (content.StartsWith(head, StringComparison.OrdinalIgnoreCase))
+                return ConsoleLineType.Cmd;
 
         return ConsoleLineType.Info;
     }
 
-    /// <summary>MSBuild tanı satırı mı — <c>": error "</c> biçiminde ya da satırın en başında.</summary>
-    private static bool HasDiagnostic(string content, string kind) =>
-        content.Contains(": " + kind + " ", StringComparison.OrdinalIgnoreCase)
-        || content.StartsWith(kind + " ", StringComparison.OrdinalIgnoreCase);
-
     /// <summary>
-    /// [idle-memory · dalga 2 · spec §6.5 — kopya YASAK] Bir uyarı satırının tanı kodu (<c>CS1591</c>, <c>MSB3277</c>, <c>NU1903</c>…)
-    /// ya da kodu yoksa <c>null</c> — kompakt konsolun gizlediği uyarıları koda göre sayışının TEK kaynağı. <see cref="HasDiagnostic"/>'in
-    /// tanıdığı iki biçimi tanır: kökenli (<c>…(9,5): warning CS1591: …</c>, <c>csc : warning CS1591: …</c>) ve kökensiz, satır başında
-    /// (<c>warning NU1701: …</c>). Uygulamanın kendi <c>warning:</c> satırları (bağımlılık uyarısı) kod taşımaz. Tanı anahtar sözcüğü
-    /// MSBuild'de yerelleşmez (Türkçe MSBuild de <c>warning</c> yazar).
+    /// [fix 1 · I1] MSBuild'in kanonik tanı biçimi (<c>Microsoft.Build.Shared.CanonicalError</c>):
+    /// <c>köken: [alt kategori ]error|warning[ KOD]: metin</c>. Köken bir dosya yolu (sürücü harfi ve isteğe bağlı <c>N&gt;</c> düğüm
+    /// öneki dahil), bir araç (<c>MSBUILD</c>, <c>csc</c>, <c>EXEC</c>) ya da proje dosyasıdır ve bir sonraki iki noktada biter; tür o
+    /// bölümün (bir sonraki iki noktaya kadar) son ya da sondan bir önceki sözcüğüdür — ardında en çok tek bir kod; önündeki serbest
+    /// sözcükler alt kategoridir (<c>XamlCompiler</c>). Kökensiz biçimde tür satırın EN BAŞINDADIR (<c>warning NU1701: …</c>) ve alt
+    /// kategori alınmaz: serbest metindeki "the error is: x" tanı değildir. Tür ilk tanı sözcüğüdür — kökenden sonraki bölümde durur,
+    /// metindeki "Warning As Error" sayılmaz.
     /// </summary>
-    public static string? WarningCode(string? text)
+    private static bool TryParseDiagnostic(ReadOnlySpan<char> content, out ConsoleLineType category, out ReadOnlySpan<char> code)
     {
-        if (string.IsNullOrEmpty(text)) return null;
-        var match = WarningCodePattern().Match(text);
-        return match.Success ? match.Groups[1].Value : null;
+        // Sürücü harfli köken (C:\…\A.cs(1,1)): sürücünün iki noktası kökene aittir, köken bir sonraki iki noktada biter.
+        int start = NodePrefixLength(content);
+        if (content.Length > start + 1 && char.IsAsciiLetter(content[start]) && content[start + 1] == ':')
+        {
+            int end = content[(start + 2)..].IndexOf(':');
+            if (end >= 0 && TryParseCategory(content[(start + 2 + end + 1)..], allowSubcategory: true, out category, out code))
+                return true;
+        }
+        // Düz köken (MSBUILD, csc, proje dosyası): ilk iki noktaya kadar.
+        int colon = content.IndexOf(':');
+        if (colon >= 0 && TryParseCategory(content[(colon + 1)..], allowSubcategory: true, out category, out code))
+            return true;
+        // Kökensiz: tür satırın başında.
+        return TryParseCategory(content, allowSubcategory: false, out category, out code);
     }
 
-    /// <summary><see cref="WarningCode"/>'un deseni: satır başı (baştaki boşluk atlanır — kırpılmış içerik) ya da <c>": "</c>, ardından
-    /// <c>warning</c>, harf + rakam kodu ve iki nokta. Büyük/küçük harf <see cref="HasDiagnostic"/> gibi duyarsızdır.</summary>
-    [GeneratedRegex(@"(?:^\s*|: )warning ([A-Za-z]+\d+)\s*:", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex WarningCodePattern();
+    /// <summary>MSBuild'in çok düğümlü konsol çıktısındaki düğüm öneki (<c>12&gt;</c>): uzunluğu, yoksa 0.</summary>
+    private static int NodePrefixLength(ReadOnlySpan<char> content)
+    {
+        int i = 0;
+        while (i < content.Length && char.IsAsciiDigit(content[i])) i++;
+        return i > 0 && i < content.Length && content[i] == '>' ? i + 1 : 0;
+    }
+
+    /// <summary>Kökenden sonraki bölüm (ilk iki noktaya kadar): <c>[alt kategori ]tür[ KOD]</c>. Tür son sözcükse kod yoktur; değilse
+    /// son sözcük koddur ve tür ondan önceki sözcüktür. Türün önünde sözcük kalırsa o alt kategoridir — yalnız kökenli biçimde.</summary>
+    private static bool TryParseCategory(ReadOnlySpan<char> rest, bool allowSubcategory, out ConsoleLineType category,
+        out ReadOnlySpan<char> code)
+    {
+        code = default;
+        category = ConsoleLineType.Info;
+        int colon = rest.IndexOf(':');
+        if (colon < 0) return false;
+        ReadOnlySpan<char> part = rest[..colon].TrimEnd();
+        int split = part.LastIndexOfAny(' ', '\t');
+        ReadOnlySpan<char> codeToken = default;
+        if (!TryCategory(part[(split + 1)..], out category))
+        {
+            if (split < 0) return false;
+            codeToken = part[(split + 1)..];
+            part = part[..split].TrimEnd();
+            split = part.LastIndexOfAny(' ', '\t');
+            if (!TryCategory(part[(split + 1)..], out category)) return false;
+        }
+        if (split >= 0 && !allowSubcategory) // kökensiz biçimde tür satırın başındadır
+        {
+            category = ConsoleLineType.Info;
+            return false;
+        }
+        code = codeToken;
+        return true;
+    }
+
+    /// <summary>Bir sözcük MSBuild'in tanı türü mü (<c>error</c> / <c>warning</c>; büyük-küçük harf duyarsız — MSBuild'de yerelleşmez,
+    /// Türkçe MSBuild de <c>warning</c> yazar).</summary>
+    private static bool TryCategory(ReadOnlySpan<char> word, out ConsoleLineType category)
+    {
+        if (word.Equals("error", StringComparison.OrdinalIgnoreCase)) { category = ConsoleLineType.Error; return true; }
+        if (word.Equals("warning", StringComparison.OrdinalIgnoreCase)) { category = ConsoleLineType.Warn; return true; }
+        category = ConsoleLineType.Info;
+        return false;
+    }
 }

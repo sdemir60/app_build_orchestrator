@@ -2,7 +2,6 @@ using System.Buffers.Binary;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
-using System.Text.RegularExpressions;
 using BuildOrchestrator.App.ViewModels;
 
 namespace BuildOrchestrator.App.Console;
@@ -15,23 +14,27 @@ namespace BuildOrchestrator.App.Console;
 /// <para><b>Kurallar</b> (spec §6.5 tablosu): projenin işlemdeki ilk satırından önce tek başlık (<see cref="ProjectHeader"/>:
 /// <c>building &lt;ad&gt;</c>); hata satırı aynen; uyarı satırı projenin ilk <see cref="ShownWarningsPerProject"/> TEKİL uyarısıysa
 /// aynen, sonrası gizlenir ve koduna göre sayılır; diğer her satır (bilgi, komut, boş) gizlenir; proje bitince (her sonuç) gizlenen
-/// uyarı varsa tek özet satırı (<see cref="ProjectDone"/>). Satırın türü <see cref="ConsoleLineClassifier.Classify"/>'ındır, uyarı
-/// kodu <see cref="ConsoleLineClassifier.WarningCode"/>'undur — ikinci bir tanım yoktur.</para>
+/// uyarı varsa tek özet satırı (<see cref="ProjectDone"/>) — sonucu hiç gelmeyen projeninki koşunun sonunda
+/// (<see cref="DrainPending"/>). Satırın türü ve tanı kodu <see cref="ConsoleLineClassifier"/>'ın TEK ayrıştırmasındandır — ikinci
+/// bir tanım yoktur.</para>
 ///
 /// <para><b>Tekil sayım.</b> MSBuild her tanıyı bitiş özetinde bir kez daha yazar: girintili ve çoğu zaman sonunda
-/// <c>[…\Proje.csproj]</c> ekiyle. Ham satır sayımı "N more warnings"ı gerçek sayının katlarına şişirirdi (son altı gerçek koşuda
-/// toplamda 3,4×). Bu yüzden bir uyarının kimliği kırpılmış ve proje eki atılmış metnidir; görülmüş bir uyarının tekrarı ne yeniden
-/// gösterilir ne sayılır — "ilk 3" ilk üç TEKİL uyarıdır. Hata hiç gizlenmez: tekrarı da geçer.</para>
+/// <c>[…\Proje.csproj]</c> ekiyle (çok hedefli projede <c>[…\Proje.csproj::TargetFramework=net8.0]</c>). Ham satır sayımı "N more
+/// warnings"ı gerçek sayının katlarına şişirirdi (son altı gerçek koşuda toplamda 3,4×). Bu yüzden bir uyarının kimliği kırpılmış ve
+/// proje eki atılmış metnidir; görülmüş bir uyarının tekrarı ne yeniden gösterilir ne sayılır — "ilk 3" ilk üç TEKİL uyarıdır. Hata
+/// hiç gizlenmez: tekrarı da geçer.</para>
 ///
 /// <para><b>Bellek.</b> Bir uyarının kimliği metnin kendisi değil 64 bitlik parmak izidir (<see cref="Fingerprint"/>): binlerce
 /// uyarılı bir projede metinleri tutmak log hacmiyle orantılı bellek olurdu (spec §5 ilke 1). Projenin sayacı özetiyle birlikte düşer;
-/// özeti olmayan projede en çok <see cref="ShownWarningsPerProject"/> iz kalır ve yeni işlemde (<see cref="Reset"/>) o da gider.</para>
+/// özeti olmayan projede en çok <see cref="ShownWarningsPerProject"/> iz kalır ve yeni işlemde (<see cref="Reset"/>) o da gider.
+/// [fix 1 · M4] Sıcak yol ayırma yapmaz: gizlenen satır ve görülmüş uyarının tekrarı 0 bayttır; kod string'i yalnız projenin sayacına
+/// YENİ bir kod girerken üretilir.</para>
 ///
 /// <para><b>Kilit yok:</b> süzgeç kendi başına thread-safe değildir; VM her çağrıyı kendi <c>_gate</c>'i altında yapar (satırlar IPC
 /// thread'inden, proje sonuçları UI thread'inden gelir). Proje kimlikleri harf duyarsızdır (Windows yolu — VM'in bütün sözlükleri
 /// gibi).</para>
 /// </summary>
-public sealed partial class CompactConsoleFilter
+public sealed class CompactConsoleFilter
 {
     /// <summary>Bir projenin anlatıda gösterilen en çok tekil uyarısı.</summary>
     public const int ShownWarningsPerProject = 3;
@@ -42,9 +45,20 @@ public sealed partial class CompactConsoleFilter
     /// <summary>Kodu çıkarılamayan uyarının (uygulamanın kendi <c>warning:</c> satırı — bağımlılık uyarısı) özet kodu.</summary>
     private const string OtherCode = "other";
 
-    // Özet satırının sabit parçaları: biçim (Summary) ve tanıma (IsSummary — sınıflandırıcının rengi) AYNI sabitlerden kurulur.
+    /// <summary>Projenin başlığının öneki (<c>building &lt;ad&gt;</c>).</summary>
+    private const string HeaderPrefix = "building ";
+
+    // [fix 1 · M6] Özet satırının sabit parçaları: biçim (Summary) ve tanıma (IsSummary — sınıflandırıcının rengi) AYNI sabitlerden
+    // kurulur; ayraçlar da dahil — ikinci bir literal yoktur.
+    private const string NameSeparator = ": ";
+    private const string PartSeparator = " — ";
+    private const string CodeSeparator = ", ";
     private const string MoreWarnings = "more warning";
-    private const string SummaryTail = " — see the project log";
+    private const string SummaryTail = PartSeparator + "see the project log";
+
+    // Tanımanın okuduğu sayılı ad: StreamText.Counted'ın "<n> <ad>[s]" çekimi — sayı ile ad arasındaki boşluk ve çoğul eki.
+    private const string CountedNoun = " " + MoreWarnings;
+    private const string PluralSuffix = "s";
 
     private readonly Dictionary<string, ProjectWarnings> _projects = new(StringComparer.OrdinalIgnoreCase);
 
@@ -52,19 +66,25 @@ public sealed partial class CompactConsoleFilter
     /// çünkü sayaç özetle birlikte düşer.</summary>
     private readonly HashSet<string> _headed = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Sayacı açılan projelerin sırası — bekleyen özetler (<see cref="DrainPending"/>) projelerin ilk uyarı sırasıyla yazılır.</summary>
+    private int _nextOrder;
+
     /// <summary>Projenin başlığı (<c>building &lt;ad&gt;</c>) — bu işlemde ilk soruluşunda; sonrasında <c>null</c>. VM onu projenin ilk
-    /// satırıyla AYNI kilit bölümünde, satırdan hemen önce yazar: başlık kendi projesinin satırlarından sonra düşemez.</summary>
-    public string? ProjectHeader(string projectId, string name) =>
-        _headed.Add(projectId) ? "building " + name : null;
+    /// satırıyla AYNI kilit bölümünde, satırdan hemen önce yazar: başlık kendi projesinin satırlarından sonra düşemez.
+    /// [fix 1 · M2b] Ad tembel sorulur (<paramref name="nameOf"/>): yalnız projenin İLK satırında — sonraki satırlar ad aramaz.</summary>
+    public string? ProjectHeader(string projectId, Func<string, string> nameOf) =>
+        _headed.Add(projectId) ? HeaderPrefix + nameOf(projectId) : null;
 
     /// <summary>Bir proje satırının anlatıdaki karşılığı: satırın kendisi ya da <c>null</c> (gizle).</summary>
-    public string? LogLine(string projectId, string text) =>
-        ConsoleLineClassifier.Classify(text) switch
+    public string? LogLine(string projectId, string text)
+    {
+        switch (ConsoleLineClassifier.Classify(text, out ReadOnlySpan<char> code))
         {
-            ConsoleLineType.Error => text,
-            ConsoleLineType.Warn => Warning(projectId, text),
-            _ => null,
-        };
+            case ConsoleLineType.Error: return text;
+            case ConsoleLineType.Warn: return Warning(projectId, text, code);
+            default: return null;
+        }
+    }
 
     /// <summary>Proje bitti (başarı, hata ya da atlama): gizlenen uyarı varsa özet satırı, yoksa <c>null</c>. Özet üretilince projenin
     /// sayacı düşer — aynı sonucun tekrarı özeti ikilemez.</summary>
@@ -75,29 +95,73 @@ public sealed partial class CompactConsoleFilter
         return Summary(name, warnings);
     }
 
+    /// <summary>
+    /// [fix 1 · M2] Koşu bitti: sonucu HİÇ gelmeyen projelerin (motor kaybı — motor uçuştaki projeler için sonuç yazmadan gitti) bekleyen
+    /// özetleri, projelerin ilk uyarı sırasıyla; özetlenen projenin sayacı düşer (<see cref="ProjectDone"/> gibi). Normal bitişte her proje
+    /// sonucunu almıştır: liste boştur. Adlar yalnız özet üretilirken sorulur.
+    /// </summary>
+    public IReadOnlyList<string> DrainPending(Func<string, string> nameOf)
+    {
+        ArgumentNullException.ThrowIfNull(nameOf);
+        var pending = _projects.Where(p => p.Value.Hidden > 0).OrderBy(p => p.Value.Order).ToList();
+        foreach (var (projectId, _) in pending) _projects.Remove(projectId);
+        return [.. pending.Select(p => Summary(nameOf(p.Key), p.Value))];
+    }
+
     /// <summary>Yeni işlem: bütün sayaçlar ve başlıklar sıfırlanır.</summary>
     public void Reset()
     {
         _projects.Clear();
         _headed.Clear();
+        _nextOrder = 0;
     }
 
     /// <summary>[tek tanım] Metin bu süzgecin özet satırı mı — <see cref="ConsoleLineClassifier"/> özet satırını bununla tanır ve uyarı
-    /// rengini verir; biçimin ikinci bir literali yoktur. Önce ucuz kuyruk kontrolü: sınıflandırıcı her satır için sorar.</summary>
-    public static bool IsSummary(string content) =>
-        content.EndsWith(SummaryTail, StringComparison.Ordinal) && SummaryShape().IsMatch(content);
-
-    private string? Warning(string projectId, string text)
+    /// rengini verir; biçimin ikinci bir literali yoktur: şekil <see cref="Summary"/>'nin AYNI sabitlerinden okunur —
+    /// <c>&lt;ad&gt;: &lt;n&gt; more warning(s) — &lt;kodlar&gt; — see the project log</c>. Önce ucuz kuyruk kontrolü: sınıflandırıcı her satır
+    /// için sorar.
+    /// <para>[DEĞİŞEN KURAL — fix 1 · M4/M6] Şekil eskiden aynı sabitlerden kurulan bir kaynak-üretimli regex'ti; ölçüldü (2026-10-15):
+    /// <c>IsMatch(span)</c> her özet satırında 96 bayt ayırıyordu, sınıflandırmanın geri kalanı 0. Elle ayrıştırma ayırma yapmaz ve şekli
+    /// aynı sabitlerden okur (ayraçlar dahil).</para></summary>
+    public static bool IsSummary(ReadOnlySpan<char> content)
     {
-        if (!_projects.TryGetValue(projectId, out var warnings)) _projects[projectId] = warnings = new ProjectWarnings();
+        if (!content.EndsWith(SummaryTail, StringComparison.Ordinal)) return false;
+        ReadOnlySpan<char> body = content[..^SummaryTail.Length]; // "<ad>: <n> more warning(s) — <kodlar>"
+        // Adın kendisi ": " içerebilir (regex'in açgözlü ".+"'sının karşılığı): her aday denenir; ad en az bir karakterdir.
+        for (int at = body.IndexOf(NameSeparator, StringComparison.Ordinal); at >= 0; )
+        {
+            if (at > 0 && IsCountedPart(body[(at + NameSeparator.Length)..])) return true;
+            int next = body[(at + 1)..].IndexOf(NameSeparator, StringComparison.Ordinal);
+            at = next < 0 ? -1 : at + 1 + next;
+        }
+        return false;
+    }
+
+    /// <summary>Özetin adından sonraki bölümü mü: <c>&lt;n&gt; more warning(s)</c> (<see cref="StreamText.Counted"/>'ın çekimi), ayraç ve
+    /// en az bir karakterlik kod listesi.</summary>
+    private static bool IsCountedPart(ReadOnlySpan<char> rest)
+    {
+        int digits = 0;
+        while (digits < rest.Length && char.IsAsciiDigit(rest[digits])) digits++;
+        if (digits == 0 || !rest[digits..].StartsWith(CountedNoun, StringComparison.Ordinal)) return false;
+        rest = rest[(digits + CountedNoun.Length)..];
+        if (rest.StartsWith(PluralSuffix, StringComparison.Ordinal)) rest = rest[PluralSuffix.Length..];
+        return rest.Length > PartSeparator.Length && rest.StartsWith(PartSeparator, StringComparison.Ordinal);
+    }
+
+    private string? Warning(string projectId, string text, ReadOnlySpan<char> code)
+    {
+        if (!_projects.TryGetValue(projectId, out var warnings))
+            _projects[projectId] = warnings = new ProjectWarnings { Order = _nextOrder++ };
         if (!warnings.Seen.Add(Fingerprint(text))) return null; // tekrar (bitiş özeti): ne gösterilir ne sayılır
         if (warnings.Shown < ShownWarningsPerProject)
         {
             warnings.Shown++;
             return text;
         }
-        string code = ConsoleLineClassifier.WarningCode(text) ?? OtherCode;
-        warnings.HiddenByCode[code] = warnings.HiddenByCode.GetValueOrDefault(code) + 1;
+        // [fix 1 · M4] Kod satırın bir dilimidir: sayaçta varsa yerinde artar (ayırma yok), string'e yalnız YENİ bir kod girerken çevrilir.
+        var byCode = warnings.HiddenByCode.GetAlternateLookup<ReadOnlySpan<char>>();
+        CollectionsMarshal.GetValueRefOrAddDefault(byCode, code.IsEmpty ? OtherCode : code, out _)++;
         warnings.Hidden++;
         return null;
     }
@@ -111,32 +175,40 @@ public sealed partial class CompactConsoleFilter
             .ThenBy(c => c.Key, StringComparer.Ordinal)
             .Take(SummaryCodes)
             .Select(c => string.Format(CultureInfo.InvariantCulture, "{0} ×{1}", c.Key, c.Value));
-        return string.Concat(name, ": ", StreamText.Counted(warnings.Hidden, MoreWarnings), " — ", string.Join(", ", codes),
-            SummaryTail);
+        return string.Concat(name, NameSeparator, StreamText.Counted(warnings.Hidden, MoreWarnings), PartSeparator,
+            string.Join(CodeSeparator, codes), SummaryTail);
     }
 
-    /// <summary>Bir uyarının tekil kimliği: kırpılmış metin, sonundaki <c>[…proj]</c> eki atılmış (bitiş özetinin kopyası satır içi
-    /// kopyada eki taşımayabilir); SHA-256'nın ilk 8 baytı — ayırma yok, çakışma olasılığı ihmal edilir.</summary>
+    /// <summary>Bir uyarının tekil kimliği: kırpılmış metin, sonundaki proje eki atılmış (<see cref="WithoutProjectSuffix"/>);
+    /// SHA-256'nın ilk 8 baytı — ayırma yok, çakışma olasılığı ihmal edilir.</summary>
     private static ulong Fingerprint(string text)
     {
-        ReadOnlySpan<char> line = text.AsSpan().Trim();
-        if (line.EndsWith("proj]", StringComparison.OrdinalIgnoreCase))
-        {
-            int suffix = line.LastIndexOf(" [", StringComparison.Ordinal);
-            if (suffix >= 0) line = line[..suffix].TrimEnd();
-        }
+        ReadOnlySpan<char> line = WithoutProjectSuffix(text.AsSpan().Trim());
         Span<byte> digest = stackalloc byte[SHA256.HashSizeInBytes];
         SHA256.HashData(MemoryMarshal.AsBytes(line), digest);
         return BinaryPrimitives.ReadUInt64LittleEndian(digest);
     }
 
-    /// <summary>Özet satırının şekli — <see cref="Summary"/>'nin ürettiğiyle AYNI sabitlerden.</summary>
-    [GeneratedRegex("^.+: [0-9]+ " + MoreWarnings + "s? — .+" + SummaryTail + "$", RegexOptions.CultureInvariant)]
-    private static partial Regex SummaryShape();
+    /// <summary>[fix 1 · M3] MSBuild'in satıra eklediği proje eki — <c> [&lt;yol&gt;proj]</c> ya da çok hedefli projede
+    /// <c> [&lt;yol&gt;proj::&lt;özellikler&gt;]</c> (<c>::TargetFramework=net8.0</c>) — atılmış satır; ek yoksa satırın kendisi. Bitiş
+    /// özetinin kopyası satır içi kopyada eki taşımayabilir; ikisi tek uyarıdır.</summary>
+    private static ReadOnlySpan<char> WithoutProjectSuffix(ReadOnlySpan<char> line)
+    {
+        if (line.IsEmpty || line[^1] != ']') return line;
+        int open = line.LastIndexOf(" [", StringComparison.Ordinal);
+        if (open < 0) return line;
+        ReadOnlySpan<char> inside = line[(open + 2)..^1];
+        int properties = inside.IndexOf("::", StringComparison.Ordinal);
+        ReadOnlySpan<char> project = properties >= 0 ? inside[..properties] : inside;
+        return project.EndsWith("proj", StringComparison.OrdinalIgnoreCase) ? line[..open].TrimEnd() : line;
+    }
 
     /// <summary>Bir projenin bu işlemdeki uyarı sayacı.</summary>
     private sealed class ProjectWarnings
     {
+        /// <summary>Sayacın açılış sırası (<see cref="DrainPending"/>'in sırası).</summary>
+        public int Order { get; init; }
+
         /// <summary>Görülen tekil uyarıların parmak izleri (gösterilen ve gizlenen).</summary>
         public HashSet<ulong> Seen { get; } = [];
 

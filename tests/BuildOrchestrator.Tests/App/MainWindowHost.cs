@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -31,6 +32,22 @@ internal static class MainWindowHost
 {
     /// <summary>Konsol pompası test boyunca hiç tick etmesin — batcher sonsuza dek bekler.</summary>
     public static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
+
+    /// <summary>[idle-memory · dalga 2 · fix 1 · M5] Pompası testin elinde olan konsol: tick beklemez, kanal <see cref="DrainPosted"/> ile
+    /// tek seferde boşaltılır — VM'in pompaya NE gönderdiğini sınayan testlerin TEK kurulumu (<see cref="NeverTickingBatcher"/>'ın eşi).</summary>
+    public static ConsoleBatcher DrainableBatcher() => new(_ => Task.CompletedTask);
+
+    /// <summary>[fix 1 · M5] Kanalı tamamlar ve üretimin pompasıyla tek seferde boşaltır; postlanan metni döner (her satır '\n' sonekli,
+    /// bir reseed sentinel'i kendinden önceki satırları atar — üretimdeki gibi). Pompaya gideni store'la karşılaştıran testlerin TEK
+    /// boşaltma yeri.</summary>
+    public static async Task<string> DrainPosted(ConsoleBatcher console)
+    {
+        ArgumentNullException.ThrowIfNull(console);
+        var posted = new StringBuilder();
+        console.Complete();
+        await console.PumpAsync((text, _) => posted.Append(text), CancellationToken.None);
+        return posted.ToString();
+    }
 
     /// <summary>Üretim kablajının TAMAMIYLA kurulu bir <see cref="MainWindow"/>'u + onun VM'i.</summary>
     /// <param name="beforeVm">[A13/T6 · t1] VM kurulduktan SONRA, pencere ctor'u onu SEED etmeden ÖNCE koşar.
@@ -361,6 +378,12 @@ internal static class MainWindowHost
         ArgumentNullException.ThrowIfNull(text);
         vm.OnEvent(new ProjectLogEvent("r1", IdOf(name), lineNumber, text));
     }
+
+    /// <summary>[idle-memory · dalga 2 · fix 1 · M5] MSBuild'in satır içi uyarı satırı (girintili, <c>&lt;dosya&gt;(&lt;satır&gt;,1): warning
+    /// &lt;KOD&gt;: &lt;metin&gt;</c>) — her satır numarası ayrı, TEKİL bir uyarıdır. Kompakt konsolun süzgeç ve VM testlerinin TEK satır
+    /// kurucusu.</summary>
+    public static string WarningLine(int line, string code = "CS1591", string text = "Missing XML comment") =>
+        $"  C:\\r\\A.cs({line},1): warning {code}: {text}";
 
     /// <summary>[perf A3/A4 fix] Bir derlemenin TÜM olay akışı: plan (<see cref="PreviewBuild"/>), başlangıç
     /// (<see cref="StartBuild"/>), her projenin derlenmesi ve bitiş (<see cref="FinishBuild"/>). Gizli-pencere testleri

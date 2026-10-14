@@ -1,5 +1,4 @@
 ﻿using System.IO;
-using System.Text;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
@@ -552,7 +551,7 @@ public class RunViewModelStateTests
     public async Task A_spool_write_failure_mid_run_is_reported_after_the_line_that_hit_it_in_store_and_pump_order()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var console = new ConsoleBatcher(_ => Task.CompletedTask); // pompa testin elinde: sonunda tek seferde boşaltılır
+        var console = MainWindowHost.DrainableBatcher(); // pompa testin elinde: sonunda tek seferde boşaltılır
         var vm = new RunViewModel(engine, console, () => "r1") { RootPath = @"D:\repo", CompactConsole = false };
         using var logs = new SpoolDir(vm.Narrative);
         FailingSpoolStream? stream = null;
@@ -569,10 +568,7 @@ public class RunViewModelStateTests
         Assert.False(vm.Narrative.IsSpooling);
         string warning = $"warning: console history could not be written to {logs.FilePath} — kept in memory (IOException)";
         Assert.Equal(["before", overflowing, warning, "after"], vm.Narrative.Slice(0, vm.Narrative.Count));
-        console.Complete();
-        var pumped = new StringBuilder();
-        await console.PumpAsync((text, _) => pumped.Append(text), CancellationToken.None);
-        Assert.Equal(vm.GetRunDocumentText(), pumped.ToString()); // pompa sırası = store sırası
+        Assert.Equal(vm.GetRunDocumentText(), await MainWindowHost.DrainPosted(console)); // pompa sırası = store sırası
     }
 
     /// <summary>[idle-memory · dalga 2 · inceleme M1] Satır gelmeyen, boştaki bir konsolda da spool uyarısı düşer: geri okuma hatası

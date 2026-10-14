@@ -476,6 +476,10 @@ public sealed partial class RunViewModel : ObservableObject
     /// koleksiyonu) soramaz. İşlem başında satır listesinden, koşunun önizlemesinden doldurulur (<see cref="CompactNameLocked"/>).</summary>
     private readonly Dictionary<string, string> _compactNames = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>[fix 1 · M2b] <see cref="CompactNameLocked"/>'ın süzgece verilen çözücüsü — ctor'da BİR kez kurulur: süzgeç adı yalnız
+    /// projenin ilk satırında sorar, satır başına ne arama ne kapanış ayrılır.</summary>
+    private readonly Func<string, string> _compactNameOf;
+
     private PendingLoad? _pendingLoad; // yalnız UI thread'inde YAZILIR (LoadProjectLogAsync, CompletePendingLoad); OnProjectLog arka plandan okur
     // [idle-memory · I1] Son proje log isteğinin kimliği — her yükleme bir artırır (ilk istek 1; 0 "kimliksiz" demektir ve hiçbir
     // isteğe verilmez). Yalnız UI thread'inde yazılır (LoadProjectLogAsync).
@@ -979,6 +983,7 @@ public sealed partial class RunViewModel : ObservableObject
         _newRunId = newRunId;
         _nowMs = nowMs ?? (() => Environment.TickCount64);
         _osActions = osActions; // [E1/T67] null ise OS eylemleri güvenle no-op (test default'u); üretimde enjekte edilir
+        _compactNameOf = CompactNameLocked;
     }
 
     // ---------------------------------------------------------------- komutlar
@@ -2748,8 +2753,9 @@ public sealed partial class RunViewModel : ObservableObject
     /// <summary>
     /// [perf Faz C · C4] Koşunun HER bitiş yolu buradan geçer: <c>runCompleted</c> (<see cref="OnRunCompleted"/> — Stop'un bitişi
     /// dahil: <c>runStopped</c> koşuyu bitirmez, <see cref="IsRunInFlight"/> <c>runCompleted</c>'a dek sürer), koşu-bitiren hata
-    /// (<see cref="OnError"/>) ve motor kaybı (<see cref="ReleaseAfterEngineLoss"/>). "Koşu bitti" sinyali yazılır
-    /// (<see cref="EndedRunSerial"/>), SONRA işlemin bitişi bildirilir (<see cref="EndedOperationSerial"/>). Koşu
+    /// (<see cref="OnError"/>) ve motor kaybı (<see cref="ReleaseAfterEngineLoss"/>). Önce kompakt konsolun bekleyen özetleri anlatıya
+    /// yazılır (<see cref="AppendPendingCompactSummaries"/> — işlemin sonundaki boşaltmadan önce: dosyaya da iner), sonra "koşu bitti"
+    /// sinyali (<see cref="EndedRunSerial"/>), SONRA işlemin bitişi bildirilir (<see cref="EndedOperationSerial"/>). Koşu
     /// yokken çağrılırsa (motor boştayken gitti, planlama düştü) ya da aynı koşunun ikinci bitişinde (<c>runCompleted</c>'dan sonra
     /// motor kaybı) iki sinyal de değişmez: bitecek bir koşu kalmamıştır. Bekleyen koşu-başlangıç akış durumu da burada bırakılır
     /// (<see cref="ForgetPendingRunStart"/>): önizlemesine varmadan biten koşunun başlangıç, kırpma ve uyarı satırları sonraki
@@ -2761,8 +2767,29 @@ public sealed partial class RunViewModel : ObservableObject
     {
         ForgetPendingRunStart();
         if (EndedRunSerial == RunSerial) return; // bitecek koşu yok ya da bu koşunun bitişi zaten işaretli
+        AppendPendingCompactSummaries();          // [fix 1 · M2] işlemin sonundaki boşaltmadan ÖNCE: özetler koşu klasörüne de iner
         EndedRunSerial = RunSerial;
         MarkOperationEnded();
+    }
+
+    /// <summary>
+    /// [idle-memory · dalga 2 · fix 1 · M2] Koşu bitti ama bazı projelerin sonucu hiç gelmedi — motor kaybında
+    /// (<see cref="ReleaseAfterEngineLoss"/>) uçuştaki projeler için ne başarı ne hata yazılır: gizledikleri uyarıların özeti bir
+    /// sonraki işlemin sıfırlamasında sessizce düşerdi. Bekleyen özetler (<see cref="CompactConsoleFilter.DrainPending"/>) normal anlatı
+    /// yolundan, kilit altında yazılır. Normal bitişte (<c>runCompleted</c>, koşu-bitiren hata) her proje sonucunu çoktan almıştır:
+    /// yazılacak bir şey yoktur.
+    /// </summary>
+    private void AppendPendingCompactSummaries()
+    {
+        lock (_gate)
+        {
+            if (!_compactInEffect) return;
+            foreach (string summary in _compact.DrainPending(_compactNameOf))
+            {
+                AppendRunLineLocked(summary);
+                AppendSpoolWarningLocked();
+            }
+        }
     }
 
     /// <summary>[T8 fix round 1 · I1] Bu koşuya ait olmayan bir koşu-sonu olayı: başka bir koşunun id'si, ya da
@@ -3044,7 +3071,9 @@ public sealed partial class RunViewModel : ObservableObject
             string? shown = e.Text;
             if (_compactInEffect)
             {
-                if (_compact.ProjectHeader(e.ProjectId, CompactNameLocked(e.ProjectId)) is { } header) AppendRunLineLocked(header);
+                // [fix 1 · M2b] Ad tembel: yalnız projenin işlemdeki İLK satırında sorulur (çözücü bir kez kurulmuş alandır — satır
+                // başına kapanış ayrılmaz).
+                if (_compact.ProjectHeader(e.ProjectId, _compactNameOf) is { } header) AppendRunLineLocked(header);
                 shown = _compact.LogLine(e.ProjectId, e.Text);
             }
 
