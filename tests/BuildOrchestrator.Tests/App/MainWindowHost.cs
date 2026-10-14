@@ -47,10 +47,11 @@ internal static class MainWindowHost
     /// üretimdeki <c>Environment.TickCount64</c>; canlı süreleri ve motor sessizlik bekçisini saati ileri alarak sınayan
     /// testler saati kendisi sürer.</param>
     /// <param name="productionMemoryCollector">[idle-memory] Pencere işlem sonu bellek trimini GERÇEK toplayıcıyla mı yapsın.
-    /// Varsayılan <c>false</c>: pencere kurulur kurulmaz boş bir toplayıcı takılır (<see cref="NoMemoryCollection"/>) — trim
-    /// her işlem bitişinde (görünür pencerede de) toplar ve süit gerçek agresif GC'yi her testte koştururdu. Üretim
-    /// toplayıcısını isteyenler: onun geçerliliğini sınayan test (<c>RunBufferReleaseTests</c>) ve kapılı bellek bütçesi ölçümü
-    /// (<c>NarrativeBudgetTests</c>: sayacını üretim toplayıcısının üstüne sarar).</param>
+    /// Varsayılan <c>false</c>: pencere kurulur kurulmaz boş bir toplayıcı takılır (<see cref="NoRealGc.Collection"/>: "testler
+    /// gerçek GC'yi koşturmaz" politikasının Supervisor ile ORTAK tek tanımı) — trim her işlem bitişinde (görünür pencerede de)
+    /// toplar ve süit gerçek agresif GC'yi her testte koştururdu. Toplamayı sayan testler kendi sahtesini fixture'DAN SONRA takar.
+    /// Üretim toplayıcısını isteyenler: onun geçerliliğini sınayan test (<c>RunBufferReleaseTests</c>) ve kapılı bellek bütçesi
+    /// ölçümü (<c>NarrativeBudgetTests</c>: sayacını üretim toplayıcısının üstüne sarar).</param>
     /// <param name="console">[idle-memory] Pencere ile VM'in paylaştığı konsol pompası. Verilmezse hiç tick etmeyen pompa
     /// (<see cref="NeverTickingBatcher"/>): satırlar kanalda bekler, belgeye yalnız testin kendisi batch verir. Pompayı kendisi
     /// süren testler (ör. bellek bütçesi ölçümü: tick etmeyen pompanın kanalında biriken satırlar üretimde yoktur) kendi
@@ -73,14 +74,9 @@ internal static class MainWindowHost
         var store = UiStateStore(uiStateDir);
         if (saved is not null) store.Save(saved);
         var window = new MainWindow(engine, vm, batcher, DsResources.NewScope(), store, autostart);
-        if (!productionMemoryCollector) window.MemoryCollector = NoMemoryCollection;
+        if (!productionMemoryCollector) window.MemoryCollector = NoRealGc.Collection;
         return (window, vm);
     }
-
-    /// <summary>[idle-memory] Fixture pencerelerinin bellek toplayıcısı: hiçbir şey yapmaz. Trim kararı ve zamanlaması aynen
-    /// koşar, yalnız gerçek toplama yapılmaz (<see cref="New"/>'ün <c>productionMemoryCollector</c>'ı). Toplamayı sayan testler
-    /// kendi sahtesini fixture'DAN SONRA takar.</summary>
-    private static readonly Action NoMemoryCollection = static () => { };
 
     /// <summary>[design v1.23/v1.24 review C13] <see cref="New"/> + <see cref="Realize"/> (üretimin açılış boyutunda):
     /// realize edilmiş kabuk ve VM'i, veri akmadan. Böyle bir kabukla başlayan testlerin TEK kurulumu —
@@ -172,7 +168,7 @@ internal static class MainWindowHost
         var grace = window.TrimGraceAfterFinale;
         var collector = window.MemoryCollector;
         window.TrimGraceAfterFinale = TimeSpan.Zero;
-        window.MemoryCollector = NoMemoryCollection;
+        window.MemoryCollector = NoRealGc.Collection;
         vm.OnEvent(SyncCompleted(projectNodes.Count)); // → Idle
         DispatcherPump.DrainToIdle();
         window.TrimGraceAfterFinale = grace;

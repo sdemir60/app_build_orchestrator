@@ -5,6 +5,10 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using BuildOrchestrator.Contracts.Ipc;
+using BuildOrchestrator.Core.Logs;
+using BuildOrchestrator.Core.Planning;
+using BuildOrchestrator.Core.ProcessControl;
+using BuildOrchestrator.Supervisor;
 
 namespace BuildOrchestrator.Tests.Supervisor;
 
@@ -24,12 +28,25 @@ internal static class SupervisorHostHarness
     public static readonly TimeSpan Limit = TimeSpan.FromSeconds(60);
 
     /// <summary>
-    /// [bellek trimi] Testlerin <c>RunCoordinator</c>'a verdiği "toplama yok" dikişi — TEK tanım (kopya YASAK). Üretim varsayılanı
-    /// (<c>MemoryTrim.CollectAndRelease</c>) bloklayan, sıkıştıran bir GC'dir ve bütün test sürecini durdurur; her koordinatör testi
-    /// koşu ya da Sync bitişinde onu ödese süit yavaşlar ve paralel koşan zamanlama testlerini bozar. Her test koordinatörü bunu
-    /// (ya da bir sayaç/kayıtçı) verir; üretim varsayılanını yalnız <c>RunCoordinatorMemoryTests</c> kaynaktan pinler.
+    /// [bellek trimi] Koşusu olmayan koordinatör — Sync, Clean, Optimize, checkout, reddetme ve bellek satırı testlerinin TEK kurulumu
+    /// (kopya YASAK: on yerde aynı beş satırlık gövde ve unutulabilir bir <c>memoryTrim:</c>). Planlayıcı, MSBuild fabrikası ve
+    /// (verilmediyse) log fabrikası çağrılırsa test KIRILIR. Yazar, host testlerinde host ile PAYLAŞILIR (Program.cs deseni: satır
+    /// bütünlüğü writer'ın kendi kilidindedir).
+    /// <para><paramref name="memoryTrim"/> verilmezse <see cref="NoRealGc.Collection"/>: gerçek toplama bütün test sürecini durdurur
+    /// (üretim varsayılanını yalnız <c>RunCoordinatorMemoryTests</c> kaynaktan pinler); sırayı ya da sayıyı gözleyen testler sayaç/kayıtçı
+    /// verir. Dikişin HİÇ verilmemesi ise kaynak guard'ıyla engellenir (<c>MemoryTrimGuardTests</c>: her <c>new RunCoordinator(</c>
+    /// <c>memoryTrim:</c> geçer).</para>
+    /// <para><paramref name="planner"/> yalnız koşuyu planlamada ASILI tutması gereken (slot dolu kalsın) testler içindir;
+    /// <paramref name="logFactory"/> koşu hiç yazılmasa da bir koşu başlayan (planlayıcı patlayan) testlerin log kökü içindir.</para>
     /// </summary>
-    public static readonly Action NoTrim = static () => { };
+    public static RunCoordinator NewIdleCoordinator(JobObject job, NdjsonWriter writer, Action<string> console,
+        Action? memoryTrim = null, Func<StartRunCommand, Action<string>, RunPlan>? planner = null,
+        Func<DateTimeOffset, RunLogWriter>? logFactory = null) => new RunCoordinator(
+        planner: planner ?? ((_, _) => throw new InvalidOperationException("no run in this test")),
+        msbuildFactory: _ => throw new InvalidOperationException("no run in this test"),
+        logFactory: logFactory ?? (_ => throw new InvalidOperationException("no run in this test")),
+        writer: writer, innerJob: job, nowMs: () => 0, console: console,
+        memoryTrim: memoryTrim ?? NoRealGc.Collection);
 
     /// <summary>Verilen komutları NDJSON olarak yazıp başa saran bir stdin. Komutlar tükenince EOF gelir ve
     /// host düzenli çıkar — testin host'u durdurmak için ayrı bir sinyale ihtiyacı olmaz.</summary>

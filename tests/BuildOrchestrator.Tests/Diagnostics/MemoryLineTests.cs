@@ -85,6 +85,28 @@ public class MemoryLineTests
         Assert.True(reading.CommittedBytes >= 0, reading.ToString());
     }
 
+    /// <summary>[idle-memory · final review (Tasks 9-10)] Tanı ekranının (About) okuması: <see cref="MemoryLine.Read"/>'in korumalı
+    /// hâli. Çalışan bir süreçte okuma başarılır ve <c>Read</c> ile aynı büyüklükte değerler verir.</summary>
+    [Fact]
+    public void TryRead_returns_the_reading_of_this_process()
+    {
+        var reading = MemoryLine.TryRead();
+
+        Assert.NotNull(reading);
+        Assert.True(reading.Value.PrivateBytes >= Mb, $"a running process holds at least a megabyte of private bytes: {reading}");
+        Assert.True(reading.Value.HeapBytes > 0, reading.ToString());
+    }
+
+    /// <summary>
+    /// Bir tanı, tanı ekranını bozamaz: süreç sorgusu patlarsa (izin, kapanan süreç) <c>TryRead</c> <c>null</c> döner, fırlatmaz.
+    /// Eskiden About'un okuması <see cref="MemoryLine.Read"/>'i doğrudan çağırıyordu — fırlatsa diyalog hiç açılmazdı;
+    /// <see cref="MemoryLine.Report"/> motorun satırı için aynı güvenceyi baştan veriyordu. Okuyucu parametreli aşırı yükleme
+    /// patlayan bir okumayı taklit etmenin tek yoludur (Core derlemesi internal'larını testlere açmaz).
+    /// </summary>
+    [Fact]
+    public void TryRead_returns_null_instead_of_throwing_when_the_read_fails() =>
+        Assert.Null(MemoryLine.TryRead(() => throw new InvalidOperationException("access denied")));
+
     [Fact]
     public void Report_hands_the_current_line_to_the_sink()
     {
@@ -131,12 +153,8 @@ public class MemoryLineWiringTests
         var stdin = await SupervisorHostHarness.StdinWith(command);
 
         using var job = JobObject.CreateKillOnClose();
-        using var coordinator = new RunCoordinator(
-            planner: (_, _) => throw new InvalidOperationException("no run in this test"),
-            msbuildFactory: _ => throw new InvalidOperationException("no run in this test"),
-            logFactory: startedAt => new RunLogWriter(Path.Combine(sandbox, "logs"), startedAt),
-            writer: writer, innerJob: job, nowMs: () => 0, console: line => { lock (console) console.Add(line); },
-            memoryTrim: SupervisorHostHarness.NoTrim);
+        using var coordinator = SupervisorHostHarness.NewIdleCoordinator(job, writer, line => { lock (console) console.Add(line); },
+            logFactory: startedAt => new RunLogWriter(Path.Combine(sandbox, "logs"), startedAt));
         var services = WorkspaceServices.Default(sandbox, _ => throw new NotSupportedException("no restore in this test"));
         if (configure is not null) services = configure(services);
         var host = new SupervisorHost(writer, new NdjsonReader(stdin), job, coordinator, services);

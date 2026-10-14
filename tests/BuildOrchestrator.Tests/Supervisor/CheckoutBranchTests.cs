@@ -102,12 +102,9 @@ public class CheckoutBranchTests
 
             // Planlama testin sonuna kadar BLOKLANIR → koşu slotu dolu kalır (sinyal, Thread.Sleep DEĞİL [D8]).
             var releasePlanning = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            using var coordinator = new RunCoordinator(
+            using var coordinator = SupervisorHostHarness.NewIdleCoordinator(job, writer, _ => { },
                 planner: (_, _) => { releasePlanning.Task.GetAwaiter().GetResult(); throw new InvalidOperationException("plan yok"); },
-                msbuildFactory: _ => throw new InvalidOperationException("bu testte msbuild yok"),
-                logFactory: startedAt => new RunLogWriter(Path.Combine(sandbox, "logs"), startedAt),
-                writer: writer, innerJob: job, nowMs: () => 0, console: _ => { },
-                memoryTrim: SupervisorHostHarness.NoTrim);
+                logFactory: startedAt => new RunLogWriter(Path.Combine(sandbox, "logs"), startedAt));
 
             // startRun slotu SENKRON tutar; dispatch loop serildir — checkoutBranch okunduğunda run KESİNLİKLE aktiftir.
             var stdin = await SupervisorHostHarness.StdinWith(
@@ -138,12 +135,8 @@ public class CheckoutBranchTests
             var stdout = new SupervisorHostHarness.CollectingStream();
             var writer = new NdjsonWriter(stdout);
             using var job = JobObject.CreateKillOnClose();
-            using var coordinator = new RunCoordinator(
-                planner: (_, _) => throw new InvalidOperationException("bu testte run yok"),
-                msbuildFactory: _ => throw new InvalidOperationException("bu testte run yok"),
-                logFactory: startedAt => new RunLogWriter(Path.Combine(sandbox, "logs"), startedAt),
-                writer: writer, innerJob: job, nowMs: () => 0, console: _ => { },
-                memoryTrim: SupervisorHostHarness.NoTrim);
+            using var coordinator = SupervisorHostHarness.NewIdleCoordinator(job, writer, _ => { },
+                logFactory: startedAt => new RunLogWriter(Path.Combine(sandbox, "logs"), startedAt));
             var services = WorkspaceServices.Default(sandbox, _ => throw new NotSupportedException("bu testte restore yok"))
                 with { Git = _ => throw new InvalidOperationException("beklenmeyen hata") };
 

@@ -231,9 +231,9 @@ public class RunCoordinatorTests
                 // Machine'i kendisi verir. productionMachine: true ⇒ seam HİÇ verilmez (null): motor üretimdeki
                 // varsayılanı, yani gerçek makineyi okur.
                 machine: productionMachine ? null : () => Machine,
-                // [bellek trimi] Varsayılan "toplama yok": üretim varsayılanı bloklayan bir GC'dir ve bu harness'i kuran ~200 testin
-                // her koşu bitişinde bütün test sürecini durdurur. Toplamayı gözleyen testler sayaç/kayıtçı verir.
-                memoryTrim: memoryTrim ?? SupervisorHostHarness.NoTrim);
+                // [bellek trimi] Varsayılan "toplama yok": üretim varsayılanı bloklayan bir GC'dir ve bu harness'i kuran her test
+                // koşu bitişinde bütün test sürecini durdurur. Toplamayı gözleyen testler sayaç/kayıtçı verir.
+                memoryTrim: memoryTrim ?? NoRealGc.Collection);
         }
 
         /// <summary>Bol işlemci ve bellek: işçi bütçesi hiçbir istek için devreye girmez.</summary>

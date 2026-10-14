@@ -20,7 +20,8 @@ public readonly record struct MemoryReading(long PrivateBytes, long CommittedByt
 /// bellek satırları (<c>App private</c> · <c>GC committed</c> · <c>Managed heap</c>) <see cref="Read"/>'in değerleridir ve
 /// sayıları <see cref="Megabytes"/>'tan gelir — motorun satırıyla App'in satırları aynı kuralla yazılır.</para>
 ///
-/// <para>Katmanlar bilerek ayrıdır: <see cref="Read"/> süreci okuyan TEK yerdir; <see cref="Megabytes"/> TEK MB biçimidir;
+/// <para>Katmanlar bilerek ayrıdır: <see cref="Read"/> süreci okuyan TEK yerdir; <see cref="TryRead()"/> onu hata YUTAN bir korumayla
+/// sarar (App'in tanı ekranı okuyamazsa "bilinmiyor" gösterir); <see cref="Megabytes"/> TEK MB biçimidir;
 /// <see cref="Format"/> SAFTIR (sayılar parametre, süreç okumaz — birim testi bayt verir, satırı görür); <see cref="Current"/>
 /// okumayı satıra çevirir; <see cref="Report"/> satırı bir kanala bağlar ve hata YUTAR — bir tanı satırı Sync'i ya da koşu
 /// kapanışını asla bozmamalıdır.</para>
@@ -54,11 +55,30 @@ public static class MemoryLine
         ((long)Math.Round(bytes / (double)BytesPerMb, MidpointRounding.AwayFromZero)).ToString(CultureInfo.InvariantCulture);
 
     /// <summary>Bu sürecin bellek okuması — süreç okuması BURADA ve yalnız burada: satır (<see cref="Current"/>) da App'in tanı
-    /// satırları da bunu kullanır.</summary>
+    /// satırları da bunu kullanır (kaynak guard'ı: <c>MemoryReadGuardTests</c>). Okuma patlarsa fırlatır; tanı ekranları korumalı
+    /// hâlini (<see cref="TryRead()"/>) kullanır.</summary>
     public static MemoryReading Read()
     {
         using var process = Process.GetCurrentProcess();
         return new(process.PrivateMemorySize64, GC.GetGCMemoryInfo().TotalCommittedBytes, GC.GetTotalMemory(false));
+    }
+
+    /// <summary>
+    /// <see cref="Read"/>'in tanı için korumalı hâli: okuma patlarsa (süreç sorgusu reddedilir, süreç kapanıyor) <c>null</c> döner,
+    /// FIRLATMAZ. App'in tanı ekranı (About → Environment) belleği okuyamadı diye açılamaz — <see cref="Report"/> motorun satırı için
+    /// aynı güvenceyi verir. Okuyamayan çağıran değeri "bilinmiyor" diye gösterir.
+    /// </summary>
+    public static MemoryReading? TryRead() => TryRead(Read);
+
+    /// <summary>
+    /// Okuyucuyu çağırandan alan aşırı yükleme: hata yutmanın TEK yeri (<see cref="TryRead()"/> buna devreder). Patlayan bir süreç
+    /// okumasını taklit etmenin tek yolu olduğu için testler kullanır — Core derlemesi internal'larını testlere açmaz.
+    /// </summary>
+    public static MemoryReading? TryRead(Func<MemoryReading> read)
+    {
+        ArgumentNullException.ThrowIfNull(read);
+        try { return read(); }
+        catch (Exception) { return null; } // tanı: okunamadı — çağıran "bilinmiyor" gösterir, tanı ekranı bozulmaz
     }
 
     /// <summary>Bu sürecin şu anki satırı: <see cref="Read"/>'in değerleri <see cref="Format"/>'ın biçiminde.</summary>

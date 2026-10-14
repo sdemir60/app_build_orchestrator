@@ -17,7 +17,7 @@ namespace BuildOrchestrator.Tests.Supervisor;
 ///
 /// <para><b>Gerçek toplama burada koşmaz.</b> Bloklayan, sıkıştıran bir GC bütün test sürecini durdurur; her koordinatör
 /// testi koşu bitişinde onu ödese süit yavaşlar ve paralel koşan zamanlama testlerini bozar. Bu yüzden her test
-/// koordinatörü <see cref="SupervisorHostHarness.NoTrim"/> ya da bir sayaç/kayıtçı verir; üretim varsayılanını yalnız
+/// koordinatörü <see cref="NoRealGc.Collection"/> ya da bir sayaç/kayıtçı verir; üretim varsayılanını yalnız
 /// <see cref="A_coordinator_built_without_a_trim_seam_trims_with_the_single_production_definition"/> kaynaktan pinler.</para>
 /// </summary>
 public class RunCoordinatorMemoryTests
@@ -41,21 +41,18 @@ public class RunCoordinatorMemoryTests
         }
     }
 
-    /// <summary>Koşusu olmayan koordinatör: planlayıcı, MSBuild ve log fabrikası çağrılırsa test KIRILIR. Yazar, host
-    /// testlerinde host ile PAYLAŞILIR (Program.cs deseni: satır bütünlüğü writer'ın kendi kilidindedir).
-    /// <paramref name="planner"/> yalnız koşuyu planlamada ASILI tutması gereken testler içindir.</summary>
-    private static RunCoordinator NewIdleCoordinator(JobObject job, NdjsonWriter writer, Action<string> console, Action memoryTrim,
-        Func<StartRunCommand, Action<string>, RunPlan>? planner = null) => new(
-        planner: planner ?? ((_, _) => throw new InvalidOperationException("no run in this test")),
-        msbuildFactory: _ => throw new InvalidOperationException("no run in this test"),
-        logFactory: _ => throw new InvalidOperationException("no run in this test"),
-        writer: writer, innerJob: job, nowMs: () => 0, console: console, memoryTrim: memoryTrim);
-
-    /// <summary>Host'u TEK komutla (stdin EOF'a kadar) koşturur: gerçek <see cref="SupervisorHost"/>, izole bir önbellek
-    /// kökünde <see cref="WorkspaceServices.Default"/> servisleri, gerçek process yok. Döner: telde görülen olaylar ve
-    /// trim/satır sırası. <paramref name="command"/> boş bir çalışma alanı kökünü alır.</summary>
+    /// <summary>
+    /// Host'u verilen komutlarla (stdin EOF'a kadar) koşturur: gerçek <see cref="SupervisorHost"/>, izole bir önbellek kökünde
+    /// <see cref="WorkspaceServices.Default"/> servisleri, gerçek process yok. Döner: telde görülen olaylar ve trim/satır sırası.
+    /// <paramref name="commands"/> boş bir çalışma alanı kökünü alır (komutlar kökü taşır). <paramref name="planner"/> yalnız koşuyu
+    /// planlamada ASILI tutması gereken (slot dolu kalsın) testler içindir. <paramref name="afterExit"/>, host çıktıktan SONRA ve
+    /// koordinatör ile zaman çizgisi hâlâ canlıyken koşar: host döndükten sonra koşunun kendi kapanışını gözleyen testin yeri
+    /// (planlamayı serbest bırakır, koşunun bitmesini bekler, zaman çizgisini yeniden okur); sandbox ondan sonra silinir.
+    /// </summary>
     private static async Task<(List<IpcEvent> Wire, IReadOnlyList<string> Order)> RunHostAsync(
-        Func<string, IpcCommand> command, Func<WorkspaceServices, WorkspaceServices>? services = null)
+        Func<string, IpcCommand[]> commands, Func<WorkspaceServices, WorkspaceServices>? services = null,
+        Func<StartRunCommand, Action<string>, RunPlan>? planner = null,
+        Func<RunCoordinator, List<IpcEvent>, Timeline, Task>? afterExit = null)
     {
         string sandbox = Directory.CreateTempSubdirectory("bo-memtrim-").FullName;
         try
@@ -65,13 +62,15 @@ public class RunCoordinatorMemoryTests
             var stdout = new SupervisorHostHarness.CollectingStream();
             var writer = new NdjsonWriter(stdout);
             using var job = JobObject.CreateKillOnClose();
-            using var coordinator = NewIdleCoordinator(job, writer, timeline.Console, timeline.Trimmed);
+            using var coordinator = SupervisorHostHarness.NewIdleCoordinator(job, writer, timeline.Console, timeline.Trimmed, planner);
             var workspace = WorkspaceServices.Default(sandbox, _ => throw new NotSupportedException("no restore in this test"));
-            var host = new SupervisorHost(writer, new NdjsonReader(await SupervisorHostHarness.StdinWith(command(root))), job,
+            var host = new SupervisorHost(writer, new NdjsonReader(await SupervisorHostHarness.StdinWith(commands(root))), job,
                 coordinator, services is null ? workspace : services(workspace));
 
             Assert.Equal(0, await Task.Run(() => host.RunAsync()).WaitAsync(SupervisorHostHarness.Limit));
-            return (NdjsonWire.Parse(stdout.Text), timeline.Events);
+            var wire = NdjsonWire.Parse(stdout.Text);
+            if (afterExit is not null) await afterExit(coordinator, wire, timeline);
+            return (wire, timeline.Events);
         }
         finally { SupervisorHostHarness.TryDeleteDirectories(sandbox); }
     }
@@ -89,7 +88,7 @@ public class RunCoordinatorMemoryTests
     {
         var timeline = new Timeline();
         using var job = JobObject.CreateKillOnClose();
-        using var coordinator = NewIdleCoordinator(job, new NdjsonWriter(Stream.Null), timeline.Console, timeline.Trimmed);
+        using var coordinator = SupervisorHostHarness.NewIdleCoordinator(job, new NdjsonWriter(Stream.Null), timeline.Console, timeline.Trimmed);
 
         coordinator.TrimAndReportMemory();
 
@@ -97,18 +96,37 @@ public class RunCoordinatorMemoryTests
     }
 
     /// <summary>Trim bir optimizasyondur: toplama fırlatırsa hata yutulur, satır yine yazılır ve çağıran iş (Sync, koşu
-    /// kapanışı) onun yüzünden düşmez.</summary>
+    /// kapanışı) onun yüzünden düşmez.
+    /// <para>[idle-memory · final review 49] Yutulan hata İZSİZ kalmaz: konsola (stderr) tek <c>warning: memory trim failed:
+    /// &lt;ileti&gt;</c> satırı düşer ve bellek satırından ÖNCE yazılır — toplama başarısız olduysa satırın taşıdığı değer
+    /// toplanmamış bir yığındır, okuyan bunu bilmelidir. Eskiden hata sessizce yutuluyordu (bir koşunun satırı beklenenden yüksek
+    /// çıksa nedeni görülemezdi).</para></summary>
     [Fact]
     public void A_failing_trim_never_breaks_the_report_or_the_work()
     {
         var lines = new List<string>();
         using var job = JobObject.CreateKillOnClose();
-        using var coordinator = NewIdleCoordinator(job, new NdjsonWriter(Stream.Null), lines.Add,
+        using var coordinator = SupervisorHostHarness.NewIdleCoordinator(job, new NdjsonWriter(Stream.Null), lines.Add,
             memoryTrim: () => throw new InvalidOperationException("collection refused"));
 
         coordinator.TrimAndReportMemory();
 
-        Assert.StartsWith(MemoryLine.Prefix, Assert.Single(lines), StringComparison.Ordinal);
+        Assert.Equal(2, lines.Count); // KIRMIZI: bugün hata iz bırakmaz, tek satır (bellek satırı) vardır
+        Assert.Equal("warning: memory trim failed: collection refused", lines[0]);
+        Assert.StartsWith(MemoryLine.Prefix, lines[1], StringComparison.Ordinal);
+    }
+
+    /// <summary>Hata izi de bir tanıdır: konsol kanalı o satırı yazarken patlarsa (ör. kapanmış stderr pipe'ı) çağıran iş yine
+    /// düşmez — trim'in hatasını yazmak, trim'in hatasından daha ağır bir hata üretemez.</summary>
+    [Fact]
+    public void A_console_that_fails_while_the_trim_failure_is_reported_never_breaks_the_work()
+    {
+        using var job = JobObject.CreateKillOnClose();
+        using var coordinator = SupervisorHostHarness.NewIdleCoordinator(job, new NdjsonWriter(Stream.Null),
+            _ => throw new IOException("stderr pipe closed"),
+            memoryTrim: () => throw new InvalidOperationException("collection refused"));
+
+        coordinator.TrimAndReportMemory();
     }
 
     // ---------------------------------------------------------------- koşu ve koşu sonu
@@ -153,7 +171,7 @@ public class RunCoordinatorMemoryTests
     [Fact]
     public async Task A_finished_clean_trims_before_it_writes_the_memory_line()
     {
-        var (wire, order) = await RunHostAsync(root => new CleanWorkspaceCommand(root));
+        var (wire, order) = await RunHostAsync(root => [new CleanWorkspaceCommand(root)]);
 
         Assert.Contains(wire, e => e is CleanCompletedEvent); // Clean gerçekten tamamlandı
         Assert.Equal(["trim", "line"], order);
@@ -164,7 +182,7 @@ public class RunCoordinatorMemoryTests
     [Fact]
     public async Task A_clean_that_fails_unexpectedly_still_trims_before_it_writes_the_memory_line()
     {
-        var (wire, order) = await RunHostAsync(root => new CleanWorkspaceCommand(root),
+        var (wire, order) = await RunHostAsync(root => [new CleanWorkspaceCommand(root)],
             services: s => s with { Clean = _ => throw new InvalidOperationException("clean exploded") });
 
         Assert.Contains(wire, e => e is ErrorEvent { Code: "cleanFailed" }); // yol gerçekten koştu
@@ -175,7 +193,7 @@ public class RunCoordinatorMemoryTests
     [Fact]
     public async Task A_finished_optimize_trims_before_it_writes_the_memory_line()
     {
-        var (wire, order) = await RunHostAsync(root => new OptimizeWorkspaceCommand(root));
+        var (wire, order) = await RunHostAsync(root => [new OptimizeWorkspaceCommand(root)]);
 
         Assert.Contains(wire, e => e is OptimizeCompletedEvent); // Optimize gerçekten tamamlandı
         Assert.Equal(["trim", "line"], order);
@@ -184,7 +202,7 @@ public class RunCoordinatorMemoryTests
     [Fact]
     public async Task An_optimize_that_fails_unexpectedly_still_trims_before_it_writes_the_memory_line()
     {
-        var (wire, order) = await RunHostAsync(root => new OptimizeWorkspaceCommand(root),
+        var (wire, order) = await RunHostAsync(root => [new OptimizeWorkspaceCommand(root)],
             services: s => s with { Optimize = _ => throw new InvalidOperationException("optimize exploded") });
 
         Assert.Contains(wire, e => e is ErrorEvent { Code: "optimizeFailed" });
@@ -196,7 +214,7 @@ public class RunCoordinatorMemoryTests
     [Fact]
     public async Task A_sync_that_ends_on_its_own_gate_trims_before_it_writes_the_memory_line()
     {
-        var (wire, order) = await RunHostAsync(root => new SyncWorkspaceCommand(Path.Combine(root, "missing"), "main"));
+        var (wire, order) = await RunHostAsync(root => [new SyncWorkspaceCommand(Path.Combine(root, "missing"), "main")]);
 
         Assert.Contains(wire, e => e is ErrorEvent { Code: "planFailed" });
         Assert.Equal(["trim", "line"], order);
@@ -205,7 +223,7 @@ public class RunCoordinatorMemoryTests
     [Fact]
     public async Task A_sync_that_fails_unexpectedly_still_trims_before_it_writes_the_memory_line()
     {
-        var (wire, order) = await RunHostAsync(root => new SyncWorkspaceCommand(root, "main"),
+        var (wire, order) = await RunHostAsync(root => [new SyncWorkspaceCommand(root, "main")],
             services: s => s with { Sync = _ => throw new InvalidOperationException("sync exploded") });
 
         Assert.Contains(wire, e => e is ErrorEvent { Code: "planFailed" });
@@ -213,7 +231,7 @@ public class RunCoordinatorMemoryTests
     }
 
     /// <summary>
-    /// Reddedilen Clean/Optimize hiçbir iş yapmaz: toplama ve satır YOK (çağrı try'ın içinde, ret dönüşünden sonra kurulur).
+    /// Reddedilen Clean/Optimize hiçbir iş yapmaz: toplama ve satır YOK (çağrı, ret dönüşünden SONRA başlayan try'ın finally'sindedir).
     /// Sonradan bitirilen koşunun kendi kapanışı ise yine toplar ve satırı yazar — rapor o koşunundur.
     /// </summary>
     [Theory]
@@ -221,35 +239,23 @@ public class RunCoordinatorMemoryTests
     [InlineData("optimize")]
     public async Task A_rejected_clean_or_optimize_neither_trims_nor_writes_a_memory_line(string operation)
     {
-        string sandbox = Directory.CreateTempSubdirectory("bo-memtrim-").FullName;
-        try
-        {
-            string root = Directory.CreateDirectory(Path.Combine(sandbox, "workspace")).FullName;
-            var timeline = new Timeline();
-            var stdout = new SupervisorHostHarness.CollectingStream();
-            var writer = new NdjsonWriter(stdout);
-            using var job = JobObject.CreateKillOnClose();
+        // Planlama, kapı kontrolü bitene kadar BLOKLANIR → koşu slotu dolu kalır (sinyal, Thread.Sleep DEĞİL [D8]).
+        var releasePlanning = Signal();
 
-            // Planlama, kapı kontrolü bitene kadar BLOKLANIR → koşu slotu dolu kalır (sinyal, Thread.Sleep DEĞİL [D8]).
-            var releasePlanning = Signal();
-            using var coordinator = NewIdleCoordinator(job, writer, timeline.Console, timeline.Trimmed,
-                planner: (_, _) => { releasePlanning.Task.GetAwaiter().GetResult(); throw new InvalidOperationException("no plan"); });
-            IpcCommand rejected = operation == "clean" ? new CleanWorkspaceCommand(root) : new OptimizeWorkspaceCommand(root);
-            var stdin = await SupervisorHostHarness.StdinWith(new StartRunCommand("r1", RunMode.Build, root, "Debug", 1), rejected);
-            var host = new SupervisorHost(writer, new NdjsonReader(stdin), job, coordinator,
-                WorkspaceServices.Default(sandbox, _ => throw new NotSupportedException("no restore in this test")));
+        await RunHostAsync(
+            root => [new StartRunCommand("r1", RunMode.Build, root, "Debug", 1),
+                     operation == "clean" ? new CleanWorkspaceCommand(root) : new OptimizeWorkspaceCommand(root)],
+            planner: (_, _) => { releasePlanning.Task.GetAwaiter().GetResult(); throw new InvalidOperationException("no plan"); },
+            afterExit: async (coordinator, wire, timeline) =>
+            {
+                Assert.Contains(wire, e => e is ErrorEvent error && error.Code == operation + "Rejected");
+                Assert.Empty(timeline.Events);          // ret yolu ne topladı ne satır yazdı
 
-            Assert.Equal(0, await Task.Run(() => host.RunAsync()).WaitAsync(SupervisorHostHarness.Limit));
+                releasePlanning.SetResult();
+                await coordinator.RunCompletion.WaitAsync(SupervisorHostHarness.Limit);
 
-            Assert.Contains(NdjsonWire.Parse(stdout.Text), e => e is ErrorEvent error && error.Code == operation + "Rejected");
-            Assert.Empty(timeline.Events);          // ret yolu ne topladı ne satır yazdı
-
-            releasePlanning.SetResult();
-            await coordinator.RunCompletion.WaitAsync(SupervisorHostHarness.Limit);
-
-            Assert.Equal(["trim", "line"], timeline.Events); // yalnız koşunun kendi kapanışı
-        }
-        finally { SupervisorHostHarness.TryDeleteDirectories(sandbox); }
+                Assert.Equal(["trim", "line"], timeline.Events); // yalnız koşunun kendi kapanışı
+            });
     }
 
     // ---------------------------------------------------------------- üretim varsayılanı

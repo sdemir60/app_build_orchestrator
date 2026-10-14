@@ -148,7 +148,7 @@ public sealed record MsBuildToolset(IMsBuildInvoker Invoker, string MsBuildExePa
 /// <param name="memoryTrim">
 /// [bellek trimi] İşlem sonu toplamasının dikişi (bkz. <see cref="TrimAndReportMemory"/>). Üretimde (null)
 /// <see cref="MemoryTrim.CollectAndRelease"/> — uygulamanın TEK toplama tanımı. Seam yalnız test içindir: bloklayan,
-/// sıkıştıran bir GC bütün test sürecini durdurur ve ~200 koordinatör testi her koşu bitişinde onu ödemesin diye testler
+/// sıkıştıran bir GC bütün test sürecini durdurur ve koordinatörü kuran her test her koşu bitişinde onu ödemesin diye testler
 /// bir sayaç ya da hiçbir şey yapmayan bir delege verir.
 /// </param>
 public sealed class RunCoordinator(
@@ -302,11 +302,13 @@ public sealed class RunCoordinator(
     }
 
     /// <summary>
-    /// [clean/optimize] Salt-okur sonda: bir koşu slotu dolu mu (planlama penceresi DAHİL). Tüketicileri
-    /// <c>cleanWorkspace</c> ve <c>optimizeWorkspace</c>'in reddetme kapılarıdır — ikisi de diski değiştirir ve
-    /// uçuştaki bir build'in yazdığı klasörlerle yarışmamalıdır.
+    /// Salt-okur sonda: bir koşu slotu dolu mu (planlama penceresi DAHİL). Tüketicileri:
+    /// <c>cleanWorkspace</c> ve <c>optimizeWorkspace</c>'in reddetme kapıları — ikisi de diski değiştirir ve uçuştaki bir
+    /// build'in yazdığı klasörlerle yarışmamalıdır — ile <see cref="TrimAndReportMemory"/>'in "bloklayan toplamayı atla" kapısı
+    /// (uçuştaki koşunun pompalarını durdurmamak için).
     /// <para><c>_finishing</c> KASITLI olarak dışarıda: drain sırasında da (sonuç event'leri yazılırken,
-    /// in-flight <c>MSBuild.exe</c>'ler post-build copy'lerini bitirirken) reddetmek doğru davranıştır.</para>
+    /// in-flight <c>MSBuild.exe</c>'ler post-build copy'lerini bitirirken) reddetmek ve toplamayı atlamak doğru davranıştır.</para>
+    /// <para>Bir ANLIK okumadır: tüketicisi sonucu kullanırken slot değişmiş olabilir (bkz. <see cref="TrimAndReportMemory"/>).</para>
     /// </summary>
     public bool IsRunActive { get { lock (_gate) return _runActive; } }
 
@@ -316,19 +318,26 @@ public sealed class RunCoordinator(
     /// Clean / Optimize bitişinde host çağırır; kanalın sahibi koordinatördür, host ikinci bir stderr bağı kurmaz.
     ///
     /// <para><b>Koşu slotu doluysa</b> (planlama dahil, bkz. <see cref="IsRunActive"/>) toplama ATLANIR, satır yine yazılır:
-    /// bloklayan GC uçuştaki koşunun IPC ve MSBuild pompalarını durdururdu. Host Sync'i koşu sürerken de koşturabilir; koşunun
-    /// kendi bitişi ise yuvayı bıraktıktan sonra çağırır ve o anda yeni bir <c>startRun</c> kabul edilmişse onun planlamasını da
-    /// bekletmez — atlanan toplamayı o koşunun kendi bitişi yapar.</para>
+    /// bloklayan GC uçuştaki koşunun IPC ve MSBuild pompalarını durdururdu. Host Sync'i koşu sürerken de koşturabilir; atlanan
+    /// toplamayı o koşunun kendi bitişi yapar (yuvayı bıraktıktan sonra çağırır). Kapı bir ANLIK okumadır: yalnız okumadan ÖNCE
+    /// kabul edilmiş bir <c>startRun</c>'u korur — okumadan SONRA kabul edilen koşu toplamanın bitmesini bekler (milisaniyeler).</para>
     ///
-    /// <para>Toplama bir OPTİMİZASYONDUR: fırlatırsa hata yutulur, satırı ve çağıran işi (Sync, koşu kapanışı) bozmaz;
-    /// satırı yazan <c>MemoryLine.Report</c> da hata yutar.</para>
+    /// <para>Toplama bir OPTİMİZASYONDUR: fırlatırsa hata yutulur, satırı ve çağıran işi (Sync, koşu kapanışı) bozmaz.
+    /// [idle-memory · final review 49] Yutulan hata izsiz kalmaz: konsola (stderr) tek <c>warning: memory trim failed: &lt;ileti&gt;</c>
+    /// satırı düşer ve bellek satırından ÖNCE yazılır — satır toplanmamış bir yığını taşır, okuyan bilmelidir. İz de bir tanıdır: o
+    /// satırı yazmak patlarsa o hata da yutulur; satırı yazan <c>MemoryLine.Report</c> da hata yutar.</para>
     /// </summary>
     public void TrimAndReportMemory()
     {
         if (!IsRunActive)
         {
             try { _memoryTrim(); }
-            catch (Exception) { /* trim bir optimizasyondur; raporu ve işi bozmaz */ }
+            catch (Exception ex)
+            {
+                // trim bir optimizasyondur; raporu ve işi bozmaz — ama sessiz de kalmaz (tanı kanalına tek satır).
+                try { console("warning: memory trim failed: " + ex.Message); }
+                catch (Exception) { /* tanı kanalı da yazılamıyor — vazgeç, işi bozma */ }
+            }
         }
         MemoryLine.Report(console);
     }
