@@ -128,7 +128,7 @@ public class NarrativeStoreTests
         store.Append("after");
 
         var document = new TextDocument("before\n" + text + "\n" + "after\n");
-        var shown = document.Lines.Take(document.LineCount - 1).Select(document.GetText).ToList(); // son satır: '\n' sonrası boş satır
+        var shown = ConsoleDocument.LinesOf(document);
 
         Assert.Equal(shown, store.Slice(0, store.Count));
         Assert.Equal(shown.Sum(l => l.Length), store.CharCount);

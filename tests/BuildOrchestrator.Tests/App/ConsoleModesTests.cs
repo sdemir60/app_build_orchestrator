@@ -555,13 +555,9 @@ public class ConsoleModesTests
         console.EvaluateChunkScroll(0.0);   // tepeye kaydırma: önceki dilim backlog'dan
 
         var oracle = new TextDocument(log + string.Concat(live.Select(line => line + "\n")));
-        Assert.Equal(LinesOf(oracle), LinesOf(console.Document)); // KIRMIZI: bugün dikişte line161 iki kez
+        Assert.Equal(ConsoleDocument.LinesOf(oracle), ConsoleDocument.LinesOf(console.Document)); // KIRMIZI: bugün dikişte line161 iki kez
         GC.KeepAlive(window);
     }
-
-    /// <summary>Belgenin gösterdiği satırlar — son satır ('\n' sonrası boş satır) hariç.</summary>
-    private static List<string> LinesOf(TextDocument document) =>
-        [.. document.Lines.Take(document.LineCount - 1).Select(document.GetText)];
 
     // ---------------------------------------------------------------- N lines = TAM tampon (Ek A #23)
 
