@@ -594,13 +594,18 @@ public sealed partial class RunViewModel
     /// <para>Değerin HER değişimi buradan geçmez: koşuyu bitiren hata ve motor kaybı, kilit zaten düşmüşken (ör. <c>runStopped</c>'tan
     /// sonra) <c>runCompleted</c> beklemesini (<c>_awaitingRunCompleted</c>) bildirimsiz bırakabilir. Orada trimi
     /// <see cref="RunViewModel.EndedOperationSerial"/> artışı ister (<c>MarkRunEnded</c>) ve bildirilen değer bir sonraki geçişte
-    /// yetişir. Bayat okuyan yoktur: tüketici (kabuk) değeri canlı okur, bildirim yalnız "yeniden sor" sinyalidir.</para></summary>
+    /// yetişir. Bayat okuyan yoktur: tüketici (kabuk) değeri canlı okur, bildirim yalnız "yeniden sor" sinyalidir.</para>
+    /// <para>[idle-memory · dalga 2 · F1 sınırı] False kenarı kompakt konsolun etkin kipini de ayara döndürür
+    /// (<see cref="RunViewModel.RecaptureCompactWhenIdle"/> — kural: uçuşta işlem yokken etkin kip ayarı izler, uçuştaki bir işlem
+    /// yakaladığı kipi tutar): işlem SAYILMAYAN bitişler — Sync zincirlemeyen reddedilmiş pull/checkout, açılış koreografisinde durdurulan
+    /// ya da gönderimi düşen başlatma — yalnız buradan geçer. Bildirimsiz bırakılan bitişleri <c>MarkOperationEnded</c> kapsar.</para></summary>
     private void NotifyOperationInFlight()
     {
         bool inFlight = IsOperationInFlight;
         if (inFlight == _operationInFlightNotified) return;
         _operationInFlightNotified = inFlight;
         OnPropertyChanged(nameof(IsOperationInFlight));
+        if (!inFlight) RecaptureCompactWhenIdle();
     }
 
     /// <summary>

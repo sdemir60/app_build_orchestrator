@@ -7,10 +7,16 @@ namespace BuildOrchestrator.App.Console;
 /// (<see cref="CompactConsoleFilter"/>), etkin kip ve projelerin adları. VM proje çıktısını, proje sonuçlarını ve işlemin sınırlarını
 /// buraya verir, anlatıya yazılacak satırları geri alır; yazımın kendisi (store, pompa, spool uyarısı) VM'in tek yolundadır.
 ///
-/// <para><b>Etkin kip</b> (<see cref="InEffect"/>) konsolun BUNDAN SONRA yazacağı kiptir: her işlemin başında ayardan yakalanır
-/// (<see cref="BeginOperation"/>) ve işlem uçuştayken değişmez — koşunun anlatısı tek kiple yazılır, "ilk 3" ortada bozulmaz; uçuşta
-/// işlem yokken ayarın kendisidir (<see cref="Recapture"/>: ayar boşta değişince ve son işlem bitince). Başlıktaki <c>compact</c>
-/// etiketi bunu gösterir.</para>
+/// <para><b>Etkin kip</b> (<see cref="InEffect"/>) konsolun BUNDAN SONRA yazacağı kiptir — tek kural: uçuşta işlem yokken ayarı izler,
+/// uçuştaki bir işlem yakaladığı kipi tutar. İşlemin başında ayardan yakalanır (<see cref="BeginOperation"/>) ve o uçuştayken
+/// değişmez — koşunun anlatısı tek kiple yazılır, "ilk 3" ortada bozulmaz; uçuşta işlem kalmayınca ayarın kendisidir
+/// (<see cref="Recapture"/>). Başlıktaki <c>compact</c> etiketi bunu gösterir. Kip yalnız YENİ satırların nasıl yazılacağını seçer
+/// (<see cref="Line"/>).</para>
+///
+/// <para><b>İşlemin kendi bekleyen çıktısı kipe bağlı değildir</b> (<see cref="Summary"/>, <see cref="Drain"/>): süzgeç gizlenen
+/// sayaçları yalnız işlem kompakt yazarken tutar — tam kipte <see cref="Line"/> süzgece hiç uğramaz, <see cref="BeginOperation"/> da
+/// sıfırlar —, yani sayaç varsa onu kompakt yazan işlem bırakmıştır ve özeti yazılır. Bu yüzden işlemin bitişinde kipin ayara dönüşü
+/// ile bekleyen özetlerin yazımı arasındaki sıra önemsizdir (motor kaybında kip, bitişin başında dönebilir).</para>
 ///
 /// <para><b>Adlar:</b> başlık ve özet projeyi koşunun adıyla anar — işlem başında satır listesinden, sonra koşunun önizlemesinden;
 /// ikisinde de yoksa projenin yoldan türeyen görünen adı (<see cref="ProjectDisplayName.FromPath"/>). Ad yalnız gerçekten bir satır
@@ -56,7 +62,8 @@ internal sealed class CompactNarrative
         foreach (var (id, name) in projects) _names[id] = name;
     }
 
-    /// <summary>Uçuşta işlem yok: etkin kip ayarın kendisidir. Değiştiyse <c>true</c>.</summary>
+    /// <summary>Uçuşta işlem yok: etkin kip ayarın kendisidir (çağıran: ayarın boştaki değişimi, uçuştaki işlerin bittiği an, işlem
+    /// bitişi). Değiştiyse <c>true</c>.</summary>
     public bool Recapture(bool compact)
     {
         if (InEffect == compact) return false;
@@ -70,11 +77,16 @@ internal sealed class CompactNarrative
     public (string? Header, string? Line) Line(string projectId, string text) =>
         InEffect ? (_filter.ProjectHeader(projectId, _nameOf), _filter.LogLine(projectId, text)) : (null, text);
 
-    /// <summary>Projenin sonucu geldi (başarı, hata ya da atlama — "her sonuç"): gizlenen uyarı varsa TEK özet satırı.</summary>
-    public string? Summary(string projectId) => InEffect ? _filter.ProjectDone(projectId, _nameOf) : null;
+    /// <summary>Projenin sonucu geldi (başarı, hata ya da atlama — "her sonuç"): gizlenen uyarı varsa TEK özet satırı. Kipe bağlı değildir
+    /// (sınıf özeti): sayaç ancak işlem kompakt yazarken dolar.</summary>
+    public string? Summary(string projectId) => _filter.ProjectDone(projectId, _nameOf);
 
-    /// <summary>Koşu bitti: sonucu hiç gelmeyen projelerin (motor kaybı) bekleyen özetleri, projelerin ilk uyarı sırasıyla.</summary>
-    public IReadOnlyList<string> Drain() => InEffect ? _filter.DrainPending(_nameOf) : [];
+    /// <summary>Koşu bitti: sonucu hiç gelmeyen projelerin (motor kaybı) bekleyen özetleri, projelerin ilk uyarı sırasıyla. Kipe bağlı
+    /// değildir: kip bitişin başında ayara dönmüş olsa da koşunun kendi özetleri yazılır.
+    /// <para>[DEĞİŞEN KURAL — F1 sınırı] Eskiden boşaltma (ve <see cref="Summary"/>) etkin kip kompakt değilse hiçbir şey vermiyordu: o
+    /// zaman kip yalnız işlem bitişinde, boşaltmadan SONRA dönüyordu. Kip artık uçuştaki işler bittiği an da döner — motor kaybında bu an
+    /// boşaltmadan öncedir —; kapı kalsaydı koşu ortasında tam kipe geçen bir Save bekleyen özetleri düşürürdü.</para></summary>
+    public IReadOnlyList<string> Drain() => _filter.DrainPending(_nameOf);
 
     private string NameOf(string projectId) =>
         _names.TryGetValue(projectId, out var name) ? name : ProjectDisplayName.FromPath(projectId);

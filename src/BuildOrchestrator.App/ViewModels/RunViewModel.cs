@@ -916,25 +916,29 @@ public sealed partial class RunViewModel : ObservableObject
 
     /// <summary>
     /// [idle-memory · dalga 2 · spec §6.5 · karar 8 · karar 204] Konsolun proje çıktısını BUNDAN SONRA yazacağı kip —
-    /// <see cref="CompactConsole"/>'un etkin değeri; başlıktaki <c>compact</c> etiketi bunu gösterir (MainWindow). Ayar bir SONRAKİ işlemde
-    /// geçerli olur: değer her işlemin başında yakalanır (<see cref="ClearConsoleForNewOperation"/>) ve işlem uçuştayken değişmez — koşunun
-    /// anlatısı tek kiple yazılır, süzgecin "ilk 3" sayımı ortada bozulmaz. Uçuşta işlem yokken (<see cref="IsOperationInFlight"/>) değer
-    /// ayarın kendisidir (<see cref="RecaptureCompactWhenIdle"/>): ayar boşta değişince (Settings Save'i, açılış seed'i) ve son işlem
-    /// bitince — sıradaki çıktı (yeni bölüm ya da eklenen bir satır) kaydedilen kiple yazılır. Alanı <c>_gate</c> altındadır: IPC
-    /// thread'i her proje satırında okur (<see cref="OnProjectLog"/>).
+    /// <see cref="CompactConsole"/>'un etkin değeri; başlıktaki <c>compact</c> etiketi bunu gösterir (MainWindow). Tek kural: <b>uçuşta işlem
+    /// yokken etkin kip ayarı izler; uçuştaki bir işlem yakaladığı kipi tutar.</b> Değer her işlemin başında yakalanır
+    /// (<see cref="ClearConsoleForNewOperation"/>) ve işlem uçuştayken değişmez — koşunun anlatısı tek kiple yazılır, süzgecin "ilk 3"
+    /// sayımı ortada bozulmaz; uçuşta işlem kalmadığı her an (<see cref="IsOperationInFlight"/> düşer — işlem sayılmayan bitişler de:
+    /// reddedilen pull/checkout, hiç başlamayan koşu) ayarın kendisidir (<see cref="RecaptureCompactWhenIdle"/>) ve sıradaki çıktı (yeni
+    /// bölüm ya da eklenen bir satır) kaydedilen kiple yazılır. Alanı <c>_gate</c> altındadır: IPC thread'i her proje satırında okur
+    /// (<see cref="OnProjectLog"/>).
     /// </summary>
     public bool CompactConsoleInEffect
     {
         get { lock (_gate) return _compact.InEffect; }
     }
 
-    /// <summary>[karar 8] Ayar değişti: işlem yokken hemen etkin kip olur; işlem uçuştayken o işlemin sonunu bekler
-    /// (<see cref="MarkOperationEnded"/>).</summary>
+    /// <summary>[karar 8] Ayar değişti: işlem yokken hemen etkin kip olur; işlem uçuştayken uçuştaki işlerin bitişini bekler
+    /// (<see cref="RecaptureCompactWhenIdle"/>).</summary>
     partial void OnCompactConsoleChanged(bool value) => RecaptureCompactWhenIdle();
 
-    /// <summary>[karar 8 · dalga 2 son inceleme F1] Uçuşta işlem yoksa etkin kip ayarın kendisidir: yakalama kilit altında, bildirim
-    /// (kabuk başlığın etiketini tazeler) kilit DIŞINDA. İki çağıranı vardır — ayarın değişimi ve bir işlemin bitişi
-    /// (<see cref="MarkOperationEnded"/>); uçuştayken yeni değer o işlemin bitişini bekler.</summary>
+    /// <summary>[karar 8 · dalga 2 son inceleme F1] Etkin kipin TEK yakalama yardımcısı — kural: uçuşta işlem yokken etkin kip ayarı
+    /// izler, uçuştaki bir işlem yakaladığı kipi tutar. Yakalama kilit altında, bildirim (kabuk başlığın etiketini tazeler) kilit DIŞINDA.
+    /// Tetikleri: ayarın değişimi (<see cref="OnCompactConsoleChanged"/>), uçuştaki işlerin bittiği an (<see cref="NotifyOperationInFlight"/>'ın
+    /// false kenarı — işlem sayılmayan bitişler dahil) ve bir işlemin bitişi (<see cref="MarkOperationEnded"/> — false kenarı bildirilmeyen
+    /// bitişler: <c>runCompleted</c> beklemesinin bildirimsiz bırakıldığı koşu-bitiren hata ve motor kaybı). Uçuştayken yeni değer
+    /// uçuştaki işlerin bitişini bekler.</summary>
     private void RecaptureCompactWhenIdle()
     {
         if (IsOperationInFlight) return;
@@ -2730,7 +2734,8 @@ public sealed partial class RunViewModel : ObservableObject
     /// penceresi son kez kapanırken boşaltır (<c>MainWindow.OnClosed</c>). Spool yoksa hiçbir şey yapmaz; boşaltma düşerse uyarısı
     /// konsola düşer.</para>
     /// <para>[idle-memory · dalga 2 son inceleme F1] Kompakt konsolun etkin kipi de burada ayara döner — uçuşta başka işlem kalmadıysa
-    /// (<see cref="RecaptureCompactWhenIdle"/>): işlem sürerken kaydedilen ayar o işlemin bitişinde geçerli olur.</para></summary>
+    /// (<see cref="RecaptureCompactWhenIdle"/>; kural: uçuşta işlem yokken etkin kip ayarı izler, uçuştaki bir işlem yakaladığı kipi
+    /// tutar).</para></summary>
     private void MarkOperationEnded()
     {
         lock (_gate)
@@ -2738,9 +2743,9 @@ public sealed partial class RunViewModel : ObservableObject
             Narrative.Flush();
             AppendSpoolWarningLocked();
         }
-        // [idle-memory · dalga 2 son inceleme F1 · karar 204] İşlem bitti: uçuşta başka işlem kalmadıysa etkin kip ayarın kendisidir —
-        // işlem sürerken yapılan bir Save burada geçerli olur ve başlığın etiketi onu hemen gösterir. Her işlem bitişi buradan geçer ve
-        // işlemin KENDİ çıktısı (motor kaybında bekleyen özetler: MarkRunEnded) bundan önce, yakaladığı kiple yazılmıştır.
+        // [idle-memory · dalga 2 son inceleme F1 · karar 204] İşlem bitti: uçuşta başka işlem kalmadıysa etkin kip ayarın kendisidir.
+        // Uçuştaki işlerin bitişi çoğunlukla zaten bildirilmiştir (NotifyOperationInFlight'ın false kenarı); burası bildirilmeyen bitişleri
+        // kapsar — runCompleted beklemesinin bildirimsiz bırakıldığı koşu-bitiren hata ve motor kaybı. İkinci yakalama değişiklik bulmaz.
         RecaptureCompactWhenIdle();
         EndedOperationSerial++;
     }
@@ -2771,8 +2776,9 @@ public sealed partial class RunViewModel : ObservableObject
     /// [idle-memory · dalga 2 · fix 1 · M2] Koşu bitti ama bazı projelerin sonucu hiç gelmedi — motor kaybında
     /// (<see cref="ReleaseAfterEngineLoss"/>) uçuştaki projeler için ne başarı ne hata yazılır: gizledikleri uyarıların özeti bir
     /// sonraki işlemin sıfırlamasında sessizce düşerdi. Bekleyen özetler (<see cref="CompactConsoleFilter.DrainPending"/>) normal anlatı
-    /// yolundan, kilit altında yazılır. Normal bitişte (<c>runCompleted</c>, koşu-bitiren hata) her proje sonucunu çoktan almıştır:
-    /// yazılacak bir şey yoktur.
+    /// yolundan, kilit altında yazılır — o anki etkin kipten bağımsız (<see cref="CompactNarrative.Drain"/>: motor kaybında kip, uçuştaki
+    /// işler bittiği an, bu boşaltmadan ÖNCE ayara dönmüş olabilir). Normal bitişte (<c>runCompleted</c>, koşu-bitiren hata) her proje
+    /// sonucunu çoktan almıştır: yazılacak bir şey yoktur.
     /// </summary>
     private void AppendPendingCompactSummaries()
     {

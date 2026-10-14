@@ -401,10 +401,76 @@ public class CompactConsoleTests
     }
 
     /// <summary>
-    /// [F1 · fix 1 · M2] Koşunun bitişi motor kaybıyla gelse de sıra aynıdır: önce koşunun kendi çıktısı — sonucu hiç gelmeyen projenin
-    /// bekleyen özeti — koşunun yakaladığı kiple yazılır, ANCAK sonra etkin kip ayara döner. Kip bitişin başında dönseydi koşu ortasında
-    /// tam kipe geçen bir Save bekleyen özeti sessizce düşürürdü.
-    /// <para>KIRMIZI: kip koşu bitince hiç dönmüyordu.</para>
+    /// [F1 sınırı · denetçi kararı] Etkin kip, uçuşta işlem kalmadığı HER an ayara döner — işlem SAYILMAYAN bitişlerde de: pull uçuştayken
+    /// yapılan Save, motor pull'u reddedip (zincirli Sync yok) iş uçuştan düştüğü anda etikette görünür; bir işlem bitişi beklenmez.
+    /// <para>KIRMIZI: kip yalnız işlem bitişinde (<c>MarkOperationEnded</c>) yeniden yakalanıyordu — reddedilen pull bir işlem bitirmez,
+    /// etiket bir sonraki işleme dek <c>compact</c> kalıyordu.</para>
+    /// </summary>
+    [StaFact]
+    public async Task A_save_during_a_pull_shows_on_the_tag_once_the_engine_rejects_the_pull()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = NewWithProjects(dir, ("A", null));
+        vm.CompactConsole = true;                             // fixture kapalı açar; üretimin varsayılanı
+        var tag = window.Shell.ConsoleHeaderControl.CompactText;
+        AcceptSends(vm);                                      // pull motora gider; cevabı test verir
+        vm.OnEvent(SyncCompleted() with { Behind = 2 });      // "N behind": pull yapılabilir
+        int ended = vm.EndedOperationSerial;
+        _ = vm.PullRepositoryCommand.ExecuteAsync(null);
+        Assert.True(vm.PullBusy);                             // ön-koşul: pull uçuşta
+
+        await vm.ApplySettingsAsync([], vm.RootPath, [], compactConsole: false); // pull uçuştayken Save
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(Visibility.Visible, tag.Visibility);     // uçuştaki iş kipi tutar
+
+        vm.OnEvent(new PullCompletedEvent(Succeeded: false, RefusalReason: PullRefusalReason.Dirty)); // ret: zincirli Sync yok
+        DispatcherPump.DrainToIdle();
+
+        Assert.Equal(ended, vm.EndedOperationSerial);         // ön-koşul: bir işlem bitmedi
+        Assert.Equal(Visibility.Collapsed, tag.Visibility);   // KIRMIZI: işlem bitişi beklendiği için "compact" kalıyordu
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [F1 sınırı] Hiç başlamayan bir koşu da bir işlem bitişi değildir: açılış koreografisinde durdurulan başlatma (komut gitmedi —
+    /// <c>CancelPendingRun</c>) iş uçuştan düştüğü anda etkin kipi ayara döndürür; başlatma sırasında yapılan Save etikette o an görünür.
+    /// <para>KIRMIZI: koşu hiç başlamadığı için işlem bitişi yoktu — etiket bir sonraki işleme dek eski kipte kalıyordu.</para>
+    /// </summary>
+    [StaFact]
+    public async Task A_save_during_a_run_start_stopped_in_its_choreography_shows_on_the_tag_at_once()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = NewWithProjects(dir, ("A", null));
+        vm.CompactConsole = true;
+        var tag = window.Shell.ConsoleHeaderControl.CompactText;
+        var choreography = new TaskCompletionSource();
+        vm.OperationChoreography = _ => choreography.Task;   // açılış koreografisi testin elinde: komut henüz gitmez
+        var build = vm.BuildCommand.ExecuteAsync(null);
+        Assert.True(vm.IsStarting);                           // ön-koşul: işlem başladı, komut gitmedi
+
+        await vm.ApplySettingsAsync([], vm.RootPath, [], compactConsole: false); // başlatma sırasında Save
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(Visibility.Visible, tag.Visibility);
+
+        await vm.StopCommand.ExecuteAsync(null);              // koreografide durduruldu: koşu hiç başlamadı
+        DispatcherPump.DrainToIdle();
+        Assert.False(vm.IsStarting);                          // ön-koşul
+        Assert.Equal(Visibility.Collapsed, tag.Visibility);   // KIRMIZI: hiç başlamayan koşunun bitişi yoktu
+
+        choreography.SetResult();
+        await build;
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [F1 · fix 1 · M2] Koşu ortasında tam kipe geçen bir Save'den sonra koşu motor kaybıyla biterse sonucu hiç gelmeyen projenin bekleyen
+    /// özeti yine yazılır — koşunun kendi çıktısıdır — ve etkin kip ardından ayardadır.
+    /// <para><b>[DEĞİŞEN GEREKÇE — F1 sınırı]</b> Eski iddia: sıra şarttı — özet önce, koşunun yakaladığı kiple yazılır, ANCAK sonra kip
+    /// döner; kip bitişin başında dönseydi özet düşerdi. Değişme gerekçesi: kip artık uçuştaki işler bittiği an da döner
+    /// (<c>NotifyOperationInFlight</c>'ın false kenarı) ve motor kaybında bu an boşaltmadan ÖNCEdir — ölçüldü: yalnız tetik eklenince bu
+    /// test "Expected: 1, Actual: 0" ile düştü. Bekleyen özet ve boşaltma artık kipten bağımsızdır (<c>CompactNarrative.Drain/Summary</c>:
+    /// süzgecin sayacı ancak işlem kompakt yazarken dolar); test aynı sonucu sıradan bağımsız pinler.</para>
+    /// <para>KIRMIZI (ilk hâli): kip koşu bitince hiç dönmüyordu.</para>
     /// </summary>
     [Fact]
     public async Task A_save_during_a_run_keeps_the_runs_mode_through_an_engine_loss_and_takes_effect_after_it()
