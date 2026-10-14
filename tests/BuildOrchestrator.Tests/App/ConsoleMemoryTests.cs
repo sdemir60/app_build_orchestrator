@@ -260,12 +260,60 @@ public class ConsoleMemoryTests
         GC.KeepAlive(twinWindow);
     }
 
+    /// <summary>
+    /// [idle-memory · dalga 1 · docs review M1] <b>Bayat anlatı belgesinin kırpılması atılacak metni ÜRETMEZ.</b> Gizli pencerede yeni
+    /// bir işlem anlatı store'unu boşaltır (<c>ConsoleCleared</c> belgeye dokunmaz); bottom-anchor zamanlayıcıları gizliyken de
+    /// ateşlendiği için kırpma yine bu bayat belgede koşar. Store belgenin gerisindedir (<c>Count</c> 0, görünüm hâlâ eski
+    /// <c>_loadedFrom</c>'unda): kırpılan satırların hiçbiri backlog'da sayılmaz, hepsi "kaydedilmemiş kuyruk" olur — ama store kuyruğu
+    /// yok sayar (<see cref="IConsoleBacklog.KeepsTrimmedLines"/> false). Kuyruğu belgeden <c>GetText</c> + <c>Split</c> ile okumak
+    /// atılacak bir metni boşuna iki kez kopyalamak olurdu; belge dönüşte zaten modelden yeniden kurulur.
+    /// <para>Okuma kapısı (<c>TrimToRenderSlice</c>'taki <c>&amp;&amp; _backlog.KeepsTrimmedLines</c>) bu yolu tek başına korur: kapı
+    /// kalkınca bu sınıfın diğer testleri yeşil kalıyordu, çünkü store kuyruğu yok sayar ve kırpmanın sonucu, belge ve fırlatma
+    /// davranışı AYNI kalır — fark yalnız ayrılan bellektir. Bu yüzden pin tahsisi sayar.</para>
+    /// <para>Kâhin ikiz görünümdür: aynı satırlar, aynı kırpma, ama store'u DOLU — backlog kırpılanları zaten sayar, kuyruk boştur,
+    /// okuma kapısına hiç girilmez. Bayat görünümün tahsisi ikizinkinden kırpılan metnin bir kopyasının yarısından fazla büyük
+    /// olamaz. Sayım <c>GC.GetAllocatedBytesForCurrentThread</c> iledir — test thread'inin ayırdığı bayt, süreç geneli değildir.</para>
+    /// <para>Ölçülen kusur (kapı geçici kaldırıldı, 2026-10-14; 1000 uzun satırlık kırpma, kırpılan metin 757.202 bayt): bayat görünüm
+    /// 2.315.848 bayt ayırdı, aynı kırpma dolu store'da 4.864 — fark ≈ 3 kopya (kapısız kod kuyruğu <c>GetText</c> + <c>Split</c> ile
+    /// okur ve sonucunu store'a verir, store atar). Kapı yerindeyken ikisi aynı işi yapar; eşik yarım kopyadır.</para>
+    /// </summary>
+    [StaFact]
+    public void Trimming_a_stale_narrative_document_does_not_read_the_trimmed_text()
+    {
+        var (stale, staleStore, staleWindow) = NarrativeViewReadingAboveTheSlice();
+        var (twin, _, twinWindow) = NarrativeViewReadingAboveTheSlice(); // ikiz: store'u dolu kalır
+        Assert.True(stale.Document.LineCount > 1000, "ön-koşul: takip kapalıyken belge kırpılmadı");
+        int textBefore = stale.Document.TextLength;
+        staleStore.Clear(); // gizliyken yeni işlem: VM anlatıyı boşalttı, görünüm yeniden bağlanmadı (kabuk yalnız bayat bayrağını kaldırdı)
+
+        long twinCost = AllocatedBy(() => twin.StickToBottom = true);   // takip geri geldi → kırpma sorulur; kuyruk boş, okuma yok
+        long staleCost = AllocatedBy(() => stale.StickToBottom = true); // aynı kırpma; kuyruk kırpılanların TAMAMI, okuma kapısı kapalı
+
+        Assert.True(stale.Document.LineCount <= ConsoleView.SeededDocumentLines, "ön-koşul: bayat belge render dilimine kırpılmadı (vakum)");
+        Assert.Equal(twin.Document.TextLength, stale.Document.TextLength); // ikisi de aynı kırpmayı yaptı
+        long copy = (textBefore - stale.Document.TextLength) * (long)sizeof(char); // kırpılan metnin UTF-16 bedeli
+        Assert.True(staleCost - twinCost < copy / 2, string.Create(CultureInfo.InvariantCulture, // KIRMIZI: kapı kalkınca kırpılan metin okunur
+            $"the stale trim allocated {staleCost} bytes, the same trim over a full store {twinCost}, for {copy} bytes of trimmed text"));
+        GC.KeepAlive(staleWindow);
+        GC.KeepAlive(twinWindow);
+    }
+
     /// <summary>Anlatı modunda, takip açık ve belgesi render diliminde duran bir görünüm — üretim düzeniyle: backlog store'dur,
     /// satırlar önce store'a sonra batch'le gelir. Kırpma ve ekleme yolu ölçümden önce bir kez koşmuştur.</summary>
     private static (ConsoleView View, NarrativeStore Store, Window Host) NarrativeViewAtTheSlice()
     {
         var (view, store, host) = NewNarrativeView();
         for (int batch = 0; batch < 8; batch++) NarrativeSnapshots.Deliver(store, view, Lines(50, batch)); // 400 satır: kırpma koştu
+        return (view, store, host);
+    }
+
+    /// <summary>Anlatı modunda, belgesi render diliminin ÜSTÜNE büyümüş bir görünüm: kullanıcı yukarıda okurken (takip kapalı, kırpma
+    /// bekler) 1000 uzun satır gelmiş. Takibin geri gelmesi (<c>StickToBottom = true</c>) kırpmayı tek hamlede yaptırır.</summary>
+    private static (ConsoleView View, NarrativeStore Store, Window Host) NarrativeViewReadingAboveTheSlice()
+    {
+        var (view, store, host) = NarrativeViewAtTheSlice();
+        view.StickToBottom = false; // kullanıcı yukarıda okuyor: takip kapalı, belge kırpılmaz
+        for (int batch = 8; batch < 28; batch++) NarrativeSnapshots.Deliver(store, view, Lines(50, batch, padding: 400)); // 1000 uzun satır
         return (view, store, host);
     }
 
