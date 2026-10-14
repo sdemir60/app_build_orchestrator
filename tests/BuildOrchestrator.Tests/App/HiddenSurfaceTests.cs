@@ -576,8 +576,8 @@ public class HiddenSurfaceTests
     }
 
     /// <summary>
-    /// [A2 fix 1 · M1] <b>Uçuştaki bayat batch.</b> Pompa bir batch'i okuyup UI thread'ine kuyruklarken (damga = o anki
-    /// reseed nesli) pencere dönüp belgeyi yeniden kurabilir. Dönüş kurulumu reseed-drop sentinel'ini yazar
+    /// [A2 fix 1 · M1] <b>Uçuştaki bayat batch.</b> Pompa bir batch'i okuyup UI thread'ine kuyruklarken (damga = pompanın
+    /// tükettiği son sentinel'in nesli; kanalda bekleyen sentinel yokken o anki nesil) pencere dönüp belgeyi yeniden kurabilir. Dönüş kurulumu reseed-drop sentinel'ini yazar
     /// (<c>SeedRunDocument</c>); eski damgalı batch kurulumdan SONRA gelse de belgeye ikinci kez inmez. Üretimde pencere
     /// ile VM AYNI <c>ConsoleBatcher</c>'ı paylaşır; fixture de paylaşır — ayrı örneklerle pencerenin nesli VM'in
     /// sentinel'ini hiç göremez ve bu kural sınanamazdı.
@@ -590,7 +590,7 @@ public class HiddenSurfaceTests
         var console = window.Shell.ConsoleViewControl;
         window.SetSurfaceHidden(true);
         MainWindowHost.LogLine(vm, "A", 1, "line 0");
-        long staleGen = window.ConsoleReseedGen;           // pompanın bu batch'i okuduğu andaki nesil
+        long staleGen = window.ConsoleReseedGen;           // pompanın damgası: bekleyen sentinel yok → o anki nesil
         window.AppendConsoleBatch("line 0\n", staleGen);   // gizliyken: belgeye basılmaz, "ekran bayat" bayrağı kalkar
         window.SetSurfaceHidden(false);
         window.ResyncAfterShow();                          // dönüşte belge modelden BİR kez kurulur (sentinel yazılır)

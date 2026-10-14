@@ -634,12 +634,12 @@ public partial class MainWindow : Window
     }
 
     /// <summary>[Kısıt 1/A13.2 · D4 review §1] Pump flush'ının hedefi. Kararı SAF <see cref="ConsoleBatchRouter"/>
-    /// verir (test edilebilir seam); Window yalnız uygular. <paramref name="batchGen"/>, pump'ın bu batch'i
-    /// okuduğu reseed nesli: aradan bir reseed geçtiyse (<c>batchGen &lt; _console.CurrentReseedGen</c>) batch
-    /// BAYATTIR ve ATILIR — Solution B'nin senkron doküman-set'inin ardından koşan bir bayat flush'ın taze
-    /// dokümana sızmasını (dup/cross-doc) kapatır. Aksi halde: anlatı (null) →
-    /// <see cref="ConsoleView.AppendNarrativeBatch"/> (en yeni satır T34 hibrit daktilo); proje-log → ham MSBuild
-    /// <see cref="ConsoleView.AppendBatch"/> instant (ham çıktı ASLA harf-harf — DD2).
+    /// verir (test edilebilir seam); Window yalnız uygular. <paramref name="batchGen"/>, batch'in ait olduğu reseed nesli
+    /// (pompanın batch'ten önce tükettiği son sentinel'in nesli): aradan bir reseed geçtiyse
+    /// (<c>batchGen &lt; _console.CurrentReseedGen</c>) batch BAYATTIR ve ATILIR — Solution B'nin senkron doküman-set'inin
+    /// ardından koşan bir bayat flush'ın taze dokümana sızmasını (dup/cross-doc) kapatır. Aksi halde: anlatı (null) →
+    /// <see cref="ConsoleView.AppendNarrativeBatch"/>; proje-log → ham MSBuild <see cref="ConsoleView.AppendBatch"/>. İkisi de
+    /// anında basar (daktilo yok).
     ///
     /// <para>[perf Faz A · A2] <b>Gizli ya da bayat konsolda belgeye yazılmaz:</b> metin modelde (VM'in anlatı store'u) zaten
     /// durur; batch atılır, "ekran bayat" bayrağı kalkar (<c>_consoleStaleWhileHidden</c>) ve <see cref="ResyncAfterShow"/>
@@ -664,8 +664,9 @@ public partial class MainWindow : Window
     }
 
     /// <summary>[test yüzeyi] Konsol pompasının şu anki reseed nesli: pompa tick etmeyen bir fixture'da testler bir
-    /// batch'i <see cref="AppendConsoleBatch"/>'e pompanın yaptığı gibi bu damgayla verir (pompanın batch'i okuduğu
-    /// andaki nesil; reseed-drop sentinel'i onu ilerletir).</summary>
+    /// batch'i <see cref="AppendConsoleBatch"/>'e pompanın yaptığı gibi bu damgayla verir — pompa batch'i tükettiği son
+    /// sentinel'in nesliyle damgalar; kanaldaki her sentinel tüketilmişse bu, şu anki nesildir (reseed-drop sentinel'i onu
+    /// ilerletir).</summary>
     internal long ConsoleReseedGen => _console.CurrentReseedGen;
 
     /// <summary>[D4/Solution B] Kart seçimi değişince konsol modunu senkron sürer. Seçim varsa: proje logunu
