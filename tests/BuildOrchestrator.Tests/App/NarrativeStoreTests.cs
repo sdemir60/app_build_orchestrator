@@ -37,6 +37,20 @@ public class NarrativeStoreTests
         Assert.Equal("", store.Join(0, 1));
     }
 
+    /// <summary>[idle-memory · final review m3] Temizlik satır dizisini de bırakır: <c>List.Clear</c> diziyi en büyük işlemin
+    /// boyunda tutar — 100 k satırlık bir koşudan sonra 8 B/satır (≈ 1 MB, LOH'ta), daha küçük bir işlem onu silse bile uygulama
+    /// ömrü boyunca. Yeni işlem diziyi yeniden büyütür; büyüme işlem sonu trimiyle ucuzdur.</summary>
+    [Fact]
+    public void Clear_also_releases_the_line_array_of_the_largest_operation()
+    {
+        var store = new NarrativeStore();
+        for (int i = 0; i < 100_000; i++) store.Append("x");
+
+        store.Clear();
+
+        Assert.Equal(0, store.Capacity); // KIRMIZI: bugün 131 072 — dizi en büyük işlemin boyunda kalır
+    }
+
     [Fact]
     public void Trimmed_lines_are_not_stored_twice()
     {
@@ -57,13 +71,28 @@ public class NarrativeStoreTests
 
     /// <summary>Okuyucu (UI thread'i) yazar (IPC thread'i) eklerken dilim ister. Store yalnız büyür: okunan sayıya kadarki dilim,
     /// yazar o sırada ne yaparsa yapsın, AYNI satırlardır — sırayla ve eksiksiz. Yırtık bir okuma (yarım liste, kayan indeks)
-    /// metni bozar ya da fırlatır.</summary>
+    /// metni bozar ya da fırlatır.
+    /// <para>[idle-memory · final review 93 — DEĞİŞEN KURULUM] Okumalar yazımla örtüşür: yazar ilk eklemesinden sonra bir
+    /// <c>TaskCompletionSource</c> ile haber verir, okuyucu onu bekler ve yazar bitene dek okur. Eski kurulum sabit 200 okuma
+    /// yapıyordu ve yazar daha başlamadan bitebilirdi — o zaman boş bir store'u okuyup eşzamanlılık hiç sınanmadan yeşil kalırdı.
+    /// Bekleme bir uyku/sorgu değildir (D8) ve tek çekirdekte de biter: okuyucu döngüsü yazarın tamamlanmasına bağlıdır.</para>
+    /// </summary>
     [Fact]
     public async Task Appends_from_another_thread_never_tear_a_join()
     {
         var store = new NarrativeStore();
-        var writer = Task.Run(() => { for (int i = 0; i < 20000; i++) store.Append("line " + i); });
-        for (int i = 0; i < 200; i++)
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var writer = Task.Run(() =>
+        {
+            for (int i = 0; i < 20000; i++)
+            {
+                store.Append("line " + i);
+                if (i == 0) started.SetResult(); // okuyucu yazar BAŞLADIKTAN sonra okur
+            }
+        });
+
+        await started.Task;
+        while (!writer.IsCompleted)
         {
             int n = store.Count;
             int from = Math.Max(0, n - 50);

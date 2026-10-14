@@ -47,7 +47,21 @@ public sealed class NarrativeStore : IConsoleBacklog
         }
     }
 
-    public void Clear() { lock (_gate) { _lines.Clear(); _chars = 0; } }
+    /// <summary>Anlatıyı boşaltır (yeni işlem). [idle-memory · final review m3] Satır dizisi de bırakılır: <c>List.Clear</c> onu en
+    /// büyük işlemin boyunda tutardı — 100 k satırlık bir koşudan sonra ≈ 1 MB (LOH'ta), daha küçük bir işlem onu silse bile uygulama
+    /// ömrü boyunca. Yeni işlem diziyi yeniden büyütür; büyümenin artıklarını işlem sonu trimi toplar.</summary>
+    public void Clear()
+    {
+        lock (_gate)
+        {
+            _lines.Clear();
+            _lines.TrimExcess();
+            _chars = 0;
+        }
+    }
+
+    /// <summary>[test yüzeyi] Satır dizisinin kapasitesi — temizliğin diziyi de bıraktığını (<see cref="Clear"/>) sınar.</summary>
+    internal int Capacity { get { lock (_gate) return _lines.Capacity; } }
 
     public string Join(int from, int to)
     {
