@@ -1,4 +1,7 @@
+using System.Globalization;
+using System.Windows;
 using BuildOrchestrator.App.Console;
+using ICSharpCode.AvalonEdit.Document;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -22,8 +25,11 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class ConsoleMemoryTests
 {
-    private static List<string> Lines(int count, int seed) =>
-        [.. Enumerable.Range(0, count).Select(i => $"line {seed * count + i}: a narrative line long enough to carry some text")];
+    /// <summary>Anlatı satırları; <paramref name="padding"/> satırı o kadar karakter uzatır (satır başına sabit maliyeti metne
+    /// göre küçültmek isteyen ölçümler için).</summary>
+    private static List<string> Lines(int count, int seed, int padding = 0) =>
+        [.. Enumerable.Range(0, count)
+            .Select(i => $"line {seed * count + i}: a narrative line long enough to carry some text{new string('.', padding)}")];
 
     [StaFact]
     public void The_narrative_document_keeps_no_undo_history_so_trimmed_text_is_released()
@@ -71,7 +77,9 @@ public class ConsoleMemoryTests
 
         for (int batch = 0; batch < 20; batch++) NarrativeSnapshots.Deliver(store, view, Lines(50, batch));
 
-        Assert.False(view.BacklogOwnsCopy);                           // KIRMIZI eski kodda: _backlogLines büyür
+        // Eski kodda bu iddia DERLENMEZDİ (kırmızısı derleme hatasıydı, başarısız bir assert değil): yüzey yoktu, çünkü görünüm
+        // anlatıda da HER ZAMAN kendi listesini (_backlogLines) tutuyordu ve kırpılan canlı satırlar ona eklenirdi.
+        Assert.False(view.BacklogOwnsCopy);
         Assert.Equal(1000, store.Count);
         Assert.True(view.Document.LineCount <= ConsoleView.RenderSliceLines + 1);
         view.PrependPreviousChunk();                                  // geçmiş store'dan gelir
@@ -128,5 +136,126 @@ public class ConsoleMemoryTests
         Assert.StartsWith("line 0\n", console.Document.Text);      // geçmiş store'dan, bitişik
         Assert.False(console.BacklogOwnsCopy);                     // kırpılan satırlar görünüme kopyalanmadı
         GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [idle-memory · final review 92] Anlatı bağı yalnız BOŞ bir anlatı belgesine kurulur: bağ belgenin ilk satırını store'un 0.
+    /// satırı sayar — store'un her satırı pompadan sırayla gelecektir. Store'un hiç görmediği satırları taşıyan bir belgeye kurulan
+    /// bağ o satırları store indeksleriyle eşlerdi ve tepeye kaydırma yanlış dilimi getirirdi; bağ sessizce kurulmaz, hemen fırlatır.
+    /// </summary>
+    [StaFact]
+    public void Binding_the_narrative_to_a_document_that_already_shows_lines_fails_fast()
+    {
+        var view = new ConsoleView();
+        view.AppendBatch("a line the store never saw\n");
+
+        Assert.Throws<InvalidOperationException>(() => view.BindNarrative(new NarrativeStore())); // KIRMIZI: bugün sessizce bağlar
+    }
+
+    /// <summary>[idle-memory · final review 92] Proje logu açıkken anlatı bağı kurulmaz: belge ve backlog o sayfanındır (görünümün
+    /// listesi). Anlatıya dönüş belgeyi store'dan kurar (<c>ReplaceRunDocument</c>); bağ yalnız kabuğun açılışındaki boş anlatı
+    /// belgesi içindir.</summary>
+    [StaFact]
+    public void Binding_the_narrative_while_a_project_log_is_shown_fails_fast()
+    {
+        var view = new ConsoleView();
+        view.ReplaceProjectDocument([]); // proje logu sayfası — belgesi boş
+
+        Assert.Throws<InvalidOperationException>(() => view.BindNarrative(new NarrativeStore())); // KIRMIZI: bugün sessizce bağlar
+    }
+
+    /// <summary>
+    /// [idle-memory · final review m1] <b>Takip geri gelince anlatı belgesi render dilimine döner.</b> Kırpma yalnız takip açıkken
+    /// yapılır — okuyucunun altından metin kaydırılmaz — ve kullanıcı yukarıdayken gelen satırlar ile tepeye kaydırınca yüklenen
+    /// dilimler belgede birikir. Eskiden belge ancak SONRAKİ batch'te render dilimine dönüyordu; koşu bittiyse sonraki batch yoktur:
+    /// o satırlar bir sonraki işleme dek AvalonEdit belgesinde (ip, satır ağacı, yükseklik ağacı) store'un ikinci, kısmi kopyası
+    /// olarak kalıyordu (spec §5 bellek bütçesi). Kırpılan satırlar store'dadır: tepeye kaydırma onları yine bitişik getirir.
+    /// </summary>
+    [StaFact]
+    public void The_narrative_document_returns_to_the_render_slice_when_following_resumes()
+    {
+        var store = new NarrativeStore();
+        var view = new ConsoleView { AnimationsEnabledProvider = () => false };
+        var window = DsResources.Realize(DsResources.NewHost(), view);
+        view.ReplaceRunDocument(NarrativeSnapshots.Of(store));
+        view.StickToBottom = false; // kullanıcı yukarıda okuyor: takip kapalı, belge kırpılmaz
+
+        for (int batch = 0; batch < 20; batch++) NarrativeSnapshots.Deliver(store, view, Lines(50, batch)); // 1000 satır
+        Assert.True(view.Document.LineCount > 1000, "ön-koşul: takip kapalıyken belge kırpılmadı");
+
+        view.StickToBottom = true; // takip geri geldi (pill, bekleme sonu) — koşu bitmiş, ardından batch gelmeyecek
+
+        Assert.True(view.Document.LineCount <= ConsoleView.RenderSliceLines + 1, // KIRMIZI: bugün belge 1001 satırda kalır
+            $"the narrative document still holds {view.Document.LineCount} lines after following resumed");
+        view.EvaluateChunkScroll(100.0); // arm: kullanıcı tepeden uzaklaştı
+        view.EvaluateChunkScroll(0.0);   // tepeye kaydırma: önceki dilim store'dan
+        int shown = view.Document.LineCount - 1;                                        // son satır: '\n' sonrası boş satır
+        Assert.Equal(store.Join(store.Count - shown, store.Count), view.Document.Text); // store'un son dilimi, bitişik
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [idle-memory · final review m2 + 91] <b>Büyük bir anlatı batch'inin görünümde kopyası üretilmez.</b> Batch belgeye eklenip
+    /// render dilimine kırpılırken görünümün ayırdığı bellek, belgenin AYNI ekleme ve kırpma için kendi ayırdığını yarım kopyadan
+    /// fazla aşmaz: ekleme metni ipe (rope) bir kez yazar, kırpma kesilen metni okumaz — anlatıda backlog store'dur, kırpılan satır
+    /// zaten oradadır (yalnız liste backlog'unun hiç kaydetmediği canlı satırlar okunur).
+    /// <para>Ölçülen kusur (2026-10-14; 2.000 satır × 560 karakter, batch 2,24 MB UTF-16): görünüm 14,1 MB ayırıyordu (batch'in 6,3
+    /// katı), belgenin kendi işi 5,5 MB'tı (2,5 katı). Fark ≈ 3,8 kopya: daktilo kaldırılırken ölü kalan iki kopya
+    /// (<c>AppendNarrativeBatch</c>'in hiç kullanılmayan <c>body</c>/<c>prefix</c>'i) ve kırpılan metnin tamamı (store'un hiç
+    /// okumadığı <c>GetText</c>). ~42 k karakterin üstündeki her batch'te bunlar LOH çöpüydü — dalga 1'in koşu sonunda topladığı
+    /// sıcak yolun üstünde.</para>
+    /// <para>Kâhin belgenin kendisidir: aynı durumdaki ikiz bir görünümün belgesinde aynı ekleme ve kırpma doğrudan yapılır
+    /// (<see cref="InsertAndTrim"/>). Sayım <c>GC.GetAllocatedBytesForCurrentThread</c> iledir — test thread'inin ayırdığı bayt,
+    /// süreç geneli değildir.</para>
+    /// </summary>
+    [StaFact]
+    public void A_large_narrative_batch_is_appended_and_trimmed_without_a_copy_of_it()
+    {
+        var (view, store, window) = NarrativeViewAtTheSlice();
+        var (twin, _, twinWindow) = NarrativeViewAtTheSlice();
+        int from = store.Count;
+        foreach (var line in Lines(2000, seed: 7, padding: 500)) store.Append(line); // üretim sırası: önce store, sonra batch
+        string batch = store.Join(from, store.Count);
+
+        long viewCost = AllocatedBy(() => view.AppendNarrativeBatch(batch));
+        long documentCost = AllocatedBy(() => InsertAndTrim(twin.Document, batch));
+
+        Assert.True(view.Document.LineCount <= ConsoleView.RenderSliceLines + 1, "ön-koşul: belge render dilimine kırpılmadı (vakum)");
+        long copy = batch.Length * (long)sizeof(char);
+        Assert.True(viewCost - documentCost < copy / 2, string.Create(CultureInfo.InvariantCulture, // KIRMIZI: bugün ≈ 3,8 kopya fazla
+            $"the view allocated {viewCost} bytes for a {copy}-byte batch, the document's own insert and trim {documentCost}"));
+        GC.KeepAlive(window);
+        GC.KeepAlive(twinWindow);
+    }
+
+    /// <summary>Anlatı modunda, takip açık ve belgesi render diliminde duran bir görünüm — üretim düzeniyle: backlog store'dur,
+    /// satırlar önce store'a sonra batch'le gelir. Kırpma ve ekleme yolu ölçümden önce bir kez koşmuştur.</summary>
+    private static (ConsoleView View, NarrativeStore Store, Window Host) NarrativeViewAtTheSlice()
+    {
+        var store = new NarrativeStore();
+        var view = new ConsoleView { AnimationsEnabledProvider = () => false };
+        var host = DsResources.Realize(DsResources.NewHost(), view);
+        view.ReplaceRunDocument(NarrativeSnapshots.Of(store));
+        for (int batch = 0; batch < 8; batch++) NarrativeSnapshots.Deliver(store, view, Lines(50, batch)); // 400 satır: kırpma koştu
+        return (view, store, host);
+    }
+
+    /// <summary>Belgenin bir batch için KENDİ işi — ölçümün kâhini: metni sona ekler, render diliminin üstündeki satırları tek
+    /// <c>Remove</c>'la siler.</summary>
+    private static void InsertAndTrim(TextDocument document, string batch)
+    {
+        document.BeginUpdate();
+        document.Insert(document.TextLength, batch);
+        var lastAbove = document.GetLineByNumber(document.LineCount - ConsoleView.RenderSliceLines);
+        document.Remove(0, lastAbove.EndOffset + lastAbove.DelimiterLength);
+        document.EndUpdate();
+    }
+
+    /// <summary>Eylemin test thread'inde ayırdığı bayt.</summary>
+    private static long AllocatedBy(Action action)
+    {
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        action();
+        return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 }

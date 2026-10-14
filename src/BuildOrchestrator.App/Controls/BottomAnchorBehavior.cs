@@ -29,7 +29,9 @@ public sealed class BottomAnchorBehavior
     private bool _lastShowPill; // son bildirilen pill görünürlüğü (bkz. Notify)
 
     /// <summary>IsStuck/IsJumping/ShowPill değiştiğinde ateşlenir — host (ConsoleView) buna göre pill Visibility'sini
-    /// / StickToBottom'ı günceller.</summary>
+    /// / StickToBottom'ı günceller. Bekleme panel dipteyken dolduğunda da ateşlenir: durum aynı kalır ama takip geri gelir
+    /// (<see cref="ShouldFollow"/> açılır) ve takibe bağlı işi olan host (konsolun render dilimi kırpması) onu bu bildirimde
+    /// okur.</summary>
     public event EventHandler? Changed;
 
     /// <param name="getOffset">Anlık VerticalOffset (px).</param>
@@ -154,7 +156,15 @@ public sealed class BottomAnchorBehavior
             if (generation != _idleGeneration) return;   // araya yeni bir scroll girdi
             _steering = false;                            // kullanıcı elini çekti — direksiyon geri alınır
             if (_autoResumeAllowed is null || !_autoResumeAllowed()) return;
-            if (_state.IsStuck) { _scrollInstant(_getExtent()); return; } // zaten dipteydi: takibi sürdür
+            if (_state.IsStuck)
+            {
+                // Zaten dipteydi (kullanıcı kendi eliyle dibe indi): takip sürer. Durum değişmedi ama takip GERİ GELDİ —
+                // host'lar duyar [idle-memory · final review m1]: konsol takibe bağlı kırpmasını sonraki batch'i beklemeden yapar.
+                _scrollInstant(_getExtent());
+                _lastShowPill = ShowPill;
+                Changed?.Invoke(this, EventArgs.Empty);
+                return;
+            }
             JumpToBottom();
         });
     }

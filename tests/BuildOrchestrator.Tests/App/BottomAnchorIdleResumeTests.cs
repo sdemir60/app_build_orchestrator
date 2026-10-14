@@ -155,6 +155,31 @@ public class BottomAnchorIdleResumeTests
         Assert.Equal(f.Extent - f.Viewport, f.SmoothTarget); // bekleme doldu ve dibe dönüldü
     }
 
+    /// <summary>
+    /// [idle-memory · final review m1] Bekleme panel HÂLÂ dipteyken dolarsa (kullanıcı kendi eliyle dibe indi) takip geri gelir ve
+    /// host bunu DUYAR (<see cref="BottomAnchorBehavior.Changed"/>). Takibe bağlı işler (konsolun belgeyi render dilimine kırpması)
+    /// <see cref="BottomAnchorBehavior.ShouldFollow"/>'u bu bildirimde okur; takip sessizce geri gelseydi o iş ancak bir sonraki
+    /// içerikle yapılırdı — koşu bittiyse hiç.
+    /// </summary>
+    [Fact]
+    public void When_the_wait_expires_at_the_bottom_the_host_hears_that_following_resumed()
+    {
+        var f = new Fake();
+        var behavior = f.New();
+        f.Offset = f.Extent - f.Viewport - 10; // dipten 10px: eşiğin İÇİNDE — kullanıcı kendi eliyle dibe indi
+        behavior.NotifyUserScroll();
+        behavior.OnScrollChanged(0);
+        Assert.True(behavior.IsStuck);         // ön-koşul: dipte
+        Assert.False(behavior.ShouldFollow);   // ön-koşul: ama direksiyon kullanıcıda
+        int changed = 0;
+        behavior.Changed += (_, _) => changed++;
+
+        f.PendingSchedule!(); // kullanıcı elini çekti
+
+        Assert.True(behavior.ShouldFollow);
+        Assert.Equal(1, changed); // KIRMIZI: bugün takip haber vermeden geri gelir
+    }
+
     /// <summary>Dipte otururken ve HİÇ kaydırılmamışken bekleme kurulmaz — dönülecek bir yer yok.</summary>
     [Fact]
     public void Content_growth_alone_arms_nothing()

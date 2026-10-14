@@ -216,11 +216,13 @@ public partial class ConsoleView : UserControl
     /// <summary>[E4/T48] Konsolun bottom-anchor'ının merkezi arbiter'a bölgesel suppress bildirimi + pill görünürlüğü.
     /// Dibe yapışıksa arbiter'da bu panel yeniden devrede (<see cref="ScrollArbiter.Resume"/>); kullanıcı dipten
     /// uzaklaşınca duraklı (<see cref="ScrollArbiter.NotifyUserScroll"/>) — YALNIZ konsol paneli (stream/frontier
-    /// akmaya devam). <see cref="Arbiter"/> null ise (izole test) yalnız pill güncellenir.</summary>
+    /// akmaya devam). <see cref="Arbiter"/> null ise (izole test) yalnız pill güncellenir. Takip geri geldiyse anlatı belgesi
+    /// render dilimine döner (<see cref="TrimNarrativeWhenFollowing"/>).</summary>
     private void OnBottomAnchorChanged(object? sender, EventArgs e)
     {
         Pill.Visibility = _bottomAnchor.ShowPill ? Visibility.Visible : Visibility.Collapsed;
         RefreshPrompt(); // dipten uzaklaşınca prompt da gider (gerekçe: RefreshPrompt doc'u)
+        TrimNarrativeWhenFollowing();
         if (Arbiter is null) return;
         if (_bottomAnchor.IsStuck) Arbiter.Resume(ScrollPanel.Console);
         else Arbiter.NotifyUserScroll(ScrollPanel.Console);
@@ -296,28 +298,10 @@ public partial class ConsoleView : UserControl
             // AMA YALNIZ TAKİP AÇIKKEN. Kırpma belgenin BAŞINDAN satır siler; kullanıcı yukarıda okurken bu,
             // kaydırma konumu sabit kalsa bile metni onun altından yukarı kaydırır. Sahada görülen "scroll
             // duruyor ama yazılar akmaya devam ediyor" tam olarak buydu: panel kullanıcıya bırakılmıştı ama
-            // okuduğu satırlar ayağının altından siliniyordu. Kullanıcı elini çekince (bekleme dolar, takip
-            // geri gelir) kırpma tek hamlede yetişir ve o an panel zaten dipte olduğu için görünmez.
-            if (_bottomAnchor.ShouldFollow)
-            {
-                var (trimmed, removed) = TrimToRenderSlice(document);
-                // [C-1] Tepeden K satır kırpıldıysa belgenin ilk satırı bir K kadar ileri kayar; chunk loader
-                // index'i onunla birlikte ilerlemelidir (aksi halde stale _loadedFrom → sonraki scroll-to-top
-                // prepend'i YANLIŞ dilimi yükler = tekrar/kayıp).
-                //
-                // Kırpılan satırların backlog'da ZATEN olan kısmı oradan belgeye yüklenmişti; geri kalanı hiç
-                // kaydedilmemiş CANLI satırlardır ve backlog'a verilir (AcceptTrimmed). Liste onları SONUNA ekler;
-                // anlatının store'u belgeden hep ileridedir (her satır önce store'a, sonra pompaya) — kırpılan her
-                // satır zaten oradadır, kopya tutulmaz. Eski kod canlı satırları hiç kaydetmiyor, index'i backlog'un
-                // uzunluğuna clamp'liyordu — o clamp tam da deliğin kendisiydi: canlı kırpılan satır ne belgede ne
-                // backlog'da kalıyordu.
-                if (trimmed > 0)
-                {
-                    int alreadyInBacklog = _backlog.Count - _loadedFrom;
-                    if (trimmed > alreadyInBacklog) _backlog.AcceptTrimmed(LastLines(removed, trimmed - alreadyInBacklog));
-                    _loadedFrom += trimmed;
-                }
-            }
+            // okuduğu satırlar ayağının altından siliniyordu. Takip geri gelince (bekleme dolar, pill, mod geçişi)
+            // anlatıda kırpma sonraki batch'i beklemeden tek hamlede yetişir (TrimNarrativeWhenFollowing) ve o an
+            // panel zaten dipte olduğu için görünmez.
+            if (_bottomAnchor.ShouldFollow) TrimToRenderSlice(document);
         }
         finally
         {
@@ -397,19 +381,61 @@ public partial class ConsoleView : UserControl
     /// üçüncüsü emniyettir. Sayı çağrı yerinde literal YAZILMAZ (StatusGlyph.PulseMs deseni).</summary>
     private const int MaxPinPasses = 3;
 
-    // Belgeyi son RenderSliceLines satıra kırpar (baştaki fazla satırları TEK Remove ile siler).
-    // Silinen satır SAYISINI ve METNİNİ döndürür: sayı [C-1] _loadedFrom'u ilerletmek, metin ise hiç
-    // kaydedilmemiş canlı satırları liste backlog'una taşımak içindir (bkz. AppendBatch; anlatının store'u onları
-    // zaten taşır).
-    private static (int Lines, string Removed) TrimToRenderSlice(TextDocument document)
+    /// <summary>
+    /// Belgeyi son <see cref="RenderSliceLines"/> satıra kırpar — baştaki fazla satırları TEK <c>Remove</c> ile siler — ve chunk
+    /// loader index'ini (<see cref="_loadedFrom"/>) kırpılan satır sayısı kadar ilerletir [C-1]: belgenin ilk satırı K satır ileri
+    /// kayar, index onunla birlikte ilerlemezse sonraki scroll-to-top prepend'i YANLIŞ dilimi yükler (tekrar/kayıp). Çağıran
+    /// belge güncellemesini (<c>BeginUpdate</c>/<c>EndUpdate</c>) ve takip kararını tutar: <see cref="AppendBatch"/> ve
+    /// <see cref="TrimNarrativeWhenFollowing"/>.
+    ///
+    /// <para>Kırpılan satırların backlog'da ZATEN olan kısmı oradan belgeye yüklenmişti; geri kalanı hiç kaydedilmemiş CANLI
+    /// satırlardır ve backlog'a verilir (<see cref="IConsoleBacklog.AcceptTrimmed"/>) — liste onları SONUNA ekler. Anlatının store'u
+    /// belgeden hep ileridedir (her satır önce store'a, sonra pompaya): kırpılan her satır zaten oradadır, o kuyruk hep boştur. Eski
+    /// kod canlı satırları hiç kaydetmiyor, index'i backlog'un uzunluğuna clamp'liyordu — o clamp tam da deliğin kendisiydi: canlı
+    /// kırpılan satır ne belgede ne backlog'da kalıyordu.</para>
+    ///
+    /// <para><b>Kırpılan metinden yalnız backlog'un ihtiyacı olan kuyruk okunur</b> — <c>Remove</c>'dan ÖNCE, belgenin satır
+    /// sınırlarından. [idle-memory · final review 91] Eskiden kırpılan metnin TAMAMI okunuyordu (<c>GetText</c>): anlatıda hiç
+    /// kullanılmadığı hâlde her büyük batch'te batch boyunda bir LOH çöpüydü (ölçüm: <c>ConsoleMemoryTests</c>).</para>
+    /// </summary>
+    private void TrimToRenderSlice(TextDocument document)
     {
         int excess = document.LineCount - RenderSliceLines;
-        if (excess <= 0) return (0, "");
-        var lastToRemove = document.GetLineByNumber(excess); // 1..excess satırlarını (ayraçlarıyla) sil
-        int length = lastToRemove.Offset + lastToRemove.TotalLength;
-        string removed = document.GetText(0, length);
+        if (excess <= 0) return;
+        var lastRemoved = document.GetLineByNumber(excess); // 1..excess satırları (ayraçlarıyla) silinir
+        int length = lastRemoved.Offset + lastRemoved.TotalLength;
+        int unrecorded = excess - (_backlog.Count - _loadedFrom); // backlog'un ucunu aşan, hiç kaydedilmemiş satırlar
+        if (unrecorded > 0)
+        {
+            int tailStart = document.GetLineByNumber(excess - unrecorded + 1).Offset;
+            _backlog.AcceptTrimmed(ConsoleLines.Split(document.GetText(tailStart, length - tailStart)));
+        }
         document.Remove(0, length);
-        return (excess, removed);
+        _loadedFrom += excess;
+    }
+
+    /// <summary>
+    /// [idle-memory · final review m1] <b>Takip geri gelince anlatı belgesi render dilimine döner</b> — sonraki batch beklenmez.
+    /// Kırpma yalnız takip açıkken yapılır (<see cref="AppendBatch"/>), yani kullanıcı yukarıdayken gelen satırlar ve tepeye
+    /// kaydırınca yüklenen dilimler belgede birikir. Koşu sürerken sonraki batch onları kırpar; koşu bittiyse sonraki batch yoktur
+    /// ve belge bir sonraki işleme dek store'un ikinci, kısmi kopyası olarak kalırdı (ip, satır ağacı, yükseklik ağacı — spec §5
+    /// bellek bütçesi).
+    ///
+    /// <para>Bottom-anchor'ın her bildiriminde sorulur (<see cref="OnBottomAnchorChanged"/>): takip geri geldiğinde — pill, bekleme
+    /// sonu (dibe dönüş ya da dipte bırakılan direksiyon), mod geçişi — <see cref="BottomAnchorBehavior.ShouldFollow"/> açıktır.
+    /// Kırpma yetkisi yine o TEK predicate'tedir; kırpılıp dibe pinlenir ve panel dipte olduğu için görünmez. Belge render dilimi
+    /// kadarsa (tohum: son dilim + boş prompt satırı) dokunulmaz. Prepend sürerken belge değişmektedir, kırpılmaz. Proje logu
+    /// sayfası kapsam dışıdır (spec §6.2): o belge sayfayla birlikte bırakılır.</para>
+    /// </summary>
+    private void TrimNarrativeWhenFollowing()
+    {
+        if (_projectMode || _prepending || !_bottomAnchor.ShouldFollow) return;
+        var document = EditorControl.Document;
+        if (document.LineCount <= RenderSliceLines + 1) return;
+        document.BeginUpdate();
+        try { TrimToRenderSlice(document); }
+        finally { document.EndUpdate(); }
+        EditorControl.ScrollToEnd();
     }
 
     // ---------------------------------------------------------------- colorizer
@@ -441,31 +467,22 @@ public partial class ConsoleView : UserControl
         EditorControl.TextArea.TextView.LineTransformers.Add(_colorizer);
     }
 
-    // ---------------------------------------------------------------- [D4] anlatı batch'i (en yeni satır daktilo)
+    // ---------------------------------------------------------------- [D4] anlatı batch'i
 
     /// <summary>
-    /// [D4/T56-UI + T34] Run/anlatı modu batch'i. Batch'in TÜM satırları anında commit edilir; YALNIZ EN YENİ
-    /// satır — degradation kuralları izin verirse (<see cref="ConsoleTypingGate"/>) — hibrit daktiloyla yazılır
-    /// (<see cref="TypeActiveLine"/>). Aksi halde (ham MSBuild / hata / fırtına / yüksek throughput / reduced-motion)
-    /// tüm batch <see cref="AppendBatch"/> ile instant basılır. Proje-log modu BU yoldan GEÇMEZ — MainWindow orada
-    /// doğrudan <see cref="AppendBatch"/> çağırır (ham çıktı asla daktilolanmaz — DD2). Batch sözleşmesi: metin
-    /// '\n' SONEKLİ tam satırlarla biter (<see cref="ConsoleBatcher"/>).
+    /// [D4/T56-UI] Run/anlatı modu batch'i: boşta "ready" metni kalkar (<see cref="ClearReadyText"/>) ve batch'in TÜM satırları
+    /// anında basılır (<see cref="AppendBatch"/> — [design v1.7.0 §2.5] daktilo yoktur). Proje-log modu BU yoldan GEÇMEZ —
+    /// MainWindow orada doğrudan <see cref="AppendBatch"/> çağırır. Batch sözleşmesi: metin '\n' SONEKLİ tam satırlarla biter
+    /// (<see cref="ConsoleBatcher"/>).
+    /// <para>[idle-memory · final review m2] Batch kopyalanmaz: daktilo kaldırılırken burada ölü kalan "en yeni satırı ayır" hesabı
+    /// her batch'in iki tam kopyasını üretip atıyordu — büyük batch'te iki LOH çöpü (ölçüm: <c>ConsoleMemoryTests</c>).</para>
     /// </summary>
     public void AppendNarrativeBatch(string text)
     {
         if (string.IsNullOrEmpty(text)) return;
         ClearReadyText();
         EnsureColorizer();
-
-        // Son tam satırı ayır: newest = son satır (soneksiz); prefix = ondan önceki her şey ('\n' sonekli).
-        string body = text[^1] == '\n' ? text[..^1] : text;
-        int lastNl = body.LastIndexOf('\n');
-        string newest = lastNl < 0 ? body : body[(lastNl + 1)..];
-        string prefix = lastNl < 0 ? "" : text[..(lastNl + 1)];
-        int lineCount = 1;
-        for (int i = 0; i < body.Length; i++) if (body[i] == '\n') lineCount++;
-
-        AppendBatch(text); // [design v1.7.0 §2.5] anlatı satırları ANINDA basılır — daktilo yok
+        AppendBatch(text);
     }
 
     /// <summary>[design v1.7.0 §2.5] Boşta (idle/boot) tek prompt satırı: <b>yanıp sönen blok imleç + "ready"
@@ -644,10 +661,20 @@ public partial class ConsoleView : UserControl
     /// <para><b>Neden ayrı bir bağ:</b> bağ olmasaydı görünüm ilk anlatı kurulumuna (mod geçişi, işlem temizliği, tepsiden
     /// dönüş) kadar kendi boş listesinde kalır ve o arada belgeden kırpılan her satırı kopyalardı. Bağ bir yeniden kurulum
     /// değildir: <see cref="RunDocumentReplacedCount"/> artmaz, belgeye ve prompt'a dokunulmaz.</para>
+    ///
+    /// <para>[idle-memory · final review 92] <b>Ön-koşul sessizce varsayılmaz:</b> belge boş ve konsol anlatı modunda olmalıdır;
+    /// değilse <see cref="InvalidOperationException"/>. Satır taşıyan bir belgeye kurulan bağ store'un hiç görmediği satırları store
+    /// indeksleriyle eşlerdi (tepeye kaydırma yanlış dilimi getirir); proje logu açıkken belge ve backlog o sayfanındır. Anlatının
+    /// her yeniden kurulumu bağı zaten kendisi kurar (<see cref="ReplaceRunDocument"/>).</para>
     /// </summary>
     public void BindNarrative(IConsoleBacklog narrative)
     {
         ArgumentNullException.ThrowIfNull(narrative);
+        if (_projectMode)
+            throw new InvalidOperationException("The narrative cannot be bound while the console shows a project log.");
+        if (EditorControl.Document.TextLength > 0)
+            throw new InvalidOperationException(
+                "The narrative can only be bound to an empty console document: its first line is taken as the narrative's first line.");
         _backlog = narrative;
         _loadedFrom = 0;
     }
@@ -981,14 +1008,6 @@ public partial class ConsoleView : UserControl
         var document = new TextDocument(text);
         document.UndoStack.SizeLimit = 0;
         return document;
-    }
-
-    // Metnin SON `count` satırı — kırpılan bloğun yalnız backlog'a girmemiş kuyruğunu almak için. Bölme kuralı konsolun
-    // tek satır kuralıdır (ConsoleLines.Split — belgenin ayraç kuralı): satır sayısı kırpılan belge satırı sayısıyla örtüşür.
-    private static List<string> LastLines(string text, int count)
-    {
-        var lines = ConsoleLines.Split(text);
-        return count >= lines.Count ? lines : lines.GetRange(lines.Count - count, count);
     }
 
     // Duration.* kaynağını çözer (motion sözleşmesi: süreler token'dan); yoksa fallback ms.
