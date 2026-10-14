@@ -1,6 +1,7 @@
 using System.Windows;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
+using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
@@ -18,8 +19,9 @@ namespace BuildOrchestrator.Tests.App;
 /// <item>Proje logu her zaman tamdır: açık sayfa canlı satırların TAMAMINI alır, bekleyen bir yüklemenin kuyruğu her satırı tutar.</item>
 /// <item>Başlık (<c>building &lt;ad&gt;</c>) projenin ilk satırıyla aynı kilit bölümünde üretilir: pompadan geç gelen
 /// <c>projectStarted</c>'a bağlı değildir, işlem başına bir kezdir ve projeyi listedeki adıyla anar.</item>
-/// <item>Kip işlem başında yakalanır: koşu ortasındaki Save o koşuyu değiştirmez, bir sonraki işlem yeni kiple yazar; işlem yokken
-/// değişiklik hemen geçer. Başlıktaki <c>compact</c> etiketi bu etkin kipi gösterir — yalnız anlatı modunda ve workspace varken.</item>
+/// <item>Kip işlem başında yakalanır: koşu ortasındaki Save o koşuyu değiştirmez, koşu bitince geçerli olur ve bir sonraki işlem yeni
+/// kiple yazar; işlem yokken değişiklik hemen geçer. Başlıktaki <c>compact</c> etiketi konsolun bundan sonra yazacağı bu etkin kipi
+/// gösterir — yalnız anlatı modunda ve workspace varken.</item>
 /// </list>
 /// VM testleri çıplak VM'le koşar (üretim varsayılanı: kompakt açık); kabuk testleri fixture'ın kapalı varsayılanını açar
 /// (<see cref="MainWindowHost.New"/>'ün <c>compactConsole</c>'u).
@@ -27,17 +29,14 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class CompactConsoleTests
 {
-    /// <summary>Proje logunun ilk satırı: motorun yazdığı MSBuild komut satırı (tırnakla başlar — bilgi satırı).</summary>
-    private const string CommandLine = "\"C:\\Program Files\\MSBuild.exe\" C:\\p\\A.csproj -t:Build -v:minimal";
-
-    private const string Error = "  C:\\r\\A.cs(11,1): error CS0103: The name 'x' does not exist";
     private const string Succeeded = "Build succeeded.";
 
-    // Uyarı satırları ortak kurucudan (MainWindowHost.WarningLine): her satır numarası ayrı, tekil bir uyarıdır.
+    // Komut, uyarı ve hata satırları ortak kurucudan (MainWindowHost.CommandLine / WarningLine / ErrorLine): her satır numarası ayrı,
+    // tekil bir tanıdır.
 
     /// <summary>Bir projenin tipik logu: komut satırı, on tekil uyarı, bir hata, bitiş satırı.</summary>
     private static string[] ProjectLog() =>
-        [CommandLine, .. Enumerable.Range(1, 10).Select(i => WarningLine(i)), Error, Succeeded];
+        [CommandLine, .. Enumerable.Range(1, 10).Select(i => WarningLine(i)), ErrorLine(11), Succeeded];
 
     private static void Stream(RunViewModel vm, string name, IReadOnlyList<string> lines, int firstLineNumber = 1)
     {
@@ -68,8 +67,8 @@ public class CompactConsoleTests
         SucceedProject(vm, "A");
         CompleteRun(vm, 1);
 
-        Assert.Equal(["building A", WarningLine(1), WarningLine(2), WarningLine(3), Error, "A: 7 more warnings — CS1591 ×7 — see the project log"],
-            NarrativeSince(vm, before));
+        Assert.Equal(["building A", WarningLine(1), WarningLine(2), WarningLine(3), ErrorLine(11),
+                "A: 7 more warnings — CS1591 ×7 — see the project log"], NarrativeSince(vm, before));
         Assert.Equal(before + 6, vm.GetActiveLineCount());    // "N lines" = anlatının gerçek satırları
         Assert.Equal(vm.GetRunDocumentText(), await DrainPosted(console)); // pompaya giden = store'daki
     }
@@ -125,7 +124,7 @@ public class CompactConsoleTests
         int before = vm.Narrative.Count;
 
         LogLine(vm, "A", 1, CommandLine);
-        LogLine(vm, "A", 2, WarningLine(1));                         // projectStarted henüz işlenmedi
+        LogLine(vm, "A", 2, WarningLine(1));                  // projectStarted henüz işlenmedi
         StartProject(vm, "A");                                // pompadan geç gelir
         LogLine(vm, "A", 3, WarningLine(2));
         StartProject(vm, "A");                                // döngünün ikinci turu: yeni dispatch
@@ -147,7 +146,7 @@ public class CompactConsoleTests
 
         Stream(vm, "A", [WarningLine(1), WarningLine(2), WarningLine(3), WarningLine(4)]);
         SucceedProject(vm, "A");
-        LogLine(vm, "Z", 1, WarningLine(1, "CS0168"));                // önizlemede yok
+        LogLine(vm, "Z", 1, WarningLine(1, "CS0168"));        // önizlemede yok
 
         Assert.Equal(["building Alpha.Core", WarningLine(1), WarningLine(2), WarningLine(3),
                 "Alpha.Core: 1 more warning — CS1591 ×1 — see the project log", "building Z", WarningLine(1, "CS0168")],
@@ -167,7 +166,7 @@ public class CompactConsoleTests
 
         _ = vm.BuildCommand.ExecuteAsync(null);               // yeni işlem: temizlik ilk await'ten ÖNCE, senkron
         int before = vm.Narrative.Count;
-        LogLine(vm, "A", 1, WarningLine(1));                         // runStarted ve önizleme henüz pompada
+        LogLine(vm, "A", 1, WarningLine(1));                  // runStarted ve önizleme henüz pompada
 
         Assert.Equal(["building Alpha.Core", WarningLine(1)], NarrativeSince(vm, before));
     }
@@ -236,7 +235,7 @@ public class CompactConsoleTests
         CompleteRun(vm, 1);                                         // koşunun sonu tamponu diske indirir
 
         Assert.True(vm.Narrative.IsSpooling, "ön-koşul: koşunun anlatısı koşu klasörüne yayıldı");
-        Assert.Equal(["building A", WarningLine(1), WarningLine(2), WarningLine(3), Error,
+        Assert.Equal(["building A", WarningLine(1), WarningLine(2), WarningLine(3), ErrorLine(11),
                 "A: 7 more warnings — CS1591 ×7 — see the project log"], NarrativeSince(vm, before));
         Assert.Equal(vm.GetRunDocumentText(), logs.ReadText());     // dosya = store, aynı sıra, özet bir kez
     }
@@ -297,7 +296,7 @@ public class CompactConsoleTests
         string full = Text(ProjectLog());
         Assert.Equal(full, vm.GetProjectDocumentText(a));      // sayfanın modeli tam
         Assert.Equal(ProjectLog().Length, vm.GetActiveLineCount()); // başlığın sayacı tam
-        Assert.Equal(["building A", WarningLine(1), WarningLine(2), WarningLine(3), Error], NarrativeSince(vm, before));
+        Assert.Equal(["building A", WarningLine(1), WarningLine(2), WarningLine(3), ErrorLine(11)], NarrativeSince(vm, before));
         Assert.Equal(full, await DrainPosted(console));             // açık sayfaya giden canlı satırlar tam
     }
 
@@ -318,7 +317,7 @@ public class CompactConsoleTests
         var (load, request) = ProjectLogIpc.Request(vm, a);
 
         Stream(vm, "A", log[3..], firstLineNumber: 4);        // istekten sonra: dikişin kuyruğu
-        Assert.Equal(log.Length - 3, vm.LiveLineCount);        // gizlenen satırlar da tamponda
+        Assert.Equal(log.Length - 3, vm.LiveLineCount);       // gizlenen satırlar da tamponda
 
         vm.OnEvent(ProjectLogIpc.Reply(request, a, Text(log[..3]), through: 3));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
@@ -387,17 +386,17 @@ public class CompactConsoleTests
 
         await vm.ApplySettingsAsync([], vm.RootPath, [], compactConsole: false); // koşu ortasında Save
         DispatcherPump.DrainToIdle();
-        Assert.Equal(Visibility.Visible, tag.Visibility);    // koşu kendi kipinde
+        Assert.Equal(Visibility.Visible, tag.Visibility);     // koşu kendi kipinde
         int before = vm.Narrative.Count;
         Stream(vm, "A", [.. Enumerable.Range(1, 5).Select(i => WarningLine(i)), Succeeded]);
         SucceedProject(vm, "A");
         Assert.Equal(["building A", WarningLine(1), WarningLine(2), WarningLine(3), "A: 2 more warnings — CS1591 ×2 — see the project log"],
-            NarrativeSince(vm, before));                     // koşunun çıktısı bitene dek yakaladığı kiple
+            NarrativeSince(vm, before));                      // koşunun çıktısı bitene dek yakaladığı kiple
 
         CompleteRun(vm, 1);
         DispatcherPump.DrainToIdle();
 
-        Assert.Equal(Visibility.Collapsed, tag.Visibility);  // KIRMIZI: yeni bir bölüm açılana dek "compact" kalıyordu
+        Assert.Equal(Visibility.Collapsed, tag.Visibility);   // KIRMIZI: yeni bir bölüm açılana dek "compact" kalıyordu
         GC.KeepAlive(window);
     }
 
@@ -524,6 +523,25 @@ public class CompactConsoleTests
     }
 
     // ---------------------------------------------------------------- başlık etiketi
+
+    /// <summary>
+    /// [dalga 2 son inceleme F2] Üretimin açılışı gerçek kabukta: kayıtlı anahtarı olmayan bir workspace kendi seed'iyle (fixture'ın kip
+    /// ataması kapalı — <c>compactConsole: null</c>) kataloğun varsayılanında, yani kompakt açılır ve başlık <c>compact</c> der — arada hiçbir
+    /// atama yokken. Seed VM'in kendi değerini değiştirmediği için bildirim gelmez; etiketi açılıştaki TEK itiş gösterir. Pencere kuran
+    /// öbür testler fixture'ın tam kipinden başlar ve kipi değiştirerek bildirim yolunu sınar.
+    /// <para>KIRMIZI (geçici bozma: <c>MainWindow</c> ctor'undaki açılış itişi silindi): uygulama <c>compact</c> etiketi olmadan açılıyordu
+    /// ve süit yeşil kalıyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void A_window_on_its_own_seed_opens_with_the_compact_tag()
+    {
+        using var temp = new TempDir();
+        var (window, vm) = New(temp, compactConsole: null, saved: new UiState { RepositoryRoot = @"C:\src\OSYS" });
+
+        Assert.True(vm.CompactConsoleInEffect);
+        Assert.Equal(Visibility.Visible, window.Shell.ConsoleHeaderControl.CompactText.Visibility);
+        GC.KeepAlive(window);
+    }
 
     /// <summary>Kabuk: başlıktaki <c>compact</c> etiketi VM'in etkin kipini izler — işlem yokken ayar değişince hemen.</summary>
     [StaFact]

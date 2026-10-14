@@ -50,7 +50,7 @@ public class EngineRunReplayTests
     private static RunViewModel Synced(RunPlan plan)
     {
         var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe),
-            new ConsoleBatcher(_ => Task.Delay(Timeout.Infinite)), () => "r1") { RootPath = @"D:\repo" };
+            MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         vm.OnEvent(new WorkspaceTopologyEvent(plan.Plan.Nodes, plan.Plan.Cycles, [], []));
         vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, plan.Plan.Nodes.Count, 0));
         vm.OnEvent(new BuildPreviewEvent([.. plan.Plan.Nodes.Select(n =>

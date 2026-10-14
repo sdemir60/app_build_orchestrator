@@ -8,6 +8,7 @@ using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Logs;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Tests.Supervisor;
+using static BuildOrchestrator.Tests.App.MainWindowHost;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -21,8 +22,6 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 public class RunViewModelStateTests
 {
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
-
     private static ProjectNode Node(string id, string name, int buildOrder, bool? willBuild = null,
         IReadOnlyList<string>? deps = null, string? layerName = null, bool inCycle = false) =>
         new(id, name, id, ["Osys"], deps ?? [], buildOrder, layerName is null ? null : 0, layerName, inCycle, willBuild);
@@ -554,13 +553,12 @@ public class RunViewModelStateTests
         var console = MainWindowHost.DrainableBatcher(); // pompa testin elinde: sonunda tek seferde boşaltılır
         var vm = new RunViewModel(engine, console, () => "r1") { RootPath = @"D:\repo", CompactConsole = false };
         using var logs = new SpoolDir(vm.Narrative);
-        FailingSpoolStream? stream = null;
-        vm.Narrative.OpenSpoolStream = path => stream = new FailingSpoolStream(NarrativeStore.OpenSpoolFile(path));
+        var spool = FailingSpoolStream.InstallOn(vm.Narrative);
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", LogDirectory: logs.Path));
         vm.OnEvent(new ProjectLogEvent("r1", @"C:\p\a.csproj", 1, "before"));
         Assert.True(vm.Narrative.IsSpooling); // ön-koşul
 
-        stream!.Fail = true; // disk doldu
+        spool().Fail = true; // disk doldu
         string overflowing = new('x', 4096); // yazıcının tamponunu taşırır: yazım tam bu satırda düşer
         vm.OnEvent(new ProjectLogEvent("r1", @"C:\p\a.csproj", 2, overflowing));
         vm.OnEvent(new ProjectLogEvent("r1", @"C:\p\a.csproj", 3, "after"));
@@ -581,7 +579,7 @@ public class RunViewModelStateTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo", CompactConsole = false };
         using var logs = new SpoolDir(vm.Narrative);
-        vm.Narrative.OpenSpoolStream = _ => new MemoryStream(); // yazım başarılı, dosya diske hiç inmez: geri okuma düşer
+        SpoolDir.NeverOnDisk(vm.Narrative); // yazım başarılı, dosya diske hiç inmez: geri okuma düşer
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", LogDirectory: logs.Path));
         for (int i = 0; i < NarrativeStore.MemoryWindowLines + 500; i++)
             vm.OnEvent(new ProjectLogEvent("r1", @"C:\p\a.csproj", i + 1, "line " + i));

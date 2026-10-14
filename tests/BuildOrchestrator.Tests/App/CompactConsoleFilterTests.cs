@@ -14,8 +14,8 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 public class CompactConsoleFilterTests
 {
-    // Uyarı satırları ortak kurucudan (MainWindowHost.WarningLine): her satır numarası ayrı, tekil bir uyarıdır.
-    private const string E ="  C:\\r\\A.cs(2,1): error CS0103: The name 'x' does not exist";
+    // Komut, uyarı ve hata satırları ortak kurucudan (MainWindowHost.CommandLine / WarningLine / ErrorLine): her satır numarası ayrı,
+    // tekil bir tanıdır.
 
     [Fact]
     public void Errors_pass_the_first_three_distinct_warnings_pass_and_every_other_line_is_hidden()
@@ -24,16 +24,16 @@ public class CompactConsoleFilterTests
         Assert.Null(f.LogLine("a", "  Copying file from X to Y"));          // Info
         Assert.Null(f.LogLine("a", ""));                                    // boş satır
         Assert.Null(f.LogLine("a", "msbuild A.csproj -t:Build"));           // komut satırı (Cmd)
-        Assert.Equal(E, f.LogLine("a", E));
+        Assert.Equal(ErrorLine(2), f.LogLine("a", ErrorLine(2)));
         Assert.Equal(WarningLine(1), f.LogLine("a", WarningLine(1)));
         Assert.Equal(WarningLine(2), f.LogLine("a", WarningLine(2)));
         Assert.Equal(WarningLine(3), f.LogLine("a", WarningLine(3)));
-        Assert.Null(f.LogLine("a", WarningLine(4)));                               // 4. tekil uyarı
+        Assert.Null(f.LogLine("a", WarningLine(4)));                        // 4. tekil uyarı
         Assert.Null(f.LogLine("a", WarningLine(5, "MSB3277", "Found conflicts")));
-        Assert.Equal(E, f.LogLine("a", E));                                 // hata hep geçer — tekrarı da; kota hatayı etkilemez
+        Assert.Equal(ErrorLine(2), f.LogLine("a", ErrorLine(2)));           // hata hep geçer — tekrarı da; kota hatayı etkilemez
 
         Assert.Equal("A: 2 more warnings — CS1591 ×1, MSB3277 ×1 — see the project log", f.ProjectDone("a", Named("A")));
-        Assert.Null(f.ProjectDone("b", Named("B")));                               // gizlenen uyarı yok
+        Assert.Null(f.ProjectDone("b", Named("B")));                        // gizlenen uyarı yok
     }
 
     /// <summary>
@@ -75,11 +75,11 @@ public class CompactConsoleFilterTests
         var f = new CompactConsoleFilter();
         for (int i = 1; i <= 5; i++) f.LogLine(@"C:\p\a.csproj", WarningLine(i));
         Assert.Equal(WarningLine(1), f.LogLine(@"C:\p\b.csproj", WarningLine(1)));      // B'nin kendi kotası: A'nın beşi onu etkilemez
-        Assert.Null(f.LogLine(@"C:\P\A.CSPROJ", WarningLine(6)));                 // aynı proje, başka yazım: A'nın kotası dolu
+        Assert.Null(f.LogLine(@"C:\P\A.CSPROJ", WarningLine(6)));                       // aynı proje, başka yazım: A'nın kotası dolu
 
         f.Reset();
         Assert.Equal(WarningLine(1), f.LogLine(@"C:\p\a.csproj", WarningLine(1)));      // yeni işlem: görülmüş uyarı ilk üç arasında yeniden görünür
-        Assert.Null(f.ProjectDone(@"C:\p\a.csproj", Named("A")));                 // önceki işlemin gizledikleri sayılmaz
+        Assert.Null(f.ProjectDone(@"C:\p\a.csproj", Named("A")));                       // önceki işlemin gizledikleri sayılmaz
         Assert.Null(f.ProjectDone(@"C:\p\b.csproj", Named("B")));
     }
 
@@ -119,8 +119,8 @@ public class CompactConsoleFilterTests
         ];
         foreach (string note in notes) Assert.Equal(note, f.LogLine("a", note));
         for (int i = 1; i <= 3; i++) Assert.Equal(WarningLine(i), f.LogLine("a", WarningLine(i))); // kota notlardan bağımsız
-        Assert.Null(f.LogLine("a", WarningLine(4)));                                                 // derleyicinin dördüncüsü
-        Assert.Equal(notes[0], f.LogLine("a", notes[0]));                                            // döngü turunda yinelenen not da
+        Assert.Null(f.LogLine("a", WarningLine(4)));                                               // derleyicinin dördüncüsü
+        Assert.Equal(notes[0], f.LogLine("a", notes[0]));                                          // döngü turunda yinelenen not da
 
         Assert.Equal("A: 1 more warning — CS1591 ×1 — see the project log", f.ProjectDone("a", Named("A")));
     }
@@ -239,11 +239,11 @@ public class CompactConsoleFilterTests
     public void The_pending_summaries_are_drained_once_in_first_warning_order()
     {
         var f = new CompactConsoleFilter();
-        for (int i = 1; i <= 5; i++) f.LogLine("b", WarningLine(i));      // B'nin uyarıları önce
+        for (int i = 1; i <= 5; i++) f.LogLine("b", WarningLine(i));       // B'nin uyarıları önce
         for (int i = 1; i <= 4; i++) f.LogLine("a", WarningLine(i));
         for (int i = 1; i <= 5; i++) f.LogLine("c", WarningLine(i));
         f.LogLine("d", WarningLine(1));                                    // gizlenen yok
-        Assert.NotNull(f.ProjectDone("c", Named("C")));                           // C sonucunu aldı
+        Assert.NotNull(f.ProjectDone("c", Named("C")));                    // C sonucunu aldı
 
         Assert.Equal(["B: 2 more warnings — CS1591 ×2 — see the project log", "A: 1 more warning — CS1591 ×1 — see the project log"],
             f.DrainPending(id => id.ToUpperInvariant()));
@@ -266,7 +266,7 @@ public class CompactConsoleFilterTests
         for (int i = 1; i <= 3; i++) f.LogLine("a", WarningLine(i)); // uyarı kotası doldu
 
         Assert.Equal(error, f.LogLine("a", error));
-        Assert.Null(f.ProjectDone("a", Named("A")));                         // uyarı sayılmadı: gizlenen yok
+        Assert.Null(f.ProjectDone("a", Named("A")));                 // uyarı sayılmadı: gizlenen yok
     }
 
     /// <summary>[fix 1 · M3] Çok hedefli (multi-targeted) bir projede MSBuild'in bitiş özeti eke hedef çerçeveyi de yazar:
@@ -280,7 +280,7 @@ public class CompactConsoleFilterTests
     {
         var f = new CompactConsoleFilter();
         for (int i = 1; i <= 3; i++) f.LogLine("a", WarningLine(i));
-        string inline = WarningLine(4);                                                             // satır içi: eksiz
+        string inline = WarningLine(4);                                                                    // satır içi: eksiz
         Assert.Null(f.LogLine("a", inline));
         Assert.Null(f.LogLine("a", "    " + inline.Trim() + @" [C:\x\A.csproj::TargetFramework=net8.0]")); // bitiş özeti
 
@@ -300,8 +300,8 @@ public class CompactConsoleFilterTests
         [
             WarningLine(1), WarningLine(2), WarningLine(3), WarningLine(4, "MSB3277"), WarningLine(5, "CS0168"),
             "warning NU1701: package restored", "warning: R failed in this run — last successful output referenced (R)",
-            "  Copying file from X to Y", "\"C:\\Program Files\\MSBuild.exe\" C:\\p\\A.csproj -t:Build", "msbuild A.csproj -t:Build", "",
-            "    0 Hata", E,
+            "  Copying file from X to Y", CommandLine, "msbuild A.csproj -t:Build", "",
+            "    0 Hata", ErrorLine(2),
         ];
         foreach (string line in lines) f.LogLine("a", line); // ısınma: ilk üçü gösterildi, gerisi sayıldı — sonrası hep tekrar
 

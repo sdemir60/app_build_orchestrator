@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Windows;
 using BuildOrchestrator.App.Console;
 using ICSharpCode.AvalonEdit.Document;
+using static BuildOrchestrator.Tests.App.ConsoleDocument;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -190,8 +191,7 @@ public class ConsoleMemoryTests
 
         Assert.True(view.Document.LineCount <= ConsoleView.SeededDocumentLines, // KIRMIZI: bugün belge 1001 satırda kalır
             $"the narrative document still holds {view.Document.LineCount} lines after following resumed");
-        view.EvaluateChunkScroll(100.0); // arm: kullanıcı tepeden uzaklaştı
-        view.EvaluateChunkScroll(0.0);   // tepeye kaydırma: önceki dilim store'dan
+        ScrollUpToTheTop(view); // tepeye kaydırma: önceki dilim store'dan
         int shown = view.Document.LineCount - 1;                                        // son satır: '\n' sonrası boş satır
         Assert.Equal(store.Join(store.Count - shown, store.Count), view.Document.Text); // store'un son dilimi, bitişik
         GC.KeepAlive(window);

@@ -1,4 +1,5 @@
 using System.IO;
+using BuildOrchestrator.App.Console;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -10,6 +11,16 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 internal sealed class FailingSpoolStream(Stream inner) : Stream
 {
+    /// <summary>[dalga 2 son inceleme O4] Store'un spool'u açılırken üretimin dosyasını bu akışla sarar (<c>NarrativeStore.OpenSpoolStream</c>)
+    /// — dikişin TEK kurulumu (store ve VM testleri). Dönen çağrı açılan akışı verir; spool açılmadan çağrılırsa fırlatır.</summary>
+    public static Func<FailingSpoolStream> InstallOn(NarrativeStore store)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+        FailingSpoolStream? opened = null;
+        store.OpenSpoolStream = path => opened = new FailingSpoolStream(NarrativeStore.OpenSpoolFile(path));
+        return () => opened ?? throw new InvalidOperationException("the spool was not opened");
+    }
+
     /// <summary>Açıkken her yazım ve boşaltma düşer.</summary>
     public bool Fail { get; set; }
 

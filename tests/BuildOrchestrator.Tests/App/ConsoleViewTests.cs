@@ -5,6 +5,7 @@ using System.Windows.Markup;
 using System.Windows.Media;
 using ICSharpCode.AvalonEdit;
 using BuildOrchestrator.App.Console;
+using static BuildOrchestrator.Tests.App.ConsoleDocument;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -169,19 +170,15 @@ public class ConsoleViewTests
     {
         // GERÇEK yol: PlayCascade render dilimini (son 200) kurar; arm (tepeden uzaklaş) → scroll-to-top →
         // ConsoleView.PrependPreviousChunk contiguous eski dilimi prepend eder + VerticalOffset'i telafi eder.
-        var view = new ConsoleView();
         // Layout: TextView.DefaultLineHeight/VerticalOffset gerçek değer alsın (offset telafisi ölçülebilsin).
-        view.Measure(new Size(800, 600));
-        view.Arrange(new Rect(0, 0, 800, 600));
-        view.UpdateLayout();
+        var view = LaidOutView();
 
         var all = Enumerable.Range(0, 250).Select(i => $"line{i}").ToArray();
         view.PlayCascade(all); // instant → son 200 (line50..line249)
         Assert.StartsWith("line50\n", view.Document.Text);
         Assert.DoesNotContain("line49\n", view.Document.Text); // ilk 50 henüz chunk loader'da
 
-        view.EvaluateChunkScroll(100.0); // arm: kullanıcı tepeden uzaklaştı (aşağı kaydırdı)
-        view.EvaluateChunkScroll(0.0);   // scroll-to-top → önceki chunk prepend edilir
+        ScrollUpToTheTop(view); // scroll-to-top → önceki chunk prepend edilir
 
         // Dikiş: line0..line249 bitişik ve TAM — tekrar YOK, kayıp YOK.
         var expected = string.Concat(all.Select(l => l + "\n"));
@@ -194,8 +191,7 @@ public class ConsoleViewTests
         Assert.Equal(before + delta, applied, 3); // ChunkStitch.CompensatedOffset wiring
 
         // Re-arm + tekrar tepe: yüklenecek daha eski satır yok → idempotent (tekrar yükleme/dup YOK).
-        view.EvaluateChunkScroll(100.0);
-        view.EvaluateChunkScroll(0.0);
+        ScrollUpToTheTop(view);
         Assert.Equal(expected, view.Document.Text);
     }
 
@@ -216,10 +212,7 @@ public class ConsoleViewTests
     [StaFact]
     public void Run_narrative_scroll_to_top_prepends_older_history()
     {
-        var view = new ConsoleView();
-        view.Measure(new Size(800, 600));
-        view.Arrange(new Rect(0, 0, 800, 600));
-        view.UpdateLayout();
+        var view = LaidOutView();
 
         var store = new NarrativeStore();
         var all = Enumerable.Range(0, 250).Select(i => $"narrative{i}").ToArray();
@@ -230,8 +223,7 @@ public class ConsoleViewTests
         Assert.StartsWith("narrative50\n", view.Document.Text);
         Assert.DoesNotContain("narrative49\n", view.Document.Text); // ön-koşul: ilk 50 belgede DEĞİL
 
-        view.EvaluateChunkScroll(100.0); // arm: kullanıcı tepeden uzaklaştı
-        view.EvaluateChunkScroll(0.0);   // scroll-to-top → önceki dilim store'dan gelir
+        ScrollUpToTheTop(view); // scroll-to-top → önceki dilim store'dan gelir
 
         Assert.Equal(expected, view.Document.Text); // bitişik ve TAM — tekrar YOK, kayıp YOK
     }
@@ -251,10 +243,7 @@ public class ConsoleViewTests
         var all = Enumerable.Range(0, NarrativeStore.MemoryWindowLines + 1000).Select(i => $"spooled{i}").ToArray();
         foreach (var line in all) store.Append(line);
         Assert.True(store.Count - store.LinesInMemory > ConsoleView.RenderSliceLines, "ön-koşul: en eski dilimler yalnız diskte");
-        var view = new ConsoleView();
-        view.Measure(new Size(800, 600));
-        view.Arrange(new Rect(0, 0, 800, 600));
-        view.UpdateLayout();
+        var view = LaidOutView();
 
         view.ShowRunDocument(NarrativeSnapshots.Of(store)); // son 200 belgeye; öncesi store'da, en eskisi diskte
         ScrollUpToTheTop(view, attempts: all.Length / ConsoleView.RenderSliceLines + 1);
@@ -271,10 +260,7 @@ public class ConsoleViewTests
     [StaFact]
     public void An_unreadable_history_slice_leaves_no_hole_and_the_next_scroll_to_the_top_asks_again()
     {
-        var view = new ConsoleView();
-        view.Measure(new Size(800, 600));
-        view.Arrange(new Rect(0, 0, 800, 600));
-        view.UpdateLayout();
+        var view = LaidOutView();
         var all = Enumerable.Range(0, 1000).Select(i => $"history{i}").ToArray();
         var backlog = new PartlyUnreadableBacklog(all) { ReadableFrom = 500 }; // 500'ün altı okunamıyor
         view.ShowRunDocument(new NarrativeSnapshot(backlog, all.Length));       // son 200 belgede: history800..999
@@ -296,10 +282,7 @@ public class ConsoleViewTests
     [StaFact]
     public void A_run_document_whose_last_slice_cannot_be_read_starts_at_the_end_and_asks_for_it_again()
     {
-        var view = new ConsoleView();
-        view.Measure(new Size(800, 600));
-        view.Arrange(new Rect(0, 0, 800, 600));
-        view.UpdateLayout();
+        var view = LaidOutView();
         var all = Enumerable.Range(0, 1000).Select(i => $"history{i}").ToArray();
         var backlog = new PartlyUnreadableBacklog(all) { ReadableFrom = all.Length }; // hiçbir dilim okunamıyor
         view.ShowRunDocument(new NarrativeSnapshot(backlog, all.Length));
@@ -323,10 +306,7 @@ public class ConsoleViewTests
     [StaFact]
     public void A_document_left_over_a_narrative_cleared_while_hidden_takes_nothing_of_the_new_section_until_it_is_rebuilt()
     {
-        var view = new ConsoleView();
-        view.Measure(new Size(800, 600));
-        view.Arrange(new Rect(0, 0, 800, 600));
-        view.UpdateLayout();
+        var view = LaidOutView();
         var store = new NarrativeStore();
         foreach (int i in Enumerable.Range(0, 500)) store.Append($"old{i}");
         view.ShowRunDocument(NarrativeSnapshots.Of(store)); // son 200 belgede: old300..old499
@@ -342,18 +322,6 @@ public class ConsoleViewTests
         view.ReplaceRunDocument(NarrativeSnapshots.Of(store)); // dönüş: belge modelden bir kez kurulur (ResyncAfterShow)
         Assert.EndsWith("new398\nnew399\n", view.Document.Text);    // yeni bölümün son dilimi
         Assert.DoesNotContain("old", view.Document.Text);           // eski bölümden satır kalmadı
-    }
-
-    /// <summary>Okuyucu tepeye <paramref name="attempts"/> kez kaydırır: her deneme önce tepeden uzaklaşır (arm), sonra tepeye döner —
-    /// chunk loader'ın üretimdeki jesti (<see cref="ConsoleView.EvaluateChunkScroll"/>). Yüklenecek dilim kalmayınca deneme bir şey
-    /// yapmaz.</summary>
-    private static void ScrollUpToTheTop(ConsoleView view, int attempts)
-    {
-        for (int i = 0; i < attempts; i++)
-        {
-            view.EvaluateChunkScroll(100.0); // arm: kullanıcı tepeden uzaklaştı
-            view.EvaluateChunkScroll(0.0);   // tepe: önceki dilim
-        }
     }
 
     /// <summary>[idle-memory · dalga 2 · inceleme M1] Bir kısmı okunamayan backlog — anlatı store'unun dosyası okunamadığında olduğu
@@ -385,18 +353,14 @@ public class ConsoleViewTests
     [StaFact]
     public void Lines_trimmed_from_the_live_run_document_stay_reachable_by_scrolling_up()
     {
-        var view = new ConsoleView();
-        view.Measure(new Size(800, 600));
-        view.Arrange(new Rect(0, 0, 800, 600));
-        view.UpdateLayout();
+        var view = LaidOutView();
         var store = new NarrativeStore();
         view.ShowRunDocument(NarrativeSnapshots.Of(store)); // anlatı modu, takip AÇIK (canlı build gibi)
 
         for (int i = 0; i < 260; i++) NarrativeSnapshots.Deliver(store, view, [$"live{i}"]);
         Assert.DoesNotContain("live0\n", view.Document.Text); // ön-koşul: kırpıldı (belge 200 ile sınırlı)
 
-        view.EvaluateChunkScroll(100.0);
-        view.EvaluateChunkScroll(0.0);
+        ScrollUpToTheTop(view);
 
         Assert.Contains("live0\n", view.Document.Text);          // store'dan DELİKSİZ geri geldi
         Assert.Contains("live59\nlive60\n", view.Document.Text); // dikiş yerinde boşluk yok
@@ -408,18 +372,14 @@ public class ConsoleViewTests
     {
         // Eski kodda backlog yalnız diskten gelen log satırlarıydı: canlı gelen satırlar kırpılınca
         // _loadedFrom clamp'e takılıyor ("index'i yok") ve o satırlara bir daha ULAŞILAMIYORDU.
-        var view = new ConsoleView();
-        view.Measure(new Size(800, 600));
-        view.Arrange(new Rect(0, 0, 800, 600));
-        view.UpdateLayout();
+        var view = LaidOutView();
 
         view.PlayCascade([.. Enumerable.Range(0, 250).Select(i => $"line{i}")]);
         view.StickToBottom = true; // kullanıcı dibe indi → takip geri geldi (canlı satırlar kırpılır)
         for (int i = 0; i < 250; i++) view.AppendBatch($"live{i}\n");
         Assert.DoesNotContain("live0\n", view.Document.Text); // ön-koşul: canlı satır kırpıldı
 
-        view.EvaluateChunkScroll(100.0);
-        view.EvaluateChunkScroll(0.0);
+        ScrollUpToTheTop(view);
 
         Assert.Contains("live0\n", view.Document.Text);          // artık geri gelir (eskiden KAYIPTI)
         Assert.Contains("live49\nlive50\n", view.Document.Text); // dikiş bitişik
@@ -481,10 +441,7 @@ public class ConsoleViewTests
     [StaFact]
     public void Project_mode_follow_trim_then_scroll_to_top_recovers_backlog_without_a_hole()
     {
-        var view = new ConsoleView();
-        view.Measure(new Size(800, 600));
-        view.Arrange(new Rect(0, 0, 800, 600));
-        view.UpdateLayout();
+        var view = LaidOutView();
 
         // 300 satır kaskat → render dilimi son 200 (orig100..orig299), _loadedFrom=100 (backlog: orig0..orig99).
         var all = Enumerable.Range(0, 300).Select(i => $"orig{i}").ToArray();
@@ -500,8 +457,7 @@ public class ConsoleViewTests
         Assert.DoesNotContain("orig", liveTail);           // tüm orijinaller belgeden kırpıldı (backlog'a düştü)
 
         // Kullanıcı yukarı kaydırır: arm → scroll-to-top → önceki chunk prepend edilir.
-        view.EvaluateChunkScroll(100.0); // arm (tepeden uzaklaş)
-        view.EvaluateChunkScroll(0.0);   // scroll-to-top → önceki chunk
+        ScrollUpToTheTop(view); // scroll-to-top → önceki chunk
 
         // (a) DELİK YOK: prepend, mevcut live kuyruğun ÖNÜNE kırpılan backlog'un SONUNU dikmeli — kuyruk
         // aynen korunur, araya kayıp/tekrar girmez. STALE index bug'ında _loadedFrom ilerlemez, eski dilim
@@ -520,8 +476,7 @@ public class ConsoleViewTests
         // Tekrar tepeye kaydır: kalan en eski dilim de geri gelir → HİÇBİR satır kalıcı kayıp değildir.
         // Belge artık koşunun TAMAMIdır: orig0..orig299 ve ardından live0..live249, bitişik (contiguous).
         // Canlı kırpılan live0..live50 de buradadır — eski kuralda onlar kalıcı olarak kaybolmuştu.
-        view.EvaluateChunkScroll(100.0);
-        view.EvaluateChunkScroll(0.0);
+        ScrollUpToTheTop(view);
         string everything = string.Concat(Enumerable.Range(0, 300).Select(i => $"orig{i}\n"))
                           + string.Concat(Enumerable.Range(0, 250).Select(i => $"live{i}\n"));
         Assert.Equal(everything, view.Document.Text);
@@ -555,10 +510,7 @@ public class ConsoleViewTests
         // dayanıyordu — ölçüldü. O bir kusurdu: design §2.5 mod geçişinde dibe pinlenmeyi ister ve pin artık
         // deterministik (ConsoleView.PinToBottomAfterModeSwitch). Senaryo bu yüzden tepeye zıplamayı GERÇEKTEN
         // yapar: kullanıcının ham jesti + gerçek kaydırma.
-        var view = new ConsoleView();
-        view.Measure(new Size(800, 600));
-        view.Arrange(new Rect(0, 0, 800, 600));
-        view.UpdateLayout();
+        var view = LaidOutView();
 
         // 300 satır kaskat → render dilimi son 200 (orig100..orig299), _loadedFrom=100 (backlog: orig0..orig99).
         var all = Enumerable.Range(0, 300).Select(i => $"orig{i}").ToArray();

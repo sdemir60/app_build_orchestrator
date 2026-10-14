@@ -172,13 +172,13 @@ public class ConsoleColorizerTests
         [
             "  Copying file from X to Y", "Build succeeded.", "    0 Hata", "", "   ",
             "msbuild Osys.sln /m:4", "git fetch origin main",
-            "  C:\\r\\A.cs(1,1): warning CS1591: Missing XML comment", "warning NU1701: package restored",
-            "csc : warning CS1591: missing doc", "  C:\\r\\A.cs(2,1): error CS0103: The name 'x' does not exist",
+            MainWindowHost.WarningLine(1), "warning NU1701: package restored",
+            "csc : warning CS1591: missing doc", MainWindowHost.ErrorLine(2),
             "warning: R failed in this run", "[error] runFailed: x", "A: 7 more warnings — CS1591 ×7 — see the project log",
             @"C:\Program Files\Microsoft Visual Studio\18\Enterprise\MSBuild\Current\Bin\Roslyn\csc.exe /noconfig /nowarn:1701,1702 /fullpaths /errorreport:prompt",
             .. CanonicalMsBuildErrors.Select<object[], string>(row => (string)row[0]),
         ];
-        foreach (string line in lines) ConsoleLineClassifier.Classify(line); // ısınma: JIT, özet deseninin çalıştırıcısı
+        foreach (string line in lines) ConsoleLineClassifier.Classify(line); // ısınma: JIT
 
         long allocated = PerfMeasure.AllocatedBy(() =>
         {

@@ -385,6 +385,15 @@ internal static class MainWindowHost
     public static string WarningLine(int line, string code = "CS1591", string text = "Missing XML comment") =>
         $"  C:\\r\\A.cs({line},1): warning {code}: {text}";
 
+    /// <summary>[dalga 2 son inceleme · defter 9] MSBuild'in satır içi hata satırı (girintili, <c>&lt;dosya&gt;(&lt;satır&gt;,1): error
+    /// CS0103: …</c>) — <see cref="WarningLine"/>'ın eşi: her satır numarası ayrı bir hatadır. Kompakt konsolun süzgeç, VM ve sınıflandırıcı
+    /// testlerinin TEK satır kurucusu.</summary>
+    public static string ErrorLine(int line) => $"  C:\\r\\A.cs({line},1): error CS0103: The name 'x' does not exist";
+
+    /// <summary>[dalga 2 son inceleme O5] Bir proje logunun ilk satırı: motorun yazdığı MSBuild komut satırı (tırnakla başlar — bilgi
+    /// satırı, kompakt kipte gizlenir). Süzgeç ve VM testlerinin TEK komut satırı girdisi.</summary>
+    public const string CommandLine = "\"C:\\Program Files\\MSBuild.exe\" C:\\p\\A.csproj -t:Build -v:minimal";
+
     /// <summary>[perf A3/A4 fix] Bir derlemenin TÜM olay akışı: plan (<see cref="PreviewBuild"/>), başlangıç
     /// (<see cref="StartBuild"/>), her projenin derlenmesi ve bitiş (<see cref="FinishBuild"/>). Gizli-pencere testleri
     /// akışın bütününü tek çağrıyla sürer.</summary>

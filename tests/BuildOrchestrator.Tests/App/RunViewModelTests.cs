@@ -7,6 +7,7 @@ using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Tests.Supervisor;
+using static BuildOrchestrator.Tests.App.MainWindowHost;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -19,8 +20,6 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 public class RunViewModelTests
 {
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
-
     // [B1/F1 · fix-1] Bu dosyada GERÇEK Supervisor process'i BAŞLATAN (StartAsync çağıran) sekiz test var ve
     // hepsi aynı köke bağlı: üretim varsayılanı (5s, EngineHost.StartupTimeout) yük altında yetmiyor. fix-1
     // öncesi bunlardan yalnız ÜÇÜ (ilk ölçülenler) yamalıydı; yük altındaki koşumda yamasız kalanlardan ikisi
@@ -1546,51 +1545,48 @@ public class RunViewModelTests
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = root };
         // [idle-memory · dalga 2] Motor runStarted'la sandbox'taki koşu klasörünü bildirir ve VM anlatıyı oraya yayar: spool, test nasıl
         // biterse bitsin (düşen bir iddia, zaman aşımı, Skip) sandbox silinmeden önce kapanır — açık dosya klasörün silinmesini
-        // engellerdi (sandbox o hatayı yutar, klasör sızardı).
-        try
+        // engellerdi (sandbox o hatayı yutar, klasör sızardı). Kapsam sandbox'tan SONRA tanımlıdır: önce kapanır.
+        using var spool = new SpoolScope(vm.Narrative);
+        var final = new TaskCompletionSource<IpcEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
+        // [teşhis — tam süitte tek seferlik zaman aşımı, 2026-10-08] Hangi olaya kadar gelindiği: bekçi düşerse mesaj söyler.
+        var seen = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        engine.EventReceived += e =>
         {
-            var final = new TaskCompletionSource<IpcEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
-            // [teşhis — tam süitte tek seferlik zaman aşımı, 2026-10-08] Hangi olaya kadar gelindiği: bekçi düşerse mesaj söyler.
-            var seen = new System.Collections.Concurrent.ConcurrentQueue<string>();
-            engine.EventReceived += e =>
-            {
-                seen.Enqueue(e.GetType().Name);
-                // İşleyicide fırlayan bir istisna EngineHost'un okuyucusunu SESSİZCE durdurur (sonraki olaylar hiç gelmez) ve
-                // test bekçide yalnız "timed out" diye düşerdi; gerçek neden görünsün diye TCS'ye taşınır.
-                try { vm.OnEvent(e); }
-                catch (Exception ex) { final.TrySetException(ex); return; }
-                if (e is RunCompletedEvent or ErrorEvent { Code: "msbuildNotFound" }) final.TrySetResult(e);
-            };
+            seen.Enqueue(e.GetType().Name);
+            // İşleyicide fırlayan bir istisna EngineHost'un okuyucusunu SESSİZCE durdurur (sonraki olaylar hiç gelmez) ve
+            // test bekçide yalnız "timed out" diye düşerdi; gerçek neden görünsün diye TCS'ye taşınır.
+            try { vm.OnEvent(e); }
+            catch (Exception ex) { final.TrySetException(ex); return; }
+            if (e is RunCompletedEvent or ErrorEvent { Code: "msbuildNotFound" }) final.TrySetResult(e);
+        };
 
-            await vm.RebuildCommand.ExecuteAsync(null);
-            // [cycle rounds] Hang-guard (bütçe değil; iddiaların hiçbiri süreye bakmaz) — sabitin tek sahibi
-            // TestPaths.WideRunTimeout. Rebuild bu fixture'ı gerçekten derler: her üye tur 1'de, kanıtsız grupta ikinci
-            // tur da koşar (2 tur × 2 üye).
-            IpcEvent outcome;
-            try { outcome = await final.Task.WaitAsync(TestPaths.WideRunTimeout); }
-            catch (TimeoutException)
-            {
-                throw new TimeoutException($"the run did not complete within {TestPaths.WideRunTimeout.TotalSeconds:0} s; " +
-                    $"{seen.Count} events, last: {string.Join(", ", seen.TakeLast(12))}");
-            }
-            if (outcome is ErrorEvent { Code: "msbuildNotFound" } err) Skip.If(true, err.Message);
-
-            var done = Assert.IsType<RunCompletedEvent>(outcome);
-            // [DEĞİŞEN KURAL — üç kez] Bu iddia önce "X↔Y pre-skip edilir" (Skipped=2) idi; turlar Build/Rebuild'in
-            // içine katlanınca "gerçekten derlenir" (Skipped=0) oldu; turlar KENDİ moduna (RunMode.Cycles) taşınınca
-            // yeniden pre-skip'e döndü (ölçüm: katlanmış hâlde iki dakikalık bir Build on beş dakikaya çıkıyordu). Bugün
-            // yeniden derlenir: tur-öncesi kanıt (CycleMemberNeed) ve yüzey kısa devresi grup maliyetini "bir kez derle +
-            // hash"e indirdi, Build'in döngüyü atlaması ise bağımlıları eski DLL'e karşı derleyip kırıyordu (ölçüm:
-            // 2026-10-07 13:17 koşusu, ARCHITECTURE §8.1). Sonuç kurulu MSBuild'e bağlı olduğu için ŞEKİL pinlenir
-            // (RunCoordinatorTests'in gerçek process testiyle aynı). Testin ASIL iddiası (Rebuild gerçek motora kablolu,
-            // satırlar doluyor, IsRunning düşüyor) her sürümde aynı kaldı.
-            Assert.Equal(0, done.Skipped);
-            Assert.Equal(2, done.Succeeded + done.Failed);
-            Assert.Equal(2, vm.Projects.Count);
-            Assert.All(vm.Projects, p => Assert.True(p.State is ProjectRowState.Succeeded or ProjectRowState.Failed));
-            Assert.False(vm.IsRunning);
+        await vm.RebuildCommand.ExecuteAsync(null);
+        // [cycle rounds] Hang-guard (bütçe değil; iddiaların hiçbiri süreye bakmaz) — sabitin tek sahibi
+        // TestPaths.WideRunTimeout. Rebuild bu fixture'ı gerçekten derler: her üye tur 1'de, kanıtsız grupta ikinci
+        // tur da koşar (2 tur × 2 üye).
+        IpcEvent outcome;
+        try { outcome = await final.Task.WaitAsync(TestPaths.WideRunTimeout); }
+        catch (TimeoutException)
+        {
+            throw new TimeoutException($"the run did not complete within {TestPaths.WideRunTimeout.TotalSeconds:0} s; " +
+                $"{seen.Count} events, last: {string.Join(", ", seen.TakeLast(12))}");
         }
-        finally { vm.Narrative.Clear(); }
+        if (outcome is ErrorEvent { Code: "msbuildNotFound" } err) Skip.If(true, err.Message);
+
+        var done = Assert.IsType<RunCompletedEvent>(outcome);
+        // [DEĞİŞEN KURAL — üç kez] Bu iddia önce "X↔Y pre-skip edilir" (Skipped=2) idi; turlar Build/Rebuild'in
+        // içine katlanınca "gerçekten derlenir" (Skipped=0) oldu; turlar KENDİ moduna (RunMode.Cycles) taşınınca
+        // yeniden pre-skip'e döndü (ölçüm: katlanmış hâlde iki dakikalık bir Build on beş dakikaya çıkıyordu). Bugün
+        // yeniden derlenir: tur-öncesi kanıt (CycleMemberNeed) ve yüzey kısa devresi grup maliyetini "bir kez derle +
+        // hash"e indirdi, Build'in döngüyü atlaması ise bağımlıları eski DLL'e karşı derleyip kırıyordu (ölçüm:
+        // 2026-10-07 13:17 koşusu, ARCHITECTURE §8.1). Sonuç kurulu MSBuild'e bağlı olduğu için ŞEKİL pinlenir
+        // (RunCoordinatorTests'in gerçek process testiyle aynı). Testin ASIL iddiası (Rebuild gerçek motora kablolu,
+        // satırlar doluyor, IsRunning düşüyor) her sürümde aynı kaldı.
+        Assert.Equal(0, done.Skipped);
+        Assert.Equal(2, done.Succeeded + done.Failed);
+        Assert.Equal(2, vm.Projects.Count);
+        Assert.All(vm.Projects, p => Assert.True(p.State is ProjectRowState.Succeeded or ProjectRowState.Failed));
+        Assert.False(vm.IsRunning);
     }
 
     // ---------------------------------------------------------------- 8) [Task 17] depIssue VM state
@@ -2941,8 +2937,7 @@ public class RunViewModelTests
         vm.SelectProject(A);
         int streamBefore = vm.StreamEvents.Count;
         Assert.True(streamBefore > 0, "ön-koşul: akışta önceki Sync'in satırı yok — vakum");
-        var sent = new List<IpcCommand>();
-        vm.DebugOnCommandSent = sent.Add;
+        var sent = SentCommands.RecordOn(vm);
 
         Assert.True(await vm.SyncSilentlyAsync(SilentSyncReason.Commit));
 
@@ -3071,8 +3066,7 @@ public class RunViewModelTests
         using var sandbox = new SupervisorSandbox();
         await using var engine = await StartedEngineAsync(sandbox);
         var vm = SyncedTwoRowVm(engine);
-        var sent = new List<IpcCommand>();
-        vm.DebugOnCommandSent = sent.Add;
+        var sent = SentCommands.RecordOn(vm);
         string line = Core.Planning.PlanProgressLines.SwitchedBranch("main", "feature", "2222222");
 
         Assert.True(await vm.SyncAfterExternalBranchChangeAsync(line));
@@ -3094,8 +3088,7 @@ public class RunViewModelTests
         var posted = new Queue<Action>();
         vm.EnableAutoSync(posted.Enqueue, _ => new Core.Git.HeadState("main", CommittedSha), () => new FakeHeadWatcher());
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
-        var sent = new List<IpcCommand>();
-        vm.DebugOnCommandSent = sent.Add;
+        var sent = SentCommands.RecordOn(vm);
 
         await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.Commit);
         Assert.Empty(sent);
@@ -3119,8 +3112,7 @@ public class RunViewModelTests
         var vm = SyncedTwoRowVm(engine);
         var posted = new Queue<Action>();
         vm.EnableAutoSync(posted.Enqueue, _ => new Core.Git.HeadState("main", CommittedSha), () => new FakeHeadWatcher());
-        var sent = new List<IpcCommand>();
-        vm.DebugOnCommandSent = sent.Add;
+        var sent = SentCommands.RecordOn(vm);
 
         await vm.PullRepositoryCommand.ExecuteAsync(null);
         await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.Other); // pull'un reflog satırı
@@ -3216,8 +3208,7 @@ public class RunViewModelTests
         await using var engine = await StartedEngineAsync(sandbox);
         var posted = new Queue<Action>();
         var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("feature", CommittedSha));
-        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
-        vm.DebugOnCommandSent = sent.Enqueue;
+        var sent = SentCommands.RecordOn(vm);
 
         await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
         await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
@@ -3238,33 +3229,29 @@ public class RunViewModelTests
     {
         using var sandbox = new SupervisorSandbox();
         await using var engine = await StartedEngineAsync(sandbox);
-        using var logs = new TempDir(); // koşu klasörü — spool'u testin açtığı yeni bölüm, düşen bir testte finally kapatır
+        using var logs = new TempDir(); // koşu klasörü — spool'u testin açtığı yeni bölüm, düşen bir testte kapsam kapatır
         var posted = new Queue<Action>();
         var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("feature", CommittedSha), logs.Path);
-        try
-        {
-            var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
-            vm.DebugOnCommandSent = sent.Enqueue;
-            await vm.StopCommand.ExecuteAsync(null);
-            vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
-            Drain(posted);
+        using var spool = new SpoolScope(vm.Narrative); // klasörden SONRA tanımlı: önce kapanır
+        var sent = SentCommands.RecordOn(vm);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
+        Drain(posted);
 
-            await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
+        await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
 
-            Assert.DoesNotContain(sent.OfType<StopRunCommand>(), s => s.Kind == StopKind.Interrupt);
-            Assert.DoesNotContain(vm.StreamEvents, e => e.Text == StreamText.InterruptedByBranchChange);
-            Assert.NotNull(vm.AutoSync!.PendingTrigger);
+        Assert.DoesNotContain(sent.OfType<StopRunCommand>(), s => s.Kind == StopKind.Interrupt);
+        Assert.DoesNotContain(vm.StreamEvents, e => e.Text == StreamText.InterruptedByBranchChange);
+        Assert.NotNull(vm.AutoSync!.PendingTrigger);
 
-            vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 1, 0, 0, 0, 500));
-            Drain(posted);
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 1, 0, 0, 0, 500));
+        Drain(posted);
 
-            Assert.Single(sent.OfType<SyncWorkspaceCommand>());
-            string text = vm.GetRunDocumentText().ReplaceLineEndings("\n");
-            Assert.DoesNotContain(Core.Planning.PlanProgressLines.RunInterruptedByBranchChange(0, 1, logs.Path), text, StringComparison.Ordinal);
-            Assert.StartsWith(Core.Planning.PlanProgressLines.SwitchedBranch("main", "feature", "2222222"), text, StringComparison.Ordinal);
-            vm.DisableAutoSync();
-        }
-        finally { vm.Narrative.Clear(); }
+        Assert.Single(sent.OfType<SyncWorkspaceCommand>());
+        string text = vm.GetRunDocumentText().ReplaceLineEndings("\n");
+        Assert.DoesNotContain(Core.Planning.PlanProgressLines.RunInterruptedByBranchChange(0, 1, logs.Path), text, StringComparison.Ordinal);
+        Assert.StartsWith(Core.Planning.PlanProgressLines.SwitchedBranch("main", "feature", "2222222"), text, StringComparison.Ordinal);
+        vm.DisableAutoSync();
     }
 
     /// <summary>Koşu sırasında commit koşuyu kesmez ve hiçbir şey yapmaz.</summary>
@@ -3275,8 +3262,7 @@ public class RunViewModelTests
         await using var engine = await StartedEngineAsync(sandbox);
         var posted = new Queue<Action>();
         var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("main", CommittedSha));
-        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
-        vm.DebugOnCommandSent = sent.Enqueue;
+        var sent = SentCommands.RecordOn(vm);
 
         await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.Commit);
         Drain(posted);
@@ -3294,28 +3280,24 @@ public class RunViewModelTests
     {
         using var sandbox = new SupervisorSandbox();
         await using var engine = await StartedEngineAsync(sandbox);
-        using var logs = new TempDir(); // koşu klasörü — özet onu yazar; spool'u yeni bölüm, düşen bir testte finally kapatır
+        using var logs = new TempDir(); // koşu klasörü — özet onu yazar; spool'u yeni bölüm, düşen bir testte kapsam kapatır
         var posted = new Queue<Action>();
         var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("feature", CommittedSha), logs.Path);
-        try
-        {
-            var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
-            vm.DebugOnCommandSent = sent.Enqueue;
+        using var spool = new SpoolScope(vm.Narrative); // klasörden SONRA tanımlı: önce kapanır
+        var sent = SentCommands.RecordOn(vm);
 
-            await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
-            vm.OnEvent(new ProjectSucceededEvent("r1", B, 300, Trusted: false));
-            vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
-            vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 1, 0, 0, 0, 500));
-            Drain(posted);
+        await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
+        vm.OnEvent(new ProjectSucceededEvent("r1", B, 300, Trusted: false));
+        vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 1, 0, 0, 0, 500));
+        Drain(posted);
 
-            Assert.False(Assert.Single(sent.OfType<SyncWorkspaceCommand>()).Fetch);
-            Assert.False(vm.Narrative.IsSpooling); // yeni bölüm koşunun spool'unu kapattı
-            string summary = Core.Planning.PlanProgressLines.RunInterruptedByBranchChange(0, 1, logs.Path);
-            string switched = Core.Planning.PlanProgressLines.SwitchedBranch("main", "feature", "2222222");
-            Assert.StartsWith(summary + "\n" + switched, vm.GetRunDocumentText().ReplaceLineEndings("\n"), StringComparison.Ordinal);
-            vm.DisableAutoSync();
-        }
-        finally { vm.Narrative.Clear(); }
+        Assert.False(Assert.Single(sent.OfType<SyncWorkspaceCommand>()).Fetch);
+        Assert.False(vm.Narrative.IsSpooling); // yeni bölüm koşunun spool'unu kapattı
+        string summary = Core.Planning.PlanProgressLines.RunInterruptedByBranchChange(0, 1, logs.Path);
+        string switched = Core.Planning.PlanProgressLines.SwitchedBranch("main", "feature", "2222222");
+        Assert.StartsWith(summary + "\n" + switched, vm.GetRunDocumentText().ReplaceLineEndings("\n"), StringComparison.Ordinal);
+        vm.DisableAutoSync();
     }
 
     /// <summary>Motor her Sync isteğine hemen başlangıçla cevap verir (<c>syncStarted</c>) — gönderilen her yeni
@@ -3337,8 +3319,7 @@ public class RunViewModelTests
         await using var engine = await StartedEngineAsync(sandbox);
         var posted = new Queue<Action>();
         var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("feature", CommittedSha));
-        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
-        vm.DebugOnCommandSent = sent.Enqueue;
+        var sent = SentCommands.RecordOn(vm);
         int answered = 0;
 
         await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
@@ -3396,8 +3377,7 @@ public class RunViewModelTests
         ]));
         vm.OnEvent(new ProjectStartedEvent("r1", A, "A"));
         vm.OnEvent(new ProjectSucceededEvent("r1", A, 300));
-        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
-        vm.DebugOnCommandSent = sent.Enqueue;
+        var sent = SentCommands.RecordOn(vm);
 
         await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
         vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
@@ -3421,8 +3401,7 @@ public class RunViewModelTests
         vm.EnableAutoSync(posted.Enqueue, _ => new Core.Git.HeadState("feature", CommittedSha), () => new FakeHeadWatcher());
         var choreography = new TaskCompletionSource();
         vm.OperationChoreography = _ => choreography.Task;
-        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
-        vm.DebugOnCommandSent = sent.Enqueue;
+        var sent = SentCommands.RecordOn(vm);
 
         var build = vm.BuildCommand.ExecuteAsync(null);
         await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
@@ -3447,8 +3426,7 @@ public class RunViewModelTests
         await using var engine = await StartedEngineAsync(sandbox);
         var posted = new Queue<Action>();
         var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("main", CommittedSha));
-        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
-        vm.DebugOnCommandSent = sent.Enqueue;
+        var sent = SentCommands.RecordOn(vm);
 
         vm.OnEvent(new ProjectSucceededEvent("r1", B, 300));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
@@ -3467,8 +3445,7 @@ public class RunViewModelTests
         await using var engine = await StartedEngineAsync(sandbox);
         var posted = new Queue<Action>();
         var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("main", "1111111111111111111111111111111111111111"));
-        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
-        vm.DebugOnCommandSent = sent.Enqueue;
+        var sent = SentCommands.RecordOn(vm);
 
         vm.OnEvent(new ProjectSucceededEvent("r1", B, 300));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
@@ -3655,8 +3632,7 @@ public class RunViewModelTests
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1")
             { RootPath = root.Path, LegacyWorktreePoolRoot = TestPaths.MissingLegacyPoolRoot };
         vm.OnEngineExited(3);
-        var sent = new List<IpcCommand>();
-        vm.DebugOnCommandSent = sent.Add;
+        var sent = SentCommands.RecordOn(vm);
 
         await vm.RestartEngineCommand.ExecuteAsync(null);
 
@@ -3759,8 +3735,7 @@ public class RunViewModelTests
         var posted = new Queue<Action>();
         var vm = GitGatedVm(engine, () => Merge, new FakePollTimer());
         vm.EnableAutoSync(posted.Enqueue, _ => new Core.Git.HeadState("main", CommittedSha), () => new FakeHeadWatcher());
-        var sent = new List<IpcCommand>();
-        vm.DebugOnCommandSent = sent.Add;
+        var sent = SentCommands.RecordOn(vm);
 
         await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.Commit);
         await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.Other);
@@ -3783,8 +3758,7 @@ public class RunViewModelTests
         var timer = new FakePollTimer();
         var vm = GitGatedVm(engine, () => op, timer);
         vm.EnableAutoSync(posted.Enqueue, _ => new Core.Git.HeadState("main", CommittedSha), () => new FakeHeadWatcher());
-        var sent = new List<IpcCommand>();
-        vm.DebugOnCommandSent = sent.Add;
+        var sent = SentCommands.RecordOn(vm);
         await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.Commit);
         timer.Tick(); // işaret hâlâ duruyor
         Drain(posted);

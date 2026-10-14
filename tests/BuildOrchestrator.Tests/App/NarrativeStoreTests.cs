@@ -107,10 +107,28 @@ public class NarrativeStoreTests
     public async Task Appends_from_another_thread_never_tear_a_join()
     {
         var store = new NarrativeStore();
+
+        await WhileAppending(store, 20000, () =>
+        {
+            int n = store.Count;
+            int from = Math.Max(0, n - 50);
+            Assert.Equal(Lines(from, n), store.Join(from, n));
+        });
+
+        Assert.Equal(20000, store.Count);
+    }
+
+    /// <summary>[dalga 2 son inceleme O4] Yazar/okuyucu el sıkışması — iki eşzamanlılık testinin TEK sürücüsü: yazar (IPC thread'inin
+    /// yerine bir görev) <paramref name="count"/> satır ekler (<c>"line &lt;i&gt;"</c> — <see cref="Lines"/> ile aynı biçim) ve ilk
+    /// eklemesinden sonra bir <c>TaskCompletionSource</c> ile haber verir; okuyucu (UI thread'inin yerine test) onu bekler ve yazar
+    /// bitene dek <paramref name="read"/>'i yineler. Bekleme bir uyku/sorgu değildir (D8) ve tek çekirdekte de biter: okuyucu döngüsü
+    /// yazarın tamamlanmasına bağlıdır.</summary>
+    private static async Task WhileAppending(NarrativeStore store, int count, Action read)
+    {
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var writer = Task.Run(() =>
         {
-            for (int i = 0; i < 20000; i++)
+            for (int i = 0; i < count; i++)
             {
                 store.Append("line " + i);
                 if (i == 0) started.SetResult(); // okuyucu yazar BAŞLADIKTAN sonra okur
@@ -118,14 +136,8 @@ public class NarrativeStoreTests
         });
 
         await started.Task;
-        while (!writer.IsCompleted)
-        {
-            int n = store.Count;
-            int from = Math.Max(0, n - 50);
-            Assert.Equal(Lines(from, n), store.Join(from, n));
-        }
+        while (!writer.IsCompleted) read();
         await writer;
-        Assert.Equal(20000, store.Count);
     }
 
     /// <summary>
@@ -321,15 +333,14 @@ public class NarrativeStoreTests
     {
         var store = new NarrativeStore();
         using var logs = new SpoolDir(store);
-        FailingSpoolStream? stream = null;
-        store.OpenSpoolStream = path => stream = new FailingSpoolStream(NarrativeStore.OpenSpoolFile(path));
+        var spool = FailingSpoolStream.InstallOn(store);
         Assert.True(store.BeginSpool(logs.FilePath));
         int before = NarrativeStore.MemoryWindowLines + 500;
         for (int i = 0; i < before; i++) store.Append("line " + i);
         int evicted = store.Count - store.LinesInMemory;
         Assert.True(evicted > 5, "ön-koşul: tahliye oldu");
 
-        stream!.Fail = true; // disk doldu
+        spool().Fail = true; // disk doldu
         int total = before + NarrativeStore.MemoryWindowLines;
         for (int i = before; i < total; i++) store.Append("line " + i);
 
@@ -354,7 +365,7 @@ public class NarrativeStoreTests
     {
         var store = new NarrativeStore();
         using var logs = new SpoolDir(store);
-        store.OpenSpoolStream = _ => new MemoryStream(); // yazım başarılı, dosya hiç yok
+        SpoolDir.NeverOnDisk(store); // yazım başarılı, dosya hiç yok
         Assert.True(store.BeginSpool(logs.FilePath));
         for (int i = 0; i < NarrativeStore.MemoryWindowLines + 500; i++) store.Append("line " + i);
         int boundary = store.Count - store.LinesInMemory;
@@ -430,32 +441,22 @@ public class NarrativeStoreTests
 
     /// <summary>[idle-memory · dalga 2] Yırtılmazlık spool açıkken de geçerlidir: yazar (IPC thread'i) satır ekler, pencereyi aşan
     /// satırları tahliye eder ve dosyaya yazar; okuyucu (UI thread'i) bellekteki kuyruğu, diske inmiş başı ve ortayı ister. Okunan
-    /// sayıya kadarki her dilim AYNI satırlardır. Kurulum yukarıdaki el sıkışmadır (TCS — uyku/sorgu yok, D8).</summary>
+    /// sayıya kadarki her dilim AYNI satırlardır. Kurulum ortak el sıkışmadır (<see cref="WhileAppending"/> — TCS, uyku/sorgu yok, D8).</summary>
     [Fact]
     public async Task Appends_with_the_spool_open_never_tear_a_join_from_memory_or_disk()
     {
         var store = new NarrativeStore();
         using var logs = new SpoolDir(store);
         Assert.True(store.BeginSpool(logs.FilePath));
-        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var writer = Task.Run(() =>
-        {
-            for (int i = 0; i < 20000; i++)
-            {
-                store.Append("line " + i);
-                if (i == 0) started.SetResult(); // okuyucu yazar BAŞLADIKTAN sonra okur
-            }
-        });
 
-        await started.Task;
-        while (!writer.IsCompleted)
+        await WhileAppending(store, 20000, () =>
         {
             int n = store.Count;
             int middle = n / 2;
             foreach (var (from, to) in new[] { (0, Math.Min(50, n)), (Math.Max(0, middle - 25), Math.Min(n, middle + 25)), (Math.Max(0, n - 50), n) })
                 Assert.Equal(Lines(from, to), store.Join(from, to));
-        }
-        await writer;
+        });
+
         Assert.Equal(20000, store.Count);
         Assert.True(store.LinesInMemory <= NarrativeStore.MemoryWindowLines, $"{store.LinesInMemory} lines in memory");
         Assert.Equal(Lines(0, 20000), store.Join(0, 20000));
