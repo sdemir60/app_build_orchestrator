@@ -726,7 +726,12 @@ public partial class ConsoleView : UserControl
         // Render dilimi: son RenderSliceLines satır belgeye; öncesi chunk loader'a bırakılır (PlayCascade ile
         // AYNI hesap — iki mod tek kuralı paylaşır).
         _loadedFrom = Math.Max(0, snapshot.Count - RenderSliceLines);
-        EditorControl.Document = NewDocument(_backlog.Join(_loadedFrom, snapshot.Count));
+        string slice = _backlog.Join(_loadedFrom, snapshot.Count);
+        // [idle-memory · dalga 2 · inceleme M1] Dilim okunamadıysa (store'un dosyası — Join tam aralık ya da "" verir) belge boş başlar
+        // ve ilk satırı anlatının SONUDUR: indeks gerçekte gösterilenle tutarlı kalır, tepeye kaydırma dilimi yeniden ister. Aksi hâlde
+        // indeks gösterilmeyen satırları belgede sanır — son dilim hiç gelmez, canlı satırlar da o kadar geride sayılır.
+        if (slice.Length == 0) _loadedFrom = snapshot.Count;
+        EditorControl.Document = NewDocument(slice);
         PinAfterModeSwitch(toBottom: true);
         // [SIRA ÖNEMLİ] Takibi devralmak pin'den SONRA gelir. Kullanıcı önceki modda serbest kaydırmış olsa
         // bile mod değişimi takibi yeniden alır — ama ForceStuck bir bildirim yayınlar ve pill'in görünürlüğü
@@ -993,7 +998,15 @@ public partial class ConsoleView : UserControl
     {
         int from = Math.Max(0, _loadedFrom - RenderSliceLines);
         string chunk = _backlog.Join(from, _loadedFrom);
-        if (chunk.Length == 0) { _loadedFrom = from; return; }
+        if (chunk.Length == 0)
+        {
+            // [idle-memory · dalga 2 · inceleme M1] Backlog'un İÇİNDEKİ bir aralık boş dönmez; dönerse okunamamıştır (anlatı store'unun
+            // dosyası — Join tam aralık ya da "" verir). İndeks YERİNDE kalır: dilim atlanmaz, sonraki tepeye kaydırma onu yeniden ister
+            // (yeniden deneme yeniden "arm" ister — sıkı bir döngü olmaz). Yalnız backlog belgenin GERİSİNDEyse (gizliyken temizlenen
+            // anlatının bayat belgesi) yüklenecek bir şey yoktur ve indeks eskisi gibi iner; o belge dönüşte zaten yeniden kurulur.
+            if (_loadedFrom > _backlog.Count) _loadedFrom = from;
+            return;
+        }
 
         _prepending = true;
         try

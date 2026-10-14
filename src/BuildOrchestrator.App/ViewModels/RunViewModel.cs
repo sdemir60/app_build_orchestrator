@@ -455,8 +455,9 @@ public sealed partial class RunViewModel : ObservableObject
     /// <see cref="SeedRunDocument"/>).
     /// <para>[idle-memory · dalga 2 · spec §6.3] Koşu başlayınca koşu klasörüne yayılır (<see cref="BeginNarrativeSpool"/>): bellekte
     /// yalnız son pencere kalır, öncesi o klasördeki dosyadan okunur. Spool'un uyarısını VM kendi bölümünde alır
-    /// (<see cref="AppendSpoolWarningLocked"/>), işlemin sonunda tamponu diske indirir (<see cref="MarkOperationEnded"/>); yeni bölüm
-    /// (<see cref="ClearConsoleForNewOperation"/>) store'u temizlerken spool'u da kapatır.</para></summary>
+    /// (<see cref="AppendSpoolWarningLocked"/>), işlemin sonunda tamponu diske indirir (<see cref="MarkOperationEnded"/>; kabuk da
+    /// penceresi son kez kapanırken — <c>MainWindow.OnClosed</c>); yeni bölüm (<see cref="ClearConsoleForNewOperation"/>) store'u
+    /// temizlerken spool'u da kapatır.</para></summary>
     internal NarrativeStore Narrative { get; } = new();
 
     private PendingLoad? _pendingLoad; // yalnız UI thread'inde YAZILIR (LoadProjectLogAsync, CompletePendingLoad); OnProjectLog arka plandan okur
@@ -1934,10 +1935,16 @@ public sealed partial class RunViewModel : ObservableObject
     /// <c>PropertyChanged</c>'dir ve görünmeyen ekranı yeniden yazdırırdı. Motor sessizlik bekçisi
     /// (<see cref="EvaluateEngineSilence"/>) <b>gizliyken de koşar</b>: tepsiden Exit + susmuş motorda bekleyen çıkışı
     /// bekçinin uyarısı serbest bırakır (<c>RunViewModel.Exit.cs</c>), yani bu tik durursa uygulama kapanmaz. Bu yüzden
-    /// zamanlayıcı durdurulmaz; bu bayrak kullanılır.</para></summary>
+    /// zamanlayıcı durdurulmaz; bu bayrak kullanılır.</para>
+    /// <para>[idle-memory · dalga 2 · inceleme M1] Görünürken anlatı spool'unun bekleyen uyarısı da alınır
+    /// (<see cref="AppendSpoolWarningLocked"/>): geri okuma hatası satır EKLEMEYEN bir yoldan gelir — görünüm tepeye kaydırınca
+    /// diskten dilim ister — ve satır gelmeyen, boştaki bir konsolda uyarı aksi hâlde bir sonraki satırı ya da işlem sonunu bekler,
+    /// arada yeni bölüm açılırsa hiç görünmeden düşerdi. Ekleme yolları uyarıyı kendi satırlarının ardından, aynı kilit bölümünde
+    /// almaya devam eder; tik onların arasına giremez.</para></summary>
     /// <param name="surfaceVisible">Yüzey görünür mü. Varsayılan <c>true</c>: mevcut çağıranlar değişmez.</param>
     public void TickElapsed(bool surfaceVisible = true)
     {
+        if (surfaceVisible) lock (_gate) AppendSpoolWarningLocked();
         if (surfaceVisible && IsRunning && _elapsedStartMs is { } startMs)
         {
             ElapsedMs = _nowMs() - startMs;
@@ -2154,7 +2161,8 @@ public sealed partial class RunViewModel : ObservableObject
     /// <summary>
     /// [idle-memory · dalga 2 · spec §6.3] Koşunun anlatısını <c>runStarted</c>'ın bildirdiği koşu klasöründeki dosyaya yayar
     /// (<see cref="RunLogPaths.NarrativeFileName"/>). Klasör yoksa ya da tam nitelikli değilse (boş/göreli — dosya adı sürecin çalışma
-    /// klasörüne düşerdi) spool açılmaz: anlatı Sync ve Clean'deki gibi bellekte kalır. Açılamazsa store bellekte devam eder ve
+    /// klasörüne düşerdi) spool açılmaz: anlatı, koşu klasörü olmayan bölümlerdeki gibi — Sync, bakım kutusunun Deep Clean'i, Optimize —
+    /// bellekte kalır (Build menüsünün Clean'i bir koşudur: klasörü vardır, yayılır). Açılamazsa store bellekte devam eder ve
     /// bölümün tek uyarısı konsola düşer. Temizlik bu çağrıdan ÖNCEDİR: koşunun bölümü <see cref="BeginRunAsync"/>'te açıldı,
     /// <c>runStarted</c> onun ardından gelir — dosyaya yalnız bu bölümün satırları yazılır.
     /// </summary>
@@ -2665,7 +2673,8 @@ public sealed partial class RunViewModel : ObservableObject
     /// <summary><see cref="EndedOperationSerial"/>'ın TEK yazıcısı — bir işlemin bitiş noktaları bunu çağırır.
     /// <para>[idle-memory · dalga 2 · spec §6.3 · I9] Anlatı spool'unun tamponu da burada diske iner: koşunun sonu (<see cref="MarkRunEnded"/>)
     /// ve açık spool'a ekleyen işlemlerin (Appended/Silent Sync) sonu. Yazıcı bölüm boyunca açık kalır ve süreç kapanırken
-    /// sonlandırıcı koşmaz — boşaltılmayan kuyruk dosyaya hiç inmezdi. Spool yoksa hiçbir şey yapmaz; boşaltma düşerse uyarısı
+    /// sonlandırıcı koşmaz — boşaltılmayan kuyruk dosyaya hiç inmezdi. Son işlemden sonra, işlem dışında eklenen satırları kabuk
+    /// penceresi son kez kapanırken boşaltır (<c>MainWindow.OnClosed</c>). Spool yoksa hiçbir şey yapmaz; boşaltma düşerse uyarısı
     /// konsola düşer.</para></summary>
     private void MarkOperationEnded()
     {
@@ -3066,9 +3075,10 @@ public sealed partial class RunViewModel : ObservableObject
     /// [idle-memory · dalga 2 · spec §6.3] Anlatı spool'unun bekleyen uyarısını (<see cref="NarrativeStore.TakeWarning"/>) bir anlatı
     /// satırı olarak ekler — kilit altında ve çağıranın kendi satırını pompaya gönderdikten SONRA: store sırası pompa sırasıyla aynı
     /// kalır (belgenin ilk satırı store indeksidir). Store dışarı çağırmaz — olay yok; uyarıyı VM alır: satır ekleyen iki yol
-    /// (<see cref="OnProjectLog"/>, <see cref="AppendRunLine"/>), açılamayan spool (<see cref="BeginNarrativeSpool"/>) ve işlemin sonundaki
-    /// boşaltma (<see cref="MarkOperationEnded"/>). Uyarı bölüm başına bir kezdir ve eklenirken ya spool kapanmıştır (yazım hatası) ya
-    /// da bölümün uyarısı alınmıştır: ekleme yeni bir uyarı doğurmaz.
+    /// (<see cref="OnProjectLog"/>, <see cref="AppendRunLine"/>), açılamayan spool (<see cref="BeginNarrativeSpool"/>), işlemin sonundaki
+    /// boşaltma (<see cref="MarkOperationEnded"/>) ve görünürken 200 ms'lik tik (<see cref="TickElapsed"/> — satır eklemeyen geri okuma
+    /// hatası için). Uyarı bölüm başına bir kezdir ve eklenirken ya spool kapanmıştır (yazım hatası) ya da bölümün uyarısı alınmıştır:
+    /// ekleme yeni bir uyarı doğurmaz.
     /// </summary>
     private void AppendSpoolWarningLocked()
     {

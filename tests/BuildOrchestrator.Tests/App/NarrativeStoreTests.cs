@@ -369,6 +369,26 @@ public class NarrativeStoreTests
         Assert.Null(store.TakeWarning()); // tekrar eden okuma hatası yeniden uyarmaz
     }
 
+    /// <summary>[idle-memory · dalga 2 · inceleme M4] Geri okuma kilit DIŞINDADIR; o arada yeni bir bölüm başlarsa (temizlik — yeni
+    /// işlem) okumanın hatası ESKİ bölümündür ve yenisine uyarı olarak kaydedilmez: yeni bölümün konsoluna önceki koşunun dosyasından
+    /// söz eden bir satır düşerdi. Okuma dikişi temizliği tam o arada yapar ve okumayı düşürür.</summary>
+    [Fact]
+    public void A_read_failure_that_outlives_its_section_warns_nothing_in_the_next_one()
+    {
+        var store = new NarrativeStore();
+        using var logs = new SpoolDir(store);
+        Assert.True(store.BeginSpool(logs.FilePath));
+        for (int i = 0; i < NarrativeStore.MemoryWindowLines + 500; i++) store.Append("line " + i);
+        store.OpenSpoolReader = _ =>
+        {
+            store.Clear(); // okuma sürerken yeni bölüm başladı
+            throw new IOException("The device is not ready.");
+        };
+
+        Assert.Equal("", store.Join(0, 2));
+        Assert.Null(store.TakeWarning()); // KIRMIZI: eski bölümün okuma hatası yeni bölüme kaydedilirdi
+    }
+
     /// <summary>[I10] Bölümün spool'u açıkken ikinci açılış hiçbir şey yapmaz: <c>FileMode.Create</c> dosyayı keserdi — tahliye edilmiş
     /// geçmiş ve ofset indeksi boşa düşerdi. Başka bir yol da açılmaz.</summary>
     [Fact]

@@ -476,8 +476,9 @@ public class RunViewModelStateTests
         Assert.Equal(vm.GetRunDocumentText(), logs.ReadText());
     }
 
-    /// <summary>[spec §6.3 · K3] Koşu klasörü bilinmiyorsa anlatı tamamen bellekte kalır: spool açılmaz ve uyarı yazılmaz — Sync ve
-    /// Clean gibi. Boş ya da göreli bir klasör de "bilinmiyor"dur: dosya adı sürecin çalışma klasörüne düşerdi.</summary>
+    /// <summary>[spec §6.3 · K3] Koşu klasörü bilinmiyorsa anlatı tamamen bellekte kalır: spool açılmaz ve uyarı yazılmaz — Sync, bakım
+    /// kutusunun Deep Clean'i ve Optimize gibi (Build menüsünün Clean'i bir koşudur: klasörü vardır, yayılır). Boş ya da göreli bir
+    /// klasör de "bilinmiyor"dur: dosya adı sürecin çalışma klasörüne düşerdi.</summary>
     [Theory]
     [InlineData(null)]
     [InlineData("")]
@@ -564,6 +565,32 @@ public class RunViewModelStateTests
         var pumped = new StringBuilder();
         await console.PumpAsync((text, _) => pumped.Append(text), CancellationToken.None);
         Assert.Equal(vm.GetRunDocumentText(), pumped.ToString()); // pompa sırası = store sırası
+    }
+
+    /// <summary>[idle-memory · dalga 2 · inceleme M1] Satır gelmeyen, boştaki bir konsolda da spool uyarısı düşer: geri okuma hatası
+    /// satır EKLEMEYEN bir yoldan gelir — görünüm tepeye kaydırınca diskten dilim ister — ve VM uyarıyı eskiden yalnız bir sonraki
+    /// eklenen satırda ya da işlem sonunda alıyordu. Koşu bittikten sonra okunamayan geçmiş hiç söylenmeden yeni bölümle düşerdi. Artık
+    /// 200 ms'lik tik de alır.</summary>
+    [Fact]
+    public async Task A_spool_warning_left_by_a_console_read_reaches_an_idle_console_on_the_next_tick()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        using var logs = new SpoolDir(vm.Narrative);
+        vm.Narrative.OpenSpoolStream = _ => new MemoryStream(); // yazım başarılı, dosya diske hiç inmez: geri okuma düşer
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", LogDirectory: logs.Path));
+        for (int i = 0; i < NarrativeStore.MemoryWindowLines + 500; i++)
+            vm.OnEvent(new ProjectLogEvent("r1", @"C:\p\a.csproj", i + 1, "line " + i));
+        vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 100)); // koşu bitti: konsola satır gelmiyor
+        Assert.Equal("", vm.Narrative.Join(0, 2)); // ön-koşul: görünüm pencerenin ötesini istedi, dosya okunamadı
+        int count = vm.Narrative.Count;
+
+        vm.TickElapsed();
+
+        Assert.Equal(count + 1, vm.Narrative.Count); // KIRMIZI: uyarı bir sonraki satırı bekliyordu
+        Assert.Equal($"warning: console history could not be read back from {logs.FilePath} (FileNotFoundException)",
+            vm.Narrative.Join(count, count + 1).TrimEnd('\n'));
     }
 
     /// <summary>

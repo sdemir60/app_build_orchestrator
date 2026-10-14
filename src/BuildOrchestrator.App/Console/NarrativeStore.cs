@@ -16,10 +16,11 @@ namespace BuildOrchestrator.App.Console;
 /// (<see cref="BeginSpool"/>): o ana dek biriken satırlar önce yazılır, sonra her satır tamponlu yazıcıya eklenir (BOM'suz UTF-8,
 /// '\n' sonekli) ve başlangıç baytı ofset indeksinde tutulur (satır başına 8 B). Bellekte en çok <see cref="MemoryWindowLines"/>
 /// satır kalır: pencere dolunca en eski blok — önce diske boşaltılıp — bellekten atılır ve o satırlar istenince dosyadan okunur.
-/// <see cref="Count"/> her zaman TOPLAM satır sayısıdır; görünümün indeksleri spool'dan habersiz yürür. Spool yoksa (Sync, Clean,
-/// klasörü bilinmeyen işlem) ya da dosya açılamaz/yazılamazsa store bellekte kalır — spool bir optimizasyondur, kaybı doğruluğu
-/// bozmaz. Bir yazım hatasından sonra o ana dek tahliye edilmiş satırlar dosyadan okunmaya devam eder, yenileri bellekte kalır.
-/// Bir bölüm (iki <see cref="Clear"/> arası) en çok bir spool açar ve en çok bir uyarı bırakır (<see cref="TakeWarning"/>).</para>
+/// <see cref="Count"/> her zaman TOPLAM satır sayısıdır; görünümün indeksleri spool'dan habersiz yürür. Spool yoksa — koşu klasörü
+/// olmayan bölüm: Sync, bakım kutusunun Deep Clean'i, Optimize ya da klasörü bilinmeyen bir koşu (Build menüsünün Clean'i bir koşudur,
+/// klasörü vardır) — ya da dosya açılamaz/yazılamazsa store bellekte kalır — spool bir optimizasyondur, kaybı doğruluğu bozmaz. Bir
+/// yazım hatasından sonra o ana dek tahliye edilmiş satırlar dosyadan okunmaya devam eder, yenileri bellekte kalır. Bir bölüm (iki
+/// <see cref="Clear"/> arası) en çok bir spool açar ve en çok bir uyarı bırakır (<see cref="TakeWarning"/>).</para>
 ///
 /// <para><b>Kilit:</b> her erişim iç kilidi alır. VM ekleme yaparken kendi <c>_gate</c>'ini tutar (ekleme ile pompaya
 /// gönderim aynı bölümdedir — reseed nesil guard'ı ona dayanır); sıra her yerde VM <c>_gate</c> → store kilididir, tersi
@@ -65,6 +66,10 @@ public sealed class NarrativeStore : IConsoleBacklog
     private string? _pendingWarning;
     private bool _warned;
 
+    /// <summary>Bölümün kimliği: her <see cref="Clear"/> bir artırır. Kilit dışındaki bir disk okumasının hatası yalnız aralığını
+    /// aldığı bölüm hâlâ sürüyorsa o bölümün uyarısıdır (<see cref="ReadDisk"/>).</summary>
+    private int _section;
+
     /// <summary>Toplam satır sayısı: bellekteki pencere ve diske tahliye edilenler.</summary>
     public int Count { get { lock (_gate) return _evicted + _lines.Count; } }
 
@@ -83,6 +88,15 @@ public sealed class NarrativeStore : IConsoleBacklog
     /// <summary>[test yüzeyi] Spool akışını açan dikiş — üretimde <see cref="OpenSpoolFile"/>. Testler yazımı düşen ya da diske hiç
     /// inmeyen bir akış verir.</summary>
     internal Func<string, Stream> OpenSpoolStream { get; set; } = OpenSpoolFile;
+
+    /// <summary>Tahliye edilmiş satırların okuma tutamacı: kısa ömürlü ve yalnız okur. <c>FileShare.ReadWrite</c> zorunludur — yazıcının
+    /// yazma erişimi başka bir paylaşımı reddederdi. Tamponsuzdur: aralık tek okumada alınır.</summary>
+    internal static Stream OpenSpoolFileForReading(string path) =>
+        new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, bufferSize: 1);
+
+    /// <summary>[test yüzeyi] Okuma tutamacını açan dikiş — üretimde <see cref="OpenSpoolFileForReading"/>. Testler kilit dışındaki
+    /// okumanın tam ortasına bir olay (yeni bölüm) sokar.</summary>
+    internal Func<string, Stream> OpenSpoolReader { get; set; } = OpenSpoolFileForReading;
 
     /// <summary>
     /// Bir anlatı satırı ekler. Satır ayraç taşımıyorsa olduğu gibi saklanır — sıcak yol, O(1): her MSBuild satırı. Taşıyorsa
@@ -107,10 +121,9 @@ public sealed class NarrativeStore : IConsoleBacklog
     }
 
     /// <summary>
-    /// SAKLANAN bir satırın TEK yolu (kilit altında; iki ekleme yolu da buradan geçer): bellek, karakter sayısı, spool yazımı + ofset,
-    /// tahliye. Yazılan, belgenin göreceği parçadır — ham çok satırlı giriş değil: dosyaya '\r' girmez, satır ile ofset birebir yürür.
-    /// Satır sonu yalnız '\n'dir (<c>WriteLine</c> "\r\n" yazardı); ofset bayt sayısından ilerletilir — yazıcının tamponu önündeyken
-    /// akışın konumu bir ofset değildir. Her istisna burada yakalanır: spool kapanır, satır bellekte kalır.
+    /// SAKLANAN bir satırın TEK yolu (kilit altında; iki ekleme yolu da buradan geçer): bellek, karakter sayısı, spool yazımı + ofset
+    /// (<see cref="WriteStored"/>), tahliye. Yazılan, belgenin göreceği parçadır — ham çok satırlı giriş değil: dosyaya '\r' girmez,
+    /// satır ile ofset birebir yürür. Her istisna burada yakalanır: spool kapanır, satır bellekte kalır.
     /// </summary>
     private void AddStored(string piece)
     {
@@ -119,16 +132,27 @@ public sealed class NarrativeStore : IConsoleBacklog
         if (_writer is null) return; // spool yok ya da kapandı: satır bellekte kalır, tahliye yok
         try
         {
-            _writer.Write(piece);
-            _writer.Write('\n');
-            _offsets.Add(_nextOffset);
-            _nextOffset += Utf8NoBom.GetByteCount(piece) + 1;
+            WriteStored(_writer, piece, _offsets, ref _nextOffset);
             if (_lines.Count > MemoryWindowLines) Evict();
         }
         catch (Exception ex)
         {
             FailSpool(ex);
         }
+    }
+
+    /// <summary>
+    /// [inceleme O1 — kopya YASAK] Saklanan bir satırın dosyadaki biçiminin TEK tanımı; iki yazım da buradan geçer: spool açılırken
+    /// bellekte biriken satırlar (<see cref="BeginSpool"/>) ve sonra her yeni satır (<see cref="AddStored"/>). Satır, ardından yalnız
+    /// '\n' (<c>WriteLine</c> "\r\n" yazardı); satırın başlangıç baytı indekse girer ve sıradaki ofset satırın bayt boyu + 1 kadar
+    /// ilerler — yazıcının tamponu önündeyken akışın konumu bir ofset değildir. İndeks yalnız yazım başarılıysa büyür.
+    /// </summary>
+    private static void WriteStored(StreamWriter writer, string piece, List<long> offsets, ref long nextOffset)
+    {
+        writer.Write(piece);
+        writer.Write('\n');
+        offsets.Add(nextOffset);
+        nextOffset += Utf8NoBom.GetByteCount(piece) + 1;
     }
 
     /// <summary>Pencereyi <c>MemoryWindowLines − EvictionBlockLines</c> satıra indirir (kilit altında). Önce boşaltır: tahliye edilen
@@ -179,13 +203,7 @@ public sealed class NarrativeStore : IConsoleBacklog
                 // Spool açılmadıysa tahliye de olmadı (_evicted 0): bellekteki satırlar bölümün TÜM satırlarıdır.
                 var offsets = new List<long>(_lines.Count);
                 long next = 0;
-                foreach (string line in _lines)
-                {
-                    writer.Write(line);
-                    writer.Write('\n');
-                    offsets.Add(next);
-                    next += Utf8NoBom.GetByteCount(line) + 1;
-                }
+                foreach (string line in _lines) WriteStored(writer, line, offsets, ref next);
                 (_writer, _stream, _spoolPath, _offsets, _nextOffset) = (writer, stream, path, offsets, next);
                 return true;
             }
@@ -198,8 +216,9 @@ public sealed class NarrativeStore : IConsoleBacklog
         }
     }
 
-    /// <summary>Spool tamponunu diske indirir (açık değilse hiçbir şey yapmaz). VM bir işlem bitince çağırır: yazıcı bölüm boyunca
-    /// açık kalır ve süreç kapanırken sonlandırıcı koşmaz — tamponda kalan kuyruk dosyaya hiç inmezdi. Düşerse spool kapanır.</summary>
+    /// <summary>Spool tamponunu diske indirir (açık değilse hiçbir şey yapmaz). VM bir işlem bitince, kabuk penceresi son kez kapanırken
+    /// çağırır: yazıcı bölüm boyunca açık kalır ve süreç kapanırken sonlandırıcı koşmaz — tamponda kalan kuyruk dosyaya hiç inmezdi.
+    /// Düşerse spool kapanır.</summary>
     public void Flush()
     {
         lock (_gate) FlushLocked();
@@ -246,8 +265,8 @@ public sealed class NarrativeStore : IConsoleBacklog
     /// büyük işlemin boyunda tutardı — 100 k satırlık bir koşudan sonra ≈ 1 MB (LOH'ta), daha küçük bir işlem onu silse bile uygulama
     /// ömrü boyunca. Yeni işlem diziyi yeniden büyütür; büyümenin artıklarını işlem sonu trimi toplar.
     /// <para>[idle-memory · dalga 2 · I5] Spool kapanır — kuyruk önce boşaltılır, dosya SİLİNMEZ: koşu klasöründe kalır ve klasörle
-    /// budanır. Ofset indeksi de bırakılır (o da satır başına 8 B'tır ve en büyük işlemin boyunda kalırdı); bölümün uyarısı düşer.
-    /// Kapatma kilit DIŞINDADIR: yazıcı artık yalnız bu çağrınındır.</para></summary>
+    /// budanır. Ofset indeksi de bırakılır (o da satır başına 8 B'tır ve en büyük işlemin boyunda kalırdı); bölümün uyarısı düşer ve
+    /// yeni bölüm yeni bir kimlik alır (<see cref="_section"/>). Kapatma kilit DIŞINDADIR: yazıcı artık yalnız bu çağrınındır.</para></summary>
     public void Clear()
     {
         StreamWriter? writer;
@@ -266,6 +285,7 @@ public sealed class NarrativeStore : IConsoleBacklog
             _evicted = 0;
             _pendingWarning = null;
             _warned = false;
+            _section++;
         }
         Close(writer, stream);
     }
@@ -340,18 +360,22 @@ public sealed class NarrativeStore : IConsoleBacklog
         int diskTo = Math.Min(to, _evicted);
         if (from >= diskTo) return null;
         FlushLocked();
-        return new SpoolRange(_spoolPath!, _offsets[from], _offsets[diskTo], diskTo - from);
+        return new SpoolRange(_spoolPath!, _offsets[from], _offsets[diskTo], diskTo - from, _section);
     }
 
-    /// <summary>Tahliye edilmiş bir aralığın metni — KİLİT DIŞINDA okunur: kısa ömürlü bir okuma tutamacı (<c>FileShare.ReadWrite</c>;
-    /// yazıcının yazma erişimi başka bir paylaşımı reddederdi), baytlar BOM'suz UTF-8 olarak çözülür ve satır sayısı doğrulanır.
-    /// Okunamazsa (silinmiş, kesilmiş dosya, okuma hatası) <c>null</c> ve bölümün uyarısı.</summary>
+    /// <summary>Tahliye edilmiş bir aralığın metni — KİLİT DIŞINDA okunur: kısa ömürlü bir okuma tutamacı
+    /// (<see cref="OpenSpoolReader"/>), baytlar BOM'suz UTF-8 olarak çözülür ve satır sayısı doğrulanır. Okunamazsa (silinmiş, kesilmiş
+    /// dosya, okuma hatası) <c>null</c> ve bölümün uyarısı.
+    /// <para>[inceleme M4] Uyarı yalnız aralığın alındığı bölüm hâlâ sürüyorsa kaydedilir: okuma kilit dışındayken bir temizlik (yeni
+    /// işlem) araya girdiyse hata ESKİ bölümündür — yenisinin konsoluna önceki koşunun dosyasından söz eden bir satır düşerdi. Kimlik
+    /// bölüm sayacıdır (<see cref="_section"/>), yol değil: bir bölüm tek spool açar, yani aynı bölümün yolu da aynıdır; yalnız yol
+    /// karşılaştırması aynı yolu yeniden açan sonraki bir bölümü ayıramazdı.</para></summary>
     private string? ReadDisk(SpoolRange range)
     {
         try
         {
             var bytes = new byte[checked((int)(range.End - range.Start))];
-            using (var stream = new FileStream(range.FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, bufferSize: 1))
+            using (var stream = OpenSpoolReader(range.FilePath))
             {
                 stream.Seek(range.Start, SeekOrigin.Begin);
                 stream.ReadExactly(bytes);
@@ -363,13 +387,16 @@ public sealed class NarrativeStore : IConsoleBacklog
         }
         catch (Exception ex)
         {
-            lock (_gate) RecordWarning(ReadWarning(range.FilePath, ex));
+            lock (_gate)
+            {
+                if (range.Section == _section) RecordWarning(ReadWarning(range.FilePath, ex));
+            }
             return null;
         }
     }
 
-    /// <summary>Dosyadaki bir satır aralığı: yol, [Start, End) baytları ve satır sayısı.</summary>
-    private readonly record struct SpoolRange(string FilePath, long Start, long End, int Lines);
+    /// <summary>Dosyadaki bir satır aralığı: yol, [Start, End) baytları, satır sayısı ve aralığın alındığı bölüm.</summary>
+    private readonly record struct SpoolRange(string FilePath, long Start, long End, int Lines, int Section);
 
     /// <summary>Store kırpılan satırları SAKLAMAZ: belgedeki her anlatı satırı önce store'a yazılmıştır, kopyası tutulmaz — görünüm
     /// de kırpılan metni onun için belgeden okumaz (<see cref="IConsoleBacklog.KeepsTrimmedLines"/>).</summary>

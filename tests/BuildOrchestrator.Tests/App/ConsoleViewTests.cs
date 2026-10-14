@@ -257,14 +257,86 @@ public class ConsoleViewTests
         view.UpdateLayout();
 
         view.ShowRunDocument(NarrativeSnapshots.Of(store)); // son 200 belgeye; öncesi store'da, en eskisi diskte
-        for (int chunk = 0; chunk <= all.Length / ConsoleView.RenderSliceLines
-            && !view.Document.Text.StartsWith("spooled0\n", StringComparison.Ordinal); chunk++)
+        ScrollUpToTheTop(view, attempts: all.Length / ConsoleView.RenderSliceLines + 1);
+
+        Assert.Equal(string.Concat(all.Select(l => l + "\n")), view.Document.Text); // bitişik ve TAM
+    }
+
+    /// <summary>
+    /// [idle-memory · dalga 2 · inceleme M1] <b>Okunamayan bir geçmiş dilimi delik bırakmaz.</b> Backlog'un içindeki bir aralık ya tam
+    /// gelir ya <c>""</c> (<see cref="IConsoleBacklog.Join"/>) — store'un dosyası okunamazsa ikincisi. Görünüm boş dilimde yerini
+    /// KORUR: o satırları atlamaz, sonraki tepeye kaydırma aynı dilimi yeniden ister. Eskiden indeks dilimin başına iniyordu; o 200
+    /// satır o belgede bir daha hiç gelmiyordu — dosya yeniden okunabilse de.
+    /// </summary>
+    [StaFact]
+    public void An_unreadable_history_slice_leaves_no_hole_and_the_next_scroll_to_the_top_asks_again()
+    {
+        var view = new ConsoleView();
+        view.Measure(new Size(800, 600));
+        view.Arrange(new Rect(0, 0, 800, 600));
+        view.UpdateLayout();
+        var all = Enumerable.Range(0, 1000).Select(i => $"history{i}").ToArray();
+        var backlog = new PartlyUnreadableBacklog(all) { ReadableFrom = 500 }; // 500'ün altı okunamıyor
+        view.ShowRunDocument(new NarrativeSnapshot(backlog, all.Length));       // son 200 belgede: history800..999
+        ScrollUpToTheTop(view, attempts: 6);
+        Assert.StartsWith("history600\n", view.Document.Text); // ön-koşul: okunabilen dilim geldi, okunamayanda durdu
+
+        backlog.ReadableFrom = 0; // dosya yeniden okunabiliyor
+        ScrollUpToTheTop(view, attempts: 6);
+
+        Assert.Equal(string.Concat(all.Select(l => l + "\n")), view.Document.Text); // KIRMIZI: 400..599 atlanmıştı — delik
+    }
+
+    /// <summary>
+    /// [idle-memory · dalga 2 · inceleme M1] <b>Son dilimi okunamayan bir anlatı belgesi anlatının SONUNDAN başlar.</b> Belge boş kurulur
+    /// ve ilk satırı anlatının sonudur: indeks gösterilmeyen 200 satırı belgede sanmaz, tepeye kaydırma o dilimi yeniden ister. Eskiden
+    /// indeks dilimin başında kalıyordu — ilk kaydırma bir ÖNCEKİ dilimi getirir, son 200 satır hiç gelmezdi; canlı satırlar da 200
+    /// satır geride sayılırdı.
+    /// </summary>
+    [StaFact]
+    public void A_run_document_whose_last_slice_cannot_be_read_starts_at_the_end_and_asks_for_it_again()
+    {
+        var view = new ConsoleView();
+        view.Measure(new Size(800, 600));
+        view.Arrange(new Rect(0, 0, 800, 600));
+        view.UpdateLayout();
+        var all = Enumerable.Range(0, 1000).Select(i => $"history{i}").ToArray();
+        var backlog = new PartlyUnreadableBacklog(all) { ReadableFrom = all.Length }; // hiçbir dilim okunamıyor
+        view.ShowRunDocument(new NarrativeSnapshot(backlog, all.Length));
+        Assert.Equal("", view.Document.Text); // ön-koşul: dilim okunamadı, belge boş
+
+        backlog.ReadableFrom = 0; // dosya yeniden okunabiliyor
+        ScrollUpToTheTop(view, attempts: 6);
+
+        Assert.Equal(string.Concat(all.Select(l => l + "\n")), view.Document.Text); // KIRMIZI: son 200 satır hiç gelmezdi
+    }
+
+    /// <summary>Okuyucu tepeye <paramref name="attempts"/> kez kaydırır: her deneme önce tepeden uzaklaşır (arm), sonra tepeye döner —
+    /// chunk loader'ın üretimdeki jesti (<see cref="ConsoleView.EvaluateChunkScroll"/>). Yüklenecek dilim kalmayınca deneme bir şey
+    /// yapmaz.</summary>
+    private static void ScrollUpToTheTop(ConsoleView view, int attempts)
+    {
+        for (int i = 0; i < attempts; i++)
         {
             view.EvaluateChunkScroll(100.0); // arm: kullanıcı tepeden uzaklaştı
             view.EvaluateChunkScroll(0.0);   // tepe: önceki dilim
         }
+    }
 
-        Assert.Equal(string.Concat(all.Select(l => l + "\n")), view.Document.Text); // bitişik ve TAM
+    /// <summary>[idle-memory · dalga 2 · inceleme M1] Bir kısmı okunamayan backlog — anlatı store'unun dosyası okunamadığında olduğu
+    /// gibi: <see cref="ReadableFrom"/>'un altına uzanan her aralık <c>""</c> döner (asla kısmi metin — <see cref="IConsoleBacklog.Join"/>
+    /// sözleşmesi); sınır inince aynı aralık tam gelir. Store gibi kırpılan satırları saklamaz.</summary>
+    private sealed class PartlyUnreadableBacklog(IReadOnlyList<string> lines) : IConsoleBacklog
+    {
+        public int ReadableFrom { get; set; }
+
+        public int Count => lines.Count;
+
+        public bool KeepsTrimmedLines => false;
+
+        public string Join(int from, int to) => from < ReadableFrom ? "" : ConsoleLines.Join(lines, from, to);
+
+        public void AcceptTrimmed(IReadOnlyList<string> trimmed) { }
     }
 
     /// <summary>

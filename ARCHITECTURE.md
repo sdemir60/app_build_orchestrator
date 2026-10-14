@@ -1589,8 +1589,10 @@ the run's console narrative as the App showed it — every project's lines and t
 file line, UTF-8 without a byte-order mark and newline-terminated. The App opens it once `runStarted` names the folder,
 writes the lines the console already held first and keeps it open until the next console section opens (§13.5); an
 operation that adds to the section instead of opening one — an automatic Sync, a pull — adds to the file too, so the
-file holds the section, not only the run. The App flushes it whenever an operation ends. It is where the console's
-history lives once it leaves memory (§13.5), and it is pruned with its folder like every other file there.
+file holds the section, not only the run. The App flushes it whenever an operation ends and once more when its window
+closes for good, so a line added outside any operation reaches the file as well; an App that dies instead of exiting
+leaves the unflushed tail out. It is where the console's history lives once it leaves memory (§13.5), and it is pruned
+with its folder like every other file there.
 
 Run logs are kept for three days, and the newest run's folder always stays however old it is, so the last run
 can always be read. The engine prunes them once, in the background, as soon as it has built its host: the sweep
@@ -4541,15 +4543,19 @@ lines.
   those lines from the file by their offsets. The render slice sits far inside the window, so the document is normally
   built from memory and the disk is read when the reader scrolls past the window; the read happens outside the store's
   lock, so the run keeps appending meanwhile, and a slice is either exactly the lines asked for or empty — a missing or
-  short file never yields partial text, because the console computes its stitch from indices. The count stays the
-  total, so the console's indices and `N lines` never see the split. Without a spool the store keeps everything in
+  short file never yields partial text, because the console computes its stitch from indices. An empty slice is not
+  skipped: the console keeps its place and asks for the same slice again on the next scroll to the top, and a document
+  whose last slice could not be read starts at the narrative's end, so its indices still match what it shows. The count
+  stays the total, so the console's indices and `N lines` never see the split. Without a spool the store keeps everything in
   memory: a Sync, a Deep Clean or an Optimize has no run folder, and neither has a run whose folder the engine did not
   name as a fully qualified path. The spool is an optimisation, never a dependency: a file that cannot be opened or
   written leaves the store in memory — new lines stay there, lines already dropped are still read back from the
   file — and the section's console gets one `warning:` line saying so, as it does when dropped lines cannot be read
   back. The store never calls out from under its lock; the view model takes the warning inside its own locked
-  section — after the line whose write failed, right after a failed open, at an operation's end — so the store's
-  order stays the pump's. A new section closes the file, which stays in its run folder.
+  section — after the line whose write failed, right after a failed open, at an operation's end, and on its 200 ms
+  tick while the window is visible, since a read the console made appends no line — so the store's order stays the
+  pump's. A new section closes the file, which stays in its run folder; a read that fails after its section ended
+  warns nothing in the next one.
 - The documents keep **no undo history**. AvalonEdit records every insert and removal on the document's undo
   stack and keeps the removed text alive as rope slices, so with the default unbounded stack a trim released
   nothing: after a long visible run about half of the live managed heap was the whole narrative, retained behind
@@ -7004,9 +7010,9 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 
 | Behaviour | File |
 |---|---|
-| AvalonEdit host, batching, active line, cascade, chunk paging, cursor + row hover band, the hidden native caret; the bind to the narrative store (`BindNarrative`) and the trim to the render slice, on a batch and when following comes back (`TrimToRenderSlice`, `TrimNarrativeWhenFollowing`) | `App/Console/ConsoleView.xaml(.cs)` |
+| AvalonEdit host, batching, active line, cascade, chunk paging (an unreadable slice keeps the index and is asked for again — `PrependPreviousChunk`, `ReplaceRunDocument`), cursor + row hover band, the hidden native caret; the bind to the narrative store (`BindNarrative`) and the trim to the render slice, on a batch and when following comes back (`TrimToRenderSlice`, `TrimNarrativeWhenFollowing`) | `App/Console/ConsoleView.xaml(.cs)` |
 | The run narrative's one owner: its lines, slices and count; the spool to the run folder — the memory window, the offset index, block eviction, slices read back from the file outside the lock, one warning per section; and a clear that closes the file and lets go of its array and index | `App/Console/NarrativeStore.cs` |
-| Opening the narrative's spool when `runStarted` names the run folder, taking its warning after the line that met the failure, flushing it when an operation ends | `App/ViewModels/RunViewModel.cs` (`BeginNarrativeSpool`, `AppendSpoolWarningLocked`, `MarkOperationEnded`) |
+| Opening the narrative's spool when `runStarted` names the run folder, taking its warning after the line that met the failure or on the visible tick, flushing it when an operation ends and when the window closes for good | `App/ViewModels/RunViewModel.cs` (`BeginNarrativeSpool`, `AppendSpoolWarningLocked`, `TickElapsed`, `MarkOperationEnded`), `App/MainWindow.xaml.cs` (`OnClosed`) |
 | The backlog behind the document — the contract (`IConsoleBacklog`), the project page's own list (`ListBacklog`) and the seed the document is built from, the store plus its count (`NarrativeSnapshot`) | `App/Console/IConsoleBacklog.cs`, `ListBacklog.cs`, `NarrativeSnapshot.cs` |
 | The console's one line rule — splitting text into document lines, joining lines newline-terminated; shared by the store, the page list, the trimmed tail and the shell's project page | `App/Console/ConsoleLines.cs`, `App/MainWindow.xaml.cs` (`ProjectDocumentLines`) |
 | Line colouring | `App/Console/ConsoleColorizer.cs`, `ConsolePalette.cs`, `ConsoleLine.cs` |

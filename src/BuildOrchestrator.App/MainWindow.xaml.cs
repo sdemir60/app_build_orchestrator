@@ -1597,6 +1597,11 @@ public partial class MainWindow : Window
         _tray?.Dispose();
         _vm.DisableAutoSync(); // HEAD izleyicisi bırakılır
         _vm.GitOperationPollTimer?.Stop(); // git işlemi yoklaması kapanan pencereyi tıklatmasın
+        // [idle-memory · dalga 2 · inceleme M2] Konsol geçmişinin (koşu klasöründeki narrative.log) kuyruğu diske iner. Yazıcı bölüm
+        // boyunca açık kalır ve tamponunu işlem sonlarında boşaltır; son işlemden SONRA, işlem dışında eklenen satırlar (düşen bir
+        // gönderimin hata satırı, reddedilen bir checkout'un satırı) tamponda bekler ve süreç kapanırken sonlandırıcı koşmadığı için
+        // dosyaya hiç inmezdi. Pencere her tam çıkışta — tepsi → Exit, ×, güncelleme, oturum kapanışı — burada son kez kapanır.
+        _vm.Narrative.Flush();
         // [tray indicator] Overlay AYRI bir top-level penceredir: kapatılmazsa uygulama kapanmaz.
         if (App.Motion is { } motion) motion.AnimationsEnabledChanged -= OnTrayIndicatorMotionChanged;
         _trayOverlay?.Close();

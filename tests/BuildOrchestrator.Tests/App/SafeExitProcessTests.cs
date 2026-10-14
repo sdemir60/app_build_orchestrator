@@ -93,97 +93,101 @@ public sealed class SafeExitProcessTests
             LegacyWorktreePoolRoot = TestPaths.MissingLegacyPoolRoot, // [final review M8]
         };
 
-        // Motorun olayları MainWindow'daki gibi VM'in thread'ine, dispatcher kuyruğuyla taşınır; sıra korunur. Yol
-        // InvokeAsync DEĞİL BeginInvoke'tur [Task 5 fix round 1 · M3]: InvokeAsync, VM'den (ya da ExitReady
-        // handler'ından) kaçan bir istisnayı kendi görevinde sessizce tutar ve test bir zaman aşımına düşerdi;
-        // BeginInvoke onu pompadan kaçırır — PumpUntil gerçek sebeple, o anda kırılır. Proje sonuçları VM'e verilmeden
-        // ÖNCE kaydedilir: ExitReady bir olayın ORTASINDA atılır ve o ana kadarki her sonucu görmelidir.
-        var succeeded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var failed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        bool synced = false;
-        ErrorEvent? error = null;
-        engine.EventReceived += ev => dispatcher.BeginInvoke(() =>
+        // [idle-memory · dalga 2] Motor runStarted'la sandbox'taki koşu klasörünü bildirir ve VM anlatıyı oraya yayar. Üretimde süreç
+        // çıkışta biter ve tutamacı sistem kapatır; test sürecinde VM yaşar — spool, test nasıl biterse bitsin (düşen bir iddia, Skip)
+        // sandbox silinmeden önce kapanır (finally).
+        try
         {
-            switch (ev)
+            // Motorun olayları MainWindow'daki gibi VM'in thread'ine, dispatcher kuyruğuyla taşınır; sıra korunur. Yol
+            // InvokeAsync DEĞİL BeginInvoke'tur [Task 5 fix round 1 · M3]: InvokeAsync, VM'den (ya da ExitReady
+            // handler'ından) kaçan bir istisnayı kendi görevinde sessizce tutar ve test bir zaman aşımına düşerdi;
+            // BeginInvoke onu pompadan kaçırır — PumpUntil gerçek sebeple, o anda kırılır. Proje sonuçları VM'e verilmeden
+            // ÖNCE kaydedilir: ExitReady bir olayın ORTASINDA atılır ve o ana kadarki her sonucu görmelidir.
+            var succeeded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var failed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            bool synced = false;
+            ErrorEvent? error = null;
+            engine.EventReceived += ev => dispatcher.BeginInvoke(() =>
             {
-                case ProjectSucceededEvent e: succeeded.Add(e.ProjectId); break;
-                case ProjectFailedEvent e: failed.Add(e.ProjectId); break;
-                case SyncCompletedEvent: synced = true; break;
-                case ErrorEvent e: error ??= e; break;
-            }
-            vm.OnEvent(ev);
-        });
-        engine.EngineExited += code => dispatcher.BeginInvoke(() => vm.OnEngineExited(code));
+                switch (ev)
+                {
+                    case ProjectSucceededEvent e: succeeded.Add(e.ProjectId); break;
+                    case ProjectFailedEvent e: failed.Add(e.ProjectId); break;
+                    case SyncCompletedEvent: synced = true; break;
+                    case ErrorEvent e: error ??= e; break;
+                }
+                vm.OnEvent(ev);
+            });
+            engine.EngineExited += code => dispatcher.BeginInvoke(() => vm.OnEngineExited(code));
 
-        // (1)'in ölçüsü: stopRun giderken ExitReady kaç kez atılmıştı. (2)'ninki: ExitReady ANINDAKİ durum.
-        var sent = new List<IpcCommand>();
-        int readyCount = 0, readyAtStop = -1;
-        vm.DebugOnCommandSent = cmd =>
-        {
-            sent.Add(cmd);
-            if (cmd is StopRunCommand) readyAtStop = readyCount;
-        };
-        ExitMoment? atReady = null;
-        vm.ExitReady += (_, _) =>
-        {
-            readyCount++;
-            atReady ??= new ExitMoment([.. members.MsBuilds.Where(p => !p.HasExited).Select(p => p.Id)],
-                new HashSet<string>(succeeded, succeeded.Comparer), new HashSet<string>(failed, failed.Comparer));
-        };
+            // (1)'in ölçüsü: stopRun giderken ExitReady kaç kez atılmıştı. (2)'ninki: ExitReady ANINDAKİ durum.
+            var sent = new List<IpcCommand>();
+            int readyCount = 0, readyAtStop = -1;
+            vm.DebugOnCommandSent = cmd =>
+            {
+                sent.Add(cmd);
+                if (cmd is StopRunCommand) readyAtStop = readyCount;
+            };
+            ExitMoment? atReady = null;
+            vm.ExitReady += (_, _) =>
+            {
+                readyCount++;
+                atReady ??= new ExitMoment([.. members.MsBuilds.Where(p => !p.HasExited).Select(p => p.Id)],
+                    new HashSet<string>(succeeded, succeeded.Comparer), new HashSet<string>(failed, failed.Comparer));
+            };
 
-        // Açılış — MainWindow.StartEngineAsync'in yolu: motor hazır olunca açılışın Sync'i gider.
-        var start = engine.StartAsync();
-        DispatcherPump.PumpUntil(() => start.IsCompleted, TestPaths.WideStartupTimeout);
-        Assert.True(start.IsCompletedSuccessfully,
-            $"the engine did not become ready: {start.Exception?.GetBaseException().Message}");
-        var ready = start.Result;
-        vm.OnEngineReady(ready.EngineVersion, ready.Pid);
-        DispatcherPump.PumpUntil(() => synced || error is not null, TestPaths.WideRunTimeout);
-        Assert.True(synced && error is null, $"the startup sync did not complete: {error?.Code} {error?.Message}");
+            // Açılış — MainWindow.StartEngineAsync'in yolu: motor hazır olunca açılışın Sync'i gider.
+            var start = engine.StartAsync();
+            DispatcherPump.PumpUntil(() => start.IsCompleted, TestPaths.WideStartupTimeout);
+            Assert.True(start.IsCompletedSuccessfully,
+                $"the engine did not become ready: {start.Exception?.GetBaseException().Message}");
+            var ready = start.Result;
+            vm.OnEngineReady(ready.EngineVersion, ready.Pid);
+            DispatcherPump.PumpUntil(() => synced || error is not null, TestPaths.WideRunTimeout);
+            Assert.True(synced && error is null, $"the startup sync did not complete: {error?.Code} {error?.Message}");
 
-        // Build — kullanıcının yolu: düğme gerçekten açık (topoloji geldi, uçuşta iş yok). Bekleyiş, bir projenin
-        // derlendiğini VM'in de gördüğü ve gerçek bir MSBuild.exe'nin canlı olduğu ana kadar.
-        Assert.True(vm.BuildCommand.CanExecute(null), "Build is not enabled after the startup sync");
-        vm.BuildCommand.Execute(null);
-        DispatcherPump.PumpUntil(() => error is not null
-            || (members.LiveMsBuildCount > 0 && vm.Projects.Any(r => r.State == ProjectRowState.Started)),
-            TestPaths.WideRunTimeout);
-        if (error is { Code: "msbuildNotFound" } missing) Skip.If(true, missing.Message); // KillMidBuildTests deseni
-        Assert.True(error is null, $"the build failed: {error?.Code} {error?.Message}");
-        var inFlight = vm.Projects.Where(r => r.State == ProjectRowState.Started).Select(r => r.Id).ToList();
-        Assert.True(inFlight.Count > 0 && members.LiveMsBuildCount > 0, "no real MSBuild.exe was seen building");
+            // Build — kullanıcının yolu: düğme gerçekten açık (topoloji geldi, uçuşta iş yok). Bekleyiş, bir projenin
+            // derlendiğini VM'in de gördüğü ve gerçek bir MSBuild.exe'nin canlı olduğu ana kadar.
+            Assert.True(vm.BuildCommand.CanExecute(null), "Build is not enabled after the startup sync");
+            vm.BuildCommand.Execute(null);
+            DispatcherPump.PumpUntil(() => error is not null
+                || (members.LiveMsBuildCount > 0 && vm.Projects.Any(r => r.State == ProjectRowState.Started)),
+                TestPaths.WideRunTimeout);
+            if (error is { Code: "msbuildNotFound" } missing) Skip.If(true, missing.Message); // KillMidBuildTests deseni
+            Assert.True(error is null, $"the build failed: {error?.Code} {error?.Message}");
+            var inFlight = vm.Projects.Where(r => r.State == ProjectRowState.Started).Select(r => r.Id).ToList();
+            Assert.True(inFlight.Count > 0 && members.LiveMsBuildCount > 0, "no real MSBuild.exe was seen building");
 
-        // Güvenli çıkış — Close to tray kapalıyken × ya da tepsi → Exit.
-        vm.RequestExit();
+            // Güvenli çıkış — Close to tray kapalıyken × ya da tepsi → Exit.
+            vm.RequestExit();
 
-        // (1) TEK graceful stopRun gitti; ExitReady ne o gittiği anda ne de RequestExit dönerken vardı — çıkış drain'i
-        // bekliyor. Drain bitince yeniden sayılır: bekleyiş ikinci bir stopRun da üretmedi.
-        var stop = Assert.Single(sent.OfType<StopRunCommand>());
-        Assert.Equal(StopKind.Graceful, stop.Kind);
-        Assert.True(readyAtStop == 0, "ExitReady fired before the stop was sent");
-        Assert.True(readyCount == 0, "ExitReady fired before the drain — RequestExit did not wait for the work in flight");
-        DispatcherPump.PumpUntil(() => atReady is not null, TestPaths.WideRunTimeout);
-        Assert.True(atReady is not null, "ExitReady never fired — the drain did not end");
-        Assert.True(sent.OfType<StopRunCommand>().Count() == 1, "a second stopRun was sent while the exit waited");
+            // (1) TEK graceful stopRun gitti; ExitReady ne o gittiği anda ne de RequestExit dönerken vardı — çıkış drain'i
+            // bekliyor. Drain bitince yeniden sayılır: bekleyiş ikinci bir stopRun da üretmedi.
+            var stop = Assert.Single(sent.OfType<StopRunCommand>());
+            Assert.Equal(StopKind.Graceful, stop.Kind);
+            Assert.True(readyAtStop == 0, "ExitReady fired before the stop was sent");
+            Assert.True(readyCount == 0, "ExitReady fired before the drain — RequestExit did not wait for the work in flight");
+            DispatcherPump.PumpUntil(() => atReady is not null, TestPaths.WideRunTimeout);
+            Assert.True(atReady is not null, "ExitReady never fired — the drain did not end");
+            Assert.True(sent.OfType<StopRunCommand>().Count() == 1, "a second stopRun was sent while the exit waited");
 
-        // (2) ExitReady anında koşuda görülen her MSBuild.exe kendiliğinden çıkmıştı — henüz hiçbir şey öldürülmedi —
-        // ve stop anında uçuştaki her proje başarıyla bitti: drain kesilmedi.
-        Assert.True(atReady.LiveMsBuilds.Count == 0,
-            $"MSBuild.exe still running when ExitReady fired (pid {string.Join(", ", atReady.LiveMsBuilds)}) "
-            + "— the exit did not wait for the drain");
-        var notSucceeded = inFlight.Where(id => !atReady.Succeeded.Contains(id)).ToList();
-        Assert.True(notSucceeded.Count == 0 && atReady.Failed.Count == 0,
-            $"in flight at the stop but not succeeded: [{string.Join(", ", notSucceeded.Select(Path.GetFileName))}], "
-            + $"failed: [{string.Join(", ", atReady.Failed.Select(Path.GetFileName))}] — the drain was cut short");
+            // (2) ExitReady anında koşuda görülen her MSBuild.exe kendiliğinden çıkmıştı — henüz hiçbir şey öldürülmedi —
+            // ve stop anında uçuştaki her proje başarıyla bitti: drain kesilmedi.
+            Assert.True(atReady.LiveMsBuilds.Count == 0,
+                $"MSBuild.exe still running when ExitReady fired (pid {string.Join(", ", atReady.LiveMsBuilds)}) "
+                + "— the exit did not wait for the drain");
+            var notSucceeded = inFlight.Where(id => !atReady.Succeeded.Contains(id)).ToList();
+            Assert.True(notSucceeded.Count == 0 && atReady.Failed.Count == 0,
+                $"in flight at the stop but not succeeded: [{string.Join(", ", notSucceeded.Select(Path.GetFileName))}], "
+                + $"failed: [{string.Join(", ", atReady.Failed.Select(Path.GetFileName))}] — the drain was cut short");
 
-        // (3)'ün girdisi — OnExit'in yaptığı disposal bekleyişi. Üye kümesi ondan ÖNCE kesinleşir: kapanışta doğan
-        // bir üye beklenmez, olsa da KILL_ON_JOB_CLOSE onu da toplar.
-        var observed = members.Freeze();
-        bool disposed = AppShutdown.WaitForAsyncDisposal(engine, AppShutdown.DisposalTimeout);
-        // [idle-memory · dalga 2] Motor runStarted'la sandbox'taki koşu klasörünü bildirdi ve VM anlatıyı oraya yaydı. Üretimde süreç
-        // burada biter ve tutamacı sistem kapatır; test sürecinde VM yaşar — spool sandbox silinmeden önce kapanır.
-        vm.Narrative.Clear();
-        return new ExitOutcome(observed, ready.Pid, Stopwatch.StartNew(), disposed);
+            // (3)'ün girdisi — OnExit'in yaptığı disposal bekleyişi. Üye kümesi ondan ÖNCE kesinleşir: kapanışta doğan
+            // bir üye beklenmez, olsa da KILL_ON_JOB_CLOSE onu da toplar.
+            var observed = members.Freeze();
+            bool disposed = AppShutdown.WaitForAsyncDisposal(engine, AppShutdown.DisposalTimeout);
+            return new ExitOutcome(observed, ready.Pid, Stopwatch.StartNew(), disposed);
+        }
+        finally { vm.Narrative.Clear(); }
     }
 
     /// <summary>(2)'nin ölçüsü — <see cref="RunViewModel.ExitReady"/> atıldığı ANDA hâlâ canlı <c>MSBuild.exe</c>'ler
