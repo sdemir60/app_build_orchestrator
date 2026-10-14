@@ -246,7 +246,7 @@ public sealed class CsprojEvaluator
 
         string asmName = Elements(root, "PropertyGroup").SelectMany(pg => Elements(pg, "AssemblyName"))
             .Select(e => e.Value.Trim()).FirstOrDefault(v => v.Length > 0)
-            ?? System.IO.Path.GetFileNameWithoutExtension(csprojPath);
+            ?? ProjectDisplayName.FromPath(csprojPath);
 
         // [T72/Task 14] StaleObjDetector.Inspect'in expectedTfm'i için: legacy TargetFrameworkVersion ya da
         // SDK-style TargetFramework — bkz. TargetFrameworkMonikerDeriver.

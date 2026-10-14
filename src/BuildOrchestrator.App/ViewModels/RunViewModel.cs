@@ -7,6 +7,7 @@ using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Discovery;
 using BuildOrchestrator.Core.Formatting;
 using BuildOrchestrator.Core.Incremental;
 using BuildOrchestrator.Core.Logs;
@@ -2400,13 +2401,13 @@ public sealed partial class RunViewModel : ObservableObject
         // yoldan Skipped'a geçmeye devam eder.
         if (_currentRunMode == RunMode.Cycles && e.Reason == SkipReasons.OutOfCycleScope)
         {
-            EnsureRow(e.ProjectId, Path.GetFileNameWithoutExtension(e.ProjectId), ProjectRowState.Pending).SkipReason = e.Reason;
+            EnsureRow(e.ProjectId, ProjectDisplayName.FromPath(e.ProjectId), ProjectRowState.Pending).SkipReason = e.Reason;
             _outOfScopeSkipCount++; // [Task 2 review fix M-1/I-2] bkz. alanın kendi XML yorumu
             UpdateEta(); // [Task 17 deseni — Task 2 review fix M-1] bu da motor açısından bir "tamamlanma"dır
             return;
         }
 
-        var row = EnsureRow(e.ProjectId, Path.GetFileNameWithoutExtension(e.ProjectId), ProjectRowState.Skipped);
+        var row = EnsureRow(e.ProjectId, ProjectDisplayName.FromPath(e.ProjectId), ProjectRowState.Skipped);
         row.State = ProjectRowState.Skipped;
         row.SkipReason = e.Reason; // proje sayfası "neden boş" sorusunu bundan cevaplar
         row.CycleUnconverged = e.CycleUnconverged; // [cycle rounds/Task 8] kalıcı kırık döngü — render Task 9'undur
@@ -3068,10 +3069,11 @@ public sealed partial class RunViewModel : ObservableObject
         }
     }
 
-    /// <summary>[karar 10] Kompakt başlığın ve özetin proje adı (kilit altında): işlemin ad haritası, yoksa kimliğin dosya adı — satır
-    /// listesinin kısa ad geri dönüşüyle aynı (<see cref="ShortNameFor"/>); IPC thread'i satır listesine soramaz.</summary>
+    /// <summary>[karar 10] Kompakt başlığın ve özetin proje adı (kilit altında): işlemin ad haritası, yoksa projenin yoldan türeyen
+    /// görünen adı (<see cref="ProjectDisplayName.FromPath"/> — satır listesinin ve akışın da geri dönüşü); IPC thread'i satır
+    /// listesine soramaz.</summary>
     private string CompactNameLocked(string projectId) =>
-        _compactNames.TryGetValue(projectId, out var name) ? name : Path.GetFileNameWithoutExtension(projectId);
+        _compactNames.TryGetValue(projectId, out var name) ? name : ProjectDisplayName.FromPath(projectId);
 
     /// <summary>
     /// [idle-memory · dalga 2 · spec §6.5 · karar 11] Bir projenin sonucu geldi — başarı, hata ya da atlama ("her sonuç"): bu işlem
@@ -3361,7 +3363,7 @@ public sealed partial class RunViewModel : ObservableObject
         var row = FindRow(projectId);
         if (row is not null) return row.Name;
         var node = Topology.FirstOrDefault(n => string.Equals(n.Id, projectId, StringComparison.OrdinalIgnoreCase));
-        return node?.Name ?? Path.GetFileNameWithoutExtension(projectId);
+        return node?.Name ?? ProjectDisplayName.FromPath(projectId);
     }
 
     /// <summary>[D4 review §2/§3] <see cref="LoadProjectLogAsync"/> bittikten sonra proje-log gösterilmeli mi:

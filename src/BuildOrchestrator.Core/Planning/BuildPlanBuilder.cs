@@ -56,7 +56,7 @@ public sealed class BuildPlanBuilder(WorkspaceScanner scanner, CsprojEvaluator e
         {
             string id = topo.BuildOrder[i];
             nodes.Add(new ProjectNode(
-                Id: id, Name: nameById.GetValueOrDefault(id, Path.GetFileNameWithoutExtension(id)), ProjectPath: id,
+                Id: id, Name: nameById.GetValueOrDefault(id, ProjectDisplayName.FromPath(id)), ProjectPath: id,
                 SolutionNames: solutions.GetValueOrDefault(id, []),
                 Dependencies: edgeById.GetValueOrDefault(id, []),
                 BuildOrder: i, LayerIndex: null, LayerName: null,

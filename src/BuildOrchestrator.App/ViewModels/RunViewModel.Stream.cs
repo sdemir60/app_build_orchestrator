@@ -1,7 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
-using System.IO;
 using BuildOrchestrator.Contracts.Ipc;
+using BuildOrchestrator.Core.Discovery;
 using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace BuildOrchestrator.App.ViewModels;
@@ -424,7 +424,7 @@ public sealed partial class RunViewModel
 
     private string ResolveName(string projectId) =>
         FindRow(projectId)?.Name
-            ?? Path.GetFileNameWithoutExtension(projectId);
+            ?? ProjectDisplayName.FromPath(projectId);
 
     /// <summary>[Selection deseni] Seçim değişince her stream satırının <see cref="StreamEventViewModel.IsSelected"/>'ını
     /// tazeler (ProjectRow/Projects akışının eşi — TEK seçim kaynağı <see cref="SelectedProjectId"/>).</summary>
