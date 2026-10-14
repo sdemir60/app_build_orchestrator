@@ -132,7 +132,7 @@ public sealed class NarrativeBudgetTests(ITestOutputHelper output)
         DispatcherPump.DrainToIdle(); // işlem sonu trimi (pay sıfır: boşta kuyruktan)
 
         Assert.Equal(1, trims);                                                     // ön-koşul: ölçüm trimden sonra
-        Assert.True(console.Document.LineCount <= ConsoleView.RenderSliceLines + 1, // ön-koşul: görünüm yalnız render dilimini tutar
+        Assert.True(console.Document.LineCount <= ConsoleView.SeededDocumentLines, // ön-koşul: görünüm yalnız render dilimini tutar
             $"the console document holds {console.Document.LineCount} lines — the render slice was not trimmed");
         long after = GC.GetTotalMemory(forceFullCollection: true);
         GC.KeepAlive(window);

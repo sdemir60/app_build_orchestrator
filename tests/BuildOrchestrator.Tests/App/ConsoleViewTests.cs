@@ -80,7 +80,7 @@ public class ConsoleViewTests
         for (int i = 0; i < 250; i++) view.AppendBatch($"line{i}\n");
 
         // Belge son ~200 satıra kırpıldı (baştakiler düştü) — hacim/performans (Ek A #16).
-        Assert.True(view.Document.LineCount <= ConsoleView.RenderSliceLines + 1,
+        Assert.True(view.Document.LineCount <= ConsoleView.SeededDocumentLines,
             $"belge satır sayısı ({view.Document.LineCount}) render dilimini aşmamalı");
         Assert.Contains("line249", view.Document.Text); // en yeni korunur
         Assert.DoesNotContain("line0\n", view.Document.Text); // en eski kırpıldı
@@ -103,7 +103,7 @@ public class ConsoleViewTests
 
         for (int i = 0; i < ConsoleView.RenderSliceLines + 50; i++) view.AppendBatch($"live{i}\n");
 
-        Assert.True(view.Document.LineCount > ConsoleView.RenderSliceLines + 1,
+        Assert.True(view.Document.LineCount > ConsoleView.SeededDocumentLines,
             $"takip kapalıyken kırpma OLMAMALI (satır sayısı {view.Document.LineCount})");
         Assert.Contains("live0\n", view.Document.Text); // en eski canlı satır DURUYOR
     }
@@ -303,7 +303,7 @@ public class ConsoleViewTests
 
         for (int i = 0; i < 400; i++) view.AppendBatch($"live{i}\n");
 
-        Assert.True(view.Document.LineCount <= ConsoleView.RenderSliceLines + 1,
+        Assert.True(view.Document.LineCount <= ConsoleView.SeededDocumentLines,
             $"follow'da belge satır sayısı ({view.Document.LineCount}) render dilimini aşmamalı");
         Assert.Contains("live399", view.Document.Text);   // en yeni korunur
         Assert.DoesNotContain("live0\n", view.Document.Text); // en eski düştü

@@ -287,7 +287,7 @@ public class HiddenSurfaceTests
             MainWindowHost.LogLine(vm, "A", i + 1, $"old {i}");
             window.AppendConsoleBatch($"old {i}\n", window.ConsoleReseedGen); // takip kapalı: belge kırpılmadan büyür
         }
-        Assert.True(console.Document.LineCount > ConsoleView.RenderSliceLines + 1, "ön-koşul: takip kapalıyken belge kırpılmadı");
+        Assert.True(console.Document.LineCount > ConsoleView.SeededDocumentLines, "ön-koşul: takip kapalıyken belge kırpılmadı");
         window.SetSurfaceHidden(true);
         int replacedBefore = console.RunDocumentReplacedCount;
         _ = vm.BuildCommand.ExecuteAsync(null); // temizlik ilk await'ten ÖNCE, senkron: VM anlatıyı boşaltır (işlemin "requested" satırı kalır)

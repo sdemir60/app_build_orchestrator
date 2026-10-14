@@ -39,6 +39,13 @@ public partial class ConsoleView : UserControl
     /// <summary>[3b/Ek A #16] Canlı append'te belgede tutulan azami satır (render dilimi). "N lines" sayacı bundan
     /// ETKİLENMEZ — tam mantıksal sayacı VM taşır (render dilimi DEĞİL, Ek A #23).</summary>
     public const int RenderSliceLines = ConsoleRenderSlice.DefaultMaxLines; // 200
+
+    /// <summary>[idle-memory · group B re-review] Render diliminden KURULAN belgenin satır sayısı: dilim + sondaki boş satır. Anlatı
+    /// metni '\n' SONEKLİdir (<see cref="ConsoleBatcher"/>, <see cref="NarrativeStore.Join"/>), yani belgenin son satırı boş prompt
+    /// satırıdır (<see cref="PositionPrompt"/>). Belge bundan fazla satır taşıyorsa kırpılacak bir şey vardır
+    /// (<see cref="TrimNarrativeWhenFollowing"/>); "belge render diliminde" iddiası (testler dahil) bu sınırla ifade edilir.</summary>
+    public const int SeededDocumentLines = RenderSliceLines + 1;
+
     // Kullanıcı tepeye ne kadar yaklaşınca önceki chunk yüklenir (px) — bottom-stick eşiğiyle uyumlu (48px).
     private const double ChunkTopThresholdPx = 48.0;
 
@@ -440,7 +447,7 @@ public partial class ConsoleView : UserControl
     {
         if (_projectMode || _prepending || !_bottomAnchor.ShouldFollow) return;
         var document = EditorControl.Document;
-        if (document.LineCount <= RenderSliceLines + 1) return;
+        if (document.LineCount <= SeededDocumentLines) return;
         document.BeginUpdate();
         try { TrimToRenderSlice(document); }
         finally { document.EndUpdate(); }

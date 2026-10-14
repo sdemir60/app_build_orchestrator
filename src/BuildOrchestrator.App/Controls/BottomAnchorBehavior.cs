@@ -86,8 +86,7 @@ public sealed class BottomAnchorBehavior
     {
         if (stuck) _steering = false; // mod değişimi gibi açık bir "dibe sabitlen" isteği direksiyonu geri alır
         _state = new BottomAnchorState(stuck, IsJumping: false);
-        _lastShowPill = ShowPill;
-        Changed?.Invoke(this, EventArgs.Empty);
+        RaiseChanged();
     }
 
     /// <summary>Her scroll-konum/extent değişiminde çağrılır (ScrollViewer.ScrollChanged.ExtentHeightChange için
@@ -113,9 +112,19 @@ public sealed class BottomAnchorBehavior
     /// </summary>
     private void Notify(BottomAnchorState prev)
     {
-        bool pill = ShowPill;
-        if (_state == prev && pill == _lastShowPill) return;
-        _lastShowPill = pill;
+        if (_state == prev && ShowPill == _lastShowPill) return;
+        RaiseChanged();
+    }
+
+    /// <summary>
+    /// Host'a duyurur (<see cref="Changed"/>) ve duyurulan pill görünürlüğünü KAYDEDER (<see cref="_lastShowPill"/>): sonraki
+    /// <see cref="Notify"/> "pill değişti mi" sorusunu buna karşı sorar. Kayıt ile duyuru ayrı yazılırsa biri unutulur ve pill
+    /// ya hiç yenilenmez ya da her olayda yenilenir — ikisi TEK yerde durur; durumun değiştiği her yol (zorlama, kullanıcı
+    /// kaydırması, bekleme sonu, atlama başı ve sonu) buradan duyurur.
+    /// </summary>
+    private void RaiseChanged()
+    {
+        _lastShowPill = ShowPill;
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
@@ -161,8 +170,7 @@ public sealed class BottomAnchorBehavior
                 // Zaten dipteydi (kullanıcı kendi eliyle dibe indi): takip sürer. Durum değişmedi ama takip GERİ GELDİ —
                 // host'lar duyar [idle-memory · final review m1]: konsol takibe bağlı kırpmasını sonraki batch'i beklemeden yapar.
                 _scrollInstant(_getExtent());
-                _lastShowPill = ShowPill;
-                Changed?.Invoke(this, EventArgs.Empty);
+                RaiseChanged();
                 return;
             }
             JumpToBottom();
@@ -178,15 +186,13 @@ public sealed class BottomAnchorBehavior
         if (!animated) { ForceStuck(true); return; } // reduced-motion/instant — jumping penceresine gerek yok
 
         _state = BottomAnchorDecision.BeginJump(_state);
-        _lastShowPill = ShowPill;
-        Changed?.Invoke(this, EventArgs.Empty);
+        RaiseChanged();
         int generation = ++_jumpGeneration;
         _scheduleOnce(TimeSpan.FromMilliseconds(BottomAnchorDecision.JumpingWindowMs), () =>
         {
             if (generation != _jumpGeneration) return; // yeni bir JumpToBottom bunu geçersiz kıldı
             _state = BottomAnchorDecision.EndJump(_state);
-            _lastShowPill = ShowPill;
-            Changed?.Invoke(this, EventArgs.Empty);
+            RaiseChanged();
         });
     }
 

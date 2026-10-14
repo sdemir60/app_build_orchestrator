@@ -25,6 +25,18 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class ConsoleMemoryTests
 {
+    /// <summary>Anlatı modunda, takip açık, BOŞ bir store'a bağlı gerçek bir görünüm — üretim düzeniyle (backlog store'dur): bu
+    /// dosyadaki anlatı testlerinin ortak kurulumu (dört satır beş yerde yazılmıştı). Dönen pencere canlı tutulmalıdır (çağıran
+    /// <c>GC.KeepAlive</c> der).</summary>
+    private static (ConsoleView View, NarrativeStore Store, Window Host) NewNarrativeView()
+    {
+        var store = new NarrativeStore();
+        var view = new ConsoleView { AnimationsEnabledProvider = () => false };
+        var host = DsResources.Realize(DsResources.NewHost(), view);
+        view.ReplaceRunDocument(NarrativeSnapshots.Of(store));
+        return (view, store, host);
+    }
+
     /// <summary>Anlatı satırları; <paramref name="padding"/> satırı o kadar karakter uzatır (satır başına sabit maliyeti metne
     /// göre küçültmek isteyen ölçümler için).</summary>
     private static List<string> Lines(int count, int seed, int padding = 0) =>
@@ -34,15 +46,12 @@ public class ConsoleMemoryTests
     [StaFact]
     public void The_narrative_document_keeps_no_undo_history_so_trimmed_text_is_released()
     {
-        var store = new NarrativeStore();
-        var view = new ConsoleView { AnimationsEnabledProvider = () => false };
-        var window = DsResources.Realize(DsResources.NewHost(), view);
-        view.ReplaceRunDocument(NarrativeSnapshots.Of(store)); // anlatı modu: takip açık, kırpma devrede
+        var (view, store, window) = NewNarrativeView(); // anlatı modu: takip açık, kırpma devrede
 
         for (int batch = 0; batch < 20; batch++) NarrativeSnapshots.Deliver(store, view, Lines(50, batch)); // 1000 satır
 
         var document = view.Document;
-        Assert.True(document.LineCount <= ConsoleView.RenderSliceLines + 1,
+        Assert.True(document.LineCount <= ConsoleView.SeededDocumentLines,
             $"ön-koşul: belge {document.LineCount} satır — kırpma çalışmadı (vakum)");
         Assert.Equal(0, document.UndoStack.SizeLimit);
         Assert.False(document.UndoStack.CanUndo, "kırpılan satırlar geri-alma geçmişinde canlı tutuluyor");
@@ -70,10 +79,7 @@ public class ConsoleMemoryTests
     [StaFact]
     public void The_narrative_view_keeps_no_copy_of_the_lines()
     {
-        var store = new NarrativeStore();
-        var view = new ConsoleView { AnimationsEnabledProvider = () => false };
-        var window = DsResources.Realize(DsResources.NewHost(), view);
-        view.ReplaceRunDocument(NarrativeSnapshots.Of(store));
+        var (view, store, window) = NewNarrativeView();
 
         for (int batch = 0; batch < 20; batch++) NarrativeSnapshots.Deliver(store, view, Lines(50, batch));
 
@@ -81,7 +87,7 @@ public class ConsoleMemoryTests
         // anlatıda da HER ZAMAN kendi listesini (_backlogLines) tutuyordu ve kırpılan canlı satırlar ona eklenirdi.
         Assert.False(view.BacklogOwnsCopy);
         Assert.Equal(1000, store.Count);
-        Assert.True(view.Document.LineCount <= ConsoleView.RenderSliceLines + 1);
+        Assert.True(view.Document.LineCount <= ConsoleView.SeededDocumentLines);
         view.PrependPreviousChunk();                                  // geçmiş store'dan gelir
         Assert.True(view.Document.LineCount > ConsoleView.RenderSliceLines);
         int shown = view.Document.LineCount - 1;                      // son satır: '\n' sonrası boş satır
@@ -101,7 +107,7 @@ public class ConsoleMemoryTests
 
         view.ReplaceRunDocument(NarrativeSnapshots.Of(store));
 
-        Assert.Equal(ConsoleView.RenderSliceLines + 1, view.Document.LineCount);
+        Assert.Equal(ConsoleView.SeededDocumentLines, view.Document.LineCount);
         Assert.StartsWith("line 300", view.Document.GetText(view.Document.GetLineByNumber(1)));
         GC.KeepAlive(window);
     }
@@ -174,10 +180,7 @@ public class ConsoleMemoryTests
     [StaFact]
     public void The_narrative_document_returns_to_the_render_slice_when_following_resumes()
     {
-        var store = new NarrativeStore();
-        var view = new ConsoleView { AnimationsEnabledProvider = () => false };
-        var window = DsResources.Realize(DsResources.NewHost(), view);
-        view.ReplaceRunDocument(NarrativeSnapshots.Of(store));
+        var (view, store, window) = NewNarrativeView();
         view.StickToBottom = false; // kullanıcı yukarıda okuyor: takip kapalı, belge kırpılmaz
 
         for (int batch = 0; batch < 20; batch++) NarrativeSnapshots.Deliver(store, view, Lines(50, batch)); // 1000 satır
@@ -185,7 +188,7 @@ public class ConsoleMemoryTests
 
         view.StickToBottom = true; // takip geri geldi (pill, bekleme sonu) — koşu bitmiş, ardından batch gelmeyecek
 
-        Assert.True(view.Document.LineCount <= ConsoleView.RenderSliceLines + 1, // KIRMIZI: bugün belge 1001 satırda kalır
+        Assert.True(view.Document.LineCount <= ConsoleView.SeededDocumentLines, // KIRMIZI: bugün belge 1001 satırda kalır
             $"the narrative document still holds {view.Document.LineCount} lines after following resumed");
         view.EvaluateChunkScroll(100.0); // arm: kullanıcı tepeden uzaklaştı
         view.EvaluateChunkScroll(0.0);   // tepeye kaydırma: önceki dilim store'dan
@@ -208,20 +211,17 @@ public class ConsoleMemoryTests
     [StaFact]
     public void Trimming_a_narrative_document_whose_store_was_cleared_behind_the_view_does_not_throw()
     {
-        var store = new NarrativeStore();
-        var view = new ConsoleView { AnimationsEnabledProvider = () => false };
-        var window = DsResources.Realize(DsResources.NewHost(), view);
-        view.ReplaceRunDocument(NarrativeSnapshots.Of(store));
+        var (view, store, window) = NewNarrativeView();
         for (int batch = 0; batch < 6; batch++) NarrativeSnapshots.Deliver(store, view, Lines(50, batch)); // 300 satır: kırpma koştu, _loadedFrom > 0
         view.StickToBottom = false; // kullanıcı yukarıda okuyor: takip kapalı, belge kırpılmaz
         for (int batch = 6; batch < 12; batch++) NarrativeSnapshots.Deliver(store, view, Lines(50, batch)); // belge render diliminin üstüne büyür
-        Assert.True(view.Document.LineCount > ConsoleView.RenderSliceLines + 1, "ön-koşul: takip kapalıyken belge kırpılmadı");
+        Assert.True(view.Document.LineCount > ConsoleView.SeededDocumentLines, "ön-koşul: takip kapalıyken belge kırpılmadı");
         store.Clear(); // gizliyken yeni işlem: VM anlatıyı boşalttı, görünüm yeniden bağlanmadı (kabuk yalnız bayat bayrağını kaldırdı)
 
         var thrown = Record.Exception(() => view.StickToBottom = true); // bekleme doldu: takip geri geldi → kırpma sorulur
 
         Assert.Null(thrown); // KIRMIZI: bugün ArgumentOutOfRangeException (GetLineByNumber(<= 0))
-        Assert.True(view.Document.LineCount <= ConsoleView.RenderSliceLines + 1,
+        Assert.True(view.Document.LineCount <= ConsoleView.SeededDocumentLines,
             $"the stale document still holds {view.Document.LineCount} lines after following resumed");
         GC.KeepAlive(window);
     }
@@ -252,7 +252,7 @@ public class ConsoleMemoryTests
         long viewCost = AllocatedBy(() => view.AppendNarrativeBatch(batch));
         long documentCost = AllocatedBy(() => InsertAndTrim(twin.Document, batch));
 
-        Assert.True(view.Document.LineCount <= ConsoleView.RenderSliceLines + 1, "ön-koşul: belge render dilimine kırpılmadı (vakum)");
+        Assert.True(view.Document.LineCount <= ConsoleView.SeededDocumentLines, "ön-koşul: belge render dilimine kırpılmadı (vakum)");
         long copy = batch.Length * (long)sizeof(char);
         Assert.True(viewCost - documentCost < copy / 2, string.Create(CultureInfo.InvariantCulture, // KIRMIZI: bugün ≈ 3,8 kopya fazla
             $"the view allocated {viewCost} bytes for a {copy}-byte batch, the document's own insert and trim {documentCost}"));
@@ -264,10 +264,7 @@ public class ConsoleMemoryTests
     /// satırlar önce store'a sonra batch'le gelir. Kırpma ve ekleme yolu ölçümden önce bir kez koşmuştur.</summary>
     private static (ConsoleView View, NarrativeStore Store, Window Host) NarrativeViewAtTheSlice()
     {
-        var store = new NarrativeStore();
-        var view = new ConsoleView { AnimationsEnabledProvider = () => false };
-        var host = DsResources.Realize(DsResources.NewHost(), view);
-        view.ReplaceRunDocument(NarrativeSnapshots.Of(store));
+        var (view, store, host) = NewNarrativeView();
         for (int batch = 0; batch < 8; batch++) NarrativeSnapshots.Deliver(store, view, Lines(50, batch)); // 400 satır: kırpma koştu
         return (view, store, host);
     }
