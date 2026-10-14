@@ -112,16 +112,32 @@ public class CompactConsoleSettingsTests
         Assert.Equal(1, Occurrences(run.GetRunDocumentText(), OnNote));
     }
 
+    /// <summary>[idle-memory · dalga 2 · karar 16] Ayarı TAŞIMAYAN bir uygulama onu değiştirmez ve not yazmaz: parametre "verilmedi ⇒
+    /// olduğu gibi kalsın"dır (<c>null</c>). Settings'in Save'i değeri her zaman verir (<see cref="SettingsDraftViewModel.CommitAsync"/>);
+    /// ayarı hiç anmayan bir çağıran — başka bir ayarı sınayan test — kipi kendiliğinden açıp konsola not düşmemeli.</summary>
+    [Fact]
+    public async Task An_apply_that_does_not_carry_the_setting_leaves_it_unchanged_and_quiet()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo", CompactConsole = false };
+
+        await run.ApplySettingsAsync([], @"D:\repo", []);
+
+        Assert.False(run.CompactConsole);
+        Assert.DoesNotContain(Label, run.GetRunDocumentText(), StringComparison.Ordinal);
+    }
+
     // ---------------------------------------------------------------- kabuk: seed + kalıcılık
 
-    /// <summary>Açılışta kalıcı durumdan seed edilir; VM'de değişince kalıcı duruma yazılır.</summary>
+    /// <summary>Açılışta kalıcı durumdan seed edilir; VM'de değişince kalıcı duruma yazılır. Fixture'ın kip ataması kapatılır
+    /// (<c>compactConsole: null</c>): test pencerenin KENDİ seed'ini gözler — fixture'ın varsayılanı (kapalı) onu ezerdi.</summary>
     [StaFact]
     public void The_shell_seeds_the_setting_and_persists_its_changes()
     {
         using var temp = new TempDir();
         UiStateStore(temp).Save(new UiState { CompactConsole = false });
 
-        var (window, vm) = New(temp);
+        var (window, vm) = New(temp, compactConsole: null);
 
         Assert.False(vm.CompactConsole);
         vm.CompactConsole = true;
@@ -129,14 +145,15 @@ public class CompactConsoleSettingsTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>Anahtarı taşımayan eski bir ui-state dosyası onaylanmış varsayılanı (açık) alır.</summary>
+    /// <summary>Anahtarı taşımayan eski bir ui-state dosyası onaylanmış varsayılanı (açık) alır — pencerenin kendi seed'i
+    /// (<c>compactConsole: null</c>: fixture'ın kapalı varsayılanı onu ezerdi).</summary>
     [StaFact]
     public void An_older_state_file_without_the_key_keeps_the_switch_on()
     {
         using var temp = new TempDir();
         UiStateStore(temp).Save(new UiState());
 
-        var (window, vm) = New(temp);
+        var (window, vm) = New(temp, compactConsole: null);
 
         Assert.True(vm.CompactConsole);
         GC.KeepAlive(window);
@@ -170,8 +187,11 @@ public class CompactConsoleSettingsTests
     }
 
     /// <summary>Kapatma yönü: varsayılanla (açık) açılan diyalogda switch kapatılıp Save edilince hem UiState hem VM kapalı
-    /// olur. Önceki test varsayılan DEĞERE döner (Save'in bayrağı atlaması orada da yeşil kalırdı: <c>ApplySettingsAsync</c>'in
-    /// varsayılan argümanı açıktır); bu test Save'in varsayılan DIŞI bir değeri uyguladığını sınar.</summary>
+    /// olur — Save'in varsayılan DIŞI bir değeri uyguladığının pini.
+    /// <para><b>[DEĞİŞEN GEREKÇE — karar 16]</b> Eski gerekçe: önceki test varsayılan DEĞERE döner ve Save bayrağı atlasa da orada yeşil
+    /// kalırdı, çünkü <c>ApplySettingsAsync</c>'in varsayılan argümanı açıktı. Değişen: parametre artık <c>bool?</c>'dur ve verilmemesi
+    /// "dokunma" demektir (<see cref="An_apply_that_does_not_carry_the_setting_leaves_it_unchanged_and_quiet"/>) — önceki test de Save'in
+    /// bayrağı taşıdığını artık ayırt eder. Bu test iki yönün kapanış tarafı olarak kalır.</para></summary>
     [StaFact]
     public void Switching_the_setting_off_and_saving_applies_it()
     {

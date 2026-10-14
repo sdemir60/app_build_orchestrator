@@ -56,9 +56,18 @@ internal static class MainWindowHost
     /// (<see cref="NeverTickingBatcher"/>): satırlar kanalda bekler, belgeye yalnız testin kendisi batch verir. Pompayı kendisi
     /// süren testler (ör. bellek bütçesi ölçümü: tick etmeyen pompanın kanalında biriken satırlar üretimde yoktur) kendi
     /// pompasını verir.</param>
+    /// <param name="compactConsole">[idle-memory · dalga 2 · spec §6.5] Kabuğun konsolu kompakt mı yazsın. Varsayılan KAPALI
+    /// (<c>false</c>): üretimin varsayılanı açıktır, ama pencere kuran testlerin anlatı iddiaları (her proje satırı anlatıda, "N
+    /// lines" satır satır, model ile belge eşitliği) her satırın geçtiği kipi pinler — kompakt kip bilgi ve komut satırlarını gizler
+    /// ve onları sessizce boşa düşürürdü. Kompakt kipi sınayan testler <c>true</c> verir; <c>null</c> ⇒ dokunulmaz: değer pencerenin
+    /// kalıcı durumdan tohumladığıdır (açılış seed'ini gözleyen testler). Değer pencere kurulduktan SONRA atanır — ctor kalıcı
+    /// durumdan tohumlar ve önce atanan bir değeri ezerdi (<paramref name="beforeVm"/>'deki bir atama da ezilir). İşlem yokken
+    /// atandığı için hemen etkindir (<see cref="RunViewModel.CompactConsoleInEffect"/>). Atama tohumdan farklıysa kabuğun kalıcılık
+    /// zinciri enjekte edilen store'u yazar (yalnız temp dosyası): store'un henüz yazılmadığını ön-koşul alan test <c>null</c>
+    /// verir.</param>
     public static (MainWindow window, RunViewModel vm) New(TempDir uiStateDir, Action<RunViewModel>? beforeVm = null,
         UiState? saved = null, AutostartService? autostart = null, Func<long>? nowMs = null,
-        bool productionMemoryCollector = false, ConsoleBatcher? console = null)
+        bool productionMemoryCollector = false, ConsoleBatcher? console = null, bool? compactConsole = false)
     {
         ArgumentNullException.ThrowIfNull(uiStateDir);
         var engine = new EngineHost(Path.Combine(AppContext.BaseDirectory, "no-such-supervisor.exe"));
@@ -75,6 +84,7 @@ internal static class MainWindowHost
         if (saved is not null) store.Save(saved);
         var window = new MainWindow(engine, vm, batcher, DsResources.NewScope(), store, autostart);
         if (!productionMemoryCollector) window.MemoryCollector = NoRealGc.Collection;
+        if (compactConsole is { } compact) vm.CompactConsole = compact; // ctor'un seed'inden SONRA (yukarıdaki param doc'u)
         return (window, vm);
     }
 

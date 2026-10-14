@@ -280,10 +280,12 @@ public sealed partial class RunViewModel
     /// <param name="resolveAtFullPriority">[RESOLVE Faz 4 / karar 11] General'ın "Resolve cycles at full priority"
     /// switch'i.</param>
     /// <param name="compactConsole">[idle-memory · dalga 2 / spec §6.5] General'ın "Compact console" switch'i — App-içi
-    /// tercih (motora gitmez); değer değiştiyse konsola not düşer, değişiklik bir sonraki işlemde geçerli olur.</param>
+    /// tercih (motora gitmez); değer değiştiyse konsola not düşer, değişiklik bir sonraki işlemde geçerli olur. <c>null</c> ⇒
+    /// DOKUNULMAZ: Settings'in Save'i değeri her zaman verir (<see cref="SettingsDraftViewModel.CommitAsync"/>); ayarı hiç anmayan
+    /// bir çağıran kipi kendiliğinden değiştirip konsola not düşmemeli.</param>
     public async Task ApplySettingsAsync(IReadOnlyList<LayerPattern> patterns, string? repositoryRoot,
         IReadOnlyList<ExternalProject> externals, bool pullExternalsBeforeBuild = true, bool stashOnBranchSwitch = false,
-        IReadOnlyList<string>? settingNotes = null, bool resolveAtFullPriority = true, bool compactConsole = true)
+        IReadOnlyList<string>? settingNotes = null, bool resolveAtFullPriority = true, bool? compactConsole = null)
     {
         string root = RootOf(repositoryRoot);
         if (WorkspaceIdle && root.Length == 0 && HasWorkspace) CloseWorkspace();
@@ -293,7 +295,7 @@ public sealed partial class RunViewModel
         ApplyPullExternals(pullExternalsBeforeBuild);
         ApplyStashOnBranchSwitch(stashOnBranchSwitch);
         ApplyResolveAtFullPriority(resolveAtFullPriority);
-        ApplyCompactConsole(compactConsole);
+        if (compactConsole is { } compact) ApplyCompactConsole(compact);
         if (settingNotes is not null)
             foreach (var note in settingNotes) AppendRunLine(note);
         if (!WorkspaceIdle)

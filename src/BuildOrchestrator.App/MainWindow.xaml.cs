@@ -332,6 +332,15 @@ public partial class MainWindow : Window
         {
             if (e.PropertyName == nameof(RunViewModel.HasWorkspace)) Shell.SetHasWorkspace(_vm.HasWorkspace);
         };
+        // [idle-memory · dalga 2 · spec §6.5] Başlıktaki "compact" etiketi anlatıyı yazan ETKİN kipi izler — ayarın kendisini değil:
+        // değişiklik bir sonraki işlemde geçerli olur (RunViewModel.CompactConsoleInEffect). Açılış seed'i yukarıda yapıldı; değer
+        // burada bir kez itilir, sonrası bildirimle.
+        Shell.ConsoleHeaderControl.SetCompact(_vm.CompactConsoleInEffect);
+        _vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(RunViewModel.CompactConsoleInEffect))
+                Shell.ConsoleHeaderControl.SetCompact(_vm.CompactConsoleInEffect);
+        };
         // [design v1.24.0 §2.3 · §2.4] Sync proje kümesini keşfederken iki panel boş kalmaz: başlık araçları ve graf
         // keşif durumuna geçer, liste bloğu davet kararından gelir (RefreshListInvite), sayaç her raporla yazılır. VM
         // keşfi topolojinin yüzeyi yeniden kurmasından ÖNCE kapatır — bloklar reveal başlamadan kalkar.

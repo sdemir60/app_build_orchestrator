@@ -424,12 +424,15 @@ public class RunViewModelStateTests
     /// event stream'i temizlemiyordu — bir önceki işlemin tortusu, Sync'in kendi <c>syncProgress</c> satırlarının
     /// ÜZERİNE yazılıyordu (aynı karışıklığın run tarafındaki karşılığı <c>CanRequestRun</c> kapısının gerekçesidir: Sync
     /// sürerken başlayan bir koşu konsolu temizleyip kendi satırını yazardı, Sync'in kalan satırları da aynı dokümana
-    /// akardı).</summary>
+    /// akardı).
+    /// <para>[DEĞİŞEN KURULUM — idle-memory dalga 2 · spec §6.5] VM kompakt konsolu açıkça KAPALI kurar: üretim varsayılanı kompakt
+    /// kiptir ve "Build succeeded" bilgi satırını hiç anlatıya yazmaz — "Sync onu sildi" iddiası boş yere yeşil kalırdı. İddia aynı,
+    /// tam kipte.</para></summary>
     [Fact]
     public async Task Sync_clears_the_console_and_stream_left_over_from_the_previous_operation()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo", CompactConsole = false };
 
         // Önceki bir Build konsola VE event stream'e satır bırakır.
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
@@ -450,6 +453,11 @@ public class RunViewModelStateTests
     }
 
     // ---------------------------------------------------------------- [idle-memory · dalga 2 · spec §6.3] koşu anlatısının spool'u
+    //
+    // [DEĞİŞEN KURULUM — idle-memory dalga 2 · spec §6.5] Bu bölümün testleri VM'i kompakt konsol KAPALI kurar
+    // (CompactConsole = false): spool'un anlatısını proje satırlarıyla — "Build succeeded", "line i", "before"/"after" — satır satır
+    // sınarlar ve eskiden her proje satırı anlatıya aynen girerdi. Üretim varsayılanı artık kompakt kiptir ve o bilgi satırlarını
+    // gizler (yerlerine "building a" başlığı yazılır). İddialar aynı, tam kipte; kompakt kipin pinleri CompactConsoleTests'tedir.
 
     /// <summary>[spec §6.3 · I9] Koşu başlayınca — <c>runStarted</c> koşu klasörünü bildirir — anlatı o klasördeki dosyaya yayılır;
     /// dosyanın adı üretimin TEK tanımıdır (<see cref="RunLogPaths.NarrativeFileName"/>). Koşu bitince dosya kuyruğuyla birlikte
@@ -459,7 +467,7 @@ public class RunViewModelStateTests
     public async Task A_run_spools_its_narrative_into_the_run_folder_and_flushes_the_tail_when_it_ends()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo", CompactConsole = false };
         using var logs = new SpoolDir(vm.Narrative);
 
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", LogDirectory: logs.Path));
@@ -486,7 +494,7 @@ public class RunViewModelStateTests
     public async Task A_run_without_a_usable_log_directory_keeps_the_narrative_in_memory(string? logDirectory)
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo", CompactConsole = false };
 
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", LogDirectory: logDirectory));
         vm.OnEvent(new ProjectLogEvent("r1", @"C:\p\a.csproj", 1, "Build succeeded"));
@@ -501,7 +509,7 @@ public class RunViewModelStateTests
     public async Task A_new_operation_closes_the_spool_and_leaves_the_file_in_the_run_folder()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo", CompactConsole = false };
         using var logs = new SpoolDir(vm.Narrative);
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", LogDirectory: logs.Path));
         vm.OnEvent(new ProjectLogEvent("r1", @"C:\p\a.csproj", 1, "Build succeeded"));
@@ -523,7 +531,7 @@ public class RunViewModelStateTests
         using var dir = new TempDir();
         string missing = Path.Combine(dir.Path, "missing");
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo", CompactConsole = false };
 
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", LogDirectory: missing));
         vm.OnEvent(new ProjectLogEvent("r1", @"C:\p\a.csproj", 1, "Build succeeded"));
@@ -545,7 +553,7 @@ public class RunViewModelStateTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var console = new ConsoleBatcher(_ => Task.CompletedTask); // pompa testin elinde: sonunda tek seferde boşaltılır
-        var vm = new RunViewModel(engine, console, () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, console, () => "r1") { RootPath = @"D:\repo", CompactConsole = false };
         using var logs = new SpoolDir(vm.Narrative);
         FailingSpoolStream? stream = null;
         vm.Narrative.OpenSpoolStream = path => stream = new FailingSpoolStream(NarrativeStore.OpenSpoolFile(path));
@@ -575,7 +583,7 @@ public class RunViewModelStateTests
     public async Task A_spool_warning_left_by_a_console_read_reaches_an_idle_console_on_the_next_tick()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo", CompactConsole = false };
         using var logs = new SpoolDir(vm.Narrative);
         vm.Narrative.OpenSpoolStream = _ => new MemoryStream(); // yazım başarılı, dosya diske hiç inmez: geri okuma düşer
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", LogDirectory: logs.Path));

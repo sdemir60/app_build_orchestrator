@@ -561,11 +561,16 @@ public class ConsoleModesTests
 
     // ---------------------------------------------------------------- N lines = TAM tampon (Ek A #23)
 
+    /// <summary>"N lines" anlatının tamamını sayar (render dilimini değil) — satır satır.
+    /// <para>[DEĞİŞEN KURULUM — idle-memory dalga 2 · spec §6.5] VM kompakt konsolu açıkça KAPALI kurar: eskiden her proje satırı
+    /// anlatıya aynen girerdi; üretim varsayılanı artık kompakt kiptir ve buradaki üç bilgi satırını gizler (sayaç 1: yalnız
+    /// başlık). İddia aynı, tam kipte — kompakt kipte sayacın anlatının gerçek satırlarını (başlık ve özet dahil) saydığı
+    /// <see cref="CompactConsoleTests"/>'tedir.</para></summary>
     [Fact]
     public async Task GetActiveLineCount_reflects_full_run_buffer_length_line_for_line()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe); // hiç başlatılmadı — OnEvent engine'e dokunmaz
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { CompactConsole = false };
 
         Assert.Equal(0, vm.GetActiveLineCount());
 

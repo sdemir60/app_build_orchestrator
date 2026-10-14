@@ -926,11 +926,15 @@ public class RunViewModelTests
 
     // ---------------------------------------------------------------- 4) run dokümanı proje modunda bile birikir
 
+    /// <summary>Proje modundayken başka bir projenin satırı da anlatıya düşer (ekranda görünmese de) ve açık sayfaya sızmaz.
+    /// <para>[DEĞİŞEN KURULUM — idle-memory dalga 2 · spec §6.5] VM kompakt konsolu açıkça KAPALI kurar: eskiden her proje satırı
+    /// anlatıya aynen girerdi; üretim varsayılanı artık kompakt kiptir ve "b-line" bilgi satırını gizler. İddia aynı, tam kipte —
+    /// kompakt kipte anlatının proje modunda da (süzülmüş) biriktiği <see cref="CompactConsoleTests"/>'tedir.</para></summary>
     [Fact]
     public async Task ProjectLog_always_accumulates_into_the_run_document_even_in_project_mode()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { CompactConsole = false };
         const string a = @"C:\p\a.csproj";
         const string b = @"C:\p\b.csproj";
         vm.OnEvent(new ProjectStartedEvent("r1", a, "A"));

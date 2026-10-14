@@ -32,6 +32,12 @@ namespace BuildOrchestrator.Tests.App;
 /// konsolun store bağı atlanınca görünüm kırpılan satırları kopyalar — ölçüldü (dalga 1), oran 2,301. Bütçe gevşetilmez; aşım
 /// raporlanır.</para>
 ///
+/// <para><b>[idle-memory · dalga 2 · spec §6.5] Kompakt konsol KAPALI koşar</b> (fixture'ın varsayılanı —
+/// <see cref="MainWindowHost.New"/>): ölçülen, her satırı anlatıya giren büyük bir koşudur. Kompakt kipte (üretim varsayılanı) aynı
+/// koşu anlatıda birkaç satır bırakır — store koşunun hacmini hiç taşımaz
+/// (<see cref="A_compact_run_keeps_the_narrative_to_a_handful_of_lines"/>); bütçe en kötü durumu, kompaktı kapatan kullanıcıyı
+/// ölçer.</para>
+///
 /// <para><b>Neden kapılı:</b> koşu ve tam toplamalar birkaç saniye sürer ve <c>GC.GetTotalMemory</c> SÜREÇ GENELİDİR — başka bir
 /// testin ayırması ölçüme girerdi (bu koleksiyon başka hiçbir koleksiyonla eşzamanlı koşmaz; yine de tek başına koşulur).
 /// <c>Category=Measurement</c> etiketi tek başına kapı değildir (<c>Category!=Acceptance</c> filtresi onu da koşturur); kapı ilk
@@ -85,6 +91,28 @@ public sealed class NarrativeBudgetTests(ITestOutputHelper output)
         Assert.True(vm.Narrative.CharCount <= windowBound,              // (c) bellekte yalnız pencere
             $"the store keeps {vm.Narrative.CharCount} characters in memory, the window holds at most {windowBound}");
         Assert.Equal(vm.Narrative.Count, logs.ReadText().AsSpan().Count('\n')); // (c) dosya tam satır sayısında
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[idle-memory · dalga 2 · spec §6.5 · karar 14] Kompakt kipte (üretim varsayılanı) aynı 100 k tekil uyarılık koşu anlatıya
+    /// beş satır bırakır: projenin başlığı, ilk üç uyarı ve gizlenen uyarıların tek özeti — store koşunun hacmini hiç taşımaz. Tam çıktı
+    /// proje logundadır (motorun dosyası). Yukarıdaki bütçe testleri kompakt KAPALI koşar: ölçtükleri her satırın girdiği anlatıdır.</summary>
+    [StaFact]
+    public void A_compact_run_keeps_the_narrative_to_a_handful_of_lines()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        vm.CompactConsole = true;
+        MainWindowHost.StartBuild(vm, "A");
+        int baseline = vm.Narrative.Count;
+        for (int i = 1; i <= Lines; i++) MainWindowHost.LogLine(vm, "A", i, Line(i));
+        MainWindowHost.FinishBuild(vm, "A");
+
+        int hidden = Lines - CompactConsoleFilter.ShownWarningsPerProject;
+        string summary = string.Create(CultureInfo.InvariantCulture,
+            $"A: {hidden} more warnings — CS1591 ×{hidden} — see the project log");
+        Assert.Equal(["building A", Line(1), Line(2), Line(3), summary], vm.Narrative.Slice(baseline, vm.Narrative.Count));
+        Assert.True(vm.Narrative.CharCount < 64 * 1024, $"the compact narrative keeps {vm.Narrative.CharCount} characters");
         GC.KeepAlive(window);
     }
 

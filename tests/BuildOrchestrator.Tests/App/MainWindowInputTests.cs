@@ -251,14 +251,17 @@ public class MainWindowInputTests
     /// persist zinciri pencerenin <c>Show()</c> edilmesine bağlı olmadığı için, testler kullanıcının
     /// gerçek tercih dosyasını sessizce yeniden yazıyordu. Elle "koşumdan önce/sonra karşılaştır" kontrolü
     /// bir dahaki sefere unutulur; bu assert unutmaz. Dosya yoksa "hâlâ yok" da geçerli bir sonuçtur
-    /// (CI/temiz makine).</para></summary>
+    /// (CI/temiz makine).</para>
+    /// <para>[DEĞİŞEN KURULUM — idle-memory dalga 2 · spec §6.5] Fixture'ın kompakt konsol ataması kapatılır
+    /// (<c>compactConsole: null</c>): atama pencere kurulduktan sonra VM'e yazar, kalıcılık zinciri de enjekte edilen store'u layout
+    /// tıklamasından ÖNCE yazardı — (b)'nin ön-koşulu ("henüz yazılmadı") tam olarak bu zinciri ölçer. İddialar aynı.</para></summary>
     [StaFact]
     public void A_layout_click_persists_through_the_injected_store_and_never_touches_the_users_real_file()
     {
         using var temp = new TempDir();
         string path = MainWindowHost.UiStatePath(temp);
         var before = Fingerprint(JsonUiStateStore.DefaultPath);
-        var (window, _) = NewMainWindow(temp);
+        var (window, _) = MainWindowHost.New(temp, compactConsole: null);
         Assert.False(File.Exists(path)); // ön-koşul: enjekte edilen store henüz yazılmadı
 
         Click(window.LayFocusButton);
