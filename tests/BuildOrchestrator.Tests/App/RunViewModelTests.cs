@@ -704,21 +704,56 @@ public class RunViewModelTests
     /// Completion tamamlanmazsa await SONSUZA DEK asılı kalır.
     /// <para>[DEĞİŞEN KURULUM — idle-memory I1] <b>Eski kurulum</b> (<c>..._completes_on_logNotFound_...</c>): motorun cevabı
     /// <c>error(logNotFound)</c>'du. "Log yok" artık isteğin kimliğini yankılayan tek, boş, bayraklı bir chunk'tır (motor tarafı:
-    /// <c>ProjectLogStreamTests</c>) ve her cevap gibi dikilir. İddia aynı: yükleme biter, asılı kalmaz.</para></summary>
+    /// <c>ProjectLogStreamTests</c>) ve her cevap gibi dikilir. İddia aynı: yükleme biter, asılı kalmaz.</para>
+    /// <para>[idle-memory · final review (group A)] <b>Eskiden boşta yeşildi:</b> motor yoktu ve gönderim kabul edilmiyordu — istek
+    /// senkron düşer, awaiter cevaptan ÖNCE serbest kalırdı ve <c>WaitAsync</c> hiçbir cevap olmadan da geçerdi. Şimdi gönderim
+    /// kabul edilir (<c>AcceptSends</c>) ve cevap gelmeden yükleme gerçekten bekliyor olmalı (<c>HasPendingLogLoad</c>, tamamlanmamış
+    /// awaiter): görevi bitiren "log yok" cevabıdır.</para></summary>
     [Fact]
     public async Task LoadProjectLogAsync_completes_on_a_no_log_answer_instead_of_hanging_forever()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        MainWindowHost.AcceptSends(vm);                                  // istek motora gider: cevabı beklenir
         const string projectId = @"C:\p\skipped.csproj";
         vm.OnEvent(new ProjectSkippedEvent("r1", projectId, "bağımlılık döngüsünde"));
 
         var (load, request) = ProjectLogIpc.Request(vm, projectId);
+        Assert.True(vm.HasPendingLogLoad);                               // ön-koşul: cevap bekleniyor
+        Assert.False(load.IsCompleted);                                  // ve awaiter cevaptan ÖNCE serbest kalmadı
         vm.OnEvent(ProjectLogIpc.NotFound(request, projectId));
 
         // Sınırlı bekleme [D8]: fix ÖNCESİ hiçbir şey Completion'ı tamamlamaz → WaitAsync timeout ile FAIL.
         await load.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Null(vm.ActiveProjectId); // dikiş hiç kurulmadı — proje moduna geçilmedi, VM tutarlı kaldı
+        Assert.False(vm.HasPendingLogLoad);                              // "log yok" yüklemeyi bitirdi
+        // Kart SEÇİLMEDİ (SelectProject yok): "log yok" da bir dikiş olarak yüklemeyi bitirir ama proje moduna geçişi seçim sürer
+        // (guard2, EnterProjectMode) — ActiveProjectId kurulmaz, VM anlatıda tutarlı kalır.
+        Assert.Null(vm.ActiveProjectId);
+    }
+
+    /// <summary>
+    /// [idle-memory · final review (group A)] <b>"Log yok" cevabı anlatıya hata satırı yazmaz.</b> Eskiden motorun cevabı
+    /// <c>error(logNotFound)</c>'du ve <c>OnError</c> her hatayı anlatıya <c>[error] code: message</c> diye yazardı: bir kartı
+    /// logsuz bir projeye tıklamak konsolun altına kırmızı bir satır düşürürdü. Artık cevap bir chunk'tır (hata olayı değil) ve
+    /// anlatıya hiçbir şey eklemez.
+    /// </summary>
+    [Fact]
+    public async Task A_card_without_a_log_writes_no_error_line_to_the_narrative()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        MainWindowHost.AcceptSends(vm);
+        const string p = @"C:\p\skipped.csproj";
+        vm.OnEvent(new ProjectSkippedEvent("r1", p, "cycle"));
+
+        vm.SelectProject(p);
+        var (load, request) = ProjectLogIpc.Request(vm, p);
+        Assert.True(vm.HasPendingLogLoad);                               // ön-koşul: cevap bekleniyor
+        vm.OnEvent(ProjectLogIpc.NotFound(request, p));
+        await load.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(p, vm.ActiveProjectId);                             // sayfa açıldı (kart seçili): cevap gerçekten işlendi
+        Assert.DoesNotContain("[error]", vm.GetRunDocumentText(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -828,6 +863,38 @@ public class RunViewModelTests
 
         Assert.Equal("q1\n", vm.GetProjectDocumentText(q));
         Assert.Equal(q, vm.ActiveProjectId);
+    }
+
+    /// <summary>
+    /// [idle-memory · final review (group A)] <b>Aynı projenin önceki isteğinin gecikmiş "log yok" cevabı da bekleyen yüklemeyi
+    /// bitirmez.</b> Önceki test başka bir projenin cevabını sınar (proje eşleşmesi tek başına bunu da yakalardı); burada AYNI proje:
+    /// P seçilir ve logu istenir, cevap gelmeden kart bırakılıp P yeniden seçilir, ikinci istek bekler. İlk isteğin "log yok" cevabı
+    /// ikinci istek beklerken gelir — proje AYNI olduğu için yalnız isteğin kimliği onu ayırt eder. Yok sayılmazsa ikinci yükleme
+    /// boş sayfayla biter, P'nin gerçek logu (ikinci isteğin cevabı, bu sırada artık dosyası var) yok sayılırdı.
+    /// </summary>
+    [Fact]
+    public async Task A_late_no_log_answer_to_an_earlier_request_for_the_same_project_does_not_end_the_pending_load()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        MainWindowHost.AcceptSends(vm);
+        const string p = @"C:\p\p.csproj";
+        vm.OnEvent(new ProjectStartedEvent("r1", p, "P"));
+
+        vm.SelectProject(p);
+        var (_, first) = ProjectLogIpc.Request(vm, p);                   // P — istek 1: henüz logu yok
+        vm.SelectProject(null);                                          // kart bırakıldı…
+        vm.SelectProject(p);                                             // …ve P yeniden seçildi
+        var (load, second) = ProjectLogIpc.Request(vm, p);               // P — istek 2
+
+        vm.OnEvent(ProjectLogIpc.NotFound(first, p));                    // istek 1'in gecikmiş "log yok" cevabı
+        Assert.True(vm.HasPendingLogLoad);                               // istek 2 hâlâ kendi cevabını bekliyor
+        Assert.False(load.IsCompleted);
+        vm.OnEvent(ProjectLogIpc.Reply(second, p, "p1\n", through: 1));  // motorun gerçek cevabı (log artık var)
+        await load.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal("p1\n", vm.GetProjectDocumentText(p));              // KIRMIZI proje-yalnız eşleşmede: "" (boş sayfa)
+        Assert.Equal(p, vm.ActiveProjectId);
     }
 
     /// <summary>

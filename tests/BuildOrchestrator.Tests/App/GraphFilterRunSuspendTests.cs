@@ -27,16 +27,14 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class GraphFilterRunSuspendTests
 {
-    private const string Base = "OSYS.Base";
-    private const string Data = "OSYS.Data";
+    private const string Base = GraphTestView.BaseNode;
+    private const string Data = GraphTestView.DataNode;
 
-    /// <summary>İki düğümlü graf; filtre yalnız <see cref="Base"/>'i eşler (<see cref="Data"/> filtre dışı).</summary>
+    /// <summary>İki düğümlü graf (<see cref="GraphTestView.TwoNodeGraph"/>); filtre yalnız <see cref="Base"/>'i eşler
+    /// (<see cref="Data"/> filtre dışı).</summary>
     private static GraphView FilteredGraph()
     {
-        var view = GraphTestView.Realized(new Size(640, 400), () => true);
-        view.SetGraph(
-            [new(Base, Base, 0, GraphStatus.Succeeded), new(Data, Data, 1, GraphStatus.Succeeded)],
-            [new(Base, Data)]);
+        var view = GraphTestView.TwoNodeGraph(() => true);
         view.FilterMatches = new HashSet<string>([Base], StringComparer.Ordinal);
         Assert.Equal(GraphNodeOpacity.Unfocused, view.NodeVisuals[Data].OpacityTarget, 6); // ön-koşul: filtre etkin
         return view;
@@ -183,9 +181,7 @@ public class GraphFilterRunSuspendTests
         Assert.Equal(EndStep.None, view.EndStep);
         Assert.False(view.IsFilterSuspended);
 
-        view.SetGraph( // Sync'in getirdiği yeni graf
-            [new(Base, Base, 0, GraphStatus.Succeeded), new(Data, Data, 1, GraphStatus.Succeeded)],
-            [new(Base, Data)]);
+        GraphTestView.SetTwoNodeGraph(view); // Sync'in getirdiği yeni graf
         Assert.Equal(GraphNodeOpacity.Unfocused, view.NodeVisuals[Data].OpacityTarget, 6);
 
         // Kesilen finalin kalan adımları sonradan düşmez. Ara an da denetlenir: finalin son adımları EndStep'i
@@ -202,10 +198,7 @@ public class GraphFilterRunSuspendTests
     [StaFact]
     public void Without_a_filter_the_run_opacities_are_unchanged()
     {
-        var view = GraphTestView.Realized(new Size(640, 400), () => true);
-        view.SetGraph(
-            [new(Base, Base, 0, GraphStatus.Succeeded), new(Data, Data, 1, GraphStatus.Succeeded)],
-            [new(Base, Data)]);
+        var view = GraphTestView.TwoNodeGraph(() => true);
 
         StartRun(view, GraphStatus.Queued, GraphStatus.Building);
         Assert.Equal(GraphNodeOpacity.Full, view.NodeVisuals[Data].OpacityTarget, 6);

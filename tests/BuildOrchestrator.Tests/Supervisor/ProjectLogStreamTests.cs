@@ -8,6 +8,7 @@ using BuildOrchestrator.Core.MsBuild;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Core.Processes;
 using BuildOrchestrator.Supervisor;
+using BuildOrchestrator.Tests.App;
 
 namespace BuildOrchestrator.Tests.Supervisor;
 
@@ -308,8 +309,13 @@ public class ProjectLogStreamTests
         await h.SendAsync(new GetProjectLogCommand(Id("Yok"), RequestId: 5));
         var reply = Assert.IsType<ProjectLogChunkEvent>(await h.ReadEventAsync());
 
-        Assert.Equal(new ProjectLogChunkEvent(Id("Yok"), Sequence: 0, Text: "", IsLast: true, ThroughLineNumber: 0,
-            RequestId: 5, NotFound: true), reply);
+        // "Log yok" cevabının biçimi TEK yerde tanımlıdır (kopya YASAK): App tarafı testlerin motor modeli ile AYNI.
+        Assert.Equal(ProjectLogIpc.NotFound(requestId: 5, Id("Yok")), reply);
+
+        // [final review (group A)] Cevap TEK olaydır: bir ping'in pong'u hemen ardından gelir. İkinci bir cevap olayı
+        // (eski error(logNotFound) ile birlikte ya da ikinci bir boş chunk) araya girseydi sıradaki olay pong olmazdı.
+        await h.SendAsync(new PingCommand(9));
+        Assert.Equal(9, Assert.IsType<PongEvent>(await h.ReadEventAsync()).Seq);
 
         await h.ShutdownAsync();
     }

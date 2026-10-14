@@ -141,7 +141,9 @@ public class ConsoleForwardWiringTests
     }
 
     /// <summary>guard2 (DEĞİŞMEDİ): seçim arada kalktıysa "log yok" cevabı da modu kurmaz — aksi halde
-    /// ActiveProjectId takılı kalır ve run konsolu (AppendRunLine'ın null kapısı) sessizce donar.</summary>
+    /// ActiveProjectId takılı kalır ve run konsolu (AppendRunLine'ın null kapısı) sessizce donar.
+    /// <para>[DEĞİŞEN KURULUM — idle-memory I1] Cevap eskiden <c>error(logNotFound)</c>'du; artık isteğin kimliğini yankılayan
+    /// tek, boş, bayraklı bir chunk'tır ve her cevap gibi dikilir. İddia aynı.</para></summary>
     [Fact]
     public async Task A_load_that_found_no_log_does_not_open_the_page_if_the_card_was_released()
     {

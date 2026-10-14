@@ -1,4 +1,3 @@
-using System.Windows;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Graph;
 
@@ -19,18 +18,12 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class GraphEndFinaleSignalTests
 {
-    private const string Base = "OSYS.Base";
-    private const string Data = "OSYS.Data";
+    private const string Data = GraphTestView.DataNode;
 
-    /// <summary>İki düğümlü graf; finalin oynayabilmesi için animasyon sinyali AÇIK (varsayılan headless kapalıdır).</summary>
-    private static GraphView FinaleGraph(Func<bool>? animationsEnabled = null)
-    {
-        var view = GraphTestView.Realized(new Size(640, 400), animationsEnabled ?? (() => true));
-        view.SetGraph(
-            [new(Base, Base, 0, GraphStatus.Succeeded), new(Data, Data, 1, GraphStatus.Succeeded)],
-            [new(Base, Data)]);
-        return view;
-    }
+    /// <summary>İki düğümlü graf (<see cref="GraphTestView.TwoNodeGraph"/>); finalin oynayabilmesi için animasyon sinyali AÇIK
+    /// (varsayılan headless kapalıdır).</summary>
+    private static GraphView FinaleGraph(Func<bool>? animationsEnabled = null) =>
+        GraphTestView.TwoNodeGraph(animationsEnabled ?? (() => true));
 
     /// <summary>Olayı sayar ve her ateşlemede finalin hâlâ oynayıp oynamadığını kaydeder (sözleşme: oynamıyor).</summary>
     private sealed class FinaleProbe
