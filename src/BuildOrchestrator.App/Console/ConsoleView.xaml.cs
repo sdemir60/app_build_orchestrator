@@ -97,6 +97,7 @@ public partial class ConsoleView : UserControl
     private bool _projectMode;                            // proje-log modu (kaynak: disk logu; anlatıda kaynak VM'in anlatı store'u)
     private bool _prepending;                             // re-entrancy guard (prepend VerticalOffset'i değiştirir)
     private bool _armedForChunk;                          // kullanıcı tepeden UZAKLAŞTI mı — ilk layout spurious prepend'ini önler
+    private bool _swappingDocument;                       // belge takası sürüyor: takasın kaydırma olayları jest değildir (SwapDocument)
 
     /// <summary>Belgenin ARKASINDAKİ satırlar — render diliminin (200) dışında kalan geçmiş. Chunk loader
     /// tepeye kaydırıldığında buradan geri yükler.
@@ -721,7 +722,6 @@ public partial class ConsoleView : UserControl
         ArgumentNullException.ThrowIfNull(snapshot);
         RunDocumentReplacedCount++;
         _projectMode = false;
-        _armedForChunk = false; // ilk layout'ta spurious prepend olmasın (kullanıcı henüz kaydırmadı)
         _backlog = snapshot.Backlog;
         // Render dilimi: son RenderSliceLines satır belgeye; öncesi chunk loader'a bırakılır (PlayCascade ile
         // AYNI hesap — iki mod tek kuralı paylaşır).
@@ -731,8 +731,7 @@ public partial class ConsoleView : UserControl
         // ve ilk satırı anlatının SONUDUR: indeks gerçekte gösterilenle tutarlı kalır, tepeye kaydırma dilimi yeniden ister. Aksi hâlde
         // indeks gösterilmeyen satırları belgede sanır — son dilim hiç gelmez, canlı satırlar da o kadar geride sayılır.
         if (slice.Length == 0) _loadedFrom = snapshot.Count;
-        EditorControl.Document = NewDocument(slice);
-        PinAfterModeSwitch(toBottom: true);
+        SwapDocument(slice, toBottom: true);
         // [SIRA ÖNEMLİ] Takibi devralmak pin'den SONRA gelir. Kullanıcı önceki modda serbest kaydırmış olsa
         // bile mod değişimi takibi yeniden alır — ama ForceStuck bir bildirim yayınlar ve pill'in görünürlüğü
         // yalnız DİPTEN UZAKLIĞA bakar (BottomAnchorDecision.ShouldShowPill). Pin'den ÖNCE çağrıldığında editör
@@ -784,13 +783,34 @@ public partial class ConsoleView : UserControl
         RefreshPrompt();                 // proje-log modunda prompt imleci yoktur
         _idleReady = false;
         ApplyPromptText();
-        _armedForChunk = false;            // ilk layout'ta spurious prepend olmasın (kullanıcı henüz kaydırmadı)
         _backlog = new ListBacklog(allLines); // kopya: backlog canlı satırlarla BÜYÜR, çağıranın listesi değişmez
 
         // Render dilimi: son RenderSliceLines satır belgeye; öncesi chunk loader'a bırakılır.
         _loadedFrom = Math.Max(0, _backlog.Count - RenderSliceLines);
-        EditorControl.Document = NewDocument(_backlog.Join(_loadedFrom, _backlog.Count));
-        PinAfterModeSwitch(toBottom: false);
+        SwapDocument(_backlog.Join(_loadedFrom, _backlog.Count), toBottom: false);
+    }
+
+    /// <summary>
+    /// [idle-memory · dalga 2 · takip — ölçüldü] Belge takasının TEK yolu (anlatı: <see cref="ReplaceRunDocument"/>, proje logu:
+    /// <see cref="ReplaceProjectDocument"/>): yeni belge kurulur ve dibe ya da tepeye sabitlenir; ardından chunk yükleyici silahsızdır —
+    /// okuyucu yeni belgede henüz kaydırmadı, önceki dilim onun ilk tepeye kaydırmasıyla gelir.
+    /// <para><b>Takasın kaydırma olayları okuyucunun jesti değildir</b> ve yükleyiciye gitmez (<see cref="EvaluateChunkScroll"/>):
+    /// ölçüldü — takas, eski belgenin ofsetini taşıyan bir olay yayar (yükleyici "tepeden uzaklaştı" diye silahlanırdı; kurulumun başındaki
+    /// silahsızlandırma bu yüzden boşa gidiyordu), yeni belgenin ilk yerleşimi ofseti sıfıra çeker ("tepeye ulaştı"). Dipteki bir belgenin
+    /// yerine anlatı kurulurken ikisi birleşip önceki 200 satırı kendiliğinden ekliyor, ardından takip kırpması fazlayı atıyordu — belge son
+    /// 199 satır kalıyor, UI thread'i boşuna bir dilim okuyup ekleyip kırpıyordu (<c>ConsoleViewTests.Rebuilding_the_narrative_over_a_…</c>).
+    /// Bottom-anchor bu olayları görmeye devam eder; yalnız yükleyici onları yok sayar.</para>
+    /// </summary>
+    private void SwapDocument(string text, bool toBottom)
+    {
+        _swappingDocument = true;
+        try
+        {
+            EditorControl.Document = NewDocument(text);
+            PinAfterModeSwitch(toBottom);
+        }
+        finally { _swappingDocument = false; }
+        _armedForChunk = false;
     }
 
     /// <summary>
@@ -956,10 +976,12 @@ public partial class ConsoleView : UserControl
     /// yalnız gerçek bir tepeye-scroll önceki chunk'ı yükler.
     /// <para><b>Mod ayrımı YOKTUR:</b> jest anlatıda da proje logunda da aynıdır ve karar tek bir soruya
     /// bakar — backlog'da daha eski satır kaldı mı (<see cref="_loadedFrom"/> &gt; 0). Kapı eskiden proje
-    /// moduna bağlıydı ve run anlatısında geçmişe dönmenin hiçbir yolu yoktu.</para></summary>
+    /// moduna bağlıydı ve run anlatısında geçmişe dönmenin hiçbir yolu yoktu.</para>
+    /// <para>Kendi değişikliklerimizin kaydırma olayları sayılmaz: prepend sürerken (<see cref="_prepending"/>) ve belge takası
+    /// sürerken (<see cref="SwapDocument"/>).</para></summary>
     internal void EvaluateChunkScroll(double verticalOffset)
     {
-        if (_prepending) return;
+        if (_prepending || _swappingDocument) return;
         if (verticalOffset > ChunkTopThresholdPx) { _armedForChunk = true; return; }
         if (_armedForChunk && _loadedFrom > 0)
         {

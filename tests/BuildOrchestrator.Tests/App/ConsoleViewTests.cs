@@ -320,8 +320,46 @@ public class ConsoleViewTests
         Assert.Equal(stale, view.Document.Text); // KIRMIZI: new0..new299 bayat belgenin tepesine dikiliyordu
 
         view.ReplaceRunDocument(NarrativeSnapshots.Of(store)); // dönüş: belge modelden bir kez kurulur (ResyncAfterShow)
-        Assert.EndsWith("new398\nnew399\n", view.Document.Text);    // yeni bölümün son dilimi
-        Assert.DoesNotContain("old", view.Document.Text);           // eski bölümden satır kalmadı
+        Assert.Equal(string.Concat(Enumerable.Range(200, 200).Select(i => $"new{i}\n")), view.Document.Text); // yeni bölümün son dilimi
+    }
+
+    /// <summary>
+    /// [idle-memory · dalga 2 · takip — ölçüldü] <b>Belge takası bir okuyucu jesti değildir.</b> Anlatı belgesi yeniden kurulurken (← Back,
+    /// tepsiden dönüş) görünüm yalnız store'un son dilimini yükler — taze bir görünümün kurduğu belgenin aynısı; önceki dilim okuyucunun
+    /// ilk tepeye kaydırmasıyla gelir. Önceki belge dipte olsa da (anlatı canlı akışı izliyordu, proje sayfası sonuna kaydırılmıştı).
+    /// <para>KIRMIZI: takasın kendi kaydırma olayları chunk yükleyiciye gidiyordu — eski belgenin ofsetini taşıyan ilk olay yükleyiciyi
+    /// "tepeden uzaklaştı" diye yeniden silahlandırıyor (kurulumun başındaki silahsızlandırma boşa gidiyordu), yeni belgenin ilk yerleşimi
+    /// ofseti sıfıra çekince "tepeye ulaştı" sayılıp önceki 200 satır kendiliğinden ekleniyor, ardından takip kırpması fazlayı atıyordu:
+    /// belge son 199 satırdı (<c>line201..</c>), UI thread'inde boşuna bir dilim okuması, ekleme ve kırpma. Satır kaybı yoktu (indeks
+    /// kırpmayla ilerliyor, tepeye kaydırma geri getiriyordu) ve "N lines" store'u sayar.</para>
+    /// </summary>
+    [StaTheory]
+    [InlineData("narrative")]
+    [InlineData("project page")]
+    public void Rebuilding_the_narrative_over_a_document_at_its_end_loads_only_the_last_slice(string previous)
+    {
+        var view = LaidOutView();
+        if (previous == "narrative")
+        {
+            var earlier = new NarrativeStore();
+            foreach (int i in Enumerable.Range(0, 500)) earlier.Append($"old{i}");
+            view.ShowRunDocument(NarrativeSnapshots.Of(earlier)); // dipte, canlı akışı izleyen anlatı
+        }
+        else
+        {
+            view.PlayCascade([.. Enumerable.Range(0, 300).Select(i => $"page{i}")]);
+            view.Editor.ScrollToEnd(); // okuyucu sayfanın sonuna indi
+            view.Editor.UpdateLayout();
+        }
+        var store = new NarrativeStore();
+        foreach (int i in Enumerable.Range(0, 400)) store.Append($"line{i}");
+
+        view.ReplaceRunDocument(NarrativeSnapshots.Of(store)); // ← Back / tepsiden dönüş: belge yeniden kurulur
+
+        Assert.Null(view.LastPrepend); // KIRMIZI: takas önceki dilimi kendiliğinden ekliyordu
+        Assert.Equal(string.Concat(Enumerable.Range(200, 200).Select(i => $"line{i}\n")), view.Document.Text);
+        ScrollUpToTheTop(view);        // okuyucunun ilk tepeye kaydırması önceki dilimi getirir
+        Assert.Equal(string.Concat(Enumerable.Range(0, 400).Select(i => $"line{i}\n")), view.Document.Text);
     }
 
     /// <summary>[idle-memory · dalga 2 · inceleme M1] Bir kısmı okunamayan backlog — anlatı store'unun dosyası okunamadığında olduğu
