@@ -434,6 +434,11 @@ unreachable package source, the offline case) is counted, named and followed by 
 cannot be deleted is counted and skipped, and if `MSBuild.exe` cannot be resolved at all (§9.1) only the
 restore step drops out. The repair degrades; it does not stop.
 
+`getProjectLog` names one project and carries a **`requestId`**, a counter the App raises for every request — the
+first is 1. Zero means "no id": it is never given to a request, and a line written before the field existed decodes
+as zero. The engine echoes the id on every chunk of its answer (§5.3), and the App matches an answer to its request
+by that id alone (§5.5).
+
 ### 5.3 Events
 
 Lifecycle: `engineReady` · `pong` · `error` · `debugChildrenSpawned` (the test hook's answer, §5.2).
@@ -498,6 +503,18 @@ be parsed out of the console's text (§10.5).
 `stashFailed`, `failed`), the branch before and after, the new HEAD on success, the number of dirty paths the
 gate saw, the stash message when a stash was actually made — kept even when the checkout after it failed — and
 git's own detail on failure. The App builds every console line of a branch switch from these fields (§10.3).
+
+`projectLogChunk` is the whole answer to `getProjectLog`: the project's log, read from the folder of the active run —
+or, when none is active, of the latest one — in chunks of at most 64 K characters (§5.1). Every chunk of one answer
+carries the request's `requestId`, its own sequence number, `isLast` and `throughLineNumber`, the last line number
+that had been persisted when the engine took the snapshot; that field describes the snapshot and not the chunk, so it
+is the same on all of them (§5.5). A project the engine holds no log for — no run has happened yet, or the project
+was skipped and so never wrote one — is not an error: the answer is one chunk, `isLast`, with empty text,
+`throughLineNumber` 0 and `notFound` true, an empty snapshot that the App stitches like any other. Like the three
+times a preview item carries (below), `notFound` has **no reader on the App side today**: the stitch does not look at
+it, and nothing on screen tells "no log" from "an empty log". It stays on the wire because the engine knows the
+difference and the decision surfaces may want it again; nothing downstream is allowed to grow a second meaning for it
+in the meantime.
 
 `engineReady` carries `interruptedProjects`: how many projects the engine found in flight in
 `run-inflight.json` when it started, and invalidated before accepting any command (§8.7). Zero means the last
@@ -628,11 +645,28 @@ down, but there is no field-level schema validation either.
 
 ### 5.5 Log delivery
 
-Live output arrives as `projectLog` lines carrying a per-project line number. When a project is selected, the
-App requests `getProjectLog` and receives `projectLogChunk` events from disk, each stamped with the last line
-number that had been persisted at snapshot time. The App stitches the two streams on that number: live lines at
-or below it are already in the chunk and are dropped. Scrolling to the top of a long log prepends the previous
-chunk with scroll compensation, so the viewport does not jump.
+Live output arrives as `projectLog` lines carrying a per-project line number. The engine writes and flushes every
+line to its project's log file before it emits the event, so a line that reaches the App after it has asked for a
+log is either already in the snapshot the engine takes or past it, never lost between the two.
+
+When a project is selected, the App requests `getProjectLog` and receives `projectLogChunk` events from disk, each
+stamped with the last line number that had been persisted at snapshot time. The App stitches the two streams on that
+number: live lines at or below it are already in the chunk and are dropped, the ones above it follow it. The lines
+that can need stitching are the ones logged after the request, so that is what the App keeps, and only for the
+project it is waiting on: its side buffer lives from the request until the load ends (§13.5), and with no request
+waiting there is nothing to keep.
+
+**An answer belongs to its request.** The App stitches a chunk only if it echoes the id of the request it is waiting
+on. The project's name would not do. Select P, then Q, then P again before the first answer arrives: that answer,
+stamped with an older line number, would match the newest request and be stitched onto a buffer that only began at
+the newest request, and the lines logged in between would be in neither half of the page — a hole in the middle that
+nothing reports. An answer to a request that a newer one has replaced is ignored. A project with no log is answered
+the same way (§5.3) and stitched the same way: the lines that arrived between the request and the answer reach the
+page, and a page with nothing to show gets its project's empty-state text (§13.5). The answer is no error, so the
+click writes no error line to the console.
+
+Scrolling to the top of a long log prepends the previous chunk with scroll compensation, so the viewport does not
+jump.
 
 ---
 
@@ -2707,13 +2741,24 @@ cannot drift apart. The floor only raises: a run with no cap — Full, or a Reso
 Once a graceful stop starts draining, the cap is never re-applied and the priority cannot go below the same
 floor (§4.5).
 
-### 11.4 Memory line
+### 11.4 Memory trim and memory line
 
-When a sync finishes and when a run ends, whatever its outcome, the engine writes one line to its stderr:
-`memory: private=<MB> committed=<MB> heap=<MB>` — the process's private bytes, the managed heap's committed bytes
-as of the last collection, and the managed heap's current size. The line only reports: nothing is collected or
-released because of it, and stdout stays NDJSON. The App discards the engine's stderr (§4.3), so the line serves
+When a run ends, whatever its outcome, and when a Sync, a Clean or an Optimize finishes, whatever its outcome, the
+engine trims its memory and then reports it. The trim is one aggressive, blocking, compacting garbage collection — the
+single definition `MemoryTrim.CollectAndRelease`, which the App's own trim uses too (§12.3) — and the report is one
+line on the engine's stderr: `memory: private=<MB> committed=<MB> heap=<MB>` — the process's private bytes, the
+managed heap's committed bytes as of the last collection, and the managed heap's current size. The line is written
+after the trim, so it carries what the trim left and not what the operation piled up. A checkout or a pull trims
+nothing and writes no line. stdout stays NDJSON; the App discards the engine's stderr (§4.3), so the line serves
 whoever reads that stream directly, such as a measurement harness.
+
+The trim happens at the end of the operation and never inside it: after a run's last event has been written and its
+slot released, so the App never waits for it, and in the `finally` of a Sync, a Clean and an Optimize — a Clean or an
+Optimize that was refused because a run held the slot did nothing and trims nothing. While a run holds the slot,
+planning included, the collection is skipped, because a blocking collection would stall the run's pipes; the line is
+still written, and the run's own end collects. The trim is an optimization and never costs the work it follows: a
+collection that throws is swallowed after one `warning: memory trim failed: <message>` line on stderr, written before
+the memory line, which then describes an uncollected heap.
 
 ---
 
@@ -2854,9 +2899,9 @@ goes out at once and the end finale never starts (§14.5). The signal behind tha
 run's events would otherwise redraw: the event stream's rows, the graph's status, phase and selection pushes and its
 filter refresh, the ribbon, the Build menu, the project rows and their list, the action bar's counter chips and the
 body of the 200 ms tick (live durations, the console header's line counter, following the frontier — only the
-engine-silence watchdog still runs, §4.6). The console document is left alone too: the narrative stays complete in
-the view model, and the document is built from that full text once, without the tilt, when the window comes back
-(§13.5). Infinite decorative animations run only while their element is visible (§14.5), so a hidden window runs
+engine-silence watchdog still runs, §4.6). The console document is left alone too: the narrative goes on filling the
+view model's store, and the document is built from the store's last slice, once and without the tilt, when the window
+comes back (§13.5). Infinite decorative animations run only while their element is visible (§14.5), so a hidden window runs
 none. Each surface only notes that it has fallen behind; when the window comes back each catches up with the model in
 a single pass, and nothing that happened meanwhile is played back — no glow, no typewriter, no list reveal, no
 cross-fade of a row's dot. The graph, the ribbon's progress bar and a row whose selection changed settle on the present state with
@@ -2891,15 +2936,46 @@ failures that name a reason keep their heads — falls back to the product name 
 notification restores the window through the *same* path as the tray icon and the overlay. A run that ends while
 the window is *visible* produces no balloon at all — the ribbon is already on screen.
 
-A run that ends while the window is hidden is followed by one full garbage collection, so a build's leftovers do not stay
-resident while nobody is looking. It waits for two signals, whichever comes last: the run has ended — completed, stopped,
-failed or with the engine lost — and its buffers are released (§13.5), and the tray indicator has finished its exit (and
-shown the result balloon, when *Show notifications* is on). The indicator takes the run's identity when its exit starts
-and hands it over with the exit notice, so a run that begins during the pause before the balloon does not inherit the
-previous run's exit: its own collection waits for its own exit. A collection requested while a run is in flight is
-dropped, and that run's own collection covers it. The collection is blocking and compacting, so it runs only while the
-window is hidden, after the exit (and the balloon) and once the application is idle; it happens once per run and never
-while the window is visible.
+**Every operation ends with one memory trim.** When a run, a Sync, a Clean or an Optimize has ended — completed,
+stopped, failed or with the engine lost — and the application is quiet, it runs one blocking, compacting garbage
+collection (`MemoryTrim.CollectAndRelease`, the one definition the engine's own trim shares, §11.4), so what the
+operation produced and let go of does not stay resident while nobody is looking. A checkout or a pull is no operation
+of its own; the Sync it chains is. The collection stops the UI thread for its duration, and all the care goes into
+choosing the moment.
+
+A pure rule (`MemoryTrimRule`) says when a trim is due, and the window (`RequestTrimWhenDue`) gathers the signals, asks
+the rule each time one arrives and schedules the answer. At most one trim runs per operation. None runs while a run
+(planning included), a Sync, a Clean, an Optimize, a checkout or a pull is in flight — `IsOperationInFlight`, the one
+definition of "the application is busy", which the automatic Sync's gate reads too — or while a project-log reply is
+being waited for. In a visible window none runs while the end finale plays, so the collection never cuts the animation
+off. A hidden window has no finale, and a run that ended while the window was hidden waits for the tray indicator to
+finish its exit (and show the result balloon, when *Show notifications* is on). The indicator takes the run's identity
+when its exit starts and hands it over with the exit notice, so a run that begins during the pause before the balloon
+does not inherit the previous run's exit: its own trim waits for its own exit. Six signals reach the window and each
+asks the question again, so whichever comes last releases the trim: an operation ended
+(`RunViewModel.EndedOperationSerial`), the graph's end finale finished (`GraphView.EndFinaleFinished`), the tray
+indicator finished its exit, the window was hidden or shown, a log reply arrived or stopped being expected
+(`HasPendingLogLoad`), and the work in flight changed (`IsOperationInFlight`, so that a refused pull or checkout,
+which is no operation, still releases the trim it held back).
+
+When the trim runs depends on whether anyone is looking. In a visible window it waits for the finale and then for a
+grace of 1.5 s (`MemoryTrimRule.GraceAfterFinale`), which every new signal restarts, and runs when the application is
+idle (`ApplicationIdle`); an operation with no finale, a Sync, waits only for the grace. A hidden window has nobody to
+pause, so the trim is queued for idle at once. Hiding the window drops the grace and queues a trim that is due; showing
+it forgets that the last run ended hidden, since a visible window has no indicator to wait for, and the trim then
+follows the visible rule. Closing the window stops it for good: a signal that arrives afterwards — the engine's exit, a
+late end — schedules nothing.
+
+The decision is taken twice. The request asks the rule; the execution, queued for idle, asks again, and only an
+execution that really collects counts the operation as trimmed. A new operation that began in the meantime, a finale
+that began (a run's end is announced before its finale starts, so the first grace can run out inside it) or a log
+reply that is being waited for makes the execution give up quietly, and the operation stays due until the next signal
+asks again. A log request whose reply is no longer expected — the send failed, or the engine is gone — is not waited
+for, and neither is the late chunk it may still get (§13.5).
+
+Every end counts, the automatic Sync's included: the silent Sync that a window activation starts after a pause (below)
+ends like any other, and in a visible window it is followed, after the grace, by its own collection. The rule makes no
+exception for it.
 
 **Every balloon answers to one switch.** *Show notifications* (Settings → General, on by default) gates all
 four the application can show: the first-close explanation, the run result, the second instance's warning and
@@ -4174,9 +4250,9 @@ inset 14 px top, 18 px sides and 20 px bottom.
   itself reported and reads `not started` until it has. Under the rows a ghost *What's new in {version}* button
   closes About and asks the window to open What's new through the same path as the title-bar button, so the
   unread mark clears exactly as it does there.
-- **Environment** is two caps groups: **RUNTIME** — engine PID, .NET runtime, OS — and **PATHS** — the resolved
-  `MSBuild.exe`, the repository root, the state file and the logs. The application and engine
-  versions are not repeated here.
+- **Environment** is two caps groups: **RUNTIME** — engine PID, .NET runtime, OS and the application's own memory
+  (**App private**, **GC committed** and **Managed heap**, in MB) — and **PATHS** — the resolved `MSBuild.exe`, the
+  repository root, the state file and the logs. The application and engine versions are not repeated here.
 - **Shortcuts** is three caps groups, **GLOBAL**, **BUILD** and **APPLICATION**; each row is the catalog's
   description and its key caps, and a global hotkey whose registration failed is marked `unavailable` — each
   one on its own row, since they register separately.
@@ -4186,7 +4262,12 @@ their groups from the same catalog the window binds its keys from, and the About
 and the clipboard text from **one** diagnostics model (`DiagnosticsReport`), so no value is written twice. It
 composes no text of its own. `MSBuild.exe` resolution is the one asynchronous value: `vswhere` is a child
 process, so it runs when the Environment tab is first selected, not when the dialog opens, and the row reads
-`resolving…` until it lands. *Copy diagnostics* sits in the footer's left corner, pulled 10 px left so its label
+`resolving…` until it lands. The memory rows are the application's counterpart of the engine's memory line (§11.4): the
+same process read (`MemoryLine.Read`, in its guarded form `TryRead`) and the same MB rule (`MemoryLine.Megabytes`),
+with only the unit added here, so the two surfaces never round a number two ways. They are the picture of the moment
+the model is built — when the dialog opens, and again when the `MSBuild.exe` resolution lands — not a live reading, and
+*Copy diagnostics* copies that picture. A read that fails does not stop the dialog: the three rows read `—`.
+*Copy diagnostics* sits in the footer's left corner, pulled 10 px left so its label
 lines up with the 18 px gutter; it writes a title line with the product and version followed by the engine,
 runtime and path rows in one aligned column, and confirms with the check icon and the success tone for the same
 1.4 s the console's copy button uses. *Close* sits on the right.
@@ -4414,19 +4495,38 @@ lines.
 - Appends are batched: IPC → channel → ~50 ms flush → exactly one `BeginUpdate → Insert → EndUpdate`. The
   window opens when a line arrives, not on a clock, so a console with nothing to print never wakes the pump.
 - The live document is capped at a render slice of 200 lines. That cap is a **window, not a limit**: scrolling
-  to the top pages the previous slice back in, in either mode. The backlog behind the window is mode-independent
-  and grows as the window slides — lines trimmed off the top while the panel is following are moved into it, so
-  nothing that scrolled past is unreachable. Only the *source* differs: a project page is seeded from the log on
-  disk (§5.5), the narrative from the view-model's full run buffer, which is what `Back` hands over anyway.
-  Leaving the narrative without a backlog was measured as the console "losing" its history — a parallel build
-  streams hundreds of lines a second, so the 200-line window turned over in seconds and everything older became
-  unreachable even though the text was still buffered.
+  to the top pages the previous slice back in, in either mode, from the **backlog** behind the window
+  (`IConsoleBacklog`: a line count, a `Join(from, to)` that returns the lines newline-terminated, and whether it keeps
+  the live lines trimmed off the document's top); the document's first line is always an index into it. Only the
+  *source* differs. A project page's backlog is the console's own list of the page's lines (`ListBacklog`), seeded
+  from the log on disk (§5.5), and it grows as the window slides: lines trimmed off the top while the panel is
+  following are added to it, so nothing that scrolled past is unreachable. The narrative's backlog is the view
+  model's `NarrativeStore` itself — the console keeps no copy of the narrative at all, and a line trimmed off the top
+  of the document is simply a line the store already holds, so the console does not even read the trimmed text off
+  the document for it. Leaving the narrative without a backlog was measured as the console "losing" its history — a
+  parallel build streams hundreds of lines a second, so the 200-line window turned over in seconds and everything
+  older became unreachable even though the text was still buffered.
+- **The run's narrative has exactly one owner: the view model's `NarrativeStore`.** Every line of the run — each
+  project's MSBuild output and the application's own narrative lines alike — is appended to it under the view model's
+  lock and before the batching pump gets it, so a line is in the store before it can be on screen; the console document
+  is only the render slice of it. The store keeps lines as the document will show them. An entry is one document line,
+  so a multi-line entry (an error message with a stack, git's stderr) is split by the console's one line rule
+  (`ConsoleLines.Split`, AvalonEdit's own: `\r\n`, `\r` and `\n` each end a line), and the header's `N lines` is the
+  store's count — what the document would show if it held everything, never the 200 of the render slice — or, on a
+  project page, that page's line count. The store hands out slices and never the whole text: no production path builds
+  the narrative as one string. Clearing it, as a new section does, lets go of its line array as well as its lines, so
+  the capacity of the largest operation does not outlive it. The console is bound to the store once, when the shell is
+  built, while its document is still empty and before the pump starts (`BindNarrative`; a non-empty document or an open
+  project page is refused, since the document's first line is taken as the store's first), and that bind is not a
+  rebuild of the document. Every later setup of the narrative document — a new section, the return from a project
+  page, the window coming back from the tray — rebinds it with a snapshot, the store plus its count at that instant
+  (`NarrativeSnapshot`), and seeds the document from the store's last 200 lines.
 - The documents keep **no undo history**. AvalonEdit records every insert and removal on the document's undo
   stack and keeps the removed text alive as rope slices, so with the default unbounded stack a trim released
   nothing: after a long visible run about half of the live managed heap was the whole narrative, retained behind
   a 200-line window. Every console document is created with its undo limit at zero (the console is read-only),
-  so a trimmed line is freed the moment it leaves the window; the narrative's lasting copy is the view-model's
-  buffer and the backlog, a project page's the log on disk.
+  so a trimmed line is freed the moment it leaves the window; the narrative's lasting copy is the store, a project
+  page's the log on disk.
 - **A line is only text.** There is no wall-clock column and no `▸` marker: every line starts at the same left
   edge as the caret and the line's kind is carried by colour alone. A real run streams hundreds of lines a
   second and a stamp on each of them carried no information; time lives in one place, the event stream and the
@@ -4456,7 +4556,11 @@ lines.
   document from the beginning, and a trim moves the text out from under a reader whose scroll offset is an
   absolute pixel — the position holds still while the content races upward past it. Trimming therefore waits
   for following to resume, and then catches up in one step while the panel is already pinned to the bottom,
-  where it is invisible. The event stream has the same hazard with its 150-row buffer and solves it the other
+  where it is invisible. In the narrative that catch-up is made the moment following comes back — the bottom anchor
+  announces it, whichever way it returns — and not with the next batch, so a run that has ended leaves a document at
+  its render slice instead of one swollen by what the reader scrolled through; a project page is not trimmed on that
+  signal, only by the next live line that arrives while it is followed, and is otherwise let go of with the page. The
+  event stream has the same hazard with its 150-row buffer and solves it the other
   way: the rows do leave, and the offset is reduced by exactly the height that left, so the reader's content
   does not move. Both are the mirror of the chunk loader's prepend compensation.
 - **Panel transitions are one piece, and the hinge is real.** Opening a project log and coming back with
@@ -4480,7 +4584,9 @@ lines.
   the console to that project, including when the engine answers that there is no log — which is not the
   exceptional case but the common one, since a skipped project never writes a log file at all and its reason
   goes only to `decision.log`. Leaving the console on the run narrative made the click look like it had done
-  nothing. What the body then shows is composed from the row: a first line saying **why** the project is in
+  nothing. That answer is an empty snapshot, not an error (§5.3): the click writes no error line to the narrative, and
+  a line the project logged between the request and the answer is the page, not the empty-state text. The body of an
+  empty page is composed from the row: a first line saying **why** the project is in
   that state, and a second saying **what we have** when the output is not this tool's own — that it has never
   been built. A project last built by this tool gets no second line: the decision is made from content, so its
   commit is not evidence and is not shown. A project built outside this tool (§7.6) reads `Up to date — built outside this tool.`
@@ -4530,32 +4636,40 @@ lines.
 - **A new section empties the narrative in place.** Not every operation opens one: a run, the Sync button,
   the click of Clean or Optimize and a branch change do (§10.2); a pull, the Sync a maintenance job chains and
   every automatic Sync append to what is already there, and a refused or failed checkout only adds its line.
-  Clearing never touches the disk logs — it is for the screen. The view-model clears its buffer and says so
-  (`ConsoleCleared`); the shell resets the document at once, without a tilt — the tilt belongs to the mode
-  switch, this is the same panel starting over — and leaves a project log that is on screen alone, since
-  `Back` seeds the fresh narrative anyway. Batches of the previous operation still in the pump are dropped
-  by the same reseed generation a mode switch uses, so nothing from before the clear can land after it.
-- **A hidden window does not write to the document.** While the window is in the tray the pump keeps draining the
-  view-model's buffer, but the shell drops each batch instead of applying it, and a clear that arrives meanwhile is
-  held back the same way: the narrative is still complete in the view model, and a document nobody can see is not
-  worth the layout work its insertions cause. So is a switch between the narrative and a project log: a run started
-  from the tray drops the open project's selection, the header follows at once and the document waits. When the
-  window returns, one rebuild puts the screen right — the
-  document is built from the model's full text **without the tilt**, once the first layout pass has run (the bottom
+  Clearing never touches the disk logs — it is for the screen. The view-model empties the store and says so
+  (`ConsoleCleared`); the shell binds the document to the emptied store with a count of **zero** — it does not read the
+  count a second time, because a line that arrived between the clear and the bind is already in the store and reaches
+  the document as a batch, so a bind that counted it too would show it twice — and resets the document at once, without
+  a tilt — the tilt belongs to the mode switch, this is the same panel starting over — and leaves a project log that is
+  on screen alone, since `Back` seeds the fresh narrative anyway. Batches of the previous operation still in the pump
+  are dropped by the same reseed generation a mode switch uses, so nothing from before the clear can land after it.
+- **A hidden window does not write to the document.** While the window is in the tray the pump keeps draining, but the
+  shell drops each batch instead of applying it: the text is in the store already, and a document nobody can see is not
+  worth the layout work its insertions cause. A clear that arrives meanwhile empties the store at once and only marks
+  the document stale, the same way. A switch between the narrative and a project log is held back too: a run started
+  from the tray drops the open project's selection, the header follows at once and the document waits. The bottom anchor's
+  timers keep firing in the tray, though, and may still trim a stale document to its render slice; that is harmless
+  because the return rebuilds it, and the trim tolerates a store that now holds fewer lines than the document's first
+  line stands for. When the window returns, one rebuild puts the screen right — the
+  document is built from the store's last slice **without the tilt**, once the first layout pass has run (the bottom
   pin reads layout). It is the same tilt-less rebuild a new section uses; the tilt still belongs to a change of
   mode. The rebuild seeds with the reseed generation like any other, so a batch that was already in flight when the
   window returns is dropped rather than landing twice, and a run with no lines shows the idle `ready` line again.
   A project log that was open is rebuilt from its own text the same way — pinned to the top and not following, as
   when it is opened — an empty log shows its project's empty-state text, as it does then. Nothing is replayed line by
   line: the console jumps to the present state of the run (§12.3).
-- **A finished run lets go of its live lines.** While a run streams, the view model also keeps its lines in a side buffer
-  per project: a project log opened mid-run is the disk snapshot plus whatever the disk did not hold yet when the
-  snapshot was taken, and that remainder is read from the side buffer. When the run ends — completed, stopped, failed or
-  with the engine lost — the disk holds everything and the buffer is released, unless a log request is still waiting for
-  its reply; then the release follows the reply, whether it brings the log or says there is none, so the page being built
-  still gets its last lines. A project's own text buffer is dropped when the console leaves its page, for another project
-  or for the narrative, and opening the project again reads the disk log afresh (§5.5). Opening a new section still
-  clears everything at once, as above.
+- **The side buffer of live lines belongs to an awaited log request.** A project log opened while its project is
+  still logging is the disk snapshot plus whatever the disk did not hold yet when the snapshot was taken, and that
+  remainder — the lines logged after the request — is read from a side buffer the view model keeps for exactly that
+  request (§5.5). The buffer holds the lines of the one project being loaded and nothing else: a run keeps no
+  per-project line buffers of its own, because the store holds the run. It is let go of when the load ends — the answer
+  stitched, the load replaced by a newer request, or a new section — and the end of a run releases nothing, because
+  with no request waiting there is nothing to release and with one waiting the buffer must live until the reply, or the
+  page being built would miss its last lines. A load whose reply is no longer expected — the send failed, or the engine
+  was lost — stays armed so that a late chunk can still be stitched, but it holds back no trim (§12.3), and the next new
+  section, which no late chunk can cross, completes it and drops its buffer. A project's own text buffer is dropped
+  when the console leaves its page, for another project or for the narrative, and opening the project again reads the
+  disk log afresh (§5.5). Opening a new section still clears everything at once, as above.
 - The console body is drawn at **Geist Mono 300**; dense output scans more easily at the lighter weight. Every
   other mono surface stays at 400.
 - The console formats text in **Ideal** mode, overriding the window's `Display` (§14.2). Display rounds every
@@ -5698,11 +5812,12 @@ either one alone removed barely a sixth of it.
 **Stopping an infinite animation means removing its clock, not just detaching it.** `BeginAnimation(property,
 null)` only unhooks the clock from the property: the clock stays a root of the dispatcher's timing tree in the
 *active* state, and an active animation clock asks for a tick on every frame. The tree holds it weakly, so only a
-garbage collection would end it — and an idle process never collects. Measured: a run that ended while the window
-was visible left the breathing rows, the building rings, the ribbon's sweep and the graph's bead orbit behind as
-orphaned clocks; hidden to the tray three seconds later, the UI thread idled at about 118 million cycles a second
-against 13 for the same window hidden mid-run, because in a hidden window every tick recommits the composition
-channel and wakes the thread at the display's refresh rate. Every owner of an infinite animation therefore keeps
+garbage collection would end it — and the application collects once per operation, after its end finale and a
+pause (§12.3), never on a clock's account, so an orphaned clock ticks until some collection happens to come. Measured:
+a run that ended while the window was visible left the breathing rows, the building rings, the ribbon's sweep and the
+graph's bead orbit behind as orphaned clocks; hidden to the tray three seconds later, the UI thread idled at about 118
+million cycles a second against 13 for the same window hidden mid-run, because in a hidden window every tick recommits
+the composition channel and wakes the thread at the display's refresh rate. Every owner of an infinite animation therefore keeps
 its clock in a `DecorativeClock` and stops by removing it from the tree (`ClockController.Remove`), the same
 discipline the carets' `CursorClock` already keeps; a shared clock — the bead orbits, the selection edges — is
 attached to each surface and removed from all of them at once. The proof at the scale of the whole shell is a
@@ -5940,6 +6055,17 @@ A category of tests that assert properties of the *source*, not of a run:
 | Entry point (`EntryPointTests`) | the App starts from the hand-written `Program.Main`, `VelopackApp…Run()` comes before the `App` is created, the uninstall hook removes the startup value, and the `Velopack` library and the `vpk` tool carry one version (§12.1) |
 | Repository hygiene (`RepoHygieneTests`) | the MIT `LICENSE`, the SDK band in `global.json`, the pinned `vpk` tool, the README's badge (the release run of `main`), and the workflows: CI builds and tests every push to `develop`, with no path filter, on the pinned image, leaves `main` to the release and can be called by it; the release runs on pushes to `main` one at a time and is never cancelled, writes only from its publish job, has its guard check the head of `main` and hand the tag on, tags only after the tests and the package and before the upload, and publishes through `package.ps1` (§18); a failed release is re-run once on its failed jobs |
 | Automation roles (`AutomationRoleTests`) | every `UserControl` of the app declares its automation role through an override in the app assembly — never WPF's default custom type, which the post-layout peer walk re-enumerates on every pass (§15) |
+| One trim definition (`MemoryTrimGuardTests`) | `GC.Collect` is written exactly once in the source, in `Core/Diagnostics/MemoryTrim.cs`; and every `RunCoordinator` the tests construct — an explicit `new`, or a target-typed one — passes a trim seam (`memoryTrim:`, not `null`), so none falls back to the real blocking collection; the rules are shown to catch each form of the call and to ignore prose |
+| One memory read (`MemoryReadGuardTests`) | the process's memory (`PrivateMemorySize64`, `GetGCMemoryInfo`, `GC.GetTotalMemory`) is read only in `Core/Diagnostics/MemoryLine.cs` (§11.4), and `GC.GetTotalMemory` only with the literal `false` — any other argument may be a hidden full collection, which the `GC.Collect` guard cannot see |
+
+**Tests never run the real collection.** The operation-end trim (§11.4, §12.3) is a blocking, compacting collection of
+the whole process; paid at the end of every operation of every window and coordinator test, it would stall the suite
+and disturb the timing tests running beside it. One no-op (`NoRealGc.Collection`) is its single definition: the window
+fixture (`MainWindowHost`) installs it on every window it builds and `SupervisorHostHarness.NewIdleCoordinator` and the
+coordinator harnesses on every coordinator — the coordinator rule above is what keeps a new test from forgetting. A
+test that counts or orders collections gives its own fake, and the production collector is exercised only where the
+test is about it: the one that pins it on a window (`RunBufferReleaseTests`), the source pin of the engine's default
+(`RunCoordinatorMemoryTests`) and the gated memory measurement (§17.5).
 
 ### 17.3 Determinism
 
@@ -5998,17 +6124,27 @@ than failed: only a build the targets break turns the test red.
 A second group carries the `Measurement` category: probes and measurements that read numbers rather than
 assert rules — the tray overlay's own cost, rendered frames of its loop, the notification call, where the real
 file picker lands, UI latency and memory under each perf profile, the UI thread cost of a build's events while the
-window is hidden, and the content-decision timings. The filter above does **not** exclude them (`!=` admits every
-other category value). The tray, file-picker, hidden-window and perf probes open real windows and dialogs, show
-balloons or saturate every core, so each is gated on an environment variable — `BO_PROBE_TRAY`,
-`BO_PROBE_FILE_DIALOG`, `BO_MEASURE_OVERLAY`, `BO_MEASURE_HIDDEN`, `BO_MEASURE_PERF` — and reports itself as skipped
-unless it is set. The content-decision measurements are gated
+window is hidden, the managed-memory budget of the run narrative, and the content-decision timings. The filter above
+does **not** exclude them (`!=` admits every other category value). The tray, file-picker, hidden-window, memory and
+perf probes open real windows and dialogs, show balloons, force full collections or saturate every core, so each is
+gated on an environment variable — `BO_PROBE_TRAY`, `BO_PROBE_FILE_DIALOG`, `BO_MEASURE_OVERLAY`, `BO_MEASURE_HIDDEN`,
+`BO_MEASURE_PERF`, `BO_MEASURE_MEMORY` — and reports itself as skipped unless it is set. The content-decision
+measurements are gated
 differently: they read a real repository whose root comes from `BO_MEASURE_ROOT`, `BO_MEASURE_COLD_ROOT` or
 `BO_CACHE_ROOT` with a local default, and skip only when that root is absent — on a machine where the default
 root exists they run with the normal suite. One probe lives in the application rather than the suite, because
 what it measures only exists there: with `BO_PROBE_FRAMES=<file>` the shell records the gap between every two
 frames it draws, one line per five-second window (frames drawn, longest gap, gaps over 33/50/100/250 ms), which
 is how an animation freeze under a real, full-priority run is measured; without the variable nothing is created.
+
+The memory budget (`NarrativeBudgetTests`) has two halves. The measurement drives a long synthetic run through the real
+shell and view model, the test ticking the batching pump along its production path — so a copy the console kept would
+count — then runs the operation-end trim with the production collector and asserts that the managed heap grew by no
+more than a fixed multiple of the narrative's own text. An overrun is reported and never absorbed by loosening the budget. It reads
+the whole process's heap, which is why it is gated and runs alone. The structural half is not gated and runs with the
+normal suite: after the same run the store holds each line once, the console holds no copy of it, no live-line buffer
+exists without a waiting request, and a new operation resets the store, that buffer, the run text and the console
+document.
 
 A third category, `LocalOnly`, marks a test that cannot run on the hosted CI runner — a timing budget a shared
 runner cannot hold, say. Only CI's filter excludes it (`Category!=Acceptance&Category!=LocalOnly`, §18); the local
@@ -6317,6 +6453,17 @@ do, and how the interface works around each — useful to know before attempting
   in roughly 130 ms and a 1000-node one in roughly 300 ms. Below that the pitch keeps shrinking until nodes
   reach their 8 px floor, at which point a very large workspace is legible as a shape rather than as
   individual projects.
+- **The run's narrative stays in memory until the next operation clears it.** The view model's store holds every line
+  of the last operation — each project's MSBuild output and the application's own lines — from its first line until a
+  new section starts, so after a long run that text stays resident while the application is idle; the operation-end
+  trim (§12.3) compacts it but cannot release it. The console document holds only the render slice, and the older
+  lines are read back from the store when the reader scrolls up (§13.5).
+- **The memory trim is a pause.** The collection is blocking and compacting, so it stops the UI thread for as long as
+  the live heap takes to mark and compact — the longer, the more the application still holds, which is why it is
+  longest right after a large run. The application only chooses its moment: once per operation, in a visible window
+  after the end finale and a grace of 1.5 s, on an idle dispatcher (§12.3). A user who clicks inside that pause feels
+  it. A Sync ends with one like any other operation, the silent Sync that a window activation starts after a pause
+  included.
 - **The will-build preview can under-promise on cycles.** A run's own preview is projected through what that
   run has actually pre-skipped, so it never promises work the run skips up front; a project decided only at its turn
   (§8.3, §8.8) reads as the planner said until then. The remaining gap is the other
@@ -6549,13 +6696,18 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Extended window styles for that overlay (`WS_EX_*`) | `App/Shell/Win32.cs` |
 | The run-result balloon's icon — the size the tray library asks for at the screen's scale, a drawn frame or one resampled from the largest — and the same balloon without the icon when it fails | `App/Shell/AppTrayIcon.cs` (`LoadBalloonIcon`, `ShowWithIconFallback`) |
 | The hidden-surface signal — one inherited property every screen-only job reads, and the "visible again" test views use to catch up; the window writes it from its own visibility and the Build menu's popup gets it by hand | `App/Controls/HiddenSurface.cs`, `App/MainWindow.HiddenSurface.cs` (`SetSurfaceHidden`), `App/Views/ActionBar.xaml.cs` |
-| Memory collection after a run that ended in the tray — two signals, once per run, deferred to idle | `App/MainWindow.HiddenSurface.cs` (`OnTrayIndicatorExitFinished`, `CollectAfterRunWhenDue`, `MemoryCollector`), `App/ViewModels/RunViewModel.cs` (`MarkRunEnded`, `EndedRunSerial`) |
-| Live line buffer released when a run ends; a pending log load ends in one place | `App/ViewModels/RunViewModel.cs` (`ReleaseLiveLinesWhenIdle`, `CompletePendingLoad`) |
+| The operation-end memory trim — the pure rule (at most one per operation; none while work is in flight or a log reply is awaited; a visible window waits out the end finale, a hidden one the tray indicator of a run that ended hidden), the grace constant and the one-trim bookkeeping | `App/Services/MemoryTrimRule.cs` (`ShouldTrim`, `MarkTrimmed`, `GraceAfterFinale`) |
+| …its scheduling shell — the six signals, the grace timer and the idle queue, the execution that asks again, the hidden and visible routes, the stop on close, the collector seam | `App/MainWindow.HiddenSurface.cs` (`RequestTrimWhenDue`, `ShouldTrimNow`, `TrimIfStillDue`, `OnTrayIndicatorExitFinished`, `StopMemoryTrim`, `MemoryCollector`), the subscriptions in `App/MainWindow.xaml.cs` |
+| …the signals it reads on the view model — an operation ended (one writer, every end path), the run that ended, work in flight, a log reply awaited or given up on | `App/ViewModels/RunViewModel.cs` (`EndedOperationSerial`, `MarkOperationEnded`, `MarkRunEnded`, `EndedRunSerial`, `HasPendingLogLoad`, `StopAwaitingReply`), `RunViewModel.Workspace.cs` (`IsOperationInFlight`, `NotifyOperationInFlight`, `ReleaseCleanSurface`, `ReleaseOptimizeSurface`) |
+| …the finale signal | `App/Graph/GraphView.xaml.cs` (`EndFinaleFinished`) |
+| The one collection both processes use | `Core/Diagnostics/MemoryTrim.cs` |
+| A Sync's one end — release, phase decision, then the end signal, whichever of its three paths | `App/ViewModels/RunViewModel.Workspace.cs` (`EndSync`, `OnSyncCompleted`, `TryConsumeSyncFailure`, `ReleaseSyncPhase`), `RunViewModel.cs` (`ReleaseAfterEngineLoss`) |
+| The project-log load — the request id, the stitch and its one match rule, the live lines buffered for the awaited project only, the end of a load in one place, the load that is no longer awaited | `App/ViewModels/RunViewModel.cs` (`PendingLoad` — `IsFor`, `IsAnsweredBy` —, `_lastLogRequestId`, `LoadProjectLogAsync`, `OnProjectLog`, `OnProjectLogChunk`, `CompletePendingLoad`, `ClearConsoleForNewOperation`) |
 | View mode + splitter persistence | `App/Shell/LayoutState.cs`, `App/Shell/UiStateStore.cs`, `App/Controls/DsSplitter.cs` |
 | Keyboard semantics (key → intent, Esc chain) | `App/Shell/KeyboardShortcuts.cs` |
 | …Esc's run layer on the view model (the chain's input state, the can't-be-stopped line) | `App/ViewModels/RunViewModel.Esc.cs` |
 | Shortcut display text, descriptions and About groups (single source) | `App/Shell/ShortcutCatalog.cs` |
-| Product identity (name, version, copyright, tagline, About overview) and the grouped diagnostics model | `App/Services/AppIdentity.cs`, `DiagnosticsReport.cs` |
+| Product identity (name, version, copyright, tagline, About overview) and the grouped diagnostics model, the application's three memory rows included (read when the dialog opens and when the MSBuild resolution lands, `—` when the read fails) | `App/Services/AppIdentity.cs`, `DiagnosticsReport.cs`, `App/Views/AboutDialog.xaml.cs` (`RefreshDiagnostics`) |
 | Layer row placeholders (Settings, by row index) | `App/Shell/LayerPlaceholders.cs` |
 | Workspace label text (the repository root's folder name) | `App/ViewModels/TitleBarContext.cs` |
 | Release notes (What's new data, categories, fold rule) | `CHANGELOG.md` (content), `App/Services/ReleaseNotes.cs` (reader and rules) |
@@ -6579,6 +6731,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Domain DTOs (`ProjectNode`, `BuildPlan`, `BuildState`, `LayerPattern`…) | `Contracts/Model/ProjectModels.cs` |
 | Spawning the engine, generation guard, engine-died signal; the kill and the wait for the killed process to end (`KillAndAwaitExit`) | `App/Services/EngineHost.cs` |
 | Engine events onto the UI thread: one ordered queue, drained in time slices that yield to input and rendering | `App/Services/EngineEventPump.cs` |
+| Every command's one route to the engine: the observer is told, then the test seam or the engine takes the command — the sends that write their failure to the console and the project-log request both go through it | `App/ViewModels/RunViewModel.cs` (`SendToEngineAsync`, `TrySendAsync`, `LoadProjectLogAsync`) |
 | Supervisor entry, argument handling, stdout redirect, planner wiring, crash recovery before the host starts | `Supervisor/Program.cs` |
 | Command dispatch, per-command input gates; the `checkoutBranch` handler and its run-active rejection | `Supervisor/SupervisorHost.cs` |
 | Supervisor path resolution from assembly metadata | `App/Services/SupervisorLayout.cs` |
@@ -6644,8 +6797,9 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Failure-evidence classification (compiler exit vs. timeout/stop/invoke error) — the one clause the evidence gate reads | `Core/State/FailureClassification.cs` |
 | Per-run and per-project logs, decision log | `Core/Logs/RunLogWriter.cs`, `RunLogPaths.cs`, `ProjectLogNaming.cs` |
 | Run-log retention: the three-day window, the newest run kept, the bounded sweep and its one stderr line; the sweep started in the background at engine start | `Core/Logs/RunLogRetention.cs`, `Core/Logs/RunLogPaths.cs` (`TryParseRunDirName`), `Supervisor/Program.cs` |
-| The engine's memory line: the line format, the process read and the sink that swallows its own errors; written to stderr after a sync (whatever its outcome) and after a run | `Core/Diagnostics/MemoryLine.cs`, `Supervisor/SupervisorHost.cs` (`SyncWorkspaceAsync`), `Supervisor/RunCoordinator.cs` (`ReportMemory`), the stderr channel in `Supervisor/Program.cs` |
+| The engine's operation-end trim and memory line: the single collection; the line format, the process read (`Read`, returning a `MemoryReading`, and the guarded `TryRead` the About dialog uses), the one MB rule (`Megabytes`) and the sink that swallows its own errors; after a run, a Sync, a Clean and an Optimize — whatever the outcome — the engine trims, then writes the line to stderr: the collection skipped while a run holds the slot, one warning line when it throws | `Core/Diagnostics/MemoryTrim.cs`, `MemoryLine.cs`, `Supervisor/RunCoordinator.cs` (`TrimAndReportMemory`, `IsRunActive`), `Supervisor/SupervisorHost.cs` (`SyncWorkspaceAsync`, `CleanWorkspaceAsync`, `OptimizeWorkspaceAsync` — each in its `finally`), the stderr channel in `Supervisor/Program.cs` |
 | Log chunking for the UI | `Core/Logs/LogChunker.cs` |
+| The project-log answer: the request's id echoed on every chunk, "no log" as one empty flagged chunk | `Supervisor/SupervisorHost.cs` (`SendProjectLogAsync`), `Supervisor/RunCoordinator.cs` (`TryGetProjectLogSnapshot`), `Contracts/Ipc/IpcMessages.cs` (`GetProjectLogCommand`, `ProjectLogChunkEvent`) |
 
 **Build execution**
 
@@ -6815,11 +6969,14 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 
 | Behaviour | File |
 |---|---|
-| AvalonEdit host, batching, active line, cascade, chunk paging, cursor + row hover band, the hidden native caret | `App/Console/ConsoleView.xaml(.cs)` |
+| AvalonEdit host, batching, active line, cascade, chunk paging, cursor + row hover band, the hidden native caret; the bind to the narrative store (`BindNarrative`) and the trim to the render slice, on a batch and when following comes back (`TrimToRenderSlice`, `TrimNarrativeWhenFollowing`) | `App/Console/ConsoleView.xaml(.cs)` |
+| The run narrative's one owner: its lines, slices and count, and a clear that lets go of its array | `App/Console/NarrativeStore.cs` |
+| The backlog behind the document — the contract (`IConsoleBacklog`), the project page's own list (`ListBacklog`) and the seed the document is built from, the store plus its count (`NarrativeSnapshot`) | `App/Console/IConsoleBacklog.cs`, `ListBacklog.cs`, `NarrativeSnapshot.cs` |
+| The console's one line rule — splitting text into document lines, joining lines newline-terminated; shared by the store, the page list, the trimmed tail and the shell's project page | `App/Console/ConsoleLines.cs`, `App/MainWindow.xaml.cs` (`ProjectDocumentLines`) |
 | Line colouring | `App/Console/ConsoleColorizer.cs`, `ConsolePalette.cs`, `ConsoleLine.cs` |
 | Row hover band target-line geometry (pure) | `App/Console/ConsoleHoverBand.cs` |
 | Typewriter timing for the active stream line (pure) | `App/Console/TypewriterScheduler.cs` |
-| Batching, routing, render slice | `App/Console/ConsoleBatcher.cs`, `ConsoleBatchRouter.cs`, `ConsoleRenderSlice.cs` |
+| Batching — a reseed's generation travels in its sentinel and the pump stamps a batch with the last one it consumed —, routing, render slice (the limit's one definition) | `App/Console/ConsoleBatcher.cs`, `ConsoleBatchRouter.cs`, `ConsoleRenderSlice.cs` |
 | Chunk stitch and scroll compensation | `App/Console/ChunkStitch.cs` |
 | Header, empty states, copy log, timestamps | `App/Console/ConsoleHeader.xaml(.cs)`, `ConsoleEmptyState.cs`, `CopyLogFeedback.cs`, `ClipboardRetry.cs`, `WallClockFormat.cs` |
 

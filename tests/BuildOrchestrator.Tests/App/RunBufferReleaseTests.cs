@@ -20,10 +20,11 @@ namespace BuildOrchestrator.Tests.App;
 ///
 /// <para><b>Test yüzeyleri:</b> motor yoktur (<c>MainWindowHost</c>): <c>LoadProjectLogAsync</c>'in gönderimi senkron düşer
 /// ama dikiş silahlı kalır (gecikmiş bir chunk hâlâ eşleşir) ve motorun yanıtı (<c>ProjectLogChunkEvent</c>) testten
-/// verilir — giden isteğin kimliğini yankılayarak (<c>ProjectLogIpc</c>). Canlı satırlar üretim sırasıyla gelir: dikişin kuyruğu istekten SONRA loglanır, istekten önceki satır testin
-/// verdiği disk metnindedir. Tepsi göstergesi headless'ta kurulmaz; çıkış bildirimini test
-/// <c>MainWindow.OnTrayIndicatorExitFinished</c>'a doğrudan verir (<c>OnGlobalHotkey</c> deseni). Fixture her pencereye boş bir toplayıcı takar (süitte gerçek agresif
-/// toplama koşmaz) ve açılış Sync'inin trimini dönmeden yürütür; toplamayı sayan testler kendi sahtesini takar
+/// verilir — giden isteğin kimliğini yankılayarak (<c>ProjectLogIpc</c>). Canlı satırlar üretim sırasıyla gelir: dikişin
+/// kuyruğu istekten SONRA loglanır, istekten önceki satır testin verdiği disk metnindedir. Tepsi göstergesi headless'ta
+/// kurulmaz; çıkış bildirimini test <c>MainWindow.OnTrayIndicatorExitFinished</c>'a doğrudan verir (<c>OnGlobalHotkey</c>
+/// deseni). Fixture her pencereye boş bir toplayıcı takar (süitte gerçek agresif toplama koşmaz) ve açılış Sync'inin trimini
+/// dönmeden yürütür; toplamayı sayan testler kendi sahtesini takar
 /// (<c>MainWindow.MemoryCollector</c>). Toplama uygulama boştayken ertelendiği için testler sinyalden sonra dispatcher'ı
 /// boşaltır (<c>DispatcherPump.DrainToIdle</c>); boşaltma zamanlayıcı ATEŞLEMEZ, bu yüzden görünür yolu boşaltmayla süren testler
 /// payı sıfırlar (<c>MainWindow.TrimGraceAfterFinale</c>; <see cref="TrimHost"/>). Payın kendisini sınayan testler onu kısa tutup
@@ -221,12 +222,15 @@ public class RunBufferReleaseTests
         int orphan = RequestProjectLog(vm, "A");
         vm.SelectProject(null);
         ReplyWithProjectLog(vm, orphan, "A", "old line\n", through: 1);
-        Assert.Equal("old line\n", vm.GetProjectDocumentText(a));   // ön-koşul: proje tamponu dolu (eskiden hiç dolmuyordu — iddia boştu)
-        Assert.Equal(1, vm.GetProjectLineCount(a));                 // ön-koşul: satır sayısı da
+        // Ön-koşullar: proje tamponu ve satır sayısı dolu (eskiden hiç dolmuyordu — iddia boştu).
+        Assert.Equal("old line\n", vm.GetProjectDocumentText(a));
+        Assert.Equal(1, vm.GetProjectLineCount(a));
         RequestProjectLog(vm, "A");                                  // yeniden açılıyor: yanıt henüz yok
         MainWindowHost.LogLine(vm, "A", 2, "tail line");             // istekten sonra: dikişin kuyruğu, canlı tamponda
         MainWindowHost.CompleteRun(vm, 1);               // dikiş bekliyor: canlı tampon yerinde
-        Assert.Equal(1, vm.LiveLineCount);               // ön-koşul: temizlenecek canlı satır var (KIRMIZI, eski kural 2: "old line" da tutuluyordu)
+        // Ön-koşul: temizlenecek canlı satır var — yalnız "tail line" (eski kuralda "old line" da tutulurdu, bkz. yukarıdaki
+        // DEĞİŞEN KURULUM).
+        Assert.Equal(1, vm.LiveLineCount);
         Assert.Contains("old line", vm.GetRunDocumentText());
         int cleared = 0; vm.ConsoleCleared += (_, _) => cleared++;
 
@@ -780,7 +784,7 @@ public class RunBufferReleaseTests
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 0, 0, 0, 100));
         DispatcherPump.DrainToIdle();
 
-        Assert.Equal([0], seen);   // (M-2 KIRMIZI'sı: runCompleted toplamayı yeniden sormuyordu — o koşu hiç toplanmıyordu)
+        Assert.Equal([0], seen);   // bir kez ve bırakılmış tamponla: toplamayı koşunun bitişi (runCompleted) ister, gösterge çıkışı değil
         GC.KeepAlive(window);
     }
 
@@ -888,7 +892,7 @@ public class RunBufferReleaseTests
 
         vm.OnEvent(ProjectLogIpc.NotFound(request, MainWindowHost.IdOf("A")));
 
-        Assert.Equal(0, vm.LiveLineCount);   // (M-1 KIRMIZI'sı: logNotFound yanıtı ertelenen bırakmayı sormuyordu)
+        Assert.Equal(0, vm.LiveLineCount);   // "log yok" yanıtı da yüklemenin sonudur: tampon yanıtla bırakılır (CompletePendingLoad)
         GC.KeepAlive(window);
     }
 

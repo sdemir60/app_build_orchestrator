@@ -613,7 +613,9 @@ the tagline on the left; a *licensed to* block with the company logo on the righ
 
 - **About** — a short description of what the app does, then the application version, the engine version (or
   `not started`) and the copyright, and a *What's new in {version}* button that opens the release notes.
-- **Environment** — two groups: *Runtime* (engine PID, .NET runtime, OS) and *Paths* (the resolved
+- **Environment** — two groups: *Runtime* (engine PID, .NET runtime, OS, and the app's own memory — *App
+  private*, *GC committed* and *Managed heap*, in MB: a snapshot taken when the screen opens and once more when
+  `MSBuild.exe` resolves, not a live reading, and `—` when it cannot be read) and *Paths* (the resolved
   `MSBuild.exe` and its version, the repository root, and the state and log paths).
 - **Shortcuts** — the table above in three groups, *Global*, *Build* and *Application*, rendered from the same
   source the app binds its keys from, so a rebound key can never drift from what the screen claims.
@@ -767,6 +769,11 @@ The reasoning behind all three is in [`ARCHITECTURE.md` §11](ARCHITECTURE.md#11
   changes the panel's behaviour — so a very large workspace pays for its whole graph once, at Sync (a few
   hundred milliseconds at a thousand projects). Past a few hundred projects the nodes reach their minimum
   size and the graph reads as a shape rather than as individual squares.
+- **A full memory collection ends every operation.** When a run, Sync, Clean or Optimize ends, the app runs one
+  blocking garbage collection to give back what the operation used — in a visible window after the closing lights
+  (when the operation has them) and a short pause, in the tray as soon as the app is idle — for a run, once the
+  corner mark has played out. It stops the interface for as long as it takes, so a click inside that moment waits;
+  and the last operation's console text stays in memory until the next operation starts.
 - **The IPC has no field-level schema validation.** A malformed *JSON* line is recoverable — the Supervisor
   answers `error(badCommand)` and keeps going — but a **framing** error (over-long or truncated line) is treated
   as unrecoverable: it writes `error(framing)` and exits with code 2, and the App reports the engine as dead.

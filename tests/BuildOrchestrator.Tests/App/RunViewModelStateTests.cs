@@ -419,8 +419,9 @@ public class RunViewModelStateTests
     /// işlemin satırları yazılır" — Build/Rebuild/Cycles bunu <c>BeginRunAsync</c> ile zaten (koşulsuz)
     /// yapıyordu. Sync ise TIKLAMA ANINDA (motorun cevabı beklenmeden, pill'in kendisiyle AYNI an) konsolu VE
     /// event stream'i temizlemiyordu — bir önceki işlemin tortusu, Sync'in kendi <c>syncProgress</c> satırlarının
-    /// ÜZERİNE yazılıyordu (bkz. <c>RunViewModel.cs:784-793</c>'teki mid-Sync run guard'ının gerekçesi: "…ama
-    /// SyncProgressEvent hâlâ _runText'e satır ekliyor olabilir").</summary>
+    /// ÜZERİNE yazılıyordu (aynı karışıklığın run tarafındaki karşılığı <c>CanRequestRun</c> kapısının gerekçesidir: Sync
+    /// sürerken başlayan bir koşu konsolu temizleyip kendi satırını yazardı, Sync'in kalan satırları da aynı dokümana
+    /// akardı).</summary>
     [Fact]
     public async Task Sync_clears_the_console_and_stream_left_over_from_the_previous_operation()
     {
