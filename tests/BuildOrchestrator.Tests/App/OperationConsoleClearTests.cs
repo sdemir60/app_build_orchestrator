@@ -7,8 +7,8 @@ namespace BuildOrchestrator.Tests.App;
 /// <summary>
 /// [design v1.13.2 §2.5 · §9] <b>Konsol ve event stream her işlemde EKRANDA temizlenir.</b> VM tamponunun
 /// silindiğini <c>RunViewModelStateTests</c> pinler; bu dosya kabuk kablajını pinler: VM'in temizliği
-/// (<c>RunViewModel.ConsoleCleared</c>) AvalonEdit belgesine (<c>ConsoleView.ClearRunDocument</c>) ve
-/// <c>StreamEvents</c>'in boşalması event stream satırlarına ulaşıyor mu.
+/// (<c>RunViewModel.ConsoleCleared</c>) AvalonEdit belgesine (boş anlatıya yeniden bağlanan belge —
+/// <c>ConsoleView.ReplaceRunDocument</c>) ve <c>StreamEvents</c>'in boşalması event stream satırlarına ulaşıyor mu.
 ///
 /// <para><b>Ölçülen kusur (kullanıcı testi):</b> Build ve Sync'te konsol "hiç temizlenmiyordu". VM tamponu
 /// siliniyor ama ekrandaki belge yalnız mod geçişinde (<c>ShowRunConsole</c>) yeniden kuruluyordu — yeni işlemin
@@ -33,7 +33,7 @@ public class OperationConsoleClearTests
         vm.OnEvent(new RunStartedEvent("r0", RunMode.Build, 1, 1, "Debug"));
         vm.OnEvent(new ProjectSucceededEvent("r0", MainWindowHost.IdOf("Alpha"), 100));
         vm.OnEvent(new RunCompletedEvent("r0", RunOutcome.Completed, 1, 0, 0, 0, 100));
-        window.Shell.ConsoleViewControl.ShowRunDocument(PreviousLine);
+        window.Shell.ConsoleViewControl.ShowRunDocument(NarrativeSnapshots.FromText(PreviousLine));
         window.Shell.EventStreamControl.UpdateLayout();
 
         Assert.Contains(PreviousLine, ConsoleText(window));
@@ -65,6 +65,30 @@ public class OperationConsoleClearTests
 
         Assert.DoesNotContain(PreviousLine, ConsoleText(window));
         Assert.Empty(window.Shell.EventStreamControl.Rows);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [idle-memory · dalga 1] <b>Temizlikle aynı anda gelen satır belgeye BİR kez iner.</b> VM anlatıyı kilit altında siler
+    /// ve olayı kilit DIŞINDA yayınlar; arada IPC thread'inden bir satır gelebilir — store'a yazılır ve temizliğin sentinel'inden
+    /// SONRA pompaya gider (yeni nesil), yani batch olarak belgeye inecektir. Kabuk bu yüzden belgeyi anlatıya BOŞ bağlar
+    /// (satır sayısı 0). Store'u ikinci kez okuyup o anki sayıyla bağlasaydı o satır hem tohumda hem batch'te olurdu: çift satır.
+    /// Test o aralığı kabuğun işleyicisinden ÖNCE koşan bir aboneyle kurar (olay aboneleri abonelik sırasıyla çağrılır; VM'e
+    /// pencereden önce abone olmanın tek yolu <c>beforeVm</c>'dir).
+    /// </summary>
+    [StaFact]
+    public async Task A_line_that_arrives_while_the_console_is_cleared_lands_once()
+    {
+        const string lateLine = "late line from the engine";
+        using var temp = new TempDir();
+        var (window, vm) = MainWindowHost.New(temp, beforeVm: model =>
+            model.ConsoleCleared += (_, _) => MainWindowHost.LogLine(model, "Alpha", 1, lateLine));
+        MainWindowHost.Realize(window);
+
+        await vm.SyncCommand.ExecuteAsync(null); // temizlik: anlatı silinir, olay yayınlanır — arada satır gelir
+
+        window.AppendConsoleBatch(lateLine + "\n", window.ConsoleReseedGen); // pompanın o satır için batch'i (pompa tick etmez)
+        Assert.Equal(1, MainWindowHost.Occurrences(ConsoleText(window), lateLine)); // KIRMIZI ikinci okumayla: 2
         GC.KeepAlive(window);
     }
 }

@@ -199,7 +199,8 @@ public class RunCoordinatorTests
             ICpuGovernor? cpuGovernor = null, MemoryStream? output = null, InFlightLedger? inFlight = null,
             Func<string, string?>? apiSurface = null,
             string? customBeforeTargetsPath = null,
-            bool productionMachine = false)
+            bool productionMachine = false,
+            Action? memoryTrim = null)
         {
             _out = output ?? new MemoryStream(); // [Fix round 2] testler pump'ı duraklatan bir stdout verebilir
             Sut = new RunCoordinator(
@@ -229,7 +230,10 @@ public class RunCoordinatorTests
                 // yapıldığı makinenin o anki boş belleğine/işlemcisine bağlı bir kırpmaya uğramasın. Kırpma testleri
                 // Machine'i kendisi verir. productionMachine: true ⇒ seam HİÇ verilmez (null): motor üretimdeki
                 // varsayılanı, yani gerçek makineyi okur.
-                machine: productionMachine ? null : () => Machine);
+                machine: productionMachine ? null : () => Machine,
+                // [bellek trimi] Varsayılan "toplama yok": üretim varsayılanı bloklayan bir GC'dir ve bu harness'i kuran her test
+                // koşu bitişinde bütün test sürecini durdurur. Toplamayı gözleyen testler sayaç/kayıtçı verir.
+                memoryTrim: memoryTrim ?? NoRealGc.Collection);
         }
 
         /// <summary>Bol işlemci ve bellek: işçi bütçesi hiçbir istek için devreye girmez.</summary>

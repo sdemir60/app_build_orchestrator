@@ -16,10 +16,24 @@ namespace BuildOrchestrator.Tests.Diagnostics;
 /// <summary>
 /// [PERF Faz C/C3] Bellek tanı satırının biçimi ve süreç okuması. Biçim <see cref="MemoryLine"/>'da TEK yerdedir; testler
 /// ikinci bir kopya tutmaz, yalnız sözleşmeyi sabitler: alan sırası, birim, yuvarlama, kültürsüzlük, hata yutma.
+///
+/// <para>[idle-memory · spec §6.6] Okuma (<see cref="MemoryLine.Read"/>) ve MB biçimi (<see cref="MemoryLine.Megabytes"/>) da
+/// tektir: satır ve App'in tanı satırları (About → Environment) ikisini de kullanır — iki yüzeyin sayıları aynı kuralla
+/// yazılır.</para>
 /// </summary>
 public class MemoryLineTests
 {
     private const long Mb = 1024 * 1024;
+
+    /// <summary>Yuvarlama tablosu — satır ve MB biçimi AYNI tabloyla sınanır (tablo tek yerde).</summary>
+    public static TheoryData<long, string> Rounding => new()
+    {
+        { 0L, "0" },
+        { Mb / 2 - 1, "0" },
+        { Mb / 2, "1" },
+        { 5 * Mb / 2, "3" },
+        { 5L * 1024 * Mb, "5120" },
+    };
 
     /// <summary>Üç değer sabit sırayla (private, committed, heap) ve MB olarak yazılır; satır <see cref="MemoryLine.Prefix"/> ile başlar.</summary>
     [Fact]
@@ -36,13 +50,16 @@ public class MemoryLineTests
     /// aşan bayt sayısı (5 GB) taşmaz ve binlik ayırıcı almaz.
     /// </summary>
     [Theory]
-    [InlineData(0L, "0")]
-    [InlineData(Mb / 2 - 1, "0")]
-    [InlineData(Mb / 2, "1")]
-    [InlineData(5 * Mb / 2, "3")]
-    [InlineData(5L * 1024 * Mb, "5120")]
+    [MemberData(nameof(Rounding))]
     public void Format_rounds_each_value_half_away_from_zero_without_digit_grouping(long bytes, string expected) =>
         Assert.Equal($"memory: private={expected} committed={expected} heap={expected}", MemoryLine.Format(bytes, bytes, bytes));
+
+    /// <summary>[idle-memory · spec §6.6] MB biçimi tek başına da satırınkiyle AYNI kuraldır: App'in tanı satırları (About →
+    /// Environment) sayıyı buradan alır, kendi yuvarlamasını yazmaz.</summary>
+    [Theory]
+    [MemberData(nameof(Rounding))]
+    public void Megabytes_rounds_half_away_from_zero_without_digit_grouping_like_the_line(long bytes, string expected) =>
+        Assert.Equal(expected, MemoryLine.Megabytes(bytes));
 
     /// <summary>Süreç okuması AYNI biçimi üretir; çalışan bir süreç en az bir MB özel bellek tutar.</summary>
     [Fact]
@@ -54,6 +71,42 @@ public class MemoryLineTests
         Assert.True(match.Success, line);
         Assert.True(long.Parse(match.Groups[1].Value) >= 1, "a running process holds at least a megabyte of private bytes: " + line);
     }
+
+    /// <summary>[idle-memory · spec §6.6] Süreç okumasının kendisi (satırı ve App'in tanı satırlarını besleyen TEK okuma): çalışan
+    /// bir süreç en az bir MB özel bellek ve boş olmayan bir yönetilen yığın tutar; GC'nin taahhüdü negatif olamaz (hiç GC
+    /// olmadıysa 0).</summary>
+    [Fact]
+    public void Read_samples_this_process()
+    {
+        var reading = MemoryLine.Read();
+
+        Assert.True(reading.PrivateBytes >= Mb, $"a running process holds at least a megabyte of private bytes: {reading}");
+        Assert.True(reading.HeapBytes > 0, $"a running process has a managed heap: {reading}");
+        Assert.True(reading.CommittedBytes >= 0, reading.ToString());
+    }
+
+    /// <summary>[idle-memory · final review (Tasks 9-10)] Tanı ekranının (About) okuması: <see cref="MemoryLine.Read"/>'in korumalı
+    /// hâli. Çalışan bir süreçte okuma başarılır ve <c>Read</c> ile aynı büyüklükte değerler verir.</summary>
+    [Fact]
+    public void TryRead_returns_the_reading_of_this_process()
+    {
+        var reading = MemoryLine.TryRead();
+
+        Assert.NotNull(reading);
+        Assert.True(reading.Value.PrivateBytes >= Mb, $"a running process holds at least a megabyte of private bytes: {reading}");
+        Assert.True(reading.Value.HeapBytes > 0, reading.ToString());
+    }
+
+    /// <summary>
+    /// Bir tanı, tanı ekranını bozamaz: süreç sorgusu patlarsa (izin, kapanan süreç) <c>TryRead</c> <c>null</c> döner, fırlatmaz.
+    /// Eskiden About'un okuması <see cref="MemoryLine.Read"/>'i doğrudan çağırıyordu — fırlatsa diyalog hiç açılmazdı;
+    /// <see cref="MemoryLine.Report"/> motorun satırı için aynı güvenceyi baştan veriyordu. Okuyucu parametreli aşırı yükleme
+    /// patlayan bir okumayı taklit etmenin yoludur: <c>internal</c>'dır ve Core derlemesi internal'larını bu test derlemesine açar
+    /// (<c>InternalsVisibleTo</c>, Core.csproj).
+    /// </summary>
+    [Fact]
+    public void TryRead_returns_null_instead_of_throwing_when_the_read_fails() =>
+        Assert.Null(MemoryLine.TryRead(() => throw new InvalidOperationException("access denied")));
 
     [Fact]
     public void Report_hands_the_current_line_to_the_sink()
@@ -81,7 +134,7 @@ public class MemoryLineTests
 /// </summary>
 public class MemoryLineWiringTests
 {
-    private static bool IsMemoryLine(string line) => line.StartsWith(MemoryLine.Prefix, StringComparison.Ordinal);
+    internal static bool IsMemoryLine(string line) => line.StartsWith(MemoryLine.Prefix, StringComparison.Ordinal);
 
     /// <summary>Konsola TEK bellek satırı düşmüştür.</summary>
     private static void AssertSingleMemoryLine(List<string> console)
@@ -101,11 +154,8 @@ public class MemoryLineWiringTests
         var stdin = await SupervisorHostHarness.StdinWith(command);
 
         using var job = JobObject.CreateKillOnClose();
-        using var coordinator = new RunCoordinator(
-            planner: (_, _) => throw new InvalidOperationException("no run in this test"),
-            msbuildFactory: _ => throw new InvalidOperationException("no run in this test"),
-            logFactory: startedAt => new RunLogWriter(Path.Combine(sandbox, "logs"), startedAt),
-            writer: writer, innerJob: job, nowMs: () => 0, console: line => { lock (console) console.Add(line); });
+        using var coordinator = SupervisorHostHarness.NewIdleCoordinator(job, writer, line => { lock (console) console.Add(line); },
+            logFactory: startedAt => new RunLogWriter(Path.Combine(sandbox, "logs"), startedAt));
         var services = WorkspaceServices.Default(sandbox, _ => throw new NotSupportedException("no restore in this test"));
         if (configure is not null) services = configure(services);
         var host = new SupervisorHost(writer, new NdjsonReader(stdin), job, coordinator, services);

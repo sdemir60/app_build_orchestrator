@@ -455,8 +455,9 @@ public class AboutDialogTests
     // ---------------------------------------------------------------- Environment sekmesi
 
     /// <summary>
-    /// [design v1.19.0 §2.10] İki caps grup: <b>RUNTIME</b> (Engine PID · .NET runtime · OS) ve <b>PATHS</b>
-    /// (MSBuild · Repository root · State file · Logs); her satırın etiketi ve değeri görünür.
+    /// [design v1.19.0 §2.10] İki caps grup: <b>RUNTIME</b> (Engine PID · .NET runtime · OS · App private · GC committed ·
+    /// Managed heap — bellek satırları idle-memory spec §6.6) ve <b>PATHS</b> (MSBuild · Repository root · State file · Logs);
+    /// her satırın etiketi ve değeri görünür.
     ///
     /// <para><b>[DEĞİŞEN KURAL — design v1.19.0]</b> ESKİ İDDİA: sekme tek düz listeydi ve <c>App version</c> /
     /// <c>Engine version</c> satırlarıyla başlardı. Sürümler About sekmesine taşındı (tekrar yok) — yoklukları
@@ -492,6 +493,36 @@ public class AboutDialogTests
             Assert.DoesNotContain("Engine version", texts);
             // Sürüm başlıktaki çipte görünür; gövdede (Environment paneli) GEÇMEZ.
             Assert.DoesNotContain(AppIdentity.Version, VisibleTexts(dialog.Body));
+        }
+    }
+
+    /// <summary>
+    /// [idle-memory · spec §6.6] RUNTIME grubu App'in belleğini taşır: <c>App private</c> · <c>GC committed</c> ·
+    /// <c>Managed heap</c>, MB. Değerler bu sürecin GERÇEK okumasıdır (<c>MemoryLine.TryRead</c>) — sahte ya da boş bir okuma
+    /// (0 MB) bağlantıyı kopuk bırakırdı: çalışan bir App en az bir MB özel bellek tutar. Okuma raporun kurulduğu anındır
+    /// (açılış ve MSBuild çözülünce), canlı değildir.
+    /// <para>Satırların RUNTIME grubunda durduğu (başlıkların arasında) <see cref="The_environment_tab_draws_runtime_and_paths_groups_without_version_rows"/>'da
+    /// her RUNTIME satırı için zaten sınanır; burada tekrar edilmez (aynı gezinti iki testte yazılırdı).</para>
+    /// </summary>
+    [StaFact]
+    public void The_runtime_group_shows_the_app_memory_in_megabytes_read_from_this_process()
+    {
+        var (dialog, _, scope) = AboutDialogHost.OpenRealized();
+        using (scope)
+        {
+            Select(dialog, EnvironmentTab);
+            var texts = VisibleTexts(dialog);
+
+            foreach (string label in new[] { "App private", "GC committed", "Managed heap" })
+            {
+                var line = dialog.Diagnostics!.Runtime.Single(l => l.Label == label);
+                Assert.Matches(@"^\d+ MB$", line.Value);
+                Assert.Contains(line.Value, texts);
+                Assert.NotNull(VisibleText(dialog, label)); // etiket çizili: tek ve görünür
+            }
+            string appPrivate = dialog.Diagnostics!.Runtime.Single(l => l.Label == "App private").Value;
+            Assert.True(long.Parse(appPrivate[..appPrivate.IndexOf(' ')]) >= 1,
+                $"App private bu sürecin okuması değil: {appPrivate}");
         }
     }
 

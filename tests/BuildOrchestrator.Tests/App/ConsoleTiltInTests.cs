@@ -35,8 +35,8 @@ public class ConsoleTiltInTests
     }
 
     /// <summary>Viewport'u kesin aşan bir anlatı (render dilimi son 200 satırla sınırlar).</summary>
-    private static string LongNarrative() =>
-        string.Concat(Enumerable.Range(0, 300).Select(i => $"line{i}\n"));
+    private static NarrativeSnapshot LongNarrative() =>
+        NarrativeSnapshots.FromText(string.Concat(Enumerable.Range(0, 300).Select(i => $"line{i}\n")));
 
     private static (AxisAngleRotation3D Rotation, TranslateTransform3D Translate) SceneOf(ConsoleView view)
     {
@@ -61,7 +61,7 @@ public class ConsoleTiltInTests
         const double height = 100;
         var view = Realized(height: height);
 
-        view.ShowRunDocument("first\n");
+        view.ShowRunDocument(NarrativeSnapshots.FromText("first\n"));
 
         var (rotation, translate) = SceneOf(view);
         Assert.Equal(new Vector3D(1, 0, 0), rotation.Axis);    // menteşe yine X ekseni
@@ -148,7 +148,7 @@ public class ConsoleTiltInTests
     public void Live_output_never_replays_the_transition()
     {
         var view = Realized();
-        view.ShowRunDocument("first\n");
+        view.ShowRunDocument(NarrativeSnapshots.FromText("first\n"));
         DispatcherPump.PumpUntil(() => view.Tilt3D.Visibility == Visibility.Collapsed, TimeSpan.FromSeconds(3));
         Assert.True(view.Tilt3D.Visibility == Visibility.Collapsed, "ön koşul: açılış geçişi 3 sn içinde bitmedi");
 

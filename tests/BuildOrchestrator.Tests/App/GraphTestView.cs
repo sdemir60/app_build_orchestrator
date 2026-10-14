@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Media;
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.App.Services;
 
@@ -57,6 +58,33 @@ internal static class GraphTestView
         Func<bool>? animationsEnabled = null,
         IMotionSettings? motion = null) =>
         Resize(New(animationsEnabled, motion), size);
+
+    /// <summary>[idle-memory · final review 63c] İki düğümlü sabit grafın düğüm kimlikleri — bitiş finali ve filtre askısı
+    /// testlerinin ORTAK dünyası (ikisi aynı kurulumu kopyalamıştı: kopya YASAK).</summary>
+    public const string BaseNode = "OSYS.Base";
+
+    /// <summary><see cref="BaseNode"/>'a bağlı ikinci düğüm (Base → Data).</summary>
+    public const string DataNode = "OSYS.Data";
+
+    /// <summary>Görünümü iki düğümlü sabit grafla besler: <see cref="BaseNode"/> → <see cref="DataNode"/>, ikisi
+    /// <c>Succeeded</c>. Kurulu bir görünümde grafı DEĞİŞTİRMEK (Sync'in getirdiği yeni graf) de bu yoldan yapılır.</summary>
+    public static void SetTwoNodeGraph(GraphView view)
+    {
+        ArgumentNullException.ThrowIfNull(view);
+        view.SetGraph(
+            [new(BaseNode, BaseNode, 0, GraphStatus.Succeeded), new(DataNode, DataNode, 1, GraphStatus.Succeeded)],
+            [new(BaseNode, DataNode)]);
+    }
+
+    /// <summary><see cref="Realized"/> bir görünüm (640×400) + <see cref="SetTwoNodeGraph"/>. <paramref name="animationsEnabled"/>
+    /// zorunludur: final ve filtre askısı testleri animasyon sinyalini AÇIK ister, kapalı varsayılan sessizce başka bir yolu sınardı.</summary>
+    public static GraphView TwoNodeGraph(Func<bool> animationsEnabled)
+    {
+        ArgumentNullException.ThrowIfNull(animationsEnabled);
+        var view = Realized(new Size(640, 400), animationsEnabled);
+        SetTwoNodeGraph(view);
+        return view;
+    }
 
     /// <summary>VAR OLAN bir view'ı yeniden ölçer/yerleştirir — panel boyut değişimini (<c>Ground.SizeChanged</c>)
     /// süren testlerin yolu. Ölçüm ikilisi <see cref="Sized"/> ile ORTAK (kopya YASAK); yerleşimi işletmek için

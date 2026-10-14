@@ -170,6 +170,10 @@ public partial class MainWindow : Window
         Shell.ProjectsList.Arbiter = _scrollArbiter;
         Shell.ConsoleViewControl.Arbiter = _scrollArbiter;
         Shell.EventStreamControl.Arbiter = _scrollArbiter;
+        // [idle-memory · dalga 1] Konsol anlatının geçmişini VM'in store'undan ister (tek kopya): bağ, belge henüz boşken ve
+        // pompa başlamadan (ctor sonu) kurulur — store'un her satırı pompadan sırayla gelecektir. Belge yeniden KURULMAZ: bu
+        // bir mod geçişi değildir (dönüş/temizlik kurulumları sayılır — ConsoleView.RunDocumentReplacedCount).
+        Shell.ConsoleViewControl.BindNarrative(_vm.Narrative);
         var saved = _uiState.Load();
         var layout = new LayoutState(saved.LayoutMode, saved.ColPct, saved.LeftPct, saved.RightPct);
         Shell.ApplyLayout(layout);
@@ -301,17 +305,22 @@ public partial class MainWindow : Window
         Shell.GraphHost.SelectionChanged += OnGraphSelectionChanged;
         _vm.PropertyChanged += OnVmPropertyChangedForGraph;
 
-        // [design v1.13.2 §2.5 · §9] Konsol her işlemde temizlenir — VM tamponu silindiği anda ekrandaki belge
-        // de boşalır. Yalnız ANLATI modunda: proje logu açıkken belge o loga aittir, dokunulmaz (← Back zaten
-        // taze anlatı belgesini kurar — ShowRunConsole). Event stream'in kendi yolu ayrı: StreamEvents'ten
+        // [design v1.13.2 §2.5 · §9] Konsol her işlemde temizlenir — VM anlatıyı sildiği anda ekrandaki belge
+        // de boşalır (tilt'siz kurulum). Yalnız ANLATI modunda: proje logu açıkken belge o loga aittir, dokunulmaz
+        // (← Back zaten taze anlatı belgesini kurar — ShowRunConsole). Event stream'in kendi yolu ayrı: StreamEvents'ten
         // silinen satırları EventStreamView CollectionChanged ile düşürür.
+        //
+        // [idle-memory · dalga 1] Belge anlatıya BOŞ bağlanır (satır sayısı 0) — store'un o anki sayısı İKİNCİ KEZ
+        // okunmaz. VM olayı kilit DIŞINDA yayınlar; arada IPC thread'inden gelen bir satır store'dadır ve temizliğin
+        // sentinel'inden SONRA pompaya gitmiştir (yeni nesil): batch olarak belgeye inecektir. Sayıyla bağlansaydı aynı
+        // satır hem tohumda hem batch'te olurdu (OperationConsoleClearTests).
         _vm.ConsoleCleared += (_, _) =>
         {
             if (_vm.ActiveProjectId is not null) return;
             // [perf Faz A · A2] Gizli pencerede belgeye dokunulmaz: temizlik de dönüşteki tek kurulumun işidir
-            // (ResyncAfterShow belgeyi modelin o anki tam metninden kurar).
+            // (ResyncAfterShow belgeyi modelin o anki anlatısından kurar).
             if (IsSurfaceHidden) _consoleStaleWhileHidden = true;
-            else Shell.ConsoleViewControl.ClearRunDocument();
+            else Shell.ConsoleViewControl.ReplaceRunDocument(new NarrativeSnapshot(_vm.Narrative, 0));
         };
         // [design v1.8.0 §3.1 · kullanıcı kararı 2026-09-29] Workspace yokken paneller boş durumdadır: başlıklar sayaç ve
         // liste araçları taşımaz, konsolun prompt satırı "Waiting for a workspace" der — ilk açılışta da, kök boş
@@ -408,12 +417,12 @@ public partial class MainWindow : Window
         {
             if (e.PropertyName == nameof(RunViewModel.SelectedProjectId)) UpdateFrontierSelection();
         };
-        // [perf Faz C · C4] "Koşu bitti" sinyali: tepside biten koşunun bellek toplaması iki sinyalin birleşimidir
-        // (MainWindow.HiddenSurface — CollectAfterRunWhenDue); bu, koşu tarafı.
-        _vm.PropertyChanged += (_, e) =>
-        {
-            if (e.PropertyName == nameof(RunViewModel.EndedRunSerial)) CollectAfterRunWhenDue();
-        };
+        // [idle-memory · dalga 1] İşlem sonu bellek trimi (MainWindow.HiddenSurface — RequestTrimWhenDue): VM'in sinyalleri
+        // (işlem bitti, koşu tepside mi bitti, log yüklemesinin cevabı artık beklenmiyor, uçuştaki iş değişti) ve grafın bitiş
+        // finalinin sonu. Öbür iki sinyal kendi yerinde bağlanır: gösterge çıkışı SetUpTrayBuildIndicator'da, yüzeyin gizlenip
+        // görünmesi SetSurfaceHidden'da.
+        _vm.PropertyChanged += (_, e) => OnVmPropertyChangedForTrim(e.PropertyName);
+        Shell.GraphHost.EndFinaleFinished += RequestTrimWhenDue;
         Shell.ConsoleHeaderControl.BackRequested += (_, _) => OnBack();
         // Liste ↔ graf karşılıklı hover: bir yüzeydeki imleç, öbüründe standart hover olarak yansır.
         Graph.GraphHoverEcho.Wire(_vm, Shell.GraphHost);
@@ -425,7 +434,7 @@ public partial class MainWindow : Window
             if (_vm.GetActiveLineCount() == 0) Shell.ConsoleViewControl.ShowReady();
             await StartEngineAsync();
         };
-        Closed += (_, _) => { _consoleCts.Cancel(); _console.Complete(); _elapsedTimer.Stop(); TrackHeaderRow(null); };
+        Closed += (_, _) => { _consoleCts.Cancel(); _console.Complete(); _elapsedTimer.Stop(); StopMemoryTrim(); TrackHeaderRow(null); };
 
         // [M-3 fix wave] Oturum kapanışı Closing'i tetikler ama e.Cancel'i YOK SAYAR — _exiting hâlâ false ise
         // OnClosing tray'e düşer ve K5 balloon'unu yakabilir. SessionEnding (Closing'den ÖNCE) _exiting'i erken set eder.
@@ -625,25 +634,25 @@ public partial class MainWindow : Window
     }
 
     /// <summary>[Kısıt 1/A13.2 · D4 review §1] Pump flush'ının hedefi. Kararı SAF <see cref="ConsoleBatchRouter"/>
-    /// verir (test edilebilir seam); Window yalnız uygular. <paramref name="batchGen"/>, pump'ın bu batch'i
-    /// okuduğu reseed nesli: aradan bir reseed geçtiyse (<c>batchGen &lt; _console.CurrentReseedGen</c>) batch
-    /// BAYATTIR ve ATILIR — Solution B'nin senkron doküman-set'inin ardından koşan bir bayat flush'ın taze
-    /// dokümana sızmasını (dup/cross-doc) kapatır. Aksi halde: anlatı (null) →
-    /// <see cref="ConsoleView.AppendNarrativeBatch"/> (en yeni satır T34 hibrit daktilo); proje-log → ham MSBuild
-    /// <see cref="ConsoleView.AppendBatch"/> instant (ham çıktı ASLA harf-harf — DD2).
+    /// verir (test edilebilir seam); Window yalnız uygular. <paramref name="batchGen"/>, batch'in ait olduğu reseed nesli
+    /// (pompanın batch'ten önce tükettiği son sentinel'in nesli): aradan bir reseed geçtiyse
+    /// (<c>batchGen &lt; _console.CurrentReseedGen</c>) batch BAYATTIR ve ATILIR — Solution B'nin senkron doküman-set'inin
+    /// ardından koşan bir bayat flush'ın taze dokümana sızmasını (dup/cross-doc) kapatır. Aksi halde: anlatı (null) →
+    /// <see cref="ConsoleView.AppendNarrativeBatch"/>; proje-log → ham MSBuild <see cref="ConsoleView.AppendBatch"/>. İkisi de
+    /// anında basar (daktilo yok).
     ///
-    /// <para>[perf Faz A · A2] <b>Gizli ya da bayat konsolda belgeye yazılmaz:</b> metin VM tamponunda zaten durur; batch atılır,
-    /// "ekran bayat" bayrağı kalkar (<c>_consoleStaleWhileHidden</c>) ve <see cref="ResyncAfterShow"/> dönüşte belgeyi
-    /// tam metinden bir kez kurar. Kapı yalnız <see cref="IsSurfaceHidden"/>'a bakmaz, bayrağa da bakar: gösterimden sonra
-    /// ama Loaded-öncelikli dönüş kurulumu koşmadan Normal-öncelikli bir pompa batch'i araya girebilir; bayat belgeye
+    /// <para>[perf Faz A · A2] <b>Gizli ya da bayat konsolda belgeye yazılmaz:</b> metin modelde (VM'in anlatı store'u) zaten
+    /// durur; batch atılır, "ekran bayat" bayrağı kalkar (<c>_consoleStaleWhileHidden</c>) ve <see cref="ResyncAfterShow"/>
+    /// dönüşte belgeyi modelden bir kez kurar. Kapı yalnız <see cref="IsSurfaceHidden"/>'a bakmaz, bayrağa da bakar: gösterimden
+    /// sonra ama Loaded-öncelikli dönüş kurulumu koşmadan Normal-öncelikli bir pompa batch'i araya girebilir; bayat belgeye
     /// basılsaydı kurulum onu boşa çıkarır, belge kısa süre aradaki satırlar eksik kalırdı. Kapı nesil kararından ÖNCEDİR
-    /// (bayat batch de aynı bayrağı kaldırır; zararsız: dönüşteki kurulum zaten tam metindir). <c>internal</c> = test
-    /// yüzeyi: pompa tick etmeyen fixture'da testler batch'i pompanın yaptığı gibi (<see cref="ConsoleReseedGen"/>
-    /// damgasıyla) doğrudan verir.</para></summary>
+    /// (bayat batch de aynı bayrağı kaldırır; zararsız: dönüşteki kurulum modelin o anki hâlinin tamamını kapsar).
+    /// <c>internal</c> = test yüzeyi: pompa tick etmeyen fixture'da testler batch'i pompanın yaptığı gibi
+    /// (<see cref="ConsoleReseedGen"/> damgasıyla) doğrudan verir.</para></summary>
     internal void AppendConsoleBatch(string text, long batchGen)
     {
-        // [perf Faz A · A2] Gizli ya da bayat konsolda belgeye yazılmaz (kapı nesil kararından ÖNCE): metin VM tamponunda
-        // zaten durur; belgeyi ResyncAfterShow tam metinden bir kez kurar. Bayrak gösterimden o kurulumun koştuğu ana dek de
+        // [perf Faz A · A2] Gizli ya da bayat konsolda belgeye yazılmaz (kapı nesil kararından ÖNCE): metin modelde zaten
+        // durur; belgeyi ResyncAfterShow modelden bir kez kurar. Bayrak gösterimden o kurulumun koştuğu ana dek de
         // kalkık kalır: araya giren batch bayat belgeye basılmaz.
         if (IsSurfaceHidden || _consoleStaleWhileHidden) { _consoleStaleWhileHidden = true; return; }
         switch (ConsoleBatchRouter.Decide(batchGen, _console.CurrentReseedGen, _vm.ActiveProjectId))
@@ -655,14 +664,15 @@ public partial class MainWindow : Window
     }
 
     /// <summary>[test yüzeyi] Konsol pompasının şu anki reseed nesli: pompa tick etmeyen bir fixture'da testler bir
-    /// batch'i <see cref="AppendConsoleBatch"/>'e pompanın yaptığı gibi bu damgayla verir (pompanın batch'i okuduğu
-    /// andaki nesil; reseed-drop sentinel'i onu ilerletir).</summary>
+    /// batch'i <see cref="AppendConsoleBatch"/>'e pompanın yaptığı gibi bu damgayla verir — pompa batch'i tükettiği son
+    /// sentinel'in nesliyle damgalar; kanaldaki her sentinel tüketilmişse bu, şu anki nesildir (reseed-drop sentinel'i onu
+    /// ilerletir).</summary>
     internal long ConsoleReseedGen => _console.CurrentReseedGen;
 
     /// <summary>[D4/Solution B] Kart seçimi değişince konsol modunu senkron sürer. Seçim varsa: proje logunu
     /// (dikişli) YÜKLE, sonra başlık + gövde AYNI UI turunda proje-loguna geçir (reseed flicker YOK). Seçim
-    /// kalkınca (null): run anlatısına dön. logNotFound/skipped gibi durumlarda ActiveProjectId kurulmaz →
-    /// run modunda kalınır.
+    /// kalkınca (null): run anlatısına dön. Logu olmayan proje de sayfasını açar ("log yok" cevabı da dikilir); cevap
+    /// gelmediyse (gönderim düştü) ya da seçim arada değiştiyse ActiveProjectId kurulmaz → run modunda kalınır.
     ///
     /// <para>[perf Faz A · A2] <b>Gizli pencerede belge kurulmaz:</b> başlık ve VM tarafı yine güncellenir; belge yerine
     /// "ekran bayat" bayrağı kalkar (<c>_consoleStaleWhileHidden</c>) ve <see cref="ResyncAfterShow"/> dönüşte belgeyi
@@ -676,7 +686,7 @@ public partial class MainWindow : Window
             if (_vm.NextConsoleSelection(out var id) == ConsoleSelection.ShowRun) { ShowRunConsole(); return; }
 
             await _vm.LoadProjectLogAsync(id!);
-            // [D4 review §2/§3] Proje-log yalnız yükleme modu kurduysa (log vardı — guard1) VE seçim hâlâ o
+            // [D4 review §2/§3] Proje-log yalnız yükleme modu kurduysa (cevap dikildi, "log yok" dahil — guard1) VE seçim hâlâ o
             // projedeyse (guard2, arada select→deselect/başka-id olmadı) gösterilir; aksi halde run modunda kal
             // (§2 donma: deselect-mid-load'da ActiveProjectId zaten null kaldığından burada erken dönülür).
             if (!_vm.ShouldShowLoadedProject(id!)) return;
@@ -708,7 +718,8 @@ public partial class MainWindow : Window
     /// <para>[perf Faz A · A2] <b>Gizli pencerede belge kurulmaz</b> (tepsiden başlayan koşu proje seçimini düşürünce buraya
     /// gelinir): başlık ve VM tarafı güncellenir, belge yerine "ekran bayat" bayrağı kalkar ve <see cref="ResyncAfterShow"/>
     /// dönüşte belgeyi <c>ActiveProjectId</c>'ye bakarak kurar. Görünür kurulum (gösterimden sonra, dönüş kurulumundan önce
-    /// bile) belgeyi modelin tam metninden kendisi kurar ve bayrağı düşürür: dönüş kurulumu ikinci kez kurmaz.</para></summary>
+    /// bile) belgeyi modelden — anlatı store'unun snapshot'ından — kendisi kurar ve bayrağı düşürür: dönüş kurulumu ikinci kez
+    /// kurmaz.</para></summary>
     private void ShowRunConsole()
     {
         _vm.ShowRun(); // ActiveProjectId=null → PropertyChanged → ShowNarrative (başlık, aynı tur)
@@ -718,7 +729,7 @@ public partial class MainWindow : Window
         // güncellendi; belgeyi dönüşteki tek kurulum (ResyncAfterShow) ActiveProjectId'ye bakarak kurar.
         if (IsSurfaceHidden) { _consoleStaleWhileHidden = true; return; }
         _consoleStaleWhileHidden = false; // görünür TAM kurulum: belge modelden kurulur, dönüş kurulumunun yapacağı iş kalmaz
-        _vm.SeedRunDocument(text => Shell.ConsoleViewControl.ShowRunDocument(text));
+        _vm.SeedRunDocument(snapshot => Shell.ConsoleViewControl.ShowRunDocument(snapshot));
         if (_vm.GetActiveLineCount() == 0) Shell.ConsoleViewControl.ShowReady(); // boş run → idle "ready"
     }
 
@@ -761,17 +772,16 @@ public partial class MainWindow : Window
     /// döner (bkz. <see cref="OnSelectedProjectChangedAsync"/>).</summary>
     private void OnBack() => _vm.SelectProject(null);
 
-    /// <summary>Dikilmiş proje-log metnini ('\n' sonekli) kaskat için satırlara böler; boş metin → boş dizi
-    /// (boş-durum metni ileride buradan gelebilir).</summary>
-    private static IReadOnlyList<string> SplitLogLines(string text) =>
-        text.Length == 0 ? [] : text.TrimEnd('\n').Split('\n');
-
     /// <summary>Proje-log belgesinin satırları: log BOŞSA sayfa boş bırakılmaz — o projenin O ANKİ durumunu anlatan
     /// metin (<see cref="ConsoleEmptyState"/>, saf karar); aksi halde dikilmiş log satırları. Kart seçimi
     /// (<see cref="OnSelectedProjectChangedAsync"/>) ile gizli pencere dönüşü (<see cref="ResyncAfterShow"/>) AYNI
-    /// kuralı kullanır (kopya YASAK). <paramref name="row"/> yoksa (proje topolojiden düşmüş) yalnız log satırları.</summary>
+    /// kuralı kullanır (kopya YASAK). <paramref name="row"/> yoksa (proje topolojiden düşmüş) yalnız log satırları.
+    /// <para>[idle-memory · final review 90] Log konsolun TEK satır kuralıyla bölünür (<see cref="ConsoleLines.Split"/>: belgenin
+    /// ayraç kuralı) — sayfanın backlog indeksi belge satırıyla birebir yürür. <b>[DEĞİŞEN KURAL]</b> Kabuk eskiden kendi kuralıyla
+    /// bölüyordu (<c>TrimEnd('\n').Split('\n')</c>): sondaki boş satırlar düşüyor, tek başına '\r' belgede iki satır olurken listede
+    /// bir girdi kalıyordu — indeks kayıyor, tepeye kaydırmada dikişte bir satır iki kez geliyordu (<c>ConsoleModesTests</c>).</para></summary>
     private static IReadOnlyList<string> ProjectDocumentLines(ProjectRowViewModel? row, string text) =>
-        text.Length == 0 && row is not null ? ConsoleEmptyState.ForEmptyLog(row) : SplitLogLines(text);
+        text.Length == 0 && row is not null ? ConsoleEmptyState.ForEmptyLog(row) : ConsoleLines.Split(text);
 
     /// <summary>[D1] VM'in katman gruplarını (topolojiden — App'te regex YOK) StickyLayerList'e verir.
     /// <see cref="ProjectRowViewModel"/> nesneleri satır olarak akar; isimsiz grup (null) StickyLayerList'te
@@ -1374,8 +1384,8 @@ public partial class MainWindow : Window
             // [K-14] Kaybolma ile bildirim üst üste binmesin diye araya giren nefes. Süre token'dan gelir ve
             // reduced-motion'da kendiliğinden sıfırlanır — kod tarafında ms literali yoktur.
             ExitBreath = () => Task.Delay(MotionTokens.ResolveSlow(this).TimeSpan),
-            // [perf Faz C · C4] Çıkış sırası bitince (gösterge gizlendi, balon gösterildi): tepside biten koşunun bellek
-            // toplamasının gösterge sinyali (koşu sinyali ctor'daki EndedRunSerial aboneliğidir).
+            // [perf Faz C · C4 · idle-memory] Çıkış sırası bitince (gösterge gizlendi, balon gösterildi): işlem sonu bellek
+            // triminin gösterge sinyali — tepside biten koşunun trimi bunu bekler (öbür sinyaller: RequestTrimWhenDue).
             ExitCompleted = OnTrayIndicatorExitFinished,
         };
         _trayIndicator = controller;

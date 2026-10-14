@@ -8,6 +8,7 @@ using BuildOrchestrator.Core.MsBuild;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Core.Processes;
 using BuildOrchestrator.Supervisor;
+using BuildOrchestrator.Tests.App;
 
 namespace BuildOrchestrator.Tests.Supervisor;
 
@@ -119,7 +120,8 @@ public class ProjectLogStreamTests
                 writer: supervisorWriter,
                 innerJob: Job,
                 nowMs: () => Environment.TickCount64,
-                console: _ => { });
+                console: _ => { },
+                memoryTrim: NoRealGc.Collection);
             // [A5/T69] Sync/branch servisleri İZOLE köklerle bağlanır (bu harness onları kullanmaz, ama
             // kullanıcının gerçek cache dosyalarına hiçbir koşulda dokunulmamalıdır).
             // [optimize] Restore fabrikası da çağrılmamalıdır — çağrılırsa test sessizce geçmez.
@@ -142,6 +144,39 @@ public class ProjectLogStreamTests
         }
 
         public void Dispose() { Coordinator.Dispose(); Job.Dispose(); }
+    }
+
+    /// <summary>Bir <c>getProjectLog</c> cevabının chunk'larını SON chunk'a dek okur (araya giren diğer olaylar atlanır).</summary>
+    private static async Task<List<ProjectLogChunkEvent>> ReadReplyAsync(Harness h)
+    {
+        var chunks = new List<ProjectLogChunkEvent>();
+        while (chunks.Count == 0 || !chunks[^1].IsLast)
+        {
+            var e = await h.ReadEventAsync();
+            if (e is ProjectLogChunkEvent c) chunks.Add(c);
+        }
+        return chunks;
+    }
+
+    /// <summary>64K'yı aşan bir log için satır sayısı (~200KB → ≥3 chunk, LogChunkerTests'teki desenle aynı).</summary>
+    private const int LongLogLineCount = 2000;
+
+    /// <summary>A projesi <see cref="LongLogLineCount"/> satır yazdı ve koşu TAMAMEN bitti: <c>getProjectLog</c> en son koşunun
+    /// dizininden okur ve cevap birden çok chunk'tır. Harness'i çağıran dispose eder.</summary>
+    private static async Task<Harness> CompletedRunWithALongLogAsync()
+    {
+        var invoker = new FakeInvoker((_, onLine, _) =>
+        {
+            for (int i = 0; i < LongLogLineCount; i++) onLine(new string('x', 100));
+            return Task.FromResult(Ok());
+        });
+        var h = new Harness(PlanOf(Node("A")), invoker);
+        Assert.IsType<EngineReadyEvent>(await h.ReadEventAsync());
+        await h.SendAsync(Start());
+        IpcEvent ev;
+        do { ev = await h.ReadEventAsync(); } while (ev is not RunCompletedEvent); // run TAMAMEN bitti
+        Assert.Equal(RunOutcome.Completed, Assert.IsType<RunCompletedEvent>(ev).Outcome);
+        return h;
     }
 
     // ---------------------------------------------------------------- 1) koşan projenin snapshot'ı + canlı dikiş
@@ -168,12 +203,7 @@ public class ProjectLogStreamTests
         await reachedMidpoint.Task.WaitAsync(Limit); // build in-flight, henüz bitmedi
 
         await h.SendAsync(new GetProjectLogCommand(Id("A")));
-        var chunks = new List<ProjectLogChunkEvent>();
-        while (chunks.Count == 0 || !chunks[^1].IsLast)
-        {
-            var e = await h.ReadEventAsync();
-            if (e is ProjectLogChunkEvent c) chunks.Add(c);
-        }
+        var chunks = await ReadReplyAsync(h);
 
         // Snapshot atomik: metin ⇔ ThroughLineNumber tutarlı, chunk'ların HEPSİ AYNI değeri taşır (chunk'ı değil
         // snapshot'ı tanımlar) — v7Δ-7: satır 1 gerçek MSBuild komut satırı, sonra line-1/line-2.
@@ -211,30 +241,13 @@ public class ProjectLogStreamTests
     [Fact]
     public async Task Completed_run_log_over_64k_is_served_in_multiple_chunks_sharing_one_through_line_number()
     {
-        const int lineCount = 2000; // ~200KB → ≥3 chunk (LogChunkerTests'teki desenle aynı)
-        var invoker = new FakeInvoker((_, onLine, _) =>
-        {
-            for (int i = 0; i < lineCount; i++) onLine(new string('x', 100));
-            return Task.FromResult(Ok());
-        });
-        using var h = new Harness(PlanOf(Node("A")), invoker);
-        Assert.IsType<EngineReadyEvent>(await h.ReadEventAsync());
-
-        await h.SendAsync(Start());
-        IpcEvent ev;
-        do { ev = await h.ReadEventAsync(); } while (ev is not RunCompletedEvent); // run TAMAMEN bitti
-        Assert.Equal(RunOutcome.Completed, Assert.IsType<RunCompletedEvent>(ev).Outcome);
+        using var h = await CompletedRunWithALongLogAsync();
 
         // [T28] Run bitti: RunCoordinator._logs artık null (RunLogWriter Dispose edildi) — bu istek en son run
         // dizininden PATH-tabanlı okumaya düşer (bkz. RunCoordinator.TryGetProjectLogSnapshot). Kart tıklaması
         // run bittikten SONRA da çalışmalı.
         await h.SendAsync(new GetProjectLogCommand(Id("A")));
-        var chunks = new List<ProjectLogChunkEvent>();
-        while (chunks.Count == 0 || !chunks[^1].IsLast)
-        {
-            var e = await h.ReadEventAsync();
-            if (e is ProjectLogChunkEvent c) chunks.Add(c);
-        }
+        var chunks = await ReadReplyAsync(h);
 
         Assert.True(chunks.Count >= 3);
         Assert.Equal(Enumerable.Range(0, chunks.Count), chunks.Select(c => c.Sequence));
@@ -242,11 +255,29 @@ public class ProjectLogStreamTests
         Assert.True(chunks[^1].IsLast);
         int through = chunks[0].ThroughLineNumber;
         Assert.All(chunks, c => Assert.Equal(through, c.ThroughLineNumber)); // TÜM chunk'lar AYNI değeri taşır
-        Assert.Equal(lineCount + 1, through); // +1: v7Δ-7 komut satırı
+        Assert.Equal(LongLogLineCount + 1, through); // +1: v7Δ-7 komut satırı
 
         string reconstructed = string.Concat(chunks.OrderBy(c => c.Sequence).Select(c => c.Text));
         string diskText = await File.ReadAllTextAsync(DiskPathOf(h, Id("A")));
         Assert.Equal(diskText, reconstructed);
+
+        await h.ShutdownAsync();
+    }
+
+    /// <summary>[idle-memory · I1] Cevabın HER chunk'ı isteğin kimliğini yankılar — App cevabı isteğiyle yalnız bundan eşleştirir
+    /// (gecikmiş bir cevap yerini yenisine bırakmış bir isteğe aitse yok sayılır). Çok chunk'lı cevapta son chunk'ın taşıması
+    /// yetmez: App chunk'ları geldikçe biriktirir ve eşleşmeyen bir chunk'ı atar.</summary>
+    [Fact]
+    public async Task Every_chunk_of_a_reply_echoes_the_request_id()
+    {
+        using var h = await CompletedRunWithALongLogAsync();
+
+        await h.SendAsync(new GetProjectLogCommand(Id("A"), RequestId: 7));
+        var chunks = await ReadReplyAsync(h);
+
+        Assert.True(chunks.Count >= 3);                     // ön-koşul: çok chunk'lı bir cevap
+        Assert.All(chunks, c => Assert.Equal(7, c.RequestId));
+        Assert.All(chunks, c => Assert.False(c.NotFound));
 
         await h.ShutdownAsync();
     }
@@ -259,17 +290,32 @@ public class ProjectLogStreamTests
 
     // ---------------------------------------------------------------- 3) bilinmeyen proje
 
+    /// <summary>
+    /// [idle-memory · I1] Logu olmayan bir projenin cevabı TEK bir chunk'tır: boş metin, son, <c>Through 0</c>, <c>NotFound</c> —
+    /// boş bir snapshot — ve isteğin kimliğini yankılar.
+    /// <para>[DEĞİŞEN KURAL] <b>Eski iddia</b> (<c>Unknown_project_log_returns_logNotFound</c>): cevap <c>error(logNotFound)</c>,
+    /// mesajı proje kimliği. <b>Neden değişti:</b> hata olayı ne isteği ne (kod olarak) projeyi taşıyordu; App onu bekleyen HER
+    /// yüklemeye uyguluyordu — başka bir projenin gecikmiş "log yok"u yeni yüklemeyi bitirip yanlış sayfayı açıyordu — ve dikişi
+    /// atlıyordu: istek ile cevap arasında gelen satırlar sayfaya girmiyordu (final review I1, 104). "Log yok" artık bir cevap
+    /// chunk'ıdır, App onu isteğiyle eşleştirir ve her cevap gibi diker.</para>
+    /// </summary>
     [Fact]
-    public async Task Unknown_project_log_returns_logNotFound()
+    public async Task Unknown_project_log_is_answered_with_one_empty_not_found_chunk()
     {
         var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
         using var h = new Harness(PlanOf(Node("A")), invoker);
         Assert.IsType<EngineReadyEvent>(await h.ReadEventAsync());
 
-        await h.SendAsync(new GetProjectLogCommand(Id("Yok")));
-        var err = Assert.IsType<ErrorEvent>(await h.ReadEventAsync());
-        Assert.Equal("logNotFound", err.Code);
-        Assert.Equal(Id("Yok"), err.Message);
+        await h.SendAsync(new GetProjectLogCommand(Id("Yok"), RequestId: 5));
+        var reply = Assert.IsType<ProjectLogChunkEvent>(await h.ReadEventAsync());
+
+        // "Log yok" cevabının biçimi TEK yerde tanımlıdır (kopya YASAK): App tarafı testlerin motor modeli ile AYNI.
+        Assert.Equal(ProjectLogIpc.NotFound(requestId: 5, Id("Yok")), reply);
+
+        // [final review (group A)] Cevap TEK olaydır: bir ping'in pong'u hemen ardından gelir. İkinci bir cevap olayı
+        // (eski error(logNotFound) ile birlikte ya da ikinci bir boş chunk) araya girseydi sıradaki olay pong olmazdı.
+        await h.SendAsync(new PingCommand(9));
+        Assert.Equal(9, Assert.IsType<PongEvent>(await h.ReadEventAsync()).Seq);
 
         await h.ShutdownAsync();
     }

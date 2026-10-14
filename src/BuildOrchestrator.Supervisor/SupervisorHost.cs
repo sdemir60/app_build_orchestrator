@@ -175,10 +175,11 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
         }
         finally
         {
-            // [PERF Faz C/C3] Sync SONUCU NE OLURSA OLSUN (tamamlanma, planFailed, iptal) bitti: bellek tanı satırı stderr'e (stdout
-            // YALNIZ NDJSON) — koşu yolundaki gibi tek kez, finally'de. Kanal koordinatörün console'udur, host ikinci bir stderr bağı
-            // kurmaz; tanı hata fırlatmaz (MemoryLine.Report yutar), yani başarılı bir Sync'i planFailed'a çeviremez.
-            coordinator.ReportMemory();
+            // [PERF Faz C/C3 · bellek trimi] Sync SONUCU NE OLURSA OLSUN (tamamlanma, planFailed, iptal) bitti: önce toplama, sonra
+            // bellek tanı satırı stderr'e (stdout YALNIZ NDJSON) — koşu yolundaki gibi tek kez, finally'de. Kanal koordinatörün
+            // console'udur, host ikinci bir stderr bağı kurmaz; kapanış hata fırlatmaz (toplama de, MemoryLine.Report de hatayı
+            // yutar), yani başarılı bir Sync'i planFailed'a çeviremez. Clean ve Optimize aynı kuralı paylaşır.
+            coordinator.TrimAndReportMemory();
         }
     }
 
@@ -297,6 +298,13 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
             // beklenmeyen bir hata düşer. IPC sınırını exception ASLA geçmemeli.
             await writer.WriteAsync(new ErrorEvent("cleanFailed", ex.Message), ct);
         }
+        finally
+        {
+            // [bellek trimi] Sync'in finally'siyle aynı kural (bkz. SyncWorkspaceAsync): sonuç ne olursa olsun (cleanCompleted,
+            // cleanFailed, iptal) bitti → önce toplama, sonra bellek satırı. Ret yolu (cleanRejected) try'ın DIŞINDA kalır: hiçbir
+            // iş yapılmadı, toplanacak bir şey yok.
+            coordinator.TrimAndReportMemory();
+        }
     }
 
     /// <summary>
@@ -328,6 +336,11 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
             // Servisin kendi kapıları bozuk girdiyi zaten optimizeFailed'a çevirir; buraya yalnız GERÇEKTEN
             // beklenmeyen bir hata düşer. IPC sınırını exception ASLA geçmemeli.
             await writer.WriteAsync(new ErrorEvent("optimizeFailed", ex.Message), ct);
+        }
+        finally
+        {
+            // [bellek trimi] Sync ve Clean'in finally'leriyle aynı kural; ret yolu (optimizeRejected) try'ın DIŞINDA kalır.
+            coordinator.TrimAndReportMemory();
         }
     }
 
@@ -379,13 +392,17 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
     /// sayısı (<c>ThroughLineNumber</c>) birlikte gelir — App bunu canlı <c>projectLog</c> akışıyla dikiş
     /// noktası olarak kullanır (<c>LineNumber &lt;= ThroughLineNumber</c> olanlar zaten bu chunk'larda vardır).
     /// Her chunk AYNI ThroughLineNumber'ı taşır — o, chunk'ı değil SNAPSHOT'ı tanımlar.
+    /// <para>[idle-memory · I1] Her chunk isteğin kimliğini de yankılar (<see cref="GetProjectLogCommand.RequestId"/>): App cevabı
+    /// isteğiyle yalnız bundan eşleştirir. <b>Log yoksa cevap da bir chunk'tır</b> — tek, boş, son, <c>ThroughLineNumber</c> 0 ve
+    /// <c>NotFound</c> bayraklı: boş bir snapshot. Ayrı bir yol yoktur: koordinatör "log yok"ta boş metin ve 0 verir, chunker boş
+    /// metni tek bir son chunk'a çevirir. Eskiden cevap <c>error(logNotFound)</c>'du; ne isteği taşıyordu ne dikişten geçiyordu.</para>
     /// </summary>
     private async Task SendProjectLogAsync(GetProjectLogCommand g, CancellationToken ct)
     {
-        if (!coordinator.TryGetProjectLogSnapshot(g.ProjectId, out string text, out int throughLineNumber))
-        { await writer.WriteAsync(new ErrorEvent("logNotFound", g.ProjectId), ct); return; }
+        bool found = coordinator.TryGetProjectLogSnapshot(g.ProjectId, out string text, out int throughLineNumber);
         foreach (var c in LogChunker.Chunk(text))
-            await writer.WriteAsync(new ProjectLogChunkEvent(g.ProjectId, c.Sequence, c.Text, c.IsLast, throughLineNumber), ct);
+            await writer.WriteAsync(new ProjectLogChunkEvent(g.ProjectId, c.Sequence, c.Text, c.IsLast, throughLineNumber,
+                g.RequestId, NotFound: !found), ct);
     }
 
     /// <summary>

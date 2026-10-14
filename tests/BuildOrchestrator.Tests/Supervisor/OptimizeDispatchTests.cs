@@ -110,11 +110,8 @@ public class OptimizeDispatchTests
         var stdin = await SupervisorHostHarness.StdinWith(new OptimizeWorkspaceCommand(box.Root));
 
         using var job = JobObject.CreateKillOnClose();
-        using var coordinator = new RunCoordinator(
-            planner: (_, _) => throw new InvalidOperationException("bu testte run yok"),
-            msbuildFactory: _ => throw new InvalidOperationException("bu testte run yok"),
-            logFactory: startedAt => new RunLogWriter(box.LogsRoot, startedAt),
-            writer: writer, innerJob: job, nowMs: () => 0, console: _ => { });
+        using var coordinator = SupervisorHostHarness.NewIdleCoordinator(job, writer, _ => { },
+            logFactory: startedAt => new RunLogWriter(box.LogsRoot, startedAt));
 
         var host = new SupervisorHost(writer, new NdjsonReader(stdin), job, coordinator,
             ServicesWith(box, _ => Task.FromResult<IMsBuildInvoker>(invoker)));
@@ -152,11 +149,9 @@ public class OptimizeDispatchTests
         // TaskCompletionSource'tur, sleep-poll YOK [D8].
         var releasePlanner = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var job = JobObject.CreateKillOnClose();
-        using var coordinator = new RunCoordinator(
+        using var coordinator = SupervisorHostHarness.NewIdleCoordinator(job, writer, _ => { },
             planner: (_, _) => { releasePlanner.Task.GetAwaiter().GetResult(); throw new InvalidOperationException("plan yok"); },
-            msbuildFactory: _ => throw new InvalidOperationException("bu testte msbuild yok"),
-            logFactory: startedAt => new RunLogWriter(box.LogsRoot, startedAt),
-            writer: writer, innerJob: job, nowMs: () => 0, console: _ => { });
+            logFactory: startedAt => new RunLogWriter(box.LogsRoot, startedAt));
 
         var host = new SupervisorHost(writer, new NdjsonReader(stdin), job, coordinator,
             ServicesWith(box, _ => Task.FromResult<IMsBuildInvoker>(invoker)));
@@ -190,11 +185,8 @@ public class OptimizeDispatchTests
         var stdin = await SupervisorHostHarness.StdinWith(new OptimizeWorkspaceCommand(box.Root), new PingCommand(7));
 
         using var job = JobObject.CreateKillOnClose();
-        using var coordinator = new RunCoordinator(
-            planner: (_, _) => throw new InvalidOperationException("bu testte run yok"),
-            msbuildFactory: _ => throw new InvalidOperationException("bu testte run yok"),
-            logFactory: startedAt => new RunLogWriter(box.LogsRoot, startedAt),
-            writer: writer, innerJob: job, nowMs: () => 0, console: _ => { });
+        using var coordinator = SupervisorHostHarness.NewIdleCoordinator(job, writer, _ => { },
+            logFactory: startedAt => new RunLogWriter(box.LogsRoot, startedAt));
 
         // Toolset fabrikası MsBuildResolveException DEĞİL, tamamen beklenmeyen bir hata fırlatır — servisin
         // kendi K-6 kapısı bunu yutmaz, host'un catch-all'ı tanımlı bir event'e çevirmelidir.

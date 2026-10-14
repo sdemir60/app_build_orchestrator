@@ -145,6 +145,12 @@ public sealed record MsBuildToolset(IMsBuildInvoker Invoker, string MsBuildExePa
 /// <see cref="MachineResources.Snapshot"/>; seam yalnız test içindir — kırpma kararı, testin koştuğu makinenin o anki
 /// boş belleğine bağlanmasın diye testler sabit bir makine verir.
 /// </param>
+/// <param name="memoryTrim">
+/// [bellek trimi] İşlem sonu toplamasının dikişi (bkz. <see cref="TrimAndReportMemory"/>). Üretimde (null)
+/// <see cref="MemoryTrim.CollectAndRelease"/> — uygulamanın TEK toplama tanımı. Seam yalnız test içindir: bloklayan,
+/// sıkıştıran bir GC bütün test sürecini durdurur ve koordinatörü kuran her test her koşu bitişinde onu ödemesin diye testler
+/// bir sayaç ya da hiçbir şey yapmayan bir delege verir.
+/// </param>
 public sealed class RunCoordinator(
     Func<StartRunCommand, Action<string>, RunPlan> planner,
     Func<CancellationToken, Task<MsBuildToolset>> msbuildFactory,
@@ -158,7 +164,8 @@ public sealed class RunCoordinator(
     Func<TimeSpan, CancellationToken, Task>? retryDelay = null,
     InFlightLedger? inFlight = null,
     Func<string, string?>? apiSurface = null,
-    Func<(int Cores, long FreeBytes)>? machine = null) : IDisposable
+    Func<(int Cores, long FreeBytes)>? machine = null,
+    Action? memoryTrim = null) : IDisposable
 {
     private readonly object _gate = new();
     private readonly ICpuGovernor _cpu = cpuGovernor ?? innerJob;
@@ -169,6 +176,10 @@ public sealed class RunCoordinator(
     /// <summary>[API kısa devresi] Bir çıktı dosyasının yüzey özeti — üretimde <see cref="ApiSurfaceHash.OfFile"/>.
     /// Seam yalnız test içindir: gerçek PE üretmeden tur döngüsünün bayatlık kararı kurulabilsin.</summary>
     private readonly Func<string, string?> _apiSurface = apiSurface ?? ApiSurfaceHash.OfFile;
+
+    /// <summary>[bellek trimi] İşlem sonu toplaması — üretimde <see cref="MemoryTrim.CollectAndRelease"/>. Tek kullanıcısı
+    /// <see cref="TrimAndReportMemory"/>'dir.</summary>
+    private readonly Action _memoryTrim = memoryTrim ?? MemoryTrim.CollectAndRelease;
 
     // --- run yaşam döngüsü (hepsi _gate altında) ---
     private bool _runActive;            // startRun slotu dolu (planlama dahil) — A6
@@ -229,7 +240,8 @@ public sealed class RunCoordinator(
     /// <see cref="RunLogWriter.ReadProjectLogFromDisk"/>) — dizin hâlâ diskte durduğu için sonradan bir proje
     /// kartına tıklamak yine çalışır. <see cref="RunLogWriter"/>'ın KENDİSİ asla dışarı verilmez: host onun
     /// yaşam döngüsüne (ne zaman Dispose edileceğine) müdahale etmemeli. Hiç run koşmadıysa ya da proje o run'da
-    /// hiç loglanmadıysa <c>false</c> döner.
+    /// hiç loglanmadıysa <c>false</c> döner — metin o zaman boş, satır no 0'dır: host "log yok" cevabını bundan, boş bir
+    /// snapshot olarak yazar (<c>SupervisorHost.SendProjectLogAsync</c>).
     ///
     /// <para>[Task 18] Gerçek disk okuması (<c>File.ReadAllText</c> / <c>ProjectLogFile.Snapshot</c>'ın
     /// FileStream'i) kilit DIŞINDA yapılır: kilit altında yalnız "hangi kaynaktan okunacağı" (canlı writer
@@ -290,20 +302,45 @@ public sealed class RunCoordinator(
     }
 
     /// <summary>
-    /// [clean/optimize] Salt-okur sonda: bir koşu slotu dolu mu (planlama penceresi DAHİL). Tüketicileri
-    /// <c>cleanWorkspace</c> ve <c>optimizeWorkspace</c>'in reddetme kapılarıdır — ikisi de diski değiştirir ve
-    /// uçuştaki bir build'in yazdığı klasörlerle yarışmamalıdır.
+    /// Salt-okur sonda: bir koşu slotu dolu mu (planlama penceresi DAHİL). Tüketicileri:
+    /// <c>cleanWorkspace</c> ve <c>optimizeWorkspace</c>'in reddetme kapıları — ikisi de diski değiştirir ve uçuştaki bir
+    /// build'in yazdığı klasörlerle yarışmamalıdır — ile <see cref="TrimAndReportMemory"/>'in "bloklayan toplamayı atla" kapısı
+    /// (uçuştaki koşunun pompalarını durdurmamak için).
     /// <para><c>_finishing</c> KASITLI olarak dışarıda: drain sırasında da (sonuç event'leri yazılırken,
-    /// in-flight <c>MSBuild.exe</c>'ler post-build copy'lerini bitirirken) reddetmek doğru davranıştır.</para>
+    /// in-flight <c>MSBuild.exe</c>'ler post-build copy'lerini bitirirken) reddetmek ve toplamayı atlamak doğru davranıştır.</para>
+    /// <para>Bir ANLIK okumadır: tüketicisi sonucu kullanırken slot değişmiş olabilir (bkz. <see cref="TrimAndReportMemory"/>).</para>
     /// </summary>
     public bool IsRunActive { get { lock (_gate) return _runActive; } }
 
     /// <summary>
-    /// [PERF Faz C/C3] Motorun bellek tanı satırını konsol (stderr) kanalına yazar: Sync bitişinde host, koşu
-    /// bitişinde koordinatörün kendisi çağırır — kanalın sahibi koordinatördür, host ikinci bir stderr bağı kurmaz.
-    /// Hata fırlatmaz (<c>MemoryLine.Report</c> yutar).
+    /// [bellek trimi] Motorun işlem sonu kapanışı: ÖNCE agresif toplama (<see cref="MemoryTrim.CollectAndRelease"/>), SONRA
+    /// bellek tanı satırı — satır böylece toplamanın bıraktığı değeri taşır. Koşu bitişinde koordinatörün kendisi, Sync /
+    /// Clean / Optimize bitişinde host çağırır; kanalın sahibi koordinatördür, host ikinci bir stderr bağı kurmaz.
+    ///
+    /// <para><b>Koşu slotu doluysa</b> (planlama dahil, bkz. <see cref="IsRunActive"/>) toplama ATLANIR, satır yine yazılır:
+    /// bloklayan GC uçuştaki koşunun IPC ve MSBuild pompalarını durdururdu. Host Sync'i koşu sürerken de koşturabilir; atlanan
+    /// toplamayı o koşunun kendi bitişi yapar (yuvayı bıraktıktan sonra çağırır). Kapı bir ANLIK okumadır: yalnız okumadan ÖNCE
+    /// kabul edilmiş bir <c>startRun</c>'u korur — okumadan SONRA kabul edilen koşu toplamanın bitmesini bekler (milisaniyeler).</para>
+    ///
+    /// <para>Toplama bir OPTİMİZASYONDUR: fırlatırsa hata yutulur, satırı ve çağıran işi (Sync, koşu kapanışı) bozmaz.
+    /// [idle-memory · final review 49] Yutulan hata izsiz kalmaz: konsola (stderr) tek <c>warning: memory trim failed: &lt;ileti&gt;</c>
+    /// satırı düşer ve bellek satırından ÖNCE yazılır — satır toplanmamış bir yığını taşır, okuyan bilmelidir. İz de bir tanıdır: o
+    /// satırı yazmak patlarsa o hata da yutulur; satırı yazan <c>MemoryLine.Report</c> da hata yutar.</para>
     /// </summary>
-    public void ReportMemory() => MemoryLine.Report(console);
+    public void TrimAndReportMemory()
+    {
+        if (!IsRunActive)
+        {
+            try { _memoryTrim(); }
+            catch (Exception ex)
+            {
+                // trim bir optimizasyondur; raporu ve işi bozmaz — ama sessiz de kalmaz (tanı kanalına tek satır).
+                try { console("warning: memory trim failed: " + ex.Message); }
+                catch (Exception) { /* tanı kanalı da yazılamıyor — vazgeç, işi bozma */ }
+            }
+        }
+        MemoryLine.Report(console);
+    }
 
     /// <summary>
     /// [I2-K1] Aktif run'ın Stop'unu sahiplenir. <c>true</c> → <c>runStopped</c>'ı (in-flight sonuçları
@@ -690,9 +727,10 @@ public sealed class RunCoordinator(
                 _copyFloorDepth = 0;
                 _capDrained = false;
             }
-            // [PERF Faz C/C3] Koşu bitti ve yuva bırakıldı: bellek tanı satırı. Yuvadan SONRA yazılır — tanı hiçbir
-            // koşulda yuvayı tutmaz; normal çıkışların hepsi (tamamlanma, Stop, planFailed, beklenmeyen hata) tek satır bırakır.
-            ReportMemory();
+            // [PERF Faz C/C3 · bellek trimi] Koşu bitti ve yuva bırakıldı: önce toplama, sonra bellek tanı satırı. Yuvadan SONRA
+            // çalışır — kapanış hiçbir koşulda yuvayı tutmaz (bu arada yeni bir startRun kabul edildiyse toplama atlanır, bkz.
+            // TrimAndReportMemory); normal çıkışların hepsi (tamamlanma, Stop, planFailed, beklenmeyen hata) tek satır bırakır.
+            TrimAndReportMemory();
         }
     }
 

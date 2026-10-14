@@ -46,15 +46,26 @@ internal static class MainWindowHost
     /// <param name="nowMs">[perf Faz A · A6] VM'in elapsed/bekçi saati (<c>RunViewModel</c> ctor'unun <c>nowMs</c>'i). Verilmezse
     /// üretimdeki <c>Environment.TickCount64</c>; canlı süreleri ve motor sessizlik bekçisini saati ileri alarak sınayan
     /// testler saati kendisi sürer.</param>
+    /// <param name="productionMemoryCollector">[idle-memory] Pencere işlem sonu bellek trimini GERÇEK toplayıcıyla mı yapsın.
+    /// Varsayılan <c>false</c>: pencere kurulur kurulmaz boş bir toplayıcı takılır (<see cref="NoRealGc.Collection"/>: "testler
+    /// gerçek GC'yi koşturmaz" politikasının Supervisor ile ORTAK tek tanımı) — trim her işlem bitişinde (görünür pencerede de)
+    /// toplar ve süit gerçek agresif GC'yi her testte koştururdu. Toplamayı sayan testler kendi sahtesini fixture'DAN SONRA takar.
+    /// Üretim toplayıcısını isteyenler: onun geçerliliğini sınayan test (<c>RunBufferReleaseTests</c>) ve kapılı bellek bütçesi
+    /// ölçümü (<c>NarrativeBudgetTests</c>: sayacını üretim toplayıcısının üstüne sarar).</param>
+    /// <param name="console">[idle-memory] Pencere ile VM'in paylaştığı konsol pompası. Verilmezse hiç tick etmeyen pompa
+    /// (<see cref="NeverTickingBatcher"/>): satırlar kanalda bekler, belgeye yalnız testin kendisi batch verir. Pompayı kendisi
+    /// süren testler (ör. bellek bütçesi ölçümü: tick etmeyen pompanın kanalında biriken satırlar üretimde yoktur) kendi
+    /// pompasını verir.</param>
     public static (MainWindow window, RunViewModel vm) New(TempDir uiStateDir, Action<RunViewModel>? beforeVm = null,
-        UiState? saved = null, AutostartService? autostart = null, Func<long>? nowMs = null)
+        UiState? saved = null, AutostartService? autostart = null, Func<long>? nowMs = null,
+        bool productionMemoryCollector = false, ConsoleBatcher? console = null)
     {
         ArgumentNullException.ThrowIfNull(uiStateDir);
         var engine = new EngineHost(Path.Combine(AppContext.BaseDirectory, "no-such-supervisor.exe"));
         // Üretimde pencere ile VM AYNI ConsoleBatcher'ı paylaşır (App.xaml.cs: tek singleton). Fixture de paylaşır: ayrı
         // örneklerle pencerenin reseed nesli VM'in SeedRunDocument sentinel'ini hiç göremez, uçuştaki bayat batch'in
         // düşmesi sınanamazdı.
-        var batcher = NeverTickingBatcher();
+        var batcher = console ?? NeverTickingBatcher();
         var vm = new RunViewModel(engine, batcher, () => "r1", nowMs)
         {
             LegacyWorktreePoolRoot = BuildOrchestrator.Tests.Supervisor.TestPaths.MissingLegacyPoolRoot, // [final review M8]
@@ -62,16 +73,20 @@ internal static class MainWindowHost
         beforeVm?.Invoke(vm);
         var store = UiStateStore(uiStateDir);
         if (saved is not null) store.Save(saved);
-        return (new MainWindow(engine, vm, batcher, DsResources.NewScope(), store, autostart), vm);
+        var window = new MainWindow(engine, vm, batcher, DsResources.NewScope(), store, autostart);
+        if (!productionMemoryCollector) window.MemoryCollector = NoRealGc.Collection;
+        return (window, vm);
     }
 
     /// <summary>[design v1.23/v1.24 review C13] <see cref="New"/> + <see cref="Realize"/> (üretimin açılış boyutunda):
     /// realize edilmiş kabuk ve VM'i, veri akmadan. Böyle bir kabukla başlayan testlerin TEK kurulumu —
     /// <c>UpdatePillTests.Realized</c> ile <c>UpdateCardTests.Shell</c> aynı iki satırı ayrı ayrı yazmıştı;
-    /// <see cref="NewWithProjects"/> da buradan başlar.</summary>
-    public static (MainWindow window, RunViewModel vm) NewRealized(TempDir uiStateDir, Func<long>? nowMs = null)
+    /// <see cref="NewWithProjects"/> da buradan başlar. <paramref name="console"/> ve
+    /// <paramref name="productionMemoryCollector"/>: <see cref="New"/>'ünküler.</summary>
+    public static (MainWindow window, RunViewModel vm) NewRealized(TempDir uiStateDir, Func<long>? nowMs = null,
+        ConsoleBatcher? console = null, bool productionMemoryCollector = false)
     {
-        var (window, vm) = New(uiStateDir, nowMs: nowMs);
+        var (window, vm) = New(uiStateDir, nowMs: nowMs, productionMemoryCollector: productionMemoryCollector, console: console);
         Realize(window);
         return (window, vm);
     }
@@ -118,16 +133,46 @@ internal static class MainWindowHost
 
     /// <summary>[perf Faz A · A6] <see cref="NewWithProjects"/> + VM'in elapsed/bekçi saati ENJEKTE: canlı süreleri ve motor
     /// sessizlik bekçisini saati ileri alarak sınayan testler içindir (<see cref="New"/>'ün <c>nowMs</c>'i; <c>null</c> ⇒ üretim
-    /// saati). Gövde TEK yerdedir: <see cref="NewWithProjects"/> buna devreder.</summary>
+    /// saati). <see cref="NewWithProjects"/> buna devreder; gövde <see cref="NewWithProjectsOn"/>'dadır.</summary>
     public static (MainWindow window, RunViewModel vm, StickyLayerList list) NewWithProjectsAndClock(
-        TempDir uiStateDir, Func<long>? nowMs, params (string Name, string? Layer)[] nodes)
+        TempDir uiStateDir, Func<long>? nowMs, params (string Name, string? Layer)[] nodes) =>
+        NewWithProjectsOn(uiStateDir, nowMs, console: null, productionMemoryCollector: false, nodes);
+
+    /// <summary>[idle-memory] <see cref="NewWithProjects"/> + pencere ile VM'in paylaştığı konsol pompası ENJEKTE (<see cref="New"/>'ün
+    /// <c>console</c>'u): pompayı kendisi süren testler içindir — satırlar üretimdeki yoldan (pompa → Dispatcher →
+    /// <c>AppendConsoleBatch</c>) belgeye gider ve kanalda birikmez. <paramref name="productionMemoryCollector"/>:
+    /// <see cref="New"/>'ünkü (bellek ölçümü üretimin toplayıcısıyla ölçer). Gövde <see cref="NewWithProjectsOn"/>'dadır.</summary>
+    public static (MainWindow window, RunViewModel vm, StickyLayerList list) NewWithProjectsAndConsole(
+        TempDir uiStateDir, ConsoleBatcher console, bool productionMemoryCollector, params (string Name, string? Layer)[] nodes)
+    {
+        ArgumentNullException.ThrowIfNull(console);
+        return NewWithProjectsOn(uiStateDir, nowMs: null, console, productionMemoryCollector, nodes);
+    }
+
+    /// <summary>Topolojisi akmış kabuğun TEK gövdesi (<see cref="NewWithProjects"/>, <see cref="NewWithProjectsAndClock"/>,
+    /// <see cref="NewWithProjectsAndConsole"/>): saat, konsol pompası ve toplayıcı <see cref="New"/>'ünkülerdir (<c>null</c>/<c>false</c>
+    /// ⇒ varsayılan).
+    /// <para>[idle-memory] Açılış Sync'i bir işlem bitişidir ve pencerenin işlem sonu bellek trimini ister. Fixture pencereyi
+    /// OTURMUŞ döndürür: o trim fixture dönmeden (boş toplayıcıyla — üretim toplayıcısı istense de) yürür — pay sıfırlanır, kuyruk
+    /// boşaltılır, üretim payı ve pencerenin toplayıcısı geri konur. Test böylece trim edilmemiş bir işlemle başlamaz ve fixture'ın
+    /// zamanlayıcısı testin içine (ya da paylaşılan STA dispatcher'ında sonraki bir teste) sızmaz.</para></summary>
+    private static (MainWindow window, RunViewModel vm, StickyLayerList list) NewWithProjectsOn(
+        TempDir uiStateDir, Func<long>? nowMs, ConsoleBatcher? console, bool productionMemoryCollector,
+        (string Name, string? Layer)[] nodes)
     {
         ArgumentNullException.ThrowIfNull(nodes);
-        var (window, vm) = NewRealized(uiStateDir, nowMs);
+        var (window, vm) = NewRealized(uiStateDir, nowMs, console, productionMemoryCollector);
         vm.RootPath = @"C:\src\OSYS";
         var projectNodes = nodes.Select((n, i) => Node(n.Name, i, n.Layer)).ToList();
         vm.OnEvent(new WorkspaceTopologyEvent(projectNodes, [], [], []));
-        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, projectNodes.Count, 0)); // → Idle
+        var grace = window.TrimGraceAfterFinale;
+        var collector = window.MemoryCollector;
+        window.TrimGraceAfterFinale = TimeSpan.Zero;
+        window.MemoryCollector = NoRealGc.Collection;
+        vm.OnEvent(SyncCompleted(projectNodes.Count)); // → Idle
+        DispatcherPump.DrainToIdle();
+        window.TrimGraceAfterFinale = grace;
+        window.MemoryCollector = collector;
         return (window, vm, window.Shell.ProjectsList);
     }
 
@@ -323,6 +368,12 @@ internal static class MainWindowHost
         }
     }
 
+    /// <summary>Motorun "Sync bitti" cevabı (<c>syncCompleted</c>): <paramref name="projectCount"/> proje, döngü yok. Olay TEK
+    /// yerde kurulur — fixture'ın açılış Sync'i (<see cref="NewWithProjectsOn"/>), <see cref="ReplySync"/> ve bitişi tek
+    /// başına süren testler aynı olayı kullanır (kopya YASAK).</summary>
+    public static SyncCompletedEvent SyncCompleted(int projectCount = 1) =>
+        new("main", "sha1234", false, projectCount, 0);
+
     /// <summary>[task 3] Motorun bir Sync'e cevabı: başlangıç, verilen topoloji (<see cref="Node"/> kuralıyla,
     /// <see cref="NewWithProjects"/> ile AYNI yapı üretilebilsin diye), tamamlanma.</summary>
     public static void ReplySync(RunViewModel vm, params (string Name, string? Layer)[] nodes)
@@ -331,7 +382,7 @@ internal static class MainWindowHost
         ArgumentNullException.ThrowIfNull(nodes);
         vm.OnEvent(new SyncStartedEvent(vm.RootPath, "main"));
         vm.OnEvent(new WorkspaceTopologyEvent([.. nodes.Select((n, i) => Node(n.Name, i, n.Layer))], [], [], []));
-        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, nodes.Length, 0));
+        vm.OnEvent(SyncCompleted(nodes.Length));
     }
 
     /// <summary>[perf Faz A temizlik] <c>ReplySync</c>'in yalnız adları alan hâli: <c>NewWithProjects</c>'in adlı aşırı yüklemesiyle

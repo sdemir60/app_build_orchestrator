@@ -62,7 +62,13 @@ public sealed record ShutdownCommand : IpcCommand;
 /// sonucu deftere başarı/kanıt olarak yazılmaz (derlediği kaynak artık diskteki kaynak değildir).</summary>
 public enum StopKind { Graceful, Hard, Interrupt }
 public sealed record StopRunCommand(string RunId, StopKind Kind) : IpcCommand;
-public sealed record GetProjectLogCommand(string ProjectId) : IpcCommand;
+/// <summary>[T28] Bir projenin logunu diskten iste — cevap <see cref="ProjectLogChunkEvent"/>'lerdir (log yoksa da: tek, boş,
+/// bayraklı bir chunk).</summary>
+/// <param name="RequestId">[idle-memory · I1] App'in bu isteğe verdiği kimlik (1'den artan sayaç). Motor cevabın HER chunk'ında
+/// aynen yankılar; App cevabı isteğiyle yalnız bundan eşleştirir — proje adı yetmez: aynı projenin art arda iki isteğinde ilkinin
+/// gecikmiş cevabı ikincinin yüklemesine dikilir ve sayfada sessiz bir delik açardı. Varsayılan <c>0</c> = kimliksiz: bu alandan
+/// ÖNCE yazılmış satırlar aynen çözülür; App hiçbir isteğe 0 vermez, kimliksiz bir cevap hiçbir yüklemeyle eşleşmez.</param>
+public sealed record GetProjectLogCommand(string ProjectId, int RequestId = 0) : IpcCommand;
 public sealed record DebugSpawnChildrenCommand(int Count, bool Breakaway) : IpcCommand;
 
 /// <summary>Bir koşunun KAPSAMINI seçer; NDJSON'a camelCase METİN olarak yazılır (<c>"cycles"</c>), sayı olarak
@@ -292,7 +298,15 @@ public sealed record ErrorEvent(string Code, string Message) : IpcEvent;
 public sealed record RunStoppedEvent(string RunId, bool WasHard) : IpcEvent;
 /// <param name="ThroughLineNumber">Snapshot anında diske yazılmış son satır no — App canlı `projectLog`
 /// satırlarını bununla dikiş yapar (LineNumber &lt;= ThroughLineNumber olanlar zaten chunk'ta). [T28]</param>
-public sealed record ProjectLogChunkEvent(string ProjectId, int Sequence, string Text, bool IsLast, int ThroughLineNumber) : IpcEvent;
+/// <param name="RequestId">[idle-memory · I1] Cevaplanan isteğin kimliği (<see cref="GetProjectLogCommand.RequestId"/>) — bir
+/// cevabın HER chunk'ı aynı değeri taşır. App chunk'ı bekleyen yüklemesiyle YALNIZ bununla eşleştirir; başka bir isteğin
+/// (gecikmiş, yerini yenisine bırakmış) cevabı yok sayılır. Varsayılan <c>0</c>: bu alandan ÖNCE yazılmış satırlar çözülür.</param>
+/// <param name="NotFound">[idle-memory · I1] Motorun bu proje için logu YOK (hiç koşu olmadı ya da proje o koşuda hiç
+/// loglanmadı — atlanan bir proje log dosyası yazmaz). Cevap o zaman tek bir chunk'tır: boş metin, son, <c>ThroughLineNumber</c>
+/// 0 — yani boş bir snapshot; App onu her cevap gibi diker (istekten sonra gelen canlı satırlar sayfaya girer). Bayrak teldeki
+/// "log yok" ile "boş log" ayrımını korur; dikiş ona bakmaz. Varsayılan <c>false</c>.</param>
+public sealed record ProjectLogChunkEvent(string ProjectId, int Sequence, string Text, bool IsLast, int ThroughLineNumber,
+    int RequestId = 0, bool NotFound = false) : IpcEvent;
 public sealed record DebugChildrenSpawnedEvent(int[] Pids) : IpcEvent;
 
 public enum RunOutcome { Completed, Stopped }

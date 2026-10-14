@@ -480,8 +480,10 @@ public sealed partial class RunViewModel
 
     /// <summary>[task 3] Sync topoloji getirmeden bitti (gönderim düştü, <c>planFailed</c>, motor kaybı, topolojisiz
     /// tamamlanma): ekran boş KALMAZ — önceki liste ve graf geri gelir. Yüzey zaten yeniden kurulduysa no-op.
-    /// Çağıranlar Sync'i serbest bırakan geçişlerdir: <see cref="ReleaseSyncRequest"/>, <see cref="ReleaseSyncPhase"/>,
-    /// <see cref="TryConsumeSyncFailure"/>.</summary>
+    /// İki çağıranı var, ikisi de Sync'i serbest bırakan geçiştir: <see cref="ReleaseSyncRequest"/> (gönderim düştü) ve
+    /// <see cref="ReleaseSyncPhase"/> — Sync'in her bitiş yolu (<c>syncCompleted</c>, Sync'e atfedilen hata
+    /// <see cref="TryConsumeSyncFailure"/>, uçuşta Sync varken motor kaybı) ona <see cref="EndSync"/> üzerinden varır; boştaki motor
+    /// kaybı da doğrudan girer.</summary>
     private void EndPlanSurfaceRestart()
     {
         if (PlanSurfaceRestarting) ReplayPlanSurface();

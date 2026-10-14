@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using BuildOrchestrator.Core.Diagnostics;
 
 namespace BuildOrchestrator.App.Services;
 
@@ -8,8 +9,10 @@ public readonly record struct DiagnosticsLine(string Label, string Value);
 
 /// <summary>
 /// [About] Tanı raporunun ham girdisi — TOPLAMAYI çağıran yapar (<see cref="AppIdentity"/>,
-/// <c>RuntimeInformation</c>, <c>MsBuildResolver</c>, uygulamanın kendi yol static'leri), bu tip yalnız taşır.
-/// Böylece rapor mantığı WPF'siz ve process'siz test edilir.
+/// <c>RuntimeInformation</c>, <c>MsBuildResolver</c>, <see cref="MemoryLine.TryRead()"/>, uygulamanın kendi yol static'leri), bu tip
+/// yalnız taşır. Böylece rapor mantığı WPF'siz ve process'siz test edilir. <see cref="Memory"/> App sürecinin bellek okumasıdır
+/// (bayt) — raporun kurulduğu anın görüntüsü, canlı değil; okunamadıysa <c>null</c> (üç bellek satırı
+/// <see cref="DiagnosticsReport.Unknown"/> gösterir, tanı ekranı bozulmaz).
 /// </summary>
 public sealed record DiagnosticsInput(
     string Product,
@@ -19,6 +22,7 @@ public sealed record DiagnosticsInput(
     int? EnginePid,
     string Runtime,
     string Os,
+    MemoryReading? Memory,
     string MsBuild,
     string RepositoryRoot,
     string StateFile,
@@ -51,6 +55,11 @@ public sealed record DiagnosticsSnapshot(
 /// <para><b>[DEĞİŞEN KURAL — design v1.19.0 §2.10]</b> ESKİ MODEL tek düz listeydi (<c>App version</c>,
 /// <c>Engine version</c>, <c>Engine PID</c> … <c>Worktree pool</c>) ve Environment sekmesi onun tamamını çizerdi.
 /// Sürümler About sekmesine taşındı (Version · Engine · Copyright); Environment RUNTIME ve PATHS gruplarıdır.</para>
+///
+/// <para><b>[idle-memory · spec §6.6] App'in belleği RUNTIME grubundadır:</b> <c>App private</c> · <c>GC committed</c> ·
+/// <c>Managed heap</c> — motorun bellek satırının (<c>memory: private=… committed=… heap=…</c>) App'teki eşi. Okuma çağıranındır
+/// (<see cref="DiagnosticsInput.Memory"/>; okunamadıysa <c>null</c> ve üç satır <see cref="Unknown"/> yazar), MB sayısı satırınkiyle
+/// AYNI kuraldan (<see cref="MemoryLine.Megabytes"/>); burada yalnız birim eklenir.</para>
 /// </summary>
 public static class DiagnosticsReport
 {
@@ -83,6 +92,9 @@ public static class DiagnosticsReport
                 new("Engine PID", input.EnginePid is { } pid ? pid.ToString(CultureInfo.InvariantCulture) : Unknown),
                 new(".NET runtime", input.Runtime),
                 new("OS", input.Os),
+                new("App private", MemoryValue(input.Memory?.PrivateBytes)),
+                new("GC committed", MemoryValue(input.Memory?.CommittedBytes)),
+                new("Managed heap", MemoryValue(input.Memory?.HeapBytes)),
             ],
             Paths:
             [
@@ -114,4 +126,8 @@ public static class DiagnosticsReport
 
     private static string Or(string? value, string fallback) =>
         string.IsNullOrWhiteSpace(value) ? fallback : value;
+
+    /// <summary>Bellek satırının değeri: sayı motorun bellek satırıyla AYNI kuraldan (<see cref="MemoryLine.Megabytes"/>), birim
+    /// burada — <c>"309 MB"</c>. Okunamayan bellek (<c>null</c>) satırı kaybetmez, <see cref="Unknown"/> yazar.</summary>
+    private static string MemoryValue(long? bytes) => bytes is { } value ? $"{MemoryLine.Megabytes(value)} MB" : Unknown;
 }

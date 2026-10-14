@@ -484,6 +484,15 @@ public partial class GraphView : UserControl
     /// gizli pencerede finalin oynamadığını bununla sınar.</summary>
     internal bool IsEndFinalePlaying => _endPlayer.IsPlaying;
 
+    /// <summary>
+    /// Bitiş koreografisi BİTTİ: finalin doğal tamamlanmasında (son adım — filtreye dönüş — oynadıktan sonra) ve final hiç
+    /// oynamadığında (derlenen yok ya da animasyonlar kapalı: <see cref="PlayEndFinale"/>'in "final yok" dalı) ateşlenir.
+    /// Ateşlendiğinde <see cref="IsEndFinalePlaying"/> zaten false'tur. KESİLEN final ateşlemez: <see cref="CancelEndFinale"/>,
+    /// yeni bir işlem (<see cref="BeginOperation"/>) ve yeni bir <see cref="PlayEndFinale"/> eskisini bitirmez, iptal eder.
+    /// İşlem sonu bellek trimi, görünür pencerede animasyonun ortasında toplamamak için finalin bittiğini bundan öğrenir.
+    /// </summary>
+    internal event Action? EndFinaleFinished;
+
     /// <summary>Opaklık kararının gördüğü filtre — askıdayken <c>null</c>. <see cref="ApplyNodeOpacity"/>
     /// <see cref="_filterMatches"/> yerine BUNU okur (tek kaynak).</summary>
     private IReadOnlySet<string>? EffectiveFilter => _filterSuspended ? null : _filterMatches;
@@ -565,6 +574,9 @@ public partial class GraphView : UserControl
     /// nefes → kalan tüm griler birlikte belirginleşir.
     ///
     /// <para>Derlenen yoksa (ya da reduced-motion) koreografi HİÇ oynamaz — final görünüme doğrudan gidilir.</para>
+    ///
+    /// <para>İki durumda da bitiş duyurulur (<see cref="EndFinaleFinished"/>): oynayan final son adımından sonra, oynamayan
+    /// ise hemen. Kesilen final duyurulmaz.</para>
     /// </summary>
     /// <param name="builtNodeNames">Bu koşuda derlenen düğümlerin adları.</param>
     /// <param name="runCount">Random sırayı tohumlayan koşu numarası.</param>
@@ -575,6 +587,7 @@ public partial class GraphView : UserControl
         if (builtNodeNames.Count == 0 || !AnimationsEnabledProvider())
         {
             ResumeFilter(); // [kullanıcı kararı 2026-09-19] final yok → koşunun bitişi tamamlandı, filtre döner
+            EndFinaleFinished?.Invoke(); // oynamayan final de "bitti" sayılır: dinleyen beklenecek bir şey bulamaz
             return;
         }
         // [kullanıcı kararı 2026-09-19] Final filtresiz oynar ve dönüşü kendi son adımı yapar (aşağıda). Askı
@@ -598,7 +611,8 @@ public partial class GraphView : UserControl
             .ToList();
         steps.Add((EndFinale.TotalMs(builtNodeNames.Count), () => SetEndStep(EndStep.None)));
         steps.Add((EndFinale.FilterReturnAtMs(builtNodeNames.Count), ResumeFilter));
-        _endPlayer.Play(steps);
+        // onDone yalnız DOĞAL tamamlanmada çağrılır (StepPlayer.Stop onu atar): kesilen final bitmiş sayılmaz.
+        _endPlayer.Play(steps, onDone: () => EndFinaleFinished?.Invoke());
     }
 
     /// <summary>
@@ -606,7 +620,8 @@ public partial class GraphView : UserControl
     /// <c>BlankPlanSurface</c>'i): oynayan bitiş koreografisi ANINDA kesilir ve filtre askısı kalkar. Final
     /// kesilmeseydi kalan adımları yeni grafın düğümlerinin gövde opaklığını boyamayı sürdürür, filtre de
     /// yeni grafın reveal'inden SONRA sönerdi; böylece reveal filtreli görünür kümeyle oynar. Yeni bir işlem
-    /// başlamadığı için askı sürdürülmez (<see cref="BeginOperation"/>'ın tersine).
+    /// başlamadığı için askı sürdürülmez (<see cref="BeginOperation"/>'ın tersine). Kesilen final bitmiş sayılmaz:
+    /// <see cref="EndFinaleFinished"/> ateşlenmez.
     /// </summary>
     public void CancelEndFinale()
     {

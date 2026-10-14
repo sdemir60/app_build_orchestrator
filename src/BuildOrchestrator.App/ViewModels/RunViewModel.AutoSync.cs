@@ -65,7 +65,7 @@ public sealed partial class RunViewModel : IAutoSyncPort
 
     bool IAutoSyncPort.HasWorkspace => HasWorkspace;
 
-    bool IAutoSyncPort.IsWorkspaceBusy => WorkspaceBusy || IsRunInFlight;
+    bool IAutoSyncPort.IsWorkspaceBusy => IsOperationInFlight;
 
     (string? Branch, string? HeadSha)? IAutoSyncPort.LastSyncHead => LastSyncHead;
 
