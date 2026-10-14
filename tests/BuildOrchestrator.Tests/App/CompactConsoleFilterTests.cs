@@ -17,6 +17,10 @@ public class CompactConsoleFilterTests
     // Komut, uyarı ve hata satırları ortak kurucudan (MainWindowHost.CommandLine / WarningLine / ErrorLine): her satır numarası ayrı,
     // tekil bir tanıdır.
 
+    /// <summary>Motorun projenin loguna yazdığı bir bağımlılık notu (<c>RunCoordinator.DepIssueWarnLines</c>'ın ilk biçimi) — bu sınıfın
+    /// motor notu girdisinin TEK tanımı (N5 testi ve ayırma pini).</summary>
+    private const string EngineNote = "warning: R failed in this run — last successful output referenced (R)";
+
     [Fact]
     public void Errors_pass_the_first_three_distinct_warnings_pass_and_every_other_line_is_hidden()
     {
@@ -112,7 +116,7 @@ public class CompactConsoleFilterTests
         var f = new CompactConsoleFilter();
         string[] notes =
         [
-            "warning: R failed in this run — last successful output referenced (R)",
+            EngineNote,
             "warning: S is in a dependency cycle and was not rebuilt — last known output referenced",
             "warning: T has pending changes and was not rebuilt in this run — last known output referenced",
             "warning: failure in dependency chain (U, V) — referenced outputs may be stale",
@@ -289,7 +293,8 @@ public class CompactConsoleFilterTests
 
     /// <summary>
     /// [fix 1 · M4] Süzgeç IPC thread'inde, VM'in kilidi altında her proje satırında koşar (OSYS koşusunda ~390 k satır): gizlenen satır
-    /// (bilgi, komut, boş) ve görülmüş bir uyarının tekrarı hiç ayırma yapmaz — ısınmadan sonra 0 bayt; geçen hata satırı da kendisidir.
+    /// (bilgi, komut, boş) ve görülmüş bir uyarının tekrarı hiç ayırma yapmaz — ısınmadan sonra 0 bayt; geçen satırlar da kendileridir: hata
+    /// ve motorun notu (N5: her turda aynen geçer, sayılmaz).
     /// <para>KIRMIZI (eski sınıflandırıcı): girintili satırın kırpılmış kopyası ve tanı aramasının birleştirdiği string'ler.</para>
     /// </summary>
     [Fact]
@@ -299,11 +304,13 @@ public class CompactConsoleFilterTests
         string[] lines =
         [
             WarningLine(1), WarningLine(2), WarningLine(3), WarningLine(4, "MSB3277"), WarningLine(5, "CS0168"),
-            "warning NU1701: package restored", "warning: R failed in this run — last successful output referenced (R)",
+            "warning NU1701: package restored", EngineNote,
             "  Copying file from X to Y", CommandLine, "msbuild A.csproj -t:Build", "",
             "    0 Hata", ErrorLine(2),
         ];
-        foreach (string line in lines) f.LogLine("a", line); // ısınma: ilk üçü gösterildi, gerisi sayıldı — sonrası hep tekrar
+        // Isınma: ilk üç uyarı gösterildi, sonraki tekil uyarılar sayıldı — ölçülen turlarda hepsi tekrardır; hata satırı ve motorun notu
+        // her turda aynen geçer, gerisi gizlenir.
+        foreach (string line in lines) f.LogLine("a", line);
 
         long allocated = PerfMeasure.AllocatedBy(() =>
         {
