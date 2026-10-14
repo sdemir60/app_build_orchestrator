@@ -25,8 +25,8 @@ public enum ConsoleLineType { Cmd, Info, Dim, Warn, Error }
 /// <para><b>[idle-memory · dalga 2 · spec §6.5] Kompakt konsolun da TEK sınıflandırıcısıdır.</b>
 /// <see cref="CompactConsoleFilter"/> bir proje satırının anlatıya gidip gitmeyeceğine buradaki tiple karar verir (hata, uyarı,
 /// gerisi) ve gizlediği uyarıyı AYNI ayrıştırmanın verdiği tanı koduyla sayar (<see cref="Classify(ReadOnlySpan{char}, out ReadOnlySpan{char})"/>)
-/// — "uyarı nedir" sorusunun ikinci bir tanımı yoktur. Süzgecin kendi özet satırını ise süzgeç tanımlar; burası onu süzgece sorarak
-/// tanır.</para>
+/// — "uyarı nedir" sorusunun ikinci bir tanımı yoktur; uygulamanın ve motorun kendi uyarısını (<see cref="IsOwnWarning"/>) süzmez.
+/// Süzgecin kendi özet satırını ise süzgeç tanımlar; burası onu süzgece sorarak tanır.</para>
 ///
 /// <para><b>[fix 1 · M4] Ayırma yapmaz.</b> Kompakt konsol sınıflandırmayı IPC thread'inde, VM'in kilidi altında her proje satırında
 /// sorar (OSYS koşusunda ~390 k satır), renklendirici her çizilen satırda: satır bir span olarak okunur, kırpılmış kopyası ya da
@@ -82,7 +82,7 @@ public static class ConsoleLineClassifier
         if (content.StartsWith("[hata]", StringComparison.Ordinal) ||
             content.StartsWith("[error]", StringComparison.OrdinalIgnoreCase))
             return ConsoleLineType.Error;
-        if (content.StartsWith("warning:", StringComparison.OrdinalIgnoreCase))
+        if (IsOwnWarning(content))
             return ConsoleLineType.Warn;
         // [spec §6.5] Kompakt konsolun özet satırı ("A: 7 more warnings — CS1591 ×7 — see the project log") — o da bizim
         // satırımızdır ve uyarı rengindedir. Biçimin TEK tanımı süzgeçtedir; burada ikinci bir literal yok.
@@ -101,6 +101,17 @@ public static class ConsoleLineClassifier
     }
 
     /// <summary>
+    /// [tek tanım · dalga 2 son inceleme N5] Satır uygulamanın — motor dahil — KENDİ uyarısı mı: <c>warning:</c> önekiyle başlar (baştaki
+    /// boşluk sayılmaz, büyük-küçük harf duyarsız). Sınıflandırıcı bu satırı uyarı renginde boyar; kompakt konsol onu süzmez ve saymaz
+    /// (motorun projenin loguna yazdığı bağımlılık notları — spec §6.5 "motor notları süzülmez"). Önekin tek tanımı burasıdır.
+    /// </summary>
+    public static bool IsOwnWarning(ReadOnlySpan<char> text) =>
+        text.TrimStart().StartsWith(OwnWarningPrefix, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Uygulamanın ve motorun uyarı öneki (<see cref="IsOwnWarning"/>).</summary>
+    private const string OwnWarningPrefix = "warning:";
+
+    /// <summary>
     /// [fix 1 · I1] MSBuild'in kanonik tanı biçimi (<c>Microsoft.Build.Shared.CanonicalError</c>):
     /// <c>köken: [alt kategori ]error|warning[ KOD]: metin</c>. Köken bir dosya yolu (sürücü harfi ve isteğe bağlı <c>N&gt;</c> düğüm
     /// öneki dahil), bir araç (<c>MSBUILD</c>, <c>csc</c>, <c>EXEC</c>) ya da proje dosyasıdır ve bir sonraki iki noktada biter; tür o
@@ -108,9 +119,17 @@ public static class ConsoleLineClassifier
     /// sözcükler alt kategoridir (<c>XamlCompiler</c>). Kökensiz biçimde tür satırın EN BAŞINDADIR (<c>warning NU1701: …</c>) ve alt
     /// kategori alınmaz: serbest metindeki "the error is: x" tanı değildir. Tür ilk tanı sözcüğüdür — kökenden sonraki bölümde durur,
     /// metindeki "Warning As Error" sayılmaz.
+    /// <para>[DEĞİŞEN SIRA — dalga 2 son inceleme · defter 6] Satır bir tür sözcüğüyle başlıyorsa kökensiz biçim ÖNCE denenir: tür satır
+    /// başındaki İLK tanı sözcüğüdür (<c>error X1: see the warning list: y</c> bir hatadır, kodu <c>X1</c>). Eski sırada düz köken
+    /// araması önce koşuyordu: satırın ilk iki noktaya kadarki bölümü ("error X1") köken sayılıyor, türü metnin ilerisindeki sözcük
+    /// veriyordu (uyarı, kodu "list"). Kökensiz biçim tutmazsa kökenli biçimler eskisi gibi denenir.</para>
     /// </summary>
     private static bool TryParseDiagnostic(ReadOnlySpan<char> content, out ConsoleLineType category, out ReadOnlySpan<char> code)
     {
+        // Kökensiz biçim satırın başındaki tür sözcüğüyle — ilk tanı sözcüğü karar verir.
+        bool categoryFirst = StartsWithCategory(content);
+        if (categoryFirst && TryParseCategory(content, allowSubcategory: false, out category, out code))
+            return true;
         // Sürücü harfli köken (C:\…\A.cs(1,1)): sürücünün iki noktası kökene aittir, köken bir sonraki iki noktada biter.
         int start = NodePrefixLength(content);
         if (content.Length > start + 1 && char.IsAsciiLetter(content[start]) && content[start + 1] == ':')
@@ -123,8 +142,18 @@ public static class ConsoleLineClassifier
         int colon = content.IndexOf(':');
         if (colon >= 0 && TryParseCategory(content[(colon + 1)..], allowSubcategory: true, out category, out code))
             return true;
-        // Kökensiz: tür satırın başında.
-        return TryParseCategory(content, allowSubcategory: false, out category, out code);
+        // Kökensiz: tür satırın başında (tür sözcüğüyle başlayan satırda zaten denendi).
+        if (!categoryFirst) return TryParseCategory(content, allowSubcategory: false, out category, out code);
+        category = ConsoleLineType.Info;
+        code = default;
+        return false;
+    }
+
+    /// <summary>Satırın ilk sözcüğü (boşluğa ya da iki noktaya kadar) bir tanı türü mü — kökensiz biçimin önce denendiği satır.</summary>
+    private static bool StartsWithCategory(ReadOnlySpan<char> content)
+    {
+        int end = content.IndexOfAny(' ', '\t', ':');
+        return TryCategory(end < 0 ? content : content[..end], out _);
     }
 
     /// <summary>MSBuild'in çok düğümlü konsol çıktısındaki düğüm öneki (<c>12&gt;</c>): uzunluğu, yoksa 0.</summary>

@@ -246,7 +246,7 @@ public sealed class CsprojEvaluator
 
         string asmName = Elements(root, "PropertyGroup").SelectMany(pg => Elements(pg, "AssemblyName"))
             .Select(e => e.Value.Trim()).FirstOrDefault(v => v.Length > 0)
-            ?? ProjectDisplayName.FromPath(csprojPath);
+            ?? MsBuildProjectName(csprojPath);
 
         // [T72/Task 14] StaleObjDetector.Inspect'in expectedTfm'i için: legacy TargetFrameworkVersion ya da
         // SDK-style TargetFramework — bkz. TargetFrameworkMonikerDeriver.
@@ -404,6 +404,12 @@ public sealed class CsprojEvaluator
         }
         return null;
     }
+
+    /// <summary>[dalga 2 son inceleme · defter 10] MSBuild'in <c>$(MSBuildProjectName)</c>'i — proje dosyasının uzantısız adı; MSBuild
+    /// <c>$(AssemblyName)</c> verilmemişse onu kullanır. Değerlendiricinin KENDİ kuralıdır: <c>AssemblyName</c> derlemenin kimliğidir
+    /// (üretici haritası onu <c>&lt;ad&gt;.dll</c> olarak eşler — <c>ProducerMap</c>) ve MSBuild'in varsayılanını izler; bir projenin
+    /// görünen adının kuralına (<see cref="ProjectDisplayName.FromPath"/>) bağlanmaz — ikisi bugün aynı sonucu verse de ayrı şeylerdir.</summary>
+    private static string MsBuildProjectName(string csprojPath) => System.IO.Path.GetFileNameWithoutExtension(csprojPath);
 
     // MSBuild namespace toleransı: legacy'de xmlns var, SDK'da yok → LocalName ile eşle [D5].
     private static IEnumerable<XElement> Elements(XElement parent, string local) =>

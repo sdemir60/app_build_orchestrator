@@ -83,14 +83,46 @@ public class CompactConsoleFilterTests
         Assert.Null(f.ProjectDone(@"C:\p\b.csproj", Named("B")));
     }
 
-    /// <summary>Kodu olmayan uyarı (Supervisor'ın bağımlılık satırı) <c>other</c> sayılır; tek gizlenen uyarı tekil yazılır
-    /// (<c>StreamText.Counted</c> — "1 more warnings" kopyala-yapıştır kokusudur).</summary>
+    /// <summary>Kodu olmayan uyarı — MSBuild'in kodsuz biçimi (<c>…(1,5): warning : …</c>; kodu verilmemiş bir <c>&lt;Warning&gt;</c>
+    /// görevi böyle yazar) — <c>other</c> sayılır; tek gizlenen uyarı tekil yazılır (<c>StreamText.Counted</c> — "1 more warnings"
+    /// kopyala-yapıştır kokusudur).
+    /// <para><b>[DEĞİŞEN KURAL — dalga 2 son inceleme N5]</b> Eski iddia: motorun projenin loguna yazdığı bağımlılık notları
+    /// (<c>warning: R1 failed in this run — …</c>) kodsuz uyarıdır — "ilk 3"e girer, sonrası <c>other</c> sayılır. Değişme gerekçesi:
+    /// spec §6.5 "motor notları süzülmez" planın süzgeç testinden üstündür (karar N5) — o notlar artık her zaman geçer ve sayılmaz
+    /// (<see cref="The_engines_own_notes_always_pass_and_neither_count_nor_use_the_quota"/>); <c>other</c> kodsuz MSBuild uyarısının
+    /// kovasıdır.</para></summary>
     [Fact]
     public void A_warning_without_a_code_counts_as_other_and_a_single_hidden_warning_is_singular()
     {
         var f = new CompactConsoleFilter();
-        for (int i = 1; i <= 4; i++) f.LogLine("a", $"warning: R{i} failed in this run — last successful output referenced (R{i})");
+        for (int i = 1; i <= 4; i++) f.LogLine("a", $@"C:\x\A.csproj({i},5): warning : R{i} is not signed");
         Assert.Equal("A: 1 more warning — other ×1 — see the project log", f.ProjectDone("a", Named("A")));
+    }
+
+    /// <summary>
+    /// [dalga 2 son inceleme N5 · spec §6.5 "motor notları süzülmez"] Motorun kendi notları — projenin loguna derleme çıktısından ÖNCE
+    /// yazdığı bağımlılık uyarıları (<c>RunCoordinator</c>'ın dört biçimi) — kompakt kipte her zaman geçer: sayılmaz ve projenin "ilk 3"
+    /// kotasını harcamaz. Tanıma sınıflandırıcının uygulama/motor öneki tanımındandır (<c>warning:</c>); ikinci bir literal yok.
+    /// <para>KIRMIZI: notlar kodsuz uyarı sayılıyordu — kotayı onlar dolduruyor, derleyicinin ilk üç uyarısı gizlenip özette
+    /// sayılıyordu ("4 more warnings").</para>
+    /// </summary>
+    [Fact]
+    public void The_engines_own_notes_always_pass_and_neither_count_nor_use_the_quota()
+    {
+        var f = new CompactConsoleFilter();
+        string[] notes =
+        [
+            "warning: R failed in this run — last successful output referenced (R)",
+            "warning: S is in a dependency cycle and was not rebuilt — last known output referenced",
+            "warning: T has pending changes and was not rebuilt in this run — last known output referenced",
+            "warning: failure in dependency chain (U, V) — referenced outputs may be stale",
+        ];
+        foreach (string note in notes) Assert.Equal(note, f.LogLine("a", note));
+        for (int i = 1; i <= 3; i++) Assert.Equal(WarningLine(i), f.LogLine("a", WarningLine(i))); // kota notlardan bağımsız
+        Assert.Null(f.LogLine("a", WarningLine(4)));                                                 // derleyicinin dördüncüsü
+        Assert.Equal(notes[0], f.LogLine("a", notes[0]));                                            // döngü turunda yinelenen not da
+
+        Assert.Equal("A: 1 more warning — CS1591 ×1 — see the project log", f.ProjectDone("a", Named("A")));
     }
 
     /// <summary>Özet en çok <see cref="CompactConsoleFilter.SummaryCodes"/> kod sayar: çoktan aza, eşitlikte alfabetik; toplam sayı
@@ -151,6 +183,24 @@ public class CompactConsoleFilterTests
         Assert.Equal(ConsoleLineType.Warn, ConsoleLineClassifier.Classify(summary));
         Assert.False(CompactConsoleFilter.IsSummary("Build succeeded — see the project log"));
         Assert.Equal(ConsoleLineType.Info, ConsoleLineClassifier.Classify("Build succeeded — see the project log"));
+    }
+
+    /// <summary>[dalga 2 son inceleme F3] Tek gizlenen uyarının özeti TEKİL yazılır (<c>1 more warning</c>) ve o da uyarı rengindedir: dört
+    /// tekil uyarılı her proje bu satırı basar. Tanıma sayılı adın çekimini <c>StreamText.Counted</c>'ın kendi parçalarından okur (ayraç ve
+    /// çoğul eki tek tanım) — çekim değişirse tanıma da onunla değişir.
+    /// <para>KIRMIZI (geçici bozma: tanımada çoğul eki zorunlu kılındı): tekil özet bilgi rengine düşüyordu; testler yalnız çoğul özeti
+    /// sınıflandırıyordu.</para></summary>
+    [Fact]
+    public void A_single_hidden_warnings_summary_is_singular_and_classified_as_a_warning()
+    {
+        var f = new CompactConsoleFilter();
+        for (int i = 1; i <= 4; i++) f.LogLine("a", WarningLine(i));
+        string summary = f.ProjectDone("a", Named("OSYS.Business.Customer"))!;
+
+        Assert.Equal("OSYS.Business.Customer: 1 more warning — CS1591 ×1 — see the project log", summary);
+        Assert.True(CompactConsoleFilter.IsSummary(summary));
+        Assert.Equal(ConsoleLineType.Warn, ConsoleLineClassifier.Classify(summary));
+        Assert.Equal(ConsoleLineType.Warn, ConsoleLineClassifier.Classify("A: 1 more warning — CS1591 ×1 — see the project log"));
     }
 
     /// <summary>[karar 7 · 10] Projenin başlığı (<c>building &lt;ad&gt;</c>) işlem başına BİR kez gelir — döngü turları onu
@@ -262,5 +312,31 @@ public class CompactConsoleFilterTests
         });
 
         Assert.Equal(0, allocated);
+    }
+
+    /// <summary>
+    /// [dalga 2 son inceleme · defter 7] Sayaç yolu da ayırma yapmaz: projenin kotası dolduktan sonra gelen YENİ bir tekil uyarı, kodu
+    /// sayaçta zaten varsa yerinde sayılır — kod string'e yalnız sayaca yeni bir kod girerken çevrilir. Ölçüm tekil kümenin o anki
+    /// kapasitesinin altında kalır (bir HashSet büyümesi ayırır — üretimde de uyarı sayısıyla orantılı, satır başına değil) ve satırlar
+    /// ölçümün DIŞINDA kurulur.
+    /// <para>KIRMIZI (geçici bozma: sayacın anahtarı <c>code.ToString()</c>): gizlenen her yeni uyarı bir string ayırıyordu; mevcut
+    /// pinler yalnız görülmüş tekrarları besliyordu (tekrar sayaca hiç ulaşmaz).</para>
+    /// </summary>
+    [Fact]
+    public void A_new_distinct_warning_with_a_counted_code_allocates_nothing()
+    {
+        var f = new CompactConsoleFilter();
+        // Isınma 1000 tekil uyarı: ilk üçü gösterildi, gerisi CS1591 olarak sayıldı. Tekil küme bu sırada büyüdü — kapasitesi her
+        // büyümede ikiye katlanır (asal boylar), son büyüme ölçülen 300 yeni uyarıya yer açmıştır: ölçüm içinde büyüme olmaz.
+        string[] lines = [.. Enumerable.Range(1, 1300).Select(i => WarningLine(i))];
+        foreach (string line in lines.AsSpan(0, 1000)) f.LogLine("a", line);
+
+        long allocated = PerfMeasure.AllocatedBy(() =>
+        {
+            for (int i = 1000; i < lines.Length; i++) f.LogLine("a", lines[i]);
+        });
+
+        Assert.Equal(0, allocated);
+        Assert.Equal("A: 1297 more warnings — CS1591 ×1297 — see the project log", f.ProjectDone("a", Named("A"))); // hepsi sayıldı
     }
 }

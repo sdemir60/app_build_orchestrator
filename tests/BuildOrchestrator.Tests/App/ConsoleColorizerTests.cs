@@ -128,6 +128,21 @@ public class ConsoleColorizerTests
     public void Every_canonical_msbuild_error_form_is_an_error(string line) =>
         Assert.Equal(ConsoleLineType.Error, ConsoleLineClassifier.Classify(line));
 
+    /// <summary>[dalga 2 son inceleme · defter 6] Kökensiz tanıda tür satırın başındaki İLK tanı sözcüğüdür: satır bir tür sözcüğüyle
+    /// başlıyorsa kökensiz biçim önce denenir — metnin ilerisindeki iki noktalar ve onların önündeki "warning"/"error" sözcükleri
+    /// türü değiştirmez, kod satır başındaki koddur.
+    /// <para>KIRMIZI: düz köken araması önce koşuyordu — ilk iki noktaya kadarki bölüm ("error X1") köken sayılıyor, türü metnin
+    /// ilerisindeki sözcük veriyordu (<c>error X1: see the warning list: y</c> → uyarı, kodu "list").</para></summary>
+    [Theory]
+    [InlineData("error X1: see the warning list: y", ConsoleLineType.Error, "X1")]
+    [InlineData("warning NU1701: see the error list: y", ConsoleLineType.Warn, "NU1701")]
+    public void An_origin_less_diagnostic_takes_its_type_and_code_from_the_first_category_word(string line, ConsoleLineType type,
+        string code)
+    {
+        Assert.Equal(type, ConsoleLineClassifier.Classify(line.AsSpan(), out var parsed));
+        Assert.Equal(code, parsed.ToString());
+    }
+
     /// <summary>[fix 1 · I1 · koruma] Kanonik biçim yalnız tanı satırını tanır: sıradan bir komut satırı komut kalır; serbest metninde
     /// "error"/"warning" geçen satır — gerçek loglardaki csc komut satırı (<c>/errorreport:prompt</c>, 1599 satır), Türkçe MSBuild'in
     /// özet satırları (<c>    N Hata</c> / <c>    N Uyarı</c>, 1698'er satır) ve İngilizce MSBuild'in, terminal logger'ın, csc'nin

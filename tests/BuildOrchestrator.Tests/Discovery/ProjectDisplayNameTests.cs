@@ -4,9 +4,11 @@ namespace BuildOrchestrator.Tests.Discovery;
 
 /// <summary>
 /// [idle-memory · dalga 2 · R3] Bir projenin yoldan türeyen görünen adının TEK tanımı (<see cref="ProjectDisplayName.FromPath"/>):
-/// proje dosyasının uzantısız adı — klasördeki noktalar ve boşluklar adı bölmez, uzantı (csproj/vbproj) ne olursa olsun. Keşfin
-/// <c>AssemblyName</c> varsayılanı (<c>CsprojEvaluatorTests</c>: "default = dosya adı") ve planın, motorun ve uygulamanın adı
-/// bilinmeyen kimlik için yazdığı ad bu tanımdan gelir.
+/// proje dosyasının uzantısız adı — klasördeki noktalar ve boşluklar adı bölmez, uzantı (csproj/vbproj) ne olursa olsun. Planın,
+/// motorun ve uygulamanın adı bilinmeyen kimlik için yazdığı ad bu tanımdan gelir.
+/// <para>[DEĞİŞEN KAPSAM — dalga 2 son inceleme · defter 10] Eski metin keşfin <c>AssemblyName</c> varsayılanının da bu tanımdan
+/// geldiğini söylüyordu; o varsayılan derlemenin kimliğidir ve değerlendiricinin kendi MSBuild kuralındadır
+/// (<c>$(MSBuildProjectName)</c> — pin: <c>CsprojEvaluatorTests</c>, "default = dosya adı").</para>
 /// </summary>
 public class ProjectDisplayNameTests
 {

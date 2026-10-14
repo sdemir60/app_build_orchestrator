@@ -207,9 +207,18 @@ public static class StreamText
 
     /// <summary>Sayı + çekimli ad (<c>1 member</c> · <c>2 members</c> · <c>1 in-flight compile</c>) — döngü satırlarının ve hard
     /// stop bitiş satırının (<see cref="RunViewModel.HardStoppedLine"/>) TEK çekim kuralı; tekil sayı olağan bir durumdur
-    /// (tek turda biten grup, tek üyeli seçici tur, tek uçuştaki derleme).</summary>
+    /// (tek turda biten grup, tek üyeli seçici tur, tek uçuştaki derleme).
+    /// <para>[idle-memory · dalga 2 son inceleme F3/O3] Çekimin iki parçası — sayı ile ad arasındaki ayraç (<see cref="CountSeparator"/>) ve
+    /// çoğul eki (<see cref="PluralSuffix"/>) — TEK tanımdır: kompakt konsolun özet satırını tanıyan ayrıştırma
+    /// (<c>CompactConsoleFilter.IsSummary</c>) aynı ikisini okur.</para></summary>
     internal static string Counted(int count, string noun) =>
-        string.Format(CultureInfo.InvariantCulture, "{0} {1}{2}", count, noun, count == 1 ? "" : "s");
+        string.Format(CultureInfo.InvariantCulture, "{0}" + CountSeparator + "{1}{2}", count, noun, count == 1 ? "" : PluralSuffix);
+
+    /// <summary><see cref="Counted"/>'ın sayı ile ad arasındaki ayracı.</summary>
+    internal const string CountSeparator = " ";
+
+    /// <summary><see cref="Counted"/>'ın çoğul eki (sayı 1 değilse).</summary>
+    internal const string PluralSuffix = "s";
 
     /// <summary>[Task 4] Aktif satırın grup-ilerleme detayı — <c>StreamComposer.StartBuilding</c>'in <c>detail</c>
     /// parametresinin TEK metin kaynağı: <c>member {index}/{count} · round {round}/{cap}</c>. Kopya YASAK

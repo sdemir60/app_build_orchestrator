@@ -18,6 +18,11 @@ namespace BuildOrchestrator.App.Console;
 /// (<see cref="DrainPending"/>). Satırın türü ve tanı kodu <see cref="ConsoleLineClassifier"/>'ın TEK ayrıştırmasındandır — ikinci
 /// bir tanım yoktur.</para>
 ///
+/// <para><b>Motor notları süzülmez</b> (spec §6.5 · son inceleme N5): motorun projenin loguna derleme çıktısından ÖNCE yazdığı kendi
+/// <c>warning:</c> satırları (bağımlılık notları — bir bağımlılık bu koşuda düştü, döngüde ya da bekleyen değişiklikle derlenmedi,
+/// zincirde hata var) her zaman aynen geçer: ne sayılır ne "ilk 3" kotasını harcar. Tanıma sınıflandırıcının öneki tanımıdır
+/// (<see cref="ConsoleLineClassifier.IsOwnWarning"/>).</para>
+///
 /// <para><b>Tekil sayım.</b> MSBuild her tanıyı bitiş özetinde bir kez daha yazar: girintili ve çoğu zaman sonunda
 /// <c>[…\Proje.csproj]</c> ekiyle (çok hedefli projede <c>[…\Proje.csproj::TargetFramework=net8.0]</c>). Ham satır sayımı "N more
 /// warnings"ı gerçek sayının katlarına şişirirdi (son altı gerçek koşuda toplamda 3,4×). Bu yüzden bir uyarının kimliği kırpılmış ve
@@ -43,7 +48,8 @@ public sealed class CompactConsoleFilter
     /// <summary>Özet satırının adını verdiği en çok kod (çoktan aza, eşitlikte alfabetik); toplam sayı hepsini içerir.</summary>
     public const int SummaryCodes = 3;
 
-    /// <summary>Kodu çıkarılamayan uyarının (uygulamanın kendi <c>warning:</c> satırı — bağımlılık uyarısı) özet kodu.</summary>
+    /// <summary>Kodu olmayan uyarının — MSBuild'in kodsuz biçimi (<c>…: warning : …</c>, kodu verilmemiş bir <c>&lt;Warning&gt;</c>
+    /// görevi) — özet kodu.</summary>
     private const string OtherCode = "other";
 
     /// <summary>Projenin başlığının öneki (<c>building &lt;ad&gt;</c>).</summary>
@@ -57,9 +63,10 @@ public sealed class CompactConsoleFilter
     private const string MoreWarnings = "more warning";
     private const string SummaryTail = PartSeparator + "see the project log";
 
-    // Tanımanın okuduğu sayılı ad: StreamText.Counted'ın "<n> <ad>[s]" çekimi — sayı ile ad arasındaki boşluk ve çoğul eki.
-    private const string CountedNoun = " " + MoreWarnings;
-    private const string PluralSuffix = "s";
+    // [son inceleme F3/O3] Tanımanın okuduğu sayılı ad: StreamText.Counted'ın "<n> <ad>[s]" çekimi — sayı ile ad arasındaki ayraç ve
+    // çoğul eki Counted'ın KENDİ parçalarıdır (StreamText.CountSeparator, StreamText.PluralSuffix): ikinci bir tanım yok, çekim
+    // değişirse tanıma onunla değişir.
+    private const string CountedNoun = StreamText.CountSeparator + MoreWarnings;
 
     private readonly Dictionary<string, ProjectWarnings> _projects = new(StringComparer.OrdinalIgnoreCase);
 
@@ -76,13 +83,14 @@ public sealed class CompactConsoleFilter
     public string? ProjectHeader(string projectId, Func<string, string> nameOf) =>
         _headed.Add(projectId) ? HeaderPrefix + nameOf(projectId) : null;
 
-    /// <summary>Bir proje satırının anlatıdaki karşılığı: satırın kendisi ya da <c>null</c> (gizle).</summary>
+    /// <summary>Bir proje satırının anlatıdaki karşılığı: satırın kendisi ya da <c>null</c> (gizle). Motorun kendi notu
+    /// (<see cref="ConsoleLineClassifier.IsOwnWarning"/>) her zaman geçer ve sayılmaz.</summary>
     public string? LogLine(string projectId, string text)
     {
         switch (ConsoleLineClassifier.Classify(text, out ReadOnlySpan<char> code))
         {
             case ConsoleLineType.Error: return text;
-            case ConsoleLineType.Warn: return Warning(projectId, text, code);
+            case ConsoleLineType.Warn: return ConsoleLineClassifier.IsOwnWarning(text) ? text : Warning(projectId, text, code);
             default: return null;
         }
     }
@@ -155,7 +163,7 @@ public sealed class CompactConsoleFilter
         while (digits < rest.Length && char.IsAsciiDigit(rest[digits])) digits++;
         if (digits == 0 || !rest[digits..].StartsWith(CountedNoun, StringComparison.Ordinal)) return false;
         rest = rest[(digits + CountedNoun.Length)..];
-        if (rest.StartsWith(PluralSuffix, StringComparison.Ordinal)) rest = rest[PluralSuffix.Length..];
+        if (rest.StartsWith(StreamText.PluralSuffix, StringComparison.Ordinal)) rest = rest[StreamText.PluralSuffix.Length..];
         return rest.Length > PartSeparator.Length && rest.StartsWith(PartSeparator, StringComparison.Ordinal);
     }
 
