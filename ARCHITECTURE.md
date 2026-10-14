@@ -4637,7 +4637,8 @@ lines.
   to the bottom on the next live line. Scrolling down yourself hands following back, by the same rule as any other
   user scroll. This is a deliberate departure from §5.1, which pins both directions to the bottom.
 - **A new section empties the narrative in place.** Not every operation opens one: a run, the Sync button,
-  the click of Clean or Optimize and a branch change do (§10.2); a pull, the Sync a maintenance job chains and
+  the click of Clean or Optimize, a branch change, a switch between Debug and Release and closing the workspace
+  (an empty root saved in Settings) do (§10.2); a pull, the Sync a maintenance job chains and
   every automatic Sync append to what is already there, and a refused or failed checkout only adds its line.
   Clearing never touches the disk logs — it is for the screen. The view-model empties the store and says so
   (`ConsoleCleared`); the shell binds the document to the emptied store with a count of **zero** — it does not read the
