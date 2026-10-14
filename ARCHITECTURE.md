@@ -1584,6 +1584,14 @@ by exactly one worker (the scheduler guarantees it); `decision.log` is written f
 inside a single MSBuild output line is normalized to a space so that one appended line is always one physical
 line, and a strange line stitch in MSBuild output cannot desynchronize the chunk reader.
 
+One more file in the folder is written by the App, not the engine: `narrative.log` (`RunLogPaths.NarrativeFileName`),
+the run's console narrative as the App showed it — every project's lines and the application's own, one console line per
+file line, UTF-8 without a byte-order mark and newline-terminated. The App opens it once `runStarted` names the folder,
+writes the lines the console already held first and keeps it open until the next console section opens (§13.5); an
+operation that adds to the section instead of opening one — an automatic Sync, a pull — adds to the file too, so the
+file holds the section, not only the run. The App flushes it whenever an operation ends. It is where the console's
+history lives once it leaves memory (§13.5), and it is pruned with its folder like every other file there.
+
 Run logs are kept for three days, and the newest run's folder always stays however old it is, so the last run
 can always be read. The engine prunes them once, in the background, as soon as it has built its host: the sweep
 neither delays `engineReady` nor the first command, and the run that is starting is safe by construction — its
@@ -1596,8 +1604,9 @@ link, and never anything outside the logs root; a link found inside a folder tha
 is, never followed, and so is a folder swapped for a link after the sweep chose it: only the link goes and its
 target is not entered. One sweep removes a bounded number of folders, oldest first, so a long backlog is worked off
 over several starts rather than stalling one; an I/O error (a log still open in an editor, say) leaves that
-folder for the next start. A sweep that removed, or failed to remove, something writes one summary line to
-stderr — stdout stays NDJSON only.
+folder for the next start. The narrative the App holds open is never in the way: it is always in the newest run's
+folder, because a new run closes it — its section opens — before the engine creates the next folder. A sweep that
+removed, or failed to remove, something writes one summary line to stderr — stdout stays NDJSON only.
 
 ### 8.6 Planning pipeline
 
@@ -4503,10 +4512,10 @@ lines.
   from the log on disk (§5.5), and it grows as the window slides: lines trimmed off the top while the panel is
   following are added to it, so nothing that scrolled past is unreachable. The narrative's backlog is the view
   model's `NarrativeStore` itself — the console keeps no copy of the narrative at all, and a line trimmed off the top
-  of the document is simply a line the store already holds, so the console does not even read the trimmed text off
-  the document for it. Leaving the narrative without a backlog was measured as the console "losing" its history — a
-  parallel build streams hundreds of lines a second, so the 200-line window turned over in seconds and everything
-  older became unreachable even though the text was still buffered.
+  of the document is simply a line the store already holds — in memory or in its file (below) — so the console does
+  not even read the trimmed text off the document for it. Leaving the narrative without a backlog was measured as the
+  console "losing" its history — a parallel build streams hundreds of lines a second, so the 200-line window turned
+  over in seconds and everything older became unreachable even though the text was still buffered.
 - **The run's narrative has exactly one owner: the view model's `NarrativeStore`.** Every line of the run — each
   project's MSBuild output and the application's own narrative lines alike — is appended to it under the view model's
   lock and before the batching pump gets it, so a line is in the store before it can be on screen; the console document
@@ -4515,21 +4524,38 @@ lines.
   (`ConsoleLines.Split`, AvalonEdit's own: `\r\n`, `\r` and `\n` each end a line), and the header's `N lines` is the
   store's count — what the document would show if it held everything, never the 200 of the render slice — or, on a
   project page, that page's line count. The store hands out slices and never the whole text: no production path builds
-  the narrative as one string. Clearing it, as a new section does, lets go of its line array as well as its lines, so
-  the capacity of the largest operation does not outlive it. The console is bound to the store once, when the shell is
-  built, while its document is still empty and before the pump starts (`BindNarrative`; a non-empty document or an open
-  project page is refused, since the document's first line is taken as the store's first), and that bind is not a
-  rebuild of the document. Every later setup of the narrative document — a new section, the return from a project
-  page, the window coming back from the tray — rebinds it with a snapshot, the store plus its count at that instant
-  (`NarrativeSnapshot`), and seeds the document from the store's last 200 lines. The one exception is a new section in
-  a visible window: it binds the emptied store with a count of zero, on purpose (*A new section empties the narrative
-  in place*, below).
+  the narrative as one string. Clearing it, as a new section does, lets go of its line array and its offset index (next
+  item) as well as its lines, so the capacity of the largest operation does not outlive it. The console is bound to
+  the store once, when the shell is built, while its document is still empty and before the pump starts
+  (`BindNarrative`; a non-empty document or an open project page is refused, since the document's first line is taken
+  as the store's first), and that bind is not a rebuild of the document. Every later setup of the narrative
+  document — a new section, the return from a project page, the window coming back from the tray — rebinds it with a
+  snapshot, the store plus its count at that instant (`NarrativeSnapshot`), and seeds the document from the store's
+  last 200 lines. The one exception is a new section in a visible window: it binds the emptied store with a count of
+  zero, on purpose (*A new section empties the narrative in place*, below).
+- **A run's narrative spills to disk; memory keeps a window of it.** Once `runStarted` names the run folder, the view
+  model has the store spool the narrative into `narrative.log` there (§8.5): the store writes the lines it already
+  holds, then every new line through a buffered writer, and keeps each line's starting byte offset in an index —
+  eight bytes a line. Memory then holds at most the last 2,000 lines (`NarrativeStore.MemoryWindowLines`): when the
+  window is full its oldest block is flushed to the file and dropped, and a slice reaching back past the window reads
+  those lines from the file by their offsets. The render slice sits far inside the window, so the document is normally
+  built from memory and the disk is read when the reader scrolls past the window; the read happens outside the store's
+  lock, so the run keeps appending meanwhile, and a slice is either exactly the lines asked for or empty — a missing or
+  short file never yields partial text, because the console computes its stitch from indices. The count stays the
+  total, so the console's indices and `N lines` never see the split. Without a spool the store keeps everything in
+  memory: a Sync, a Deep Clean or an Optimize has no run folder, and neither has a run whose folder the engine did not
+  name as a fully qualified path. The spool is an optimisation, never a dependency: a file that cannot be opened or
+  written leaves the store in memory — new lines stay there, lines already dropped are still read back from the
+  file — and the section's console gets one `warning:` line saying so, as it does when dropped lines cannot be read
+  back. The store never calls out from under its lock; the view model takes the warning inside its own locked
+  section — after the line whose write failed, right after a failed open, at an operation's end — so the store's
+  order stays the pump's. A new section closes the file, which stays in its run folder.
 - The documents keep **no undo history**. AvalonEdit records every insert and removal on the document's undo
   stack and keeps the removed text alive as rope slices, so with the default unbounded stack a trim released
   nothing: after a long visible run about half of the live managed heap was the whole narrative, retained behind
   a 200-line window. Every console document is created with its undo limit at zero (the console is read-only),
-  so a trimmed line is freed the moment it leaves the window; the narrative's lasting copy is the store, a project
-  page's the log on disk.
+  so a trimmed line is freed the moment it leaves the window; the narrative's lasting copy is the store — its window in
+  memory, the rest in the run folder's `narrative.log` — a project page's the log on disk.
 - **A line is only text.** There is no wall-clock column and no `▸` marker: every line starts at the same left
   edge as the caret and the line's kind is carried by colour alone. A real run streams hundreds of lines a
   second and a stamp on each of them carried no information; time lives in one place, the event stream and the
@@ -4640,7 +4666,8 @@ lines.
   the click of Clean or Optimize, a branch change, a switch between Debug and Release and closing the workspace
   (an empty root saved in Settings) do (§10.2); a pull, the Sync a maintenance job chains and
   every automatic Sync append to what is already there, and a refused or failed checkout only adds its line.
-  Clearing never touches the disk logs — it is for the screen. The view-model empties the store and says so
+  Clearing never deletes a log on disk — it is for the screen; the store only closes the narrative's file, which stays
+  in its run folder (§8.5). The view-model empties the store and says so
   (`ConsoleCleared`); the shell binds the document to the emptied store with a count of **zero** — it does not read the
   count a second time, because a line that arrived between the clear and the bind is already in the store and reaches
   the document as a batch, so a bind that counted it too would show it twice — and resets the document at once, without
@@ -5907,7 +5934,7 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 
 | Path | Content | Corruption behaviour |
 |---|---|---|
-| `logs\run-<timestamp>\` | per-run and per-project logs; a run's folder is removed at the first engine start more than three days after the run, except the newest run's, which always stays (§8.5) | — |
+| `logs\run-<timestamp>\` | per-run and per-project logs, written by the engine, and `narrative.log`, the run's console narrative, written by the App from the moment `runStarted` names the folder until the next console section opens (§8.5, §13.5); a run's folder is removed at the first engine start more than three days after the run, except the newest run's, which always stays (§8.5) | — |
 | `build-state.json` | per-project signature, commit, result, duration, dependency-issue note with its root project ids, non-convergent cycle signature, the fed outputs learned from the last success (§7.6), the `packages.config` content hash behind the restore decision (§9.3), a cycle member's term, the sibling surfaces it read and the engine fingerprint behind round one's compile decision (§7.5, §8.8); projects from external roots share the file under the same key shape, without a commit or branch (§7.5). A record written before a field existed loads with that field empty | falls back to empty |
 | `evaluation-cache.json` | csproj evaluation cache; each entry records the schema it was written under, and an entry written under another schema is re-evaluated rather than served (§6.2); an SDK-style entry also records the `Directory.Build.*` files its layout decision read, and is re-evaluated when one of them changes or appears; Optimize removes such entries outright, whatever root they belong to | falls back to empty |
 | `source-hash-cache.json` | source content hashes keyed by path, size and modification time (§7.1) — this is what turns the content decision into one stat pass per run | falls back to empty (the next run re-reads and rebuilds it) |
@@ -6142,12 +6169,14 @@ frames it draws, one line per five-second window (frames drawn, longest gap, gap
 is how an animation freeze under a real, full-priority run is measured; without the variable nothing is created.
 
 The memory budget (`NarrativeBudgetTests`) has two halves. The measurement drives a long synthetic run through the real
-shell and view model, the test ticking the batching pump along its production path — so a copy the console kept would
-count — then runs the operation-end trim with the production collector and asserts that the managed heap grew by no
-more than a fixed multiple of the narrative's own text. An overrun is reported and never absorbed by loosening the budget. It reads
-the whole process's heap, which is why it is gated and runs alone. The structural half is not gated and runs with the
-normal suite: after the same run the store holds each line once, the console holds no copy of it, no live-line buffer
-exists without a waiting request, and a new operation resets the store, that buffer, the run text and the console
+shell and view model — a run that names its run folder, as the engine's do, so the narrative spools to disk (§13.5) —
+the test ticking the batching pump along its production path, so a copy the console kept would count; then it runs the
+operation-end trim with the production collector and asserts that the managed heap grew by no more than a fixed
+ceiling (8 MB), whatever the length of the run's text. An overrun is reported and never absorbed by loosening the
+budget. It reads the whole process's heap, which is why it is gated and runs alone. The structural half is not gated
+and runs with the normal suite: after the same run the store holds each line once and keeps no more than its window
+in memory, the run folder's file holds every line, the console holds no copy of it, no live-line buffer exists without
+a waiting request, and a new operation resets the store and closes its file, that buffer, the run text and the console
 document.
 
 A third category, `LocalOnly`, marks a test that cannot run on the hosted CI runner — a timing budget a shared
@@ -6457,11 +6486,13 @@ do, and how the interface works around each — useful to know before attempting
   in roughly 130 ms and a 1000-node one in roughly 300 ms. Below that the pitch keeps shrinking until nodes
   reach their 8 px floor, at which point a very large workspace is legible as a shape rather than as
   individual projects.
-- **The run's narrative stays in memory until a new section clears it.** The view model's store holds every line
-  of the last operation — each project's MSBuild output and the application's own lines — from its first line until a
-  new section starts, so after a long run that text stays resident while the application is idle; the operation-end
-  trim (§12.3) compacts it but cannot release it. The console document holds only the render slice, and the older
-  lines are read back from the store when the reader scrolls up (§13.5).
+- **A section without a run folder keeps its narrative in memory.** A run spools its narrative into its run folder and
+  keeps only a window of it in memory (§13.5), but a section that has no run folder — a Sync, a Deep Clean, an
+  Optimize, a run whose folder the engine did not name — keeps every line in the view model's store until a new section
+  clears it, and so does a run whose file could not be opened, and the lines a run adds after its file failed. The
+  operation-end trim (§12.3) compacts that text but cannot release it. A spooled run still keeps one byte offset per
+  line in memory until the next section. The console document holds only the render slice either way, and the older
+  lines are read back from the store — from memory or from the file — when the reader scrolls up.
 - **The memory trim is a pause.** The collection is blocking and compacting, so it stops the UI thread for as long as
   the live heap takes to mark and compact — the longer, the more the application still holds, which is why it is
   longest right after a large run. The application only chooses its moment: once per operation, in a visible window
@@ -6799,7 +6830,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Bounded synchronous retry (used by state store and clipboard) | `Core/Scheduling/SyncRetry.cs` |
 | Worker loop, event pump, stop bookkeeping, perf lifecycle, cycle round loop (it applies the settled rule as it reports the members: a settled member's success is trusted, a settled carried member is reported up to date, an unsettled carried member of a group with a verdict is reported skipped with its record discarded (`ReportDiscardedCarry`), every other success is invalidated) and non-convergence memory; the build-slot budget and who holds it (a worker from dispatch to result, a cycle member from `projectStarted` to `cycleMemberHeld`); the interrupt flag and the one reporting gate that stops trusting results after it; the dependency-issue computation that precedes every compile and cannot throw (`DepIssuesForCompile`); in-flight ledger calls | `Supervisor/RunCoordinator.cs` |
 | Failure-evidence classification (compiler exit vs. timeout/stop/invoke error) — the one clause the evidence gate reads | `Core/State/FailureClassification.cs` |
-| Per-run and per-project logs, decision log | `Core/Logs/RunLogWriter.cs`, `RunLogPaths.cs`, `ProjectLogNaming.cs` |
+| Per-run and per-project logs, decision log; the name of the App's narrative file in the run folder | `Core/Logs/RunLogWriter.cs`, `RunLogPaths.cs` (`NarrativeFileName`), `ProjectLogNaming.cs` |
 | Run-log retention: the three-day window, the newest run kept, the bounded sweep and its one stderr line; the sweep started in the background at engine start | `Core/Logs/RunLogRetention.cs`, `Core/Logs/RunLogPaths.cs` (`TryParseRunDirName`), `Supervisor/Program.cs` |
 | The engine's operation-end trim and memory line: the single collection; the line format, the process read (`Read`, returning a `MemoryReading`, and the guarded `TryRead` the About dialog uses), the one MB rule (`Megabytes`) and the sink that swallows its own errors; after a run, a Sync, a Clean and an Optimize — whatever the outcome — the engine trims, then writes the line to stderr: the collection skipped while a run holds the slot, one warning line when it throws | `Core/Diagnostics/MemoryTrim.cs`, `MemoryLine.cs`, `Supervisor/RunCoordinator.cs` (`TrimAndReportMemory`, `IsRunActive`), `Supervisor/SupervisorHost.cs` (`SyncWorkspaceAsync`, `CleanWorkspaceAsync`, `OptimizeWorkspaceAsync` — each in its `finally`), the stderr channel in `Supervisor/Program.cs` |
 | Log chunking for the UI | `Core/Logs/LogChunker.cs` |
@@ -6974,7 +7005,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | AvalonEdit host, batching, active line, cascade, chunk paging, cursor + row hover band, the hidden native caret; the bind to the narrative store (`BindNarrative`) and the trim to the render slice, on a batch and when following comes back (`TrimToRenderSlice`, `TrimNarrativeWhenFollowing`) | `App/Console/ConsoleView.xaml(.cs)` |
-| The run narrative's one owner: its lines, slices and count, and a clear that lets go of its array | `App/Console/NarrativeStore.cs` |
+| The run narrative's one owner: its lines, slices and count; the spool to the run folder — the memory window, the offset index, block eviction, slices read back from the file outside the lock, one warning per section; and a clear that closes the file and lets go of its array and index | `App/Console/NarrativeStore.cs` |
+| Opening the narrative's spool when `runStarted` names the run folder, taking its warning after the line that met the failure, flushing it when an operation ends | `App/ViewModels/RunViewModel.cs` (`BeginNarrativeSpool`, `AppendSpoolWarningLocked`, `MarkOperationEnded`) |
 | The backlog behind the document — the contract (`IConsoleBacklog`), the project page's own list (`ListBacklog`) and the seed the document is built from, the store plus its count (`NarrativeSnapshot`) | `App/Console/IConsoleBacklog.cs`, `ListBacklog.cs`, `NarrativeSnapshot.cs` |
 | The console's one line rule — splitting text into document lines, joining lines newline-terminated; shared by the store, the page list, the trimmed tail and the shell's project page | `App/Console/ConsoleLines.cs`, `App/MainWindow.xaml.cs` (`ProjectDocumentLines`) |
 | Line colouring | `App/Console/ConsoleColorizer.cs`, `ConsolePalette.cs`, `ConsoleLine.cs` |

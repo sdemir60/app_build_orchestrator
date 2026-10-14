@@ -678,8 +678,9 @@ rehearsal), and `BO_UPDATE_PRERELEASE=1` also offers pre-releases.
 ### State on disk
 
 Everything the app persists lives under `%LOCALAPPDATA%\BuildOrchestrator\`: `logs\run-<timestamp>\` (per-run
-and per-project logs, removed at the first engine start more than three days after their run — the latest run's
-folder always stays), `build-state.json`, `evaluation-cache.json`, `source-hash-cache.json`, `ui-state.json`
+and per-project logs, plus `narrative.log`, the run's console text as the app showed it; removed at the first engine
+start more than three days after their run — the latest run's folder always stays), `build-state.json`,
+`evaluation-cache.json`, `source-hash-cache.json`, `ui-state.json`
 and, only while a build is running, `run-inflight.json` — the projects being compiled right now. If the engine
 dies mid-build (a crash, Task Manager, a closed session), the next start finds that file, marks those projects
 as not built and prints `previous run was interrupted; N projects will rebuild`, so a half-written output is
@@ -772,10 +773,12 @@ The reasoning behind all three is in [`ARCHITECTURE.md` §11](ARCHITECTURE.md#11
 - **A full memory collection ends every operation.** When a run, Sync, Clean or Optimize ends, the app runs one
   blocking garbage collection to give back what the operation used — in a visible window after the closing lights
   (when the operation has them) and a short pause, in the tray as soon as the app is idle — for a run, once the
-  corner mark has played out. It stops the interface for as long as it takes, so a click inside that moment waits;
-  and the last operation's console text stays in memory until a new console section opens — the next run, Clean or
-  Optimize, a Sync you press, a branch or Debug/Release change, or closing the workspace. A pull and every other
-  Sync add to that text instead.
+  corner mark has played out. It stops the interface for as long as it takes, so a click inside that moment waits.
+  A run's console text goes to its run folder (`narrative.log`) and only its latest lines stay in memory — scrolling
+  further up reads the rest back from the file; the console text of a Sync, Deep Clean or Optimize, which have no run
+  folder, stays in memory until a new console section opens — the next run, Clean or Optimize, a Sync you press, a
+  branch or Debug/Release change, or closing the workspace. A pull and every other Sync add to the open section
+  instead.
 - **The IPC has no field-level schema validation.** A malformed *JSON* line is recoverable — the Supervisor
   answers `error(badCommand)` and keeps going — but a **framing** error (over-long or truncated line) is treated
   as unrecoverable: it writes `error(framing)` and exits with code 2, and the App reports the engine as dead.
