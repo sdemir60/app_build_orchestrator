@@ -103,13 +103,17 @@ public static class ConsoleLineClassifier
     /// <summary>
     /// [tek tanım · dalga 2 son inceleme N5] Satır uygulamanın — motor dahil — KENDİ uyarısı mı: <c>warning:</c> önekiyle başlar (baştaki
     /// boşluk sayılmaz, büyük-küçük harf duyarsız). Sınıflandırıcı bu satırı uyarı renginde boyar; kompakt konsol onu süzmez ve saymaz
-    /// (motorun projenin loguna yazdığı bağımlılık notları — spec §6.5 "motor notları süzülmez"). Önekin tek tanımı burasıdır.
+    /// (motorun projenin loguna yazdığı bağımlılık notları — spec §6.5 "motor notları süzülmez"). Önek <see cref="OwnWarningPrefix"/>'tir.
     /// </summary>
     public static bool IsOwnWarning(ReadOnlySpan<char> text) =>
         text.TrimStart().StartsWith(OwnWarningPrefix, StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>Uygulamanın ve motorun uyarı öneki (<see cref="IsOwnWarning"/>).</summary>
-    private const string OwnWarningPrefix = "warning:";
+    /// <summary>Uygulamanın ve motorun uyarı öneki — App'teki TEK tanımı: tanıma (<see cref="IsOwnWarning"/>) ve akış satırının öneki
+    /// düşürmesi (<c>StreamText.RunStartWarning</c>) bunu okur. Satırları üreten motor (Core/Supervisor) öneki kendi metnine yazar; App
+    /// yalnız tanır ve düşürür.
+    /// <para>[DEĞİŞEN KURULUM — ikinci inceleme] Eskiden <c>StreamText</c> öneki ayrıca tanımlıyordu (<c>"warning: "</c>) ve buradaki
+    /// "tek tanım" cümlesi onu gizliyordu; artık oradaki sabit bundan türer.</para></summary>
+    internal const string OwnWarningPrefix = "warning:";
 
     /// <summary>
     /// [fix 1 · I1] MSBuild'in kanonik tanı biçimi (<c>Microsoft.Build.Shared.CanonicalError</c>):

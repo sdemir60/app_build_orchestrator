@@ -792,14 +792,18 @@ public partial class ConsoleView : UserControl
 
     /// <summary>
     /// [idle-memory · dalga 2 · takip — ölçüldü] Belge takasının TEK yolu (anlatı: <see cref="ReplaceRunDocument"/>, proje logu:
-    /// <see cref="ReplaceProjectDocument"/>): yeni belge kurulur ve dibe ya da tepeye sabitlenir; ardından chunk yükleyici silahsızdır —
-    /// okuyucu yeni belgede henüz kaydırmadı, önceki dilim onun ilk tepeye kaydırmasıyla gelir.
-    /// <para><b>Takasın kaydırma olayları okuyucunun jesti değildir</b> ve yükleyiciye gitmez (<see cref="EvaluateChunkScroll"/>):
-    /// ölçüldü — takas, eski belgenin ofsetini taşıyan bir olay yayar (yükleyici "tepeden uzaklaştı" diye silahlanırdı; kurulumun başındaki
-    /// silahsızlandırma bu yüzden boşa gidiyordu), yeni belgenin ilk yerleşimi ofseti sıfıra çeker ("tepeye ulaştı"). Dipteki bir belgenin
-    /// yerine anlatı kurulurken ikisi birleşip önceki 200 satırı kendiliğinden ekliyor, ardından takip kırpması fazlayı atıyordu — belge son
-    /// 199 satır kalıyor, UI thread'i boşuna bir dilim okuyup ekleyip kırpıyordu (<c>ConsoleViewTests.Rebuilding_the_narrative_over_a_…</c>).
-    /// Bottom-anchor bu olayları görmeye devam eder; yalnız yükleyici onları yok sayar.</para>
+    /// <see cref="ReplaceProjectDocument"/>): yeni belge kurulur ve dibe ya da tepeye sabitlenir; ardından chunk yükleyicinin durumu
+    /// belgenin OTURDUĞU konumdan okunur — tepeden uzaktaysa silahlı, tepedeyse silahsız. Dibe sabitlenen anlatıda okuyucunun TEK tepeye
+    /// sıçraması (Ctrl+Home, kaydırma çubuğunun tek hamlesi) önceki dilimi getirir; tepeye sabitlenen proje sayfasında ilk dilim okuyucu
+    /// aşağı inip yeniden tepeye çıktığında gelir.
+    /// <para><b>Takasın geçici kaydırma olayları okuyucunun jesti değildir</b> ve yükleyiciye gitmez (<see cref="EvaluateChunkScroll"/>):
+    /// ölçüldü — takas, eski belgenin ofsetini taşıyan bir olay yayar (yükleyici "tepeden uzaklaştı" diye silahlanırdı), yeni belgenin ilk
+    /// yerleşimi ofseti sıfıra çeker ("tepeye ulaştı"). Dipteki bir belgenin yerine anlatı kurulurken ikisi birleşip önceki 200 satırı
+    /// kendiliğinden ekliyor, ardından takip kırpması fazlayı atıyordu — belge son 199 satır kalıyor, UI thread'i boşuna bir dilim okuyup
+    /// ekleyip kırpıyordu (<c>ConsoleViewTests.Rebuilding_the_narrative_over_a_…</c>). Bottom-anchor bu olayları görmeye devam eder.</para>
+    /// <para>[DEĞİŞEN KURAL — ikinci inceleme] Eskiden takastan sonra yükleyici koşulsuz silahsız bırakılıyordu. Olaylar yok sayılınca
+    /// sabitlemenin kendi dibe kaydırması da sayılmıyordu (önceki hâlde yükleyiciyi silahlandıran oydu): yeniden kurulan anlatıda tek bir
+    /// tepeye sıçrama hiçbir şey yüklemiyordu (<c>ConsoleViewTests.A_rebuilt_narrative_brings_the_previous_slice_on_a_single_jump_to_the_top</c>).</para>
     /// </summary>
     private void SwapDocument(string text, bool toBottom)
     {
@@ -810,7 +814,7 @@ public partial class ConsoleView : UserControl
             PinAfterModeSwitch(toBottom);
         }
         finally { _swappingDocument = false; }
-        _armedForChunk = false;
+        _armedForChunk = EditorControl.VerticalOffset > ChunkTopThresholdPx;
     }
 
     /// <summary>

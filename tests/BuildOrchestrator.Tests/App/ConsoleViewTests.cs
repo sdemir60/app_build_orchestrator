@@ -362,6 +362,33 @@ public class ConsoleViewTests
         Assert.Equal(string.Concat(Enumerable.Range(0, 400).Select(i => $"line{i}\n")), view.Document.Text);
     }
 
+    /// <summary>
+    /// [idle-memory · dalga 2 · ikinci inceleme — C4 gerilemesi] Yeniden kurulan anlatı dibe sabitlenir ve chunk yükleyici o konumdan
+    /// silahlı durur: okuyucunun TEK tepeye sıçraması (Ctrl+Home, kaydırma çubuğunun tek hamlesi — önce aşağı inmeden) önceki dilimi
+    /// getirir; daha eskisi de böyle, diskten (spec §10.3). Takasın kendi geçici olayları yine yok sayılır — takas dilimi kendiliğinden
+    /// eklemez (<see cref="Rebuilding_the_narrative_over_a_document_at_its_end_loads_only_the_last_slice"/>).
+    /// <para>KIRMIZI: takas yükleyiciyi koşulsuz silahsız bırakıyordu; sabitlemenin kendi dibe kaydırması da yok sayıldığından (ff1fa5d0'da
+    /// onu silahlandıran olay buydu) ← Back ya da tepsiden dönüşten sonraki tek sıçrama dilimin tepesinde kalıyor, eski satırlar hiç
+    /// gelmiyordu — okuyucu önce aşağı inip yeniden çıkmadıkça.</para>
+    /// <para>Sıçrama üretimin karar yolundan, tepedeki ofsetle sürülür (<see cref="ConsoleView.EvaluateChunkScroll"/> — kaydırma işleyicisinin
+    /// her olayda çağırdığı metot): durumu takasın bıraktığı haldir. Gerçek jest yolu burada kullanılamaz — ölçüldü: bu host'ta kaydırma
+    /// ofsete ancak bir yerleşim geçişinden sonra yansır ve o geçiş önce ESKİ ofseti taşıyan bir olay verir; o olay yükleyiciyi kendiliğinden
+    /// silahlandırıp takasın bıraktığı durumu gizler (eski satırla da yeşil kalıyordu); <c>ScrollToHome</c> + <c>UpdateLayout</c> ise
+    /// işleyiciye 0'ı hiç ulaştırmaz.</para>
+    /// </summary>
+    [StaFact]
+    public void A_rebuilt_narrative_brings_the_previous_slice_on_a_single_jump_to_the_top()
+    {
+        var view = LaidOutView();
+        var store = new NarrativeStore();
+        foreach (int i in Enumerable.Range(0, 400)) store.Append($"line{i}");
+        view.ReplaceRunDocument(NarrativeSnapshots.Of(store)); // ← Back / tepsiden dönüş: dibe sabitlenmiş son dilim
+
+        view.EvaluateChunkScroll(0.0); // TEK sıçrama (Ctrl+Home) — öncesinde silahlandıran bir jest yok
+
+        Assert.Equal(string.Concat(Enumerable.Range(0, 400).Select(i => $"line{i}\n")), view.Document.Text);
+    }
+
     /// <summary>[idle-memory · dalga 2 · inceleme M1] Bir kısmı okunamayan backlog — anlatı store'unun dosyası okunamadığında olduğu
     /// gibi: <see cref="ReadableFrom"/>'un altına uzanan her aralık <c>""</c> döner (asla kısmi metin — <see cref="IConsoleBacklog.Join"/>
     /// sözleşmesi); sınır inince aynı aralık tam gelir. Store gibi kırpılan satırları saklamaz.</summary>

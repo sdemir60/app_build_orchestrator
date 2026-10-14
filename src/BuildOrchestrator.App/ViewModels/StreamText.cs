@@ -1,4 +1,5 @@
 using System.Globalization;
+using BuildOrchestrator.App.Console;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Formatting;
@@ -78,7 +79,9 @@ public static class StreamText
     public static string RunStartWarning(string line) =>
         line.StartsWith(RunStartWarningPrefix, StringComparison.Ordinal) ? line[RunStartWarningPrefix.Length..] : line;
 
-    private const string RunStartWarningPrefix = "warning: ";
+    /// <summary>Düşürülen önek: uygulamanın uyarı öneki (TEK tanımı <see cref="ConsoleLineClassifier.OwnWarningPrefix"/>) ve motorun onu
+    /// metinden ayıran boşluğu (<c>"warning: " + metin</c>).</summary>
+    private const string RunStartWarningPrefix = ConsoleLineClassifier.OwnWarningPrefix + " ";
 
     /// <summary>[koşu başı uyarıları · akış seli] Akışa her biri AYRI satır olarak yazılan koşu başı uyarısı sayısının
     /// tavanı. Bayat obj taraması planın her düğümünde koşar ve her bayat proje bir uyarıdır; çok projeli bir çalışma
