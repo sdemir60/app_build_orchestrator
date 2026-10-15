@@ -81,7 +81,9 @@ public sealed class BottomAnchorBehavior
 
     /// <summary>Dibin ofseti — "dip"in TEK tanımı: içerik eksi görünür alan (sığan içerikte 0). Uzaklık ondan ölçülür, dibe her gidiş
     /// (atlama, içerik büyümesi yakalaması, bekleme dönüşü) onu hedefler. Host da oturmuş bir kaydırma konumunun üst sınırı olarak okur
-    /// (konsol: yükleyicinin okuduğu konum buna kenetlenir — +∞ ya da dibin ötesindeki geçici bir istek dipte sayılır).</summary>
+    /// (konsol: yükleyicinin okuduğu konum buna kenetlenir — +∞ ya da dibin ötesindeki geçici bir istek dipte sayılır). İçerik
+    /// yüksekliği yalnız yerleşimde güncellenen bir host (ScrollViewer'ın <c>ExtentHeight</c>'ı — event stream) eşzamanlı bir yakalamada
+    /// henüz eski dibi hedefler; yeni dibe, yerleşimin ardından gelen kendi kaydırma olayıyla (içerik büyümesi) iner.</summary>
     public double BottomOffset => Math.Max(0, _getExtent() - _getViewport());
     public bool ShowPill => BottomAnchorDecision.ShouldShowPill(_state, DistanceFromBottom, _thresholdPx);
 

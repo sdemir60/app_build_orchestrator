@@ -1029,7 +1029,7 @@ public partial class ConsoleView : UserControl
         MotionTokens.AnimateSlowEaseInOut(this, EditorControl, ScrollGeometry.VerticalOffset, target);
 
     /// <summary>[3b I-2] Chunk-scroll kararı. Offset dışarıdan verilir — üretimde <see cref="OnScrollOffsetChanged"/>
-    /// TextView'in kendi ofsetiyle (<see cref="ScrollGeometry"/>) çağırır; böylece GERÇEK yol (arm → tepeye-scroll → prepend → re-arm)
+    /// dibe kenetli konumla (<see cref="SettledOffset"/>) çağırır; böylece GERÇEK yol (arm → tepeye-scroll → prepend → re-arm)
     /// canlı bir scroll event'i olmadan test edilebilir (paralel bir kopya yol DEĞİL — üretimin çağırdığı metodun
     /// ta kendisi). Kullanıcı tepeden uzaklaşınca "arm" (ilk layout'ta offset=0 iken spurious prepend olmaz);
     /// yalnız gerçek bir tepeye-scroll önceki chunk'ı yükler.
