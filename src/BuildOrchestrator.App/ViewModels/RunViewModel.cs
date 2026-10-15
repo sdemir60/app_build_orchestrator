@@ -803,9 +803,15 @@ public sealed partial class RunViewModel : ObservableObject
     /// olurdu. Yalnız kapı gösterilir; açıp açmamak kullanıcının kararıdır.</para></summary>
     [ObservableProperty] private string? _engineOverdueMessage;
 
-    /// <summary>Motordan gelen SON event'in zamanı (monotonik). <see cref="OnEvent"/> HER event'te yazar —
-    /// <c>ProjectLogEvent</c> dalı UI thread'ine marshal EDİLMEDİĞİ için erişim <see cref="Volatile"/>'dir;
-    /// değerlendirme (ve tek gözlemlenebilir alanın yazımı) yalnız UI thread'indeki tick'te yapılır.</summary>
+    /// <summary>SON MOTOR ETKİNLİĞİNİN zamanı (monotonik) — motorla konuşmanın TEK damgası [idle-memory · dalga 3 · karar 13 · C8: ikinci bir
+    /// etkinlik damgası yoktur]. Üç yazan: motordan gelen her olay (<see cref="OnEvent"/>), motordan cevap beklenen her bekleyişin başı — yani
+    /// komut gönderimi (<see cref="ArmEngineWatchdog"/>: koşu isteği, Sync, Clean, Optimize, checkout, pull, Stop/Sync fazı) — ve motorun hazır
+    /// bildirimi (<see cref="EnterEngineReady"/>). İki okuyan, ikisi de UI thread'indeki tikte: sessizlik bekçisi
+    /// (<see cref="EvaluateEngineSilence"/> — bir bekleyişte motor ne zamandır susuyor) ve boşta kuralı (<see cref="EvaluateEngineIdle"/> —
+    /// motor ne zamandır işsiz). Cevabı bekleyişe sayılmayan gönderimler damgayı yazmaz: proje log isteği (cevabı beklenirken boşta kuralını
+    /// <see cref="HasPendingLogLoad"/> tutar, cevabı olay olarak damgalanır) ve branch envanteri (Sync'in hemen ardından gider, cevabı
+    /// damgalanır). <c>ProjectLogEvent</c> dalı UI thread'ine marshal EDİLMEDİĞİ için erişim <see cref="Volatile"/>'dir; değerlendirme (ve
+    /// gözlemlenebilir alanların yazımı) yalnız tikte yapılır.</summary>
     private long _lastEngineSignalMs;
 
     /// <summary>[E2/T10] Son Sync başarısız olduysa hata gerekçesi (ErrorEvent.Message) — şerit bunu KIRMIZI
@@ -918,7 +924,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// <see cref="Services.EngineIdleRule.IdleAfter"/> sonra çıksın mı (sonraki iş onu yeniden başlatır). Varsayılanın TEK tanımı kataloğun
     /// satırıdır (<see cref="GeneralSettingsCatalog"/> — onaylanmış değer: açık). Bayrak yalnız App içidir — motora GİTMEZ (komutlarda alanı
     /// yoktur); burası yalnız kullanıcının kararını taşır ve kalıcılaştırır, motoru durdurma kararını boşta kuralı verir
-    /// (<see cref="Services.EngineIdleRule"/>).
+    /// (<see cref="Services.EngineIdleRule"/> — tikte <see cref="EvaluateEngineIdle"/> sorar). Kapatmak uyuyan motoru uyandırmaz (karar 10).
     /// <para><see cref="ObservablePropertyAttribute"/>: kalıcılık bu bildirimden sürer (MainWindow).</para></summary>
     [ObservableProperty]
     private bool _stopEngineWhenIdle = GeneralSettingsCatalog.Definition(GeneralSetting.StopEngineWhenIdle).Default;
@@ -985,6 +991,7 @@ public sealed partial class RunViewModel : ObservableObject
         _console = console;
         _newRunId = newRunId;
         _nowMs = nowMs ?? (() => Environment.TickCount64);
+        SleepEngine = engine.SleepAsync; // [idle-memory · dalga 3] üretimin uykusu: konağın kendisi
         _osActions = osActions; // [E1/T67] null ise OS eylemleri güvenle no-op (test default'u); üretimde enjekte edilir
         _compact = new CompactNarrative(CompactConsole); // [O2] açılıştaki etkin kip ayarın kendisidir — ikinci bir literal yok
     }
@@ -1720,6 +1727,11 @@ public sealed partial class RunViewModel : ObservableObject
         // Eski process (ve tüm MSBuild child'ları) her koşulda gitti — o motorun asla göndermeyeceği event'leri
         // bekleyen hiçbir durum kalmamalı (ReleaseAfterEngineLoss). Yeni motor başlatılamadıysa da geçerlidir: orada
         // da bekleyecek bir şey yoktur (bkz. OnEngineUnavailable, komutlar zaten kapanır).
+        // [idle-memory · dalga 3 · karar 13] Yeniden başlatma bir başlatmadır: yeni motor hazır olana dek durum Starting — boşta kuralı
+        // uyutmaz. Başarı hazır yolundan Ready'ye, kurulum hatası Unavailable'a gider. Başka bir hatada Starting kalır ve burada ayrıca
+        // yazılmaz: yeni süreç hazır olamadan öldürüldüyse ölümünü EngineExited TEK sinyal olarak bildirir (Dead); hiç doğmadıysa (çıkışta
+        // dispose öne geçti) konuşulacak motor yoktur ve hazır olmayan motor uyutulmaz.
+        EngineState = EngineState.Starting;
         EngineReadyEvent ready;
         try
         {
@@ -1996,7 +2008,8 @@ public sealed partial class RunViewModel : ObservableObject
     /// <c>PropertyChanged</c>'dir ve görünmeyen ekranı yeniden yazdırırdı. Motor sessizlik bekçisi
     /// (<see cref="EvaluateEngineSilence"/>) <b>gizliyken de koşar</b>: tepsiden Exit + susmuş motorda bekleyen çıkışı
     /// bekçinin uyarısı serbest bırakır (<c>RunViewModel.Exit.cs</c>), yani bu tik durursa uygulama kapanmaz. Bu yüzden
-    /// zamanlayıcı durdurulmaz; bu bayrak kullanılır.</para>
+    /// zamanlayıcı durdurulmaz; bu bayrak kullanılır. [idle-memory · dalga 3 · spec §6.4] Boşta kuralı (<see cref="EvaluateEngineIdle"/>)
+    /// bekçinin yanında, aynı gerekçeyle gizliyken de koşar: tepside saatlerce duran uygulamanın işsiz motoru da uyur.</para>
     /// <para>[idle-memory · dalga 2 · inceleme M1] Görünürken anlatı spool'unun bekleyen uyarısı da alınır
     /// (<see cref="AppendSpoolWarningLocked"/>): geri okuma hatası satır EKLEMEYEN bir yoldan gelir — görünüm tepeye kaydırınca
     /// diskten dilim ister — ve satır gelmeyen, boştaki bir konsolda uyarı aksi hâlde bir sonraki satırı ya da işlem sonunu bekler,
@@ -2020,6 +2033,7 @@ public sealed partial class RunViewModel : ObservableObject
             UpdateEta();
         }
         EvaluateEngineSilence();
+        EvaluateEngineIdle();
     }
 
     // ---------------------------------------------------------------- motor sessizlik watchdog'u
@@ -2065,6 +2079,95 @@ public sealed partial class RunViewModel : ObservableObject
     internal static string EngineSilentMessage { get; } = string.Format(CultureInfo.InvariantCulture,
         "Engine has stopped responding — no reply for {0} · you can restart it",
         DurationFormat.Elapsed(EngineSilenceThresholdMs));
+
+    // ---------------------------------------------------------------- motor uykusu (boşta kuralı)
+
+    /// <summary>
+    /// [idle-memory · dalga 3 · spec §6.4 · karar 13-14] VM'in motor durumu — TEK alan: boşta kuralının motor girdisi. Yalnız UI thread'inde
+    /// ve durumu değiştiren olayla SENKRON yazılır:
+    /// <list type="bullet">
+    /// <item><see cref="EngineState.Starting"/>: VM bu durumda doğar (kabuk motoru <c>Loaded</c>'da başlatır) ve "Restart engine" başlarken
+    /// yeniden girer (<see cref="RestartEngineAsync"/>);</item>
+    /// <item><see cref="EngineState.Ready"/>: hazır yolu (<see cref="OnEngineReady"/> → <see cref="EnterEngineReady"/>);</item>
+    /// <item><see cref="EngineState.Sleeping"/> → <see cref="EngineState.Asleep"/>: boşta kuralının uykusu (<see cref="PutEngineToSleepAsync"/>);</item>
+    /// <item><see cref="EngineState.Dead"/>: motor kaybı — kendiliğinden ölüm (<see cref="OnEngineExited"/>) ya da düşen uyku; ikisi de
+    /// <see cref="ReportEngineDead"/>'den geçer;</item>
+    /// <item><see cref="EngineState.Unavailable"/>: motor hiç doğamadı (<see cref="OnEngineUnavailable"/>).</item>
+    /// </list>
+    /// Şeridin bayrakları (<see cref="EngineDiedMessage"/>, <see cref="EngineRestartable"/>, <see cref="IsEngineUnavailable"/>) UI'ın bayrakları
+    /// olarak kalır ve AYNI yerlerde yazılır: Dead bir ölüm metniyle (yeniden başlatılabilir), Unavailable kalıcı bir eksik metniyle gelir;
+    /// yeniden başlatmanın Ready'si metnin temizliğinden sonradır. Bilinçli tek ayrışma: <see cref="OnRunStarted"/> ölüm metnini temizler ama
+    /// durumu Ready'ye çekmez (Ready yalnız hazır yolundan gelir) — orada durum en kötü "ölü" kalır ve kural uyutmaz: ayrışma güvenli yöndedir.
+    /// </summary>
+    internal EngineState EngineState { get; private set; } = EngineState.Starting;
+
+    /// <summary>[test dikişi] Motoru uyutan çağrı — üretimde konağın uykusu (<see cref="EngineHost.SleepAsync"/>, ctor'da bağlanır). Testler
+    /// sahtesini verir: sayan, bekletilen (TCS: uyku sürüyor) ya da vazgeçen bir görev. Karar ve VM'in durumu dikişin önündedir.</summary>
+    internal Func<Task> SleepEngine { get; set; }
+
+    /// <summary>[spec §6.4 · karar 15] UI thread'inde, <see cref="TickElapsed"/> ile 200 ms'de bir — pencere gizliyken de (sessizlik
+    /// bekçisinin yanında). Karar saf kuraldadır (<see cref="EngineIdleRule.ShouldSleep"/>); girdileri VM'in tek tanımlarıdır: ayar
+    /// (<see cref="StopEngineWhenIdle"/>), <see cref="IsOperationInFlight"/>, <see cref="HasPendingLogLoad"/>, <see cref="EngineState"/> ve son
+    /// motor etkinliği (<see cref="_lastEngineSignalMs"/>). Doğruysa motor uyutulur.</summary>
+    private void EvaluateEngineIdle()
+    {
+        if (EngineIdleRule.ShouldSleep(_nowMs(), Volatile.Read(ref _lastEngineSignalMs), StopEngineWhenIdle, IsOperationInFlight,
+                HasPendingLogLoad, EngineState))
+            _ = PutEngineToSleepAsync();
+    }
+
+    /// <summary>
+    /// Boştaki motoru uyutur. Durum ÖNCE ve senkron <see cref="EngineState.Sleeping"/> olur: konağın uykusu (shutdown, en çok
+    /// <see cref="EngineHost.SleepExitWait"/> zarif çıkış, gerekirse öldürme) sürerken gelen tik bir geçiş görür ve ikinci uykuyu başlatmaz
+    /// (tek uçuş — C3). Uyku sürerken başka bir sinyal durumu değiştirdiyse — motor kendiliğinden öldü: konakta ölüm hakkını bekçi aldı, uyku
+    /// hiçbir şey yapmadan döner — o sinyal kazanır ve bitişte dokunulmaz. Değiştirmediyse bitiş üç yoldan biridir:
+    /// <list type="bullet">
+    /// <item><b>Uyku bitti</b> → <see cref="EngineState.Asleep"/>. Uyuyan motorun PID'i tutulmaz (<see cref="EnginePid"/> null: ölü bir süreç
+    /// canlıymış gibi görünmez); sürüm kalır (uyanan motor aynı ikilidir).</item>
+    /// <item><b>Çıkışta vazgeçildi</b> — dispose uçuştaki uykunun önüne geçti (<see cref="OperationCanceledException"/>) ya da çağrı dispose'tan
+    /// sonra geldi (<see cref="ObjectDisposedException"/>) → yine <see cref="EngineState.Asleep"/>: motorun nesli emekliye ayrıldı ve süreci
+    /// çıkışın kapanışı alıyor — "hazır" demek ölü bir süreci canlı saymak, uykuyu her tikte yeniden denemek olurdu. Konsola satır YAZILMAZ,
+    /// ölüm de bildirilmez: ölen yok, uygulama kapanıyor.</item>
+    /// <item><b>Uyku başka bir nedenle düştü</b> (ör. öldürme fırlattı) → motor KAYBEDİLDİ: konak nesli emekliye ayırdıktan sonra düştü, ölüm
+    /// sinyali hiç gelmeyecek ve konak ne uyuyor ne canlı (uyandırma ve gönderim "Engine is not running." ile düşer). Bugünkü ölüm yolu
+    /// bildirir (<see cref="ReportEngineDead"/>: kırmızı ölüm satırı + "Restart engine", durum <see cref="EngineState.Dead"/>) — ikinci bir
+    /// kopyası değil; o yol boştayken konsola satır yazmaz.</item>
+    /// </list>
+    /// </summary>
+    private async Task PutEngineToSleepAsync()
+    {
+        EngineState = EngineState.Sleeping;
+        try
+        {
+            await SleepEngine();
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException)
+        {
+            // Çıkış: motoru dispose'un kendi kapanışı alıyor — sessiz (gerekçe özette).
+        }
+        catch (Exception)
+        {
+            if (EngineState == EngineState.Sleeping) ReportEngineDead(IdleShutdownFailedCause);
+            return;
+        }
+        if (EngineState != EngineState.Sleeping) return;
+        EngineState = EngineState.Asleep;
+        EnginePid = null;
+    }
+
+    /// <summary>Uykusu düşen motorun ölüm satırındaki nedeni (<see cref="ReportEngineDead"/>): "Engine stopped unexpectedly (idle shutdown
+    /// failed)" — kendiliğinden ölümün çıkış kodu ya da protokol hatası yerine.</summary>
+    private const string IdleShutdownFailedCause = "idle shutdown failed";
+
+    /// <summary>Motor hazır: durum <see cref="EngineState.Ready"/> ve son motor etkinliği ŞİMDİ. Hazır bildirimi motorun konuştuğu andır;
+    /// damga hazır olayının olay pompasından geçişini beklemez — kabuğun hazır yolu ile pompanın sırası garanti değildir ve tik ikisinin arasına
+    /// düşerse boşta kuralı hiç yazılmamış (0) ya da açılıştan beri bayat damgayı okur, motoru hazır olur olmaz uyuturdu (C1). Aynı tek damga
+    /// (<see cref="_lastEngineSignalMs"/>) — ikinci bir etkinlik damgası yoktur.</summary>
+    private void EnterEngineReady()
+    {
+        Volatile.Write(ref _lastEngineSignalMs, _nowMs());
+        EngineState = EngineState.Ready;
+    }
 
     // ---------------------------------------------------------------- event → durum
 
@@ -2897,16 +3000,23 @@ public sealed partial class RunViewModel : ObservableObject
     /// ya da framing-hatası dalı) ateşlenir; bu metot ObservableProperty/CanExecuteChanged'a dokunduğundan
     /// <see cref="OnEvent"/>'in Dispatcher-gerektiren dalları GİBİ UI thread'ine marshal edilerek çağrılmalıdır
     /// — çağıran (MainWindow) bu sorumluluğu taşır, VM'in kendisi Dispatcher TÜRÜ TAŞIMAZ (test edilebilirlik).</para></summary>
-    public void OnEngineExited(int? exitCode)
-    {
-        // [E2/T37 · İngilizce sweep] Şerit kalıcı-hata modu bu metni GÖSTERİR → İngilizce (tüm UI/konsol metni).
+    public void OnEngineExited(int? exitCode) =>
         // Exit kodu (varsa) KORUNUR — test bu sayıyı pinler.
+        ReportEngineDead(exitCode is { } code ? $"exit {code}" : "protocol error");
+
+    /// <summary>[idle-memory · dalga 3] Motor öldü — kullanıcıya bildirmenin TEK yolu: kendiliğinden ölüm (<see cref="OnEngineExited"/>) ve
+    /// uykusu düşüp kaybedilen motor (<see cref="PutEngineToSleepAsync"/>). Durum <see cref="EngineState.Dead"/>, şeritte kırmızı ölüm satırı
+    /// ve "Restart engine"; uçuştaki pencereler bırakılır (<see cref="ReleaseAfterEngineLoss"/>). Konsola satır yazmaz (boşta bir motor
+    /// kaybı hiçbir işlemi bitirmez).</summary>
+    /// <param name="cause">Ölüm satırının parantezindeki neden (İngilizce): <c>exit N</c>, <c>protocol error</c> ya da uykunun düşüşü.</param>
+    private void ReportEngineDead(string cause)
+    {
+        EngineState = EngineState.Dead;
+        // [E2/T37 · İngilizce sweep] Şerit kalıcı-hata modu bu metni GÖSTERİR → İngilizce (tüm UI/konsol metni).
         // [D1] Doğmuş bir motorun ölümü YENİDEN BAŞLATILABİLİR — şerit "Restart engine" aksiyonunu gösterir
         // (EngineDiedMessage yazan her yol bu bayrağı da yazar; bkz. EngineRestartable).
         EngineRestartable = true;
-        EngineDiedMessage = exitCode is { } code
-            ? $"Engine stopped unexpectedly (exit {code})"
-            : "Engine stopped unexpectedly (protocol error)";
+        EngineDiedMessage = $"Engine stopped unexpectedly ({cause})";
         ReleaseAfterEngineLoss();
     }
 
@@ -2978,6 +3088,7 @@ public sealed partial class RunViewModel : ObservableObject
     public void OnEngineUnavailable(string exePath,
         Services.EngineUnavailableReason reason = Services.EngineUnavailableReason.NotFound)
     {
+        EngineState = EngineState.Unavailable; // [idle-memory · dalga 3] IsEngineUnavailable ile aynı an
         EngineRestartable = false;
         EngineDiedMessage = reason == Services.EngineUnavailableReason.NotFound
             ? EngineMissingMessage
@@ -3016,6 +3127,7 @@ public sealed partial class RunViewModel : ObservableObject
     {
         EngineVersion = engineVersion;
         EnginePid = pid;
+        EnterEngineReady(); // [idle-memory · dalga 3] motor durumu + son motor etkinliği
         AppendRunLine($"Engine ready — v{engineVersion}");
         if (!_engineWasReady)
         {

@@ -901,12 +901,13 @@ public partial class MainWindow : Window
     /// üretimde yalnız gerçek zamanlayıcıdan gelir; testler gövdeyi doğrudan sürer (<see cref="OnGlobalHotkey"/> deseni) —
     /// enjekte saatle 3 sn'lik bir tik dizisini gerçek zamanı beklemeden ancak bu yüzeyle sınayabilirler.
     ///
-    /// <para><b>[perf Faz A · A6] Gizliyken yalnız motor sessizlik bekçisi koşar.</b> Canlı süreler (koşu süresi, building
-    /// satırların süresi, ETA), konsol başlığının satır sayacı, grafın statü itişi ve frontier takibi görünmeyen bir ekranı
-    /// yeniden yazardı: hepsi yalnız görünürken koşar. Gizliyken <c>_tickStaleWhileHidden</c> kalkar ve dönüşte
+    /// <para><b>[perf Faz A · A6] Gizliyken yalnız motorun iki tik işi koşar: sessizlik bekçisi ve boşta kuralı.</b> Canlı süreler
+    /// (koşu süresi, building satırların süresi, ETA), konsol başlığının satır sayacı, grafın statü itişi ve frontier takibi görünmeyen bir
+    /// ekranı yeniden yazardı: hepsi yalnız görünürken koşar. Gizliyken <c>_tickStaleWhileHidden</c> kalkar ve dönüşte
     /// <see cref="ResyncAfterShow"/> süreleri ve sayacı bir kez yeniler. Bekçi gizliyken de koşar — tepsiden Exit + susmuş
     /// motorda bekleyen çıkışı bekçinin uyarısı serbest bırakır (<c>RunViewModel.Exit.cs</c>) — bu yüzden zamanlayıcı
-    /// <b>durdurulmaz</b>.</para>
+    /// <b>durdurulmaz</b>. [idle-memory · dalga 3] Boşta kuralı da gizliyken sorulur (tepsideki uygulamanın işsiz motoru uyur); kararı ve
+    /// uyutmayı VM verir (<c>RunViewModel.TickElapsed</c>), kabuk yalnız zamanlayıcıyı sürer.</para>
     /// </summary>
     internal void OnElapsedTick()
     {

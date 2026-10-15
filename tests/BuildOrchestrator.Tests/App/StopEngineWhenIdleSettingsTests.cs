@@ -16,12 +16,12 @@ namespace BuildOrchestrator.Tests.App;
 /// beş dakika işsiz kalan motor süreci çıkar ve sonraki iş onu yeniden başlatır; kapalıyken motor kendiliğinden hiç durdurulmaz.
 ///
 /// <para>Bu sınıf YALNIZ ayarın zincirini sınar: katalog → taslak → ayar dosyası → Save (UiState +
-/// <see cref="RunViewModel.StopEngineWhenIdle"/> aynı commit'te) → kabuğun açılış seed'i ve kalıcılığı. Uykunun KENDİSİ (boşta kuralı,
-/// tik, uyandırma kapısı) bu görevin değil sonraki görevlerin işidir. Desen <see cref="CompactConsoleSettingsTests"/>'in aynısıdır;
+/// <see cref="RunViewModel.StopEngineWhenIdle"/> aynı commit'te) → kabuğun açılış seed'i ve kalıcılığı. Uykunun KENDİSİ bu sınıfın konusu
+/// değildir: boşta kuralı ve tik <see cref="EngineSleepTests"/>'te, uyandırma kapısı Task 21'de. Desen <see cref="CompactConsoleSettingsTests"/>'in aynısıdır;
 /// iki fark vardır: (a) "beş dakika"nın TEK sahibi <see cref="EngineIdleRule.IdleAfter"/>'dır — katalog açıklaması (spec'in birebir
-/// cümlesi) ile "on" notu sayıyı sözcükle yazar ve ikisinin sabitle ayrışması iki testle yakalanır; (b) fixture ayarı varsayılan
-/// KAPALI açar (<see cref="MainWindowHost.New"/>'in <c>stopEngineWhenIdle</c> parametresi) — saati ileri alan testler fixture motorunu
-/// uyutmasın.</para>
+/// cümlesi) ile "on" notu sayıyı sözcükle yazar; sabitin literal pini kuralın testindedir (<see cref="EngineIdleRuleTests"/>, karar 29), iki
+/// metnin sabitle ayrışmasını bu sınıfın testi yakalar; (b) fixture ayarı varsayılan KAPALI açar (<see cref="MainWindowHost.New"/>'in
+/// <c>stopEngineWhenIdle</c> parametresi) — saati ileri alan testler fixture motorunu uyutmasın.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class StopEngineWhenIdleSettingsTests
@@ -103,13 +103,8 @@ public class StopEngineWhenIdleSettingsTests
 
     // ---------------------------------------------------------------- "beş dakika" tek sahip
 
-    /// <summary>[karar 11] "Beş dakika"nın TEK sahibi — spec §6.4 beş dakikayı söyler. <c>EngineHostTests.Kill_exit_wait_stays_one_second</c>
-    /// deseni: sabit sessizce kayarsa (ör. 5 → 50 dk) motor beklenenden çok sonra uyur ve kullanıcıya söylenen süre yalan olur.</summary>
-    [Fact]
-    public void The_idle_window_stays_five_minutes()
-    {
-        Assert.Equal(TimeSpan.FromMinutes(5), EngineIdleRule.IdleAfter);
-    }
+    // [karar 29] Sabitin literal pini (5 dk) kuralın sınıfıyla birlikte durur: EngineIdleRuleTests.The_idle_window_stays_five_minutes.
+    // Burada kalan, iki kullanıcı metninin o sabitle uyuşmasıdır.
 
     /// <summary>
     /// [karar 11 · C18] Katalog açıklaması (spec'in birebir cümlesi) ve "on" notu süreyi SÖZCÜKLE yazar; ikisi de sabitin bugünkü değeriyle

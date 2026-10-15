@@ -46,11 +46,15 @@ public sealed class EngineSilenceWatchdogTests
         public void Advance(long ms) => _now += ms;
     }
 
+    /// <summary>Bekçinin VM'i, saati testin elinde. [idle-memory · dalga 3 · Q10] Boştaki motorun uykusu KAPALI açılır: bu sınıf saati
+    /// <c>EngineIdleRule.IdleAfter</c>'ın çok ötesine (15 dk) alır ve aynı tik bekçiyle birlikte boşta kuralını da sorar; bekçinin iddiaları
+    /// motorun uyutulup uyutulmamasına bağlı kalmasın (uyku <c>EngineSleepTests</c>'in konusudur). Bugün bu VM'ler hazır yolundan geçmediği için
+    /// kural onları zaten uyutmaz (motor durumu <c>Starting</c>, C1); kapatmak bunu açık kılar — üretimin varsayılanı açıktır.</summary>
     private static (RunViewModel Vm, FakeClock Clock) NewVm(EngineHost engine)
     {
         var clock = new FakeClock();
         return (new RunViewModel(engine, NeverTickingBatcher(), () => "r1", () => clock.Now)
-                { RootPath = @"D:\repo", LegacyWorktreePoolRoot = TestPaths.MissingLegacyPoolRoot },
+                { RootPath = @"D:\repo", LegacyWorktreePoolRoot = TestPaths.MissingLegacyPoolRoot, StopEngineWhenIdle = false },
                 clock);
     }
 
