@@ -694,6 +694,37 @@ public class EngineWakeTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[uyanma gecikmesi · round 2 · PİN] Tıklamada başlayan uyanma koreografi sürerken bittiyse motor hazırdır: o anda basılan perf chip'i
+    /// bugünkü gibi hazır motora gider (<c>setPerfMode</c>) ve koşu da yeni profille gider. Uyku döngüsü bittiği için kapı chip'i tutmaz — kontrolcü
+    /// kararıyla kabul edilen davranış. PİN: kırmızısı gösterilemez; ileride hazır motora giden bir chip'in kapıda tutulmasını yakalar.</summary>
+    [WpfFact]
+    public async Task A_perf_change_during_the_choreography_after_the_wake_goes_to_the_ready_engine()
+    {
+        using var dir = new TempDir();
+        var (window, vm, probe, sent, _) = AsleepShell(dir); // sahte uyanma anında biter
+        var choreography = new TaskCompletionSource();
+        vm.OperationChoreography = _ => choreography.Task;
+        var build = vm.BuildCommand.ExecuteAsync(null);
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(EngineState.Ready, vm.EngineState); // ön-koşul: uyanma tıklamada bitti, koreografi sürüyor
+        Assert.True(vm.IsMidRunLocked);
+        string before = vm.PerfMode;
+
+        await vm.CyclePerfAsync();
+        string chosen = vm.PerfMode;
+        Assert.NotEqual(before, chosen);
+        choreography.SetResult();
+        DispatcherPump.DrainToIdle();
+        await build;
+
+        Assert.Equal([typeof(SetPerfModeCommand), typeof(StartRunCommand)], sent.Commands.Select(c => c.GetType()));
+        Assert.All(sent.States, s => Assert.Equal(EngineState.Ready, s));
+        Assert.Equal(chosen, Assert.IsType<StartRunCommand>(sent.Commands.Last()).PerfMode);
+        Assert.Equal(1, probe.WakeCalls);
+        Assert.DoesNotContain("[error]", vm.GetRunDocumentText());
+        GC.KeepAlive(window);
+    }
+
     // ---------------------------------------------------------------- düşen uyanma (karar 19, 34 · C5, C23)
 
     /// <summary>[karar 19 · C5 · C23] Uyanma motoru bulamazsa (kurulum) bugünkü erişilemezlik yolu: konsolda TEK satır (<c>OnEngineUnavailable</c>),
