@@ -295,6 +295,31 @@ public class ConsoleViewTests
     }
 
     /// <summary>
+    /// [idle-memory · dalga 2 · beşinci inceleme — ölçüldü] Görünüme sığan KISA bir belge, arkasında geçmiş dururken takipte gelen satırla
+    /// önceki dilimi kendiliğinden yüklemez — kimse tepeye kaydırmadı. Böyle bir belge son dilimi okunamayan anlatıdır: boş kurulur, satırlar
+    /// sonradan gelir.
+    /// <para>KIRMIZI (ölçüldü): takip <c>ScrollToEnd</c> ister ve TextView o isteği tek bir olayda +∞ ofsetle bildirir — yükleyici "tepeden
+    /// uzaklaştı" diye silahlanıyordu (her takip batch'inde yeniden); hemen ardından kenetlenen konum (belge sığdığı için 0) "tepeye ulaştı"
+    /// sayılıyor ve önceki 200 satır isteyen olmadan ekleniyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void A_short_document_with_history_behind_it_does_not_load_it_unasked_while_following()
+    {
+        var view = LaidOutView();
+        var all = Enumerable.Range(0, 1000).Select(i => $"history{i}").ToArray();
+        var backlog = new PartlyUnreadableBacklog(all) { ReadableFrom = all.Length }; // son dilim okunamadı: belge boş, geçmiş arkada
+        view.ShowRunDocument(new NarrativeSnapshot(backlog, all.Length));
+        backlog.ReadableFrom = 0; // dosya yeniden okunabiliyor
+        Assert.True(view.FollowsBottom); // ön-koşul: anlatı dibi izliyor
+
+        view.AppendBatch("live\n"); // takipte bir satır: ScrollToEnd
+        view.UpdateLayout();
+
+        Assert.Null(view.LastPrepend);
+        Assert.Equal("live\n", view.Document.Text);
+    }
+
+    /// <summary>
     /// [idle-memory · dalga 2 son inceleme · defter 2] <b>Boş dilim kuralının istisnası: store belgenin GERİSİNDEyse yüklenecek bir şey
     /// yoktur ve indeks iner.</b> Pencere gizliyken yeni bir işlem anlatıyı temizler; belge dönüşe dek kurulmaz (bayat belge — kabuk onu
     /// dönüşte modelden bir kez kurar). Bu sırada gelen bir tepeye kaydırma boş dilim alır: "aynı dilimi yeniden iste" kuralı burada

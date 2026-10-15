@@ -78,6 +78,10 @@ public sealed class BottomAnchorBehavior
     /// </summary>
     public bool ShouldFollow => _state.IsStuck && !_state.IsJumping && !_steering;
     public double DistanceFromBottom => Math.Max(0, _getExtent() - _getOffset() - _getViewport());
+
+    /// <summary>Dibin ofseti: içerik eksi görünür alan (sığan içerikte 0) — dibe atlamanın hedefi. Host da oturmuş bir kaydırma konumunun
+    /// üst sınırı olarak okur (konsol: geçici bir isteği — +∞, dibin ötesi — yükleyiciye vermez).</summary>
+    public double BottomOffset => Math.Max(0, _getExtent() - _getViewport());
     public bool ShowPill => BottomAnchorDecision.ShouldShowPill(_state, DistanceFromBottom, _thresholdPx);
 
     /// <summary>Elle üzerine yaz (ör. ConsoleView.StickToBottom setter'ı ile geriye dönük uyum) — dipten uzaklığı
@@ -181,8 +185,7 @@ public sealed class BottomAnchorBehavior
     public void JumpToBottom()
     {
         _steering = false; // açık "şimdi dibe git" (pill ya da bekleme sonu) — takip yeniden devralır
-        double target = Math.Max(0, _getExtent() - _getViewport());
-        bool animated = _scrollSmooth(target);
+        bool animated = _scrollSmooth(BottomOffset);
         if (!animated) { ForceStuck(true); return; } // reduced-motion/instant — jumping penceresine gerek yok
 
         _state = BottomAnchorDecision.BeginJump(_state);

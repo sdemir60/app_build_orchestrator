@@ -4548,9 +4548,13 @@ lines.
   that state from where it settles: the narrative, pinned to its end, brings the previous slice on the first jump to
   the top, while a project page, pinned to the top of its document, loads the lines before it only once the reader
   has left the top and come back. Both documents are swapped in through one path (`SwapDocument`), and the swap's own
-  scroll events are not the reader's: a swap reports the old document's offset and then lays the new one out at zero,
-  which would read as leaving the top and coming back — a narrative rebuilt over a document at its end, on `Back` or on
-  the return from the tray, would prepend a slice nobody asked for and trim it off again.
+  scroll events are not the reader's: assigning the new document clears the text view's scroll data to zero before the
+  pin reports where it lands, which the loader, still armed from the old document's position, would read as arriving at
+  the top — a narrative rebuilt over a document at its end, on `Back` or on the return from the tray, would prepend a
+  slice nobody asked for and trim it off again — and the bottom anchor, for a reader who had just scrolled, as a
+  distance of zero — a project page opened then would start following once the wait ran out, and its next live line
+  would trim its top and throw the reader to the bottom — so neither decides on them, and both are set from the settled
+  geometry when the swap ends.
 - **The run's narrative has exactly one owner: the view model's `NarrativeStore`.** Every narrative line — the
   application's own and each project's output as the console writes it, every line of it or what the compact console
   keeps (below) — is appended to it under the view model's lock and before the batching pump gets it, so a line is in

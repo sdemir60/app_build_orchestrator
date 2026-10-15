@@ -151,4 +151,77 @@ public class ConsoleReaderNavigationTests
 
         AssertFollowingAtTheBottom(narrative);
     }
+
+    /// <summary>
+    /// Okuyucu konsolda kaydırdıktan hemen sonra — bekleme dolmadan — açılan proje sayfası baştan okunur ve İZLEMEZ: uzun sayfanın
+    /// tepesinde <c>⌄ latest</c> görünür; bekleme dolunca da takip gelmez, derlenen projenin canlı satırı sayfanın tepesini kırpmaz ve
+    /// okuyucuyu dibe atmaz (proje logu tepeye sabitlenir, izlemeden açılır).
+    /// <para>KIRMIZI (ölçüldü): sayfa takası belgeyi değiştirince TextView kaydırma verisini sıfırlar — tek olay; ofset, içerik ve görünür
+    /// alan 0. Anchor o olayda uzaklığı 0 okuyup (direksiyon hâlâ okuyucudaydı) takası başlatan "izleme" kararını ezerek sayfayı izler hâle
+    /// getiriyordu ve sonra hiçbir olay yeniden karar vermiyordu: pill gizli, bekleme dolunca takip açık — sıradaki canlı satır tepeyi
+    /// kırpıp okuyucuyu dibe atıyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void A_project_page_opened_right_after_a_scroll_opens_at_its_top_and_does_not_follow()
+    {
+        using var narrative = new RealizedNarrative(lines: 400);
+        narrative.WheelUp();
+        narrative.WheelUp(); // okuyucu kaydırdı: direksiyon onda, bekleme kuruldu
+
+        narrative.View.PlayCascade([.. Enumerable.Range(0, 300).Select(i => $"page{i}")]);
+        DispatcherPump.DrainToIdle();
+
+        Assert.False(narrative.View.StickToBottom);
+        Assert.Equal(Visibility.Visible, narrative.View.Pill.Visibility); // uzun sayfanın tepesi: dip uzakta
+
+        narrative.ElapseAnchorTimers();       // bekleme doldu
+        narrative.View.AppendBatch("live\n"); // derlenen projenin canlı satırı
+        DispatcherPump.DrainToIdle();
+
+        Assert.False(narrative.View.FollowsBottom);
+        Assert.Equal(0, narrative.View.Editor.VerticalOffset);
+        Assert.StartsWith("page100\n", narrative.View.Document.Text); // tepe kırpılmadı
+    }
+
+    /// <summary>
+    /// Akışı izleyen anlatıdan açılan uzun bir proje sayfası tepesinde açılır, izlemez ve <c>⌄ latest</c>'i gösterir — pill'in tek
+    /// kuralı (dipten uzaklık) takasın sonunda oturmuş geometriyle uygulanır; proje modunda prompt satırı yoktur.
+    /// <para>Takip kararı takasın sonunda verilir (<c>SwapDocument</c>); onsuz sayfa anlatının takibini taşırdı (bozma: karar
+    /// kaldırılınca bu test düşer). Pill: düzeltmeden önce gizliydi (ölçüldü) — karar takastan önce eski belgenin geometrisiyle
+    /// veriliyordu (anlatı dipte: uzaklık 0) ve sonra hiçbir olay pill'i yeniden değerlendirmiyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void A_project_page_opened_from_a_following_narrative_opens_at_its_top_and_offers_the_latest_pill()
+    {
+        using var narrative = new RealizedNarrative(lines: 400);
+        Assert.True(narrative.View.FollowsBottom); // ön-koşul: anlatı dibi izliyor
+
+        narrative.View.PlayCascade([.. Enumerable.Range(0, 300).Select(i => $"page{i}")]);
+        DispatcherPump.DrainToIdle();
+
+        Assert.False(narrative.View.FollowsBottom);
+        Assert.Equal(0, narrative.View.Editor.VerticalOffset);
+        Assert.Equal(Visibility.Visible, narrative.View.Pill.Visibility);
+        Assert.Equal(Visibility.Collapsed, narrative.View.ActiveLineOverlay.Visibility);
+    }
+
+    /// <summary>
+    /// Okuyucunun kaydırdığı bir proje sayfasından ← Back: anlatı dibine sabitlenir ve akışı HEMEN yeniden izler — direksiyon geri
+    /// alınır, beklemeyi beklemez.
+    /// <para>Takip kararı takasın sonunda verilir (<c>SwapDocument</c>); onsuz anlatı sayfanın "izleme" durumunu taşırdı (bozma: karar
+    /// kaldırılınca bu test düşer). Düzeltmeden önce de yeşildi (karar <c>ReplaceRunDocument</c>'teydi) — pin.</para>
+    /// </summary>
+    [StaFact]
+    public void Back_from_a_project_page_the_reader_scrolled_follows_the_narrative_again()
+    {
+        using var narrative = new RealizedNarrative(lines: 400);
+        narrative.View.PlayCascade([.. Enumerable.Range(0, 300).Select(i => $"page{i}")]);
+        DispatcherPump.DrainToIdle();
+        narrative.Press(Key.PageDown); // okuyucu sayfada gezindi: direksiyon onda
+
+        narrative.View.ReplaceRunDocument(NarrativeSnapshots.Of(narrative.Store)); // ← Back
+        DispatcherPump.DrainToIdle();
+
+        AssertFollowingAtTheBottom(narrative);
+    }
 }
