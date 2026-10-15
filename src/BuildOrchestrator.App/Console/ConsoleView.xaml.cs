@@ -827,7 +827,7 @@ public partial class ConsoleView : UserControl
             PinAfterModeSwitch(toBottom);
         }
         finally { _swappingDocument = false; }
-        _armedForChunk = ScrollGeometry.VerticalOffset > ChunkTopThresholdPx;
+        _armedForChunk = SettledOffset > ChunkTopThresholdPx;
         _bottomAnchor.ForceStuck(toBottom); // anlatı dipten izlenir; proje sayfası baştan okunur, izlenmez
     }
 
@@ -844,12 +844,23 @@ public partial class ConsoleView : UserControl
     /// metnin üstünde); ilk PageUp de öyle; tekerlek takibi eşiği aşan çentikten bir çentik sonra bırakıyordu; dibe dönüşün olayları pill'i
     /// dönüş öncesi ofsetle değerlendirip görünür bırakıyordu. İçerik yüksekliği de olayda geride kalır (prepend telafisinde ScrollViewer
     /// 3738,6, TextView 7458,6) — bu yüzden üç değer aynı yerden. Bir <c>ScrollToEnd</c> isteği uygulanırken TextView'in ofseti tek bir
-    /// olayda +∞, bir atlamanın hedefi kenetlenmeden önce dibin ötesi olabilir: anchor için uzaklık o an 0 (dipte) sayılır; yükleyiciye
-    /// yalnız oturmuş bir konum gider (<see cref="BottomAnchorBehavior.BottomOffset"/> ile sınırlı).</para>
+    /// olayda +∞, bir atlamanın hedefi kenetlenmeden önce dibin ötesi olabilir: anchor için uzaklık o an 0 (dipte) sayılır; yükleyici
+    /// konumu dibe kenetli okur (<see cref="SettledOffset"/>).</para>
     /// <para>Testler: <c>ConsoleViewTests.A_real_ctrl_home_in_a_rebuilt_narrative_loads_the_previous_slice</c>,
     /// <c>ConsoleReaderNavigationTests</c>.</para>
     /// </summary>
     private IScrollInfo ScrollGeometry => EditorControl.TextArea.TextView;
+
+    /// <summary>
+    /// [idle-memory · dalga 2 · beşinci/altıncı inceleme — ölçüldü] Chunk yükleyicinin okuduğu konum — TEK kural, üç giriş: kaydırma
+    /// işleyicisi, prepend'in telafisi, takasın sonu. TextView'in ofseti, dibe kenetlenmiş (<see cref="BottomAnchorBehavior.BottomOffset"/>):
+    /// bir <c>ScrollToEnd</c> isteği uygulanırken ofset tek bir olayda +∞, bir atlamanın hedefi kenetlenmeden önce dibin ötesi olabilir —
+    /// oturduğu yer dibi aşmaz. Ölçüldü: +∞ yükleyiciyi "tepeden uzaklaştı" diye silahlandırıyor, görünüme sığan kısa bir belgede hemen
+    /// ardından kenetlenen 0 önceki dilimi isteyen olmadan ekliyordu; kenetli okumada o belgenin dibi 0'dır ve yükleyici silahlanmaz.
+    /// <para>[DEĞİŞEN KURAL — altıncı inceleme] Beşinci incelemede kaydırma işleyicisi dibi aşan olayları atlıyordu, takasın sonu ise ham
+    /// ofseti okuyordu — aynı soruya iki cevap. Kenetleme ikisini tek kurala indirir; atlanan bir olay artık dipte sayılır.</para>
+    /// </summary>
+    private double SettledOffset => Math.Min(ScrollGeometry.VerticalOffset, _bottomAnchor.BottomOffset);
 
     /// <summary>
     /// [design v1.7.0 §2.5 · animasyon spec §2] Panel geçişinin TEK hareketi. Log bloğu, <b>alt kenarı sabit
@@ -992,12 +1003,9 @@ public partial class ConsoleView : UserControl
             // fırlatıyordu. İçerik büyümesini artık büyümeyi YAPAN yer bildirir (AppendBatch → ShouldFollow).
             _bottomAnchor.OnScrollChanged(extentHeightChange: 0);
 
-            // Chunk loader — üstteki eşik ayrı kavram. Ofset TextView'in kendisinden (ScrollGeometry): ScrollViewer'ınki bu olayda
-            // henüz eski. Yalnız OTURMUŞ bir konum gider: ScrollToEnd'in isteği bir olayda +∞, bir atlamanın hedefi kenetlenmeden önce
-            // dibin ötesi olabilir — kenetlenen konum hemen ardından kendi olayıyla gelir. +∞ yükleyiciyi "tepeden uzaklaştı" diye
-            // silahlandırıyordu; görünüme sığan kısa bir belgede kenetlenen 0 da ardından önceki dilimi isteyen olmadan ekliyordu.
-            double offset = ScrollGeometry.VerticalOffset;
-            if (offset <= _bottomAnchor.BottomOffset) EvaluateChunkScroll(offset); // NaN/+∞ da elenir
+            // Chunk loader — üstteki eşik ayrı kavram. Ofset TextView'in kendisinden, dibe kenetli (SettledOffset): ScrollViewer'ınki bu
+            // olayda henüz eski, ScrollToEnd'in isteği ise bir olayda +∞ gösterir.
+            EvaluateChunkScroll(SettledOffset);
         }
 
         // Prompt AYNI olayda taşınır. Konumu belgenin son satırından gelir; kaydırma o satırı yukarı iterken
@@ -1082,7 +1090,7 @@ public partial class ConsoleView : UserControl
         try
         {
             var tv = EditorControl.TextArea.TextView;
-            double before = ScrollGeometry.VerticalOffset; // kaydırma olayının içinden de doğru: ScrollViewer'ınki orada henüz eski
+            double before = SettledOffset; // kaydırma olayının içinden de doğru: ScrollViewer'ınki orada henüz eski
             int prependedLines = _loadedFrom - from;
             double delta = prependedLines * tv.DefaultLineHeight;
 
