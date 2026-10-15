@@ -150,6 +150,39 @@ public class BottomAnchorBehaviorTests
         Assert.True(behavior.ShowPill);
     }
 
+    /// <summary>
+    /// [B2 fix 1 · F1] <see cref="BottomAnchorBehavior.RefreshPill"/> yalnız pill'i yeniden okur: içerik kaydırmasız büyüyüp dipten uzaklık
+    /// eşiği aştığında pill DEĞİŞTİYSE bildirir; değişmediyse bildirmez. Karar vermez (yapışıklık ve takip aynı kalır) ve kaydırmaz.
+    /// <para>KIRMIZI: yöntem yoktu (derleme hatası) — konsolda içerik büyüyünce pill hiç yeniden okunmuyordu.</para>
+    /// </summary>
+    [Fact]
+    public void RefreshPill_raises_only_when_the_pill_flips_and_neither_scrolls_nor_decides()
+    {
+        var f = new Fake { Extent = 1000, Offset = 790, Viewport = 200 }; // dipten 10 px: eşiğin içinde
+        var behavior = f.New();
+        behavior.NotifyUserScroll();
+        behavior.OnScrollChanged(extentHeightChange: 0);
+        Assert.True(behavior.IsStuck);  // ön-koşul: dipte
+        Assert.False(behavior.ShowPill);
+        int changed = 0;
+        behavior.Changed += (_, _) => changed++;
+
+        behavior.RefreshPill();         // hiçbir şey değişmedi
+        Assert.Equal(0, changed);
+
+        f.Extent += 100;                // içerik kaydırmasız büyüdü: dipten 110 px
+        behavior.RefreshPill();
+        Assert.Equal(1, changed);
+        Assert.True(behavior.ShowPill);
+        Assert.True(behavior.IsStuck);  // karar verilmedi
+        Assert.Equal(790, f.Offset);    // kaydırılmadı
+        Assert.Empty(f.InstantScrolls);
+        Assert.Null(f.SmoothTarget);
+
+        behavior.RefreshPill();         // pill zaten görünür: yeniden bildirilmez
+        Assert.Equal(1, changed);
+    }
+
     [Fact]
     public void JumpToBottom_when_animated_enters_jumping_and_hides_pill_until_window_elapses()
     {

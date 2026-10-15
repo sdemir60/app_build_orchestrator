@@ -156,7 +156,8 @@ public partial class ConsoleView : UserControl
         // (yeni satır, punto, yeniden boyutlanma) prompt yeniden konumlanır.
         // [M-2 review round 1] AYNI olay hover bandını da tazeler — imleç kımıldamadan içerik kayarsa (scroll,
         // ekleme, chunk-dikiş, mod değişimi) bant ESKİ satırda asılı kalmasın diye (bkz. RefreshHoverBand doc'u).
-        EditorControl.TextArea.TextView.VisualLinesChanged += (_, _) => { RefreshPrompt(); RefreshHoverBand(); };
+        // [B2 fix 1 · F1] ve izlenmeyen belgede pill'i yeniden okur (OnVisualLinesChanged).
+        EditorControl.TextArea.TextView.VisualLinesChanged += (_, _) => OnVisualLinesChanged();
         // [T59] Kullanıcı tekerleği çevirdiği anda uçuştaki pill-jump animasyonu iptal olur + suppress bayrağı kalkar.
         ScrollAnimator.EnableUserCancellation(EditorControl);
         // Yatay tekerlek/touchpad: WPF WM_MOUSEHWHEEL'i HİÇ dağıtmaz, bu yüzden yatay kaydırma uygulamanın kendi
@@ -255,6 +256,24 @@ public partial class ConsoleView : UserControl
         else Arbiter.NotifyUserScroll(ScrollPanel.Console);
     }
 
+    /// <summary>
+    /// TextView görsel satırları her kurduğunda (her ölçüm turu: yeni satır, kaydırma, punto, boyut) prompt satırı ve hover bandı tazelenir;
+    /// [B2 fix 1 · F1] izlenmeyen belgede <c>⌄ latest</c> da yeniden okunur (<see cref="BottomAnchorBehavior.RefreshPill"/>): içerik
+    /// kaydırmasız büyüyünce (proje sayfası hiç izlemez; anlatıda direksiyon okuyucudayken) TextView kaydırma olayı yaymaz ve pill'in kuralı —
+    /// canlı dipten uzaklık — başka hiçbir yerden okunmazdı. Bu olay ölçümün sonunda, TextView'in kaydırma verisi güncellendikten sonra gelir;
+    /// uzaklık oradan okunur. Ölçümü gelmeyecek bir ekleme onu kendisi ister (<see cref="AppendBatch"/>).
+    /// <para>İki istisna: belge takası (<see cref="_swappingDocument"/>) — takasın geometrisi okuyucunun değildir, pill takasın sonunda
+    /// oturmuş uzaklıktan okunur (<see cref="SwapDocument"/>) — ve takip (<see cref="BottomAnchorBehavior.ShouldFollow"/>): izleyen belgede
+    /// ekleme ile <c>ScrollToEnd</c>'in uygulanması arasında uzaklık bir an eşiği aşar ve pill yanıp sönerdi (← Back'teki parlamanın
+    /// akrabası); orada pill kaydırma olaylarından okunur.</para>
+    /// </summary>
+    private void OnVisualLinesChanged()
+    {
+        RefreshPrompt();
+        RefreshHoverBand();
+        if (!_swappingDocument && !_bottomAnchor.ShouldFollow) _bottomAnchor.RefreshPill();
+    }
+
     /// <summary>[E4/T48] Üç panelin auto-scroll'unu hakem eden merkezi arbiter; null ise izole (bildirimler no-op).
     /// MainWindow enjekte eder.</summary>
     public ScrollArbiter? Arbiter { get; set; }
@@ -350,6 +369,12 @@ public partial class ConsoleView : UserControl
         // hâle getiriyordu.
         if (_bottomAnchor.ShouldFollow)
             EditorControl.ScrollToEnd();
+        else
+            // [B2 fix 1 · F1] İzlenmeyen belge büyüdü: görünüm oynamaz ama dipten uzaklık değişti — pill yeniden okunur
+            // (OnVisualLinesChanged). AvalonEdit eklemede yalnız görünür satırlara (ya da öncesine) dokunan değişiklikte yeniden ölçer;
+            // okuyucu sondan iki satır ve daha yukarıdaysa ölçüm hiç gelmez, içerik yüksekliği de güncellenmezdi. Ölçüm burada istenir;
+            // uzaklık o ölçümün TextView verisinden okunur (tek geometri kaynağı — ScrollGeometry; DocumentHeight ayrıca okunmaz).
+            EditorControl.TextArea.TextView.InvalidateMeasure();
     }
 
     /// <summary>

@@ -128,6 +128,15 @@ public sealed class BottomAnchorBehavior
     }
 
     /// <summary>
+    /// [B2 fix 1 · F1] <b>Yalnız pill'i yeniden okur</b> — içerik kaydırmasız büyüdüğünde (host'un kaydırma olayı yokken) çağrılır: dipten
+    /// uzaklık değiştiyse ve pill bu yüzden görünür/gizli olacaksa host'u uyarır (<see cref="Notify"/>), aksi hâlde hiçbir şey yapmaz. Karar
+    /// VERMEZ (<see cref="IsStuck"/>, takip, direksiyon aynı kalır) ve kaydırmaz — "pill canlı uzaklığı izler" kuralının içerik büyümesi kolu.
+    /// Takip edilirken çağrılmamalıdır: ekleme ile dibe kaydırmanın uygulanması arasında uzaklık bir an eşiği aşar ve pill yanıp sönerdi (host
+    /// bunu <see cref="ShouldFollow"/> ile ayırır).
+    /// </summary>
+    public void RefreshPill() => Notify(_state);
+
+    /// <summary>
     /// Host'u uyarır. Durum değişmese bile <see cref="ShowPill"/> değiştiyse haber verilir: pill görünürlüğü
     /// durumdan değil ANLIK UZAKLIKTAN türer (design-v1 §2.5 — "dipten &gt;48px ise görünür"), ve takip
     /// kararı artık kullanıcıya bağlı olduğundan uzaklık, durum sabitken de değişebilir. Yalnız durum

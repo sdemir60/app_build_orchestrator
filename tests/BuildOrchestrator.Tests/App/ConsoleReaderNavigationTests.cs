@@ -746,6 +746,139 @@ public class ConsoleReaderNavigationTests
         Assert.False(narrative.View.FollowsBottom);
     }
 
+    // ---------------------------------------------------------------- [B2 fix 1 · F1] pill içerik büyüyünce yeniden okunur
+
+    /// <summary>
+    /// [B2 fix 1 · F1] Proje sayfasında <c>⌄ latest</c> ile sona atlayan okuyucunun altına derlenen projenin yeni satırları gelince pill
+    /// GERİ GELİR — görünüm yerinden oynamaz, sayfa izlemez (pill'in tek kuralı: canlı dipten uzaklık).
+    /// <para>KIRMIZI (düzeltmeden önce): konsolun TextView'i yalnız ofset değişince kaydırma olayı yayar; izlenmeyen sayfa büyüyünce olay
+    /// yoktu ve pill yeniden okunmuyordu — okuyucu kaydırana dek gizli kalıyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void The_latest_pill_returns_when_new_lines_grow_a_project_page_below_the_reader()
+    {
+        using var narrative = new RealizedNarrative(lines: 400);
+        OpenPage(narrative, lines: 1000);
+        narrative.ClickLatest();
+        Assert.Equal(Visibility.Collapsed, narrative.View.Pill.Visibility); // ön-koşul: sonda
+        double landed = narrative.View.Editor.VerticalOffset;
+
+        narrative.View.AppendBatch("live0\nlive1\nlive2\nlive3\n"); // eşikten uzun (4 satır)
+        DispatcherPump.DrainToIdle();
+
+        Assert.Equal(Visibility.Visible, narrative.View.Pill.Visibility);
+        Assert.Equal(landed, narrative.View.Editor.VerticalOffset);
+        Assert.False(narrative.View.FollowsBottom);
+    }
+
+    /// <summary>
+    /// [B2 fix 1 · F1] Görünüme sığan kısa bir proje sayfası derlenen projenin satırlarıyla paneli aşınca <c>⌄ latest</c>'i gösterir;
+    /// görünüm tepede kalır.
+    /// <para>KIRMIZI (düzeltmeden önce): pill açılıştaki kısa sayfanın kararında (gizli) kalıyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void A_short_project_page_that_grows_past_the_panel_offers_the_latest_pill()
+    {
+        using var narrative = new RealizedNarrative(lines: 400);
+        OpenPage(narrative, lines: 5);
+        Assert.Equal(Visibility.Collapsed, narrative.View.Pill.Visibility); // ön-koşul: sayfa sığıyor
+
+        narrative.View.AppendBatch(string.Concat(Enumerable.Range(0, 100).Select(i => $"live{i}\n")));
+        DispatcherPump.DrainToIdle();
+
+        Assert.Equal(Visibility.Visible, narrative.View.Pill.Visibility);
+        Assert.Equal(0, narrative.View.Editor.VerticalOffset);
+    }
+
+    /// <summary>
+    /// [B2 fix 1 · F1] Anlatıda dibin iki satır üstünde okuyan (eşiğin içinde, direksiyon onda) okuyucuya yeni satırlar gelince
+    /// <c>⌄ latest</c> görünür — uzaklık eşiği aştı; görünüm yerinden oynamaz (kontrolcü kararı: kural "pill canlı uzaklığı izler", iki
+    /// kipte de).
+    /// <para>KIRMIZI (düzeltmeden önce): pill okuyucu kaydırana ya da 5 sn dönüşe dek gizli kalıyordu. İki satır seçildi: son metin satırı
+    /// görünür alandaysa AvalonEdit eklemede kendiliğinden yeniden ölçer; iki satır yukarıda ölçüm hiç gelmezdi — ekleme onu ister.</para>
+    /// </summary>
+    [StaFact]
+    public void A_reader_two_lines_above_the_end_of_the_narrative_sees_the_latest_pill_when_lines_arrive()
+    {
+        using var narrative = new RealizedNarrative(lines: 400);
+        narrative.Press(Key.Up);
+        narrative.Press(Key.Up);
+        Assert.True(narrative.View.StickToBottom);                          // ön-koşul: eşiğin içinde
+        Assert.Equal(Visibility.Collapsed, narrative.View.Pill.Visibility);
+        double reading = narrative.View.Editor.VerticalOffset;
+
+        NarrativeSnapshots.Deliver(narrative.Store, narrative.View, ["live0", "live1", "live2", "live3"]);
+        DispatcherPump.DrainToIdle();
+
+        Assert.Equal(Visibility.Visible, narrative.View.Pill.Visibility);
+        Assert.Equal(reading, narrative.View.Editor.VerticalOffset);
+    }
+
+    /// <summary>
+    /// [B2 fix 1 · F1] Akışı izleyen anlatı satır aldıkça <c>⌄ latest</c> HİÇ kımıldamaz — belge render dilimine dek büyürken de, sonra
+    /// kırpılırken de: yeniden okuma yalnız izlenmeyen belgede yapılır; izleyen belgede ekleme ile <c>ScrollToEnd</c>'in uygulanması
+    /// arasındaki uzaklık bir an eşiği aşar ve pill yanıp sönerdi.
+    /// <para>PİN — düzeltmeden önce de yeşildi; düzeltmenin sınırını korur (bozma: takip koruması kaldırılınca kırmızı). Anlatı render
+    /// diliminin altından başlar: dilimdeki belge kırpmayla aynı boyda kalır, büyümez — yanıp sönme yalnız büyüyen belgede görülür.</para>
+    /// </summary>
+    [StaFact]
+    public void A_following_narrative_never_toggles_the_latest_pill_while_lines_arrive()
+    {
+        using var narrative = new RealizedNarrative(lines: 100);
+        using var toggles = PillToggles.Count(narrative);
+
+        foreach (int batch in Enumerable.Range(0, 20))
+        {
+            NarrativeSnapshots.Deliver(narrative.Store, narrative.View, [.. Enumerable.Range(0, 10).Select(i => $"live{batch}.{i}")]);
+            DispatcherPump.DrainToIdle();
+        }
+
+        Assert.Equal(0, toggles.Value);
+        AssertFollowingAtTheBottom(narrative);
+    }
+
+    /// <summary>
+    /// [B2 fix 1 · F1] Pill'in gizli olduğu bir proje sayfasından (sığan kısa sayfa) ← Back <c>⌄ latest</c>'i bir an bile göstermez: takasın
+    /// kendi ölçümünde pill yeniden okunmaz, takasın sonunda oturmuş uzaklıktan okunur (sahada "geri diyorsun latest çıkıyor kayboluyor").
+    /// <para>PİN — düzeltmeden önce de yeşildi; düzeltmenin sınırını korur (bozma: takas koruması kaldırılınca kırmızı).</para>
+    /// </summary>
+    [StaFact]
+    public void Back_from_a_short_project_page_never_flashes_the_latest_pill()
+    {
+        using var narrative = new RealizedNarrative(lines: 400);
+        OpenPage(narrative, lines: 5);
+        Assert.Equal(Visibility.Collapsed, narrative.View.Pill.Visibility); // ön-koşul
+        using var toggles = PillToggles.Count(narrative);
+
+        narrative.View.ReplaceRunDocument(NarrativeSnapshots.Of(narrative.Store)); // ← Back
+        DispatcherPump.DrainToIdle();
+
+        Assert.Equal(0, toggles.Value);
+        AssertFollowingAtTheBottom(narrative);
+    }
+
+    /// <summary><c>⌄ latest</c>'in görünürlüğü kaç kez değişti — sayım bitince bırakılan bir dinleyici (gerçek değer değişimleri).</summary>
+    private sealed class PillToggles : IDisposable
+    {
+        private static readonly System.ComponentModel.DependencyPropertyDescriptor Visibility =
+            System.ComponentModel.DependencyPropertyDescriptor.FromProperty(UIElement.VisibilityProperty, typeof(UIElement));
+        private readonly UIElement _pill;
+
+        private PillToggles(UIElement pill)
+        {
+            _pill = pill;
+            Visibility.AddValueChanged(pill, OnChanged);
+        }
+
+        public int Value { get; private set; }
+
+        public static PillToggles Count(RealizedNarrative narrative) => new(narrative.View.Pill);
+
+        private void OnChanged(object? sender, EventArgs e) => Value++;
+
+        public void Dispose() => Visibility.RemoveValueChanged(_pill, OnChanged);
+    }
+
     /// <summary>Konsolun kaydırma animasyonu (<c>ScrollAnimator.VerticalOffset</c>) şu an editöre bağlı mı.</summary>
     private static bool IsAnimating(RealizedNarrative narrative) =>
         DependencyPropertyHelper.GetValueSource(narrative.View.Editor, ScrollAnimator.VerticalOffsetProperty).IsAnimated;
