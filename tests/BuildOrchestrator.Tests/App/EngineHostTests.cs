@@ -643,6 +643,52 @@ public class EngineHostTests
         Assert.Equal(0, Volatile.Read(ref exited)); // ölüm uyku sayıldı — ölüm sinyali yok
     }
 
+    /// <summary>[fix 2 · N1] Uykunun kontrolünden SONRA bildirilen bir ölüm uykuyu "uyudu" diye bitirmez: konak uyumaz, ölüm sinyali tek
+    /// kalır. Uyku, kontrolünün canlı bulduğu nesli sahiplenmeye çalışır; bekçi o nesli zaten sahiplenmişse (ölüm bildirildi) uyku
+    /// kaybeder ve uyumadan döner — ölümü Restart toparlar. Eskiden uyku giden nesli sahiplenmeye çalışıp sonucunu yok sayıyordu: ölüm
+    /// bildirildiği hâlde konak uyuyor diye biterdi (VM "öldü", konak "uyuyor" — iki görüş ayrışırdı); çerçeve hatası yolunda okuyucu nesli
+    /// kendisi ilerlettiği için uykunun sahiplendiği (yeni − 1) nesil ölen nesil bile değildi.
+    /// <para><b>Kurgu (dikişle deterministik):</b> uyku, motoru canlı bulup havuza sıçradığı anda
+    /// <see cref="EngineHost.DebugSleepPassedCheck"/>'te tutulur; motor öldürülür, ölüm bildirilir (<see cref="EngineHost.EngineExited"/>),
+    /// sonra uyku bırakılır. Çerçeve hatası yolu dikişsizdir (gerçek bir Supervisor bozuk satır yazdırılamaz) — sahiplenilen nesil aynı
+    /// olduğu için aynı kural.</para></summary>
+    [Fact]
+    public async Task A_death_reported_after_the_sleeps_check_keeps_the_host_awake()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var host = sandbox.IsolatedEngineHost(WideStartupTimeout);
+        var sleepPassedCheck = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var releaseSleep = new ManualResetEventSlim();
+        host.DebugSleepPassedCheck = () =>
+        {
+            sleepPassedCheck.TrySetResult();
+            releaseSleep.Wait(WideStartupTimeout);
+        };
+        var ready = await host.StartAsync();
+        var watch = host.ExitWatch!;
+        int exited = 0;
+        var died = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.EngineExited += _ =>
+        {
+            Interlocked.Increment(ref exited);
+            died.TrySetResult();
+        };
+
+        var sleep = host.SleepAsync();
+        try
+        {
+            await sleepPassedCheck.Task.WaitAsync(WideStartupTimeout); // uyku motoru canlı buldu — nesli henüz sahiplenmedi
+            using (var engine = Process.GetProcessById(ready.Pid)) engine.Kill(); // kendiliğinden ölüm
+            await died.Task.WaitAsync(WideStartupTimeout); // ölüm bildirildi: bekçi nesli sahiplendi
+        }
+        finally { releaseSleep.Set(); }
+        await sleep.WaitAsync(WideStartupTimeout);
+
+        Assert.False(host.IsAsleep); // ölüm uykudan önce sahiplenildi — konak uyumaz, Restart toparlar
+        await watch.WaitAsync(WideStartupTimeout);
+        Assert.Equal(1, Volatile.Read(ref exited)); // tek ölüm sinyali
+    }
+
     /// <summary>[fix 1 · M1] Nesli geride kalmış bir çıkış bekçisi daha yeni bir başlatmayı ASLA düşüremez: her nesil kendi hazır
     /// görevini taşır ve bekçi yalnız onu bozar. Eskiden bekçi alandaki güncel görevi (<c>_ready</c>) bozuyordu: kontrolünü
     /// geçtikten sonra yeni bir nesil başlamışsa, yeni motor sağlam olduğu hâlde başlatma "Engine died during startup" ile düşer,
