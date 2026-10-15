@@ -168,29 +168,18 @@ public class MsBuildInvokerTests
             line => { lock (lines) lines.Add(line); },
             CancellationToken.None);
 
-        // grandchild (ping.exe) doğana kadar NEW_PROCESS bildirimlerini isme göre süz — MSBuild.exe'nin
-        // kendisi ve CoreCompile'ın kısa ömürlü derleyici child'ı (csc.exe/VBCSCompiler) "ping" DEĞİLDİR,
-        // atlanır. Aynı süzme deseni aşağıdaki testte de var (orada "powershell" için).
-        int pingPid = -1;
-        JobBirths.Until(iocp, TimeSpan.FromSeconds(30), "grandchild (ping.exe) doğum bildirimi gelmedi", pid =>
-        {
-            try
-            {
-                if (string.Equals(Process.GetProcessById(pid).ProcessName, "ping", StringComparison.OrdinalIgnoreCase))
-                    pingPid = pid;
-            }
-            catch (ArgumentException) { /* zaten çıkmış kısa ömürlü job üyesi — ping değil, atla */ }
-            return pingPid >= 0;
-        });
+        // grandchild (ping.exe) doğana kadar NEW_PROCESS bildirimlerini isme göre süz — MSBuild.exe'nin kendisi ve CoreCompile'ın kısa
+        // ömürlü derleyici child'ı (csc.exe/VBCSCompiler) "ping" DEĞİLDİR, atlanır; çoktan çıkmış kısa ömürlü üye de. Süzgeç ve tutamacın
+        // doğumda alınması tek yardımcıdadır (JobBirths.WaitForProcess — aşağıdaki test "powershell" için aynısını kullanır).
+        using var ping = JobBirths.WaitForProcess(iocp, TimeSpan.FromSeconds(30), "grandchild (ping.exe) doğum bildirimi gelmedi",
+            p => string.Equals(p.ProcessName, "ping", StringComparison.OrdinalIgnoreCase));
 
         var result = await invokeTask.WaitAsync(TimeSpan.FromSeconds(20)); // hang'i sonsuza kadar değil, teste çevirir (zaman ASSERT değil, yalnız guard)
 
         // ASIL İDDİA (zaman değil, SIRALAMA): invoke, grandchild (60sn uyuyan ping.exe) HÂLÂ YAŞARKEN döndü.
         // Fix ÖNCESİ (unbounded Task.WhenAll) invoke ancak grandchild pipe'ı kapatıp (yani ÇIKIP) EOF
-        // üretince dönerdi — o durumda burada ping ZATEN ölmüş olurdu (bkz. rapor RED kanıtı).
-        bool grandchildStillAlive;
-        try { grandchildStillAlive = !Process.GetProcessById(pingPid).HasExited; }
-        catch (ArgumentException) { grandchildStillAlive = false; } // pid artık yok = zaten çıkmış
+        // üretince dönerdi — o durumda burada ping ZATEN ölmüş olurdu (bkz. rapor RED kanıtı). Tutamaç doğumda alındı: nesne o süreçtir.
+        bool grandchildStillAlive = !ping.HasExited;
         Assert.True(grandchildStillAlive,
             "invoke, grandchild ÇIKTIKTAN SONRA döndü — WaitPumpsBoundedAsync sınırı bozulmuş olabilir (bkz. Fix wave 1 / Finding 1)");
 
@@ -247,18 +236,10 @@ public class MsBuildInvokerTests
         // job'a katılan NEW_PROCESS bildirimlerini isme göre süz — MSBuild.exe'nin kendisi ve CoreCompile'ın
         // kısa ömürlü derleyici child'ı (csc.exe/VBCSCompiler, breakaway YAPMAZSA o da job üyesi olur)
         // "powershell" DEĞİLDİR, atlanır. Kısa ömürlü job üyeleri isim sorgusundan ÖNCE çıkmış olabilir
-        // (ArgumentException) — bunlar da "powershell değil" sayılıp atlanır.
-        int writerPid = -1;
-        JobBirths.Until(iocp, TimeSpan.FromSeconds(30), "grandchild (powershell.exe) doğum bildirimi gelmedi", pid =>
-        {
-            try
-            {
-                if (string.Equals(Process.GetProcessById(pid).ProcessName, "powershell", StringComparison.OrdinalIgnoreCase))
-                    writerPid = pid;
-            }
-            catch (ArgumentException) { /* zaten çıkmış kısa ömürlü job üyesi — powershell değil, atla */ }
-            return writerPid >= 0;
-        });
+        // — bunlar da "powershell değil" sayılıp atlanır (tek yardımcı: JobBirths.WaitForProcess).
+        using var writerProcess = JobBirths.WaitForProcess(iocp, TimeSpan.FromSeconds(30), "grandchild (powershell.exe) doğum bildirimi gelmedi",
+            p => string.Equals(p.ProcessName, "powershell", StringComparison.OrdinalIgnoreCase));
+        int writerPid = writerProcess.Id;
 
         var result = await invokeTask.WaitAsync(TimeSpan.FromSeconds(20));
 

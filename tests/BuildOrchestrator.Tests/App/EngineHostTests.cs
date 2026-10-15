@@ -536,8 +536,12 @@ public class EngineHostTests
     /// (<see cref="AppShutdown.WaitForAsyncDisposal"/>, aynı tavan).</para>
     /// <para><b>[DEĞİŞEN KURULUM — idle-memory · dalga 3 · M-2]</b> Eskiden yeni motorun PID'i <c>WakeAsync</c> döner dönmez
     /// <see cref="EngineHost.EnginePid"/>'den okunuyordu: uyanma süreci çağıranın thread'inde, dönmeden doğuruyordu. Uyanma artık başlatmadan önce
-    /// havuza sıçrar (<see cref="A_wake_started_on_the_callers_context_leaves_it_before_any_work"/>) ve döndüğü anda süreç henüz yoktur — PID job'un
-    /// IOCP'sinden, doğduğu anda alınır (sleep/poll yok — D8). İddia değişmedi.</para></summary>
+    /// havuza sıçrar (<see cref="A_wake_started_on_the_callers_context_leaves_it_before_any_work"/>) ve döndüğü anda süreç henüz yoktur — süreç job'un
+    /// IOCP'sinden, doğduğu anda alınır (sleep/poll yok — D8). İddia değişmedi.</para>
+    /// <para><b>[DEĞİŞEN KURULUM — dalga 3 · B1 fix 1 · I-3]</b> Eskiden "uykudan sonra bağlanan portun ilk doğumu uyanan motorundur" sayılıyor ve
+    /// o PID sonradan açılıyordu. Ön koşul yanlıştı: port bağlandığında job'da kalmış üyeler de doğum olarak bildirilir (uyutulan motorun conhost'u,
+    /// çıkmakta olan eski motor) ve bildirilen PID açılmadan gidebilir — bir kez ölçüldü: <c>Process with an Id of 27996 is not running</c>.
+    /// Uyanan motor artık imajıyla seçilir ve tutamacı doğumda alınır (<see cref="JobBirths.WaitForProcess"/>). İddia değişmedi.</para></summary>
     [Fact]
     public async Task Dispose_preempts_a_wake_that_waits_for_a_frozen_engine()
     {
@@ -548,15 +552,10 @@ public class EngineHostTests
         {
             await host.StartAsync();
             await host.SleepAsync();
-            using var births = host.OuterJob.AttachCompletionPort(); // uykudan sonra: ilk doğum uyanan motorundur
+            using var births = host.OuterJob.AttachCompletionPort(); // job'da kalmış üyeler de bildirilir — motor imajıyla seçilir
             var wake = host.WakeAsync();
-            int woken = 0;
-            JobBirths.Until(births, WideStartupTimeout, "the woken engine was never born into the outer job", pid =>
-            {
-                woken = pid;
-                return true;
-            });
-            frozen = Process.GetProcessById(woken);
+            frozen = JobBirths.WaitForProcess(births, WideStartupTimeout, "the woken engine was never born into the outer job",
+                TestPaths.IsSupervisor);
             Assert.Equal(0, NtSuspendProcess(frozen.SafeHandle)); // yeni motor hazır olmadan kilitlendi
             const string ReadyBeforeFrozen = "the woken engine was ready before it was frozen — the precondition was not set up";
             Assert.False(wake.IsCompleted, ReadyBeforeFrozen);
@@ -788,9 +787,13 @@ public class EngineHostTests
     /// geçtikten sonra yeni bir nesil başlamışsa, yeni motor sağlam olduğu hâlde başlatma "Engine died during startup" ile düşer,
     /// yeni motor öldürülür ve bir ölüm sinyali atılırdı.
     /// <para><b>Kurgu (dikişle deterministik):</b> eski motor öldürülür, bekçisi kontrolü geçtiği anda tutulur; Restart yeni nesli
-    /// açar; job'ın IOCP'si (eski motor öldükten SONRA bağlanır — ilk doğum yeni motorundur) yeni motorun doğumunu bildirdiği anda
-    /// yeni neslin hazır görevi vardır ve motor henüz hazır olamaz; bekçi o anda bırakılır. Okuyucunun aynı yakalaması
-    /// (kendi neslinin görevi) dikişsizdir: süzgeçle tamamlama arasında tutulabilecek bir an yoktur — yapı gereği aynı kural.</para></summary>
+    /// açar; job'ın IOCP'si yeni motorun doğumunu bildirdiği anda yeni neslin hazır görevi vardır ve motor henüz hazır olamaz; bekçi o anda
+    /// bırakılır. Okuyucunun aynı yakalaması (kendi neslinin görevi) dikişsizdir: süzgeçle tamamlama arasında tutulabilecek bir an yoktur —
+    /// yapı gereği aynı kural.</para>
+    /// <para><b>[DEĞİŞEN KURULUM — dalga 3 · B1 fix 1 · I-3 · m-4]</b> Eskiden port eski motor öldükten sonra bağlanıyor ve İLK doğum yeni motorun
+    /// sayılıyordu (<c>_ =&gt; true</c>). Port bağlandığında job'da kalmış üyeler de bildirildiği için ilk bildirim eski motorun conhost'u olabilir
+    /// ve bekçi yeni nesil doğmadan bırakılırdı (kurgu sessizce zayıflardı). Yeni motor artık imajıyla seçilir
+    /// (<see cref="JobBirths.WaitForProcess"/>). İddia değişmedi.</para></summary>
     [Fact]
     public async Task A_stale_exit_watcher_never_fails_a_newer_start()
     {
@@ -807,10 +810,11 @@ public class EngineHostTests
         {
             using (var engine = Process.GetProcessById(first.Pid)) engine.Kill(); // kendiliğinden ölüm
             await staleWatcher.Reached(); // eski bekçi nesli güncel buldu
-            using var births = host.OuterJob.AttachCompletionPort(); // eski motor öldükten sonra: ilk doğum yeni motorundur
+            using var births = host.OuterJob.AttachCompletionPort(); // job'da kalmış üyeler de bildirilir — yeni motor imajıyla seçilir
 
             restart = host.RestartAsync();
-            JobBirths.Until(births, WideStartupTimeout, "the restarted engine was never born into the outer job", _ => true);
+            using var restarted = JobBirths.WaitForProcess(births, WideStartupTimeout, "the restarted engine was never born into the outer job",
+                TestPaths.IsSupervisor);
         }
         finally { staleWatcher.Release(); } // yeni neslin hazır görevi bekliyor — eski bekçi şimdi bırakılır
 

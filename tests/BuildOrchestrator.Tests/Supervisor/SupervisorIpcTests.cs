@@ -14,6 +14,19 @@ public static class TestPaths
 {
     public static string SupervisorExe => Path.Combine(AppContext.BaseDirectory, "BuildOrchestrator.Supervisor.exe");
 
+    /// <summary>[idle-memory · dalga 3 · B1 fix 1 · m-3] Motoru erişilemez gösteren testlerin Supervisor yolu — erişilemezlik satırının ve
+    /// istisnanın taşıdığı TEK değer. Var olması gerekmez: konak sahtedir ya da hiç başlamaz.</summary>
+    public const string AbsentSupervisorExe = @"C:\app\supervisor\BuildOrchestrator.Supervisor.exe";
+
+    /// <summary>[idle-memory · dalga 3 · B1 fix 1 · I-3] Bir süreç gerçek Supervisor mı — imaj adından (<see cref="SupervisorExe"/>'in adı). Job'a
+    /// doğan süreçlerden motoru seçen testler bunu kullanır (<c>JobBirths.WaitForProcess</c>): job'da başka üyeler de vardır — motorun conhost'u,
+    /// çıkmakta olan eski motor. Okunamayan ad (süreç çıktı) <see cref="InvalidOperationException"/> atar; yardımcı onu "uymuyor" sayar.</summary>
+    public static bool IsSupervisor(Process process)
+    {
+        ArgumentNullException.ThrowIfNull(process);
+        return string.Equals(process.ProcessName, Path.GetFileNameWithoutExtension(SupervisorExe), StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>[B1/F1 · fix-1] GERÇEK bir Supervisor process'i başlatan her testin <see cref="SupervisorExe"/>
     /// ile birlikte <c>EngineHost</c>'a ENJEKTE ETTİĞİ startup timeout. Üretim varsayılanı (5 sn,
     /// <c>EngineHost.StartupTimeout</c>) yük altında yetmiyor: taze bir process doğup <c>engineReady</c>
@@ -124,6 +137,46 @@ public class SupervisorIpcTests
         string rest = await p.StandardOutput.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(5));
         foreach (var line in rest.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             Assert.NotNull(System.Text.Json.JsonSerializer.Deserialize<IpcEvent>(line, IpcJson.Options)); // D4: kalan satırlar da NDJSON
+        await p.WaitForExitAsync(new CancellationTokenSource(2000).Token);
+    }
+
+    /// <summary>
+    /// [idle-memory · dalga 3 · karar 37 · B1 fix 1 · I-2] GERÇEK Supervisor süreci — kendi koşusu yok (uyanmış ya da yeniden başlatılmış motorun
+    /// durumu) — önceki bir motorun bıraktığı koşu klasöründeki proje logunu, isteğin adını verdiği klasörden okur. Kabul kuralı motorun kendi log
+    /// kökünü ister; kök süreç içinde <c>--logs</c>'tan (ya da varsayılan yoldan) koordinatöre ulaşır — bu test o bağlantının kendisidir: kopsa
+    /// in-process testler yeşil kalırdı (onlar kökü kendileri verir) ama her uyanmış motor yine "No log yet" derdi.
+    /// <para>KIRMIZI (mutasyon: <c>Program</c> kökü koordinatöre vermiyordu): <c>NotFound</c> true, metin boş.</para>
+    /// </summary>
+    [Fact]
+    public async Task GetProjectLog_of_an_earlier_engines_run_is_read_from_the_folder_the_request_names()
+    {
+        using var sandbox = new SupervisorSandbox();
+        const string projectId = @"d:\repo\A\A.csproj";
+        string runDirectory;
+        using (var earlier = new BuildOrchestrator.Core.Logs.RunLogWriter(sandbox.LogsDir, DateTimeOffset.Now)) // önceki motorun koşusu
+        {
+            using (var log = earlier.OpenProjectLog(projectId))
+            {
+                log.AppendLine("line-1");
+                log.AppendLine("line-2");
+            }
+            runDirectory = earlier.RunDirectory;
+        }
+        using var p = Process.Start(sandbox.Psi())!;
+        var writer = new NdjsonWriter(p.StandardInput.BaseStream);
+        var reader = new NdjsonReader(p.StandardOutput.BaseStream);
+        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TestPaths.WideStartupTimeout));
+
+        await writer.WriteAsync(new GetProjectLogCommand(projectId, RequestId: 4, RunDirectory: runDirectory));
+        var reply = Assert.IsType<ProjectLogChunkEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(10)));
+
+        Assert.False(reply.NotFound);
+        Assert.Equal(4, reply.RequestId);
+        Assert.Equal(2, reply.ThroughLineNumber);
+        Assert.Equal("line-1" + Environment.NewLine + "line-2" + Environment.NewLine, reply.Text);
+
+        await writer.WriteAsync(new ShutdownCommand());
+        await p.StandardOutput.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(5));
         await p.WaitForExitAsync(new CancellationTokenSource(2000).Token);
     }
 

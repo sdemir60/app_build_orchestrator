@@ -36,6 +36,22 @@ public class JobObjectTests
         Assert.True(sw.ElapsedMilliseconds <= 2000, $"kaskat {sw.ElapsedMilliseconds}ms");
     }
 
+    /// <summary>[idle-memory · dalga 3 · B1 fix 1 · I-3 · PİN] Job'a ZATEN girmiş, çalışan bir üye, IOCP SONRADAN bağlandığında da doğum olarak
+    /// (<c>JOB_OBJECT_MSG_NEW_PROCESS</c>) bildirilir — Win32'nin ilişkilendirme davranışı. "Port bağlandıktan sonraki ilk doğum yeni süreçtir"
+    /// varsayımı bu yüzden yanlıştır; belirli bir süreci bekleyen testler onu kimliğiyle seçer (<see cref="JobBirths.WaitForProcess"/>).
+    /// PİN: işletim sisteminin davranışıdır, kodumuzun değil — değişirse bu test söyler (imaj süzgeci ön koşulu yine kesin tutar).</summary>
+    [Fact]
+    public void A_member_already_running_is_reported_as_born_when_a_port_is_attached_later()
+    {
+        using var job = JobObject.CreateKillOnClose();
+        using var child = JobProcessLauncher.Launch(job, SleepChildCmdLine(), new LaunchOptions());
+        using var iocp = job.AttachCompletionPort(); // üye ZATEN job'da ve çalışıyor
+
+        var born = JobBirths.WaitForBirth(iocp, child.Pid, TimeSpan.FromSeconds(10));
+
+        Assert.Contains(child.Pid, born);
+    }
+
     [Fact]
     public void Terminate_kills_assigned_child()
     {
