@@ -1133,6 +1133,35 @@ public class EngineWakeTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[T21 OOS-1 · round 2] Kapının "gönderme" dediği geçiş de kayıt bırakmaz: uyanma sürerken geri alınan koşunun geçişi kapsamının
+    /// sonunda bırakılır. Sonraki koşu hazır motora gider ve motoru ölürse kayıp onun açılışını bugünkü gibi bırakır. Sızan bir kayıt kaybın koşu
+    /// penceresini atlatır — gönderilmiş koşu, motoru ölmüşken Starting'te asılı kalırdı.
+    /// <para>KIRMIZI (geçici bozma: <c>BeginRunAsync</c> geçişi <c>using</c>'siz tutar — reddedilen geçiş hiç bırakılmaz): ölümden sonra
+    /// <c>IsStarting</c> açık kaldı.</para></summary>
+    [WpfFact]
+    public async Task A_refused_gate_pass_leaves_no_registration_behind()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _, sent, waking, build, _) = BuildWaitingForWake(dir);
+        await vm.StopCommand.ExecuteAsync(null); // bekleyen koşu geri alınır — kapı "gönderme" der
+        waking.SetResult(Woken());
+        DispatcherPump.DrainToIdle();
+        await build;
+        Assert.Empty(sent.Commands);                     // ön-koşul: ilk koşu gitmedi...
+        Assert.Equal(EngineState.Ready, vm.EngineState); // ...ve motor uyanık
+
+        var second = vm.BuildCommand.ExecuteAsync(null);
+        DispatcherPump.DrainToIdle();
+        await second;
+        Assert.IsType<StartRunCommand>(Assert.Single(sent.Commands)); // ön-koşul: ikinci koşu hazır motora gitti
+        Assert.True(vm.IsStarting);
+
+        vm.OnEngineExited(-1);
+
+        Assert.False(vm.IsStarting); // kayıp gönderilmiş koşunun açılışını bıraktı — geride kayıt yok
+        GC.KeepAlive(window);
+    }
+
     /// <summary>[T21 OOS-3 · R3 · PİN] Kapıda bekleyen bakım Clean'i de çıkışta geri çekilir — checkout ve pull da aynı yoldan geçer (gönderimin
     /// varsayılan yolu <c>TrySendAsync</c>): uyanma sürerken çıkış istenir; uyanma bitince Clean gönderilmez, kendi geri alımı (istek penceresi)
     /// pencereyi bırakır ve çıkış bir kez hazır olur. PİN: kapı R3'ten beri her komut türüne aynı soruyu sorar — kırmızısı gösterilemez; ileride
