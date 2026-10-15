@@ -10,6 +10,11 @@ namespace BuildOrchestrator.Tests.App;
 /// komut doğrudan <c>SendWithFailureLineAsync(...)</c> ile yazılırsa kapıyı sessizce atlar — uyuyan motora gönderim "Engine is not running."
 /// satırıyla düşer, uyandırma hiç olmaz — ve yol tablosu testi (<c>EngineWakeTests</c>) bunu görmez: yalnız bilinen yolları sürer.
 ///
+/// <para><b>[round 3] Zincirin alt halkaları da tek çağıranlıdır:</b> gönderimin tek yolu <c>SendToEngineAsync</c> (gözlemci + test dikişi +
+/// motor) yalnız <c>SendWithFailureLineAsync</c>'ten, motorun <c>SendAsync</c>'i yalnız <c>SendToEngineAsync</c>'ten çağrılır — kapıyı bir alt
+/// halkadan atlayan gönderim de kırmızıdır. Motorun gönderimi ALICIDAN BAĞIMSIZ taranır (<c>.SendAsync(</c>): <c>_engine</c> dışında bir
+/// referansla motora giden gönderim de görülür; App'te motorla ilgisiz bir <c>SendAsync</c> doğarsa izin listesine gerekçesiyle girer.</para>
+///
 /// <para><b>[round 2 · T21 OOS-1] Kapının geçişi unutulamaz:</b> kapı bir geçiş döner (<c>RunViewModel.GatePass</c>); kapıda beklemiş bir isteğin
 /// kaydı onunla yaşar ve motor kaybı kayıtlı isteğin penceresini bırakmaz. Her kapı çağrısı bir <c>using</c> bildiriminin başlatıcısıdır — bir
 /// çağıran geçişi tutmayı unutursa kayıt hiç silinmez ve sonraki her kayıp o türün penceresini atlar.</para>
@@ -18,14 +23,26 @@ namespace BuildOrchestrator.Tests.App;
 /// ardındaki branch envanteri için kapıya BİR kez soran Sync ve yerini yenisi alabilen proje logu. Çağrı adedi PİNLENMEZ, çağıran yöntem listesi
 /// pinlenir; yeni bir çağıran guard'ı kırmızıya çeker. Yöntemin kendi tanımı çağrı sayılmaz.</para>
 ///
+/// <para><b>Çağrının sahibi</b> kendinden önceki son üye bildirimidir (<see cref="MemberDeclaration"/>): [round 3] yöntemin yanında özellik, alan,
+/// olay ve iç içe tür de sınırdır — ifade gövdeli bir özellikteki ya da bir alanın başlatıcısındaki çağrı üstündeki (belki izinli) yönteme
+/// sayılmaz.</para>
+///
 /// <para><b>YAKALAYAMADIĞI (bilinçli sınır):</b> izinli bir yöntemin İÇİNDE kapıya sormadan yapılan gönderim ve yöntemi bir temsilciye bağlayıp
-/// başka yerden çağırmak — niyetin denetimi review'ın işidir. Tarama yorumları ve metin literallerini görmez
+/// başka yerden çağırmak — niyetin denetimi review'ın işidir. Adı devam satırında kalan ya da hiç belirteç taşımayan bir bildirim (arayüz üyesi
+/// gibi) sınır sayılmaz: içindeki çağrı üstündeki üyeye sayılır. Tarama yorumları ve metin literallerini görmez
 /// (<see cref="SourceLiterals.CodeOnly"/>): kuralı ANLATAN bir doküman satırı onu ihlal etmez.</para>
 /// </summary>
 public sealed class EngineGateGuardTests
 {
     /// <summary>Kapıdan geçmiş bir isteğin gönderimi — çağrı biçimi.</summary>
     private static readonly Regex GatedSend = new(@"\bSendWithFailureLineAsync\s*\(", RegexOptions.Compiled);
+
+    /// <summary>[round 3] Gönderimin tek yolu (gözlemci + test dikişi + motor) — çağrı biçimi.</summary>
+    private static readonly Regex EngineRoute = new(@"\bSendToEngineAsync\s*\(", RegexOptions.Compiled);
+
+    /// <summary>[round 3] Motorun gönderimi — alıcıdan BAĞIMSIZ: <c>_engine.SendAsync(</c>, <c>_engine?.SendAsync(</c> ya da motora giden başka bir
+    /// referans.</summary>
+    private static readonly Regex HostSend = new(@"\.\s*SendAsync\s*\(", RegexOptions.Compiled);
 
     /// <summary>Motor kapısının çağrısı.</summary>
     private static readonly Regex GateCall = new(@"\bEnsureEngineAwakeAsync\s*\(", RegexOptions.Compiled);
@@ -34,12 +51,16 @@ public sealed class EngineGateGuardTests
     /// <c>using (var x = await</c>).</summary>
     private static readonly Regex HeldWithUsing = new(@"using\s*(?:\(\s*)?var\s+\w+\s*=\s*await\s+$", RegexOptions.Compiled);
 
-    /// <summary>Sınıf üyesinin bildirimi: dosya kapsamlı namespace'te üyelerin girintisi (4 boşluk), en az bir erişim/biçim belirteci, dönüş türü,
-    /// ad ve parametre listesi. Yerel fonksiyonlar ve lambdalar daha derindedir ve belirteç taşımaz — içlerindeki çağrı, içinde bulundukları üyeye
-    /// sayılır.</summary>
+    /// <summary>Sınıf üyesinin bildirimi — çağrının sahibini belirleyen sınır: dosya kapsamlı namespace'te üyelerin girintisi (4 boşluk), en az bir
+    /// erişim/biçim belirteci ve [round 3] üyenin her biçimi: yöntem ve kurucu (ad + parametre listesi; tuple dönüş türü dahil), özellik (ifade
+    /// gövdeli ya da erişimci bloklu), alan ve olay (ad + <c>=</c> ya da <c>;</c>) ve iç içe tür (<c>class</c>/<c>struct</c>/<c>record</c>/…
+    /// + ad). Ad, satırda ardından bunlardan biri gelen İLK addır. Yerel fonksiyonlar ve lambdalar daha derindedir ve belirteç taşımaz — içlerindeki
+    /// çağrı, içinde bulundukları üyeye sayılır; iç içe türün üyeleri de daha derindedir — içlerindeki çağrı o türe sayılır.</summary>
     private static readonly Regex MemberDeclaration = new(
-        @"^ {4}(?:(?:public|private|internal|protected|static|async|override|sealed|virtual|partial|readonly|extern|unsafe)\s+)+"
-        + @"[^=;{}()\r\n]*?\b(?<name>\w+)\s*(?:<[^>\r\n]*>)?\s*\(",
+        @"^ {4}(?:(?:public|private|internal|protected|static|async|override|sealed|virtual|partial|readonly|extern|unsafe|const|event|required|new"
+        + @"|abstract|volatile)\s+)+"
+        + @"(?:(?:class|struct|interface|enum|record(?:\s+(?:class|struct))?)\s+(?<name>\w+)"
+        + @"|[^=;{}\r\n]*?\b(?<name>\w+)\s*(?:<[^>\r\n]*>)?\s*(?:\(|=|\{|;))",
         RegexOptions.Compiled | RegexOptions.Multiline);
 
     /// <summary>Kapıyı isteği için kendisi soran yöntemler — gönderimin meşru olduğu TEK yerler ve gerekçeleri.</summary>
@@ -51,18 +72,29 @@ public sealed class EngineGateGuardTests
         "LoadProjectLogAsync", // proje logu: kapının koşulu "yerini yenisi almadı"
     ];
 
+    /// <summary>[round 3] Gönderimin tek yolunun TEK çağıranı: kapıdan geçmiş isteğin tek gönderimi.</summary>
+    private static readonly IReadOnlyCollection<string> EngineRouteCallers = ["SendWithFailureLineAsync"];
+
+    /// <summary>[round 3] Motorun gönderiminin TEK çağıranı: gözlemciye bildiren, test dikişine ya da motora yönlendiren yol.</summary>
+    private static readonly IReadOnlyCollection<string> HostSendCallers = ["SendToEngineAsync"];
+
     /// <summary>Kaynaktaki bir çağrı: <c>dosya:satır</c>, içinde bulunduğu üye ve geçişi tutan bir <c>using</c>'in başlatıcısı olup olmadığı.</summary>
     private readonly record struct Call(string Where, string Member, bool Held);
 
     [Fact]
-    public void Only_the_gated_methods_call_the_gated_send()
-    {
-        var offenders = AppCalls(GatedSend).Where(c => !GatedCallers.Contains(c.Member)).Select(c => $"{c.Where} ({c.Member})").ToList();
+    public void Only_the_gated_methods_call_the_gated_send() =>
+        AssertCalledOnlyFrom(GatedSend, GatedCallers, "Motor kapısını atlayan gönderim (SendWithFailureLineAsync kapıya sormayan bir yöntemde):");
 
-        Assert.True(offenders.Count == 0,
-            "Motor kapısını atlayan gönderim (SendWithFailureLineAsync kapıya sormayan bir yöntemde):" + Environment.NewLine + "  "
-            + string.Join(Environment.NewLine + "  ", offenders));
-    }
+    /// <summary>[round 3] Kapı alt halkadan da atlanamaz: <c>SendToEngineAsync</c> yalnız <c>SendWithFailureLineAsync</c>'ten çağrılır.</summary>
+    [Fact]
+    public void Only_the_single_send_calls_the_engine_route() =>
+        AssertCalledOnlyFrom(EngineRoute, EngineRouteCallers, "Motor kapısını atlayan gönderim (SendToEngineAsync, SendWithFailureLineAsync dışında):");
+
+    /// <summary>[round 3] Kapı motorun kendisinden de atlanamaz: motorun <c>SendAsync</c>'i — hangi referansla olursa olsun — yalnız
+    /// <c>SendToEngineAsync</c>'ten çağrılır.</summary>
+    [Fact]
+    public void Only_the_engine_route_calls_the_hosts_send() =>
+        AssertCalledOnlyFrom(HostSend, HostSendCallers, "Motor kapısını atlayan gönderim (SendAsync, SendToEngineAsync dışında):");
 
     /// <summary>Vakum karşıtı: tarama izinli yöntemlerin her birinde en az bir gönderim ve en az bir kapı çağrısı görür — boş bir tarama guard'ı
     /// sessizce yeşil bırakırdı.</summary>
@@ -76,16 +108,22 @@ public sealed class EngineGateGuardTests
         Assert.All(GatedCallers, caller => Assert.Contains(caller, askers));
     }
 
+    /// <summary>[round 3] Vakum karşıtı: tarama gönderim zincirinin iki alt halkasını tek çağıranlarında görür.</summary>
+    [Fact]
+    public void The_guard_sees_every_link_of_the_send_chain()
+    {
+        var routeCallers = AppCalls(EngineRoute).Select(c => c.Member).ToHashSet();
+        var hostSendCallers = AppCalls(HostSend).Select(c => c.Member).ToHashSet();
+
+        Assert.All(EngineRouteCallers, caller => Assert.Contains(caller, routeCallers));
+        Assert.All(HostSendCallers, caller => Assert.Contains(caller, hostSendCallers));
+    }
+
     /// <summary>[round 2 · T21 OOS-1] Kapının her çağrısı geçişi bir <c>using</c> ile tutar: kayıt, istek motora teslim edilince ya da kapsamın
     /// sonunda bırakılır — hiçbir yolda sızamaz.</summary>
     [Fact]
-    public void Every_gate_pass_is_held_with_using()
-    {
-        var offenders = AppCalls(GateCall).Where(c => !c.Held).Select(c => $"{c.Where} ({c.Member})").ToList();
-
-        Assert.True(offenders.Count == 0,
-            "Kapının geçişi using ile tutulmuyor (kayıt sızabilir):" + Environment.NewLine + "  " + string.Join(Environment.NewLine + "  ", offenders));
-    }
+    public void Every_gate_pass_is_held_with_using() =>
+        AssertNoOffenders(AppCalls(GateCall).Where(c => !c.Held), "Kapının geçişi using ile tutulmuyor (kayıt sızabilir):");
 
     /// <summary>Guard'ın kendi kanıtı: kapıya sormayan bir yöntemdeki gönderim raporlanır; tanımın kendisi, yorum ve yerel fonksiyon raporlanmaz
     /// (yerel fonksiyonun içindeki çağrı içinde bulunduğu üyeye sayılır).</summary>
@@ -95,13 +133,13 @@ public sealed class EngineGateGuardTests
         var calls = CallsIn(@"ViewModels\RunViewModel.Fake.cs", """
             public sealed partial class RunViewModel
             {
-                private async Task<bool> SendWithFailureLineAsync(IpcCommand cmd, string failureLine) => await Task.FromResult(true);
+                private async Task<bool> SendWithFailureLineAsync(IpcCommand cmd, string failureLine, GatePass pass) => await Task.FromResult(true);
 
                 /// <summary>Kural anlatılır: SendWithFailureLineAsync(...) yalnız kapıdan sonra.</summary>
                 private async Task FutureCommandAsync()
                 {
                     bool Local() => true;
-                    if (Local()) await SendWithFailureLineAsync(new PingCommand(1), "[error] failed to send ping");
+                    if (Local()) await SendWithFailureLineAsync(new PingCommand(1), "[error] failed to send ping", GatePass.None);
                 }
             }
             """, GatedSend);
@@ -139,6 +177,72 @@ public sealed class EngineGateGuardTests
         var forgotten = Assert.Single(calls, c => !c.Held);
         Assert.Equal("ForgottenAsync", forgotten.Member);
         Assert.Equal(@"ViewModels\RunViewModel.Fake.cs:14", forgotten.Where);
+    }
+
+    /// <summary>[round 3] Guard'ın kendi kanıtı: motorun gönderimi alıcıdan bağımsız görülür — tek yolun kendi gönderimi izinlidir, başka bir
+    /// referansla yapılan gönderim raporlanır; yorum raporlanmaz.</summary>
+    [Fact]
+    public void The_rule_recognises_a_host_send_through_any_reference()
+    {
+        var calls = CallsIn(@"ViewModels\RunViewModel.Fake.cs", """
+            public sealed partial class RunViewModel
+            {
+                private Task SendToEngineAsync(IpcCommand cmd) => _engine?.SendAsync(cmd) ?? Task.CompletedTask;
+
+                /// <summary>Kural anlatılır: _engine.SendAsync(...) yalnız SendToEngineAsync'ten.</summary>
+                private async Task StrayAsync(EngineHost host)
+                {
+                    await host.SendAsync(new PingCommand(1));
+                }
+            }
+            """, HostSend);
+
+        Assert.Equal(2, calls.Count);
+        var stray = Assert.Single(calls, c => !HostSendCallers.Contains(c.Member));
+        Assert.Equal("StrayAsync", stray.Member);
+        Assert.Equal(@"ViewModels\RunViewModel.Fake.cs:8", stray.Where);
+    }
+
+    /// <summary>[round 3] Guard'ın kendi kanıtı — çağrının sahibi: ifade gövdeli bir özellikteki ve bir alanın başlatıcısındaki çağrı o üyeye
+    /// sayılır, üstündeki (izinli) yönteme değil; iç içe bir türün içindeki çağrı o türe sayılır.
+    /// <para>KIRMIZI (round 2 bildirim kalıbı yalnız parametre listeli üyeleri sınır sayıyordu): dört çağrının dördü de üstteki
+    /// <c>SendWithFailureLineAsync</c>'e sayıldı — özellikteki gönderim izinli görünürdü.</para></summary>
+    [Fact]
+    public void The_rule_attributes_a_call_in_a_property_or_a_field_to_that_member()
+    {
+        var calls = CallsIn(@"ViewModels\RunViewModel.Fake.cs", """
+            public sealed partial class RunViewModel
+            {
+                private async Task<bool> SendWithFailureLineAsync(IpcCommand cmd, string failureLine, GatePass pass)
+                {
+                    await SendToEngineAsync(cmd);
+                    return true;
+                }
+
+                private Task Ping => SendToEngineAsync(new PingCommand(1));
+
+                private readonly Func<Task> _pong = () => SendToEngineAsync(new PingCommand(2));
+
+                private sealed class Nested
+                {
+                    public Task SendAsync() => SendToEngineAsync(new PingCommand(3));
+                }
+            }
+            """, EngineRoute);
+
+        Assert.Equal(["SendWithFailureLineAsync", "Ping", "_pong", "Nested"], calls.Select(c => c.Member));
+    }
+
+    /// <summary>App kaynağında çağrının yalnız izinli üyelerden yapıldığını doğrular.</summary>
+    private static void AssertCalledOnlyFrom(Regex call, IReadOnlyCollection<string> callers, string message) =>
+        AssertNoOffenders(AppCalls(call).Where(c => !callers.Contains(c.Member)), message);
+
+    /// <summary>İhlal yoksa geçer; varsa her birini <c>dosya:satır (üye)</c> olarak listeler.</summary>
+    private static void AssertNoOffenders(IEnumerable<Call> offenders, string message)
+    {
+        var lines = offenders.Select(c => $"{c.Where} ({c.Member})").ToList();
+
+        Assert.True(lines.Count == 0, message + Environment.NewLine + "  " + string.Join(Environment.NewLine + "  ", lines));
     }
 
     /// <summary>App kaynağındaki bütün çağrılar.</summary>
