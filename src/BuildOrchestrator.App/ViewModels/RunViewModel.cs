@@ -1090,7 +1090,8 @@ public sealed partial class RunViewModel : ObservableObject
         if (OperationChoreography is { } playChoreography) await playChoreography(scope);
         // [idle-memory · dalga 3 · Task 21 · karar 18 · C4] Uyuyan motor bekleyen-koşu penceresinin İÇİNDE, koreografiden sonra uyanır:
         // uyanma sürerken kimlik durur — Stop/Esc, branch kesmesi ve çıkış komutu değil isteği geri alır (CancelPendingRun, komut gitmez).
-        bool awake = StillPending() && await EnsureEngineAwakeAsync(typeof(StartRunCommand));
+        // Kapı isteği için TEK kez sorulur ve geri alınan isteğe yeni uyanma başlatmaz (koşul: kimlik hâlâ bu koşunun — Mi4).
+        bool awake = StillPending() && await EnsureEngineAwakeAsync(typeof(StartRunCommand), StillPending);
         // Koreografi ya da uyanma sırasında Stop'a basıldıysa (ya da başka bir işlem devraldıysa) komut GİTMEZ; geri alım onundur.
         if (!StillPending()) return;
         _pendingRunId = null;
@@ -1104,7 +1105,7 @@ public sealed partial class RunViewModel : ObservableObject
             var cmd = new StartRunCommand(runId, mode, RootPath, Configuration, Parallelism,
                 DependentMode.Safe, LayerPatterns, PerfMode,
                 ExternalProjectsForWire, UpdateExternals, scopeProjectId, runPerf.ResolveAtFullPriority);
-            if (await TrySendAsync(cmd, RunModeLabel(mode))) return;
+            if (await SendWithFailureLineAsync(cmd, SendFailedLine(RunModeLabel(mode)))) return;
         }
         // Komut gitmedi (motor kapısı "gönderme" dedi ya da gönderim düştü): hiçbir engine event'i gelmeyecek — faz Starting'te asılı
         // bırakılamaz. [karar 34] Kapıda beklerken motor kaybedildiyse bu geri alım yine buradadır, tek kez (motor kaybı onu yapmaz).
@@ -1437,9 +1438,17 @@ public sealed partial class RunViewModel : ObservableObject
         // basılan ilk Sync anında "cevap vermiyor" derdi (saat son motor event'inden beri bayattır).
         // OnIsStartingChanged'in ve OnPhaseChanged'in aynı satırı.
         ArmEngineWatchdog();
-        bool sent = await TrySendAsync(
+        // [idle-memory · dalga 3 · Task 21 · Fix round 1 · I1 · Go2] Motor kapısı Sync ve ardındaki branch envanteri için TEK kez sorulur — ikisi
+        // aynı isteğin parçasıdır. Kapı "gönderme" derse (kural EnsureEngineAwakeAsync'te) ikisi de gitmez, satır yazılmaz ve yalnız Sync'in
+        // kendi geri alımı çalışır (C23: ikinci deneme yok). Gönderim düşerse bugünkü iki satır yazılır.
+        if (!await EnsureEngineAwakeAsync(typeof(SyncWorkspaceCommand)))
+        {
+            ReleaseSyncRequest();
+            return false;
+        }
+        bool sent = await SendWithFailureLineAsync(
             new SyncWorkspaceCommand(RootPath, Branch, LayerPatterns, Configuration, ExternalProjectsForWire,
-                Fetch: mode.Fetches()), "sync");
+                Fetch: mode.Fetches()), SendFailedLine("sync"));
         // Gönderim SENKRON düştüyse (engine hazır değil/ölü) hiçbir syncStarted GELMEYECEK — kapı burada
         // açılmazsa Sync düğmesi kalıcı pasif kalırdı. Envanter komutları yine de GÖNDERİLİR: onlar Sync'in
         // event akışından bağımsızdır ve tek huni buradan geçer (bkz. aşağıdaki gerekçeler).
@@ -1452,7 +1461,7 @@ public sealed partial class RunViewModel : ObservableObject
         // Ayrı bir komut olarak GİDER (Sync'in kendi event akışına karışmaz): Supervisor sıradaki komut olarak
         // işler ve hatası AYRI bir kodla döner ("branchListFailed", SupervisorHost.cs:138) — RunEndingErrorCodes'ta
         // ve SyncErrorCodes'ta OLMADIĞI için bir Sync hatası gibi yanlış atfedilemez.
-        await TrySendAsync(new ListBranchesCommand(RootPath), "listBranches");
+        await SendWithFailureLineAsync(new ListBranchesCommand(RootPath), SendFailedLine("listBranches"));
         return sent;
     }
     // [D1 review · A3] Motor erişilemezken gönderim anlamsız.
@@ -1970,24 +1979,32 @@ public sealed partial class RunViewModel : ObservableObject
         FinishedOfWillBuild = fin;
     }
 
-    /// <summary>Engine hazır değilken (henüz başlamadı/çöktü) SendAsync SENKRON fırlar — UI tıklaması bu
-    /// yüzden çökmemeli; hata run dokümanına düşürülür, sessizce yutulmaz. Dönen <c>bool</c>, çağıranın
-    /// gönderim BAŞARISIZ olduğunda kendi "starting" durumunu geri açabilmesi içindir — bu metot kendi başına
-    /// hiçbir bound-state'e dokunmaz. Gönderimin kendisi <see cref="SendToEngineAsync"/>'tir.
-    /// <para>[idle-memory · dalga 3 · Task 21 · karar 17/33] Gönderimden ÖNCE motor kapısı (<see cref="EnsureEngineAwakeAsync"/>): uyuyan
-    /// motoru uyandırır, uyku sürüyorsa bitmesini bekler; uyanık olmayan motora uyandırmayan komutu (Stop, perf chip) ve ölü ya da erişilemez
-    /// motora hiçbir komutu göndermez. Kapı "gönderme" derse satır YAZILMAZ — tek sinyal kapının özetindedir — ve <c>false</c> döner: çağıran
-    /// aynı geri alımı çalıştırır.</para></summary>
-    private async Task<bool> TrySendAsync(IpcCommand cmd, string what)
+    /// <summary>Gönderimin varsayılan yolu — [idle-memory · dalga 3 · Task 21 · Fix round 1 · Go2] motor kapısı ve ardından tek gönderim:
+    /// kapı "gönderme" derse (kural <see cref="EnsureEngineAwakeAsync"/>'te) satır yazılmaz ve <c>false</c> döner; gönderim düşerse
+    /// (<see cref="SendWithFailureLineAsync"/>) bugünkü <c>[error] failed to send {what}: …</c> satırı yazılır ve yine <c>false</c> döner. Dönen
+    /// <c>bool</c>, çağıranın gönderim BAŞARISIZ olduğunda kendi "starting" durumunu geri açabilmesi içindir — bu metot kendi başına hiçbir
+    /// bound-state'e dokunmaz. Kapıyı isteği için kendisi soran çağıranlar (koşu, Sync, proje logu) gönderimi doğrudan
+    /// <see cref="SendWithFailureLineAsync"/> ile yapar — istek başına TEK kapı sorusu.</summary>
+    private async Task<bool> TrySendAsync(IpcCommand cmd, string what) =>
+        await EnsureEngineAwakeAsync(cmd.GetType()) && await SendWithFailureLineAsync(cmd, SendFailedLine(what));
+
+    /// <summary>[Fix round 1 · Go2] Kapıdan geçmiş bir isteğin TEK gönderimi: komutu gönderir (<see cref="SendToEngineAsync"/>); gönderim düşerse —
+    /// motor hazır değilken (henüz başlamadı, öldü, erişilemez) <c>SendAsync</c>'in SENKRON fırlaması dahil — UI tıklaması çökmez, hata
+    /// <c>{failureLine}: {hatanın metni}</c> olarak konsola TEK satır düşer, sessizce yutulmaz. Kapıyı çağıran sorar.</summary>
+    /// <param name="failureLine">Düşen gönderimin satırının başı: <see cref="SendFailedLine"/> ya da isteğin kendi metni (proje logu).</param>
+    /// <returns>Gönderim kabul edildi mi.</returns>
+    private async Task<bool> SendWithFailureLineAsync(IpcCommand cmd, string failureLine)
     {
-        if (!await EnsureEngineAwakeAsync(cmd.GetType())) return false;
         var send = SendToEngineAsync(cmd);
         try { await send; return true; }
-        catch (Exception ex) { AppendRunLine($"[error] failed to send {what}: {ex.Message}"); return false; }
+        catch (Exception ex) { AppendRunLine($"{failureLine}: {ex.Message}"); return false; }
     }
 
-    /// <summary>Bir komutu motora göndermenin TEK yolu — <see cref="TrySendAsync"/> ve proje log isteği
-    /// (<see cref="LoadProjectLogAsync"/>) bunu kullanır; ikisi de buraya motor kapısından (<see cref="EnsureEngineAwakeAsync"/>) geçerek gelir: önce gözlemciye bildirir (<see cref="DebugOnCommandSent"/>), sonra
+    /// <summary>Düşen bir komut gönderiminin satırının başı — <c>[error] failed to send {what}</c>; metnin TEK yeri.</summary>
+    private static string SendFailedLine(string what) => $"[error] failed to send {what}";
+
+    /// <summary>Bir komutu motora göndermenin TEK yolu — gönderimler buraya <see cref="SendWithFailureLineAsync"/> üzerinden, motor kapısından
+    /// (<see cref="EnsureEngineAwakeAsync"/>) geçerek gelir: önce gözlemciye bildirir (<see cref="DebugOnCommandSent"/>), sonra
     /// gönderimi test dikişine (<see cref="DebugSendOverride"/>) ya da motora yönlendirir. Gönderimin hatası — motor hazır değilken
     /// <c>SendAsync</c>'in SENKRON fırlaması dahil — dönen görevde taşınır; çağıran onu kendi hata satırıyla karşılar ve görev
     /// zaten düşmüşse <c>await</c> askıya almadan fırlatır. Gözlemcinin kendi istisnası bir gönderim hatası DEĞİLDİR, çağırana
@@ -2939,9 +2956,8 @@ public sealed partial class RunViewModel : ObservableObject
 
     /// <summary>Motor GİTTİ — beklenmedik ölümle (<see cref="OnEngineExited"/>) ya da kullanıcının kasıtlı
     /// yeniden başlatmasıyla (<see cref="RestartEngineAsync"/>). Her iki yolda da uçuştaki run/Sync pencereleri
-    /// serbest bırakılır: o motorun asla göndermeyeceği event'leri bekleyen hiçbir durum kalmamalıdır. [Task 21 · karar 34] Bir geçişin
-    /// (uyku, uyanma) ortasındaki kayıpta çağrılmaz: o pencereler kapıda bekleyen, hiç gönderilmemiş isteklerindir ve kendi geri alımları
-    /// bırakır (gerekçe <see cref="ReportEngineDead"/>'de).
+    /// serbest bırakılır: o motorun asla göndermeyeceği event'leri bekleyen hiçbir durum kalmamalıdır. [Task 21 · karar 34] Uyku döngüsündeki
+    /// bir kayıpta çağrılmaz (gerekçe <see cref="ReportEngineDead"/>'de).
     ///
     /// <para><b>Neden iki çağıran:</b> <see cref="EngineHost.RestartAsync"/> önce <c>_generation</c>'ı artırır
     /// (eski exit-watcher susturulur) ve ancak sonra child'ı öldürür — yani YAŞAYAN bir motoru yeniden
@@ -3441,9 +3457,10 @@ public sealed partial class RunViewModel : ObservableObject
     /// eklenir ve konsol proje moduna geçer — motorun "log yok" cevabı da böyle biter (bkz. <see cref="OnProjectLogChunk"/>).
     /// SendAsync engine hazır değilken senkron fırlarsa yutulur — UI
     /// tıklaması çökmemeli; dikiş silahlı kalır ve gecikmiş bir chunk'la yine tamamlanabilir.
-    /// <para>[idle-memory · dalga 3 · Task 21 · karar 33] Doğrudan gönderim de motor kapısından geçer (<see cref="EnsureEngineAwakeAsync"/>): uyuyan
-    /// motoru uyandırır, uyku sürüyorsa bitmesini bekler; ölü ya da erişilemez motora istek gitmez — kapının reddi düşen gönderimle aynı geri
-    /// alımı alır, satırsız (tek sinyal kapının özetinde).</para>
+    /// <para>[idle-memory · dalga 3 · Task 21 · karar 33 · Fix round 1 · Go2] Gönderim önce motor kapısından geçer (<see cref="EnsureEngineAwakeAsync"/> —
+    /// kural orada; isteğin hâlâ istendiği koşulu: yerini yenisi almamış olması), sonra tek gönderimle (<see cref="SendWithFailureLineAsync"/>,
+    /// bugünkü <c>[error] could not load project log: …</c> satırıyla). İki "gitmedi" de — kapının reddi (satırsız) ve düşen gönderim — aynı geri
+    /// alımı alır.</para>
     /// </summary>
     public async Task LoadProjectLogAsync(string projectId)
     {
@@ -3457,20 +3474,8 @@ public sealed partial class RunViewModel : ObservableObject
         // sürerken de kurulu kalır: boşta kuralı cevabı beklenen yüklemeyi uyutmaz (HasPendingLogLoad).
         _pendingLoad = pending;
         NotifyPendingLogLoad(wasPending);
-        bool sent = false;
-        if (await EnsureEngineAwakeAsync(typeof(GetProjectLogCommand)))
-        {
-            var send = SendToEngineAsync(new GetProjectLogCommand(projectId, pending.RequestId));
-            try
-            {
-                await send;
-                sent = true;
-            }
-            catch (Exception ex)
-            {
-                AppendRunLine($"[error] could not load project log: {ex.Message}");
-            }
-        }
+        bool sent = await EnsureEngineAwakeAsync(typeof(GetProjectLogCommand), stillWanted: () => ReferenceEquals(_pendingLoad, pending))
+            && await SendWithFailureLineAsync(new GetProjectLogCommand(projectId, pending.RequestId), "[error] could not load project log");
         if (!sent)
         {
             // İstek yola çıkmadı: gönderim düştü ya da motor kapısı "gönderme" dedi.

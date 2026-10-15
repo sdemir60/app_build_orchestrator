@@ -67,11 +67,14 @@ internal sealed class EngineSleepProbe
 
     /// <summary>Uyuyabilen kabuk: topolojisi akmış pencere (tek proje "A"), saat testin elinde, iki dikiş sahte, ayar AÇIK (fixture döndükten
     /// sonra — <paramref name="stopWhenIdle"/>), gönderimler kabul edilir ve motor HAZIR: kabuğun açılış yolu — hazır bildirimi
-    /// (<c>OnEngineReady</c>) açılış Sync'ini gönderir, motor onu cevaplar. Dönüşte VM boştadır ve son motor etkinliği şimdidir.</summary>
+    /// (<c>OnEngineReady</c>) açılış Sync'ini gönderir, motor onu cevaplar. Dönüşte VM boştadır ve son motor etkinliği şimdidir. Tam çıkış
+    /// isteyen testler gerçek uygulamayı kapatmaz ve pencere göstermez: kabuğun iki çıkış dikişi no-op'tur (<c>CloseToTrayTests</c> deseni).</summary>
     public static (MainWindow Window, RunViewModel Vm, EngineSleepProbe Probe) ReadyShell(TempDir dir, Func<long> nowMs,
         bool stopWhenIdle = true)
     {
         var (window, vm, _) = MainWindowHost.NewWithProjectsAndClock(dir, nowMs, ("A", null));
+        window.ShutdownApplication = () => { };
+        window.BringForward = () => { };
         if (stopWhenIdle) vm.StopEngineWhenIdle = true;
         var probe = Attach(vm);
         MainWindowHost.AcceptSends(vm);

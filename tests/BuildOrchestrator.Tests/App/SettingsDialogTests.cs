@@ -265,7 +265,7 @@ public class SettingsDialogTests
         // aliasing zaten fiziksel olarak imkânsız olduğundan iddia hep-doğru (anlamsız) kalırdı.
         // Commit KÖKÜ de taşır: aynı ayrımcı kanıt bekleyen repo kökü için de gerekir (aksi halde "Commit
         // çağrılmadı → kök eski" iddiası, kökü hiç uygulamayan bir Commit'te de yeşil kalırdı). Commit'in
-        // sürdüğü Sync gönderimi engine hiç başlatılmadığı için hataya düşer ve TrySendAsync onu yutar —
+        // sürdüğü Sync gönderimi engine hiç başlatılmadığı için hataya düşer ve gönderim yolu (SendWithFailureLineAsync) onu yutar —
         // burada gözlenen tek etki kökün kendisidir.
         await editor.CommitAsync(run, store);
         Assert.Equal(2, run.LayerPatterns!.Count);

@@ -18,9 +18,9 @@ namespace BuildOrchestrator.App.ViewModels;
 /// <para><b>Bekleyiş sonsuz değildir:</b> motor susarsa sessizlik bekçisinin uyarısı (<see cref="EngineOverdueMessage"/>)
 /// çıkışı serbest bırakır — bekçi çıkışın bulunabileceği her pencerede (Starting, Stopping, Syncing, workspace işi)
 /// zaten kuruludur. Motor ölürse <see cref="ReleaseAfterEngineLoss"/> her pencereyi bırakır ve koşul kendiliğinden
-/// doğrulanır. [idle-memory · dalga 3 · Task 21] Uyku ya da uyanma sürerken kaybedilen motorda pencereler motor kapısında bekleyen,
-/// hiç gönderilmemiş isteklerindir: onları kapı "gönderme" deyince kendi geri alımları bırakır (<c>ReportEngineDead</c>); uyanma
-/// sürerken istenen çıkışta bekleyen koşu Stop'un kuralıyla komutsuz geri alınır ve çıkış hemen hazırdır.</para>
+/// doğrulanır. [idle-memory · dalga 3 · Task 21] Motor kapısında bekleyen istekleri (<see cref="EnsureEngineAwakeAsync"/>: uyku döngüsü)
+/// çıkış isteği geri çeker — hiçbiri gönderilmez, her biri kendi geri alımıyla pencereyi bırakır ve koşul kendiliğinden doğrulanır; bekleyen
+/// koşu ayrıca Stop'un kuralıyla komutsuz geri alınır.</para>
 ///
 /// <para><b>Değerlendirme noktaları:</b> meşguliyet bildiriminin tek noktası (<see cref="OnWorkspaceBusyChanged"/> —
 /// her iş bayrağı ve koşu kilidi geçişi oraya iner) ve bekçinin uyarısı (<see cref="OnEngineOverdueMessageChanged"/>).
@@ -44,7 +44,9 @@ public sealed partial class RunViewModel
     /// durumu gösterir; bkz. <see cref="StopRequestedLine"/>).</summary>
     internal static string ExitPendingLine => "exit requested — the app closes when the work in flight finishes";
 
-    /// <summary>Çıkış istendi: ikinci istek (ikinci ×, tepsi → Exit) durum ne olursa olsun tam no-op'tur.</summary>
+    /// <summary>Çıkış istendi: ikinci istek (ikinci ×, tepsi → Exit) durum ne olursa olsun tam no-op'tur. [Task 21 · Fix round 1 · R3] Motor
+    /// kapısının çıkış sorusu da budur (<see cref="EnsureEngineAwakeAsync"/>): <see cref="ExitPending"/> yalnız uçuşta iş varken açılır, kapıda
+    /// yalnız bir proje logu yüklemesi bekliyorsa hiç açılmaz.</summary>
     private bool _exitRequested;
 
     /// <summary><see cref="ExitReady"/> atıldı — birden çok değerlendirme noktası aynı anı görebilir.</summary>

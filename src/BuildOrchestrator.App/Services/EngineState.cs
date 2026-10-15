@@ -6,8 +6,7 @@ namespace BuildOrchestrator.App.Services;
 /// (<c>EngineDiedMessage</c>, <c>IsEngineUnavailable</c>) UI'ın bayrakları olarak kalır, aynı yerlerde yazılır ve onunla aynı şeyi söyler.
 /// Yalnız <see cref="Ready"/> motor uyutulabilir: geçişler (<see cref="Starting"/>, <see cref="Sleeping"/>, <see cref="Waking"/>) ve konuşacak
 /// süreci olmayan durumlar (<see cref="Asleep"/>, <see cref="Dead"/>, <see cref="Unavailable"/>) uyutulmaz. Aynı alan VM'in motor kapısını
-/// da sürer (<c>RunViewModel.EnsureEngineAwakeAsync</c> — motora gönderimden önce hangi durumda uyandırılacağı, bekleneceği ya da
-/// gönderilmeyeceği).
+/// da sürer — gönderim kuralının tek ifadesi <c>RunViewModel.EnsureEngineAwakeAsync</c>'in özetindedir.
 /// </summary>
 public enum EngineState
 {
@@ -26,13 +25,14 @@ public enum EngineState
     Asleep,
 
     /// <summary>[dalga 3 · Task 21 · karar 32] Uyanma sürüyor: bir komut yolu uyuyan motoru başlatıyor (<see cref="EngineHost.WakeAsync"/>
-    /// bitmedi) — geçiş. Uyanmayı isteyen her yol AYNI uyanmaya katılır (tek uçuş, <c>RunViewModel.EnsureEngineAwakeAsync</c>); kural
-    /// uyutmaz. Uyanma bitince <see cref="Ready"/>; düşerse kurulum hatasında <see cref="Unavailable"/>, doğup hazır olamayan motorda ölüm
-    /// sinyaliyle <see cref="Dead"/>.</summary>
+    /// bitmedi) — geçiş; kural uyutmaz. Uyanma bitince <see cref="Ready"/>; düşerse kurulum hatasında <see cref="Unavailable"/>, doğup hazır
+    /// olamayan motorda <see cref="Dead"/> (ölüm sinyaliyle; sinyal hiç gelmezse kapıya yeni giren ilk yolda — kural
+    /// <c>RunViewModel.EnsureEngineAwakeAsync</c>'te).</summary>
     Waking,
 
-    /// <summary>Motor kaybedildi — kendiliğinden öldü (<see cref="EngineHost.EngineExited"/>) ya da uykusu durdurmanın ortasında düştü (ölüm
-    /// sinyali gelmez, konak ne uyuyor ne canlı): şerit ölüm satırını ve "Restart engine"i gösterir; toparlamak yeniden başlatmanın işidir.</summary>
+    /// <summary>Motor kaybedildi — kendiliğinden öldü (<see cref="EngineHost.EngineExited"/>), uykusu durdurmanın ortasında düştü (ölüm sinyali
+    /// gelmez, konak ne uyuyor ne canlı) ya da uyanması ölüm sinyali gelmeden düştü: şerit ölüm satırını ve "Restart engine"i gösterir;
+    /// toparlamak yeniden başlatmanın işidir.</summary>
     Dead,
 
     /// <summary>Motor hiç doğamadı (kurulum eksik ya da bozuk — <see cref="EngineUnavailableException"/>): komutlar kapalıdır
