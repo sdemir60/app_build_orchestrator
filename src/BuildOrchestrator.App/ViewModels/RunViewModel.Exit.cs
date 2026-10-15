@@ -17,8 +17,8 @@ namespace BuildOrchestrator.App.ViewModels;
 ///
 /// <para><b>Bekleyiş sonsuz değildir:</b> motor susarsa sessizlik bekçisinin uyarısı (<see cref="EngineOverdueMessage"/>)
 /// çıkışı serbest bırakır — bekçi çıkışın bulunabileceği her pencerede (Starting, Stopping, Syncing, workspace işi)
-/// zaten kuruludur. Motor ölürse <see cref="ReleaseAfterEngineLoss"/> her pencereyi bırakır — motor kapısında bekleyen isteklerinkiler
-/// hariç: onları kendi geri alımları bırakır — ve koşul kendiliğinden doğrulanır. [idle-memory · dalga 3 · Task 21] Motor kapısında bekleyen
+/// zaten kuruludur. Motor ölürse <see cref="ReleaseAfterEngineLoss"/> her pencereyi bırakır — kapıdan geçişini tutan (motora henüz teslim
+/// edilmemiş) isteklerinkiler hariç: onları kendi geri alımları bırakır — ve koşul kendiliğinden doğrulanır. [idle-memory · dalga 3 · Task 21] Motor kapısında bekleyen
 /// istekleri (<see cref="EnsureEngineAwakeAsync"/>: uyku döngüsü) çıkış isteği geri çeker — hiçbiri gönderilmez, her biri kendi geri alımıyla
 /// pencereyi bırakır ve koşul kendiliğinden doğrulanır; bekleyen koşu ayrıca Stop'un kuralıyla komutsuz geri alınır.</para>
 ///

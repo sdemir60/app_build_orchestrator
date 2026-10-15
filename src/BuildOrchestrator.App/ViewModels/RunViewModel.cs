@@ -995,14 +995,16 @@ public sealed partial class RunViewModel : ObservableObject
         // başlar ve koreografiyle örtüşür: komut ikisi de bitince gider, bekleyiş yalnız uzun olanınki kadardır. Kapı isteği için TEK kez sorulur;
         // uyanma sürerken kimlik durur — Stop/Esc, branch kesmesi ve çıkış komutu değil isteği geri alır (CancelPendingRun, komut gitmez) ve geri
         // alınan isteğe yeni uyanma başlamaz (koşul: kimlik hâlâ bu koşunun — Mi4). Başlamış bir uyanma paylaşılan iştir: biter, motor hazır
-        // kalır. Uyanık motorda kapı askıya girmez — cevabı tıklama anında "gönder"dir.
-        var gate = EnsureEngineAwakeAsync(typeof(StartRunCommand), StillPending);
-        if (OperationChoreography is { } playChoreography) await playChoreography(scope);
-        bool awake = await gate;
+        // kalır. Uyanık motorda kapı askıya girmez — cevabı tıklama anında "gönder"dir. [round 2 · OOS-1] Kapının geçişi komut teslim edilene ya da
+        // geri alım bitene dek tutulur (using): kapıda beklemiş koşunun açılışını bu arada gelen bir motor kaybı sıfırlamaz. Koreografi kapıdan ÖNCE
+        // başlatılır: senkron kısmı fırlasa bile tutulmayan bir geçiş — geride bir kayıt — kalmaz.
+        var choreography = OperationChoreography is { } playChoreography ? playChoreography(scope) : Task.CompletedTask;
+        using var pass = await EnsureEngineAwakeAsync(typeof(StartRunCommand), StillPending);
+        await choreography;
         // Koreografi ya da uyanma sırasında Stop'a basıldıysa (ya da başka bir işlem devraldıysa) komut GİTMEZ; geri alım onundur.
         if (!StillPending()) return;
         _pendingRunId = null;
-        if (awake)
+        if (pass.Send)
         {
             // [T20-b/K11] PerfMode de gider: paralellik (Parallelism) ve cap/priority (PerfMode) AYNI profil
             // satırının iki yarısıdır — Supervisor cap'i o addan çözer, worker sayısını YENİDEN türetmez.
@@ -1012,7 +1014,7 @@ public sealed partial class RunViewModel : ObservableObject
             var cmd = new StartRunCommand(runId, mode, RootPath, Configuration, Parallelism,
                 DependentMode.Safe, LayerPatterns, PerfMode,
                 ExternalProjectsForWire, UpdateExternals, scopeProjectId, runPerf.ResolveAtFullPriority);
-            if (await SendWithFailureLineAsync(cmd, SendFailedLine(RunModeLabel(mode)))) return;
+            if (await SendWithFailureLineAsync(cmd, SendFailedLine(RunModeLabel(mode)), pass)) return;
         }
         // Komut gitmedi (motor kapısı "gönderme" dedi ya da gönderim düştü): hiçbir engine event'i gelmeyecek — faz Starting'te asılı
         // bırakılamaz. [karar 34] Kapıda beklerken motor kaybedildiyse bu geri alım yine buradadır, tek kez (motor kaybı onu yapmaz).
@@ -1349,15 +1351,17 @@ public sealed partial class RunViewModel : ObservableObject
         ArmEngineWatchdog();
         // [idle-memory · dalga 3 · Task 21 · Fix round 1 · I1 · Go2] Motor kapısı Sync ve ardındaki branch envanteri için TEK kez sorulur — ikisi
         // aynı isteğin parçasıdır. Kapı "gönderme" derse (kural EnsureEngineAwakeAsync'te) ikisi de gitmez, satır yazılmaz ve yalnız Sync'in
-        // kendi geri alımı çalışır (C23: ikinci deneme yok). Gönderim düşerse bugünkü iki satır yazılır.
-        if (!await EnsureEngineAwakeAsync(typeof(SyncWorkspaceCommand)))
+        // kendi geri alımı çalışır (C23: ikinci deneme yok). Gönderim düşerse bugünkü iki satır yazılır. [round 2 · OOS-1] Geçiş Sync teslim
+        // edilene ya da geri alım bitene dek tutulur: kapıda beklemiş Sync'i bu arada gelen bir motor kaybı bitmiş saymaz.
+        using var pass = await EnsureEngineAwakeAsync(typeof(SyncWorkspaceCommand));
+        if (!pass.Send)
         {
             ReleaseSyncRequest();
             return false;
         }
         bool sent = await SendWithFailureLineAsync(
             new SyncWorkspaceCommand(RootPath, Branch, LayerPatterns, Configuration, ExternalProjectsForWire,
-                Fetch: mode.Fetches()), SendFailedLine("sync"));
+                Fetch: mode.Fetches()), SendFailedLine("sync"), pass);
         // Gönderim SENKRON düştüyse (engine hazır değil/ölü) hiçbir syncStarted GELMEYECEK — kapı burada
         // açılmazsa Sync düğmesi kalıcı pasif kalırdı. Envanter komutları yine de GÖNDERİLİR: onlar Sync'in
         // event akışından bağımsızdır ve tek huni buradan geçer (bkz. aşağıdaki gerekçeler).
@@ -3054,7 +3058,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// <para>[idle-memory · dalga 3 · Task 21 · karar 33 · Fix round 1 · Go2] Gönderim önce motor kapısından geçer (<see cref="EnsureEngineAwakeAsync"/> —
     /// kural orada; isteğin hâlâ istendiği koşulu: yerini yenisi almamış olması), sonra tek gönderimle (<see cref="SendWithFailureLineAsync"/>,
     /// bugünkü <c>[error] could not load project log: …</c> satırıyla). İki "gitmedi" de — kapının reddi (satırsız) ve düşen gönderim — aynı geri
-    /// alımı alır.</para>
+    /// alımı alır. [round 2] Kapının geçişi gönderim boyunca tutulur (<see cref="GatePass"/>).</para>
     /// </summary>
     public async Task LoadProjectLogAsync(string projectId)
     {
@@ -3068,8 +3072,9 @@ public sealed partial class RunViewModel : ObservableObject
         // sürerken de kurulu kalır: boşta kuralı cevabı beklenen yüklemeyi uyutmaz (HasPendingLogLoad).
         _pendingLoad = pending;
         NotifyPendingLogLoad(wasPending);
-        bool sent = await EnsureEngineAwakeAsync(typeof(GetProjectLogCommand), stillWanted: () => ReferenceEquals(_pendingLoad, pending))
-            && await SendWithFailureLineAsync(new GetProjectLogCommand(projectId, pending.RequestId), "[error] could not load project log");
+        bool sent;
+        using (var pass = await EnsureEngineAwakeAsync(typeof(GetProjectLogCommand), stillWanted: () => ReferenceEquals(_pendingLoad, pending)))
+            sent = pass.Send && await SendWithFailureLineAsync(new GetProjectLogCommand(projectId, pending.RequestId), "[error] could not load project log", pass);
         if (!sent)
         {
             // İstek yola çıkmadı: gönderim düştü ya da motor kapısı "gönderme" dedi.

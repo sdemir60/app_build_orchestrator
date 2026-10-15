@@ -1017,6 +1017,91 @@ public class EngineWakeTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[T21 OOS-1 · round 2] Kapının "gönder" kararı ile isteğin motora teslimi arasında bir dispatcher sıçrayışı vardır: her <c>await</c>
+    /// devamını post eder. Ölüm tam bu sıçrayışta gelirse — uyanma başarılı, kapıda bekleyen Sync "gönder" kararını aldı ama çağıranı
+    /// (<c>SyncCoreAsync</c>) henüz devam etmedi — motor kaybı o Sync'i bitmiş SAYMAZ: istek kapıdan geçişini hâlâ tutuyor, motora teslim edilmedi.
+    /// Çağıranı devam eder, ölü motora gönderim bugünkü satırlarıyla düşer (Sync ve ardındaki envanter, birer kez) ve Sync'in kendi geri alımı
+    /// TEK kez çalışır; sahte işlem sonu yoktur.
+    /// <para><b>Kurgu (ölçülen sıra — b11):</b> üç yol aynı uyanmayı bekler: ilk proje logu (uyanmayı başlatır, yerini ikincisi alır), ikinci log ve
+    /// Sync. Uyanma bitince kapıdaki devamlar kayıt sırasıyla koşar ve her biri çağıranının devamını kuyruğun sonuna ekler — ikinci logunki Sync'in
+    /// kapı devamından SONRA, Sync'in çağıran devamından ÖNCE. İkinci logun isteği teslim edilirken motor ölür (gözlemcide <c>OnEngineExited</c>):
+    /// Sync'in kapısı o an "gönder" demiştir, çağıranı kuyruktadır. Ölümden sonraki gönderimler bugünkü gibi düşer (hiç başlamamış konak).</para>
+    /// <para>KIRMIZI (kayıt kapıdan dönünce siliniyordu): ölüm "gönder" kararını almış Sync'i bitirdi — <c>EndedOperationSerial</c> bir arttı.</para></summary>
+    [WpfFact]
+    public void A_death_between_the_gates_send_verdict_and_the_send_ends_nothing()
+    {
+        using var dir = new TempDir();
+        var (window, vm, probe, sent, waking) = AsleepShellWithHeldWake(dir);
+        SendsReachTheDeadEngine(vm);
+        var record = vm.DebugOnCommandSent!;
+        EngineState? atDeath = null;
+        bool syncSentAtDeath = true, syncWindowOpenAtDeath = false;
+        vm.DebugOnCommandSent = command =>
+        {
+            record(command);
+            if (command is not GetProjectLogCommand || atDeath is not null) return;
+            atDeath = vm.EngineState;
+            syncSentAtDeath = sent.Commands.Any(c => c is SyncWorkspaceCommand);
+            syncWindowOpenAtDeath = vm.SyncBusy;
+            vm.OnEngineExited(-1); // uyanan motor ilk teslimde ölür
+        };
+        _ = vm.LoadProjectLogAsync(MainWindowHost.IdOf("A")); // uyanmayı başlatır
+        _ = vm.LoadProjectLogAsync(MainWindowHost.IdOf("A")); // katılır, ilkinin yerini alır — kapıya Sync'ten önce girdi
+        var sync = vm.SyncCommand.ExecuteAsync(null);         // katılır
+        Assert.Equal(EngineState.Waking, vm.EngineState);     // ön-koşul: üçü de kapıda
+        int ended = vm.EndedOperationSerial;
+
+        waking.SetResult(Woken());
+        DispatcherPump.DrainToIdle();
+
+        Assert.Equal(EngineState.Ready, atDeath); // ön-koşul: ölüm uyanmadan sonra...
+        Assert.False(syncSentAtDeath);            // ...Sync teslim edilmeden...
+        Assert.True(syncWindowOpenAtDeath);       // ...istek penceresi açıkken geldi
+        Assert.Equal(EngineState.Dead, vm.EngineState);
+        Assert.Equal(ended, vm.EndedOperationSerial); // ölüm, teslim edilmemiş Sync'i bitirmedi
+        string console = vm.GetRunDocumentText();
+        Assert.Equal(1, MainWindowHost.Occurrences(console, "[error] failed to send sync: "));         // bugünkü satır, bir kez
+        Assert.Equal(1, MainWindowHost.Occurrences(console, "[error] failed to send listBranches: ")); // envanterinki de
+        Assert.False(vm.SyncBusy); // Sync'in kendi geri alımı
+        Assert.True(sync.IsCompleted);
+        Assert.Equal(1, probe.WakeCalls);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[T21 OOS-1 · round 2] Kapının geçişindeki kayıt TESLİMDE biter, gönderimin sonunda değil: kapıda beklemiş Sync motora teslim edildikten
+    /// sonra — yazımı henüz bitmeden — gelen motor kaybı onu gönderilmiş sayar ve penceresini bırakır (dalga öncesi anlam: Sync'in sonu bildirilir);
+    /// yazım ardından başarıyla biterse pencere açık kalmaz. Kayıt gönderimin sonuna dek yaşasaydı kayıp pencereyi atlar, başarılı yazım geri alım
+    /// çalıştırmaz ve Sync, motoru ölmüş bir istek için kilitli kalırdı (yalnız "Restart engine" açardı).
+    /// <para>KIRMIZI (geçici bozma: teslimdeki bırakma silindi — kayıt geçişin <c>using</c>'iyle, gönderimin sonunda biter): kayıptan sonra
+    /// <c>SyncBusy</c> açık kaldı.</para></summary>
+    [WpfFact]
+    public void A_death_after_the_hand_over_ends_the_sync_like_any_sent_request()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _, sent, waking) = AsleepShellWithHeldWake(dir);
+        var write = new TaskCompletionSource();
+        vm.DebugSendOverride = command => command is SyncWorkspaceCommand ? write.Task : Task.CompletedTask; // Sync'in yazımı sürer
+        var sync = vm.SyncCommand.ExecuteAsync(null);
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(EngineState.Waking, vm.EngineState); // ön-koşul: Sync kapıda
+        int ended = vm.EndedOperationSerial;
+        waking.SetResult(Woken());
+        DispatcherPump.DrainToIdle();
+        Assert.IsType<SyncWorkspaceCommand>(Assert.Single(sent.Commands)); // ön-koşul: teslim edildi, yazımı sürüyor
+        Assert.True(vm.SyncBusy);
+
+        vm.OnEngineExited(-1);
+
+        Assert.False(vm.SyncBusy);                        // teslim edilmiş istek: kayıp penceresini bıraktı
+        Assert.Equal(ended + 1, vm.EndedOperationSerial); // Sync'in sonu bildirildi — dalga öncesi anlam
+        write.SetResult();                                // yazım yine de başarıyla biter
+        DispatcherPump.DrainToIdle();
+        Assert.True(sync.IsCompleted);
+        Assert.False(vm.SyncBusy);                        // pencere açık kalmadı
+        Assert.Equal(ended + 1, vm.EndedOperationSerial);
+        GC.KeepAlive(window);
+    }
+
     /// <summary>[T21 OOS-3 · R3 · PİN] Kapıda bekleyen bakım Clean'i de çıkışta geri çekilir — checkout ve pull da aynı yoldan geçer (gönderimin
     /// varsayılan yolu <c>TrySendAsync</c>): uyanma sürerken çıkış istenir; uyanma bitince Clean gönderilmez, kendi geri alımı (istek penceresi)
     /// pencereyi bırakır ve çıkış bir kez hazır olur. PİN: kapı R3'ten beri her komut türüne aynı soruyu sorar — kırmızısı gösterilemez; ileride
