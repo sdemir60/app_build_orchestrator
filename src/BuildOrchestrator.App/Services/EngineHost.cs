@@ -411,6 +411,7 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
                 try
                 {
                     ev = await reader.ReadAsync<IpcEvent>(CancellationToken.None);
+                    // Test dikişi — üretimde null: olay başına tek bir null kontrolü. Yalnız EngineHostTests bir olayı bozuk çerçeve saydırır.
                     if (ev is not null && DebugFramingFault?.Invoke(ev) == true) throw new IpcFramingException("test: corrupt frame");
                 }
                 catch (IpcFramingException)
