@@ -6,6 +6,7 @@ using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Core.Processes;
 using BuildOrchestrator.Supervisor;
 using BuildOrchestrator.Tests.Git;
+using BuildOrchestrator.Tests.ProcessControl;
 
 namespace BuildOrchestrator.Tests.Supervisor;
 
@@ -253,14 +254,12 @@ public class SupervisorIpcTests
         using var marker = LaunchIsolatedSupervisorIn(outer, markerSandbox);
 
         var births = new List<(int Pid, string Name)>();
-        while (true)
+        JobBirths.Until(iocp, TestPaths.WideStartupTimeout, "IOCP: marker dogum bildirimi gelmedi", pid =>
         {
-            var n = iocp.WaitNext(TestPaths.WideStartupTimeout)
-                ?? throw new TimeoutException("IOCP: marker dogum bildirimi gelmedi");
-            if (n.MessageId != NativeMethods.JOB_OBJECT_MSG_NEW_PROCESS) continue;
-            if (n.Pid == marker.Pid) break;
-            births.Add((n.Pid, ProcessTree.NameOfProcess(n.Pid))); // doğum ANINDA — hiçbir şey öldürülmediği için okunabilir
-        }
+            if (pid == marker.Pid) return true;
+            births.Add((pid, ProcessTree.NameOfProcess(pid))); // doğum ANINDA — hiçbir şey öldürülmediği için okunabilir
+            return false;
+        });
 
         // VAKUM KARŞITI: port GERÇEKTEN doğum taşıyor — Supervisor'ın kendi doğumu listede. Bu kontrol
         // olmasaydı, IOCP hiç bildirim taşımadığında da aşağıdaki iddia yeşil kalırdı.

@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using BuildOrchestrator.Core.MsBuild;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Core.Processes;
+using BuildOrchestrator.Tests.ProcessControl;
 using Xunit;
 
 namespace BuildOrchestrator.Tests.MsBuild;
@@ -171,17 +172,16 @@ public class MsBuildInvokerTests
         // kendisi ve CoreCompile'ın kısa ömürlü derleyici child'ı (csc.exe/VBCSCompiler) "ping" DEĞİLDİR,
         // atlanır. Aynı süzme deseni aşağıdaki testte de var (orada "powershell" için).
         int pingPid = -1;
-        while (pingPid < 0)
+        JobBirths.Until(iocp, TimeSpan.FromSeconds(30), "grandchild (ping.exe) doğum bildirimi gelmedi", pid =>
         {
-            var born = iocp.WaitNext(TimeSpan.FromSeconds(30)) ?? throw new TimeoutException("grandchild (ping.exe) doğum bildirimi gelmedi");
-            if (born.MessageId != NativeMethods.JOB_OBJECT_MSG_NEW_PROCESS) continue;
             try
             {
-                if (string.Equals(Process.GetProcessById(born.Pid).ProcessName, "ping", StringComparison.OrdinalIgnoreCase))
-                    pingPid = born.Pid;
+                if (string.Equals(Process.GetProcessById(pid).ProcessName, "ping", StringComparison.OrdinalIgnoreCase))
+                    pingPid = pid;
             }
             catch (ArgumentException) { /* zaten çıkmış kısa ömürlü job üyesi — ping değil, atla */ }
-        }
+            return pingPid >= 0;
+        });
 
         var result = await invokeTask.WaitAsync(TimeSpan.FromSeconds(20)); // hang'i sonsuza kadar değil, teste çevirir (zaman ASSERT değil, yalnız guard)
 
@@ -249,17 +249,16 @@ public class MsBuildInvokerTests
         // "powershell" DEĞİLDİR, atlanır. Kısa ömürlü job üyeleri isim sorgusundan ÖNCE çıkmış olabilir
         // (ArgumentException) — bunlar da "powershell değil" sayılıp atlanır.
         int writerPid = -1;
-        while (writerPid < 0)
+        JobBirths.Until(iocp, TimeSpan.FromSeconds(30), "grandchild (powershell.exe) doğum bildirimi gelmedi", pid =>
         {
-            var born = iocp.WaitNext(TimeSpan.FromSeconds(30)) ?? throw new TimeoutException("grandchild (powershell.exe) doğum bildirimi gelmedi");
-            if (born.MessageId != NativeMethods.JOB_OBJECT_MSG_NEW_PROCESS) continue;
             try
             {
-                if (string.Equals(Process.GetProcessById(born.Pid).ProcessName, "powershell", StringComparison.OrdinalIgnoreCase))
-                    writerPid = born.Pid;
+                if (string.Equals(Process.GetProcessById(pid).ProcessName, "powershell", StringComparison.OrdinalIgnoreCase))
+                    writerPid = pid;
             }
             catch (ArgumentException) { /* zaten çıkmış kısa ömürlü job üyesi — powershell değil, atla */ }
-        }
+            return writerPid >= 0;
+        });
 
         var result = await invokeTask.WaitAsync(TimeSpan.FromSeconds(20));
 

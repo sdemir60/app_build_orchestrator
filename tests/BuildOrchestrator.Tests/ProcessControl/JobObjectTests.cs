@@ -21,11 +21,11 @@ public class JobObjectTests
             using var child = JobProcessLauncher.Launch(job, SleepChildCmdLine(), new LaunchOptions());
             cmdPid = child.Pid;
             // cmd + powershell torunu: en az 2 doğum bildirimi (nested üyelik otomatik miras)
-            while (births.Count < 2)
+            JobBirths.Until(iocp, TimeSpan.FromSeconds(10), "IOCP doğum bildirimi gelmedi", pid =>
             {
-                var n = iocp.WaitNext(TimeSpan.FromSeconds(10)) ?? throw new TimeoutException("IOCP doğum bildirimi gelmedi");
-                if (n.MessageId == NativeMethods.JOB_OBJECT_MSG_NEW_PROCESS) births.Add(n.Pid);
-            }
+                births.Add(pid);
+                return births.Count >= 2;
+            });
         } // job.Dispose → KILL_ON_JOB_CLOSE kaskadı
         var sw = System.Diagnostics.Stopwatch.StartNew();
         foreach (var pid in births)

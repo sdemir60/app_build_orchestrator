@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Core.ProcessControl;
+using BuildOrchestrator.Tests.ProcessControl;
 using BuildOrchestrator.Tests.Supervisor;
 using Microsoft.Win32.SafeHandles;
 
@@ -421,13 +422,7 @@ public class EngineHostTests
 
         var woken = await host.WakeAsync();
 
-        var born = new List<int>();
-        while (!born.Contains(woken.Pid))
-        {
-            var n = births.WaitNext(WideStartupTimeout)
-                ?? throw new TimeoutException("the woken engine was never born into the outer job");
-            if (n.MessageId == NativeMethods.JOB_OBJECT_MSG_NEW_PROCESS) born.Add(n.Pid);
-        }
+        var born = JobBirths.WaitForBirth(births, woken.Pid, WideStartupTimeout);
         Assert.Contains(first.Pid, born); // vakum karşıtı: port ilk başlatmanın doğumunu da taşıdı
     }
 

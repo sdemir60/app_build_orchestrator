@@ -184,14 +184,13 @@ public class JobCpuRateTests(ITestOutputHelper output)
                 using var child = JobProcessLauncher.Launch(job, JobTestChildren.SleepChildCmdLine(), new LaunchOptions());
                 // cmd + powershell torunu: en az 2 doğum bildirimi (nested üyelik otomatik miras)
                 int notifications = 0;
-                while (notifications < 2)
+                JobBirths.Until(iocp, TimeSpan.FromSeconds(15), "IOCP doğum bildirimi gelmedi", pid =>
                 {
-                    var n = iocp.WaitNext(TimeSpan.FromSeconds(15)) ?? throw new TimeoutException("IOCP doğum bildirimi gelmedi");
-                    if (n.MessageId != NativeMethods.JOB_OBJECT_MSG_NEW_PROCESS) continue;
                     notifications++;
-                    try { births.Add(Process.GetProcessById(n.Pid)); }
+                    try { births.Add(Process.GetProcessById(pid)); }
                     catch (ArgumentException) { /* çoktan çıkmış — zaten ölü, doğrulanacak bir şey yok */ }
-                }
+                    return notifications >= 2;
+                });
             } // job.Dispose → KILL_ON_JOB_CLOSE kaskadı
 
             var sw = Stopwatch.StartNew();
@@ -247,13 +246,10 @@ public class JobCpuRateTests(ITestOutputHelper output)
             for (int i = 0; i < childCount; i++)
                 children.Add(JobProcessLauncher.Launch(job, JobTestChildren.BusyLoopChildCmdLine(), new LaunchOptions()));
 
-            // Ölçümden önce hepsinin gerçekten doğduğunu IOCP randevusuyla bekle (D8: uyku/poll yok).
+            // Ölçümden önce hepsinin gerçekten doğduğunu IOCP randevusuyla bekle (D8: uyku/poll yok). childCount ≥ 3
+            // (ProcessorCount + 2): ilk doğumdan önce yeterli sayılacak bir durum yoktur.
             int born = 0;
-            while (born < childCount)
-            {
-                var n = iocp.WaitNext(TimeSpan.FromSeconds(20)) ?? throw new TimeoutException("IOCP doğum bildirimi gelmedi");
-                if (n.MessageId == NativeMethods.JOB_OBJECT_MSG_NEW_PROCESS) born++;
-            }
+            JobBirths.Until(iocp, TimeSpan.FromSeconds(20), "IOCP doğum bildirimi gelmedi", _ => ++born >= childCount);
             procs.AddRange(children.Select(c => Process.GetProcessById(c.Pid)));
 
             // Bounded retry: harici bir yük anlık ise sonraki pencere doyuma ulaşır (normal makinede TEK
