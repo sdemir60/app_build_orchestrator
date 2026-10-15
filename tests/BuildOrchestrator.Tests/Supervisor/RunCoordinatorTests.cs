@@ -768,6 +768,24 @@ public class RunCoordinatorTests
         Assert.Equal(h.LogWriters[^1].RunDirectory, Assert.Single(h.Events.OfType<RunStartedEvent>()).LogDirectory);
     }
 
+    /// <summary>[dalga 3 · B1 fix 1 · O-2 · B1 fix 2] Log kökü de log fabrikası da verilmeyen koordinatör KURULMAZ: koşuları log yazamayacak bir
+    /// motor sessizce açılmaz — kurulum <see cref="ArgumentException"/> ile düşer ve eksik girişi (<c>logsRoot</c>, kökün koordinatöre TEK girişi)
+    /// adlandırır. Üretimde kök hep verilir (<c>Program</c>); testler kökü ya da kendi fabrikasını verir.
+    /// <para>PİN: kural B1 fix 1'de (O-2) geldi; bu test onun gevşemesini — kurulumun geçip ilk koşunun log açarken düşmesini — yakalar.</para></summary>
+    [Fact]
+    public void A_coordinator_without_a_logs_root_or_a_log_factory_is_never_built()
+    {
+        using var job = JobObject.CreateKillOnClose();
+
+        var thrown = Assert.Throws<ArgumentException>(() => new RunCoordinator(
+            planner: (_, _) => throw new InvalidOperationException("no run in this test"),
+            msbuildFactory: _ => throw new InvalidOperationException("no run in this test"),
+            writer: new NdjsonWriter(Stream.Null), innerJob: job, nowMs: () => 0, console: _ => { },
+            memoryTrim: NoRealGc.Collection));
+
+        Assert.Equal("logsRoot", thrown.ParamName);
+    }
+
     // [Task 18] TryGetProjectLogSnapshot artık gerçek disk okumasını (canlı writer'ın FileStream'i ya da
     // ReadProjectLogFromDisk'in File.ReadAllText'i) _gate DIŞINDA yapıyor — kilit altında yalnız "hangi
     // kaynaktan okunacağı" (canlı writer referansı / en son run dizini) yakalanır. Bu test, bir proje
