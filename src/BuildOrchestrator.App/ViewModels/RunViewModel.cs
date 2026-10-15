@@ -991,11 +991,14 @@ public sealed partial class RunViewModel : ObservableObject
         // "komut henüz gitmedi" sorusunun (Stop, branch kesmesi) tek cevabıdır.
         _pendingRunId = runId;
         bool StillPending() => string.Equals(_pendingRunId, runId, StringComparison.Ordinal);
+        // [idle-memory · dalga 3 · Task 21 · karar 18 · C4 · uyanma gecikmesi] Uyuyan motor bekleyen-koşu penceresinin İÇİNDE, TIKLAMADA uyanmaya
+        // başlar ve koreografiyle örtüşür: komut ikisi de bitince gider, bekleyiş yalnız uzun olanınki kadardır. Kapı isteği için TEK kez sorulur;
+        // uyanma sürerken kimlik durur — Stop/Esc, branch kesmesi ve çıkış komutu değil isteği geri alır (CancelPendingRun, komut gitmez) ve geri
+        // alınan isteğe yeni uyanma başlamaz (koşul: kimlik hâlâ bu koşunun — Mi4). Başlamış bir uyanma paylaşılan iştir: biter, motor hazır
+        // kalır. Uyanık motorda kapı askıya girmez — cevabı tıklama anında "gönder"dir.
+        var gate = EnsureEngineAwakeAsync(typeof(StartRunCommand), StillPending);
         if (OperationChoreography is { } playChoreography) await playChoreography(scope);
-        // [idle-memory · dalga 3 · Task 21 · karar 18 · C4] Uyuyan motor bekleyen-koşu penceresinin İÇİNDE, koreografiden sonra uyanır:
-        // uyanma sürerken kimlik durur — Stop/Esc, branch kesmesi ve çıkış komutu değil isteği geri alır (CancelPendingRun, komut gitmez).
-        // Kapı isteği için TEK kez sorulur ve geri alınan isteğe yeni uyanma başlatmaz (koşul: kimlik hâlâ bu koşunun — Mi4).
-        bool awake = StillPending() && await EnsureEngineAwakeAsync(typeof(StartRunCommand), StillPending);
+        bool awake = await gate;
         // Koreografi ya da uyanma sırasında Stop'a basıldıysa (ya da başka bir işlem devraldıysa) komut GİTMEZ; geri alım onundur.
         if (!StillPending()) return;
         _pendingRunId = null;
@@ -1297,17 +1300,19 @@ public sealed partial class RunViewModel : ObservableObject
     /// <param name="silentReason">Yalnız <see cref="SyncMode.Silent"/>: bitişteki akış satırını seçer.</param>
     /// <param name="sectionLines">Konsolu temizleyen kiplerde (<see cref="SyncMode.BranchChange"/>, <see cref="SyncMode.Manual"/>,
     /// <see cref="SyncMode.ConfigurationChange"/>): temizlikten sonra yazılan ilk satırlar.</param>
-    /// <returns>Sync komutu motora gitti mi — düşen gönderimde ve çıkış beklerken <c>false</c> (kendiliğinden Sync
+    /// <returns>Sync komutu motora gitti mi — düşen gönderimde ve çıkış istendikten sonra <c>false</c> (kendiliğinden Sync
     /// tetiği bekletir).</returns>
     private async Task<bool> SyncCoreAsync(SyncMode mode, SilentSyncReason silentReason = SilentSyncReason.Refresh,
         IReadOnlyList<string>? sectionLines = null)
     {
-        // [P3 · final review I2] Çıkış beklerken HİÇBİR Sync başlamaz — her yan etkiden (konsol temizliği, istek bayrağı,
+        // [P3 · final review I2] Çıkış istendikten SONRA HİÇBİR Sync başlamaz — her yan etkiden (konsol temizliği, istek bayrağı,
         // komut) ÖNCE. Bekleyiş yeni iş açmaz: Clean/Optimize/checkout/pull'un bitişine zincirlenen Sync yalnız kapanan
         // bir ekranı tazelerdi ve bir sonraki açılış zaten Sync'ler (OnEngineReady). Zincir (SyncThenReleaseAsync) işin
         // yüzeyini doğrudan bırakır ve çıkış o anda hazır olur — kendiliğinden Sync'in bekleyişte kapalı olmasıyla
-        // (DisableAutoSync) AYNI gerekçe.
-        if (ExitPending) return false;
+        // (DisableAutoSync) AYNI gerekçe. [idle-memory · dalga 3 · tek çıkış sorusu] Soru motor kapısınınkiyle AYNI bayraktır — "çıkış
+        // istendi" (_exitRequested), "çıkış bekliyor" (ExitPending) değil: uçuşta iş yokken istenen çıkış bekleyiş açmaz, ardından gelen bir Sync
+        // de kapanan uygulamanın motoruna gitmez.
+        if (_exitRequested) return false;
         // Sıra ÖNEMLİ: temizlik SEÇİMDEN ÖNCE gelir. Seçim düşünce kabuk anlatı belgesini yeniden kurar
         // (ShowRunConsole → SeedRunDocument); temizlik sonra gelseydi o kurulum bir önceki işlemin metnini
         // tilt'le getirir, temizlik onu hemen silerdi (görünür bir kırpışma). Aşağıdaki `_syncRequested`/

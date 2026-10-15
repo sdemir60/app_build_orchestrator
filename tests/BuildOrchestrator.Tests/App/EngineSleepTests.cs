@@ -242,6 +242,32 @@ public class EngineSleepTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[T20 M6 · defter 9 · PİN] Bilinen ayrışma (1) — güvenli yönde: ölü motorun borusunda kalmış bir <c>runStarted</c> ölüm metnini
+    /// temizler (şerit artık ölümü göstermez) ama durumu Ready'ye ÇEKMEZ — Ready yalnız hazır yolundan gelir. Durum en kötü "ölü" kalır: koşu
+    /// bitip beş işsiz dakika fazlasıyla geçse de boşta kuralı ölü motoru uyutmaz. PİN: kırmızısı gösterilemez — ayrışmanın yönünü tutar;
+    /// <c>OnRunStarted</c> durumu Ready'ye çekseydi kural, süreci olmayan bir motoru "uyutmaya" kalkardı.</summary>
+    [StaFact]
+    public void A_run_started_on_a_dead_engine_clears_the_death_text_but_never_lets_the_rule_sleep_it()
+    {
+        using var dir = new TempDir();
+        long now = 1_000;
+        var (window, vm, sleep) = ReadyShell(dir, () => now);
+        vm.OnEngineExited(1);
+        Assert.Equal(EngineState.Dead, vm.EngineState); // ön-koşul
+
+        MainWindowHost.StartBuild(vm, "A"); // ölen motorun borusunda kalmış runStarted
+        Assert.Null(vm.EngineDiedMessage);  // ayrışma: ölüm metni temizlendi...
+        Assert.Equal(EngineState.Dead, vm.EngineState); // ...durum Ready'ye çekilmedi
+        MainWindowHost.FinishBuild(vm, "A");
+        Assert.False(vm.IsOperationInFlight); // ön-koşul: kuralı tutan tek şey motor durumu
+        now += IdleAfterMs * 3;
+        window.OnElapsedTick();
+
+        Assert.Equal(0, sleep.SleepCalls);
+        Assert.Equal(EngineState.Dead, vm.EngineState);
+        GC.KeepAlive(window);
+    }
+
     /// <summary>Uyku sürerken motor kendiliğinden ölürse ölüm kazanır: konakta ölüm hakkını bekçi aldıysa uyku hiçbir şey yapmadan döner ve
     /// ölüm sinyali gelir. Uyku bitince durum "uyuyor"a dönmez — şerit ölüm satırını ve "Restart engine"i gösterir, kural ölü motoru bir daha
     /// uyutmaya çalışmaz.</summary>

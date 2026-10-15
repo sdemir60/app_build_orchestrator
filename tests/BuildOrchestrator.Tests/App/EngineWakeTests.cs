@@ -620,11 +620,16 @@ public class EngineWakeTests
 
     /// <summary>[karar 18 · 24 · C4 · C13] Perf chip uyuyan motoru uyandırmaz ve uyanık olmayan motora hiç gönderilmez: koşu istendikten sonra
     /// (koşu kilidi açık) chip'e basılırsa not yazılır, <c>setPerfMode</c> GİTMEZ (hata satırı da yok) ve koşunun komutu uyanmadan SONRA
-    /// kurulduğu için yeni profili taşır. İki pencere: açılış koreografisi sürerken (motor uyuyor) ve uyanma sürerken.
+    /// kurulduğu için yeni profili taşır. İki pencere: açılış koreografisi sürerken (tıklamada başlayan uyanma da sürüyor) ve koreografi
+    /// bittikten sonra uyanma sürerken.
+    /// <para><b>[DEĞİŞEN KURULUM — uyanma gecikmesi, kontrolcü kararı]</b> Eskiden koreografi satırında motor koreografi boyunca UYUYORDU — koşunun
+    /// uyanması koreografiden sonra başlıyordu. Uyanma artık tıklamada başlar ve koreografiyle örtüşür; anlık biten bir uyanma motoru koreografi
+    /// sırasında hazır ederdi ve o anki chip bugünkü gibi hazır motora giderdi. Pencereyi "motor henüz uyanık değil"de tutmak için uyanma da
+    /// bekletilir. İddia aynı.</para>
     /// <para>KIRMIZI (kapısız kod): <c>setPerfMode</c> uyuyan motora gidiyordu; uyanma penceresinde koşu eski profille çoktan gitmişti.</para></summary>
     [WpfTheory]
-    [InlineData(true)]  // koreografi sürerken
-    [InlineData(false)] // uyanma sürerken
+    [InlineData(true)]  // koreografi sürerken (uyanma da sürüyor)
+    [InlineData(false)] // koreografiden sonra, uyanma sürerken
     public async Task A_perf_change_before_the_engine_is_awake_goes_with_the_build(bool duringChoreography)
     {
         using var dir = new TempDir();
@@ -638,11 +643,17 @@ public class EngineWakeTests
         {
             (window, vm, probe, sent, _) = AsleepShell(dir);
             var choreography = new TaskCompletionSource();
+            var waking = new TaskCompletionSource<EngineReadyEvent>();
             vm.OperationChoreography = _ => choreography.Task;
+            probe.NextWake = () => waking.Task;
             build = vm.BuildCommand.ExecuteAsync(null);
             DispatcherPump.DrainToIdle();
-            Assert.Equal(EngineState.Asleep, vm.EngineState); // ön-koşul: koreografi sürüyor, motor uyuyor
-            release = () => choreography.SetResult();
+            Assert.Equal(EngineState.Waking, vm.EngineState); // ön-koşul: koreografi sürüyor, tıklamada başlayan uyanma da
+            release = () =>
+            {
+                choreography.SetResult();
+                waking.SetResult(Woken());
+            };
         }
         else
         {
@@ -830,9 +841,15 @@ public class EngineWakeTests
     }
 
     /// <summary>[Fix round 1 · Mi2 · karar 34] Uyutulan motorun ölüm sinyali uyku bittikten SONRA gelebilir (bekçi ölümü sahiplendi, uyku sessizce
-    /// döndü, sinyal VM'e geç ulaştı). Motor uyurken ona hiçbir şey gitmez — o sırada açılış koreografisinde kapıya yürüyen bir koşunun açılışını
-    /// motor kaybı geri ALMAZ (Starting ve faz durur); koreografi bitince koşu ölü motora bugünkü gibi gider (R2), gönderim düşer ve koşunun kendi
-    /// geri alımı TEK kez çalışır. Uyandırma yok, koşu bitmiş sayılmaz.
+    /// döndü, sinyal VM'e geç ulaştı); o arada konak ne uyuyor ne canlıdır — uyandırması bugünkü "motor çalışmıyor" hatasıyla düşer. Bir Build'in açılış
+    /// koreografisi sürerken gelen bu geç ölüm koşunun açılışını geri ALMAZ (Starting ve faz durur): kayıp uyku döngüsündedir ve koşu kapıda
+    /// bekliyor. Koreografi bitince kapı koşuyu satırsız reddeder (beklediği geçiş motoru kaybetti) ve koşunun kendi geri alımı TEK kez çalışır;
+    /// komut gitmez, koşu bitmiş sayılmaz.
+    /// <para><b>[DEĞİŞEN KURAL — uyanma gecikmesi, kontrolcü kararı]</b> ESKİ İDDİA: koreografi sürerken motor uyuyordu (koşunun uyanması
+    /// koreografiden SONRA başlıyordu); koreografi bitince koşu ölü motora bugünkü gibi gidiyor (R2), tek "[error] failed to send build" satırı
+    /// yazılıyor ve uyandırma hiç denenmiyordu. GEREKÇE: koşunun uyanması artık tıklamada başlar — koşu koreografi boyunca kapıda uyanmayı bekler
+    /// ve uyanmanın düşmesi onu kapının kuralıyla satırsız reddeder (o geçişin tek sinyali ölüm şerididir). Kaybın pencereyi bırakmaması ve geri
+    /// alımın tekliği değişmedi.</para>
     /// <para>KIRMIZI (e843d516): uyurken gelen ölüm sinyali pencereleri bırakıyordu — koreografi sürerken Starting kapanmış, faz sıfırlanmıştı
     /// (koşunun kendi geri alımı ikinci kez çalışacaktı).</para></summary>
     [WpfFact]
@@ -840,30 +857,30 @@ public class EngineWakeTests
     {
         using var dir = new TempDir();
         var (window, vm, probe, sent, _) = AsleepShell(dir);
+        probe.NextWake = () => Task.FromException<EngineReadyEvent>(new InvalidOperationException("Engine is not running."));
         var choreography = new TaskCompletionSource();
         vm.OperationChoreography = _ => choreography.Task;
         var phaseBefore = vm.Phase;
         int ended = vm.EndedOperationSerial;
         var build = vm.BuildCommand.ExecuteAsync(null);
         DispatcherPump.DrainToIdle();
-        Assert.True(vm.IsStarting); // ön-koşul: koşu istendi, koreografi sürüyor, motor uyuyor
-        Assert.Equal(EngineState.Asleep, vm.EngineState);
+        Assert.True(vm.IsStarting); // ön-koşul: koşu istendi, koreografi sürüyor; uyanma tıklamada denendi ve düştü, ölüm sinyali henüz yok
+        Assert.Equal(EngineState.Waking, vm.EngineState);
 
         vm.OnEngineExited(-1);
         Assert.True(vm.IsStarting);
         Assert.Equal(AppPhase.Starting, vm.Phase);
         Assert.Equal(EngineState.Dead, vm.EngineState);
 
-        SendsReachTheDeadEngine(vm);
         choreography.SetResult();
         DispatcherPump.DrainToIdle();
         await build;
 
         Assert.False(vm.IsStarting);
         Assert.Equal(phaseBefore, vm.Phase);
-        Assert.Equal(1, MainWindowHost.Occurrences(vm.GetRunDocumentText(), "[error] failed to send build: "));
-        Assert.IsType<StartRunCommand>(Assert.Single(sent).Command);
-        Assert.Equal(0, probe.WakeCalls);
+        Assert.Empty(sent);
+        Assert.DoesNotContain("[error]", vm.GetRunDocumentText());
+        Assert.Equal(1, probe.WakeCalls);
         Assert.Equal(ended, vm.EndedOperationSerial);
         GC.KeepAlive(window);
     }
@@ -895,6 +912,251 @@ public class EngineWakeTests
         Assert.False(vm.SyncBusy);
         Assert.Equal(ended, vm.EndedOperationSerial);
         Assert.Equal(console, vm.GetRunDocumentText());
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[M-3 · T21 N1] Askıdaki uyanmanın raporundan (Mi1) SONRA gelen gerçek ölüm sinyali AYNI kaybı anlatır: yalnız şeridin metnini
+    /// kendi nedeniyle yeniler, hiçbir pencereyi bırakmaz. Mi1 motoru zaten ölü bildirmiştir; arada istenen bir Build açılış koreografisindeyken
+    /// geç ölüm gelir — koşunun açılışı (Starting, faz) durur. Koreografi bitince koşu ölü motora bugünkü gibi gider (R2), gönderim düşer ve
+    /// koşunun kendi geri alımı TEK kez çalışır; tek "failed to send build" satırı.
+    /// <para>KIRMIZI (değişiklikten önce): ölü motorun ikinci bildirimi pencereleri bırakıyordu — koreografi sürerken Starting kapanmış, faz
+    /// dinlenme fazına çekilmişti (koşunun kendi geri alımı ikinci kez çalışacaktı).</para></summary>
+    [WpfFact]
+    public async Task A_late_death_after_the_stranded_wakes_report_only_renews_the_ribbon_text()
+    {
+        using var dir = new TempDir();
+        var (window, vm, probe, sent, _) = AsleepShell(dir);
+        var waking = new TaskCompletionSource<EngineReadyEvent>();
+        probe.NextWake = () => waking.Task;
+        var sync = vm.SyncCommand.ExecuteAsync(null);
+        DispatcherPump.DrainToIdle();
+        waking.SetException(new InvalidOperationException("the kill failed")); // ölüm sinyali gelmeyen düşmüş uyanma
+        DispatcherPump.DrainToIdle();
+        await sync;
+        await vm.LoadProjectLogAsync(MainWindowHost.IdOf("A")); // kapıya yeni giren ilk yol kaybı bildirir (Mi1)
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(EngineState.Dead, vm.EngineState); // ön-koşul: Mi1'in raporu
+        var choreography = new TaskCompletionSource();
+        vm.OperationChoreography = _ => choreography.Task;
+        SendsReachTheDeadEngine(vm);
+        var phaseBefore = vm.Phase;
+        int ended = vm.EndedOperationSerial;
+        var build = vm.BuildCommand.ExecuteAsync(null);
+        DispatcherPump.DrainToIdle();
+        Assert.True(vm.IsStarting); // ön-koşul: koşu açılış koreografisinde
+
+        vm.OnEngineExited(-1); // aynı motorun geç gelen gerçek ölüm sinyali
+        Assert.Equal("Engine stopped unexpectedly (exit -1)", vm.EngineDiedMessage);
+        Assert.True(vm.IsStarting);
+        Assert.Equal(AppPhase.Starting, vm.Phase);
+
+        choreography.SetResult();
+        DispatcherPump.DrainToIdle();
+        await build;
+
+        Assert.False(vm.IsStarting);
+        Assert.Equal(phaseBefore, vm.Phase);
+        Assert.Equal(1, MainWindowHost.Occurrences(vm.GetRunDocumentText(), "[error] failed to send build: "));
+        Assert.IsType<StartRunCommand>(Assert.Single(sent).Command);
+        Assert.Equal(ended, vm.EndedOperationSerial);
+        Assert.Equal(1, probe.WakeCalls);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[T21 OOS-1 · karar 34] Uyanma başarılı olur ve motor hemen ölür — kapıda uyanmayı bekleyen bir Sync'in devamı henüz koşmamışken
+    /// (uyanmanın bitişi katılanların devamını dispatcher'a post eder; ölüm sinyali onları öne geçer): motor kaybı o Sync'i bitmiş SAYMAZ — istek
+    /// motora hiç gitmedi ve kendi geri alımı kapıdan dönünce çalışır; sahte işlem sonu yoktur (ne <c>EndSync</c> ne <c>EndedOperationSerial</c>
+    /// artışı). Kayıp yalnız motora GİTMİŞ isteklerin pencerelerini bırakır, kapıda bekleyenlerinkini bırakmaz.
+    /// <para><b>Kurgu (sıra deterministik):</b> proje logu tıklaması uyanmayı başlatır, Sync ona katılır. Uyanma bittiği anda ölüm gelir — uyanmanın
+    /// devamı tamamlayan bağlamda satır içi koştuysa hemen, post edildiyse onun hemen ardından (aynı öncelik, sıra): katılan Sync'in devamı ikisinden
+    /// sonradır. Ön-koşul bunu gösterir: ölüm anında motor hazır, Sync gönderilmemiş, istek penceresi açık.</para>
+    /// <para>KIRMIZI (değişiklikten önce): kayıp kapıda bekleyen Sync'i bitirdi — <c>EndedOperationSerial</c> bir arttı.</para></summary>
+    [WpfFact]
+    public void A_death_right_after_a_wake_ends_no_request_still_waiting_at_the_gate()
+    {
+        using var dir = new TempDir();
+        var (window, vm, probe, sent, _) = AsleepShell(dir);
+        var waking = new TaskCompletionSource<EngineReadyEvent>();
+        probe.NextWake = () => waking.Task;
+        _ = vm.LoadProjectLogAsync(MainWindowHost.IdOf("A")); // uyanmayı başlatır
+        var sync = vm.SyncCommand.ExecuteAsync(null);         // katılır
+        Assert.Equal(EngineState.Waking, vm.EngineState);     // ön-koşul: Sync kapıda, uyanma sürüyor
+        int ended = vm.EndedOperationSerial;
+        EngineState atDeath = default;
+        bool syncSentAtDeath = true, syncWindowOpenAtDeath = false;
+        void Die()
+        {
+            atDeath = vm.EngineState;
+            syncSentAtDeath = sent.Any(s => s.Command is SyncWorkspaceCommand);
+            syncWindowOpenAtDeath = vm.SyncBusy;
+            vm.OnEngineExited(-1);
+        }
+
+        waking.SetResult(Woken());
+        if (vm.EngineState == EngineState.Ready) Die(); // uyanmanın devamı satır içi koştu — katılanların devamı post edildi
+        else System.Windows.Threading.Dispatcher.CurrentDispatcher.InvokeAsync(Die); // uyanmanın devamından hemen sonra
+        DispatcherPump.DrainToIdle();
+
+        Assert.Equal(EngineState.Ready, atDeath); // ön-koşul: uyanma bitmişti...
+        Assert.False(syncSentAtDeath);            // ...Sync henüz gönderilmemişti...
+        Assert.True(syncWindowOpenAtDeath);       // ...ve istek penceresi açıktı
+        Assert.Equal(EngineState.Dead, vm.EngineState);
+        Assert.Equal(ended, vm.EndedOperationSerial); // kapıda bekleyen Sync bitmiş sayılmadı
+        Assert.False(vm.SyncBusy);                    // Sync'in kendi geri alımı
+        Assert.True(sync.IsCompleted);
+        Assert.DoesNotContain(sent, s => s.Command is SyncWorkspaceCommand or ListBranchesCommand); // Sync gönderilmedi
+        Assert.Equal(1, probe.WakeCalls);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[T21 OOS-3 · R3 · PİN] Kapıda bekleyen bakım Clean'i de çıkışta geri çekilir — checkout ve pull da aynı yoldan geçer (gönderimin
+    /// varsayılan yolu <c>TrySendAsync</c>): uyanma sürerken çıkış istenir; uyanma bitince Clean gönderilmez, kendi geri alımı (istek penceresi)
+    /// pencereyi bırakır ve çıkış bir kez hazır olur. PİN: kapı R3'ten beri her komut türüne aynı soruyu sorar — kırmızısı gösterilemez; ileride
+    /// bu yoldaki bir komutun çıkış sorusunu atlamasını yakalar.</summary>
+    [WpfFact]
+    public async Task An_exit_requested_during_a_wake_withdraws_a_clean_waiting_in_the_gate()
+    {
+        using var dir = new TempDir();
+        var (window, vm, probe, sent, _) = AsleepShell(dir);
+        var waking = new TaskCompletionSource<EngineReadyEvent>();
+        probe.NextWake = () => waking.Task;
+        int exitReady = 0;
+        vm.ExitReady += (_, _) => exitReady++;
+        var clean = vm.CleanCommand.ExecuteAsync(null);
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(EngineState.Waking, vm.EngineState); // ön-koşul: Clean kapıda
+        Assert.True(vm.CleanBusy);
+
+        vm.RequestExit();
+        Assert.Equal(0, exitReady); // çıkış kapıda bekleyen Clean'i bekliyor (istek uçuşta sayılır)
+        waking.SetResult(Woken());
+        DispatcherPump.DrainToIdle();
+        await clean;
+
+        Assert.Empty(sent);
+        Assert.Equal(1, exitReady);
+        Assert.False(vm.CleanBusy);
+        Assert.DoesNotContain("[error]", vm.GetRunDocumentText());
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[uyanma gecikmesi — kontrolcü kararı, inceleme §8] Koşunun uyanması TIKLAMADA başlar ve açılış koreografisiyle örtüşür
+    /// (bekleyen-koşu penceresinin içinde): koreografi sürerken uyanma da sürer; komut ancak ikisi de bitince — ve koşu hâlâ bekliyorsa — gider.
+    /// İki bitiş sırası aynı sonucu verir: tek uyanma, komut hazır motora.
+    /// <para><b>[DEĞİŞEN KURAL — karar 18]</b> ESKİ: uyanma koreografiden SONRA başlıyordu; uyku sonrası ilk Build koreografiyi ve uyanmayı arka
+    /// arkaya ödüyordu. GEREKÇE: ikisi örtüşünce bekleyiş yalnız uzun olanınki kadardır; komutun yeri (ikisinden sonra, pencere hâlâ açıkken)
+    /// değişmedi.</para>
+    /// <para>KIRMIZI (değişiklikten önce): koreografi sürerken uyanma başlamamıştı (<c>WakeCalls</c> 0, motor uyuyordu).</para></summary>
+    [WpfTheory]
+    [InlineData(true)]  // önce uyanma biter
+    [InlineData(false)] // önce koreografi biter
+    public async Task A_builds_wake_starts_at_the_click_and_overlaps_the_choreography(bool wakeFirst)
+    {
+        using var dir = new TempDir();
+        var (window, vm, probe, sent, _) = AsleepShell(dir);
+        var waking = new TaskCompletionSource<EngineReadyEvent>();
+        probe.NextWake = () => waking.Task;
+        var choreography = new TaskCompletionSource();
+        vm.OperationChoreography = _ => choreography.Task;
+
+        var build = vm.BuildCommand.ExecuteAsync(null);
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(1, probe.WakeCalls); // uyanma tıklamada başladı — koreografi sürüyor
+        Assert.Equal(EngineState.Waking, vm.EngineState);
+
+        if (wakeFirst) waking.SetResult(Woken());
+        else choreography.SetResult();
+        DispatcherPump.DrainToIdle();
+        Assert.Empty(sent); // ikisinden biri sürerken komut gitmez
+        Assert.True(vm.IsStarting);
+
+        if (wakeFirst) choreography.SetResult();
+        else waking.SetResult(Woken());
+        DispatcherPump.DrainToIdle();
+        await build;
+
+        var start = Assert.Single(sent);
+        Assert.IsType<StartRunCommand>(start.Command);
+        Assert.Equal(EngineState.Ready, start.State);
+        Assert.Equal(1, probe.WakeCalls);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[uyanma gecikmesi] Koreografi sürerken Stop (ya da Esc) isteği geri alır — "Cancelled — build not started", motora ne
+    /// <c>startRun</c> ne <c>stopRun</c> gider. Tıklamada başlayan uyanma paylaşılan iştir ve biter: uyanan motor hazır kalır (boşta kalırsa kendi
+    /// kuralıyla yine uyur).
+    /// <para>KIRMIZI (değişiklikten önce): koreografi sırasında uyanma hiç başlamamıştı (<c>WakeCalls</c> 0, motor uyuyordu).</para></summary>
+    [WpfFact]
+    public async Task A_build_cancelled_during_its_choreography_sends_nothing_and_leaves_the_woken_engine_ready()
+    {
+        using var dir = new TempDir();
+        var (window, vm, probe, sent, _) = AsleepShell(dir);
+        var choreography = new TaskCompletionSource();
+        vm.OperationChoreography = _ => choreography.Task;
+        var build = vm.BuildCommand.ExecuteAsync(null);
+        DispatcherPump.DrainToIdle();
+        Assert.True(vm.IsStarting); // ön-koşul: koreografi sürüyor
+
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.Contains(RunViewModel.RunCancelledLine, vm.GetRunDocumentText());
+        choreography.SetResult();
+        DispatcherPump.DrainToIdle();
+        await build;
+
+        Assert.Empty(sent); // ne startRun ne stopRun
+        Assert.Equal(1, probe.WakeCalls);
+        Assert.Equal(EngineState.Ready, vm.EngineState);
+        Assert.False(vm.IsStarting);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[T20 M5 · defter 9] Uykunun ve uyanmanın bitişi motor durumunu UI thread'inde yazar: VM dikişin görevini bağlamı yakalayarak bekler
+    /// (<c>ConfigureAwait</c> yok) — görev havuzdan tamamlansa da (konağın uykusu ve uyanması havuzda biter) devam UI'ın dispatcher bağlamına post
+    /// edilir, tamamlayan thread'de satır içi koşmaz. Durum kilitsizdir ve yalnız UI thread'inde yazılır (<c>RunViewModel.EngineState</c>'in
+    /// özeti); bu pin o sözleşmeyi tutar.
+    /// <para><b>Nasıl gözlenir:</b> dispatcher thread'i bloklu beklerken görev havuzdan tamamlanır ve durum AYNI havuz thread'inde hemen okunur:
+    /// devam post edildiyse durum henüz değişmemiştir; dispatcher pompalanınca değişir.</para>
+    /// <para>KIRMIZI (geçici bozma: dikişin await'i <c>ConfigureAwait(false)</c>): devam tamamlayan havuz thread'inde satır içi koştu — durum
+    /// orada yazılmıştı.</para></summary>
+    [WpfTheory]
+    [InlineData(true)]  // uyku
+    [InlineData(false)] // uyanma
+    public void The_sleep_and_the_wake_write_the_engine_state_on_the_ui_thread(bool sleep)
+    {
+        using var dir = new TempDir();
+        MainWindow window;
+        RunViewModel vm;
+        Action complete;
+        EngineState settled;
+        if (sleep)
+        {
+            TaskCompletionSource sleeping;
+            (window, vm, _, _, sleeping) = SleepingShell(dir);
+            complete = () => sleeping.SetResult();
+            settled = EngineState.Asleep;
+        }
+        else
+        {
+            EngineSleepProbe probe;
+            (window, vm, probe, _, _) = AsleepShell(dir);
+            var waking = new TaskCompletionSource<EngineReadyEvent>();
+            probe.NextWake = () => waking.Task;
+            _ = vm.LoadProjectLogAsync(MainWindowHost.IdOf("A")); // uyanmayı başlatır
+            complete = () => waking.SetResult(Woken());
+            settled = EngineState.Ready;
+        }
+        var transition = vm.EngineState;
+        Assert.True(transition is EngineState.Sleeping or EngineState.Waking, $"ön-koşul: geçiş uçuşta olmalıydı ({transition})");
+
+        var onTheCompletingThread = Task.Run(() =>
+        {
+            complete();
+            return vm.EngineState;
+        }).GetAwaiter().GetResult(); // dispatcher bloklu: post edilen devam henüz koşamaz
+
+        Assert.Equal(transition, onTheCompletingThread); // devam tamamlayan havuz thread'inde koşmadı — dispatcher'a post edildi
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(settled, vm.EngineState); // dispatcher pompalanınca UI thread'inde yazıldı
         GC.KeepAlive(window);
     }
 

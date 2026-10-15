@@ -63,6 +63,28 @@ public sealed class SafeExitTests
         Assert.Equal(1, h.Ready); // TEK atım
     }
 
+    /// <summary>[idle-memory · dalga 3 · tek çıkış sorusu] Çıkış istendikten SONRA hiçbir Sync gönderilmez — uçuşta iş yokken istenen çıkışta da
+    /// (bekleyiş hiç açılmaz, çıkış hemen hazırdır; pencere kapanana dek Sync düğmesi basılabilir). Sync'in kapısı motor kapısıyla AYNI soruyu
+    /// sorar: "çıkış istendi" (<c>_exitRequested</c>) — iki ayrı çıkış sorusu yoktur.
+    /// <para><b>[DEĞİŞEN KURAL]</b> ESKİ: Sync'in kapısı "çıkış bekliyor"u (<c>ExitPending</c>) soruyordu; uçuşta iş yokken istenen çıkış onu hiç
+    /// açmadığı için ardından başlayan bir Sync kapanan uygulamanın motoruna gidiyordu (Sync + branch envanteri). GEREKÇE: motor kapısının R3
+    /// kararı — çıkış istendikten sonra yeni iş başlamaz; bayrak bir tanedir (bekleyişte zincirlenen Sync'in kuralı değişmedi).</para>
+    /// <para>KIRMIZI (değişiklikten önce): Sync ve envanter gönderiliyordu.</para></summary>
+    [Fact]
+    public async Task A_sync_started_after_an_exit_with_nothing_in_flight_is_not_sent()
+    {
+        var h = new Harness();
+        h.Vm.RequestExit();
+        Assert.Equal(1, h.Ready); // ön-koşul: uçuşta iş yoktu — çıkış hemen hazır, bekleyiş açılmadı
+        Assert.False(h.Vm.ExitPending);
+
+        await h.Vm.SyncCommand.ExecuteAsync(null);
+
+        Assert.Empty(h.Sent);
+        Assert.False(h.Vm.SyncBusy);
+        Assert.Equal(1, h.Ready);
+    }
+
     // ---------------------------------------------------------------- derleme
 
     /// <summary>Koşan bir derleme graceful durdurulur (TEK <see cref="StopRunCommand"/>, <see cref="StopKind.Graceful"/>)

@@ -12,21 +12,21 @@ namespace BuildOrchestrator.App.ViewModels;
 /// uçuştaki <c>MSBuild.exe</c>'ler post-build copy dahil biter, ortak çıktı dizininde yarım DLL kalmaz. Açılış
 /// koreografisindeki henüz gönderilmemiş koşu Stop'un marking kuralıyla geri alınır. Workspace işlerinin iptali
 /// yoktur, beklenirler: Clean/Optimize/checkout/pull yarıda kesilse ağacı yarım bırakırdı; Sync'in fetch'i git
-/// ref'lerini yazar. Bitişlerine zincirlenen Sync ise bekleyişte BAŞLAMAZ (<see cref="SyncCoreAsync"/>'in kapısı):
+/// ref'lerini yazar. Bitişlerine zincirlenen Sync ise çıkış istendikten sonra BAŞLAMAZ (<see cref="SyncCoreAsync"/>'in kapısı):
 /// zincir işin yüzeyini doğrudan bırakır (<see cref="SyncThenReleaseAsync"/>) ve çıkış o anda hazırdır.</para>
 ///
 /// <para><b>Bekleyiş sonsuz değildir:</b> motor susarsa sessizlik bekçisinin uyarısı (<see cref="EngineOverdueMessage"/>)
 /// çıkışı serbest bırakır — bekçi çıkışın bulunabileceği her pencerede (Starting, Stopping, Syncing, workspace işi)
-/// zaten kuruludur. Motor ölürse <see cref="ReleaseAfterEngineLoss"/> her pencereyi bırakır ve koşul kendiliğinden
-/// doğrulanır. [idle-memory · dalga 3 · Task 21] Motor kapısında bekleyen istekleri (<see cref="EnsureEngineAwakeAsync"/>: uyku döngüsü)
-/// çıkış isteği geri çeker — hiçbiri gönderilmez, her biri kendi geri alımıyla pencereyi bırakır ve koşul kendiliğinden doğrulanır; bekleyen
-/// koşu ayrıca Stop'un kuralıyla komutsuz geri alınır.</para>
+/// zaten kuruludur. Motor ölürse <see cref="ReleaseAfterEngineLoss"/> her pencereyi bırakır — motor kapısında bekleyen isteklerinkiler
+/// hariç: onları kendi geri alımları bırakır — ve koşul kendiliğinden doğrulanır. [idle-memory · dalga 3 · Task 21] Motor kapısında bekleyen
+/// istekleri (<see cref="EnsureEngineAwakeAsync"/>: uyku döngüsü) çıkış isteği geri çeker — hiçbiri gönderilmez, her biri kendi geri alımıyla
+/// pencereyi bırakır ve koşul kendiliğinden doğrulanır; bekleyen koşu ayrıca Stop'un kuralıyla komutsuz geri alınır.</para>
 ///
 /// <para><b>Değerlendirme noktaları:</b> meşguliyet bildiriminin tek noktası (<see cref="OnWorkspaceBusyChanged"/> —
 /// her iş bayrağı ve koşu kilidi geçişi oraya iner) ve bekçinin uyarısı (<see cref="OnEngineOverdueMessageChanged"/>).
-/// Bekleyiş boyunca hiçbir Sync başlamaz — kendiliğinden Sync kapanır (<see cref="DisableAutoSync"/>), zincirlenen
+/// Çıkış istendikten sonra hiçbir Sync başlamaz — kendiliğinden Sync kapanır (<see cref="DisableAutoSync"/>), zincirlenen
 /// ve diğer her Sync'i <see cref="SyncCoreAsync"/>'in kapısı keser: başlasaydı iş biter bitmez yeni bir iş açılır ve
-/// çıkış onu da beklerdi.</para>
+/// çıkış onu da beklerdi (uçuşta iş yokken istenen çıkışta da kapanan uygulamanın motoruna giderdi).</para>
 ///
 /// <para><b>Abone sözleşmesi:</b> <see cref="ExitReady"/> bir durum geçişinin ORTASINDA (ör. <c>IsRunning</c>
 /// düşerken) senkron atılabilir; VM abonenin ne yaptığına dayanmaz — kabuk kapanışı kendi kuyruğuna erteler.</para>
@@ -45,8 +45,9 @@ public sealed partial class RunViewModel
     internal static string ExitPendingLine => "exit requested — the app closes when the work in flight finishes";
 
     /// <summary>Çıkış istendi: ikinci istek (ikinci ×, tepsi → Exit) durum ne olursa olsun tam no-op'tur. [Task 21 · Fix round 1 · R3] Motor
-    /// kapısının çıkış sorusu da budur (<see cref="EnsureEngineAwakeAsync"/>): <see cref="ExitPending"/> yalnız uçuşta iş varken açılır, kapıda
-    /// yalnız bir proje logu yüklemesi bekliyorsa hiç açılmaz.</summary>
+    /// kapısının (<see cref="EnsureEngineAwakeAsync"/>) ve Sync'in kapısının (<see cref="SyncCoreAsync"/>) çıkış sorusu da budur — TEK bayrak:
+    /// <see cref="ExitPending"/> yalnız uçuşta iş varken açılır; kapıda yalnız bir proje logu yüklemesi bekliyorsa ya da uçuşta hiç iş yokken
+    /// hiç açılmaz.</summary>
     private bool _exitRequested;
 
     /// <summary><see cref="ExitReady"/> atıldı — birden çok değerlendirme noktası aynı anı görebilir.</summary>

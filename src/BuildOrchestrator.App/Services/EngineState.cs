@@ -21,13 +21,16 @@ public enum EngineState
     /// <summary>Uyku sürüyor: konağın uykusu (<see cref="EngineHost.SleepAsync"/>) bitmedi — geçiş. Tik ikinci bir uyku başlatmaz.</summary>
     Sleeping,
 
-    /// <summary>Motor kasıtlı durduruldu: süreci yok, konuşulacak motor yok; sonraki iş onu yeniden başlatır (uyandırma).</summary>
+    /// <summary>Motor kasıtlı durduruldu: süreci yok, konuşulacak motor yok; sonraki iş onu yeniden başlatır (uyandırma). Çıkışta vazgeçilen
+    /// uyku ve uyanma da buraya döner — dispose uçuştaki işlemin önüne geçti: süreci çıkışın kendi kapanışı alıyor, "hazır" ya da "ölü" demek
+    /// yanlış olurdu.</summary>
     Asleep,
 
     /// <summary>[dalga 3 · Task 21 · karar 32] Uyanma sürüyor: bir komut yolu uyuyan motoru başlatıyor (<see cref="EngineHost.WakeAsync"/>
     /// bitmedi) — geçiş; kural uyutmaz. Uyanma bitince <see cref="Ready"/>; düşerse kurulum hatasında <see cref="Unavailable"/>, doğup hazır
     /// olamayan motorda <see cref="Dead"/> (ölüm sinyaliyle; sinyal hiç gelmezse kapıya yeni giren ilk yolda — kural
-    /// <c>RunViewModel.EnsureEngineAwakeAsync</c>'te).</summary>
+    /// <c>RunViewModel.EnsureEngineAwakeAsync</c>'te); çıkışta dispose uyanmanın önüne geçerse <see cref="Asleep"/>. Uyanma sürerken başka bir
+    /// sinyal durumu değiştirdiyse (uyanan motorun ölümü) o kazanır: uyanmanın bitişi duruma dokunmaz.</summary>
     Waking,
 
     /// <summary>Motor kaybedildi — kendiliğinden öldü (<see cref="EngineHost.EngineExited"/>), uykusu durdurmanın ortasında düştü (ölüm sinyali
