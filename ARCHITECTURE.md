@@ -4584,7 +4584,10 @@ lines.
   lock, so the run keeps appending meanwhile, and a slice is either exactly the lines asked for or empty — a missing or
   short file never yields partial text, because the console computes its stitch from indices. An empty slice is not
   skipped: the console keeps its place and asks for the same slice again on the next scroll to the top, and a document
-  whose last slice could not be read starts at the narrative's end, so its indices still match what it shows. The one
+  whose last slice could not be read starts at the narrative's end, so its indices still match what it shows — that slice
+  is read again when the narrative is next rebuilt (on `Back` or on the return from the tray) or, while the run streams,
+  once the document is tall enough to scroll away from the top and back, after any live lines trimmed off its top in the
+  meantime; a new section discards it with the rest of the narrative. The one
   exception is a store that has fallen behind the document — a narrative cleared while the window was hidden, under a
   document that stays stale until the return rebuilds it: there is nothing to load, so the index steps back as if the
   slice had been read and the stale document never takes lines of the new section. The count stays the total, so the
