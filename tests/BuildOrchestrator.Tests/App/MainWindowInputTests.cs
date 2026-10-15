@@ -254,14 +254,17 @@ public class MainWindowInputTests
     /// (CI/temiz makine).</para>
     /// <para>[DEĞİŞEN KURULUM — idle-memory dalga 2 · spec §6.5] Fixture'ın kompakt konsol ataması kapatılır
     /// (<c>compactConsole: null</c>): atama pencere kurulduktan sonra VM'e yazar, kalıcılık zinciri de enjekte edilen store'u layout
-    /// tıklamasından ÖNCE yazardı — (b)'nin ön-koşulu ("henüz yazılmadı") tam olarak bu zinciri ölçer. İddialar aynı.</para></summary>
+    /// tıklamasından ÖNCE yazardı — (b)'nin ön-koşulu ("henüz yazılmadı") tam olarak bu zinciri ölçer. İddialar aynı.</para>
+    /// <para>[DEĞİŞEN KURULUM — idle-memory dalga 3 · spec §6.4] Aynı gerekçeyle fixture'ın motor uykusu ataması da kapatılır
+    /// (<c>stopEngineWhenIdle: null</c>): fixture ayarı varsayılan KAPALI açar (üretimde açık) ve o atama da kalıcılık zinciriyle
+    /// store'u layout tıklamasından önce yazardı. İddialar aynı.</para></summary>
     [StaFact]
     public void A_layout_click_persists_through_the_injected_store_and_never_touches_the_users_real_file()
     {
         using var temp = new TempDir();
         string path = MainWindowHost.UiStatePath(temp);
         var before = Fingerprint(JsonUiStateStore.DefaultPath);
-        var (window, _) = MainWindowHost.New(temp, compactConsole: null);
+        var (window, _) = MainWindowHost.New(temp, compactConsole: null, stopEngineWhenIdle: null);
         Assert.False(File.Exists(path)); // ön-koşul: enjekte edilen store henüz yazılmadı
 
         Click(window.LayFocusButton);

@@ -914,6 +914,15 @@ public sealed partial class RunViewModel : ObservableObject
     [ObservableProperty]
     private bool _compactConsole = GeneralSettingsCatalog.Definition(GeneralSetting.CompactConsole).Default;
 
+    /// <summary>[idle-memory · dalga 3 / spec §6.4] Settings → General → ENGINE "Stop the engine when idle": işsiz kalan motor süreci
+    /// <see cref="Services.EngineIdleRule.IdleAfter"/> sonra çıksın mı (sonraki iş onu yeniden başlatır). Varsayılanın TEK tanımı kataloğun
+    /// satırıdır (<see cref="GeneralSettingsCatalog"/> — onaylanmış değer: açık). Bayrak yalnız App içidir — motora GİTMEZ (komutlarda alanı
+    /// yoktur); burası yalnız kullanıcının kararını taşır ve kalıcılaştırır, motoru durdurma kararını boşta kuralı verir
+    /// (<see cref="Services.EngineIdleRule"/>).
+    /// <para><see cref="ObservablePropertyAttribute"/>: kalıcılık bu bildirimden sürer (MainWindow).</para></summary>
+    [ObservableProperty]
+    private bool _stopEngineWhenIdle = GeneralSettingsCatalog.Definition(GeneralSetting.StopEngineWhenIdle).Default;
+
     /// <summary>
     /// [idle-memory · dalga 2 · spec §6.5 · karar 8 · karar 204] Konsolun proje çıktısını BUNDAN SONRA yazacağı kip —
     /// <see cref="CompactConsole"/>'un etkin değeri; başlıktaki <c>compact</c> etiketi bunu gösterir (MainWindow). Tek kural: <b>uçuşta işlem

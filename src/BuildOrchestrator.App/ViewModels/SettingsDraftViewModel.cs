@@ -82,9 +82,10 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
 
     /// <summary>[design v1.19.0 §2.9] General sayfasının grupları ve satırları — <see cref="GeneralSettingsCatalog"/>'tan
     /// doğar (sıra/metin burada yeniden yazılmaz).
-    /// <para>Sekiz anahtarın hepsi gerçektir. <c>Pull before build</c> (<see cref="PullExternalsBeforeBuild"/>),
+    /// <para>Dokuz anahtarın hepsi gerçektir. <c>Pull before build</c> (<see cref="PullExternalsBeforeBuild"/>),
     /// <c>Stash and switch branches</c> (<see cref="StashOnBranchSwitch"/>), <c>Resolve cycles at full priority</c>
-    /// (<see cref="ResolveAtFullPriority"/>) ve <c>Compact console</c> (<see cref="CompactConsole"/>) canlı VM değerinin
+    /// (<see cref="ResolveAtFullPriority"/>), <c>Compact console</c> (<see cref="CompactConsole"/>) ve <c>Stop the engine when
+    /// idle</c> (<see cref="StopEngineWhenIdle"/>) canlı VM değerinin
     /// taslak kopyasıdır; dört kabuk anahtarı (<c>Start with Windows</c>, <c>Start minimized to tray</c>, <c>Close to
     /// tray</c>, <c>Show notifications</c>) <see cref="ShellSwitches"/> tablosu üzerinden KALICIDIR: ctor'un <c>saved</c> parametresi
     /// onları tohumlar, <see cref="CommitAsync"/> yazar, <see cref="ToFile"/>/<see cref="LoadFrom"/> taşır, değişen değer
@@ -149,6 +150,14 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         set => GeneralRow(GeneralSetting.CompactConsole).IsOn = value;
     }
 
+    /// <summary>[idle-memory · dalga 3 / spec §6.4] General sayfasının ENGINE grubundaki <c>Stop the engine when idle</c> satırının
+    /// KENDİSİ (<see cref="CompactConsole"/> deseni). Varsayılan AÇIK (kataloğun satırı); Save'e kadar yalnız taslaktır.</summary>
+    public bool StopEngineWhenIdle
+    {
+        get => GeneralRow(GeneralSetting.StopEngineWhenIdle).IsOn;
+        set => GeneralRow(GeneralSetting.StopEngineWhenIdle).IsOn = value;
+    }
+
     /// <summary>Seçilmiş ama HENÜZ UYGULANMAMIŞ repo kökü. "Change…" yalnız burayı yazar; kök değişimi,
     /// satır reset'i ve Sync Save'e ertelenir — Cancel/Esc taslağı atar ve hiçbir iz kalmaz. Diyalog
     /// açılırken canlı <see cref="RunViewModel.RootPath"/> ile başlar.</summary>
@@ -166,6 +175,9 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// <param name="compactConsole">[idle-memory · dalga 2] Canlı Compact console ayarının taslak kopyası. <c>null</c> ⇒ satır kataloğun
     /// varsayılanında kalır (<see cref="GeneralSettingRowViewModel"/> ctor'u) — varsayılanın TEK tanımı kataloğun satırıdır, burada ikinci
     /// bir literal yazılmaz (son inceleme · defter 12).</param>
+    /// <param name="stopEngineWhenIdle">[idle-memory · dalga 3] Canlı Stop the engine when idle ayarının taslak kopyası. <c>null</c> ⇒ satır
+    /// kataloğun varsayılanında kalır (<paramref name="compactConsole"/> ile aynı kural ve gerekçe: varsayılanın TEK tanımı kataloğun
+    /// satırıdır, burada ikinci bir literal yazılmaz).</param>
     /// <param name="saved">[P3 · P4] Kalıcı kabuk anahtarlarının (<see cref="ShellSwitches"/>) kayıtlı durumu — verildiyse
     /// <see cref="ShellSwitches.All"/>'daki HER satır <see cref="ShellSwitches.IsOn"/> ile tohumlanır; <c>null</c> ⇒
     /// satırlar zaten kendi katalog varsayılanındadır (<see cref="GeneralSettingRowViewModel"/> ctor'u).</param>
@@ -175,7 +187,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     public SettingsDraftViewModel(IReadOnlyList<LayerPattern>? initial, string? repositoryRoot,
         IReadOnlyList<ExternalProject>? initialExternals = null, bool pullExternalsBeforeBuild = true,
         bool stashOnBranchSwitch = false, UiState? saved = null, AutostartService? autostart = null,
-        bool resolveAtFullPriority = true, bool? compactConsole = null)
+        bool resolveAtFullPriority = true, bool? compactConsole = null, bool? stopEngineWhenIdle = null)
     {
         _repositoryRoot = repositoryRoot;
         _openedWithoutWorkspace = string.IsNullOrWhiteSpace(repositoryRoot);
@@ -184,6 +196,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         StashOnBranchSwitch = stashOnBranchSwitch;
         ResolveAtFullPriority = resolveAtFullPriority;
         if (compactConsole is { } compact) CompactConsole = compact;
+        if (stopEngineWhenIdle is { } stopIdle) StopEngineWhenIdle = stopIdle;
         if (saved is not null)
             foreach (var s in ShellSwitches.All) GeneralRow(s.Setting).IsOn = ShellSwitches.IsOn(saved, s.Setting);
         _autostart = autostart;
@@ -265,7 +278,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     public SettingsFile ToFile()
     {
         var file = SettingsFile.From(RepositoryRoot, BuildPatterns(), BuildExternals(), PullExternalsBeforeBuild, StashOnBranchSwitch,
-            ResolveAtFullPriority, CompactConsole);
+            ResolveAtFullPriority, CompactConsole, StopEngineWhenIdle);
         foreach (var s in ShellSwitches.All) s.WriteFile(file, GeneralRow(s.Setting).IsOn);
         return file;
     }
@@ -300,6 +313,8 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         if (file.ResolveAtFullPriority is { } resolve) ResolveAtFullPriority = resolve;
         // [idle-memory · dalga 2] Compact console AYNI kural: anahtar yoksa taslaktaki değer korunur.
         if (file.CompactConsole is { } compact) CompactConsole = compact;
+        // [idle-memory · dalga 3] Stop the engine when idle AYNI kural: anahtar yoksa taslaktaki değer korunur.
+        if (file.StopEngineWhenIdle is { } stopIdle) StopEngineWhenIdle = stopIdle;
         // [P3 · P4] Kabuk anahtarları (ShellSwitches) AYNI kural: anahtar dosyada yoksa (ReadFile null) o satır
         // dokunulmaz kalır — pull/stash'in deseninin tablo üzerinden tekrarı.
         foreach (var s in ShellSwitches.All)
@@ -362,6 +377,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         state.StashOnBranchSwitch = StashOnBranchSwitch;
         state.ResolveAtFullPriority = ResolveAtFullPriority;
         state.CompactConsole = CompactConsole;
+        state.StopEngineWhenIdle = StopEngineWhenIdle;
         // [P4] Start with Windows YALNIZ diyaloğun açıldığı değerden farklıysa uygulanır: Windows kaydı anında yazılır
         // ve tercih değişir. Dokunulmadıysa ikisi de olduğu gibi kalır (Save'in gösterilen "kapalı"yı sessizce tercihe
         // yazması kullanıcının vermediği bir karar olurdu); kayıt yazılamadıysa tercih de değişmez.
@@ -379,7 +395,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
             ? ShellSwitches.StartWithWindows(state) : GeneralRow(s).IsOn));
         store.Save(state);
         await run.ApplySettingsAsync(patterns, RepositoryRoot, externals, PullExternalsBeforeBuild, StashOnBranchSwitch, settingNotes,
-            ResolveAtFullPriority, CompactConsole);
+            ResolveAtFullPriority, CompactConsole, StopEngineWhenIdle);
     }
 
     /// <summary>Katalogdan satırları kurar; bağımlı satırın etkinliğini üst anahtara, pull satırını
@@ -416,6 +432,10 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         _generalRows[GeneralSetting.CompactConsole].PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(GeneralSettingRowViewModel.IsOn)) OnPropertyChanged(nameof(CompactConsole));
+        };
+        _generalRows[GeneralSetting.StopEngineWhenIdle].PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(GeneralSettingRowViewModel.IsOn)) OnPropertyChanged(nameof(StopEngineWhenIdle));
         };
         return groups;
     }

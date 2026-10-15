@@ -4,12 +4,13 @@ using CommunityToolkit.Mvvm.ComponentModel;
 namespace BuildOrchestrator.App.ViewModels;
 
 /// <summary>[design v1.19.0 §2.9] Settings → General sayfasının anahtarları.
-/// <para>Sekiz anahtarın hepsi gerçektir. <see cref="PullBeforeBuild"/>
+/// <para>Dokuz anahtarın hepsi gerçektir. <see cref="PullBeforeBuild"/>
 /// (<see cref="SettingsDraftViewModel.PullExternalsBeforeBuild"/>), <see cref="StashOnBranchSwitch"/>
 /// (<see cref="SettingsDraftViewModel.StashOnBranchSwitch"/>) ve <see cref="ResolveAtFullPriority"/>
 /// (<see cref="SettingsDraftViewModel.ResolveAtFullPriority"/>) motora giden iş akışı tercihleridir;
-/// <see cref="CompactConsole"/> (<see cref="SettingsDraftViewModel.CompactConsole"/>) App-içi bir tercihtir — konsol
-/// anlatısının proje çıktısını nasıl göstereceğini söyler ve motora GİTMEZ; kalan dördü kabuk
+/// <see cref="CompactConsole"/> (<see cref="SettingsDraftViewModel.CompactConsole"/>) ve <see cref="StopEngineWhenIdle"/>
+/// (<see cref="SettingsDraftViewModel.StopEngineWhenIdle"/>) App-içi tercihlerdir — ilki konsol anlatısının proje çıktısını nasıl
+/// göstereceğini, ikincisi App'in boştaki motor sürecini ne zaman durduracağını söyler ve ikisi de motora GİTMEZ; kalan dördü kabuk
 /// anahtarıdır ve <see cref="ShellSwitches"/> tablosu üzerinden kalıcıdır: Save'de yazılır, diyalog kayıtlı değeri
 /// gösterir, Export/Import taşır, değişince konsola not düşer.</para>
 /// <para><b>[DEĞİŞEN KURAL — P3 2026-09-28 · P4 2026-09-29, kullanıcı kararları]</b> ESKİ: dört kabuk anahtarı
@@ -43,6 +44,10 @@ public enum GeneralSetting
     /// konsol anlatısı proje çıktısını kompakt mı göstersin (hatalar tam, her projenin ilk uyarıları ve kalanın sayısı;
     /// kapalıyken her satır). Motora gitmez; değişiklik bir sonraki işlemde geçerli olur.</summary>
     CompactConsole,
+    /// <summary>[idle-memory · dalga 3 / spec §6.4] Gerçek bayrak: <see cref="SettingsDraftViewModel.StopEngineWhenIdle"/> —
+    /// <see cref="Services.EngineIdleRule.IdleAfter"/> kadar işsiz kalan motor süreci çıksın mı (sonraki iş onu yeniden başlatır).
+    /// Motora gitmez: App'in kendi kararını sürer.</summary>
+    StopEngineWhenIdle,
 }
 
 /// <summary>General sayfasındaki tek bir ayar satırının tanımı (prototip <c>GENERAL_GROUPS</c> satırı).</summary>
@@ -74,7 +79,7 @@ public static class GeneralSettingsCatalog
                 "No window on start — the tray icon brings it back.", Default: false,
                 DependsOn: GeneralSetting.StartWithWindows),
             new(GeneralSetting.CloseToTray, "Close to tray",
-                "Closing the window leaves the engine running in the tray.", Default: true),
+                "Closing the window leaves the app running in the tray.", Default: true),
         ]),
         new("BUILD",
         [
@@ -97,6 +102,12 @@ public static class GeneralSettingsCatalog
             new(GeneralSetting.CompactConsole, "Compact console",
                 "Errors in full, the first warnings of each project and a count of the rest; every other MSBuild line stays in "
                 + "the project log. Off: every line.", Default: true),
+        ]),
+        new("ENGINE",
+        [
+            new(GeneralSetting.StopEngineWhenIdle, "Stop the engine when idle",
+                "After five minutes without work the engine process exits. It starts again in a moment when you build or sync.",
+                Default: true),
         ]),
         new("NOTIFICATIONS",
         [

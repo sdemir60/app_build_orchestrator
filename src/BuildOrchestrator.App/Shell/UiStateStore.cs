@@ -116,6 +116,11 @@ public sealed class UiState
     /// (MainWindow seed'i) — anahtarı taşımayan eski bir dosya varsayılanı alır.</summary>
     public bool? CompactConsole { get; set; }
 
+    /// <summary>[idle-memory · dalga 3 / spec §6.4] Settings → General → ENGINE → <c>Stop the engine when idle</c>:
+    /// <see cref="Services.EngineIdleRule.IdleAfter"/> kadar işsiz kalan motor süreci çıksın mı. <see cref="UpdateExternals"/> ile AYNI
+    /// gerekçeyle NULLABLE; yok ⇒ kataloğun varsayılanı (açık; MainWindow seed'i) — anahtarı taşımayan eski bir dosya varsayılanı alır.</summary>
+    public bool? StopEngineWhenIdle { get; set; }
+
     /// <summary>[P4] Settings → General → STARTUP → <c>Start with Windows</c>: uygulamanın tercihi — Windows oturumu
     /// açılınca başlasın mı. Her açılış bu tercihi Windows'un başlangıç kaydıyla hizalar
     /// (<see cref="Services.AutostartService.Apply"/>); Save kaydı anında yazar. <see cref="UpdateExternals"/> ile AYNI

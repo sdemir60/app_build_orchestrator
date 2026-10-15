@@ -9,8 +9,8 @@ namespace BuildOrchestrator.App.ViewModels;
 /// <summary>
 /// [design v1.10.0 §2.9 · K5] Settings'in <b>dışa/içe aktarılan</b> dosya biçimi:
 /// <c>{ app, version, repositoryRoot, externalProjects[{ path }], pullExternalBeforeBuild, stashOnBranchSwitch,
-/// resolveAtFullPriority, compactConsole, startWithWindows, startMinimizedToTray, closeToTray, showNotifications,
-/// layers[{ name, pattern }] }</c> —
+/// resolveAtFullPriority, compactConsole, stopEngineWhenIdle, startWithWindows, startMinimizedToTray, closeToTray,
+/// showNotifications, layers[{ name, pattern }] }</c> —
 /// <c>externalProjects</c> BİLEREK <c>repositoryRoot</c> ile <c>layers</c> ARASINDADIR (design v1.14.0/§9),
 /// hem burada hem sınıf içindeki alan bildirim sırasında (JSON çıktısını o sıra belirler). Dosyanın adı
 /// <see cref="FileName"/>'dir.
@@ -68,6 +68,11 @@ public sealed class SettingsFile
     /// sıfırlamaz.</summary>
     [JsonPropertyName("compactConsole")] public bool? CompactConsole { get; set; }
 
+    /// <summary>[idle-memory · dalga 3 / spec §6.4] Boştaki motor süreci durdurulsun mu. <see cref="StashOnBranchSwitch"/> gibi KASITLI
+    /// OLARAK nullable: anahtarı taşımayan (eski) bir dosya taslaktaki değeri sıfırlamaz. <b>Bildirim sırası</b> <c>compactConsole</c>'dan
+    /// SONRA, <c>startWithWindows</c>'ten ÖNCEDİR (JSON çıktısını bu sıra belirler).</summary>
+    [JsonPropertyName("stopEngineWhenIdle")] public bool? StopEngineWhenIdle { get; set; }
+
     /// <summary>[P4] Settings → General → STARTUP: <c>Start with Windows</c>. <see cref="StashOnBranchSwitch"/> gibi
     /// KASITLI OLARAK nullable: anahtarı taşımayan (eski) bir dosya taslaktaki değeri sıfırlamaz
     /// (<see cref="SettingsDraftViewModel.LoadFrom"/>). Okuma/yazma <see cref="BuildOrchestrator.App.Shell.ShellSwitches"/>
@@ -104,7 +109,8 @@ public sealed class SettingsFile
     /// hiç eksik BIRAKMAZ (§9: "yalnız boş olmayan path'ler").</summary>
     public static SettingsFile From(string? repositoryRoot, IReadOnlyList<LayerPattern> layers,
         IReadOnlyList<ExternalProject>? externals = null, bool? pullExternalBeforeBuild = null,
-        bool? stashOnBranchSwitch = null, bool? resolveAtFullPriority = null, bool? compactConsole = null)
+        bool? stashOnBranchSwitch = null, bool? resolveAtFullPriority = null, bool? compactConsole = null,
+        bool? stopEngineWhenIdle = null)
     {
         ArgumentNullException.ThrowIfNull(layers);
         return new SettingsFile
@@ -114,6 +120,7 @@ public sealed class SettingsFile
             StashOnBranchSwitch = stashOnBranchSwitch,
             ResolveAtFullPriority = resolveAtFullPriority,
             CompactConsole = compactConsole,
+            StopEngineWhenIdle = stopEngineWhenIdle,
             // Sıra BİLEREK budur (RepositoryRoot → ExternalProjects → Layers): nesne başlatıcısının kendi
             // sırası JSON çıktısını ETKİLEMEZ (System.Text.Json BİLDİRİM sırasını yazar), ama okunurluk için
             // sınıftaki alan sırasıyla AYNI tutulur — iki sıra sessizce ayrışmasın.

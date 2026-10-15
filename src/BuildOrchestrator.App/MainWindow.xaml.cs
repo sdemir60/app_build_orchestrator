@@ -213,6 +213,9 @@ public partial class MainWindow : Window
         // [idle-memory · dalga 2 / spec §6.5] Compact console: hiç yazılmamışsa kataloğun varsayılanı (onaylanmış değer: açık) — eski
         // dosya da onu alır. Varsayılanın TEK tanımı kataloğun satırıdır; burada ikinci bir literal yazılmaz (son inceleme · defter 12).
         _vm.CompactConsole = saved.CompactConsole ?? GeneralSettingsCatalog.Definition(GeneralSetting.CompactConsole).Default;
+        // [idle-memory · dalga 3 / spec §6.4] Stop the engine when idle: hiç yazılmamışsa kataloğun varsayılanı (onaylanmış değer: açık) —
+        // eski dosya da onu alır. Varsayılanın TEK tanımı kataloğun satırıdır (Compact console'un kuralı); burada ikinci bir literal yok.
+        _vm.StopEngineWhenIdle = saved.StopEngineWhenIdle ?? GeneralSettingsCatalog.Definition(GeneralSetting.StopEngineWhenIdle).Default;
         _vm.PropertyChanged += OnWorkflowPreferenceChanged;
 
         // [design v1.11.0 §2.1] Title bar'ın mono bağlam metni (OSYS · main · main-2) KALDIRILDI — başlık
@@ -1303,7 +1306,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>[D6 fold] İş akışı tercihi (RepositoryRoot/Configuration/PerfMode/UpdateExternals/StashOnBranchSwitch/ResolveAtFullPriority/
-    /// CompactConsole) değişince kalıcı duruma yazar — yerleşim persist'iyle AYNI desen (Load → muta → Save; düşük frekans).
+    /// CompactConsole/StopEngineWhenIdle) değişince kalıcı duruma yazar — yerleşim persist'iyle AYNI desen (Load → muta → Save; düşük frekans).
     /// [D7 M3] RootPath değişimi (Settings → Save ile uygulanan kök, ilk kurulum dahil)
     /// TEK noktadan buradan persist edilir; açılışta seed edilip hatırlanır.</summary>
     private void OnWorkflowPreferenceChanged(object? sender, PropertyChangedEventArgs e)
@@ -1317,6 +1320,7 @@ public partial class MainWindow : Window
             case nameof(RunViewModel.StashOnBranchSwitch):
             case nameof(RunViewModel.ResolveAtFullPriority):
             case nameof(RunViewModel.CompactConsole):
+            case nameof(RunViewModel.StopEngineWhenIdle):
                 var s = _uiState.Load();
                 s.RepositoryRoot = _vm.RootPath;
                 s.Configuration = _vm.Configuration;
@@ -1325,6 +1329,7 @@ public partial class MainWindow : Window
                 s.StashOnBranchSwitch = _vm.StashOnBranchSwitch;
                 s.ResolveAtFullPriority = _vm.ResolveAtFullPriority;
                 s.CompactConsole = _vm.CompactConsole;
+                s.StopEngineWhenIdle = _vm.StopEngineWhenIdle;
                 _uiState.Save(s);
                 break;
         }

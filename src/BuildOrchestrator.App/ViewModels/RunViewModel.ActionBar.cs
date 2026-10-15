@@ -227,6 +227,24 @@ public sealed partial class RunViewModel
             : $"{label} off — every MSBuild line is shown from the next run");
     }
 
+    /// <summary>
+    /// [idle-memory · dalga 3 / spec §6.4] Settings Save: "Stop the engine when idle" switch'ini uygular. Bayrak motora gitmez — App'in kendi
+    /// kararını sürer; not yalnız değer GERÇEKTEN değiştiyse yazılır (<see cref="ApplyCompactConsole"/> deseni). Kapatma notu "no longer
+    /// stopped" der, "stays running" DEMEZ (kontrolcü kararı 10): ayarı kapatmak uykudaki motoru uyandırmaz, motor bir sonraki işe dek
+    /// uykuda kalır — "çalışıyor" demek o an yanlış olurdu.
+    /// </summary>
+    private void ApplyStopEngineWhenIdle(bool stopWhenIdle)
+    {
+        if (stopWhenIdle == StopEngineWhenIdle) return;
+        StopEngineWhenIdle = stopWhenIdle;
+        // Etiket KATALOGDAN gelir (ApplyCompactConsole deseni): anahtarın adı burada literal yazılmaz. "Beş dakika" sözcüğü
+        // EngineIdleRule.IdleAfter ile testle eşitlenir (kopya YASAK: sayının sahibi o sabittir).
+        string label = GeneralSettingsCatalog.Definition(GeneralSetting.StopEngineWhenIdle).Label;
+        AppendRunLine(stopWhenIdle
+            ? $"{label} on — the engine exits after five idle minutes"
+            : $"{label} off — the engine is no longer stopped when idle");
+    }
+
     /// <summary>[Settings] Save'in TEK giriş noktası: katman pattern'lerini uygular, gerekirse repo kökünü
     /// değiştirir ve TEK bir Sync gönderir.
     ///
@@ -273,7 +291,7 @@ public sealed partial class RunViewModel
     /// <param name="settingNotes">[P3 · P4] <see cref="BuildOrchestrator.App.Shell.ShellSwitches"/>'in <c>Commit</c>'inin
     /// ürettiği, DEĞİŞEN kabuk anahtarlarının (Start with Windows, Start minimized to tray, Close to tray, Show
     /// notifications) konsol notları —
-    /// <see cref="ApplyCompactConsole"/>'dan HEMEN SONRA (sıra: Pull → Stash → Resolve → Compact → bu notlar), idle kapısından
+    /// <see cref="ApplyStopEngineWhenIdle"/>'dan HEMEN SONRA (sıra: Pull → Stash → Resolve → Compact → Stop engine → bu notlar), idle kapısından
     /// ÖNCE <see cref="AppendRunLine"/> ile
     /// sırayla yazılır (bu yüzden motor/workspace durumundan ETKİLENMEZ — <see cref="ApplyPullExternals"/>/
     /// <see cref="ApplyStashOnBranchSwitch"/>'in kendi notlarıyla AYNI konum).</param>
@@ -283,9 +301,14 @@ public sealed partial class RunViewModel
     /// tercih (motora gitmez); değer değiştiyse konsola not düşer, değişiklik bir sonraki işlemde geçerli olur. <c>null</c> ⇒
     /// DOKUNULMAZ: Settings'in Save'i değeri her zaman verir (<see cref="SettingsDraftViewModel.CommitAsync"/>); ayarı hiç anmayan
     /// bir çağıran kipi kendiliğinden değiştirip konsola not düşmemeli.</param>
+    /// <param name="stopEngineWhenIdle">[idle-memory · dalga 3 / spec §6.4] General'ın "Stop the engine when idle" switch'i — App-içi
+    /// tercih (motora gitmez); değer değiştiyse konsola not düşer. <c>null</c> ⇒ DOKUNULMAZ (<paramref name="compactConsole"/> ile aynı
+    /// kural ve gerekçe: Settings'in Save'i değeri her zaman verir; ayarı hiç anmayan bir çağıran ayarı kendiliğinden açıp konsola not
+    /// düşmemeli).</param>
     public async Task ApplySettingsAsync(IReadOnlyList<LayerPattern> patterns, string? repositoryRoot,
         IReadOnlyList<ExternalProject> externals, bool pullExternalsBeforeBuild = true, bool stashOnBranchSwitch = false,
-        IReadOnlyList<string>? settingNotes = null, bool resolveAtFullPriority = true, bool? compactConsole = null)
+        IReadOnlyList<string>? settingNotes = null, bool resolveAtFullPriority = true, bool? compactConsole = null,
+        bool? stopEngineWhenIdle = null)
     {
         string root = RootOf(repositoryRoot);
         if (WorkspaceIdle && root.Length == 0 && HasWorkspace) CloseWorkspace();
@@ -296,6 +319,7 @@ public sealed partial class RunViewModel
         ApplyStashOnBranchSwitch(stashOnBranchSwitch);
         ApplyResolveAtFullPriority(resolveAtFullPriority);
         if (compactConsole is { } compact) ApplyCompactConsole(compact);
+        if (stopEngineWhenIdle is { } stopIdle) ApplyStopEngineWhenIdle(stopIdle);
         if (settingNotes is not null)
             foreach (var note in settingNotes) AppendRunLine(note);
         if (!WorkspaceIdle)
