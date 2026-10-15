@@ -49,8 +49,7 @@ public class BottomAnchorBehaviorTests
     }
 
     /// <summary>
-    /// Takipteyken içerik büyürse görünüm ANINDA (animasyonsuz) yeni dibe gider; ardından tepeye sıçrayıp takibi bırakan okuyucuya
-    /// prepend'in büyümesi dokunmaz.
+    /// Takipteyken içerik büyürse görünüm ANINDA (animasyonsuz) yeni dibe gider.
     /// <para>[DEĞİŞEN KURAL — dalga 2 altıncı inceleme] Eski iddia: anında kaydırmanın hedefi içerik yüksekliğinin kendisiydi (1050 —
     /// <c>ScrollToEnd</c> gibi dibi aşan bir istek, host kenetliyordu). "Dip"in artık tek tanımı var
     /// (<see cref="BottomAnchorBehavior.BottomOffset"/>: içerik eksi görünür alan) ve dibe her gidiş onu hedefler. Gerçek host'ta oturulan

@@ -16,6 +16,9 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class ConsoleReaderNavigationTests
 {
+    /// <summary>Bir proje sayfasının satırları (<c>page0</c>, <c>page1</c>, …) — sayfayı açan testlerin tek kaynağı.</summary>
+    private static string[] Page(int lines) => [.. Enumerable.Range(0, lines).Select(i => $"page{i}")];
+
     /// <summary>Okuyucu dipten ayrıldı: takip bırakıldı, <c>⌄ latest</c> görünür, prompt satırı (panele yaslı) gizli — dipte asılı
     /// kalsaydı okunan metnin üstüne binerdi.</summary>
     private static void AssertReleased(RealizedNarrative narrative)
@@ -118,12 +121,14 @@ public class ConsoleReaderNavigationTests
     /// azaltılmış hareket ayarındaki kullanıcının yolu).
     /// <para>KIRMIZI (ölçüldü): dipte, takip açık — ama pill GÖRÜNÜR kalıyordu. Pill atlamadan önce (uzakken) değerlendiriliyor, atlamanın
     /// olayı da ScrollViewer'ın eski (uzak) ofsetiyle değerlendirdiği için onu kaldırmıyordu.</para>
+    /// <para>[DEĞİŞEN KURULUM — dalga 2 kapanış] Eskiden sabit 10 çentikle bırakıyordu; tekerlekle dipten ayrılma artık tek yardımcıda
+    /// (<see cref="RealizedNarrative.WheelAwayFromTheBottom"/>, eşik geçilene dek). İddia aynı.</para>
     /// </summary>
     [StaFact]
     public void Clicking_the_latest_pill_brings_the_reader_back_and_hides_it()
     {
         using var narrative = new RealizedNarrative(lines: 400);
-        foreach (int _ in Enumerable.Range(0, 10)) narrative.WheelUp();
+        narrative.WheelAwayFromTheBottom();
         AssertReleased(narrative); // ön-koşul
 
         narrative.ClickLatest();
@@ -168,7 +173,7 @@ public class ConsoleReaderNavigationTests
         narrative.WheelUp();
         narrative.WheelUp(); // okuyucu kaydırdı: direksiyon onda, bekleme kuruldu
 
-        narrative.View.PlayCascade([.. Enumerable.Range(0, 300).Select(i => $"page{i}")]);
+        narrative.View.PlayCascade(Page(lines: 300));
         DispatcherPump.DrainToIdle();
 
         Assert.False(narrative.View.StickToBottom);
@@ -196,7 +201,7 @@ public class ConsoleReaderNavigationTests
         using var narrative = new RealizedNarrative(lines: 400);
         Assert.True(narrative.View.FollowsBottom); // ön-koşul: anlatı dibi izliyor
 
-        narrative.View.PlayCascade([.. Enumerable.Range(0, 300).Select(i => $"page{i}")]);
+        narrative.View.PlayCascade(Page(lines: 300));
         DispatcherPump.DrainToIdle();
 
         Assert.False(narrative.View.FollowsBottom);
@@ -215,7 +220,7 @@ public class ConsoleReaderNavigationTests
     {
         using var narrative = new RealizedNarrative(lines: 400);
 
-        narrative.View.PlayCascade([.. Enumerable.Range(0, 5).Select(i => $"page{i}")]);
+        narrative.View.PlayCascade(Page(lines: 5));
         DispatcherPump.DrainToIdle();
 
         Assert.True(narrative.View.Editor.ExtentHeight <= narrative.View.Editor.ViewportHeight, "test kurgusu: sayfa görünüme sığmalıydı");
@@ -231,19 +236,21 @@ public class ConsoleReaderNavigationTests
     /// sayfası açılıyor. Takastan önceki ve sonraki karar aynıdır (yapışık değil, pill görünür) — aradaki her farklılık takasın ortasında
     /// verilmiş bir karardır. KIRMIZI (bozma: anchor takas olaylarını yeniden görür — beşinci incelemede bu bozma altında bütün setler
     /// yeşil kalmıştı): sıfırlama olayında yapışık, pill gizli.</para>
+    /// <para>[DEĞİŞEN KURULUM — dalga 2 kapanış] Eskiden tam iki tekerlek çentiğiyle bırakıyordu. Çentiğin kaç piksel kaydırdığı Windows
+    /// ayarına bağlı: satır başına bir çentikte (~18,6 px) iki çentik eşiği (48 px) geçmez ve ön-koşul düşerdi. Artık eşik geçilene dek
+    /// çevrilir (<see cref="RealizedNarrative.WheelAwayFromTheBottom"/>); iddia aynı.</para>
     /// </summary>
     [StaFact]
     public void A_document_swap_decides_following_once_at_its_end_and_never_on_its_own_scroll_events()
     {
         using var narrative = new RealizedNarrative(lines: 400);
-        narrative.WheelUp();
-        narrative.WheelUp();
+        narrative.WheelAwayFromTheBottom();
         AssertReleased(narrative); // ön-koşul: takastan önceki karar
         var decisions = new List<(bool Stuck, Visibility Pill)>();
         narrative.View.Editor.TextArea.TextView.ScrollOffsetChanged += (_, _) =>
             decisions.Add((narrative.View.StickToBottom, narrative.View.Pill.Visibility)); // üretimin işleyicisinden SONRA koşar
 
-        narrative.View.PlayCascade([.. Enumerable.Range(0, 300).Select(i => $"page{i}")]);
+        narrative.View.PlayCascade(Page(lines: 300));
 
         Assert.NotEmpty(decisions); // ön-koşul: takas kaydırma olayı yaydı
         Assert.All(decisions, decision => Assert.Equal((false, Visibility.Visible), decision));
@@ -261,7 +268,7 @@ public class ConsoleReaderNavigationTests
     public void Back_from_a_project_page_the_reader_scrolled_follows_the_narrative_again()
     {
         using var narrative = new RealizedNarrative(lines: 400);
-        narrative.View.PlayCascade([.. Enumerable.Range(0, 300).Select(i => $"page{i}")]);
+        narrative.View.PlayCascade(Page(lines: 300));
         DispatcherPump.DrainToIdle();
         narrative.Press(Key.PageDown); // okuyucu sayfada gezindi: direksiyon onda
 

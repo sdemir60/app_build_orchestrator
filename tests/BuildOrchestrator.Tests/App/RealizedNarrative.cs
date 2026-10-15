@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using BuildOrchestrator.App.Console;
+using BuildOrchestrator.App.Controls;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -65,6 +66,13 @@ internal sealed class RealizedNarrative : IDisposable
     {
         MouseInput.Wheel(View.Editor.TextArea.TextView, Mouse.MouseWheelDeltaForOneLine);
         DispatcherPump.DrainToIdle();
+    }
+
+    /// <summary>Okuyucu tekerlekle dipten ayrılır: eşiği (<see cref="BottomAnchorDecision.DefaultThresholdPx"/>) geçene dek çentik çentik
+    /// yukarı. Çentiğin kaç piksel kaydırdığı sistem ayarına bağlıdır (Windows'un "satır sayısı"), bu yüzden çentik sayısı sabit değildir.</summary>
+    public void WheelAwayFromTheBottom()
+    {
+        for (int notch = 0; notch < 20 && DistanceFromBottom <= BottomAnchorDecision.DefaultThresholdPx; notch++) WheelUp();
     }
 
     /// <summary><c>⌄ latest</c> tıklaması — pill'in kendi düğmesinden.</summary>
