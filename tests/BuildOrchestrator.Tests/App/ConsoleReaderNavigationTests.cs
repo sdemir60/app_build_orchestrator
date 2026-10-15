@@ -36,7 +36,17 @@ public class ConsoleReaderNavigationTests
     {
         Assert.False(narrative.View.StickToBottom);
         Assert.Equal(Visibility.Visible, narrative.View.Pill.Visibility);
-        Assert.Equal(Visibility.Collapsed, narrative.View.ActiveLineOverlay.Visibility);
+        AssertCaretFollowsPill(narrative);
+    }
+
+    /// <summary>[B2 fix 2 · madde 1] Prompt imleci pill'i izler (bir atlama uçuşta değilken): ikisinden TAM OLARAK biri görünür. Pill
+    /// görünürken okuyucu canlı dipten uzaktadır ve panele yaslı imleç okunan metnin üstüne binerdi; pill gizliyken anlatı canlı dipte,
+    /// imleç orada yanar. Proje sayfasında imleç hiç yoktur — orada yalnız pill görünürken çağrılır.</summary>
+    private static void AssertCaretFollowsPill(RealizedNarrative narrative)
+    {
+        var pill = narrative.View.Pill.Visibility;
+        var caret = narrative.View.ActiveLineOverlay.Visibility;
+        Assert.True(pill != caret, $"the prompt caret does not follow the latest pill: pill {pill}, caret {caret}");
     }
 
     /// <summary>Okuyucu dipte ve akışı izliyor: pill gizli, prompt satırı görünür.</summary>
@@ -500,6 +510,7 @@ public class ConsoleReaderNavigationTests
             double before = narrative.ContentTop();
             narrative.Press(Key.PageUp);
             Assert.Equal(Math.Max(0, before - viewport), narrative.ContentTop(), precision: 1);
+            AssertCaretFollowsPill(narrative);
         }
 
         Assert.Equal(0, narrative.ContentTop());
@@ -769,6 +780,7 @@ public class ConsoleReaderNavigationTests
         Assert.Equal(Visibility.Visible, narrative.View.Pill.Visibility);
         Assert.Equal(landed, narrative.View.Editor.VerticalOffset);
         Assert.False(narrative.View.FollowsBottom);
+        AssertCaretFollowsPill(narrative);
     }
 
     /// <summary>
@@ -788,14 +800,17 @@ public class ConsoleReaderNavigationTests
 
         Assert.Equal(Visibility.Visible, narrative.View.Pill.Visibility);
         Assert.Equal(0, narrative.View.Editor.VerticalOffset);
+        AssertCaretFollowsPill(narrative);
     }
 
     /// <summary>
     /// [B2 fix 1 · F1] Anlatıda dibin iki satır üstünde okuyan (eşiğin içinde, direksiyon onda) okuyucuya yeni satırlar gelince
     /// <c>⌄ latest</c> görünür — uzaklık eşiği aştı; görünüm yerinden oynamaz (kontrolcü kararı: kural "pill canlı uzaklığı izler", iki
-    /// kipte de).
+    /// kipte de). [B2 fix 2 · madde 1] Pill görünürken prompt imleci gizlidir: okuyucu artık canlı dipte değildir.
     /// <para>KIRMIZI (düzeltmeden önce): pill okuyucu kaydırana ya da 5 sn dönüşe dek gizli kalıyordu. İki satır seçildi: son metin satırı
     /// görünür alandaysa AvalonEdit eklemede kendiliğinden yeniden ölçer; iki satır yukarıda ölçüm hiç gelmezdi — ekleme onu ister.</para>
+    /// <para>KIRMIZI (madde 1'den önce): imleç yalnız takip durumuna (<c>IsStuck</c>) bakıyordu — okuyucu eşiğin içinden kaydırdığı için
+    /// durum "dipte" kalıyor, imleç pill'le birlikte görünüyordu.</para>
     /// </summary>
     [StaFact]
     public void A_reader_two_lines_above_the_end_of_the_narrative_sees_the_latest_pill_when_lines_arrive()
@@ -812,20 +827,24 @@ public class ConsoleReaderNavigationTests
 
         Assert.Equal(Visibility.Visible, narrative.View.Pill.Visibility);
         Assert.Equal(reading, narrative.View.Editor.VerticalOffset);
+        AssertCaretFollowsPill(narrative);
     }
 
     /// <summary>
     /// [B2 fix 1 · F1] Akışı izleyen anlatı satır aldıkça <c>⌄ latest</c> HİÇ kımıldamaz — belge render dilimine dek büyürken de, sonra
     /// kırpılırken de: yeniden okuma yalnız izlenmeyen belgede yapılır; izleyen belgede ekleme ile <c>ScrollToEnd</c>'in uygulanması
-    /// arasındaki uzaklık bir an eşiği aşar ve pill yanıp sönerdi.
-    /// <para>PİN — düzeltmeden önce de yeşildi; düzeltmenin sınırını korur (bozma: takip koruması kaldırılınca kırmızı). Anlatı render
-    /// diliminin altından başlar: dilimdeki belge kırpmayla aynı boyda kalır, büyümez — yanıp sönme yalnız büyüyen belgede görülür.</para>
+    /// arasındaki uzaklık bir an eşiği aşar ve pill yanıp sönerdi. [B2 fix 2 · madde 1] Prompt imleci de hiç kımıldamaz: imleç pill'in
+    /// DUYURULAN görünürlüğünü okur (<c>BottomAnchorBehavior.PillShown</c>), o anki uzaklığı değil.
+    /// <para>PİN — düzeltmeden önce de yeşildi; düzeltmenin sınırını korur (bozma: takip koruması kaldırılınca pill, imleç canlı
+    /// <c>ShowPill</c>'i okuyunca imleç kırmızı). Anlatı render diliminin altından başlar: dilimdeki belge kırpmayla aynı boyda kalır,
+    /// büyümez — yanıp sönme yalnız büyüyen belgede görülür.</para>
     /// </summary>
     [StaFact]
     public void A_following_narrative_never_toggles_the_latest_pill_while_lines_arrive()
     {
         using var narrative = new RealizedNarrative(lines: 100);
-        using var toggles = PillToggles.Count(narrative);
+        using var pill = VisibilityToggles.Of(narrative.View.Pill);
+        using var caret = VisibilityToggles.Of(narrative.View.ActiveLineOverlay);
 
         foreach (int batch in Enumerable.Range(0, 20))
         {
@@ -833,8 +852,10 @@ public class ConsoleReaderNavigationTests
             DispatcherPump.DrainToIdle();
         }
 
-        Assert.Equal(0, toggles.Value);
+        Assert.Equal(0, pill.Value);
+        Assert.Equal(0, caret.Value);
         AssertFollowingAtTheBottom(narrative);
+        AssertCaretFollowsPill(narrative);
     }
 
     /// <summary>
@@ -848,35 +869,125 @@ public class ConsoleReaderNavigationTests
         using var narrative = new RealizedNarrative(lines: 400);
         OpenPage(narrative, lines: 5);
         Assert.Equal(Visibility.Collapsed, narrative.View.Pill.Visibility); // ön-koşul
-        using var toggles = PillToggles.Count(narrative);
+        using var pill = VisibilityToggles.Of(narrative.View.Pill);
 
         narrative.View.ReplaceRunDocument(NarrativeSnapshots.Of(narrative.Store)); // ← Back
         DispatcherPump.DrainToIdle();
 
-        Assert.Equal(0, toggles.Value);
+        Assert.Equal(0, pill.Value);
+        AssertFollowingAtTheBottom(narrative);
+        AssertCaretFollowsPill(narrative);
+    }
+
+    // ---------------------------------------------------------------- [B2 fix 2 · madde 1] prompt imleci yalnız canlı dipte
+
+    /// <summary>
+    /// [B2 fix 2 · madde 1] Canlı dibe dönüş imleci geri getirir: dibin iki satır üstünde okurken satırlar gelip <c>⌄ latest</c> çıkan
+    /// okuyucu End'e basınca ya da elini çekince (bekleme) pill kalkar ve prompt imleci yeniden görünür. Bu dönüşte takip durumu
+    /// (<c>IsStuck</c>) hiç değişmez — dipte sayılmaya devam ediyordu —; imleç yalnız pill'in duyurulan görünürlüğü yenilendiği için döner.
+    /// <para>PİN — madde 1'den önce de yeşildi (imleç yalnız takip durumuna bakıyor, hiç gizlenmiyordu); kuralın dönüş yolunu korur (bozma:
+    /// anchor pill değişimini yalnız durum değişince duyurursa imleç gizli, pill görünür kalır).</para>
+    /// </summary>
+    [StaTheory]
+    [InlineData("End")]
+    [InlineData("let go")]
+    public void Returning_to_the_live_bottom_brings_the_prompt_caret_back(string how)
+    {
+        using var narrative = new RealizedNarrative(lines: 400);
+        narrative.Press(Key.Up);
+        narrative.Press(Key.Up);
+        NarrativeSnapshots.Deliver(narrative.Store, narrative.View, ["live0", "live1", "live2", "live3"]);
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(Visibility.Visible, narrative.View.Pill.Visibility); // ön-koşul: okuyucu canlı dipten uzakta
+
+        if (how == "End") narrative.Press(Key.End);
+        else narrative.ElapseAnchorTimers();
+
+        Assert.Equal(Visibility.Collapsed, narrative.View.Pill.Visibility);
+        AssertCaretFollowsPill(narrative);
+    }
+
+    /// <summary>
+    /// [B2 fix 2 · madde 1] Proje sayfasında prompt imleci hiç görünmez — <c>⌄ latest</c> gelip giderken de: pill sona atlayınca kalkar,
+    /// derlenen projenin satırlarıyla geri gelir, End ile yine kalkar; imleç bir kez bile kımıldamaz (sayfa okunan bir logdur, izlenen bir
+    /// akış değil).
+    /// <para>PİN — madde 1'den önce de yeşildi (bozma: imleç kuralından proje kipi koşulu kaldırılınca sayfanın sonunda imleç yanar).</para>
+    /// </summary>
+    [StaFact]
+    public void A_project_page_never_shows_the_prompt_caret_while_the_latest_pill_comes_and_goes()
+    {
+        using var narrative = new RealizedNarrative(lines: 400);
+        OpenPage(narrative, lines: 1000);
+        Assert.Equal(Visibility.Collapsed, narrative.View.ActiveLineOverlay.Visibility); // ön-koşul
+        using var pill = VisibilityToggles.Of(narrative.View.Pill);
+        using var caret = VisibilityToggles.Of(narrative.View.ActiveLineOverlay);
+
+        narrative.ClickLatest();                                         // pill kalkar: sayfanın sonu
+        narrative.View.AppendBatch("live0\nlive1\nlive2\nlive3\n");      // pill geri gelir: okuyucunun altında yeni satırlar
+        DispatcherPump.DrainToIdle();
+        narrative.Press(Key.End);                                        // pill yine kalkar
+
+        Assert.True(pill.Value >= 3, $"test kurgusu: pill gelip gitmeliydi, değişim {pill.Value}");
+        Assert.Equal(Visibility.Collapsed, narrative.View.Pill.Visibility);
+        Assert.Equal(0, caret.Value);
+    }
+
+    /// <summary>
+    /// [B2 fix 2 · madde 1] <c>⌄ latest</c>'in canlandırılmış atlaması sürerken prompt imleci gizlidir — görünüm henüz canlı dipte değildir
+    /// ve imleç (son satır görünür alanda değilken eski yerinde kalır) metnin üstünde "sanki sondaymış gibi" dururdu; atlama inip pencere
+    /// kapanınca imleç dipte yeniden görünür. İniş belirlenimlidir: saat sonuna konumlanır (<see cref="LandTheJump"/>), duvar saati beklenmez.
+    /// <para>KIRMIZI (madde 1'den önce): atlama başlarken anchor durumu iyimser biçimde "dipte" yapar (<c>BeginJump</c>) ve imleç yalnız
+    /// ona bakıyordu — uçuş boyunca görünürdü.</para>
+    /// </summary>
+    [StaFact]
+    public void The_prompt_caret_hides_during_the_latest_pills_flight_and_returns_after_landing()
+    {
+        using var motion = MotionScope.Enable(new FakeMotionSettings { AnimationsEnabled = true });
+        using var narrative = new RealizedNarrative(lines: 400);
+        narrative.WheelAwayFromTheBottom();
+        narrative.ClickLatest();
+        Assert.True(IsAnimating(narrative), "test kurgusu: pill bir kaydırma animasyonu başlatmalıydı");
+
+        Assert.Equal(Visibility.Collapsed, narrative.View.ActiveLineOverlay.Visibility); // uçuşta
+
+        LandTheJump(narrative);
+        narrative.ElapseAnchorTimers(); // atlama penceresi kapandı
+
         AssertFollowingAtTheBottom(narrative);
     }
 
-    /// <summary><c>⌄ latest</c>'in görünürlüğü kaç kez değişti — sayım bitince bırakılan bir dinleyici (gerçek değer değişimleri).</summary>
-    private sealed class PillToggles : IDisposable
+    /// <summary>Bir öğenin görünürlüğü kaç kez değişti — sayım bitince bırakılan bir dinleyici (gerçek değer değişimleri): <c>⌄ latest</c> ve
+    /// prompt imleci.</summary>
+    private sealed class VisibilityToggles : IDisposable
     {
         private static readonly System.ComponentModel.DependencyPropertyDescriptor Visibility =
             System.ComponentModel.DependencyPropertyDescriptor.FromProperty(UIElement.VisibilityProperty, typeof(UIElement));
-        private readonly UIElement _pill;
+        private readonly UIElement _element;
 
-        private PillToggles(UIElement pill)
+        private VisibilityToggles(UIElement element)
         {
-            _pill = pill;
-            Visibility.AddValueChanged(pill, OnChanged);
+            _element = element;
+            Visibility.AddValueChanged(element, OnChanged);
         }
 
         public int Value { get; private set; }
 
-        public static PillToggles Count(RealizedNarrative narrative) => new(narrative.View.Pill);
+        public static VisibilityToggles Of(UIElement element) => new(element);
 
         private void OnChanged(object? sender, EventArgs e) => Value++;
 
-        public void Dispose() => Visibility.RemoveValueChanged(_pill, OnChanged);
+        public void Dispose() => Visibility.RemoveValueChanged(_element, OnChanged);
+    }
+
+    /// <summary>Uçuştaki kaydırma animasyonunu (<c>⌄ latest</c> atlaması) sonuna konumlar ve yerleşimi oturtur: saat bir tik beklemeden
+    /// hedefi DP'ye yazar (<c>SeekAlignedToLastTick</c> — <c>GraphRenderTests</c> deseni), görünüm hedefe iner. Atlama penceresi kapanmaz —
+    /// o anchor'ın zamanlayıcısıdır (<see cref="RealizedNarrative.ElapseAnchorTimers"/>).</summary>
+    private static void LandTheJump(RealizedNarrative narrative)
+    {
+        var clock = ActiveClockInspector.AppliedClock(narrative.View.Editor, ScrollAnimator.VerticalOffsetProperty)
+                    ?? throw new InvalidOperationException("no scroll animation is in flight");
+        clock.Controller!.SeekAlignedToLastTick(clock.NaturalDuration.TimeSpan, TimeSeekOrigin.BeginTime);
+        DispatcherPump.DrainToIdle();
     }
 
     /// <summary>Konsolun kaydırma animasyonu (<c>ScrollAnimator.VerticalOffset</c>) şu an editöre bağlı mı.</summary>

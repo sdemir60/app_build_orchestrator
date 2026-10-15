@@ -103,6 +103,15 @@ public sealed class BottomAnchorBehavior
     public double BottomOffset => Math.Max(0, _getExtent() - _getViewport());
     public bool ShowPill => BottomAnchorDecision.ShouldShowPill(_state, DistanceFromBottom, _thresholdPx);
 
+    /// <summary>
+    /// [B2 fix 2 · madde 1] <b>Son DUYURULAN pill görünürlüğü</b> (<see cref="Changed"/> anında kaydedilen <see cref="ShowPill"/>) — host'un
+    /// pill'i ve pill'e bağlı her şey (konsolun prompt imleci) bunu okur, canlı <see cref="ShowPill"/>'i değil. Canlı değer o anki uzaklıktır:
+    /// izlenen belgede ekleme ile dibe kaydırmanın uygulanması arasında bir an eşiği aşar ve onu okuyan her şey yanıp sönerdi (pill'in kendi
+    /// kuralı da bu yüzden kaydırma olaylarından okunur — <see cref="RefreshPill"/>). Duyurulan değer yalnız <see cref="Notify"/>'ın gördüğü
+    /// değişimlerle ilerler.
+    /// </summary>
+    public bool PillShown => _lastShowPill;
+
     /// <summary>Elle üzerine yaz (ör. ConsoleView.StickToBottom setter'ı ile geriye dönük uyum) — dipten uzaklığı
     /// YENİDEN HESAPLAMADAN doğrudan durumu değiştirir.</summary>
     public void ForceStuck(bool stuck)

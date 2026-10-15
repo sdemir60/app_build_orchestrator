@@ -250,8 +250,9 @@ public partial class ConsoleView : UserControl
     /// render dilimine döner (<see cref="TrimNarrativeWhenFollowing"/>).</summary>
     private void OnBottomAnchorChanged(object? sender, EventArgs e)
     {
-        Pill.Visibility = _bottomAnchor.ShowPill ? Visibility.Visible : Visibility.Collapsed;
-        RefreshPrompt(); // dipten uzaklaşınca prompt da gider (gerekçe: RefreshPrompt doc'u)
+        // Pill ve prompt imleci AYNI duyurulan değeri okur (PillShown) — biri görünürken öbürü gizlidir (gerekçe: RefreshPrompt doc'u).
+        Pill.Visibility = _bottomAnchor.PillShown ? Visibility.Visible : Visibility.Collapsed;
+        RefreshPrompt();
         TrimNarrativeWhenFollowing();
         if (Arbiter is null) return;
         if (_bottomAnchor.IsStuck) Arbiter.Resume(ScrollPanel.Console);
@@ -615,15 +616,23 @@ public partial class ConsoleView : UserControl
 
     /// <summary>
     /// Prompt satırının TEK görünürlük yazıcısı. İki koşul: <b>anlatı modunda</b> olmak (proje-log modunun
-    /// kendi sonu vardır) ve <b>dipte</b> olmak.
+    /// kendi sonu vardır) ve <b>CANLI dipte</b> olmak.
     ///
     /// <para>Dip koşulu şundandır: prompt panelin altına yaslıdır, belgeyle birlikte kaymaz. Kullanıcı yukarı
     /// kaydırıp geçmişe baktığında dipte asılı kalan bir imleç oradaki metnin üstüne binerdi. Dipten
     /// uzaklaşınca zaten <c>⌄ latest</c> pill'i çıkar; prompt onunla birlikte gider ve dibe dönünce geri gelir.</para>
+    ///
+    /// <para><b>[B2 fix 2 · madde 1] "Canlı dip" üç şeydir:</b> takip durumu dipte (<see cref="BottomAnchorBehavior.IsStuck"/>), pill
+    /// gizli ve uçuşta bir <c>⌄ latest</c> atlaması yok. [DEĞİŞEN KURAL] Eskiden yalnız takip durumuna bakılıyordu ve iki yerde imleç
+    /// pill'le birlikte görünüyordu: eşiğin içinden kaydıran okuyucunun altına satırlar gelince (durum "dipte" kalır, uzaklık eşiği aşar —
+    /// pill çıkar) ve atlama sürerken (atlama durumu iyimser biçimde "dipte" yapar; son satır görünür alanda değilken imleç eski yerinde,
+    /// metnin üstünde kalırdı). Pill koşulu DUYURULAN değeri okur (<see cref="BottomAnchorBehavior.PillShown"/>) — pill'in kendisiyle aynı
+    /// değer; canlı uzaklık izlenen belgede bir an eşiği aşar ve imleç her batch'te yanıp sönerdi. Atlamadan sonra imleç pencere kapanınca
+    /// döner (<see cref="BottomAnchorDecision.JumpingWindowMs"/>; hareket açıkken inişten biraz sonra) — ikinci bir zamanlayıcı kurulmaz.</para>
     /// </summary>
     private void RefreshPrompt()
     {
-        bool show = !_projectMode && _bottomAnchor.IsStuck;
+        bool show = !_projectMode && _bottomAnchor.IsStuck && !_bottomAnchor.PillShown && !_bottomAnchor.IsJumping;
         ActiveLineOverlay.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
         if (!show) { StopBlink(); return; }
         ActiveCursor.Opacity = 1.0;
