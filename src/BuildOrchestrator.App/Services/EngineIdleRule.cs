@@ -10,7 +10,8 @@ namespace BuildOrchestrator.App.Services;
 public enum EngineState
 {
     /// <summary>Motor başlıyor, hazır bildirimi bekleniyor — geçiş. VM bu durumda doğar (kabuk motoru <c>Loaded</c>'da başlatır; tik daha
-    /// önce, pencerenin ctor'unda kurulur) ve "Restart engine" başlarken yeniden girer.</summary>
+    /// önce, pencerenin ctor'unda kurulur) ve "Restart engine" başlarken yeniden girer; ölüm sinyali gelmeden düşen bir yeniden başlatmada
+    /// kalıcı kalabilir (<c>RunViewModel.EngineState</c>'in bilinen ikinci ayrışması).</summary>
     Starting,
 
     /// <summary>Motor hazır ve uyanık — hazır yolundan sonra (<c>RunViewModel.OnEngineReady</c>). Uyutulabilen TEK durum.</summary>

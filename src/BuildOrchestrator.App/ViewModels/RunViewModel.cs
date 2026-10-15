@@ -804,7 +804,7 @@ public sealed partial class RunViewModel : ObservableObject
     [ObservableProperty] private string? _engineOverdueMessage;
 
     /// <summary>SON MOTOR ETKİNLİĞİNİN zamanı (monotonik) — motorla konuşmanın TEK damgası [idle-memory · dalga 3 · karar 13 · C8: ikinci bir
-    /// etkinlik damgası yoktur]. Üç yazan: motordan gelen her olay (<see cref="OnEvent"/>), motordan cevap beklenen her bekleyişin başı — yani
+    /// etkinlik damgası yoktur]. Yazımı tek yerdedir (<see cref="StampEngineActivity"/>). Üç yazan: motordan gelen her olay (<see cref="OnEvent"/>), motordan cevap beklenen her bekleyişin başı — yani
     /// komut gönderimi (<see cref="ArmEngineWatchdog"/>: koşu isteği, Sync, Clean, Optimize, checkout, pull, Stop/Sync fazı) — ve motorun hazır
     /// bildirimi (<see cref="EnterEngineReady"/>). İki okuyan, ikisi de UI thread'indeki tikte: sessizlik bekçisi
     /// (<see cref="EvaluateEngineSilence"/> — bir bekleyişte motor ne zamandır susuyor) ve boşta kuralı (<see cref="EvaluateEngineIdle"/> —
@@ -1728,9 +1728,13 @@ public sealed partial class RunViewModel : ObservableObject
         // bekleyen hiçbir durum kalmamalı (ReleaseAfterEngineLoss). Yeni motor başlatılamadıysa da geçerlidir: orada
         // da bekleyecek bir şey yoktur (bkz. OnEngineUnavailable, komutlar zaten kapanır).
         // [idle-memory · dalga 3 · karar 13] Yeniden başlatma bir başlatmadır: yeni motor hazır olana dek durum Starting — boşta kuralı
-        // uyutmaz. Başarı hazır yolundan Ready'ye, kurulum hatası Unavailable'a gider. Başka bir hatada Starting kalır ve burada ayrıca
-        // yazılmaz: yeni süreç hazır olamadan öldürüldüyse ölümünü EngineExited TEK sinyal olarak bildirir (Dead); hiç doğmadıysa (çıkışta
-        // dispose öne geçti) konuşulacak motor yoktur ve hazır olmayan motor uyutulmaz.
+        // uyutmaz. Başarı hazır yolundan Ready'ye, kurulum hatası Unavailable'a gider. Başka bir hatada durum burada ayrıca yazılmaz: yeni
+        // süreç hazır olamadan öldürüldüyse ya da öldüyse (zaman aşımı, erken ölüm — en sık hata) ölümünü EngineExited TEK sinyal olarak
+        // bildirir (Dead). [T20 incelemesi M3 · ikinci bilinen ayrışma] Ölüm sinyali gelmeyen iki hata Starting'i KALICI bırakır: çıkışta
+        // dispose'un öne geçmesi (uygulama kapanıyor, ölen yok) ve eski motorun öldürülmesinin fırlatması (konakta konuşulacak süreç kalmaz).
+        // Catch bu ikisini zaman aşımından ayıramaz: burada Dead yazmak en sık hatanın ölümünü EngineExited'in yanında İKİNCİ kez bildirirdi.
+        // Kalıcı Starting güvenli yöndedir: kural uyutmaz, gönderim bugünkü gibi gider ve konağın "Engine is not running." hatasıyla tek satır
+        // düşer; ölüm metni duruyorsa "Restart engine" görünür kalır (dalga öncesi davranış).
         EngineState = EngineState.Starting;
         EngineReadyEvent ready;
         try
@@ -2061,7 +2065,13 @@ public sealed partial class RunViewModel : ObservableObject
 
     /// <summary>Sessizlik saatini şimdiye alır: bekleyiş TAM BURADA başlar. Kurulmasaydı, uzun süre boşta
     /// duran bir uygulamada basılan ilk Build anında "cevap vermiyor" derdi.</summary>
-    private void ArmEngineWatchdog() => Volatile.Write(ref _lastEngineSignalMs, _nowMs());
+    private void ArmEngineWatchdog() => StampEngineActivity();
+
+    /// <summary>[idle-memory · dalga 3 · T20 incelemesi O1] Son motor etkinliğini ŞİMDİ'ye alır — <see cref="_lastEngineSignalMs"/>'in TEK
+    /// yazımı. Üç çağıran: motorun her olayı (<see cref="OnEvent"/> — IPC thread'inden de, erişim bu yüzden <see cref="Volatile"/>'dir),
+    /// motordan cevap beklenen her bekleyişin başı (<see cref="ArmEngineWatchdog"/>) ve motorun hazır bildirimi
+    /// (<see cref="EnterEngineReady"/>).</summary>
+    private void StampEngineActivity() => Volatile.Write(ref _lastEngineSignalMs, _nowMs());
 
     /// <summary>UI thread'inde, <see cref="TickElapsed"/> ile 200ms'de bir. Gözlemlenebilir alanın TEK yazıcısı
     /// burasıdır: <see cref="OnEvent"/> (arka plan thread'inde de koşabilir) yalnız zaman damgasını yazar.
@@ -2096,8 +2106,11 @@ public sealed partial class RunViewModel : ObservableObject
     /// </list>
     /// Şeridin bayrakları (<see cref="EngineDiedMessage"/>, <see cref="EngineRestartable"/>, <see cref="IsEngineUnavailable"/>) UI'ın bayrakları
     /// olarak kalır ve AYNI yerlerde yazılır: Dead bir ölüm metniyle (yeniden başlatılabilir), Unavailable kalıcı bir eksik metniyle gelir;
-    /// yeniden başlatmanın Ready'si metnin temizliğinden sonradır. Bilinçli tek ayrışma: <see cref="OnRunStarted"/> ölüm metnini temizler ama
-    /// durumu Ready'ye çekmez (Ready yalnız hazır yolundan gelir) — orada durum en kötü "ölü" kalır ve kural uyutmaz: ayrışma güvenli yöndedir.
+    /// yeniden başlatmanın Ready'si metnin temizliğinden sonradır. Bilinen iki ayrışma, ikisi de güvenli yönde: (1) <see cref="OnRunStarted"/>
+    /// ölüm metnini temizler ama durumu Ready'ye çekmez (Ready yalnız hazır yolundan gelir) — durum en kötü "ölü" kalır ve kural uyutmaz;
+    /// (2) [T20 incelemesi M3] ölüm sinyali gelmeden düşen bir yeniden başlatma (çıkışta dispose öne geçti ya da eski motorun öldürülmesi
+    /// fırlattı) durumu <see cref="EngineState.Starting"/>'te bırakır — kural uyutmaz, gönderim bugünkü gibi gider (gerekçe
+    /// <see cref="RestartEngineAsync"/>'te).
     /// </summary>
     internal EngineState EngineState { get; private set; } = EngineState.Starting;
 
@@ -2111,8 +2124,9 @@ public sealed partial class RunViewModel : ObservableObject
     /// motor etkinliği (<see cref="_lastEngineSignalMs"/>). Doğruysa motor uyutulur.</summary>
     private void EvaluateEngineIdle()
     {
-        if (EngineIdleRule.ShouldSleep(_nowMs(), Volatile.Read(ref _lastEngineSignalMs), StopEngineWhenIdle, IsOperationInFlight,
-                HasPendingLogLoad, EngineState))
+        if (EngineIdleRule.ShouldSleep(nowMs: _nowMs(), lastActivityMs: Volatile.Read(ref _lastEngineSignalMs),
+                settingOn: StopEngineWhenIdle, operationInFlight: IsOperationInFlight, pendingLogLoad: HasPendingLogLoad,
+                engine: EngineState))
             _ = PutEngineToSleepAsync();
     }
 
@@ -2124,10 +2138,11 @@ public sealed partial class RunViewModel : ObservableObject
     /// <list type="bullet">
     /// <item><b>Uyku bitti</b> → <see cref="EngineState.Asleep"/>. Uyuyan motorun PID'i tutulmaz (<see cref="EnginePid"/> null: ölü bir süreç
     /// canlıymış gibi görünmez); sürüm kalır (uyanan motor aynı ikilidir).</item>
-    /// <item><b>Çıkışta vazgeçildi</b> — dispose uçuştaki uykunun önüne geçti (<see cref="OperationCanceledException"/>) ya da çağrı dispose'tan
-    /// sonra geldi (<see cref="ObjectDisposedException"/>) → yine <see cref="EngineState.Asleep"/>: motorun nesli emekliye ayrıldı ve süreci
-    /// çıkışın kapanışı alıyor — "hazır" demek ölü bir süreci canlı saymak, uykuyu her tikte yeniden denemek olurdu. Konsola satır YAZILMAZ,
-    /// ölüm de bildirilmez: ölen yok, uygulama kapanıyor.</item>
+    /// <item><b>Çıkışta vazgeçildi</b> — dispose uçuştaki uykunun önüne geçti (<see cref="OperationCanceledException"/>) → yine
+    /// <see cref="EngineState.Asleep"/>: motorun nesli emekliye ayrıldı ve süreci çıkışın kapanışı alıyor — "hazır" demek ölü bir süreci canlı
+    /// saymak, uykuyu her tikte yeniden denemek olurdu. Konsola satır YAZILMAZ, ölüm de bildirilmez: ölen yok, uygulama kapanıyor.
+    /// <see cref="ObjectDisposedException"/> aynı dalda yalnız SAVUNMA için yakalanır: konak dispose'tan sonra gelen bir uykuyu fırlatmadan
+    /// no-op yapar (<see cref="EngineHost.SleepAsync"/>) — o çağrı normal biter ve "uyku bitti" dalına düşer, sonuç aynıdır.</item>
     /// <item><b>Uyku başka bir nedenle düştü</b> (ör. öldürme fırlattı) → motor KAYBEDİLDİ: konak nesli emekliye ayırdıktan sonra düştü, ölüm
     /// sinyali hiç gelmeyecek ve konak ne uyuyor ne canlı (uyandırma ve gönderim "Engine is not running." ile düşer). Bugünkü ölüm yolu
     /// bildirir (<see cref="ReportEngineDead"/>: kırmızı ölüm satırı + "Restart engine", durum <see cref="EngineState.Dead"/>) — ikinci bir
@@ -2137,20 +2152,26 @@ public sealed partial class RunViewModel : ObservableObject
     private async Task PutEngineToSleepAsync()
     {
         EngineState = EngineState.Sleeping;
+        bool lost = false;
         try
         {
             await SleepEngine();
         }
         catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException)
         {
-            // Çıkış: motoru dispose'un kendi kapanışı alıyor — sessiz (gerekçe özette).
+            // Çıkış: motoru dispose'un kendi kapanışı alıyor — sessiz; ObjectDisposedException savunmadır (gerekçe özette).
         }
         catch (Exception)
         {
-            if (EngineState == EngineState.Sleeping) ReportEngineDead(IdleShutdownFailedCause);
+            lost = true;
+        }
+        // [T20 incelemesi O2] Durumun TEK kontrolü: uyku sürerken başka bir sinyal (kendiliğinden ölüm) durumu değiştirdiyse o kazanır.
+        if (EngineState != EngineState.Sleeping) return;
+        if (lost)
+        {
+            ReportEngineDead(IdleShutdownFailedCause);
             return;
         }
-        if (EngineState != EngineState.Sleeping) return;
         EngineState = EngineState.Asleep;
         EnginePid = null;
     }
@@ -2165,7 +2186,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// (<see cref="_lastEngineSignalMs"/>) — ikinci bir etkinlik damgası yoktur.</summary>
     private void EnterEngineReady()
     {
-        Volatile.Write(ref _lastEngineSignalMs, _nowMs());
+        StampEngineActivity();
         EngineState = EngineState.Ready;
     }
 
@@ -2176,7 +2197,7 @@ public sealed partial class RunViewModel : ObservableObject
         // Motor KONUŞTU: sessizlik saati sıfırlanır. Event TÜRÜ önemsizdir — sinyal "yaşıyor mu" değil
         // "susuyor mu". Uyarının kendisi BURADA temizlenmez: bu metot ProjectLogEvent için arka plan
         // thread'inden de çağrılır ve gözlemlenebilir alanların tek yazıcısı UI thread'indeki tick'tir.
-        Volatile.Write(ref _lastEngineSignalMs, _nowMs());
+        StampEngineActivity();
         if (IsStaleRunEnd(ev)) return; // [T8 fix round 1 · I1] faz ve akış bu koşuya ait değil
         switch (ev)
         {

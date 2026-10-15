@@ -326,13 +326,14 @@ public class EngineSleepTests
     }
 
     /// <summary>[T18 yeniden incelemesi · ek 2] Çıkışta uykudan vazgeçilirse sessiz kalınır: dispose uçuştaki uykunun önüne geçer
-    /// (<see cref="OperationCanceledException"/>) ya da çağrı dispose'tan sonra gelir (<see cref="ObjectDisposedException"/>). Konsola satır
-    /// yazılmaz, şerit ölüm göstermez (ölen yok: uygulama kapanıyor ve motoru kendi kapanışı alıyor). Durum "uyuyor"dur: motorun nesli uykuda ve
-    /// dispose'ta emekliye ayrılmıştır, konuşacak süreç yoktur — "hazır" demek ölü bir süreci canlı saymak olurdu; tik vazgeçen uykuyu her
-    /// 200 ms'de yeniden denemez.</summary>
+    /// (<see cref="OperationCanceledException"/>). Konsola satır yazılmaz, şerit ölüm göstermez (ölen yok: uygulama kapanıyor ve motoru kendi
+    /// kapanışı alıyor). Durum "uyuyor"dur: motorun nesli uykuda ve dispose'ta emekliye ayrılmıştır, konuşacak süreç yoktur — "hazır" demek ölü
+    /// bir süreci canlı saymak olurdu; tik vazgeçen uykuyu her 200 ms'de yeniden denemez. [T20 incelemesi M2] <see cref="ObjectDisposedException"/>
+    /// satırı SAVUNMA dalını sınar: konak dispose'tan sonra gelen bir uykuyu fırlatmadan no-op yapar (<c>EngineHost.SleepAsync</c>), yani bu
+    /// istisna bugün üretimde gelmez — gelirse dal yine sessiz kalmalıdır.</summary>
     [StaTheory]
     [InlineData(true)]  // dispose uçuştaki uykunun önüne geçti
-    [InlineData(false)] // dispose'tan sonra gelen çağrı
+    [InlineData(false)] // savunma: ObjectDisposedException (konak dispose sonrası uykuyu fırlatmadan no-op yapar)
     public void A_sleep_given_up_at_exit_writes_nothing_and_reports_no_death(bool cancelled)
     {
         using var dir = new TempDir();
