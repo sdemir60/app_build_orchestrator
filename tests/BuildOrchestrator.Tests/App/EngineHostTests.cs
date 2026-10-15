@@ -531,9 +531,13 @@ public class EngineHostTests
     /// <para><b>Neden:</b> <c>App.OnExit</c> disposal'ı en çok <see cref="AppShutdown.DisposalTimeout"/> bekler, sonra güncelleyiciyi
     /// başlatır; kuyruğa giren bir dispose vazgeçilmiş sayılır ve <c>Update.exe</c>, Supervisor öldürülüp çıkışı beklenmeden
     /// çalışırdı. Eskiden dispose uyanmanın tüm zaman aşımını (<see cref="EngineHost.StartupTimeout"/>) bekliyordu.</para>
-    /// <para><b>Kurgu:</b> uyanmanın yeni motoru hazır olmadan KİLİTLENİR (<see cref="NtSuspendProcess"/>; PID uyanma döner dönmez
-    /// bellidir) — uyanma tavanına (burada 60 s) dek bekleyecektir. Ölçüt üretimin çıkış yolunun kendisidir
-    /// (<see cref="AppShutdown.WaitForAsyncDisposal"/>, aynı tavan).</para></summary>
+    /// <para><b>Kurgu:</b> uyanmanın yeni motoru hazır olmadan KİLİTLENİR (<see cref="NtSuspendProcess"/>; PID outer job'un doğum
+    /// bildiriminden alınır) — uyanma tavanına (burada 60 s) dek bekleyecektir. Ölçüt üretimin çıkış yolunun kendisidir
+    /// (<see cref="AppShutdown.WaitForAsyncDisposal"/>, aynı tavan).</para>
+    /// <para><b>[DEĞİŞEN KURULUM — idle-memory · dalga 3 · M-2]</b> Eskiden yeni motorun PID'i <c>WakeAsync</c> döner dönmez
+    /// <see cref="EngineHost.EnginePid"/>'den okunuyordu: uyanma süreci çağıranın thread'inde, dönmeden doğuruyordu. Uyanma artık başlatmadan önce
+    /// havuza sıçrar (<see cref="A_wake_started_on_the_callers_context_leaves_it_before_any_work"/>) ve döndüğü anda süreç henüz yoktur — PID job'un
+    /// IOCP'sinden, doğduğu anda alınır (sleep/poll yok — D8). İddia değişmedi.</para></summary>
     [Fact]
     public async Task Dispose_preempts_a_wake_that_waits_for_a_frozen_engine()
     {
@@ -544,8 +548,15 @@ public class EngineHostTests
         {
             await host.StartAsync();
             await host.SleepAsync();
+            using var births = host.OuterJob.AttachCompletionPort(); // uykudan sonra: ilk doğum uyanan motorundur
             var wake = host.WakeAsync();
-            frozen = Process.GetProcessById(host.EnginePid!.Value);
+            int woken = 0;
+            JobBirths.Until(births, WideStartupTimeout, "the woken engine was never born into the outer job", pid =>
+            {
+                woken = pid;
+                return true;
+            });
+            frozen = Process.GetProcessById(woken);
             Assert.Equal(0, NtSuspendProcess(frozen.SafeHandle)); // yeni motor hazır olmadan kilitlendi
             const string ReadyBeforeFrozen = "the woken engine was ready before it was frozen — the precondition was not set up";
             Assert.False(wake.IsCompleted, ReadyBeforeFrozen);
@@ -669,8 +680,8 @@ public class EngineHostTests
     /// kendisi ilerlettiği için uykunun sahiplendiği (yeni − 1) nesil ölen nesil bile değildi.
     /// <para><b>Kurgu (dikişle deterministik):</b> uyku, motoru canlı bulup havuza sıçradığı anda
     /// <see cref="EngineHost.DebugSleepPassedCheck"/>'te tutulur; motor öldürülür, ölüm bildirilir (<see cref="EngineHost.EngineExited"/>),
-    /// sonra uyku bırakılır. Çerçeve hatası yolu dikişsizdir (gerçek bir Supervisor bozuk satır yazdırılamaz) — sahiplenilen nesil aynı
-    /// olduğu için aynı kural.</para>
+    /// sonra uyku bırakılır. Çerçeve hatası yolunun aynı yarışı kendi dikişleriyle sınanır
+    /// (<see cref="A_framing_fault_the_sleeps_check_overlaps_keeps_the_host_awake"/>).</para>
     /// <para><b>[defter 4 · T18 OOS-2] Son durum — PİN:</b> sahiplenmeyi kaybeden uyku konağı tutarlı bırakır: süreç yok
     /// (<see cref="EngineHost.EnginePid"/> null), gönderim ve uyanma bugünkü "motor çalışmıyor" hatasıyla düşer, <see cref="EngineHost.RestartAsync"/>
     /// yeni bir motorla toparlar (VM'in ölüm yolu bunu sunar). Kırmızısı gösterilemez — bugünkü kod da yeşildir; ileride kaybeden uykunun
@@ -717,6 +728,59 @@ public class EngineHostTests
         Assert.NotEqual(ready.Pid, restarted.Pid);
         Assert.Equal(restarted.Pid, host.EnginePid);
         Assert.Equal(1, Volatile.Read(ref exited)); // yeniden başlatma ölüm sinyali üretmedi
+    }
+
+    /// <summary>[defter 3 · T18 OOS-1] Çerçeve hatası yolu nesli KENDİSİ ilerletir (eski bekçiyi susturmak için) ve motoru öldürüp kendi
+    /// neslinin ölümünü ancak SONRA sahiplenir. Uykunun kontrolü bu aradaki pencereye düşerse motor hâlâ canlıdır ve uyku ölümle yarışır; kural
+    /// <see cref="A_death_reported_after_the_sleeps_check_keeps_the_host_awake"/>'inkiyle aynıdır: ölüm önce sahiplenildiyse konak UYUMAZ, ölüm
+    /// sinyali tektir.
+    /// <para><b>Kusur (eski):</b> uyku ve canlılık sorusu nesli alandan (<c>_generation</c>) okuyordu; çerçeve hatası alanı çoktan ilerlettiği için
+    /// uyku motorun neslini değil bir sonrakini sahiplendi — ölüm kendi neslini sahiplenip bildirildiği hâlde uyku da "kazandı": VM ölü, konak
+    /// uyuyor (iki görüş ayrışırdı; Restart toparlıyordu). Artık ikisi de motorun KENDİ neslini — başlatmanın atadığını — okur.</para>
+    /// <para><b>Kurgu (iki dikişle deterministik):</b> bir pong bozuk çerçeve sayılır (<see cref="EngineHost.DebugFramingFault"/> — gerçek bir
+    /// Supervisor bozuk satır yazdırılamaz); okuyucu nesli ilerlettiği anda, motoru öldürmeden önce tutulur
+    /// (<see cref="EngineHost.DebugFramingFaultPassedCheck"/>); uyku motoru canlı bulur ve sahiplenmeden önce tutulur
+    /// (<see cref="EngineHost.DebugSleepPassedCheck"/>); okuyucu bırakılır — motoru öldürür, ölümü bildirir —, sonra uyku bırakılır.</para>
+    /// <para>KIRMIZI (değişiklikten önce): konak uyuyordu (<c>Assert.False(host.IsAsleep)</c>).</para></summary>
+    [Fact]
+    public async Task A_framing_fault_the_sleeps_check_overlaps_keeps_the_host_awake()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var host = sandbox.IsolatedEngineHost(WideStartupTimeout);
+        var reader = new SeamHold();
+        var sleeper = new SeamHold();
+        host.DebugFramingFault = e => e is PongEvent; // motorun cevabı bozuk bir çerçeve sayılır
+        host.DebugFramingFaultPassedCheck = reader.Hold;
+        host.DebugSleepPassedCheck = sleeper.Hold;
+        await host.StartAsync();
+        int exited = 0;
+        var died = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.EngineExited += _ =>
+        {
+            Interlocked.Increment(ref exited);
+            died.TrySetResult();
+        };
+
+        Task sleep;
+        try
+        {
+            await host.SendAsync(new PingCommand(1)); // pong'u bozuk çerçeve sayılır
+            await reader.Reached(); // okuyucu nesli ilerletti — motor henüz öldürülmedi
+            sleep = host.SleepAsync();
+            await sleeper.Reached(); // uyku motoru canlı buldu — nesli henüz sahiplenmedi
+            reader.Release();
+            await died.Task.WaitAsync(WideStartupTimeout); // okuyucu motoru öldürdü ve kendi neslinin ölümünü bildirdi
+        }
+        finally
+        {
+            reader.Release();
+            sleeper.Release();
+        }
+        await sleep.WaitAsync(WideStartupTimeout);
+
+        Assert.False(host.IsAsleep); // ölüm uykudan önce sahiplenildi — konak uyumaz, Restart toparlar
+        Assert.Equal(1, Volatile.Read(ref exited)); // tek ölüm sinyali
+        Assert.Null(host.EnginePid);
     }
 
     /// <summary>[fix 1 · M1] Nesli geride kalmış bir çıkış bekçisi daha yeni bir başlatmayı ASLA düşüremez: her nesil kendi hazır
@@ -835,5 +899,38 @@ public class EngineHostTests
 
         Assert.True(host.IsAsleep);
         Assert.Equal(0, caller.Posts);
+    }
+
+    /// <summary>[idle-memory · dalga 3 · M-2] Uyanma, çağıranın bağlamından (UI thread'i) başlatmanın hiçbir işini yapmadan ÖNCE ayrılır — uykunun
+    /// sıçrayışının aynısı: kapı serbestse çağıranın thread'inde alınır, sonra havuza geçilir; ön kontrol (<c>File.Exists</c>), süreç doğurma
+    /// (<c>CreateProcessW</c>, job ataması, devam ettirme) ve okuyucu/bekçi kurulumu havuzda koşar. Uyanma etkileşimli yoldadır — boşta kalmış bir
+    /// uygulamada Build, Sync ya da proje logu tıklaması — ve <c>CreateProcessW</c> antivirüs taraması altında uzayabilir; açılış ve Restart aynı
+    /// işi bugün de çağıranın thread'inde başlatır (bilinçli olarak dokunulmadı).
+    /// <para><b>Nasıl gözlenir:</b> <see cref="A_start_that_gives_up_kills_the_engine_off_the_callers_context"/>'in deseni — başlatmanın işi
+    /// başlarken çağrılan dikiş (<see cref="EngineHost.DebugStartWorkBegins"/>) <see cref="SynchronizationContext.Current"/>'ı yakalar; uyanma
+    /// <see cref="CallerContext"/> altında başlatılır.</para>
+    /// <para>KIRMIZI (sıçrayışsız uyanma): başlatmanın işi çağıranın bağlamında başlıyordu (<c>Assert.NotSame</c>).</para></summary>
+    [Fact]
+    public async Task A_wake_started_on_the_callers_context_leaves_it_before_any_work()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var host = sandbox.IsolatedEngineHost(WideStartupTimeout);
+        await host.StartAsync();
+        await host.SleepAsync();
+        Assert.True(host.IsAsleep); // ön-koşul: uyanacak bir motor var
+        var workContext = new TaskCompletionSource<SynchronizationContext?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.DebugStartWorkBegins = () => workContext.TrySetResult(SynchronizationContext.Current);
+        var caller = new CallerContext();
+
+        Task<EngineReadyEvent> wake;
+        var previous = SynchronizationContext.Current;
+        SynchronizationContext.SetSynchronizationContext(caller);
+        try { wake = host.WakeAsync(); }
+        finally { SynchronizationContext.SetSynchronizationContext(previous); }
+        var woken = await wake.WaitAsync(WideStartupTimeout);
+
+        Assert.NotSame(caller, await workContext.Task.WaitAsync(WideStartupTimeout)); // ön kontrol + süreç doğurma çağıranın bağlamında koşmadı
+        Assert.Equal(0, caller.Posts);
+        Assert.Equal(woken.Pid, host.EnginePid);
     }
 }
