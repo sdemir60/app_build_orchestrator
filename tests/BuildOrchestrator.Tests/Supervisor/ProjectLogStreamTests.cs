@@ -440,6 +440,29 @@ public class ProjectLogStreamTests
     }
 
     /// <summary>
+    /// [B1 fix 2 · 4a] Proje log isteğini cevaplarken beklenmedik bir hata — burada bozuk bir istek: kimliksiz (<c>projectId</c> yok) ve kabul
+    /// edilen bir koşu klasörü; adlandırma kuralı kimliksiz isteği okuyamaz — motoru düşürmez: komutun kendi yakalaması onu bugünkü "log yok"
+    /// cevabına çevirir (tek, boş, <c>NotFound</c>, isteğin kimliğini yankılayan bir chunk) ve motor komut almaya devam eder (ping → pong). Öteki
+    /// komutların (Sync, checkout, Clean, Optimize) yakalamasıyla aynı kural: istisna IPC sınırını geçmez.
+    /// <para>KIRMIZI: hata komut döngüsünden yükseliyor, host çıkıyordu — cevap hiç gelmiyordu (okuma zaman aşımı).</para>
+    /// </summary>
+    [Fact]
+    public async Task A_project_log_request_that_fails_unexpectedly_is_answered_as_no_log_and_the_engine_keeps_answering()
+    {
+        var invoker = new FakeInvoker((_, _, _) => throw new InvalidOperationException("no run in this test"));
+        using var h = new Harness(PlanOf(Node("A")), invoker);
+        Assert.IsType<EngineReadyEvent>(await h.ReadEventAsync());
+        string runDirectory = RunLeftByAnEarlierEngine(h.LogsRoot);
+
+        await h.SendAsync(new GetProjectLogCommand(ProjectId: null!, RequestId: 11, RunDirectory: runDirectory));
+        Assert.Equal(ProjectLogIpc.NotFound(requestId: 11, projectId: null!), Assert.IsType<ProjectLogChunkEvent>(await h.ReadEventAsync()));
+        await h.SendAsync(new PingCommand(12));
+        Assert.Equal(12, Assert.IsType<PongEvent>(await h.ReadEventAsync()).Seq); // motor komut almaya devam ediyor
+
+        await h.ShutdownAsync();
+    }
+
+    /// <summary>
     /// [karar 37 · PİN] Kendi koşusu olan motor isteğin klasörüne BAKMAZ: kaynak sırası canlı yazıcı → motorun son koşusu → isteğin klasörü.
     /// Koşusu tamamen bitmiş motor, isteğin adını verdiği (geçerli, A'nın iki satırlık logunu taşıyan) başka bir koşu klasörü yerine kendi son
     /// koşusunun uzun logunu verir.

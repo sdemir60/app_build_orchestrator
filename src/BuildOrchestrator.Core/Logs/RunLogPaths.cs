@@ -55,7 +55,8 @@ public static class RunLogPaths
     /// <see cref="RunLogWriter"/>) ve adı koşu klasörü kalıbına tam uyuyor (<see cref="TryParseRunDirName"/>). Karşılaştırma Windows yolu gibi
     /// harf duyarsızdır; sondaki ayırıcı, ileri eğik çizgi ve <c>.</c>/<c>..</c> bölümleri normalleştirilir — kökten dışarı çıkan bir yol
     /// böylece dışarıda kalır; aygıt (<c>\\?\</c>, <c>\\.\</c>) ve UNC biçimleri kökle aynı biçimde değilse eşleşmez. Saf ve SÖZCÜKSELDİR: diske
-    /// bakmaz (klasörün var olup olmadığını okuma sorar), bağlantı ya da junction çözmez. Okunamayan bir yol (ör. gömülü null) fırlatmaz, reddedilir.
+    /// bakmaz (klasörün var olup olmadığını okuma sorar), bağlantı ya da junction çözmez. Okunamayan bir yol (ör. gömülü null; sistemin
+    /// normalleştiremeyeceği uzunluk — IO hatası ailesi) fırlatmaz, reddedilir.
     /// <para>[B1 fix 1 · m-2] Kabul edilen klasör NORMALLEŞTİRİLMİŞ hâliyle döner (<paramref name="runDirectory"/>) — okuyan, isteğin ham metnini
     /// değil doğrulanan yolu kullanır.</para>
     /// <para>Tek kullanıcısı kendi koşusu olmayan motorun proje log okumasıdır (<c>RunCoordinator.TryGetProjectLogSnapshot</c>): istek App'in
@@ -78,9 +79,9 @@ public static class RunLogPaths
             runDirectory = folder;
             return true;
         }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or IOException)
         {
-            return false; // okunamayan yol (ör. gömülü null) bir koşu klasörü değildir
+            return false; // okunamayan yol (ör. gömülü null, sistemin normalleştiremeyeceği uzunluk) bir koşu klasörü değildir
         }
     }
 }

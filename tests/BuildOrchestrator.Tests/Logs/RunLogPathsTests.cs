@@ -1,3 +1,4 @@
+using System.IO;
 using BuildOrchestrator.Core.Logs;
 using Xunit;
 
@@ -105,7 +106,24 @@ public sealed class RunLogPathsTests
     [InlineData(@"\\srv\share\bo\logs\run-20261015-101010-123")] // [B1 fix 1 · m-2 · PİN] UNC: başka bir kök
     [InlineData(@"\\?\C:\bo\logs\run-20261015-101010-123")]     // [m-2 · PİN] aygıt yolu: normalleşmez, kökle eşleşmez
     [InlineData(@"\\.\C:\bo\logs\run-20261015-101010-123")]     // [m-2 · PİN] DOS aygıt yolu: aynı
-    public void Any_other_folder_is_refused(string? path)
+    public void Any_other_folder_is_refused(string? path) => AssertRefusedWithoutThrowing(path);
+
+    /// <summary>[B1 fix 2 · 4b] Sistemin normalleştiremeyeceği kadar uzun bir yol (Windows'un 32 767 karakterlik sınırının ötesi) de FIRLATMAZ,
+    /// reddedilir: kural motorun komut döngüsünde koşar (proje log isteği) — oradan yükselen bir IO hatası motoru düşürürdü. Ön-koşul yolun gerçekten
+    /// normalleştirilemediğidir (IO hatası ailesi): kural yakalamasına bu yoldan ulaşılır.
+    /// <para>PİN: bugünkü yakalama <see cref="PathTooLongException"/>'ı zaten kapsıyordu; yakalama artık IO hatası ailesinin tamamıdır ve bu test
+    /// onun daralmasını yakalar.</para></summary>
+    [Fact]
+    public void A_path_too_long_to_normalize_is_refused()
+    {
+        string path = @"C:\bo\logs\" + new string('a', 40_000);
+        Assert.ThrowsAny<IOException>(() => Path.GetFullPath(path)); // ön-koşul: sistem bu yolu normalleştiremez
+
+        AssertRefusedWithoutThrowing(path);
+    }
+
+    /// <summary>Kural <paramref name="path"/>'i fırlatmadan reddeder: <c>false</c> ve klasör <c>null</c>.</summary>
+    private static void AssertRefusedWithoutThrowing(string? path)
     {
         bool accepted = true;
         string? folder = "unset";
