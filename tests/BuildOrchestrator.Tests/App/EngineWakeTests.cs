@@ -18,7 +18,10 @@ namespace BuildOrchestrator.Tests.App;
 /// gelen istek bugünkü gibi gönderilir (ölü/erişilemez motorda bugünkü "failed to send" satırlarıyla — R2).
 ///
 /// <para><b>Bu sınıfın pinledikleri:</b> her uyandıran yol önce uyandırır ve komutu uyanmadan SONRA gönderir; uyanma sessizdir — konsola
-/// "Engine ready" yazmaz, açılış Sync'ini göndermez (karar 20; iddia gönderilen komut listesindedir, anlatının satır sayısında değil — C12);
+/// "Engine ready" yazmaz, açılış Sync'ini göndermez (karar 20; iddia gönderilen komut listesindedir, anlatının satır sayısında değil — C12;
+/// tek istisna kesilmiş bir koşu kurtaran uyanmadır: ardından TEK Sync — karar 42); uyanırken şerit motorun başladığını söyler (karar 38);
+/// uyanmış motora giden proje log isteği son koşunun klasörünü taşır (karar 37); motoru başlatamayan uyanma yeniden başlatılabilir ölümdür,
+/// bulamayan uyanma erişilemezlik (karar 41);
 /// hiç uyandırmayan yollar (tik, çıkış, boştaki Stop/Esc) uyandırmaz; ölü ve erişilemez motor bugünkü gönderimini ve satırını korur (R2);
 /// yarışlar bekletilen (TCS) sahtelerle: uyku sürerken gelen Sync uykuyu bekler ve TEK uyanmayla gider, iki yol tek uyanmayı paylaşır, uyanma
 /// başlarken kapıya yeniden giren yol o uyanmaya katılır, uyanma ya da uyku sürerken Stop/çıkış kapıda bekleyeni komutsuz geri alır ve yeni
@@ -286,6 +289,42 @@ public class EngineWakeTests
         string console = vm.GetRunDocumentText();
         Assert.Contains(Core.Planning.PlanProgressLines.PreviousRunInterrupted(2), console);
         Assert.DoesNotContain("Engine ready", console);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [karar 42 · M-4 · C21] Uyanan motor açılışta yarım kalmış bir koşu kurtardıysa (önceki motorun defteri temizlenemedi — hazır olayı
+    /// <c>InterruptedProjects</c> &gt; 0 taşır) ekranın kararları artık yanlıştır: uyanmanın ardından TEK bir Sync koşar — açılışın hazır yolunun
+    /// kipiyle (<see cref="SyncMode.Appended"/>: fetch'li, konsolu temizlemez — açılışın satırları ve "previous run was interrupted" satırı kalır).
+    /// Uyanmayı isteyen yol kendisi bir Sync ise (Sync düğmesi) ikinci bir Sync gitmez: o Sync ekranı zaten tazeler (uçuşta iş varken Sync
+    /// başlamaz). "Engine ready" satırı yine yazılmaz. Satırın kendisi bugünkü olay yolundandır (hazır olayı olay pompasından da geçer).
+    /// <para>KIRMIZI (proje logu yolu): uyanma hiç Sync çalıştırmıyordu — kurtarılan projelerin satırları uykudan önceki kararlarında kalıyordu.
+    /// Sync düğmesi yolu PİN'dir (tek Sync bugün de gidiyordu): ikinci bir Sync'in eklenmesini yakalar.</para>
+    /// </summary>
+    [WpfTheory]
+    [InlineData(WakingPath.ProjectLog)]
+    [InlineData(WakingPath.SyncButton)]
+    public async Task A_woken_engine_that_recovered_interrupted_projects_syncs_once_after_the_wake(WakingPath path)
+    {
+        using var dir = new TempDir();
+        var (window, vm, probe, sent, _) = AsleepShell(dir);
+        var ready = new EngineReadyEvent(WokenPid, EngineVersion, InterruptedProjects: 2);
+        probe.NextWake = () => Task.FromResult(ready);
+
+        await Trigger(path, window, vm);
+        vm.OnEvent(ready); // aynı hazır olayının olay pompasından geçişi — satır bugünkü yolundan düşer
+        DispatcherPump.DrainToIdle();
+
+        Assert.Equal(1, probe.WakeCalls);
+        var sync = Assert.Single(sent.Commands.OfType<SyncWorkspaceCommand>());
+        Assert.True(sync.Fetch);
+        Assert.All(sent.States, s => Assert.Equal(EngineState.Ready, s));
+        if (path == WakingPath.ProjectLog)
+        {
+            Assert.Single(sent.Commands.OfType<GetProjectLogCommand>());
+            Assert.Equal(1, ReadyLines(vm)); // konsol temizlenmedi: açılışın hazır satırı yerinde, yenisi yok
+        }
+        Assert.Contains(Core.Planning.PlanProgressLines.PreviousRunInterrupted(2), vm.GetRunDocumentText());
         GC.KeepAlive(window);
     }
 
@@ -811,7 +850,10 @@ public class EngineWakeTests
     /// şerit kalıcı hata, komutlar kapalı. İkinci sinyal yoktur — ne Sync'in ne branch envanterinin "failed to send" satırı, ne ikinci bir uyandırma
     /// denemesi; Sync'in kendi "gönderim düştü" geri alımı çalışır ve hiç başlamamış Sync bitmiş sayılmaz. Sonraki bir Sync de uyandırmayı yeniden
     /// denemez.
-    /// <para>KIRMIZI (kapısız kod): Sync uyuyan motora gönderiliyordu — erişilemezlik hiç bildirilmiyordu.</para></summary>
+    /// <para>KIRMIZI (kapısız kod): Sync uyuyan motora gönderiliyordu — erişilemezlik hiç bildirilmiyordu.</para>
+    /// <para>[karar 41 · M-1] Bu yol artık YALNIZ exe'nin bulunamadığı uyanmanındır (<see cref="EngineUnavailableReason.NotFound"/>) — bu test onun
+    /// pinidir. Exe var ama başlatılamadıysa (<see cref="EngineUnavailableReason.CannotStart"/>) uyanma yeniden başlatılabilir ölüm yolundan gider:
+    /// <see cref="A_wake_that_cannot_launch_the_engine_offers_restart_instead_of_ending_the_session"/>.</para></summary>
     [WpfFact]
     public async Task A_wake_that_finds_no_engine_takes_todays_unavailable_path_once()
     {
@@ -837,6 +879,49 @@ public class EngineWakeTests
         Assert.False(await vm.SyncSilentlyAsync(SilentSyncReason.Refresh));
         Assert.Equal(1, probe.WakeCalls);
         Assert.Equal(console, vm.GetRunDocumentText());
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [karar 41 · M-1] Uyanma motoru BAŞLATAMAZSA — exe yerinde ama süreç doğmadı (<see cref="EngineUnavailableReason.CannotStart"/>: işletim
+    /// sisteminin geçici bir reddi, bellek sınırı, antivirüs kilidi) — oturum motorsuz kalmaz: kayıp yeniden başlatılabilir ölüm yolundan
+    /// bildirilir (<c>ReportEngineDead</c>): şeritte "Engine stopped unexpectedly (wake failed)" ve "Restart engine", komutlar açık, erişilemezlik
+    /// metni yok, konsola satır yok. Kapıda bekleyen istek (burada proje logu) gitmez ve kendi geri alımını yapar. "Restart engine" başlatmayı
+    /// yeniden dener: konağın yeniden başlatması çağrılır — bu kabuğun konağında exe yoktur, deneme onun ön kontrolüne ulaşır ve bugünkü "motor
+    /// bulunamadı" yoluna düşer (<c>EnginePreflightTests</c> o yolu pinler).
+    /// <para>KIRMIZI: uyanmanın CannotStart'ı kurulum hatası yoluna gidiyordu — "Engine could not start — … reinstall required", Restart gizli,
+    /// komutlar kapalı: geçici bir başlatma hatası oturumun geri kalanını motorsuz bırakıyordu.</para>
+    /// </summary>
+    [WpfFact]
+    public async Task A_wake_that_cannot_launch_the_engine_offers_restart_instead_of_ending_the_session()
+    {
+        using var dir = new TempDir();
+        var (window, vm, probe, sent, _) = AsleepShell(dir);
+        const string exe = @"C:\app\supervisor\BuildOrchestrator.Supervisor.exe";
+        probe.NextWake = () => Task.FromException<EngineReadyEvent>(new EngineUnavailableException(exe, EngineUnavailableReason.CannotStart,
+            new System.ComponentModel.Win32Exception(1455))); // ERROR_COMMITMENT_LIMIT — geçici bir başlatma reddi
+        string console = vm.GetRunDocumentText();
+
+        await vm.LoadProjectLogAsync(MainWindowHost.IdOf("A"));
+        DispatcherPump.DrainToIdle();
+
+        Assert.Equal(EngineState.Dead, vm.EngineState);
+        Assert.Equal(RunViewModel.EngineDiedText(RunViewModel.WakeFailedCause), vm.EngineDiedMessage);
+        Assert.True(vm.EngineRestartable);
+        Assert.False(vm.IsEngineUnavailable);
+        Assert.Equal(vm.EngineDiedMessage, window.Shell.Ribbon.PhaseText.Text);
+        Assert.Equal(Visibility.Visible, window.Shell.Ribbon.RestartEngineAction.Visibility);
+        Assert.True(vm.SyncCommand.CanExecute(null));
+        Assert.Equal(console, vm.GetRunDocumentText());
+        Assert.Empty(sent.Commands);
+        Assert.Equal(1, probe.WakeCalls);
+        Assert.False(vm.HasPendingLogLoad);
+
+        await vm.RestartEngineCommand.ExecuteAsync(null);
+
+        Assert.Equal(EngineState.Unavailable, vm.EngineState); // yeniden başlatma konağın başlatmasına ulaştı (bu kabukta exe yok)
+        Assert.Equal(RunViewModel.EngineMissingMessage, vm.EngineDiedMessage);
+        Assert.Equal(1, probe.WakeCalls);                        // yeniden başlatma uyandırma değildir
         GC.KeepAlive(window);
     }
 

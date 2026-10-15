@@ -28,18 +28,18 @@ public enum EngineState
     Asleep,
 
     /// <summary>[dalga 3 · Task 21 · karar 32] Uyanma sürüyor: bir komut yolu uyuyan motoru başlatıyor (<see cref="EngineHost.WakeAsync"/>
-    /// bitmedi) — geçiş; kural uyutmaz. Uyanma bitince <see cref="Ready"/>; düşerse kurulum hatasında <see cref="Unavailable"/>, doğup hazır
-    /// olamayan motorda <see cref="Dead"/> (ölüm sinyaliyle; sinyal hiç gelmezse kapıya yeni giren ilk yolda — kural
-    /// <c>RunViewModel.EnsureEngineAwakeAsync</c>'te); çıkışta dispose uyanmanın önüne geçerse <see cref="Asleep"/>. Uyanma sürerken başka bir
-    /// sinyal durumu değiştirdiyse (uyanan motorun ölümü) o kazanır: uyanmanın bitişi duruma dokunmaz.</summary>
+    /// bitmedi) — geçiş; kural uyutmaz. Uyanma bitince <see cref="Ready"/>; düşerse exe bulunamadığında <see cref="Unavailable"/>, exe
+    /// başlatılamadığında (karar 41) ve doğup hazır olamayan motorda <see cref="Dead"/> (sonuncusu ölüm sinyaliyle; sinyal hiç gelmezse kapıya yeni
+    /// giren ilk yolda — kural <c>RunViewModel.EnsureEngineAwakeAsync</c>'te); çıkışta dispose uyanmanın önüne geçerse <see cref="Asleep"/>. Uyanma
+    /// sürerken başka bir sinyal durumu değiştirdiyse (uyanan motorun ölümü) o kazanır: uyanmanın bitişi duruma dokunmaz.</summary>
     Waking,
 
     /// <summary>Motor kaybedildi — kendiliğinden öldü (<see cref="EngineHost.EngineExited"/>), uykusu durdurmanın ortasında düştü (ölüm sinyali
-    /// gelmez, konak ne uyuyor ne canlı) ya da uyanması ölüm sinyali gelmeden düştü: şerit ölüm satırını ve "Restart engine"i gösterir;
-    /// toparlamak yeniden başlatmanın işidir.</summary>
+    /// gelmez, konak ne uyuyor ne canlı), uyanması ölüm sinyali gelmeden düştü ya da uyanma motoru başlatamadı (karar 41): şerit ölüm satırını
+    /// ve "Restart engine"i gösterir; toparlamak yeniden başlatmanın işidir.</summary>
     Dead,
 
-    /// <summary>Motor hiç doğamadı (kurulum eksik ya da bozuk — <see cref="EngineUnavailableException"/>): komutlar kapalıdır
-    /// (<c>RunViewModel.IsEngineUnavailable</c>).</summary>
+    /// <summary>Motor hiç doğamadı (kurulum eksik ya da bozuk — <see cref="EngineUnavailableException"/>; uyanmada yalnız exe bulunamadığında):
+    /// komutlar kapalıdır (<c>RunViewModel.IsEngineUnavailable</c>).</summary>
     Unavailable,
 }
