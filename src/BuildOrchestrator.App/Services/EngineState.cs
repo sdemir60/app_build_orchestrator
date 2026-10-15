@@ -15,7 +15,8 @@ public enum EngineState
     /// kalıcı kalabilir (<c>RunViewModel.EngineState</c>'in bilinen ikinci ayrışması).</summary>
     Starting,
 
-    /// <summary>Motor hazır ve uyanık — hazır yolundan sonra (<c>RunViewModel.OnEngineReady</c>). Uyutulabilen TEK durum.</summary>
+    /// <summary>Motor hazır ve uyanık — TEK hazır geçişinden (<c>RunViewModel.EnterEngineReady</c>) sonra; iki yolu var: hazır yolu
+    /// (<c>RunViewModel.OnEngineReady</c> — açılış ve yeniden başlatma) ve uyanma (<c>RunViewModel.OnEngineResumed</c>). Uyutulabilen TEK durum.</summary>
     Ready,
 
     /// <summary>Uyku sürüyor: konağın uykusu (<see cref="EngineHost.SleepAsync"/>) bitmedi — geçiş. Tik ikinci bir uyku başlatmaz.</summary>
