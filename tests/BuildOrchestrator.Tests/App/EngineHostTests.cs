@@ -193,7 +193,9 @@ public class EngineHostTests
     /// Supervisor'da ~4-10 ms).
     /// <para><b>Ölçüt process handle'ının sinyali:</b> <c>Process.GetProcessById</c>'in "yok" demesi YETMEZ — çıkış kodu
     /// Kill'le hemen yazıldığı için process henüz sonlanmamışken de fırlatıyor (ölçüldü). Handle Dispose'dan ÖNCE
-    /// açılır, sonra sinyali beklemeden (0 ms) sorulur.</para>
+    /// açılır, sonra sinyali beklemeden (0 ms) sorulur. [idle-memory · dalga 3 · fix 2] <c>GetProcessById</c> tanıtıcı AÇMAZ (ilk
+    /// erişimde açılır): açılış artık açıkça <c>SafeHandle</c> erişimiyle, Dispose'dan önce yapılır — eskiden ilk erişim Dispose'dan sonraki
+    /// <c>WaitForExit</c>'ti ve PID'in o arada başka bir sürece geçmediğinin güvencesi yoktu.</para>
     /// <para><b>Bu test beklemeyi PİNLEMEZ (ölçüldü):</b> ağaç öldürme (<c>Kill(entireProcessTree: true)</c>) Kill'den
     /// SONRA tüm process'leri tarar ve bu tarama boştaki bir Supervisor'ın sonlanmasından çoğu kez uzun sürer —
     /// beklemesiz eski kod bu makinede yeşildi. Üretim yolunu (Dispose → öldür + bekle) uçtan uca koşar; beklemenin
@@ -205,7 +207,8 @@ public class EngineHostTests
         using var sandbox = new SupervisorSandbox();
         await using var host = sandbox.IsolatedEngineHost(WideStartupTimeout); // erken bir hata motoru sızdırmasın; ikinci Dispose no-op
         await host.StartAsync();
-        using var supervisor = Process.GetProcessById(host.EnginePid!.Value); // handle Dispose'dan ÖNCE açılır
+        using var supervisor = Process.GetProcessById(host.EnginePid!.Value);
+        _ = supervisor.SafeHandle; // tanıtıcı Dispose'dan ÖNCE açılır — PID başkasına geçemez
 
         await host.DisposeAsync();
 
@@ -544,12 +547,16 @@ public class EngineHostTests
             var wake = host.WakeAsync();
             frozen = Process.GetProcessById(host.EnginePid!.Value);
             Assert.Equal(0, NtSuspendProcess(frozen.SafeHandle)); // yeni motor hazır olmadan kilitlendi
-            Assert.False(wake.IsCompleted, "the woken engine was ready before it was frozen — the precondition was not set up");
+            const string ReadyBeforeFrozen = "the woken engine was ready before it was frozen — the precondition was not set up";
+            Assert.False(wake.IsCompleted, ReadyBeforeFrozen);
 
             bool disposed = AppShutdown.WaitForAsyncDisposal(host, AppShutdown.DisposalTimeout); // App.OnExit'in yolu
 
             Assert.True(disposed, "the disposal queued behind the wake and did not finish within AppShutdown.DisposalTimeout");
             Assert.True(frozen.WaitForExit(TimeSpan.Zero), "the frozen engine was still alive after the disposal");
+            // [fix 2] Test thread'i bir motor açılışından uzun takılırsa engineReady kilitlemeden önce boruya yazılmış olabilir: uyanma o
+            // zaman BAŞARIYLA biter. Bu bir ön koşul kaybıdır — aşağıdaki "hiç istisna yok" iddiası onu yanlış anlatırdı.
+            Assert.False(wake.IsCompletedSuccessfully, ReadyBeforeFrozen);
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => wake); // uyanma vazgeçti — öldürme dispose'undu
         }
         finally
@@ -725,6 +732,7 @@ public class EngineHostTests
         var start = host.StartAsync(giveUp.Token);
         Assert.False(start.IsCompleted, "StartAsync returned before it began waiting — the precondition was not set up");
         using var engine = Process.GetProcessById(host.EnginePid!.Value);
+        _ = engine.SafeHandle; // tanıtıcı ŞİMDİ açılır: konak kendi tanıtıcısını bırakınca da PID başkasına geçemez
 
         giveUp.Cancel(); // vazgeçilen başlatma öldürmeyi dener — öldürme fırlatır
 
