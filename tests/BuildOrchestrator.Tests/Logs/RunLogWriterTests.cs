@@ -59,6 +59,21 @@ public class RunLogWriterTests : IDisposable
         Assert.Null(w.SnapshotProjectLog(@"C:\repo\Nope\Nope.csproj"));
     }
 
+    /// <summary>[idle-memory · dalga 3 · B1 fix 1 · m-5] Okunamayan bir proje logu — başka bir süreç dosyayı paylaşımsız tutuyor; ya da klasör
+    /// okunurken silindi (uyanan motorun açılıştaki saklama süpürmesi) — "log yok" okunur, istisna yükselmez: okuma motorun komut döngüsündedir
+    /// ve oradaki bir IO hatası motoru düşürürdü.
+    /// <para>KIRMIZI: paylaşım ihlali (<see cref="IOException"/>) çağırana yükseliyordu.</para></summary>
+    [Fact]
+    public void A_project_log_that_cannot_be_read_reads_as_no_log()
+    {
+        using var w = new RunLogWriter(_root, Ts);
+        string id = @"C:\repo\A\A.csproj";
+        using (var log = w.OpenProjectLog(id)) log.AppendLine("first");
+        using var held = new FileStream(w.ProjectLogPath(id), FileMode.Open, FileAccess.Read, FileShare.None); // başka bir sürecin kilidi
+
+        Assert.Null(RunLogWriter.ReadProjectLogFromDisk(w.RunDirectory, id));
+    }
+
     [Fact] // decision log çok worker'dan yazılır: satır kaybı/karışması YOK
     public void Decision_log_is_thread_safe()
     {

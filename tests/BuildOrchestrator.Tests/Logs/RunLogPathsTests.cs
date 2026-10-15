@@ -72,7 +72,7 @@ public sealed class RunLogPathsTests
     private const string LogsRoot = @"C:\bo\logs";
 
     /// <summary>[karar 37] Kendi koşusu olmayan motor (uykudan uyanmış ya da yeniden başlatılmış) proje log isteğinin adını verdiği klasörü
-    /// yalnız kendi log kökünün koşu klasörlerinden biriyse okur (<see cref="RunLogPaths.IsRunDirectoryOf"/>): tam nitelikli, kökün DOĞRUDAN
+    /// yalnız kendi log kökünün koşu klasörlerinden biriyse okur (<see cref="RunLogPaths.TryGetRunDirectory"/>): tam nitelikli, kökün DOĞRUDAN
     /// altında ve adı koşu klasörü kalıbına tam uyuyor — yazıcının açtığı klasörün biçimi (<c>logsRoot\run-…</c>). Yol normalleştirilerek
     /// karşılaştırılır: sondaki ayırıcı, ileri eğik çizgi, kökün harf büyüklüğü ve kökün içinde kalan bir <c>..</c> sonucu değiştirmez.
     /// <para>KIRMIZI: kural yoktu (gövde <c>NotImplementedException</c>).</para></summary>
@@ -83,7 +83,7 @@ public sealed class RunLogPathsTests
     [InlineData(@"c:\BO\LOGS\run-20261015-101010-123")]        // kök harf duyarsız (Windows yolu)
     [InlineData(@"C:\bo\logs\x\..\run-20261015-101010-123")]   // normalleşince kökün doğrudan altında
     public void A_run_folder_directly_under_the_logs_root_is_accepted(string path) =>
-        Assert.True(RunLogPaths.IsRunDirectoryOf(LogsRoot, path));
+        Assert.True(RunLogPaths.TryGetRunDirectory(LogsRoot, path, out _));
 
     /// <summary>[karar 37] Başka her şey reddedilir — motor o zaman bugünkü "log yok" cevabını verir: klasörsüz istek, göreli ya da sürücüye
     /// göreli yol (sürecin çalışma klasörüne düşerdi), kökün kendisi, kalıba uymayan ad, kökün doğrudan altında olmayan (iç içe) koşu klasörü,
@@ -102,14 +102,19 @@ public sealed class RunLogPathsTests
     [InlineData(@"C:\bo\logs\..\run-20261015-101010-123")]     // kökten dışarı çıkıyor (C:\bo\run-…)
     [InlineData(@"C:\bo\logs-old\run-20261015-101010-123")]    // adı kökle aynı başlayan komşu klasör
     [InlineData("C:\\bo\\logs\\run-20261015-101010-123\0")]    // gömülü null
+    [InlineData(@"\\srv\share\bo\logs\run-20261015-101010-123")] // [B1 fix 1 · m-2 · PİN] UNC: başka bir kök
+    [InlineData(@"\\?\C:\bo\logs\run-20261015-101010-123")]     // [m-2 · PİN] aygıt yolu: normalleşmez, kökle eşleşmez
+    [InlineData(@"\\.\C:\bo\logs\run-20261015-101010-123")]     // [m-2 · PİN] DOS aygıt yolu: aynı
     public void Any_other_folder_is_refused(string? path)
     {
         bool accepted = true;
+        string? folder = "unset";
 
-        var thrown = Record.Exception(() => accepted = RunLogPaths.IsRunDirectoryOf(LogsRoot, path));
+        var thrown = Record.Exception(() => accepted = RunLogPaths.TryGetRunDirectory(LogsRoot, path, out folder));
 
         Assert.Null(thrown);
         Assert.False(accepted);
+        Assert.Null(folder);
     }
 
     /// <summary>[karar 37] Kökün kendisi de normalleştirilir: sonunda ayırıcı taşıyan bir kök (<c>--logs C:\bo\logs\</c>) altındaki koşu klasörünü
@@ -117,5 +122,18 @@ public sealed class RunLogPathsTests
     /// <para>KIRMIZI: kural yoktu (gövde <c>NotImplementedException</c>).</para></summary>
     [Fact]
     public void A_logs_root_with_a_trailing_separator_still_accepts_its_run_folders() =>
-        Assert.True(RunLogPaths.IsRunDirectoryOf(LogsRoot + @"\", @"C:\bo\logs\run-20261015-101010-123"));
+        Assert.True(RunLogPaths.TryGetRunDirectory(LogsRoot + @"\", @"C:\bo\logs\run-20261015-101010-123", out _));
+
+    /// <summary>[B1 fix 1 · m-2] Kabul edilen klasör NORMALLEŞTİRİLMİŞ hâliyle döner — sondaki ayırıcı atılmış, eğik çizgi Windows ayırıcısı,
+    /// <c>..</c> çözülmüş: motor isteğin ham metnini değil, doğruladığı klasörü okur (doğrulanan ile okunan aynı yol).
+    /// <para>KIRMIZI: dönüş yoktu — kural yalnız evet/hayır diyordu ve okuma isteğin ham metniyle yapılıyordu.</para></summary>
+    [Theory]
+    [InlineData(@"C:\bo\logs\run-20261015-101010-123\")]
+    [InlineData(@"C:/bo/logs/run-20261015-101010-123")]
+    [InlineData(@"C:\bo\logs\x\..\run-20261015-101010-123")]
+    public void An_accepted_folder_comes_back_normalized(string path)
+    {
+        Assert.True(RunLogPaths.TryGetRunDirectory(LogsRoot, path, out var folder));
+        Assert.Equal(@"C:\bo\logs\run-20261015-101010-123", folder);
+    }
 }

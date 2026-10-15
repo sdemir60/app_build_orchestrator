@@ -115,8 +115,6 @@ public sealed record MsBuildToolset(IMsBuildInvoker Invoker, string MsBuildExePa
 /// bloklamaz).</para></param>
 /// <param name="msbuildFactory">MSBuild takımını (ham invoker + exe yolu) LAZY çözer: vswhere/VS yoksa Supervisor
 /// yine ayağa kalkar, hata ancak <c>startRun</c>'da <c>error(msbuildNotFound)</c> olarak bildirilir.</param>
-/// <param name="logFactory">Run başına TEK <see cref="RunLogWriter"/> üretir; HER koşu kendi writer'ını
-/// (kendi run dizinini) açar — "aynı writer'ı paylaşan" bir sonraki koşu senaryosu YOK.</param>
 /// <param name="nowMs">MONOTONİK zaman kaynağı (üretimde <c>Environment.TickCount64</c>); duvar saati
 /// KULLANILMAZ — geri atlarsa elapsed negatife düşerdi.</param>
 /// <param name="console">Konsol (stderr) uyarı/özet kanalı. stdout YALNIZ NDJSON'dır [D4], bu yüzden buradan
@@ -153,15 +151,18 @@ public sealed record MsBuildToolset(IMsBuildInvoker Invoker, string MsBuildExePa
 /// bir sayaç ya da hiçbir şey yapmayan bir delege verir.
 /// </param>
 /// <param name="logsRoot">
-/// [idle-memory · dalga 3 · karar 37] <paramref name="logFactory"/>'nin koşu klasörlerini açtığı log kökü — üretimde <c>Program</c>'ın
-/// AYNI <c>logsRoot</c> değişkeni. Tek kullanıcısı <see cref="TryGetProjectLogSnapshot"/>'ın üçüncü kaynağıdır: kendi koşusu olmayan bir
-/// motor isteğin adını verdiği klasörü yalnız bu kökün koşu klasörlerinden biriyse okur. <c>null</c> ⇒ isteğin klasörü hiç kabul edilmez
-/// (bugünkü "log yok").
+/// [idle-memory · dalga 3 · karar 37 · B1 fix 1 · I-2/O-2] Motorun log kökü — koordinatöre TEK girişi: koşu klasörleri onun DOĞRUDAN altında
+/// açılır (varsayılan yazıcı fabrikası, <see cref="_logFactory"/>) ve <see cref="TryGetProjectLogSnapshot"/>'ın üçüncü kaynağı isteğin adını
+/// verdiği klasörü yalnız bu kökün koşu klasörlerinden biriyse okur. Üretimde <c>Program</c>'ın <c>logsRoot</c>'u (<c>--logs</c> ya da
+/// varsayılan yol). Kök ayrıca fabrikanın içinde yaşamaz: bağlantı kopsa koşular log yazamaz, yani kopukluk sessiz kalamaz. <c>null</c> ⇒
+/// isteğin klasörü hiç kabul edilmez (bugünkü "log yok") ve <paramref name="logFactory"/> ZORUNLUDUR.
 /// </param>
+/// <param name="logFactory">[test dikişi] Run başına TEK <see cref="RunLogWriter"/> üreten fabrika; HER koşu kendi writer'ını (kendi run dizinini)
+/// açar — "aynı writer'ı paylaşan" bir sonraki koşu senaryosu YOK. Verilmezse <paramref name="logsRoot"/>'tan kurulur (üretim); testler
+/// yazıcıyı gözlemek ya da koşuyu yasaklamak için kendisininkini verir.</param>
 public sealed class RunCoordinator(
     Func<StartRunCommand, Action<string>, RunPlan> planner,
     Func<CancellationToken, Task<MsBuildToolset>> msbuildFactory,
-    Func<DateTimeOffset, RunLogWriter> logFactory,
     NdjsonWriter writer,
     JobObject innerJob,
     Func<long> nowMs,
@@ -173,10 +174,21 @@ public sealed class RunCoordinator(
     Func<string, string?>? apiSurface = null,
     Func<(int Cores, long FreeBytes)>? machine = null,
     Action? memoryTrim = null,
-    string? logsRoot = null) : IDisposable
+    string? logsRoot = null,
+    Func<DateTimeOffset, RunLogWriter>? logFactory = null) : IDisposable
 {
     private readonly object _gate = new();
     private readonly ICpuGovernor _cpu = cpuGovernor ?? innerJob;
+
+    /// <summary>[B1 fix 1 · O-2] Koşunun log yazıcısının fabrikası — üretimde log kökünden (kökün koordinatöre TEK girişi), testte dikişten. Hiçbiri
+    /// yoksa kurulum düşer: log yazamayacak bir koordinatör sessizce kurulmaz.</summary>
+    private readonly Func<DateTimeOffset, RunLogWriter> _logFactory = logFactory
+        ?? (logsRoot is { } root
+            ? startedAt => new RunLogWriter(root, startedAt)
+            : throw new ArgumentException("A run coordinator needs a logs root or a log factory.", nameof(logsRoot)));
+
+    /// <summary>[karar 37] Motorun log kökü (<paramref name="logsRoot"/>) — isteğin klasörünün kabul kuralı onu okur.</summary>
+    private readonly string? _logsRoot = logsRoot;
 
     /// <summary>[PERF Faz D / karar 10] Koşu başında makinenin görüntüsü — üretimde <see cref="MachineResources.Snapshot"/>.</summary>
     private readonly Func<(int Cores, long FreeBytes)> _machine = machine ?? MachineResources.Snapshot;
@@ -254,9 +266,10 @@ public sealed class RunCoordinator(
     /// <para>[idle-memory · dalga 3 · karar 37] <b>Üçüncü kaynak: isteğin klasörü.</b> Bu süreç hiç koşu yürütmediyse (uykudan uyanmış ya
     /// da yeniden başlatılmış motor — <c>_lastRunDirectory</c> süreç içidir) okuma isteğin adını verdiği klasörden yapılır
     /// (<paramref name="runDirectory"/> — App'in gördüğü son koşunun <c>runStarted.LogDirectory</c>'si). Klasör yalnız bu motorun log kökünün
-    /// koşu klasörlerinden biriyse kabul edilir (<see cref="RunLogPaths.IsRunDirectoryOf"/>: tam nitelikli, kökün doğrudan altında, adı koşu
-    /// klasörü kalıbında); aksi hâlde — ya da kök bilinmiyorsa — bugünkü "log yok". Sıra: canlı writer → motorun son koşusu → isteğin klasörü;
-    /// kendi koşusu olan motor isteğin klasörüne hiç bakmaz.</para>
+    /// koşu klasörlerinden biriyse kabul edilir (<see cref="RunLogPaths.TryGetRunDirectory"/>: tam nitelikli, kökün doğrudan altında, adı koşu
+    /// klasörü kalıbında) ve okuma kuralın döndüğü NORMALLEŞTİRİLMİŞ klasörden yapılır — isteğin ham metninden değil [B1 fix 1 · m-2]; aksi hâlde —
+    /// ya da kök bilinmiyorsa — bugünkü "log yok". Sıra: canlı writer → motorun son koşusu → isteğin klasörü; kendi koşusu olan motor isteğin
+    /// klasörüne hiç bakmaz. Okunamayan bir dosya da "log yok"tur (<see cref="RunLogWriter.ReadProjectLogFromDisk"/>, m-5).</para>
     ///
     /// <para>[Task 18] Gerçek disk okuması (<c>File.ReadAllText</c> / <c>ProjectLogFile.Snapshot</c>'ın
     /// FileStream'i) kilit DIŞINDA yapılır: kilit altında yalnız "hangi kaynaktan okunacağı" (canlı writer
@@ -283,7 +296,7 @@ public sealed class RunCoordinator(
             lastRunDirectory = _lastRunDirectory;
         }
         string? diskDirectory = lastRunDirectory
-            ?? (logsRoot is { } root && RunLogPaths.IsRunDirectoryOf(root, runDirectory) ? runDirectory : null);
+            ?? (_logsRoot is { } root && RunLogPaths.TryGetRunDirectory(root, runDirectory, out string? requested) ? requested : null);
         (string Text, int ThroughLineNumber)? snap = logs is not null
             ? logs.SnapshotProjectLog(projectId)
             : diskDirectory is not null ? RunLogWriter.ReadProjectLogFromDisk(diskDirectory, projectId) : null;
@@ -844,7 +857,7 @@ public sealed class RunCoordinator(
             lock (_gate)
             {
                 _logs?.Dispose(); // runStarted'a varmadan dönmüş önceki koşunun (msbuildNotFound ya da beklenmeyen hata) kapanmamış writer'ı — finally'si hiç koşmadı
-                logs = _logs = logFactory(DateTimeOffset.Now);
+                logs = _logs = _logFactory(DateTimeOffset.Now);
                 _lastRunDirectory = logs.RunDirectory;
                 depIssuesById = new ConcurrentDictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase); // [T54] taze run → taze birikim
             }

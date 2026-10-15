@@ -65,12 +65,17 @@ public sealed class RunLogWriter : IDisposable
     /// dosyayı okur. Satır sayısı '\n' sayılarak elde edilir — <see cref="ProjectLogFile.AppendLine"/>'ın
     /// tek-satır-tek-çağrı garantisi sayesinde canlı sayaçla AYNI sonucu verir. <see cref="SnapshotProjectLog"/>'un
     /// disk-fallback dalı da AYNI metodu çağırır — iki dal aynı sonucu üretir, kopya sayım mantığı YOK.
+    /// <para>[idle-memory · dalga 3 · B1 fix 1 · m-5] <b>Okunamayan log "log yok"tur</b> (<c>null</c>), istisna değil: dosyayı başka bir süreç
+    /// paylaşımsız tutuyor ya da klasör okunurken silindi (uyanan motorun açılıştaki saklama süpürmesi), erişim reddedildi. Okuma motorun komut
+    /// döngüsündedir (<c>getProjectLog</c>) — oradan yükselen bir IO hatası motoru düşürürdü.</para>
     /// </summary>
     public static (string Text, int ThroughLineNumber)? ReadProjectLogFromDisk(string runDirectory, string projectId)
     {
         string path = Path.Combine(runDirectory, ProjectLogNaming.FileNameFor(projectId));
         if (!File.Exists(path)) return null;
-        string text = File.ReadAllText(path);
+        string text;
+        try { text = File.ReadAllText(path); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
         return (text, CountLines(text));
     }
 

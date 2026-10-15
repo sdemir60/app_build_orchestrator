@@ -5,7 +5,6 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using BuildOrchestrator.Contracts.Ipc;
-using BuildOrchestrator.Core.Logs;
 using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Supervisor;
@@ -37,16 +36,18 @@ internal static class SupervisorHostHarness
     /// verir. Dikişin HİÇ verilmemesi ise kaynak guard'ıyla engellenir (<c>MemoryTrimGuardTests</c>: her <c>new RunCoordinator(</c>
     /// <c>memoryTrim:</c> geçer).</para>
     /// <para><paramref name="planner"/> yalnız koşuyu planlamada ASILI tutması gereken (slot dolu kalsın) testler içindir;
-    /// <paramref name="logFactory"/> koşu hiç yazılmasa da bir koşu başlayan (planlayıcı patlayan) testlerin log kökü içindir.</para>
+    /// <paramref name="logsRoot"/> koşu hiç yazılmasa da bir koşu başlayan (planlayıcı patlayan) testlerin log köküdür — koordinatör yazıcı
+    /// fabrikasını üretimdeki gibi ondan kurar [dalga 3 · B1 fix 1 · O-2]; verilmezse fabrika çağrılırsa test KIRILIR.</para>
     /// </summary>
     public static RunCoordinator NewIdleCoordinator(JobObject job, NdjsonWriter writer, Action<string> console,
         Action? memoryTrim = null, Func<StartRunCommand, Action<string>, RunPlan>? planner = null,
-        Func<DateTimeOffset, RunLogWriter>? logFactory = null) => new RunCoordinator(
+        string? logsRoot = null) => new RunCoordinator(
         planner: planner ?? ((_, _) => throw new InvalidOperationException("no run in this test")),
         msbuildFactory: _ => throw new InvalidOperationException("no run in this test"),
-        logFactory: logFactory ?? (_ => throw new InvalidOperationException("no run in this test")),
         writer: writer, innerJob: job, nowMs: () => 0, console: console,
-        memoryTrim: memoryTrim ?? NoRealGc.Collection);
+        memoryTrim: memoryTrim ?? NoRealGc.Collection,
+        logsRoot: logsRoot,
+        logFactory: logsRoot is null ? _ => throw new InvalidOperationException("no run in this test") : null);
 
     /// <summary>Verilen komutları NDJSON olarak yazıp başa saran bir stdin. Komutlar tükenince EOF gelir ve
     /// host düzenli çıkar — testin host'u durdurmak için ayrı bir sinyale ihtiyacı olmaz.</summary>

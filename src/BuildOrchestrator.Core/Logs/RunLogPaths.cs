@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 
 namespace BuildOrchestrator.Core.Logs;
@@ -53,23 +54,29 @@ public static class RunLogPaths
     /// sürecin çalışma klasörüne düşerdi), normalleştirildiğinde kökün DOĞRUDAN altında (yazıcı koşu klasörünü orada açar —
     /// <see cref="RunLogWriter"/>) ve adı koşu klasörü kalıbına tam uyuyor (<see cref="TryParseRunDirName"/>). Karşılaştırma Windows yolu gibi
     /// harf duyarsızdır; sondaki ayırıcı, ileri eğik çizgi ve <c>.</c>/<c>..</c> bölümleri normalleştirilir — kökten dışarı çıkan bir yol
-    /// böylece dışarıda kalır. Saf: diske bakmaz (klasörün var olup olmadığını okuma sorar). Okunamayan bir yol (ör. gömülü null) fırlatmaz,
-    /// reddedilir.
+    /// böylece dışarıda kalır; aygıt (<c>\\?\</c>, <c>\\.\</c>) ve UNC biçimleri kökle aynı biçimde değilse eşleşmez. Saf ve SÖZCÜKSELDİR: diske
+    /// bakmaz (klasörün var olup olmadığını okuma sorar), bağlantı ya da junction çözmez. Okunamayan bir yol (ör. gömülü null) fırlatmaz, reddedilir.
+    /// <para>[B1 fix 1 · m-2] Kabul edilen klasör NORMALLEŞTİRİLMİŞ hâliyle döner (<paramref name="runDirectory"/>) — okuyan, isteğin ham metnini
+    /// değil doğrulanan yolu kullanır.</para>
     /// <para>Tek kullanıcısı kendi koşusu olmayan motorun proje log okumasıdır (<c>RunCoordinator.TryGetProjectLogSnapshot</c>): istek App'in
     /// gördüğü son koşunun klasörünü taşır ve motor onu yalnız bu kural doğruysa okur.</para>
     /// </summary>
     /// <param name="logsRoot">Motorun log kökü (koşu klasörlerini açtığı yer).</param>
     /// <param name="path">Sınanan klasör — isteğin taşıdığı yol; <c>null</c> ya da boş reddedilir.</param>
-    public static bool IsRunDirectoryOf(string logsRoot, string? path)
+    /// <param name="runDirectory">Kabul edildiyse normalleştirilmiş klasör (sondaki ayırıcısız); aksi hâlde <c>null</c>.</param>
+    public static bool TryGetRunDirectory(string logsRoot, string? path, [NotNullWhen(true)] out string? runDirectory)
     {
         ArgumentNullException.ThrowIfNull(logsRoot);
+        runDirectory = null;
         if (string.IsNullOrEmpty(path) || !Path.IsPathFullyQualified(path)) return false;
         try
         {
             string folder = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
             string root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(logsRoot));
-            return string.Equals(Path.GetDirectoryName(folder), root, StringComparison.OrdinalIgnoreCase)
-                && TryParseRunDirName(Path.GetFileName(folder), out _);
+            if (!string.Equals(Path.GetDirectoryName(folder), root, StringComparison.OrdinalIgnoreCase)
+                || !TryParseRunDirName(Path.GetFileName(folder), out _)) return false;
+            runDirectory = folder;
+            return true;
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
         {

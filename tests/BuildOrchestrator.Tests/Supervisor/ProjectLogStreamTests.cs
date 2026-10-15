@@ -116,13 +116,12 @@ public class ProjectLogStreamTests
             Coordinator = new RunCoordinator(
                 planner: (_, _) => plan,
                 msbuildFactory: _ => Task.FromResult(new MsBuildToolset(invoker, FakeMsBuildExe)),
-                logFactory: startedAt => new RunLogWriter(LogsRoot, startedAt),
                 writer: supervisorWriter,
                 innerJob: Job,
                 nowMs: () => Environment.TickCount64,
                 console: _ => { },
                 memoryTrim: NoRealGc.Collection,
-                logsRoot: LogsRoot); // [dalga 3 · karar 37] Program.cs deseni: log fabrikasının AYNI kökü
+                logsRoot: LogsRoot); // [dalga 3 · karar 37 · B1 fix 1 · O-2] Program.cs deseni: kökün TEK girişi — yazıcı fabrikası ondan kurulur
             // [A5/T69] Sync/branch servisleri İZOLE köklerle bağlanır (bu harness onları kullanmaz, ama
             // kullanıcının gerçek cache dosyalarına hiçbir koşulda dokunulmamalıdır).
             // [optimize] Restore fabrikası da çağrılmamalıdır — çağrılırsa test sessizce geçmez.
@@ -379,7 +378,7 @@ public class ProjectLogStreamTests
 
     /// <summary>
     /// [karar 37] Taze motor isteğin klasörünü yalnız kendi log kökünün koşu klasörlerinden biriyse kabul eder (tam nitelikli, kökün doğrudan
-    /// altında, adı koşu klasörü kalıbında — <see cref="RunLogPaths.IsRunDirectoryOf"/>); aksi hâlde bugünkü "log yok" cevabıdır: tek, boş,
+    /// altında, adı koşu klasörü kalıbında — <see cref="RunLogPaths.TryGetRunDirectory"/>); aksi hâlde bugünkü "log yok" cevabıdır: tek, boş,
     /// <c>NotFound</c> bir chunk. Klasörlerin hepsi gerçek ve A'nın logunu taşır — ret kuralın işidir, eksik dosyanın değil.
     /// <para>KIRMIZI (mutasyon: kabul koşulu yokken — klasörü doğrulamadan okuyan geri düşüş): üç durumda da başka yerdeki log okunup
     /// gönderiliyordu.</para>
@@ -414,6 +413,30 @@ public class ProjectLogStreamTests
             Directory.Move(directory, target);
             return target;
         }
+    }
+
+    /// <summary>
+    /// [karar 37 · B1 fix 1 · m-5] Okunamayan bir proje logu (başka bir süreç dosyayı paylaşımsız tutuyor; ya da klasör okunurken silindi — uyanan
+    /// motorun açılıştaki saklama süpürmesi) motoru düşürmez: cevap bugünkü "log yok" chunk'ıdır ve motor komut almaya devam eder (ping → pong).
+    /// <para>KIRMIZI: okuma hatası komut döngüsünden yükseliyor, host çıkıyordu — cevap hiç gelmiyordu (okuma zaman aşımı).</para>
+    /// </summary>
+    [Fact]
+    public async Task A_project_log_that_cannot_be_read_is_answered_as_no_log_and_the_engine_keeps_answering()
+    {
+        var invoker = new FakeInvoker((_, _, _) => throw new InvalidOperationException("no run in this test"));
+        using var h = new Harness(PlanOf(Node("A")), invoker);
+        Assert.IsType<EngineReadyEvent>(await h.ReadEventAsync());
+        string runDirectory = RunLeftByAnEarlierEngine(h.LogsRoot);
+
+        using (new FileStream(LogOfAIn(runDirectory), FileMode.Open, FileAccess.Read, FileShare.None)) // başka bir sürecin kilidi
+        {
+            await h.SendAsync(new GetProjectLogCommand(Id("A"), RequestId: 9, RunDirectory: runDirectory));
+            Assert.Equal(ProjectLogIpc.NotFound(requestId: 9, Id("A")), Assert.IsType<ProjectLogChunkEvent>(await h.ReadEventAsync()));
+        }
+        await h.SendAsync(new PingCommand(10));
+        Assert.Equal(10, Assert.IsType<PongEvent>(await h.ReadEventAsync()).Seq); // motor komut almaya devam ediyor
+
+        await h.ShutdownAsync();
     }
 
     /// <summary>
