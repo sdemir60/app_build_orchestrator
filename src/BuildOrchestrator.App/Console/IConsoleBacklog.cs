@@ -2,11 +2,12 @@ namespace BuildOrchestrator.App.Console;
 
 /// <summary>
 /// [idle-memory · dalga 1 · spec §6.2] Konsol belgesinin ARKASINDAKİ satırlar: render diliminin dışında kalan geçmiş. Konsol
-/// görünümü belgenin yalnız son dilimini tutar; kullanıcı tepeye kaydırınca önceki dilimi buradan ister.
+/// görünümü anlatı belgesinin yalnız son dilimini tutar; kullanıcı tepeye kaydırınca önceki dilimi buradan ister.
 ///
-/// <para>İki kaynak vardır. Anlatıda backlog VM'in anlatı store'unun KENDİSİDİR (<see cref="NarrativeStore"/>) — görünüm
-/// satırları kopyalamaz, dilim ister. Proje logunda görünümün kendi satır listesidir (<see cref="ListBacklog"/>): diskten
-/// gelen log + kırpılan canlı satırlar.</para>
+/// <para>Anlatıda backlog VM'in anlatı store'unun KENDİSİDİR (<see cref="NarrativeStore"/>) — görünüm satırları kopyalamaz, dilim
+/// ister. Görünümün kendi satır listesi (<see cref="ListBacklog"/>) yalnız anlatı bağlanmadan önceki görünümündür (kırpılan canlı
+/// satırlar) ve proje sayfasında boştur: [dalga 3 · karar 44] sayfa logun tamamını belgesinde taşır, arkasında bir şey yoktur. Eskiden
+/// proje sayfasının backlog'u o listeydi — diskten gelen log + kırpılan canlı satırlar.</para>
 /// </summary>
 public interface IConsoleBacklog
 {

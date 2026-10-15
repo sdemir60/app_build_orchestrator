@@ -23,6 +23,7 @@ public class BottomAnchorIdleResumeTests
         public Action? PendingSchedule;
         public TimeSpan? PendingDelay;
         public bool AutoResumeAllowed = true;
+        public bool FollowAllowed = true;
 
         public BottomAnchorBehavior New() => new(
             getOffset: () => Offset,
@@ -31,7 +32,8 @@ public class BottomAnchorIdleResumeTests
             scrollInstant: v => Offset = v,
             scrollSmooth: target => { SmoothTarget = target; return true; },
             scheduleOnce: (delay, cb) => { PendingDelay = delay; PendingSchedule = cb; },
-            autoResumeAllowed: () => AutoResumeAllowed);
+            autoResumeAllowed: () => AutoResumeAllowed,
+            followAllowed: () => FollowAllowed);
 
         /// <summary>
         /// Kullanıcı yukarı kaydırdı: host HAM GİRDİYİ bildirir (tekerlek) ve ardından scroll olayı gelir.
@@ -60,7 +62,9 @@ public class BottomAnchorIdleResumeTests
         Assert.Equal(f.Extent - f.Viewport, f.SmoothTarget); // dibe dönüldü
     }
 
-    /// <summary>Host izin vermiyorsa (konsolun proje-log modu) dönüş HİÇ kurulmaz.</summary>
+    /// <summary>Host dönüşe izin vermiyorsa dönüş HİÇ kurulmaz.
+    /// <para>[dalga 3 · karar 45] Örnek eskiden konsolun proje-log moduydu; konsol artık orada takibi yasaklar (<c>followAllowed</c>) ve
+    /// dönüş onunla birlikte kapanır — <see cref="A_host_that_forbids_following_never_returns_on_its_own_either"/>.</para></summary>
     [Fact]
     public void A_panel_that_forbids_it_never_returns_on_its_own()
     {
@@ -73,6 +77,55 @@ public class BottomAnchorIdleResumeTests
 
         Assert.Null(f.PendingSchedule);
         Assert.Null(f.SmoothTarget);
+    }
+
+    /// <summary>
+    /// [dalga 3 · karar 45] Takibe izin vermeyen host (konsolun proje sayfası) kendiliğinden dibe de dönmez — dönüş takibe dönüştür; dönüşe
+    /// izin verse bile (<c>autoResumeAllowed</c>) bekleme kurulmaz.
+    /// </summary>
+    [Fact]
+    public void A_host_that_forbids_following_never_returns_on_its_own_either()
+    {
+        var f = new Fake { FollowAllowed = false };
+        var behavior = f.New();
+        f.Offset = 100;
+
+        behavior.NotifyUserScroll();
+        behavior.OnScrollChanged(0);
+
+        Assert.Null(f.PendingSchedule);
+        Assert.Null(f.SmoothTarget);
+    }
+
+    /// <summary>
+    /// [dalga 3 · karar 45] Takibe izin vermeyen host hiçbir yoldan izlemez: dibe zorlansa da (<see cref="BottomAnchorBehavior.ForceStuck"/>)
+    /// içerik büyümesi görünümü çekmez; dibe atlama (pill) görünümü dibe BİR KEZ götürür, atlama penceresi bitince de takip açılmaz.
+    /// Durum her zamanki gibi işler (yapışık, pill gizli) — yalnız akan içerik görünümü çekmez.
+    /// </summary>
+    [Fact]
+    public void A_host_that_forbids_following_is_never_pulled_down_not_after_a_forced_stick_nor_after_a_jump()
+    {
+        var f = new Fake { FollowAllowed = false };
+        var behavior = f.New();
+        f.Offset = f.Extent - f.Viewport; // dipte
+        behavior.ForceStuck(true);
+        Assert.True(behavior.IsStuck);    // ön-koşul: durum yapışık
+        Assert.False(behavior.ShouldFollow);
+
+        f.Extent += 40;                   // yeni satır geldi
+        behavior.OnScrollChanged(40);
+        Assert.Equal(f.Extent - 40 - f.Viewport, f.Offset); // görünüm çekilmedi
+
+        behavior.JumpToBottom();          // `⌄ latest`
+        Assert.Equal(f.Extent - f.Viewport, f.SmoothTarget); // dibe bir kez
+        f.Offset = f.SmoothTarget!.Value; // atlama dipte oturdu
+        f.PendingSchedule!();             // atlama penceresi bitti
+        Assert.False(behavior.ShouldFollow);
+        Assert.False(behavior.ShowPill);
+
+        f.Extent += 40;                   // sıradaki satır
+        behavior.OnScrollChanged(40);
+        Assert.Equal(f.Extent - 40 - f.Viewport, f.Offset); // atlamadan sonra da görünüm çekilmedi
     }
 
     /// <summary>

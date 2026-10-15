@@ -165,6 +165,37 @@ public class ConsoleModesTests
         Assert.DoesNotContain(previousRunText, view.Document.Text, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// [dalga 3 · karar 44] <b>Derlenen bir projenin sayfası, dikilmiş logun TAMAMIDIR — ilk satırından.</b> İstekten önce diske yazılan log
+    /// (motorun snapshot'ı, 1000 satır), istekle cevap arasında gelen canlı satırlar (dikiş: snapshot'ta da olanlar tekrar edilmez) ve sayfa
+    /// açıldıktan sonra gelen satırlar (pompa → kabuğun <c>Route.Raw</c>'ı → <c>AppendBatch</c>) sayfada sırayla, tekrarsız ve eksiksiz
+    /// durur; sayfa tepesinde açılır.
+    /// <para>KIRMIZI (karardan önce): sayfa dikilmiş logun yalnız son 200 satırıyla kuruluyordu — belge <c>log813</c>'ten başlıyordu (öncesi
+    /// görünümün listesinde, tepeye kaydırınca gelirdi). Dikişin kendisi (VM, <c>OnProjectLogChunk</c>) değişmedi; bu test onu sayfanın
+    /// tamamı üzerinden sınar.</para>
+    /// </summary>
+    [StaFact]
+    public async Task A_building_projects_page_is_its_whole_stitched_log_from_the_first_line_with_later_lines_after_it()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var view = LaidOutView();
+        const string projectId = @"C:\p\a.csproj";
+        vm.OnEvent(new ProjectStartedEvent("r1", projectId, "A"));
+        vm.SelectProject(projectId); // üretimde seçim yüklemeden önce kurulur
+        var (load, request) = ProjectLogIpc.Request(vm, projectId);
+        foreach (int n in Enumerable.Range(995, 16)) // istekten sonra gelenler: 995..1000 snapshot'ta da var, 1001..1010 yalnız tamponda
+            vm.OnEvent(new ProjectLogEvent("r1", projectId, n, $"log{n}"));
+        vm.OnEvent(ProjectLogIpc.Reply(request, projectId, string.Concat(Enumerable.Range(1, 1000).Select(n => $"log{n}\n")), through: 1000));
+        await load.WaitAsync(TimeSpan.FromSeconds(5));
+
+        vm.SeedProjectDocument(projectId, text => view.PlayCascade(ConsoleLines.Split(text))); // kabuğun kart seçimi (satır kuralı tek)
+        view.AppendBatch("log1011\nlog1012\n");                                             // sayfa açıldıktan sonra gelenler
+
+        Assert.Equal(Enumerable.Range(1, 1012).Select(n => $"log{n}"), LinesOf(view.Document));
+        Assert.Equal(0, view.Editor.VerticalOffset);
+    }
+
     // ---------------------------------------------------------------- boş-durum metinleri (verbatim §2.5)
 
     /// <summary>
@@ -530,31 +561,31 @@ public class ConsoleModesTests
     }
 
     /// <summary>
-    /// [idle-memory · final review 90] <b>Fark 2 — tek başına '\r':</b> belge onu satır ayracı sayar, kabuğun eski kuralı saymıyordu
-    /// — sayfanın bir girdisi belgede iki satır olur ve backlog indeksi belgeden bir satır kayardı. Kayma, takip açıkken gelen canlı
-    /// satırlar sayfayı render dilimine kırpınca tepeye kaydırmada görünür: dikişte bir satır İKİ kez gelir. Kâhin AvalonEdit'in kendi
-    /// belgesidir: sayfa, log + canlı satırların belgede gösterdiği satırların aynısıdır — tekrar yok, kayıp yok.
+    /// [idle-memory · final review 90] <b>Fark 2 — tek başına '\r':</b> belge onu satır ayracı sayar, kabuğun eski kuralı saymıyordu.
+    /// Kâhin AvalonEdit'in kendi belgesidir: sayfa, log + canlı satırların belgede gösterdiği satırların aynısıdır — tekrar yok, kayıp yok.
+    /// <para>[DEĞİŞEN KURAL — dalga 3 · karar 44-45] Eski iddia: sayfanın bir girdisi belgede iki satır olunca backlog indeksi belgeden bir
+    /// satır kayardı; kayma, takip açıkken (<c>StickToBottom = true</c>, "kullanıcı dibe indi") gelen canlı satırlar sayfayı render dilimine
+    /// kırpınca tepeye kaydırmada görünürdü — dikişte bir satır İKİ kez (KIRMIZI: <c>line161</c>). Değişme gerekçesi (sahip kararları 44-45):
+    /// proje sayfası logun tamamını taşır (arkasında indeksli bir backlog yoktur) ve hiç izlemez (kırpılmaz) — o kayma artık doğamaz. Kalan
+    /// iddia sayfanın kendisidir: kart seçilince belge logun tamamı ve ardından canlı satırlardır, satır satır; kaydırma gerekmez.</para>
     /// </summary>
     [StaFact]
-    public void A_lone_carriage_return_in_a_project_log_keeps_the_page_contiguous_when_scrolling_up()
+    public void A_lone_carriage_return_in_a_project_log_shows_the_page_line_for_line()
     {
         using var dir = new TempDir();
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
         var console = window.Shell.ConsoleViewControl;
         var row = MainWindowHost.ProjectOf(vm, "A");
         vm.ActiveProjectId = row.Id;
-        for (int i = 0; i < 300; i++) // '\r' taşıyan satır render diliminin içinde (son 200)
+        for (int i = 0; i < 300; i++)
             MainWindowHost.LogLine(vm, "A", i + 1, i == 150 ? "restore 50%\rrestore 100%" : $"line{i}");
         string log = vm.GetProjectDocumentText(row.Id);
-        vm.SelectProject(row.Id);                               // sayfa: son dilim belgede, öncesi backlog'da
-        console.StickToBottom = true;                           // kullanıcı dibe indi: takip açık, canlı satırlar sayfayı kırpar
+        vm.SelectProject(row.Id);                               // sayfa: logun tamamı
         string[] live = [.. Enumerable.Range(0, 60).Select(i => $"live{i}")];
         foreach (var line in live) window.AppendConsoleBatch(line + "\n", window.ConsoleReseedGen);
 
-        ScrollUpToTheTop(console); // tepeye kaydırma: önceki dilim backlog'dan
-
         var oracle = new TextDocument(log + string.Concat(live.Select(line => line + "\n")));
-        Assert.Equal(ConsoleDocument.LinesOf(oracle), ConsoleDocument.LinesOf(console.Document)); // KIRMIZI: bugün dikişte line161 iki kez
+        Assert.Equal(ConsoleDocument.LinesOf(oracle), ConsoleDocument.LinesOf(console.Document));
         GC.KeepAlive(window);
     }
 

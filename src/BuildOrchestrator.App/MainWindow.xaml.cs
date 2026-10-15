@@ -793,9 +793,11 @@ public partial class MainWindow : Window
     /// (<see cref="OnSelectedProjectChangedAsync"/>) ile gizli pencere dönüşü (<see cref="ResyncAfterShow"/>) AYNI
     /// kuralı kullanır (kopya YASAK). <paramref name="row"/> yoksa (proje topolojiden düşmüş) yalnız log satırları.
     /// <para>[idle-memory · final review 90] Log konsolun TEK satır kuralıyla bölünür (<see cref="ConsoleLines.Split"/>: belgenin
-    /// ayraç kuralı) — sayfanın backlog indeksi belge satırıyla birebir yürür. <b>[DEĞİŞEN KURAL]</b> Kabuk eskiden kendi kuralıyla
-    /// bölüyordu (<c>TrimEnd('\n').Split('\n')</c>): sondaki boş satırlar düşüyor, tek başına '\r' belgede iki satır olurken listede
-    /// bir girdi kalıyordu — indeks kayıyor, tepeye kaydırmada dikişte bir satır iki kez geliyordu (<c>ConsoleModesTests</c>).</para></summary>
+    /// ayraç kuralı) — sayfanın her girdisi belgede bir satırdır, sondaki boş satır dahil. <b>[DEĞİŞEN KURAL]</b> Kabuk eskiden kendi
+    /// kuralıyla bölüyordu (<c>TrimEnd('\n').Split('\n')</c>): sondaki boş satırlar düşüyor, tek başına '\r' belgede iki satır olurken
+    /// listede bir girdi kalıyordu — sayfa bir son dilim + backlog'ken indeks kayıyor, tepeye kaydırmada dikişte bir satır iki kez
+    /// geliyordu (<c>ConsoleModesTests</c>). [dalga 3 · karar 44] Sayfa artık logun tamamıdır (indeksli backlog yok); kural sayfanın
+    /// logu satır satır göstermesi için durur.</para></summary>
     private static IReadOnlyList<string> ProjectDocumentLines(ProjectRowViewModel? row, string text) =>
         text.Length == 0 && row is not null ? ConsoleEmptyState.ForEmptyLog(row) : ConsoleLines.Split(text);
 

@@ -42,14 +42,20 @@ internal sealed class RealizedNarrative : IDisposable
     public double DistanceFromBottom =>
         View.Editor.ExtentHeight - View.Editor.VerticalOffset - View.Editor.ViewportHeight;
 
-    /// <summary>Ctrl+Home: ham tuş ve editörün KENDİ Ctrl+Home bağlaması (<c>MoveToDocumentStart</c>). Bağlama komutundan
-    /// çalıştırılır: testte Ctrl basılı olamaz ve <c>KeyGesture</c> klavyenin gerçek durumunu okur — KeyDown onu eşleştirmezdi.</summary>
-    public void PressCtrlHome()
+    /// <summary>Ctrl+Home: ham tuş ve editörün KENDİ Ctrl+Home bağlaması (<c>MoveToDocumentStart</c>) — <see cref="PressWithControl"/>.</summary>
+    public void PressCtrlHome() => PressWithControl(Key.Home);
+
+    /// <summary>Ctrl+End: ham tuş ve editörün KENDİ Ctrl+End bağlaması (<c>MoveToDocumentEnd</c>) — <see cref="PressWithControl"/>.</summary>
+    public void PressCtrlEnd() => PressWithControl(Key.End);
+
+    /// <summary>Ctrl+tuş: ham tuşun önizlemesi ve editörün o tuşa KENDİ Ctrl bağlaması. Bağlama komutundan çalıştırılır: testte Ctrl
+    /// basılı olamaz ve <c>KeyGesture</c> klavyenin gerçek durumunu okur — KeyDown onu eşleştirmezdi.</summary>
+    private void PressWithControl(Key key)
     {
         var textArea = View.Editor.TextArea;
         var binding = textArea.InputBindings.OfType<KeyBinding>()
-            .Single(k => k.Key == Key.Home && k.Modifiers == ModifierKeys.Control);
-        RaiseKey(Key.Home, Keyboard.PreviewKeyDownEvent);
+            .Single(k => k.Key == key && k.Modifiers == ModifierKeys.Control);
+        RaiseKey(key, Keyboard.PreviewKeyDownEvent);
         ((RoutedCommand)binding.Command).Execute(binding.CommandParameter, textArea);
         DispatcherPump.DrainToIdle();
     }

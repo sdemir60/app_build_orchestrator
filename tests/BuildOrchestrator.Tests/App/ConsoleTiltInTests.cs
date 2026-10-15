@@ -199,6 +199,25 @@ public class ConsoleTiltInTests
     }
 
     /// <summary>
+    /// [dalga 3 · karar 44] <b>Uzun bir proje logu, geçişini logun İLK satırı çizilmiş olarak başlatır.</b> Açılış dönüşün aynasıdır:
+    /// dokunun alındığı karede belgenin ilk satırı — logun ilk satırı — görünür satırların başındadır ve geçiş oynar.
+    /// <para>KIRMIZI (karardan önce): sayfa logun son 200 satırıyla kuruluyordu — 1000 satırlık logun geçişi <c>page800</c>'le başlıyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void A_long_project_log_starts_its_transition_with_its_first_line_already_drawn()
+    {
+        var view = Realized(width: 800, height: 400);
+
+        view.PlayCascade([.. Enumerable.Range(0, 1000).Select(i => $"page{i}")]);
+
+        Assert.Equal(0, view.Editor.VerticalOffset);
+        var textView = view.Editor.TextArea.TextView;
+        Assert.True(textView.VisualLinesValid, "görsel satırlar geçiş anında kurulmamış — doku boş/bayat bir kare taşır");
+        Assert.Equal("page0", view.Document.GetText(textView.VisualLines[0].FirstDocumentLine));
+        Assert.Equal(Visibility.Visible, view.Tilt3D.Visibility); // geçiş oynuyor
+    }
+
+    /// <summary>
     /// <b>Dönüşte kaydırma animasyonu YOKTUR.</b> Panel geçişten önce zaten son satırdadır; hareket eden tek
     /// şey menteşedir. İki animasyonu üst üste bindirmek (geçiş + kaydırma) kullanıcı kararıyla reddedildi:
     /// dönüş bir yer değiştirme değil, bir mod değişimidir.

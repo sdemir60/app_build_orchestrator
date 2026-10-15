@@ -21,7 +21,8 @@ namespace BuildOrchestrator.Tests.App;
 /// tamponu ve görünümün satır listesi (belgeden kırpılan canlı satırlar da listeye eklenirdi). Değişme gerekçesi (ölçüldü,
 /// boşta bellek analizi §3): 83 k satırlık bir koşudan sonra görünümün listesi tek başına 59 MB tutuyordu, VM tamponu ayrıca
 /// 55 MB. Artık anlatının bellekteki TEK sahibi VM'in store'udur (<see cref="NarrativeStore"/>): görünüm geçmiş dilimini ondan
-/// ister. Proje logu sayfası kendi listesini tutmaya devam eder (<see cref="ListBacklog"/>).</para>
+/// ister. [dalga 3 · karar 44] Proje logu sayfası logun tamamını belgesinde taşır, arkasında satır listesi tutmaz (eskiden logun
+/// kopyası görünümün <see cref="ListBacklog"/>'undaydı, belge son 200 satırdı).</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class ConsoleMemoryTests
@@ -159,9 +160,8 @@ public class ConsoleMemoryTests
         Assert.Throws<InvalidOperationException>(() => view.BindNarrative(new NarrativeStore())); // KIRMIZI: bugün sessizce bağlar
     }
 
-    /// <summary>[idle-memory · final review 92] Proje logu açıkken anlatı bağı kurulmaz: belge ve backlog o sayfanındır (görünümün
-    /// listesi). Anlatıya dönüş belgeyi store'dan kurar (<c>ReplaceRunDocument</c>); bağ yalnız kabuğun açılışındaki boş anlatı
-    /// belgesi içindir.</summary>
+    /// <summary>[idle-memory · final review 92] Proje logu açıkken anlatı bağı kurulmaz: belge o sayfanındır (logun tamamı). Anlatıya
+    /// dönüş belgeyi store'dan kurar (<c>ReplaceRunDocument</c>); bağ yalnız kabuğun açılışındaki boş anlatı belgesi içindir.</summary>
     [StaFact]
     public void Binding_the_narrative_while_a_project_log_is_shown_fails_fast()
     {

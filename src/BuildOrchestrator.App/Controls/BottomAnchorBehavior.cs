@@ -21,6 +21,7 @@ public sealed class BottomAnchorBehavior
     private readonly Action<TimeSpan, Action> _scheduleOnce;
     private readonly double _thresholdPx;
     private readonly Func<bool>? _autoResumeAllowed;
+    private readonly Func<bool>? _followAllowed;
 
     private BottomAnchorState _state = BottomAnchorState.Initial;
     private int _jumpGeneration;
@@ -46,15 +47,21 @@ public sealed class BottomAnchorBehavior
     /// <param name="autoResumeAllowed">Dibe KENDİLİĞİNDEN dönmek serbest mi (<c>null</c> = hiç dönme).
     /// Kullanıcı kaydırdıktan sonra <see cref="BottomAnchorDecision.IdleResumeMs"/> boyunca panele hiç
     /// dokunulmazsa dibe dönülür — panel akışı yeniden izlemeye başlar, tıpkı listenin frontier takibinin
-    /// aynı süre sonunda geri açılması gibi. Host bunu kapatabilir: konsol proje-log modunda dönmez, orada
-    /// izlenecek bir akış (ve imleç) yoktur.</param>
+    /// aynı süre sonunda geri açılması gibi. Dönüş takibe dönüştür: takip yasakken (<paramref name="followAllowed"/>) bu izin
+    /// olsa da dönülmez (<see cref="AutoResumeAllowed"/>).</param>
+    /// <param name="followAllowed">[idle-memory · dalga 3 · karar 45] Host şu an akışı İZLEYEBİLİR mi (<c>null</c> = her zaman). İzin
+    /// yokken <see cref="ShouldFollow"/> hiç açılmaz: ne zorlanan dip (<see cref="ForceStuck"/>), ne dibe atlama
+    /// (<see cref="JumpToBottom"/> — görünüm dibe BİR KEZ gider), ne kullanıcının kendi eliyle dibe inmesi takibi başlatır; bekleme
+    /// dönüşü de kurulmaz. Durum (<see cref="IsStuck"/>, pill) her zamanki gibi işler — yalnız akan içerik görünümü çekmez. Konsolun proje
+    /// sayfası böyledir: okunan bir logdur, izlenen bir akış değil.</param>
     public BottomAnchorBehavior(
         Func<double> getOffset, Func<double> getExtent, Func<double> getViewport,
         Action<double> scrollInstant, Func<double, bool> scrollSmooth,
         Action<TimeSpan, Action>? scheduleOnce = null, double thresholdPx = BottomAnchorDecision.DefaultThresholdPx,
-        Func<bool>? autoResumeAllowed = null)
+        Func<bool>? autoResumeAllowed = null, Func<bool>? followAllowed = null)
     {
         _autoResumeAllowed = autoResumeAllowed;
+        _followAllowed = followAllowed;
         _getOffset = getOffset;
         _getExtent = getExtent;
         _getViewport = getViewport;
@@ -69,14 +76,23 @@ public sealed class BottomAnchorBehavior
 
     /// <summary>
     /// <b>Şu anda dibe yapışmak serbest mi</b> — "yeni içerik geldi, görünümü dibe çekeyim mi" sorusunun TEK
-    /// yetkili cevabı. Üç koşul birden: takip açık, uçuşta bir atlama yok ve direksiyon kullanıcıda değil.
+    /// yetkili cevabı. Dört koşul birden: takip açık, uçuşta bir atlama yok, direksiyon kullanıcıda değil ve host takibe izin
+    /// veriyor (<see cref="FollowAllowed"/>).
     ///
     /// <para>Host'lar bunu okur (konsolun <c>AppendBatch</c>'i dahil) — kendi <see cref="IsStuck"/>
     /// yorumlarını yapmazlar. Konsol tam da bunu yapıyordu: <c>AppendBatch</c> salt <c>IsStuck</c>'a bakıp
     /// her batch'te dibe kaydırıyor, kullanıcının kaydırmasını görmüyordu — derleme sürerken konsol
     /// kaydırılamaz hâle geliyordu.</para>
     /// </summary>
-    public bool ShouldFollow => _state.IsStuck && !_state.IsJumping && !_steering;
+    public bool ShouldFollow => _state.IsStuck && !_state.IsJumping && !_steering && FollowAllowed;
+
+    /// <summary>[idle-memory · dalga 3 · karar 45] Host şu an takibe izin veriyor mu — yapıcının <c>followAllowed</c>'ı, verilmemişse
+    /// her zaman. Takibin (<see cref="ShouldFollow"/>) ve bekleme dönüşünün (<see cref="AutoResumeAllowed"/>) ortak kapısı.</summary>
+    private bool FollowAllowed => _followAllowed?.Invoke() ?? true;
+
+    /// <summary>Dibe kendiliğinden dönüş şu an serbest mi: host dönüşe izin veriyor (<c>autoResumeAllowed</c>) VE takibe izin veriyor
+    /// (<see cref="FollowAllowed"/>). Dönüş takibe dönüştür; takip yasakken görünümü dibe taşımak okuyucunun yerini boşuna değiştirirdi.</summary>
+    private bool AutoResumeAllowed => _autoResumeAllowed is not null && _autoResumeAllowed() && FollowAllowed;
     public double DistanceFromBottom => Math.Max(0, BottomOffset - _getOffset());
 
     /// <summary>Dibin ofseti — "dip"in TEK tanımı: içerik eksi görünür alan (sığan içerikte 0). Uzaklık ondan ölçülür, dibe her gidiş
@@ -158,20 +174,19 @@ public sealed class BottomAnchorBehavior
     /// sıfırlanıyor ve beş saniye HİÇ dolmuyordu — sahada "kaydırdım, bekliyorum, dibe dönmüyor" diye
     /// görülen buydu. Sayaç scroll olaylarını değil, kullanıcının elini ölçer.</para>
     ///
-    /// <para>Host izin vermiyorken (konsolun proje-log modu) saat kurulmaz. Kuşak sayacı, arka arkaya gelen
-    /// girdilerin biriktirdiği eski saatlerin dolduğunda iş yapmasını engeller.</para>
+    /// <para>Host izin vermiyorken (<see cref="AutoResumeAllowed"/> — konsolun proje sayfası takibe izin vermez) saat kurulmaz.
+    /// Kuşak sayacı, arka arkaya gelen girdilerin biriktirdiği eski saatlerin dolduğunda iş yapmasını engeller.</para>
     /// </summary>
     private void ArmIdleResume()
     {
-        if (_autoResumeAllowed is null || !_steering) return;
-        if (!_autoResumeAllowed()) return;
+        if (!_steering || !AutoResumeAllowed) return;
 
         int generation = ++_idleGeneration;
         _scheduleOnce(TimeSpan.FromMilliseconds(BottomAnchorDecision.IdleResumeMs), () =>
         {
             if (generation != _idleGeneration) return;   // araya yeni bir scroll girdi
             _steering = false;                            // kullanıcı elini çekti — direksiyon geri alınır
-            if (_autoResumeAllowed is null || !_autoResumeAllowed()) return;
+            if (!AutoResumeAllowed) return;
             if (_state.IsStuck)
             {
                 // Zaten dipteydi (kullanıcı kendi eliyle dibe indi): takip sürer. Durum değişmedi ama takip GERİ GELDİ —
@@ -184,10 +199,11 @@ public sealed class BottomAnchorBehavior
         });
     }
 
-    /// <summary>`⌄ latest` pill tıklaması (ya da başka bir "şimdi dibe git" tetikleyicisi).</summary>
+    /// <summary>`⌄ latest` pill tıklaması (ya da başka bir "şimdi dibe git" tetikleyicisi). Takip yeniden devralır — host takibe izin
+    /// veriyorsa (<see cref="FollowAllowed"/>); izin yoksa görünüm dibe BİR KEZ gider ve orada kalır (konsolun proje sayfası).</summary>
     public void JumpToBottom()
     {
-        _steering = false; // açık "şimdi dibe git" (pill ya da bekleme sonu) — takip yeniden devralır
+        _steering = false; // açık "şimdi dibe git" (pill ya da bekleme sonu) — takip yeniden devralır (izin varsa)
         bool animated = _scrollSmooth(BottomOffset);
         if (!animated) { ForceStuck(true); return; } // reduced-motion/instant — jumping penceresine gerek yok
 

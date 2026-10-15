@@ -19,6 +19,24 @@ public class ConsoleReaderNavigationTests
     /// <summary>Bir proje sayfasının satırları (<c>page0</c>, <c>page1</c>, …) — sayfayı açan testlerin tek kaynağı.</summary>
     private static string[] Page(int lines) => [.. Enumerable.Range(0, lines).Select(i => $"page{i}")];
 
+    /// <summary>Bir proje sayfası açılır — kabuğun kart seçimiyle aynı çağrı (<c>PlayCascade</c>) — ve yerleşim oturur.</summary>
+    private static void OpenPage(RealizedNarrative narrative, int lines)
+    {
+        narrative.View.PlayCascade(Page(lines));
+        DispatcherPump.DrainToIdle();
+    }
+
+    /// <summary>Görünür alanın tepesindeki satırın metni — geometri TextView'in kendisinden.</summary>
+    private static string TopLine(RealizedNarrative narrative)
+    {
+        var textView = narrative.View.Editor.TextArea.TextView;
+        return narrative.View.Document.GetText(textView.GetDocumentLineByVisualTop(textView.VerticalOffset));
+    }
+
+    /// <summary>Metni <paramref name="text"/> olan satır şu an görünür satırlar arasında mı.</summary>
+    private static bool IsShown(RealizedNarrative narrative, string text) =>
+        narrative.View.Editor.TextArea.TextView.VisualLines.Any(v => narrative.View.Document.GetText(v.FirstDocumentLine) == text);
+
     /// <summary>Okuyucu dipten ayrıldı: takip bırakıldı, <c>⌄ latest</c> görünür, prompt satırı (panele yaslı) gizli — dipte asılı
     /// kalsaydı okunan metnin üstüne binerdi.</summary>
     private static void AssertReleased(RealizedNarrative narrative)
@@ -165,6 +183,9 @@ public class ConsoleReaderNavigationTests
     /// alan 0. Anchor o olayda uzaklığı 0 okuyup (direksiyon hâlâ okuyucudaydı) takası başlatan "izleme" kararını ezerek sayfayı izler hâle
     /// getiriyordu ve sonra hiçbir olay yeniden karar vermiyordu: pill gizli, bekleme dolunca takip açık — sıradaki canlı satır tepeyi
     /// kırpıp okuyucuyu dibe atıyordu.</para>
+    /// <para>[DEĞİŞEN KURAL — dalga 3 · karar 44] Eski iddia: sayfanın tepesi <c>page100</c>'dü — sayfa logun son 200 satırıyla (render
+    /// dilimi) kuruluyor, 300 satırlık bir log 100. satırından açılıyordu. Sahip kararı: proje sayfası logun İLK satırından açılır ve logun
+    /// tamamını taşır; tepe artık <c>page0</c>'dır. "Tepe kırpılmadı" iddiası aynı.</para>
     /// </summary>
     [StaFact]
     public void A_project_page_opened_right_after_a_scroll_opens_at_its_top_and_does_not_follow()
@@ -173,8 +194,7 @@ public class ConsoleReaderNavigationTests
         narrative.WheelUp();
         narrative.WheelUp(); // okuyucu kaydırdı: direksiyon onda, bekleme kuruldu
 
-        narrative.View.PlayCascade(Page(lines: 300));
-        DispatcherPump.DrainToIdle();
+        OpenPage(narrative, lines: 300);
 
         Assert.False(narrative.View.StickToBottom);
         Assert.Equal(Visibility.Visible, narrative.View.Pill.Visibility); // uzun sayfanın tepesi: dip uzakta
@@ -185,7 +205,7 @@ public class ConsoleReaderNavigationTests
 
         Assert.False(narrative.View.FollowsBottom);
         Assert.Equal(0, narrative.View.Editor.VerticalOffset);
-        Assert.StartsWith("page100\n", narrative.View.Document.Text); // tepe kırpılmadı
+        Assert.StartsWith("page0\n", narrative.View.Document.Text); // tepe kırpılmadı — sayfa logun ilk satırıdır
     }
 
     /// <summary>
@@ -201,8 +221,7 @@ public class ConsoleReaderNavigationTests
         using var narrative = new RealizedNarrative(lines: 400);
         Assert.True(narrative.View.FollowsBottom); // ön-koşul: anlatı dibi izliyor
 
-        narrative.View.PlayCascade(Page(lines: 300));
-        DispatcherPump.DrainToIdle();
+        OpenPage(narrative, lines: 300);
 
         Assert.False(narrative.View.FollowsBottom);
         Assert.Equal(0, narrative.View.Editor.VerticalOffset);
@@ -220,8 +239,7 @@ public class ConsoleReaderNavigationTests
     {
         using var narrative = new RealizedNarrative(lines: 400);
 
-        narrative.View.PlayCascade(Page(lines: 5));
-        DispatcherPump.DrainToIdle();
+        OpenPage(narrative, lines: 5);
 
         Assert.True(narrative.View.Editor.ExtentHeight <= narrative.View.Editor.ViewportHeight, "test kurgusu: sayfa görünüme sığmalıydı");
         Assert.False(narrative.View.FollowsBottom);
@@ -268,13 +286,140 @@ public class ConsoleReaderNavigationTests
     public void Back_from_a_project_page_the_reader_scrolled_follows_the_narrative_again()
     {
         using var narrative = new RealizedNarrative(lines: 400);
-        narrative.View.PlayCascade(Page(lines: 300));
-        DispatcherPump.DrainToIdle();
+        OpenPage(narrative, lines: 300);
         narrative.Press(Key.PageDown); // okuyucu sayfada gezindi: direksiyon onda
 
         narrative.View.ReplaceRunDocument(NarrativeSnapshots.Of(narrative.Store)); // ← Back
         DispatcherPump.DrainToIdle();
 
         AssertFollowingAtTheBottom(narrative);
+    }
+
+    // ---------------------------------------------------------------- [dalga 3 · karar 44] proje sayfası logun ilk satırından açılır
+
+    /// <summary>
+    /// [dalga 3 · karar 44] Uzun bir proje logu İLK satırından açılır — bir derleme logunda aranan ilk hatadır — ve logun geri kalanına
+    /// aşağı kaydırarak ulaşılır: Ctrl+End son satırı gösterir.
+    /// <para>KIRMIZI (karardan önce): sayfa logun son 200 satırıyla (render dilimi) kuruluyor ve o dilimin tepesine sabitleniyordu — 1000
+    /// satırlık log <c>page800</c>'den açılıyordu; öncesi ancak tepeye kaydırınca dilim dilim geliyordu. ≤ 200 satırlık log zaten 1. satırdan
+    /// açılıyordu, kusur yalnız uzun loglardaydı.</para>
+    /// </summary>
+    [StaFact]
+    public void A_long_project_page_opens_at_the_first_line_of_its_log_and_scrolls_down_to_its_last()
+    {
+        using var narrative = new RealizedNarrative(lines: 400);
+
+        OpenPage(narrative, lines: 1000);
+
+        Assert.Equal(0, narrative.View.Editor.VerticalOffset);
+        Assert.Equal("page0", TopLine(narrative));
+        Assert.False(narrative.View.FollowsBottom);
+
+        narrative.PressCtrlEnd();
+
+        Assert.Equal(0, narrative.DistanceFromBottom, precision: 1);
+        Assert.True(IsShown(narrative, "page999"), "the log's last line is not on screen at the end of its page");
+    }
+
+    /// <summary>
+    /// [dalga 3 · karar 44-45] Derlenen bir projenin canlı satırları sayfanın SONUNA, geldikleri sırayla eklenir ve hiçbiri kaybolmaz —
+    /// okuyucu sayfanın tepesinde, ortasında ya da sonunda olsun; görünüm yerinden oynamaz (proje sayfası izlemez).
+    /// <para>KIRMIZI (karardan önce): sayfa belgesi logun yalnız son 200 satırıydı — belge logun tamamını ve ardından canlı satırları
+    /// taşımıyordu (öncesi görünümün listesinde, tepeye kaydırınca gelirdi).</para>
+    /// </summary>
+    [StaTheory]
+    [InlineData("top")]
+    [InlineData("middle")]
+    [InlineData("end")]
+    public void Live_lines_of_a_building_project_land_in_order_after_its_log_wherever_the_reader_is(string where)
+    {
+        using var narrative = new RealizedNarrative(lines: 400);
+        OpenPage(narrative, lines: 1000);
+        if (where == "middle") foreach (int _ in Enumerable.Range(0, 10)) narrative.Press(Key.PageDown);
+        if (where == "end") narrative.PressCtrlEnd();
+        double readingAt = narrative.View.Editor.VerticalOffset;
+        string[] live = [.. Enumerable.Range(0, 6).Select(i => $"live{i}")];
+
+        foreach (var pair in live.Chunk(2))
+        {
+            narrative.View.AppendBatch(string.Concat(pair.Select(line => line + "\n"))); // pompanın batch'i (kabuk: Route.Raw)
+            DispatcherPump.DrainToIdle();
+        }
+
+        string[] logThenLive = [.. Page(1000), .. live];
+        Assert.Equal(logThenLive, ConsoleDocument.LinesOf(narrative.View.Document));
+        Assert.Equal(readingAt, narrative.View.Editor.VerticalOffset);
+    }
+
+    // ---------------------------------------------------------------- [dalga 3 · karar 45] proje sayfası hiç izlemez
+
+    /// <summary>
+    /// [dalga 3 · karar 45] Okuyucu proje sayfasını kendi eliyle sonuna indirse de sayfa İZLEMEZ: bekleme dolsa da yeni canlı satırlar
+    /// görünümü oynatmaz.
+    /// <para>PİN — karardan önce de yeşildi (ölçüldü): proje modunda bekleme hiç kurulmadığından direksiyon okuyucuda kalıyor, takip
+    /// gelmiyordu. Kodun doc'u (<c>PlayCascade</c>: "kullanıcı kendi eliyle dibe inerse takip geri gelir") ve README tersini söylüyordu;
+    /// karar bugünkü davranışı kural yaptı.</para>
+    /// </summary>
+    [StaFact]
+    public void A_project_page_scrolled_to_its_end_does_not_follow_new_lines()
+    {
+        using var narrative = new RealizedNarrative(lines: 400);
+        OpenPage(narrative, lines: 300);
+        narrative.PressCtrlEnd();
+        Assert.Equal(0, narrative.DistanceFromBottom, precision: 1); // ön-koşul: okuyucu sayfanın sonunda
+        double atTheEnd = narrative.View.Editor.VerticalOffset;
+
+        narrative.ElapseAnchorTimers(); // okuyucu elini çekti
+        narrative.View.AppendBatch("live0\nlive1\nlive2\nlive3\n");
+        DispatcherPump.DrainToIdle();
+
+        Assert.False(narrative.View.FollowsBottom);
+        Assert.Equal(atTheEnd, narrative.View.Editor.VerticalOffset);
+    }
+
+    /// <summary>
+    /// [dalga 3 · karar 44-45] Proje sayfasında <c>⌄ latest</c> sayfanın GERÇEK sonuna bir kez atlar — logun son satırı ekrandadır — ve
+    /// takibi AÇMAZ: sıradaki canlı satırlar görünümü çekmez.
+    /// <para>KIRMIZI (karardan önce): pill tıklaması direksiyonu geri alıp sayfayı izler hâle getiriyordu (<c>FollowsBottom</c> true) —
+    /// sonraki canlı batch görünümü dibe çekiyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void The_latest_pill_on_a_project_page_jumps_to_its_end_once_and_does_not_follow()
+    {
+        using var narrative = new RealizedNarrative(lines: 400);
+        OpenPage(narrative, lines: 1000);
+        Assert.Equal(Visibility.Visible, narrative.View.Pill.Visibility); // ön-koşul: uzun sayfanın tepesi
+
+        narrative.ClickLatest();
+
+        Assert.Equal(0, narrative.DistanceFromBottom, precision: 1);
+        Assert.True(IsShown(narrative, "page999"), "the pill did not land on the log's last line");
+        Assert.Equal(Visibility.Collapsed, narrative.View.Pill.Visibility);
+        Assert.False(narrative.View.FollowsBottom);
+        double landed = narrative.View.Editor.VerticalOffset;
+
+        narrative.View.AppendBatch("live0\nlive1\nlive2\nlive3\n");
+        DispatcherPump.DrainToIdle();
+
+        Assert.Equal(landed, narrative.View.Editor.VerticalOffset);
+        Assert.False(narrative.View.FollowsBottom);
+    }
+
+    /// <summary>
+    /// [dalga 3 · karar 45] Anlatıda <c>⌄ latest</c> takibi geri verir: tıklamadan sonra gelen satırlar görünümü yeni dibe çeker.
+    /// <para>PİN — karar yalnız proje sayfasını değiştirir; anlatı değişmez.</para>
+    /// </summary>
+    [StaFact]
+    public void After_the_latest_pill_the_narrative_follows_new_output()
+    {
+        using var narrative = new RealizedNarrative(lines: 400);
+        narrative.WheelAwayFromTheBottom();
+        narrative.ClickLatest();
+
+        NarrativeSnapshots.Deliver(narrative.Store, narrative.View, ["live0", "live1", "live2", "live3"]);
+        DispatcherPump.DrainToIdle();
+
+        AssertFollowingAtTheBottom(narrative);
+        Assert.EndsWith("live3\n", narrative.View.Document.Text);
     }
 }
