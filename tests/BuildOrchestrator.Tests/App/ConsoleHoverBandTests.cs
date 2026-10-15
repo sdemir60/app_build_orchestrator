@@ -276,25 +276,11 @@ public class ConsoleHoverBandTests
         Assert.Same(shownClock, AppliedColorClock(brush)); // yeni animasyon başlamadı
     }
 
-    /// <summary>Fırçanın <c>Color</c> özelliğine şu an uygulanmış animasyon saati (yoksa null) — WPF bunu public
-    /// API'de sunmaz; iç <c>AnimationStorage</c>'dan okunur (yalnız test ölçümü).</summary>
-    private static object? AppliedColorClock(SolidColorBrush brush)
-    {
-        var storageType = typeof(System.Windows.Media.Animation.AnimationClock).Assembly
-            .GetType("System.Windows.Media.Animation.AnimationStorage", throwOnError: true)!;
-        var getStorage = storageType.GetMethod("GetStorage",
-            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic,
-            [typeof(DependencyObject), typeof(DependencyProperty)])!;
-        var storage = getStorage.Invoke(null, [brush, SolidColorBrush.ColorProperty]);
-        if (storage is null) return null;
-        var clocksField = storageType.GetField("_animationClocks",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-        // _animationClocks bir FrugalObjectList<AnimationClock>'tur (IList değil) — ToArray ile okunur.
-        var list = clocksField.GetValue(storage);
-        if (list is null) return null;
-        var clocks = (System.Windows.Media.Animation.AnimationClock[])list.GetType().GetMethod("ToArray")!.Invoke(list, null)!;
-        return clocks.Length > 0 ? clocks[0] : null;
-    }
+    /// <summary>Fırçanın <c>Color</c> özelliğine şu an uygulanmış animasyon saati (yoksa null) — okuma tek yerde
+    /// (<see cref="ActiveClockInspector.AppliedClock"/>; [B2 fix 1] reflection eskiden burada satır satır yazılıydı, konsolun kaydırma
+    /// animasyonu testi de aynısına ihtiyaç duyunca ortak yardımcıya taşındı).</summary>
+    private static object? AppliedColorClock(SolidColorBrush brush) =>
+        ActiveClockInspector.AppliedClock(brush, SolidColorBrush.ColorProperty);
 
     /// <summary>
     /// [Review round 1 M-1] Yarım satır kadar kaydırılınca ilk görsel satır EKRANIN ÜSTÜNDE kısmen görünür kalır

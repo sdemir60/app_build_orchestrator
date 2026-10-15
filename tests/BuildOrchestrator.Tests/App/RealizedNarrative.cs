@@ -10,7 +10,8 @@ namespace BuildOrchestrator.Tests.App;
 /// <summary>
 /// Gerçek (ekran dışı) bir pencerede, dibe sabitlenmiş YENİDEN KURULAN anlatı (← Back / tepsiden dönüş) ve okuyucunun GERÇEK
 /// gezinmesi: tuşlar — <c>UserScrollSignal</c>'in dinlediği ham girdi ve editörün KENDİ bağlaması —, tekerlek ve <c>⌄ latest</c>
-/// tıklaması; her adımdan sonra dispatcher boşa kadar pompalanır.
+/// tıklaması; her adımdan sonra dispatcher boşa kadar pompalanır. Aynı pencere proje sayfalarını da taşır: test anlatının üstüne bir
+/// sayfa açar (<c>PlayCascade</c>) ve okuyucu orada da aynı tuşlarla gezinir.
 ///
 /// <para>Neden gerçek pencere: kaydırma olayının içindeki geometri (hangi ofsetin o anda henüz eski olduğu) yalnız yerleşimi
 /// üretimdeki gibi koşan bir host'ta üretimle aynıdır; tuş ve tekerlek olayları da bir <see cref="PresentationSource"/> ister.</para>
@@ -43,28 +44,29 @@ internal sealed class RealizedNarrative : IDisposable
     public double DistanceFromBottom =>
         View.Editor.ExtentHeight - View.Editor.VerticalOffset - View.Editor.ViewportHeight;
 
-    /// <summary>Ctrl+Home: ham tuş ve editörün KENDİ Ctrl+Home bağlaması (<c>MoveToDocumentStart</c>) — <see cref="PressWithControl"/>.</summary>
-    public void PressCtrlHome() => PressWithControl(Key.Home);
+    /// <summary>Ctrl+Home: <see cref="PressWithModifiers"/> — editörün kendi bağlaması (<c>MoveToDocumentStart</c>).</summary>
+    public void PressCtrlHome() => PressWithModifiers(Key.Home, ModifierKeys.Control);
 
-    /// <summary>Ctrl+End: ham tuş ve editörün KENDİ Ctrl+End bağlaması (<c>MoveToDocumentEnd</c>) — <see cref="PressWithControl"/>.</summary>
-    public void PressCtrlEnd() => PressWithControl(Key.End);
+    /// <summary>Ctrl+End: <see cref="PressWithModifiers"/> — editörün kendi bağlaması (<c>MoveToDocumentEnd</c>).</summary>
+    public void PressCtrlEnd() => PressWithModifiers(Key.End, ModifierKeys.Control);
 
-    /// <summary>Ctrl+tuş: ham tuşun önizlemesi ve editörün o tuşa KENDİ Ctrl bağlaması. Bağlama komutundan çalıştırılır: testte Ctrl
-    /// basılı olamaz ve <c>KeyGesture</c> klavyenin gerçek durumunu okur — KeyDown onu eşleştirmezdi.</summary>
-    private void PressWithControl(Key key)
+    /// <summary>Değiştiricili tuş (Ctrl, Shift, …): ham tuşun önizlemesi ve editörün o tuş + değiştiriciye KENDİ bağlaması. Bağlama
+    /// komutundan çalıştırılır: testte değiştirici basılı olamaz ve <c>KeyGesture</c> klavyenin gerçek durumunu okur — KeyDown onu
+    /// eşleştirmezdi. Değiştiricisiz tuşun gerçek KeyDown yolu <see cref="Press"/>'tedir.</summary>
+    public void PressWithModifiers(Key key, ModifierKeys modifiers)
     {
         var textArea = View.Editor.TextArea;
         var binding = textArea.InputBindings.OfType<KeyBinding>()
-            .Single(k => k.Key == key && k.Modifiers == ModifierKeys.Control);
+            .Single(k => k.Key == key && k.Modifiers == modifiers);
         RaiseKey(key, Keyboard.PreviewKeyDownEvent);
         ((RoutedCommand)binding.Command).Execute(binding.CommandParameter, textArea);
         DispatcherPump.DrainToIdle();
     }
 
     /// <summary>Okuyucunun İÇERİKTEKİ yeri (px): görünür alanın tepesindeki satırın içerik sırası × satır yüksekliği + o satırın içinde
-    /// kalan pay. Satırlar "önek + sıra" biçimindedir (anlatı <c>line</c>, proje sayfası <c>page</c>) ve hepsi bir satır yüksekliğindedir
-    /// (sarma yok). Belgenin tepesine dilim eklenince ofset sıçrar ama bu değer sıçramaz: bir kaydırmanın içerikte aldığı yol prepend'den
-    /// bağımsız okunur. Geometri TextView'in kendisinden okunur (konsolun tek kaynağı — <c>ConsoleView.ScrollGeometry</c>).</summary>
+    /// kalan pay. Satırlar "önek + sıra" ile başlar (anlatı <c>line</c>, proje sayfası <c>page</c>; ardından metin gelebilir) ve hepsi bir
+    /// satır yüksekliğindedir (sarma yok). Belgenin tepesine dilim eklenince ofset sıçrar ama bu değer sıçramaz: bir kaydırmanın içerikte
+    /// aldığı yol prepend'den bağımsız okunur. Geometri TextView'in kendisinden okunur (konsolun tek kaynağı — <c>ConsoleView.ScrollGeometry</c>).</summary>
     public double ContentTop()
     {
         var textView = View.Editor.TextArea.TextView;
@@ -77,11 +79,24 @@ internal sealed class RealizedNarrative : IDisposable
     /// <see cref="ContentTop"/> bu değerdir. Tepeye bir dilim eklenince küçülür.</summary>
     public double DocumentTop() => Order(View.Document.GetLineByNumber(1)) * View.Editor.TextArea.TextView.DefaultLineHeight;
 
-    /// <summary>Bir satırın içerik sırası: metnindeki önekten sonraki sayı.</summary>
+    /// <summary>Görünür alanın tepesindeki satırın metni — geometri TextView'in kendisinden.</summary>
+    public string TopLine()
+    {
+        var textView = View.Editor.TextArea.TextView;
+        return View.Document.GetText(textView.GetDocumentLineByVisualTop(textView.VerticalOffset));
+    }
+
+    /// <summary>Metni <paramref name="text"/> olan satır şu an görünür satırlar arasında mı.</summary>
+    public bool IsShown(string text) =>
+        View.Editor.TextArea.TextView.VisualLines.Any(v => View.Document.GetText(v.FirstDocumentLine) == text);
+
+    /// <summary>Bir satırın içerik sırası: metninin önekten sonraki ilk sayı dizisi.</summary>
     private int Order(ICSharpCode.AvalonEdit.Document.DocumentLine line)
     {
-        string text = View.Document.GetText(line);
-        return int.Parse(text.AsSpan(text.AsSpan().IndexOfAnyInRange('0', '9')), CultureInfo.InvariantCulture);
+        var text = View.Document.GetText(line).AsSpan();
+        text = text[text.IndexOfAnyInRange('0', '9')..];
+        int end = text.IndexOfAnyExceptInRange('0', '9');
+        return int.Parse(end < 0 ? text : text[..end], CultureInfo.InvariantCulture);
     }
 
     /// <summary>Değiştiricisiz bir tuş: önizleme, ardından gerçek KeyDown — editörün bağlamasını <c>CommandManager</c> eşleştirir.</summary>

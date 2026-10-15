@@ -13,6 +13,7 @@ using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 using ICSharpCode.AvalonEdit;
 using ICSharpCode.AvalonEdit.Document;
+using EditingCommands = System.Windows.Documents.EditingCommands;
 
 namespace BuildOrchestrator.App.Console;
 
@@ -181,8 +182,9 @@ public partial class ConsoleView : UserControl
         // "Kullanıcı kaydırdı" HAM GİRDİDEN bildirilir — tekerlek, kaydırma çubuğu ve gezinme tuşları
         // (gerekçe: UserScrollSignal / BottomAnchorBehavior.NotifyUserScroll).
         UserScrollSignal.Wire(this, _bottomAnchor.NotifyUserScroll);
-        // [idle-memory · dalga 3 · karar 46] PageUp/PageDown görünümü bir görünür alan kaydırır (gerekçe: OnPreviewPageCommand).
-        CommandManager.AddPreviewExecutedHandler(EditorControl, OnPreviewPageCommand);
+        // [idle-memory · dalga 3 · karar 46 · B2 fix 1 F2] Klavye gezintisi görünümü kaydırır, gizli imleci değil (gerekçe:
+        // OnPreviewNavigationCommand).
+        CommandManager.AddPreviewExecutedHandler(EditorControl, OnPreviewNavigationCommand);
         // [A13/T5] Pill'in adı host'tan gelir (hangi akışın sonu — bkz. LatestPill.AccessibleName).
         Pill.AccessibleName = AccessibilityNames.LatestConsole;
         // [Task 6/design v1.17.0 §9] Konsol gövdesi standart OK imleci ister — AvalonEdit'in TextArea'sı kendi
@@ -1057,26 +1059,58 @@ public partial class ConsoleView : UserControl
     private void OnPillClick(object sender, RoutedEventArgs e) => _bottomAnchor.JumpToBottom();
 
     /// <summary>
-    /// [idle-memory · dalga 3 · karar 46] <b>PageUp/PageDown görünümü TAM BİR görünür alan kaydırır</b> — anlatıda da proje sayfasında
-    /// da; komut ScrollViewer'dan geçer (<see cref="TextEditor.PageUp"/>/<see cref="TextEditor.PageDown"/> → TextView'in kendi bir-görünür-alan
-    /// adımı), konsolun diğer kaydırma komutları gibi.
-    /// <para>Editörün kendi PageUp/PageDown'ı imleç-görelidir: imleci bir sayfa taşıyıp görünür kılar. Konsolun imleci görünmez ve hiç
-    /// taşınmaz — yeniden kurulumdan sonra 1. satırdadır, eklemeler onu oynatmaz. Ölçüldü (dalga 2 dördüncü inceleme): dipteki ilk PageUp bir
-    /// sayfa yukarı değil, 200 satırlık dilimin TEPESİNE sıçrıyor (ve yükleyici önceki dilimi getiriyordu); dipteki PageDown da okuyucuyu
-    /// imlecin yanına, dilimin başına yakın bir yere yukarı atıyordu (dalga 3: 600 satırlık anlatıda dipten ~2645 px yukarı). Komut bu yüzden
-    /// tünelleyen önizlemede (editör, TextArea'nın atası) karşılanır ve editörün kendi işleyicisine inmez; imleç yine taşınmaz (seçim ve
+    /// [idle-memory · dalga 3 · karar 46 · B2 fix 1 F2] <b>Klavye gezintisi GÖRÜNÜMÜ kaydırır, gizli imleci değil</b> — anlatıda da proje
+    /// sayfasında da. Editörün değiştiricisiz gezinme komutları (ve Ctrl'li sözcük adımları) tek tablodan (<see cref="NavigationScrolls"/>) bir
+    /// görünüm kaydırmasına eşlenir; komut tünelleyen önizlemede (editör, TextArea'nın atası) karşılanır ve editörün imleç-göreli işleyicisine
+    /// inmez. Kaydırma komutları ScrollViewer'dan geçer (TextView'in kendi adımları: bir görünür alan, bir satır, yatayda bir adım), konsolun
+    /// diğer kaydırma komutları gibi.
+    /// <para><b>Neden:</b> editörün gezinmesi imleç-görelidir — imleci taşıyıp görünür kılar. Konsolun imleci görünmez ve hiç taşınmaz
+    /// (yeniden kurulumdan sonra 1. satırdadır, eklemeler onu oynatmaz), dolayısıyla her gezinme tuşu görünümü imlece — belgenin başına —
+    /// sıçratıyordu. Ölçüldü: dipteki ilk PageUp 200 satırlık dilimin TEPESİNE sıçrıyor, PageDown dipten ~2645 px yukarı atıyordu (karar 46);
+    /// ↑/↓/Home/End ve oklar aynı kökten (B2 fix 1: dipteki ↑ dilimin tepesine, iki sayfa aşağıdaki ↓ sayfanın tepesine, Ctrl+End sonrası
+    /// Home sona sıçrıyor, End tepedeki sayfayı hiç oynatmıyordu).</para>
+    /// <para><b>Uçuştaki <c>⌄ latest</c> animasyonu önce durdurulur</b> (<see cref="ScrollAnimator.CancelForUser"/>, tekerleğin yaptığı
+    /// gibi): aksi hâlde sıradaki karesi tuşun kaydırmasını ezerdi (B2 fix 1 · M5). Geri kalan her şey her jestteki gibidir: tuşun ham
+    /// önizlemesi direksiyonu okuyucuya verir (<see cref="UserScrollSignal"/>), kaydırmanın olayı takip kararını ve yükleyiciyi besler
+    /// (<see cref="OnScrollOffsetChanged"/>). Shift'li seçim adımları, Alt+Shift kutu seçimi ve Ctrl+Home/Ctrl+End editörde kalır (seçim ve
     /// Ctrl+C eskisi gibi).</para>
-    /// <para>Geri kalan her şey her jestteki gibidir: tuşun ham önizlemesi direksiyonu okuyucuya verir (<see cref="UserScrollSignal"/>),
-    /// kaydırmanın olayı takip kararını ve yükleyiciyi besler (<see cref="OnScrollOffsetChanged"/>) — tepeye varan bir PageUp anlatıda
-    /// önceki dilimi getirir, dibe varan bir PageDown dibe ulaşmanın aynısıdır. Ctrl+Home/Ctrl+End ve Shift'li seçim adımları editörün
-    /// kendisinde kalır.</para>
     /// </summary>
-    private void OnPreviewPageCommand(object sender, ExecutedRoutedEventArgs e)
+    private void OnPreviewNavigationCommand(object sender, ExecutedRoutedEventArgs e)
     {
-        if (e.Command == System.Windows.Documents.EditingCommands.MoveUpByPage) EditorControl.PageUp();
-        else if (e.Command == System.Windows.Documents.EditingCommands.MoveDownByPage) EditorControl.PageDown();
-        else return;
+        if (!NavigationScrolls.TryGetValue(e.Command, out var scroll)) return;
+        ScrollAnimator.CancelForUser(EditorControl);
+        scroll(this);
         e.Handled = true;
+    }
+
+    /// <summary>[B2 fix 1 · F2] Gezinme komutu → görünüm kaydırması: konsolun klavye gezintisinin TEK tablosu
+    /// (<see cref="OnPreviewNavigationCommand"/>). Home görünümü tepeye, End dibe — takibin kendi isteğiyle (<see cref="TextEditor.ScrollToEnd"/>,
+    /// <see cref="AppendBatch"/>'inki) — götürür. Ölçüldü: ikisi de yatay konumu sol kenara alır; End'in isteği, sondaki satırlar panelden
+    /// genişken dibin bir yatay çubuk boyu (10 px) üstünde oturur (+∞ isteği görsel satırı olmayan konumda, yatay çubuk henüz yokken kenetlenir —
+    /// takipte de aynısı; eşiğin içinde). ←/→ ve Ctrl'li sözcük adımları yatayda bir adım kaydırır. Değer görünümü alır: PageUp'ın dilim sınırı
+    /// adımı görünümün durumuna bakar (<see cref="PageUpOneViewport"/>).</summary>
+    private static readonly Dictionary<ICommand, Action<ConsoleView>> NavigationScrolls = new()
+    {
+        [EditingCommands.MoveUpByPage] = view => view.PageUpOneViewport(),
+        [EditingCommands.MoveDownByPage] = view => view.EditorControl.PageDown(),
+        [EditingCommands.MoveUpByLine] = view => view.EditorControl.LineUp(),
+        [EditingCommands.MoveDownByLine] = view => view.EditorControl.LineDown(),
+        [EditingCommands.MoveToLineStart] = view => view.EditorControl.ScrollToHome(),
+        [EditingCommands.MoveToLineEnd] = view => view.EditorControl.ScrollToEnd(),
+        [EditingCommands.MoveLeftByCharacter] = view => view.EditorControl.LineLeft(),
+        [EditingCommands.MoveRightByCharacter] = view => view.EditorControl.LineRight(),
+        [EditingCommands.MoveLeftByWord] = view => view.EditorControl.LineLeft(),
+        [EditingCommands.MoveRightByWord] = view => view.EditorControl.LineRight(),
+    };
+
+    /// <summary>[B2 fix 1 · M4] PageUp TAM BİR görünür alandır — anlatının dilim sınırında da: adım belgenin tepesini aşacaksa ve arkada
+    /// geçmiş varsa önce önceki dilim yüklenir (<see cref="PrependPreviousChunk"/> ofseti telafi eder), sonra sayfa kayar. [DEĞİŞEN KURAL]
+    /// Eskiden basış her jest gibi belgenin tepesinde duruyor, dilim orada geliyordu — o basış bir sayfadan kısaydı (ölçüldü: 565,2 yerine
+    /// ~347 px); sahip "bir sayfa" istedi. Proje sayfasının arkasında bir şey yoktur; orada ve anlatının başında adım tepede durur.</summary>
+    private void PageUpOneViewport()
+    {
+        if (SettledOffset - ScrollGeometry.ViewportHeight < 0 && _loadedFrom > 0) PrependPreviousChunk();
+        EditorControl.PageUp();
     }
 
     // [T59] BottomAnchorBehavior'ın "scrollSmooth" delege'i. [M-1] Ortak desen (taze AnimationsEnabled + Duration.Slow

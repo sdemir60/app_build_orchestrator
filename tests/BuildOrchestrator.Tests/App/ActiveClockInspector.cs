@@ -47,6 +47,8 @@ internal static class ActiveClockInspector
     private static readonly MethodInfo StoreGet = Require(HandlersOfClock.FieldType.GetMethod("Get", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, [typeof(EventPrivateKey)]), "EventHandlersStore.Get");
     private static readonly FieldInfo StorageObject = Require(StorageType.GetField("_dependencyObject", Hidden), "AnimationStorage._dependencyObject");
     private static readonly FieldInfo StorageProperty = Require(StorageType.GetField("_dependencyProperty", Hidden), "AnimationStorage._dependencyProperty");
+    private static readonly MethodInfo StorageOf = Require(StorageType.GetMethod("GetStorage", BindingFlags.Static | BindingFlags.NonPublic, [typeof(DependencyObject), typeof(DependencyProperty)]), "AnimationStorage.GetStorage");
+    private static readonly FieldInfo ClocksOfStorage = Require(StorageType.GetField("_animationClocks", Hidden), "AnimationStorage._animationClocks");
     private static readonly PropertyInfo InheritanceContext = Require(typeof(DependencyObject).GetProperty("InheritanceContext", Hidden), "DependencyObject.InheritanceContext");
 
     private static T Require<T>(T? member, string name) where T : MemberInfo =>
@@ -69,6 +71,22 @@ internal static class ActiveClockInspector
         foreach (var weak in (List<WeakReference>)RootChildren.GetValue(root)!)
             if (weak.Target is Clock clock) result.Add(Describe(clock));
         return result;
+    }
+
+    /// <summary>Bir nesnenin bir özelliğine şu an uygulanmış (ilk) animasyon saati; yoksa null. WPF bunu genel API'de sunmaz — özelliğin
+    /// <c>AnimationStorage</c>'ından okunur. Saatin kimliği "yeni bir animasyon başladı mı" sorusunun, zaman çizelgesi "nereye gidiyor"
+    /// sorusunun cevabıdır (saat beklenmeden). Testlerin tek okuma yeri (hover bandının renk saati, konsolun kaydırma animasyonu).</summary>
+    public static AnimationClock? AppliedClock(DependencyObject target, DependencyProperty property)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentNullException.ThrowIfNull(property);
+        var storage = StorageOf.Invoke(null, [target, property]);
+        if (storage is null) return null;
+        // _animationClocks bir FrugalObjectList<AnimationClock>'tur (IList değil) — ToArray ile okunur.
+        var list = ClocksOfStorage.GetValue(storage);
+        if (list is null) return null;
+        var clocks = (AnimationClock[])list.GetType().GetMethod("ToArray")!.Invoke(list, null)!;
+        return clocks.Length > 0 ? clocks[0] : null;
     }
 
     /// <summary>Yalnız ŞU AN dönen kök saatler — render döngüsünü uyanık tutanlar.</summary>

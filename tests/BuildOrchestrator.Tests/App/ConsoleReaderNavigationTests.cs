@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Media.Animation;
 using BuildOrchestrator.App.Controls;
 
 namespace BuildOrchestrator.Tests.App;
@@ -20,22 +21,14 @@ public class ConsoleReaderNavigationTests
     private static string[] Page(int lines) => [.. Enumerable.Range(0, lines).Select(i => $"page{i}")];
 
     /// <summary>Bir proje sayfası açılır — kabuğun kart seçimiyle aynı çağrı (<c>PlayCascade</c>) — ve yerleşim oturur.</summary>
-    private static void OpenPage(RealizedNarrative narrative, int lines)
+    private static void OpenPage(RealizedNarrative narrative, int lines) => OpenPage(narrative, Page(lines));
+
+    /// <summary><see cref="OpenPage(RealizedNarrative, int)"/>'in verilen satırlarla hâli (ör. yatay kaydırma isteyen uzun satırlar).</summary>
+    private static void OpenPage(RealizedNarrative narrative, string[] page)
     {
-        narrative.View.PlayCascade(Page(lines));
+        narrative.View.PlayCascade(page);
         DispatcherPump.DrainToIdle();
     }
-
-    /// <summary>Görünür alanın tepesindeki satırın metni — geometri TextView'in kendisinden.</summary>
-    private static string TopLine(RealizedNarrative narrative)
-    {
-        var textView = narrative.View.Editor.TextArea.TextView;
-        return narrative.View.Document.GetText(textView.GetDocumentLineByVisualTop(textView.VerticalOffset));
-    }
-
-    /// <summary>Metni <paramref name="text"/> olan satır şu an görünür satırlar arasında mı.</summary>
-    private static bool IsShown(RealizedNarrative narrative, string text) =>
-        narrative.View.Editor.TextArea.TextView.VisualLines.Any(v => narrative.View.Document.GetText(v.FirstDocumentLine) == text);
 
     /// <summary>Okuyucu dipten ayrıldı: takip bırakıldı, <c>⌄ latest</c> görünür, prompt satırı (panele yaslı) gizli — dipte asılı
     /// kalsaydı okunan metnin üstüne binerdi.</summary>
@@ -314,13 +307,13 @@ public class ConsoleReaderNavigationTests
         OpenPage(narrative, lines: 1000);
 
         Assert.Equal(0, narrative.View.Editor.VerticalOffset);
-        Assert.Equal("page0", TopLine(narrative));
+        Assert.Equal("page0", narrative.TopLine());
         Assert.False(narrative.View.FollowsBottom);
 
         narrative.PressCtrlEnd();
 
         Assert.Equal(0, narrative.DistanceFromBottom, precision: 1);
-        Assert.True(IsShown(narrative, "page999"), "the log's last line is not on screen at the end of its page");
+        Assert.True(narrative.IsShown("page999"), "the log's last line is not on screen at the end of its page");
     }
 
     /// <summary>
@@ -395,7 +388,7 @@ public class ConsoleReaderNavigationTests
         narrative.ClickLatest();
 
         Assert.Equal(0, narrative.DistanceFromBottom, precision: 1);
-        Assert.True(IsShown(narrative, "page999"), "the pill did not land on the log's last line");
+        Assert.True(narrative.IsShown("page999"), "the pill did not land on the log's last line");
         Assert.Equal(Visibility.Collapsed, narrative.View.Pill.Visibility);
         Assert.False(narrative.View.FollowsBottom);
         double landed = narrative.View.Editor.VerticalOffset;
@@ -488,10 +481,13 @@ public class ConsoleReaderNavigationTests
     }
 
     /// <summary>
-    /// [dalga 3 · karar 46] Dipten art arda PageUp'lar anlatıda her basışta TAM BİR görünür alan yukarı yürür; belgenin tepesine varan
-    /// basış, her okuyucu jestindeki gibi orada durur ve önceki dilimi getirir (yükleyici + prepend telafisi): okuyucunun içerikteki yeri
-    /// sıçramaz, sıradaki basış yürüyüşü sürdürür — anlatının başına dek; sonunda belge anlatının tamamıdır.
-    /// <para>KIRMIZI (karardan önce): ilk basış dilimin tepesine sıçrıyordu (içerikte ~170 satır, bir görünür alan ~30 satır).</para>
+    /// [dalga 3 · karar 46 · B2 fix 1 M4] Dipten art arda PageUp'lar anlatıda her basışta TAM BİR görünür alan yukarı yürür — belgenin
+    /// (dilimin) tepesini aşacak basış da: önceki dilim basıştan ÖNCE gelir (prepend + telafi), sayfa tam kalır; okuyucunun içerikteki yeri
+    /// sıçramaz ve yürüyüş anlatının başına dek sürer — sonunda belge anlatının tamamıdır. Adımı yalnız anlatının başı (içerikte 0) kısaltır.
+    /// <para>[DEĞİŞEN KURAL — B2 fix 1 · M4] Eski iddia: belgenin tepesine varan basış her okuyucu jesti gibi orada durur, dilim orada
+    /// gelir — o basış bir görünür alandan kısaydı (600 satırda iki kez; ölçüldü: 565,2 yerine ~347 px). Değişme gerekçesi (kontrolcü kararı,
+    /// sahip "bir sayfa" istedi): dilimin tepesini aşacak PageUp önce önceki dilimi yükler, sonra bir sayfa kayar.</para>
+    /// <para>KIRMIZI (karar 46'dan önce): ilk basış dilimin tepesine sıçrıyordu (içerikte ~170 satır, bir görünür alan ~30 satır).</para>
     /// </summary>
     [StaFact]
     public void Page_ups_walk_the_narrative_up_one_viewport_at_a_time_and_bring_the_previous_slices_on_the_way()
@@ -502,9 +498,8 @@ public class ConsoleReaderNavigationTests
         for (int press = 0; press < 60 && narrative.ContentTop() > 0; press++)
         {
             double before = narrative.ContentTop();
-            double documentTop = narrative.DocumentTop(); // bir basış belgenin tepesinde durur (her jest gibi), dilim orada gelir
             narrative.Press(Key.PageUp);
-            Assert.Equal(Math.Max(documentTop, before - viewport), narrative.ContentTop(), precision: 1);
+            Assert.Equal(Math.Max(0, before - viewport), narrative.ContentTop(), precision: 1);
         }
 
         Assert.Equal(0, narrative.ContentTop());
@@ -532,4 +527,226 @@ public class ConsoleReaderNavigationTests
         Assert.Equal(start + viewport, narrative.ContentTop(), precision: 1);
         Assert.False(narrative.View.FollowsBottom);
     }
+
+    // ---------------------------------------------------------------- [B2 fix 1 · F2] klavye gezintisi görünümü kaydırır, imleci değil
+
+    /// <summary>
+    /// [B2 fix 1 · F2] Anlatının dibinde gerçek bir ↑ görünümü TAM BİR satır yukarı kaydırır; önceki dilim yüklenmez.
+    /// <para>KIRMIZI (düzeltmeden önce): ↑ editörün gizli imlecini taşıyordu — imleç belgenin 1. satırında durduğundan yerinde kalıyor,
+    /// görünür kılınırken görünüm dilimin tepesine sıçrıyor ve yükleyici önceki dilimi getiriyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void A_real_up_at_the_bottom_of_the_narrative_moves_exactly_one_line()
+    {
+        using var narrative = new RealizedNarrative(lines: 600);
+        double before = narrative.ContentTop();
+
+        narrative.Press(Key.Up);
+
+        Assert.Equal(before - narrative.View.Editor.TextArea.TextView.DefaultLineHeight, narrative.ContentTop(), precision: 1);
+        Assert.Null(narrative.View.LastPrepend);
+    }
+
+    /// <summary>
+    /// [B2 fix 1 · F2] Anlatının dibinde gerçek bir ↓ dipte kalır — dibe ulaşmanın aynısı: pill çıkmaz, okuyucu elini çekince takip sürer.
+    /// <para>KIRMIZI (düzeltmeden önce): ↓ gizli imleci 1. satırdan 2. satıra taşıyıp görünür kılıyordu — dipteki okuyucu dilimin tepesine
+    /// sıçrıyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void A_real_down_at_the_bottom_of_the_narrative_stays_at_the_bottom()
+    {
+        using var narrative = new RealizedNarrative(lines: 600);
+
+        narrative.Press(Key.Down);
+
+        Assert.Equal(0, narrative.DistanceFromBottom, precision: 1);
+        Assert.Equal(Visibility.Collapsed, narrative.View.Pill.Visibility);
+        narrative.ElapseAnchorTimers();
+        AssertFollowingAtTheBottom(narrative);
+    }
+
+    /// <summary>
+    /// [B2 fix 1 · F2] Proje sayfasının tepesinde End görünümü sayfanın SONUNA götürür — logun son satırı ekranda — ve takip açılmaz.
+    /// <para>KIRMIZI (düzeltmeden önce): End gizli imleci 1. satırın sonuna taşıyordu; satır zaten görünür olduğundan görünüm tepede
+    /// kalıyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void End_takes_a_project_page_to_its_end_without_following()
+    {
+        using var narrative = new RealizedNarrative(lines: 400);
+        OpenPage(narrative, lines: 1000);
+
+        narrative.Press(Key.End);
+
+        Assert.Equal(0, narrative.DistanceFromBottom, precision: 1);
+        Assert.True(narrative.IsShown("page999"), "End did not reach the log's last line");
+        Assert.False(narrative.View.FollowsBottom);
+    }
+
+    /// <summary>
+    /// [B2 fix 1 · F2] Ctrl+End ve üç PageUp'tan sonra Home proje sayfasının TEPESİNE gider.
+    /// <para>KIRMIZI (düzeltmeden önce): Ctrl+End gizli imleci belgenin sonuna koyuyordu; Home onu son satırın başına taşıyıp görünür
+    /// kılıyordu — görünüm tepe yerine yine sona sıçrıyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void Home_takes_a_project_page_back_to_its_top_after_ctrl_end_and_page_ups()
+    {
+        using var narrative = new RealizedNarrative(lines: 400);
+        OpenPage(narrative, lines: 1000);
+        narrative.PressCtrlEnd();
+        foreach (int _ in Enumerable.Range(0, 3)) narrative.Press(Key.PageUp);
+
+        narrative.Press(Key.Home);
+
+        Assert.Equal(0, narrative.View.Editor.VerticalOffset);
+        Assert.Equal("page0", narrative.TopLine());
+    }
+
+    /// <summary>
+    /// [B2 fix 1 · F2] İki PageDown'dan sonra ↓ proje sayfasını TAM BİR satır daha aşağı kaydırır.
+    /// <para>KIRMIZI (düzeltmeden önce): ↓ gizli imleci 1. satırdan 2. satıra taşıyıp görünür kılıyordu — okuyucu iki sayfa aşağıdan
+    /// sayfanın tepesine sıçrıyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void Down_after_two_page_downs_moves_a_project_page_one_more_line()
+    {
+        using var narrative = new RealizedNarrative(lines: 400);
+        OpenPage(narrative, lines: 1000);
+        double start = narrative.ContentTop();
+        double viewport = narrative.View.Editor.ViewportHeight;
+        narrative.Press(Key.PageDown);
+        narrative.Press(Key.PageDown);
+
+        narrative.Press(Key.Down);
+
+        Assert.Equal(start + 2 * viewport + narrative.View.Editor.TextArea.TextView.DefaultLineHeight, narrative.ContentTop(), precision: 1);
+    }
+
+    /// <summary>
+    /// [B2 fix 1 · F2] ← / → ve Ctrl+← / Ctrl+→ uzun satırlı bir sayfayı YANA kaydırır, dikeyde yerinden oynatmaz; End sayfanın sonuna
+    /// takibin kendi isteğiyle (<c>ScrollToEnd</c>), Home tepeye gider. Ölçüldü (ikisi de): yatay konum sol kenara döner; End'in isteği,
+    /// sondaki satırlar panelden genişken dibin bir yatay çubuk boyu (10 px) üstünde oturur — +∞ isteği görsel satırı olmayan konumda,
+    /// yatay çubuk henüz yokken kenetlenir; takip de aynı isteği kullanır (eşiğin içinde: pill çıkmaz).
+    /// <para>KIRMIZI (düzeltmeden önce): oklar gizli imleci 1. satırda taşıyıp görünür kılıyordu — iki sayfa aşağıdaki okuyucu sayfanın
+    /// tepesine sıçrıyor, yatay konum imlecin sütununa gidiyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void Arrows_scroll_long_lines_sideways_without_moving_the_page()
+    {
+        using var narrative = new RealizedNarrative(lines: 400);
+        OpenPage(narrative, [.. Enumerable.Range(0, 1000).Select(LongLine)]);
+        narrative.Press(Key.PageDown);
+        narrative.Press(Key.PageDown);
+        var editor = narrative.View.Editor;
+        double vertical = editor.VerticalOffset;
+        Assert.Equal(0, editor.HorizontalOffset); // ön-koşul
+
+        narrative.Press(Key.Right);
+        double oneStep = editor.HorizontalOffset;
+        Assert.True(oneStep > 0, "→ did not scroll the long lines sideways");
+        narrative.PressWithModifiers(Key.Right, ModifierKeys.Control);
+        Assert.Equal(2 * oneStep, editor.HorizontalOffset, precision: 1);
+        narrative.PressWithModifiers(Key.Left, ModifierKeys.Control);
+        Assert.Equal(oneStep, editor.HorizontalOffset, precision: 1);
+        narrative.Press(Key.Left);
+        Assert.Equal(0, editor.HorizontalOffset, precision: 1);
+        Assert.Equal(vertical, editor.VerticalOffset);
+
+        narrative.Press(Key.Right);
+        narrative.Press(Key.End);
+        Assert.InRange(narrative.DistanceFromBottom, 0, BottomAnchorDecision.DefaultThresholdPx); // ölçüldü: yatay çubuğun boyu kadar kısa
+        Assert.True(narrative.IsShown(LongLine(999)), "End did not reach the log's last line");
+        Assert.Equal(0, editor.HorizontalOffset, precision: 1); // ölçüldü: takibin isteği yatayı sol kenara alır
+        narrative.Press(Key.Right);
+        narrative.Press(Key.Home);
+        Assert.Equal(0, editor.VerticalOffset);
+        Assert.Equal(0, editor.HorizontalOffset, precision: 1); // Home: tepe ve sol kenar
+    }
+
+    /// <summary>Panelden geniş bir sayfa satırı: <c>page{i}</c> + 400 karakter — yatay kaydırma isteyen sayfaların tek tanımı.</summary>
+    private static string LongLine(int i) => $"page{i} " + new string('x', 400);
+
+    /// <summary>
+    /// [B2 fix 1 · F2 · M3] Shift'li adımlar seçimdir ve editörde kalır: Shift+↓ ilk satırı seçer, Shift+PageDown seçimi bir sayfa büyütür,
+    /// Shift+PageUp onu geri küçültür.
+    /// <para>PİN — düzeltmeden önce de yeşildi: görünüm kaydırma tablosu yalnız değiştiricisiz (ve Ctrl'li ←/→) adımları alır.</para>
+    /// </summary>
+    [StaFact]
+    public void Shift_steps_still_select_text()
+    {
+        using var narrative = new RealizedNarrative(lines: 400);
+        OpenPage(narrative, lines: 1000);
+        var editor = narrative.View.Editor;
+
+        narrative.PressWithModifiers(Key.Down, ModifierKeys.Shift);
+        Assert.Equal("page0\n", editor.SelectedText);
+        narrative.PressWithModifiers(Key.PageDown, ModifierKeys.Shift);
+        int page = editor.SelectionLength;
+        Assert.True(page > "page0\n".Length, "Shift+PageDown did not extend the selection");
+        narrative.PressWithModifiers(Key.PageUp, ModifierKeys.Shift);
+        Assert.Equal("page0\n", editor.SelectedText);
+    }
+
+    /// <summary>
+    /// [B2 fix 1 · F2 · M5] <c>⌄ latest</c>'in kaydırma animasyonu sürerken basılan bir tuş animasyonu durdurur: sıradaki kare tuşun
+    /// kaydırmasını ezmez (tekerleğin zaten yaptığı gibi — <c>ScrollAnimator.EnableUserCancellation</c>).
+    /// <para>KIRMIZI (düzeltmeden önce): tuş animasyona dokunmuyordu — animasyon editöre bağlı kalıyor, sonraki kareler görünümü dibe
+    /// sürmeye devam ediyordu.</para>
+    /// <para>Ölçü animasyonun kendisidir (<c>ScrollAnimator.VerticalOffset</c> canlandırılıyor mu) — kareleri bekleyen bir duvar saati
+    /// ölçümü değil.</para>
+    /// </summary>
+    [StaFact]
+    public void A_key_pressed_during_the_latest_pills_animation_stops_it()
+    {
+        using var motion = MotionScope.Enable(new FakeMotionSettings { AnimationsEnabled = true });
+        using var narrative = new RealizedNarrative(lines: 400);
+        narrative.WheelAwayFromTheBottom();
+        narrative.ClickLatest();
+        Assert.True(IsAnimating(narrative), "test kurgusu: pill bir kaydırma animasyonu başlatmalıydı");
+
+        narrative.Press(Key.PageUp);
+
+        Assert.False(IsAnimating(narrative));
+        Assert.True(narrative.DistanceFromBottom > narrative.View.Editor.ViewportHeight / 2, "the key's scroll did not stand");
+    }
+
+    /// <summary>
+    /// [B2 fix 1 · M7 · karar 44-45] Hareket açıkken proje sayfasında <c>⌄ latest</c> sayfanın GERÇEK sonuna canlandırılmış bir atlama
+    /// başlatır ve takibi hiçbir anda açmaz: atlama sürerken gelen canlı satır görünümü çekmez ve belgeyi kırpmaz, atlama penceresi
+    /// (yakalanan zamanlayıcı) dolunca da takip gelmez.
+    /// <para>PİN — karar 45'ten beri yeşil (bozma: anchor'ın takip izni kaldırılınca pencere sonunda takip açılır). Atlamanın İNİŞİ
+    /// sınanmaz: kaydırma animasyonu WPF'in animasyon saatinde koşar (<c>BeginAnimation</c>; ileri sarılabilen bir saat tutamağı yoktur),
+    /// inişi görmek gerçek zaman pompalamak (<c>PumpUntil</c>) demektir — paylaşılan CI runner'ında kararsız bulunan desen
+    /// (<c>ConsoleTiltInTests</c>'in <c>LocalOnly</c> testleri). Belirlenimli kısım: animasyonun hedefi (saatin zaman çizelgesi) ve anchor'ın
+    /// pencere boyunca ve sonundaki kararı.</para>
+    /// </summary>
+    [StaFact]
+    public void An_animated_latest_pill_jump_on_a_project_page_aims_at_its_end_and_never_turns_following_on()
+    {
+        using var motion = MotionScope.Enable(new FakeMotionSettings { AnimationsEnabled = true });
+        using var narrative = new RealizedNarrative(lines: 400);
+        OpenPage(narrative, lines: 1000);
+        var editor = narrative.View.Editor;
+        double end = editor.ExtentHeight - editor.ViewportHeight;
+
+        narrative.ClickLatest();
+
+        var clock = ActiveClockInspector.AppliedClock(editor, ScrollAnimator.VerticalOffsetProperty);
+        Assert.NotNull(clock); // atlama canlandırıldı
+        Assert.Equal(end, ((DoubleAnimationUsingKeyFrames)clock.Timeline).KeyFrames[0].Value, precision: 1);
+        Assert.Equal(Visibility.Collapsed, narrative.View.Pill.Visibility); // atlama penceresi
+        Assert.False(narrative.View.FollowsBottom);
+
+        narrative.View.AppendBatch("live0\nlive1\nlive2\nlive3\n"); // atlama sürerken derlenen projenin satırları
+        DispatcherPump.DrainToIdle();
+        Assert.False(narrative.View.FollowsBottom);
+        Assert.Equal(1000 + 4 + 1, narrative.View.Document.LineCount); // kırpılmadı
+
+        narrative.ElapseAnchorTimers(); // atlama penceresi doldu
+        Assert.False(narrative.View.FollowsBottom);
+    }
+
+    /// <summary>Konsolun kaydırma animasyonu (<c>ScrollAnimator.VerticalOffset</c>) şu an editöre bağlı mı.</summary>
+    private static bool IsAnimating(RealizedNarrative narrative) =>
+        DependencyPropertyHelper.GetValueSource(narrative.View.Editor, ScrollAnimator.VerticalOffsetProperty).IsAnimated;
 }
