@@ -88,10 +88,6 @@ internal sealed class RealizedNarrative : IDisposable
         return Order(line) * textView.DefaultLineHeight + (offset - textView.GetVisualTopByDocumentLine(line.LineNumber));
     }
 
-    /// <summary>Belgenin İLK satırının içerikteki yeri (px) — <see cref="ContentTop"/> ile aynı ölçek: okuyucu belgenin tepesindeyken
-    /// <see cref="ContentTop"/> bu değerdir. Tepeye bir dilim eklenince küçülür.</summary>
-    public double DocumentTop() => Order(View.Document.GetLineByNumber(1)) * View.Editor.TextArea.TextView.DefaultLineHeight;
-
     /// <summary>Görünür alanın tepesindeki satırın metni — geometri TextView'in kendisinden.</summary>
     public string TopLine()
     {

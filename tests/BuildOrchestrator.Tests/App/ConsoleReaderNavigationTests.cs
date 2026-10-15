@@ -492,15 +492,23 @@ public class ConsoleReaderNavigationTests
     {
         using var narrative = new RealizedNarrative(lines: 600);
         double viewport = narrative.View.Editor.ViewportHeight;
+        int boundaries = 0;
 
         for (int press = 0; press < 60 && narrative.ContentTop() > 0; press++)
         {
             double before = narrative.ContentTop();
+            int lines = narrative.View.Document.LineCount;
             narrative.Press(Key.PageUp);
             Assert.Equal(Math.Max(0, before - viewport), narrative.ContentTop(), precision: 1);
             AssertCaretFollowsPill(narrative);
+            if (narrative.View.Document.LineCount == lines) continue;
+            // [B2 fix 2 · madde 5] Dilim sınırındaki basış: önceki dilim yüklenip ofset telafi edildi — anchor bunu okuyucunun kaydırması gibi
+            // okumalı (takip bırakılmış, pill görünür, imleç gizli); prepend'in büyümesi "dipte" kararı doğurmaz.
+            boundaries++;
+            AssertReleased(narrative);
         }
 
+        Assert.True(boundaries > 0, "test kurgusu: yürüyüş bir dilim sınırından geçmeliydi");
         Assert.Equal(0, narrative.ContentTop());
         Assert.Equal(string.Concat(Enumerable.Range(0, 600).Select(i => $"line{i}\n")), narrative.View.Document.Text);
     }

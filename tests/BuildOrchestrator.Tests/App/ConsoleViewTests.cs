@@ -89,7 +89,11 @@ public class ConsoleViewTests
 
     /// <summary>
     /// [tail-trim tek kural · dalga 3 · karar 44-45] <b>Proje sayfasında canlı satırlar hiç kırpılmaz</b> — anchor ne derse desin: sayfa açıldığı
-    /// gibi (takip yok), okuyucu yukarıda (<c>StickToBottom = false</c>) ya da anchor elle dibe zorlanmış (<c>StickToBottom = true</c>). Kırpma
+    /// gibi (takip yok), okuyucu sayfada gerçekten kaydırmış (direksiyon onda, dipten uzakta) ya da anchor elle dibe zorlanmış
+    /// (<c>StickToBottom = true</c>). [B2 fix 2 · madde 5] "scrolled up" satırı gerçek bir okuyucu jestidir — kaydırma çubuğunu tutup sayfanın
+    /// sonuna inmek ve biraz yukarı çıkmak (<see cref="UserScrollGesture"/>: <c>UserScrollSignal</c>'in kanalı); eskiden <c>StickToBottom =
+    /// false</c> ile durum elle yazılıyordu ve o hâl "opened" satırıyla aynıydı (sayfa tepede açılır, dipte sayılmaz) — jest direksiyonu da
+    /// okuyucuya verir, satır artık ayrı bir anchor durumunu sınar. Kırpma
     /// yetkisi TEK yerdedir (<c>BottomAnchorBehavior.ShouldFollow</c>) ve proje sayfasında hiç açılmaz (anchor'ın takip izni): chatty bir
     /// derlemenin her satırı sayfada, sırayla kalır; görünüm yerinden oynamaz; arkada bir şey olmadığından tepeye kaydırma bir şey getirmez.
     /// <para>Kırpmanın takibe bağlı olmasının kendi gerekçesi ayrıdır ve önemlidir: kırpma belgenin BAŞINDAN satır siler, yani kullanıcı
@@ -110,7 +114,17 @@ public class ConsoleViewTests
         var view = LaidOutView();
         string[] page = [.. Enumerable.Range(0, 250).Select(i => $"line{i}")];
         view.PlayCascade(Text(page));
-        if (anchor == "scrolled up") view.StickToBottom = false;
+        if (anchor == "scrolled up")
+        {
+            UserScrollGesture.Raise(view);                                   // okuyucu çubuğu tuttu, sayfanın sonuna indi...
+            view.Editor.ScrollToVerticalOffset(view.Editor.ExtentHeight);
+            view.UpdateLayout();
+            UserScrollGesture.Raise(view);                                   // ...ve biraz yukarı çıktı
+            view.Editor.ScrollToVerticalOffset(view.Editor.VerticalOffset - 200);
+            view.UpdateLayout();
+            Assert.False(view.StickToBottom); // ön-koşul: anchor jesti gördü — okuyucu dipten uzakta
+            Assert.True(view.Editor.VerticalOffset > 0, "test kurgusu: okuyucu sayfanın içinde olmalıydı");
+        }
         if (anchor == "forced to the bottom") view.StickToBottom = true;
         double offset = view.Editor.VerticalOffset;
 
