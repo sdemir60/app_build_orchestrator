@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media.Animation;
+using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
 
 namespace BuildOrchestrator.Tests.App;
@@ -634,12 +635,16 @@ public class ConsoleReaderNavigationTests
     }
 
     /// <summary>
-    /// [B2 fix 1 · F2] ← / → ve Ctrl+← / Ctrl+→ uzun satırlı bir sayfayı YANA kaydırır, dikeyde yerinden oynatmaz; End sayfanın sonuna
-    /// takibin kendi isteğiyle (<c>ScrollToEnd</c>), Home tepeye gider. Ölçüldü (ikisi de): yatay konum sol kenara döner; End'in isteği,
-    /// sondaki satırlar panelden genişken dibin bir yatay çubuk boyu (10 px) üstünde oturur — +∞ isteği görsel satırı olmayan konumda,
-    /// yatay çubuk henüz yokken kenetlenir; takip de aynı isteği kullanır (eşiğin içinde: pill çıkmaz).
+    /// [B2 fix 1 · F2] ← / → ve Ctrl+← / Ctrl+→ uzun satırlı bir sayfayı YANA kaydırır, dikeyde yerinden oynatmaz; End sayfanın TAM sonuna
+    /// takibin kendi isteğiyle gider ve yatay okuma konumunu KORUR, Home tepeye ve sol kenara gider.
     /// <para>KIRMIZI (düzeltmeden önce): oklar gizli imleci 1. satırda taşıyıp görünür kılıyordu — iki sayfa aşağıdaki okuyucu sayfanın
     /// tepesine sıçrıyor, yatay konum imlecin sütununa gidiyordu.</para>
+    /// <para>[DEĞİŞEN KURAL — B2 fix 2 · madde 3] Eski iddia: End'den sonra yatay konum 0'dır ve dip bir yatay çubuk boyu (10 px) kısa olabilir
+    /// (ölçülen hâliyle pinlenmişti: istek <c>ScrollToEnd</c>'di — "dikeyde +∞, yatayda sol kenar"; editör +∞ konumunda yalnız son boş satırı
+    /// kurar, yatay genişlik çöker, çubuk kaybolur ve ofset 0'a / dibin 10 px üstüne kenetlenir). Değişme gerekçesi (kontrolcü kararı): takibin
+    /// isteği yalnız dikeydir — izleyen anlatıda uzun bir satırı yana kaydırıp okuyan okuyucu her batch'te sol kenara atılıyordu
+    /// (<see cref="A_sideways_step_in_a_following_narrative_survives_new_output"/>); istek sonlu olduğu için (belgenin şu anki sonu) dip de tam.
+    /// End o isteğin kendisi olarak kalır.</para>
     /// </summary>
     [StaFact]
     public void Arrows_scroll_long_lines_sideways_without_moving_the_page()
@@ -665,17 +670,76 @@ public class ConsoleReaderNavigationTests
 
         narrative.Press(Key.Right);
         narrative.Press(Key.End);
-        Assert.InRange(narrative.DistanceFromBottom, 0, BottomAnchorDecision.DefaultThresholdPx); // ölçüldü: yatay çubuğun boyu kadar kısa
+        Assert.Equal(0, narrative.DistanceFromBottom, precision: 1);
         Assert.True(narrative.IsShown(LongLine(999)), "End did not reach the log's last line");
-        Assert.Equal(0, editor.HorizontalOffset, precision: 1); // ölçüldü: takibin isteği yatayı sol kenara alır
+        Assert.Equal(oneStep, editor.HorizontalOffset, precision: 1); // End yalnız dikeydir: yatay okuma konumu kalır
         narrative.Press(Key.Right);
         narrative.Press(Key.Home);
         Assert.Equal(0, editor.VerticalOffset);
         Assert.Equal(0, editor.HorizontalOffset, precision: 1); // Home: tepe ve sol kenar
     }
 
-    /// <summary>Panelden geniş bir sayfa satırı: <c>page{i}</c> + 400 karakter — yatay kaydırma isteyen sayfaların tek tanımı.</summary>
+    /// <summary>Panelden geniş bir sayfa satırı: <c>page{i}</c> + 400 karakter — yatay kaydırma isteyen sayfaların (ve anlatı satırlarının)
+    /// tek tanımı.</summary>
     private static string LongLine(int i) => $"page{i} " + new string('x', 400);
+
+    // ---------------------------------------------------------------- [B2 fix 2 · madde 3] yatay okuma takipte kalır
+
+    /// <summary>
+    /// [B2 fix 2 · madde 3] Akışı izleyen anlatıda yana bir adım (→) yeni satırlar gelince de yerinde kalır: takibin isteği görünümü yalnız
+    /// DİKEYDE, belgenin tam sonuna götürür — uzun bir satırı okuyan okuyucu her batch'te sol kenara atılmaz. Adım direksiyonu almaz (takip
+    /// sürer); dipten uzaklık ve pill yatay konumdan bağımsızdır.
+    /// <para>KIRMIZI (madde 3'ten önce, ölçüldü): takibin isteği <c>ScrollToEnd</c>'di ("dikeyde +∞, yatayda sol kenar") — editör +∞ konumunda
+    /// yalnız son boş satırı kurar, yatay genişlik 2940,6'dan 3,0 px'e çöker ve yerleşim yatay konumu 0'a kenetler (7,2 → 0). Yalnız dikey bir
+    /// +∞ isteği de aynısını yapıyordu (ilk deneme — yine kırmızı): hedef sonlu olmalı.</para>
+    /// </summary>
+    [StaFact]
+    public void A_sideways_step_in_a_following_narrative_survives_new_output()
+    {
+        using var narrative = new RealizedNarrative(lines: 400);
+        NarrativeSnapshots.Deliver(narrative.Store, narrative.View, [LongLine(400)]);
+        DispatcherPump.DrainToIdle();
+        narrative.Press(Key.Right);
+        var editor = narrative.View.Editor;
+        double sideways = editor.HorizontalOffset;
+        Assert.True(sideways > 0, "test kurgusu: → yana kaydırmalıydı");
+        Assert.True(narrative.View.FollowsBottom); // ön-koşul: yatay adım direksiyonu almaz
+
+        NarrativeSnapshots.Deliver(narrative.Store, narrative.View, ["live0", "live1", "live2", "live3"]);
+        DispatcherPump.DrainToIdle();
+
+        Assert.Equal(sideways, editor.HorizontalOffset, precision: 1);
+        Assert.True(narrative.IsShown("live3"), "the follow did not bring the new lines into view");
+        AssertFollowingAtTheBottom(narrative);
+    }
+
+    /// <summary>
+    /// [B2 fix 2 · madde 3] Yana kaydırıp okuyan okuyucu takip geri gelince de (bekleme dönüşü) yatay konumunu korur: dönüşte belge render
+    /// dilimine kırpılır ve dibe istenir — istek yine takibin tek isteğidir, yalnız dikey.
+    /// <para>KIRMIZI (madde 3'ten önce): dönüşün kırpması <c>ScrollToEnd</c> istiyordu — yatay konum 0'a dönüyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void A_sideways_step_survives_the_return_to_following()
+    {
+        using var narrative = new RealizedNarrative(lines: 400);
+        // Uzun satırın altında birkaç satır: okuyucu dipten ayrılınca uzun satır görünür alanda kalır (yatay kaydırma görünür satırlardan ölçülür).
+        NarrativeSnapshots.Deliver(narrative.Store, narrative.View, [LongLine(400), .. Enumerable.Range(0, 5).Select(i => $"after{i}")]);
+        DispatcherPump.DrainToIdle();
+        narrative.WheelAwayFromTheBottom();
+        NarrativeSnapshots.Deliver(narrative.Store, narrative.View, ["live0", "live1", "live2", "live3"]); // takip yokken: kırpılmaz
+        DispatcherPump.DrainToIdle();
+        Assert.True(narrative.View.Document.LineCount > ConsoleView.SeededDocumentLines, "test kurgusu: dönüşte kırpılacak satır olmalıydı");
+        narrative.Press(Key.Right);
+        var editor = narrative.View.Editor;
+        double sideways = editor.HorizontalOffset;
+        Assert.True(sideways > 0, "test kurgusu: → yana kaydırmalıydı");
+
+        narrative.ElapseAnchorTimers(); // okuyucu elini çekti: dibe dönüş, takip, kırpma
+
+        Assert.Equal(ConsoleView.RenderSliceLines, narrative.View.Document.LineCount); // dönüşün kırpması koştu
+        Assert.True(narrative.View.FollowsBottom);
+        Assert.Equal(sideways, editor.HorizontalOffset, precision: 1);
+    }
 
     /// <summary>
     /// [B2 fix 1 · F2 · M3] Shift'li adımlar seçimdir ve editörde kalır: Shift+↓ ilk satırı seçer, Shift+PageDown seçimi bir sayfa büyütür,
