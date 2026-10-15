@@ -284,8 +284,9 @@ public partial class ConsoleView : UserControl
     /// TEK bottom-anchor mekanizması <see cref="_bottomAnchor"/>'dır (görev talimatı: "çift iş yok"). Public API
     /// AYNI kaldı (3b testleri elle <c>StickToBottom = false</c> atar, bu hâlâ çalışır — <see cref="BottomAnchorBehavior.ForceStuck"/>
     /// bir doğrudan override'dır). YENİ olan: gerçek uygulamada <see cref="OnScrollOffsetChanged"/> bunu, direksiyon kullanıcıdayken
-    /// (ham girdi — <c>UserScrollSignal</c> — ile başlar, bekleme dolana dek sürer) her kaydırma olayında 48px eşiğine göre OTOMATİK de
-    /// günceller, geometriyi TextView'in kendisinden okuyarak (<see cref="ScrollGeometry"/>) — önceden (Task 3b'de) hiçbir mekanizma bunu yapmıyordu
+    /// (ham girdi — <c>UserScrollSignal</c> — ile başlar, bekleme dolana dek sürer) her kaydırma olayında — belge takasınınkiler hariç:
+    /// takasta karar sonunda, sabitlenen uçtan verilir (<see cref="SwapDocument"/>) — 48px eşiğine göre OTOMATİK de günceller,
+    /// geometriyi TextView'in kendisinden okuyarak (<see cref="ScrollGeometry"/>) — önceden (Task 3b'de) hiçbir mekanizma bunu yapmıyordu
     /// (MainWindow hiçbir yerde StickToBottom atamıyordu, konsol pratikte kalıcı yapışıktı). Yerleşim koşmayan testlerde
     /// (ölçülmemiş çıplak görünüm) kaydırma olayı doğmadığından bu otomatik yol tetiklenmez; yerleşimi koşan testlerde gerçek
     /// olayla tetiklenir (<c>ConsoleReaderNavigationTests</c>).</para>
@@ -795,7 +796,8 @@ public partial class ConsoleView : UserControl
     /// <summary>
     /// [idle-memory · dalga 2 · takip / beşinci inceleme — ölçüldü] Belge takasının TEK yolu (anlatı: <see cref="ReplaceRunDocument"/>,
     /// proje logu: <see cref="ReplaceProjectDocument"/>): yeni belge kurulur ve dibe ya da tepeye sabitlenir; ardından chunk yükleyici ve
-    /// bottom-anchor belgenin OTURDUĞU geometriden (<see cref="ScrollGeometry"/>) yeniden kurulur. Yükleyici konumdan: tepeden uzaktaysa
+    /// bottom-anchor yeniden kurulur — yükleyici belgenin OTURDUĞU konumdan (<see cref="SettledOffset"/>), anchor'ın takibi sabitlendiği
+    /// uçtan; oturmuş geometriyi anchor'da yalnız pill okur. Yükleyici konumdan: tepeden uzaktaysa
     /// silahlı, tepedeyse silahsız — dibe sabitlenen anlatıda okuyucunun TEK tepeye sıçraması (Ctrl+Home, kaydırma çubuğunun tek hamlesi)
     /// önceki dilimi getirir; tepeye sabitlenen proje sayfasında önceki dilim okuyucu aşağı inip yeniden tepeye çıktığında gelir. Anchor
     /// sabitlendiği uçtan: dipten okunan anlatı dibi izler (direksiyon geri alınır), baştan okunan proje sayfası izlemez; pill oturmuş
@@ -988,7 +990,8 @@ public partial class ConsoleView : UserControl
     internal void OnScrollOffsetChanged()
     {
         // Takasın kendi kaydırma olayları okuyucunun değildir (SwapDocument): ne takip kararı ne yükleyici onlarla verilir — takas
-        // bitince ikisi de OTURMUŞ geometriden yeniden kurulur.
+        // bitince yükleyici oturmuş konumdan, takip sabitlenen uçtan kurulur (anlatı izler, proje sayfası izlemez); pill oturmuş
+        // uzaklığı okur.
         if (!_swappingDocument)
         {
             // [I-1 fix] Bottom-anchor'ın yeniden-hesabı, chunk loader'dan (EvaluateChunkScroll) ÖNCE çalışır: bir

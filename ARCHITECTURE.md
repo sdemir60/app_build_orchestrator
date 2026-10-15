@@ -4553,8 +4553,9 @@ lines.
   the top — a narrative rebuilt over a document at its end, on `Back` or on the return from the tray, would prepend a
   slice nobody asked for and trim it off again — and the bottom anchor, for a reader who had just scrolled, as a
   distance of zero — a project page opened then would start following once the wait ran out, and its next live line
-  would trim its top and throw the reader to the bottom — so neither decides on them, and both are set from the settled
-  geometry when the swap ends.
+  would trim its top and throw the reader to the bottom — so neither decides on them: when the swap ends the loader is
+  armed from where the document settled and the anchor follows from the end the document is pinned to (a narrative
+  follows, a project page does not), with only its pill read from the settled distance.
 - **The run's narrative has exactly one owner: the view model's `NarrativeStore`.** Every narrative line — the
   application's own and each project's output as the console writes it, every line of it or what the compact console
   keeps (below) — is appended to it under the view model's lock and before the batching pump gets it, so a line is in
@@ -7098,7 +7099,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 
 | Behaviour | File |
 |---|---|
-| AvalonEdit host, batching, active line, cascade, chunk paging (an unreadable slice keeps the index and is asked for again — `PrependPreviousChunk`, `ReplaceRunDocument`; the one document swap, whose scroll events are no gesture, arming the loader from where the document settles — `SwapDocument`, `EvaluateChunkScroll`), cursor + row hover band, the hidden native caret; the bind to the narrative store (`BindNarrative`) and the trim to the render slice, on a batch and when following comes back (`TrimToRenderSlice`, `TrimNarrativeWhenFollowing`) | `App/Console/ConsoleView.xaml(.cs)` |
+| AvalonEdit host, batching, active line, cascade, chunk paging (an unreadable slice keeps the index and is asked for again — `PrependPreviousChunk`, `ReplaceRunDocument`; the one document swap, whose scroll events reach neither the loader nor the follow decision (`OnScrollOffsetChanged`) and which, when it ends, arms the loader from where the document settles and sets the follow from the end it is pinned to — `SwapDocument`, `SettledOffset`), cursor + row hover band, the hidden native caret; the bind to the narrative store (`BindNarrative`) and the trim to the render slice, on a batch and when following comes back (`TrimToRenderSlice`, `TrimNarrativeWhenFollowing`) | `App/Console/ConsoleView.xaml(.cs)` |
 | The run narrative's one owner: its lines, slices and count; the spool to the run folder — the memory window, the offset index, block eviction, slices read back from the file outside the lock, one warning per section; and a clear that closes the file and lets go of its array and index | `App/Console/NarrativeStore.cs` |
 | Opening the narrative's spool when `runStarted` names the run folder, taking its warning after the line that met the failure or on the visible tick, flushing it when an operation ends and when the window closes for good | `App/ViewModels/RunViewModel.cs` (`BeginNarrativeSpool`, `AppendSpoolWarningLocked`, `TickElapsed`, `MarkOperationEnded`), `App/MainWindow.xaml.cs` (`OnClosed`) |
 | The backlog behind the document — the contract (`IConsoleBacklog`), the project page's own list (`ListBacklog`) and the seed the document is built from, the store plus its count (`NarrativeSnapshot`) | `App/Console/IConsoleBacklog.cs`, `ListBacklog.cs`, `NarrativeSnapshot.cs` |
