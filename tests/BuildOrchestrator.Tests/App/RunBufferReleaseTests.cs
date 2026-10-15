@@ -669,8 +669,7 @@ public class RunBufferReleaseTests
     {
         using var dir = new TempDir();
         var (window, vm, collections) = TrimHost(dir, grace: TimeSpan.FromMilliseconds(graceMs));
-        window.ShutdownApplication = () => { };
-        window.BringForward = () => { };
+        MainWindowHost.NeutralizeExitSeams(window);
         bool closed = false;
         window.Closed += (_, _) => closed = true;
         MainWindowHost.RunBuild(vm, "A");                // trim bekliyor
@@ -699,8 +698,7 @@ public class RunBufferReleaseTests
     {
         using var dir = new TempDir();
         var (window, vm, collections) = TrimHost(dir, grace: TimeSpan.FromMilliseconds(graceMs));
-        window.ShutdownApplication = () => { };
-        window.BringForward = () => { };
+        MainWindowHost.NeutralizeExitSeams(window);
         bool closed = false;
         window.Closed += (_, _) => closed = true;
         window.ExitFromTray();

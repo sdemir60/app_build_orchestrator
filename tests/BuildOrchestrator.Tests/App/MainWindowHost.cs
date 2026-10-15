@@ -265,6 +265,16 @@ internal static class MainWindowHost
     /// motorun cevabını test <c>vm.OnEvent(...)</c> ile verir. Verilmezse gönderim her zaman düşer.</summary>
     public static void AcceptSends(RunViewModel vm) => vm.DebugSendOverride = _ => Task.CompletedTask;
 
+    /// <summary>[idle-memory · dalga 3 · T21 fix dalgası] Kabuğun iki çıkış dikişini no-op yapar: tam çıkış (tepsi → Exit, çıkış isteği) koşan
+    /// bir test gerçek uygulamayı kapatmaz ve pencereyi öne getirmez. Çağrıyı SAYAN testler kendi sahtelerini takar (<c>CloseToTrayTests</c>,
+    /// <c>HiddenSurfaceTests</c>); yalnız etkisizleştiren testlerin TEK satırı budur.</summary>
+    public static void NeutralizeExitSeams(MainWindow window)
+    {
+        ArgumentNullException.ThrowIfNull(window);
+        window.ShutdownApplication = () => { };
+        window.BringForward = () => { };
+    }
+
     /// <summary>[perf Faz B · B3] Stop/Esc testlerinin ortak kurulumu: <see cref="New"/> (ya da <paramref name="projectNames"/>
     /// verilirse <see cref="NewWithProjects(TempDir, string[])"/>) + repo kökü + gönderimin kabulü (<see cref="AcceptSends"/>) +
     /// giden komutların toplandığı liste (<c>DebugOnCommandSent</c>). <c>EscStopTests</c> ile <c>StopNowTests</c> aynı kurulumu

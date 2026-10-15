@@ -1,11 +1,8 @@
 using System.IO;
 using System.Text.RegularExpressions;
-using System.Windows.Automation;
-using System.Windows.Controls;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
-using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Tests.Supervisor;
 using static BuildOrchestrator.Tests.App.MainWindowHost;
 
@@ -31,20 +28,20 @@ public class StopEngineWhenIdleSettingsTests
     private const string OnNote = $"{Label} on — the engine exits after five idle minutes";
     private const string OffNote = $"{Label} off — the engine is no longer stopped when idle";
 
-    private static GeneralSettingDefinition Row() =>
-        Assert.Single(GeneralSettingsCatalog.Groups.SelectMany(g => g.Rows), r => r.Label == Label);
-
+    /// <summary>Açık başlar: kataloğun satırı, taze taslak ve taze VM.
+    /// <para>KIRMIZI (geçici bozma M3a: katalog satırı <c>Default: false</c>, VM alanı literal <c>true</c>): katalog satırı kapalıydı.</para></summary>
     [Fact]
     public async Task The_switch_is_on_by_default()
     {
-        Assert.True(Row().Default);
+        Assert.True(SettingsDialogHost.CatalogRow(Label).Default);
         Assert.True(new SettingsDraftViewModel(null, @"D:\repo").StopEngineWhenIdle);
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         Assert.True(new RunViewModel(engine, NeverTickingBatcher(), () => "r1").StopEngineWhenIdle);
     }
 
     /// <summary>Satır ve taslak bayrağı TEK değerdir: satır değişince taslağın özelliği de bildirir
-    /// (<see cref="SettingsGeneralPageTests.The_pull_row_and_the_draft_flag_are_one_value"/> deseni).</summary>
+    /// (<see cref="SettingsGeneralPageTests.The_pull_row_and_the_draft_flag_are_one_value"/> deseni).
+    /// <para>KIRMIZI (iskelet, Task 19 RED-B — satır köprüsü bağlı değildi): bildirim gelmedi (<c>Collection: []</c>).</para></summary>
     [Fact]
     public void The_row_and_the_draft_flag_are_one_value()
     {
@@ -65,6 +62,8 @@ public class StopEngineWhenIdleSettingsTests
     /// anahtarı taşımayan bir ui-state'ten açılan kabuk onu gösterir — kendi literalini taşıyan bir yer kataloğun değeri değişince ondan
     /// ayrışır ve bu test kırmızı verir (<see cref="CompactConsoleSettingsTests.A_fresh_vm_a_fresh_draft_and_a_key_less_seed_show_the_catalogs_default"/>
     /// deseni; aynı tuzak bu ayarda baştan kapalıdır).
+    /// <para>KIRMIZI (geçici bozma M3a: katalog <c>Default: false</c> + VM alanı literal <c>true</c>; M3b: katalog <c>false</c> + kabuğun tohumu
+    /// <c>?? true</c>): <c>Expected: False / Actual: True</c>.</para>
     /// </summary>
     [StaFact]
     public void A_fresh_vm_a_fresh_draft_and_a_key_less_seed_show_the_catalogs_default()
@@ -86,6 +85,7 @@ public class StopEngineWhenIdleSettingsTests
     /// olarak tekrarlamaz — etiket değişirse not kendiliğinden izler (<see cref="OnNote"/>/<see cref="OffNote"/> etiketi katalogdan alan
     /// bir metindir). Tarama yalnız string literallerine bakar (yorumlar hariç); vakum karşıtı olarak katalogdaki literalin bulunduğu
     /// ayrıca doğrulanır.
+    /// <para>KIRMIZI (geçici bozma M7: nottaki etiket literal yazıldı): ihlal dosya:satırıyla raporlandı (<c>RunViewModel.ActionBar.cs:241</c>).</para>
     /// </summary>
     [Fact]
     public void The_label_is_a_literal_only_in_the_catalog()
@@ -110,6 +110,8 @@ public class StopEngineWhenIdleSettingsTests
     /// [karar 11 · C18] Katalog açıklaması (spec'in birebir cümlesi) ve "on" notu süreyi SÖZCÜKLE yazar; ikisi de sabitin bugünkü değeriyle
     /// aynı sözcüğü söylemelidir. Sabit değişirse (ör. 10 dk) bu test, iki metin ve aşağıdaki sözcük tablosu birlikte güncellenene dek
     /// kırmızıdır — metin sessizce yalan olamaz. "Beş" sözcüğü yalnız bu tabloda (ve iki metinde) yazılıdır.
+    /// <para>KIRMIZI (iskelet, RED-B — not yazılmıyordu): <c>Not found: "the engine exits after five idle minutes"</c>; geçici bozma M4
+    /// (<c>IdleAfter</c> 6 dk): <c>IdleAfter 6 dakika oldu: … birlikte güncellenmeli</c>.</para>
     /// </summary>
     [Fact]
     public async Task The_catalog_text_and_the_on_note_say_the_window_the_rule_uses()
@@ -121,7 +123,7 @@ public class StopEngineWhenIdleSettingsTests
                 $"EngineIdleRule.IdleAfter {minutes} dakika oldu: katalog açıklaması, \"on\" notu ve bu tablo birlikte güncellenmeli."),
         };
 
-        Assert.Contains($"After {words} minutes without work", Row().Description, StringComparison.Ordinal);
+        Assert.Contains($"After {words} minutes without work", SettingsDialogHost.CatalogRow(Label).Description, StringComparison.Ordinal);
 
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo", StopEngineWhenIdle = false };
@@ -134,7 +136,9 @@ public class StopEngineWhenIdleSettingsTests
     /// <summary>Export anahtarı yazar, Import geri okur (<see cref="CompactConsoleSettingsTests.The_setting_round_trips_through_the_file"/> deseni).
     /// Varsayılan DIŞI değer (kapalı) kullanılır: bağlantı koparsa form varsayılanda (açık) kalır ve test kırmızı verir. Anahtarın dosyadaki
     /// yeri de pinlidir: System.Text.Json alanları BİLDİRİM sırasıyla yazar — <c>compactConsole</c>'dan hemen sonra, kabuk anahtarlarının
-    /// ilki olan <c>startWithWindows</c>'ten önce (<c>SettingsFile</c>'ın sınıf özeti bu sırayı söyler).</summary>
+    /// ilki olan <c>startWithWindows</c>'ten önce (<c>SettingsFile</c>'ın sınıf özeti bu sırayı söyler).
+    /// <para>KIRMIZI (iskelet, RED-B — dosya alanı atanmıyordu): <c>Not found: "stopEngineWhenIdle": false</c>; geçici bozma M9 (<c>LoadFrom</c>
+    /// satırı silindi): okunan form varsayılanda kaldı.</para></summary>
     [Fact]
     public void The_setting_round_trips_through_the_file()
     {
@@ -156,7 +160,8 @@ public class StopEngineWhenIdleSettingsTests
     }
 
     /// <summary>Anahtarı taşımayan (eski) bir dosya formdaki değeri varsayılana döndürmez — pull/stash/Resolve/Compact
-    /// bayraklarının kuralı.</summary>
+    /// bayraklarının kuralı.
+    /// <para>KIRMIZI (iskelet, RED-B — taslağın ctor parametresi yok sayılıyordu): <c>Expected: False / Actual: True</c>.</para></summary>
     [Fact]
     public void A_file_without_the_setting_leaves_the_form_untouched()
     {
@@ -172,7 +177,9 @@ public class StopEngineWhenIdleSettingsTests
     /// <summary>Değişen ayar VM'e uygulanır ve konsola not düşer; değişmeyen sessiz kalır
     /// (<see cref="CompactConsoleSettingsTests.A_changed_setting_notes_it_on_the_console_and_an_unchanged_one_stays_quiet"/> deseni).
     /// Kapatma notu "no longer stopped" der (kontrolcü kararı 10): ayarı kapatmak uykudaki motoru uyandırmaz, motor bir sonraki işe dek
-    /// uykuda kalır — "motor çalışıyor" demek o an yanlış olurdu.</summary>
+    /// uykuda kalır — "motor çalışıyor" demek o an yanlış olurdu.
+    /// <para>KIRMIZI (iskelet, RED-B — not yazılmıyordu); geçici bozma M1 (değişmeyen değerde erken dönüş silindi):
+    /// <c>Assert.DoesNotContain() … Found: "Stop the engine when idle"</c>.</para></summary>
     [Fact]
     public async Task A_changed_setting_notes_it_on_the_console_and_an_unchanged_one_stays_quiet()
     {
@@ -197,7 +204,8 @@ public class StopEngineWhenIdleSettingsTests
 
     /// <summary>[dalga 2 · karar 16 deseni] Ayarı TAŞIMAYAN bir uygulama onu değiştirmez ve not yazmaz: parametre "verilmedi ⇒ olduğu gibi
     /// kalsın"dır (<c>null</c>). Settings'in Save'i değeri her zaman verir (<see cref="SettingsDraftViewModel.CommitAsync"/>); ayarı hiç
-    /// anmayan bir çağıran — başka bir ayarı sınayan test — ayarı kendiliğinden açıp konsola not düşmemeli.</summary>
+    /// anmayan bir çağıran — başka bir ayarı sınayan test — ayarı kendiliğinden açıp konsola not düşmemeli.
+    /// <para>KIRMIZI (geçici bozma M2: <c>null ⇒ true</c>): ayar kendiliğinden açıldı ve not yazıldı.</para></summary>
     [Fact]
     public async Task An_apply_that_does_not_carry_the_setting_leaves_it_unchanged_and_quiet()
     {
@@ -213,7 +221,9 @@ public class StopEngineWhenIdleSettingsTests
     // ---------------------------------------------------------------- kabuk: seed + kalıcılık
 
     /// <summary>Açılışta kalıcı durumdan seed edilir; VM'de değişince kalıcı duruma yazılır. Fixture'ın ayar ataması kapatılır
-    /// (<c>stopEngineWhenIdle: null</c>): test pencerenin KENDİ seed'ini gözler — fixture'ın varsayılanı (kapalı) onu ezerdi.</summary>
+    /// (<c>stopEngineWhenIdle: null</c>): test pencerenin KENDİ seed'ini gözler — fixture'ın varsayılanı (kapalı) onu ezerdi.
+    /// <para>KIRMIZI (iskelet, RED-B — tohum yoktu): <c>Expected: False / Actual: True</c>; geçici bozma M8 (kalıcılık <c>case</c>'i silindi):
+    /// store yazılmadı.</para></summary>
     [StaFact]
     public void The_shell_seeds_the_setting_and_persists_its_changes()
     {
@@ -229,7 +239,8 @@ public class StopEngineWhenIdleSettingsTests
     }
 
     /// <summary>Anahtarı taşımayan eski bir ui-state dosyası onaylanmış varsayılanı (açık) alır — pencerenin kendi seed'i
-    /// (<c>stopEngineWhenIdle: null</c>: fixture'ın kapalı varsayılanı onu ezerdi).</summary>
+    /// (<c>stopEngineWhenIdle: null</c>: fixture'ın kapalı varsayılanı onu ezerdi).
+    /// <para>KIRMIZI (geçici bozma M3a: katalog satırı kapalı — kabuğun tohumu kataloğu izler): anahtarsız dosyadan kapalı açıldı.</para></summary>
     [StaFact]
     public void An_older_state_file_without_the_key_keeps_the_switch_on()
     {
@@ -247,6 +258,7 @@ public class StopEngineWhenIdleSettingsTests
     /// dakikadan fazla ileri alan testlerin fixture motorunu uyutmaması buna bağlıdır; uyku yalnız bunu açıkça isteyen testte
     /// (<c>stopEngineWhenIdle: true</c>) işler. Saatli topolojili kurulum (<see cref="MainWindowHost.NewWithProjectsAndClock"/>) da
     /// aynı varsayılandan başlar: uyku testleri o yoldan gelir.
+    /// <para>KIRMIZI (geçici bozma M5: fikstürün ataması silindi): fikstür ayarı açık açtı.</para>
     /// </summary>
     [StaFact]
     public void The_fixture_opens_with_the_setting_off_unless_the_test_opts_in()
@@ -270,25 +282,23 @@ public class StopEngineWhenIdleSettingsTests
 
     // ---------------------------------------------------------------- realize
 
-    private static CheckBox EngineSwitch(SettingsDialog dialog) =>
-        Assert.Single(DsResources.RealizedObjects(dialog.Page(SettingsSection.General)).OfType<CheckBox>(),
-            c => AutomationProperties.GetName(c) == Label);
-
     /// <summary>Realize: satır General sayfasının tek <c>ToggleRow</c> şablonuyla çizilir; diyalog canlı değerle açılır
-    /// (<c>SettingsDialog.Open</c> VM'in değerini taslağa geçirir), switch taslağın bayrağıdır ve Save onu uygular.</summary>
+    /// (<c>SettingsDialog.Open</c> VM'in değerini taslağa geçirir), switch taslağın bayrağıdır ve Save onu uygular.
+    /// <para>KIRMIZI (iskelet, RED-B — diyalog değeri taslağa geçirmiyordu); geçici bozma M10 (<c>CommitAsync</c> değeri Apply'a geçirmedi, tek
+    /// başına koşuldu — M2 ile birlikte maskeleniyordu): VM açılmadı.</para></summary>
     [StaFact]
     public void The_general_page_realizes_the_switch_and_save_applies_it()
     {
         var (dialog, run, store, scope) = SettingsDialogHost.OpenRealized(r => r.StopEngineWhenIdle = false);
         using var _scope = scope;
 
-        var toggle = EngineSwitch(dialog);
+        var toggle = SettingsDialogHost.GeneralSwitch(dialog, Label);
         Assert.False(toggle.IsChecked);
 
         toggle.IsChecked = true;
         Assert.False(run.StopEngineWhenIdle); // Save'e kadar uygulanmaz
 
-        dialog.Save.RaiseEvent(new System.Windows.RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+        CommandPress.Click(dialog.Save);
 
         Assert.True(store.State.StopEngineWhenIdle);
         DispatcherPump.PumpUntil(() => run.StopEngineWhenIdle, TimeSpan.FromSeconds(5));
@@ -297,7 +307,8 @@ public class StopEngineWhenIdleSettingsTests
 
     /// <summary>Kapatma yönü: varsayılanla (açık) açılan diyalogda switch kapatılıp Save edilince hem UiState hem VM kapalı olur —
     /// Save'in varsayılan DIŞI bir değeri uyguladığının pini (<see cref="CompactConsoleSettingsTests.Switching_the_setting_off_and_saving_applies_it"/>
-    /// ile aynı gerekçe: parametre <c>bool?</c>'dur ve verilmemesi "dokunma" demektir, yani bu test Save'in değeri taşıdığını ayırt eder).</summary>
+    /// ile aynı gerekçe: parametre <c>bool?</c>'dur ve verilmemesi "dokunma" demektir, yani bu test Save'in değeri taşıdığını ayırt eder).
+    /// <para>KIRMIZI (iskelet, RED-B — diyalog bağlı değildi); geçici bozma M10 (tek başına): VM kapanmadı.</para></summary>
     [StaFact]
     public void Switching_the_setting_off_and_saving_applies_it()
     {
@@ -305,10 +316,10 @@ public class StopEngineWhenIdleSettingsTests
         using var _scope = scope;
         Assert.True(run.StopEngineWhenIdle);
 
-        EngineSwitch(dialog).IsChecked = false;
+        SettingsDialogHost.GeneralSwitch(dialog, Label).IsChecked = false;
         Assert.True(run.StopEngineWhenIdle); // Save'e kadar uygulanmaz
 
-        dialog.Save.RaiseEvent(new System.Windows.RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+        CommandPress.Click(dialog.Save);
 
         Assert.False(store.State.StopEngineWhenIdle);
         DispatcherPump.PumpUntil(() => !run.StopEngineWhenIdle, TimeSpan.FromSeconds(5));

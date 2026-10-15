@@ -1,10 +1,7 @@
 using System.IO;
-using System.Windows.Automation;
-using System.Windows.Controls;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
-using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Tests.Supervisor;
 using static BuildOrchestrator.Tests.App.MainWindowHost;
 
@@ -30,7 +27,7 @@ public class StashOnBranchSwitchTests
     [Fact]
     public void It_is_off_by_default()
     {
-        var row = Assert.Single(GeneralSettingsCatalog.Groups.SelectMany(g => g.Rows), r => r.Setting == GeneralSetting.StashOnBranchSwitch);
+        var row = SettingsDialogHost.CatalogRow(Label);
         Assert.False(row.Default);
         Assert.False(new SettingsDraftViewModel(null, @"D:\repo").StashOnBranchSwitch);
         Assert.False(new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1").StashOnBranchSwitch);
@@ -130,10 +127,6 @@ public class StashOnBranchSwitchTests
 
     // ---------------------------------------------------------------- görünüm
 
-    private static CheckBox StashSwitch(SettingsDialog dialog) =>
-        Assert.Single(DsResources.RealizedObjects(dialog.Page(SettingsSection.General)).OfType<CheckBox>(),
-            c => AutomationProperties.GetName(c) == Label);
-
     /// <summary>Diyalog canlı değerle açılır; switch taslağın bayrağıdır ve Save onu uygular.</summary>
     [StaFact]
     public void The_general_page_carries_the_switch_and_save_applies_it()
@@ -141,14 +134,14 @@ public class StashOnBranchSwitchTests
         var (dialog, run, store, scope) = SettingsDialogHost.OpenRealized(r => r.StashOnBranchSwitch = true);
         using var _scope = scope;
 
-        var toggle = StashSwitch(dialog);
+        var toggle = SettingsDialogHost.GeneralSwitch(dialog, Label);
         Assert.True(toggle.IsChecked);
 
         toggle.IsChecked = false;
         Assert.False(dialog.Draft!.StashOnBranchSwitch);
         Assert.True(run.StashOnBranchSwitch); // Save'e kadar uygulanmaz
 
-        dialog.Save.RaiseEvent(new System.Windows.RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+        CommandPress.Click(dialog.Save);
 
         Assert.False(store.State.StashOnBranchSwitch);
         DispatcherPump.PumpUntil(() => !run.StashOnBranchSwitch, TimeSpan.FromSeconds(5));

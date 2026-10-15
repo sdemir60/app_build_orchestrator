@@ -372,6 +372,7 @@ public class EngineSleepTests
         Assert.Equal(EngineState.Dead, vm.EngineState);
         Assert.True(vm.EngineRestartable);
         Assert.False(vm.IsEngineUnavailable);
+        // [M-5] Düşen uykunun şerit metninin TEK literal pini — başka testler metni üretimden kurar (RunViewModel.EngineDiedText).
         Assert.Equal(sleepFailed ? "Engine stopped unexpectedly (idle shutdown failed)" : "Engine stopped unexpectedly (exit 1)",
             vm.EngineDiedMessage);
         Assert.Equal(vm.EngineDiedMessage, window.Shell.Ribbon.PhaseText.Text);

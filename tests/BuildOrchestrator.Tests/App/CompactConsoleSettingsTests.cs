@@ -1,9 +1,6 @@
-using System.Windows.Automation;
-using System.Windows.Controls;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
-using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Tests.Supervisor;
 using static BuildOrchestrator.Tests.App.MainWindowHost;
 
@@ -27,13 +24,10 @@ public class CompactConsoleSettingsTests
     private const string OnNote = "Compact console on — errors, the first warnings of each project and a warning count from the next run";
     private const string OffNote = "Compact console off — every MSBuild line is shown from the next run";
 
-    private static GeneralSettingDefinition Row() =>
-        Assert.Single(GeneralSettingsCatalog.Groups.SelectMany(g => g.Rows), r => r.Label == Label);
-
     [Fact]
     public async Task The_switch_is_on_by_default()
     {
-        Assert.True(Row().Default);
+        Assert.True(SettingsDialogHost.CatalogRow(Label).Default);
         Assert.True(new SettingsDraftViewModel(null, @"D:\repo").CompactConsole);
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         Assert.True(new RunViewModel(engine, NeverTickingBatcher(), () => "r1").CompactConsole);
@@ -185,10 +179,6 @@ public class CompactConsoleSettingsTests
 
     // ---------------------------------------------------------------- realize
 
-    private static CheckBox CompactSwitch(SettingsDialog dialog) =>
-        Assert.Single(DsResources.RealizedObjects(dialog.Page(SettingsSection.General)).OfType<CheckBox>(),
-            c => AutomationProperties.GetName(c) == Label);
-
     /// <summary>Realize: satır General sayfasının tek <c>ToggleRow</c> şablonuyla çizilir; diyalog canlı değerle açılır,
     /// switch taslağın bayrağıdır ve Save onu uygular.</summary>
     [StaFact]
@@ -197,13 +187,13 @@ public class CompactConsoleSettingsTests
         var (dialog, run, store, scope) = SettingsDialogHost.OpenRealized(r => r.CompactConsole = false);
         using var _scope = scope;
 
-        var toggle = CompactSwitch(dialog);
+        var toggle = SettingsDialogHost.GeneralSwitch(dialog, Label);
         Assert.False(toggle.IsChecked);
 
         toggle.IsChecked = true;
         Assert.False(run.CompactConsole); // Save'e kadar uygulanmaz
 
-        dialog.Save.RaiseEvent(new System.Windows.RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+        CommandPress.Click(dialog.Save);
 
         Assert.True(store.State.CompactConsole);
         DispatcherPump.PumpUntil(() => run.CompactConsole, TimeSpan.FromSeconds(5));
@@ -223,10 +213,10 @@ public class CompactConsoleSettingsTests
         using var _scope = scope;
         Assert.True(run.CompactConsole);
 
-        CompactSwitch(dialog).IsChecked = false;
+        SettingsDialogHost.GeneralSwitch(dialog, Label).IsChecked = false;
         Assert.True(run.CompactConsole); // Save'e kadar uygulanmaz
 
-        dialog.Save.RaiseEvent(new System.Windows.RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+        CommandPress.Click(dialog.Save);
 
         Assert.False(store.State.CompactConsole);
         DispatcherPump.PumpUntil(() => !run.CompactConsole, TimeSpan.FromSeconds(5));

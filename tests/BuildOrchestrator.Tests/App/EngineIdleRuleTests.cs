@@ -52,7 +52,8 @@ public class EngineIdleRuleTests
     /// <summary>[karar 11 · karar 29] "Beş dakika"nın TEK sahibi — spec §6.4 beş dakikayı söyler. <c>EngineHostTests.Kill_exit_wait_stays_one_second</c>
     /// deseni: sabit sessizce kayarsa (ör. 5 → 50 dk) motor beklenenden çok sonra uyur ve kullanıcıya söylenen süre yalan olur. Sabitin
     /// sahibi kuralın sınıfı olduğu için pin de burada durur (Task 19'da ayarın testleriyle doğmuştu); iki kullanıcı metninin sabitle
-    /// uyuşması ayarın testindedir (<c>StopEngineWhenIdleSettingsTests.The_catalog_text_and_the_on_note_say_the_window_the_rule_uses</c>).</summary>
+    /// uyuşması ayarın testindedir (<c>StopEngineWhenIdleSettingsTests.The_catalog_text_and_the_on_note_say_the_window_the_rule_uses</c>).
+    /// <para>KIRMIZI (geçici bozma M4, Task 19: <c>IdleAfter</c> 6 dk): <c>Expected: 00:05:00 / Actual: 00:06:00</c>.</para></summary>
     [Fact]
     public void The_idle_window_stays_five_minutes()
     {

@@ -1,9 +1,6 @@
-using System.Windows.Automation;
-using System.Windows.Controls;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
-using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Tests.Supervisor;
 using static BuildOrchestrator.Tests.App.MainWindowHost;
@@ -22,13 +19,10 @@ public class ResolveAtFullPrioritySettingsTests
 {
     private const string Label = "Resolve cycles at full priority";
 
-    private static GeneralSettingDefinition Row() =>
-        Assert.Single(GeneralSettingsCatalog.Groups.SelectMany(g => g.Rows), r => r.Label == Label);
-
     [Fact]
     public async Task The_switch_is_on_by_default()
     {
-        Assert.True(Row().Default);
+        Assert.True(SettingsDialogHost.CatalogRow(Label).Default);
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         Assert.True(new RunViewModel(engine, NeverTickingBatcher(), () => "r1").ResolveAtFullPriority);
     }
@@ -128,10 +122,6 @@ public class ResolveAtFullPrioritySettingsTests
         GC.KeepAlive(window);
     }
 
-    private static CheckBox ResolveSwitch(SettingsDialog dialog) =>
-        Assert.Single(DsResources.RealizedObjects(dialog.Page(SettingsSection.General)).OfType<CheckBox>(),
-            c => AutomationProperties.GetName(c) == Label);
-
     /// <summary>Realize: satır General sayfasının tek <c>ToggleRow</c> şablonuyla çizilir; diyalog canlı değerle açılır,
     /// switch taslağın bayrağıdır ve Save onu uygular.</summary>
     [StaFact]
@@ -140,13 +130,13 @@ public class ResolveAtFullPrioritySettingsTests
         var (dialog, run, store, scope) = SettingsDialogHost.OpenRealized(r => r.ResolveAtFullPriority = false);
         using var _scope = scope;
 
-        var toggle = ResolveSwitch(dialog);
+        var toggle = SettingsDialogHost.GeneralSwitch(dialog, Label);
         Assert.False(toggle.IsChecked);
 
         toggle.IsChecked = true;
         Assert.False(run.ResolveAtFullPriority); // Save'e kadar uygulanmaz
 
-        dialog.Save.RaiseEvent(new System.Windows.RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+        CommandPress.Click(dialog.Save);
 
         Assert.True(store.State.ResolveAtFullPriority);
         DispatcherPump.PumpUntil(() => run.ResolveAtFullPriority, TimeSpan.FromSeconds(5));

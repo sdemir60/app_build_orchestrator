@@ -39,20 +39,32 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF STA kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class EngineWakeTests
 {
-    /// <summary>Gönderilen bir komut ve gönderildiği andaki VM motor durumu.</summary>
-    private readonly record struct Sent(IpcCommand Command, EngineState State);
+    /// <summary>[O-4] Giden komutlar ve her gönderimin anındaki VM motor durumu. Komutların kaydı ortak kaydedicidir (<see cref="SentCommands"/> —
+    /// <see cref="SentCommands.Record"/> gönderim anında başka bir şeyi de ölçen testlerin yolu); durum aynı anda, aynı sırayla yanına yazılır.</summary>
+    private sealed class SentLog
+    {
+        /// <summary>Giden komutlar, gönderim sırasıyla.</summary>
+        public SentCommands Commands { get; } = new();
+
+        /// <summary>Her gönderimin anındaki motor durumu — <see cref="Commands"/> ile aynı sıra.</summary>
+        public List<EngineState> States { get; } = [];
+    }
 
     /// <summary>Giden komutları gönderim anındaki motor durumuyla toplar (gözlemci gönderimden hemen ÖNCE çağrılır).</summary>
-    private static List<Sent> Record(RunViewModel vm)
+    private static SentLog Record(RunViewModel vm)
     {
-        var sent = new List<Sent>();
-        vm.DebugOnCommandSent = command => sent.Add(new Sent(command, vm.EngineState));
+        var sent = new SentLog();
+        vm.DebugOnCommandSent = command =>
+        {
+            sent.Commands.Record(command);
+            sent.States.Add(vm.EngineState);
+        };
         return sent;
     }
 
     /// <summary>Uyuyan kabuk: hazır kabuk (<see cref="EngineSleepProbe.ReadyShell"/>), beş işsiz dakika ve bir tik — motor uyudu (sahte uyku
     /// hemen biter). <c>Advance</c> testin saatini ileri alır.</summary>
-    private static (MainWindow Window, RunViewModel Vm, EngineSleepProbe Probe, List<Sent> Sent, Action<long> Advance) AsleepShell(TempDir dir)
+    private static (MainWindow Window, RunViewModel Vm, EngineSleepProbe Probe, SentLog Sent, Action<long> Advance) AsleepShell(TempDir dir)
     {
         long now = 1_000;
         var (window, vm, probe) = ReadyShell(dir, () => now);
@@ -65,7 +77,7 @@ public class EngineWakeTests
 
     /// <summary>[Go5] Uykusu sürerken kabuk: hazır kabuk, bekletilen uyku (TCS), beş işsiz dakika ve bir tik — durum <c>Sleeping</c>.
     /// Uykuyu bitirmek dönen kaynağın işidir.</summary>
-    private static (MainWindow Window, RunViewModel Vm, EngineSleepProbe Probe, List<Sent> Sent, TaskCompletionSource Sleeping) SleepingShell(
+    private static (MainWindow Window, RunViewModel Vm, EngineSleepProbe Probe, SentLog Sent, TaskCompletionSource Sleeping) SleepingShell(
         TempDir dir)
     {
         long now = 1_000;
@@ -79,14 +91,23 @@ public class EngineWakeTests
         return (window, vm, probe, sent, sleeping);
     }
 
-    /// <summary>[Go5] Uyanmayı bekleyen koşu: uyuyan kabuk, bekletilen uyanma (TCS) ve Build — koşunun komutu bekleyen-koşu penceresinde kapıda,
-    /// uyanma sürüyor. <c>PhaseBefore</c> tıklamadan önceki fazdır (koşunun kendi geri alımı oraya döner).</summary>
-    private static (MainWindow Window, RunViewModel Vm, EngineSleepProbe Probe, List<Sent> Sent, TaskCompletionSource<EngineReadyEvent> Waking,
-        Task Build, AppPhase PhaseBefore) BuildWaitingForWake(TempDir dir)
+    /// <summary>[T21 · fix dalgası] Uyuyan kabuk (<see cref="AsleepShell"/>) + bekletilen uyanma (TCS): uyanmayı ilk isteyen yol onu başlatır,
+    /// bitirmek dönen kaynağın işidir. Bekletilen uyanmanın TEK kurulumu.</summary>
+    private static (MainWindow Window, RunViewModel Vm, EngineSleepProbe Probe, SentLog Sent, TaskCompletionSource<EngineReadyEvent> Waking)
+        AsleepShellWithHeldWake(TempDir dir)
     {
         var (window, vm, probe, sent, _) = AsleepShell(dir);
         var waking = new TaskCompletionSource<EngineReadyEvent>();
         probe.NextWake = () => waking.Task;
+        return (window, vm, probe, sent, waking);
+    }
+
+    /// <summary>[Go5] Uyanmayı bekleyen koşu: uyuyan kabuk, bekletilen uyanma (TCS) ve Build — koşunun komutu bekleyen-koşu penceresinde kapıda,
+    /// uyanma sürüyor. <c>PhaseBefore</c> tıklamadan önceki fazdır (koşunun kendi geri alımı oraya döner).</summary>
+    private static (MainWindow Window, RunViewModel Vm, EngineSleepProbe Probe, SentLog Sent, TaskCompletionSource<EngineReadyEvent> Waking,
+        Task Build, AppPhase PhaseBefore) BuildWaitingForWake(TempDir dir)
+    {
+        var (window, vm, probe, sent, waking) = AsleepShellWithHeldWake(dir);
         var phaseBefore = vm.Phase;
         var build = vm.BuildCommand.ExecuteAsync(null);
         DispatcherPump.DrainToIdle();
@@ -174,11 +195,11 @@ public class EngineWakeTests
         await Trigger(path, window, vm);
 
         Assert.Equal(1, probe.WakeCalls);
-        Assert.NotEmpty(sent);
-        Assert.All(sent, s => Assert.Equal(EngineState.Ready, s.State));
-        Assert.IsType(firstCommand, sent[0].Command);
-        Assert.Equal(syncs, sent.Count(s => s.Command is SyncWorkspaceCommand));
-        if (syncs > 0) Assert.IsType<ListBranchesCommand>(sent[^1].Command);
+        Assert.NotEmpty(sent.Commands);
+        Assert.All(sent.States, s => Assert.Equal(EngineState.Ready, s));
+        Assert.IsType(firstCommand, sent.Commands.First());
+        Assert.Equal(syncs, sent.Commands.Count(c => c is SyncWorkspaceCommand));
+        if (syncs > 0) Assert.IsType<ListBranchesCommand>(sent.Commands.Last());
         Assert.Equal(EngineState.Ready, vm.EngineState);
         Assert.Equal(WokenPid, vm.EnginePid);
         Assert.Equal(EngineVersion, vm.EngineVersion);
@@ -212,7 +233,7 @@ public class EngineWakeTests
 
         Assert.Equal(1, exitReady);
         Assert.Equal(0, probe.WakeCalls);
-        Assert.Empty(sent);
+        Assert.Empty(sent.Commands);
         Assert.Equal(EngineState.Asleep, vm.EngineState);
         GC.KeepAlive(window);
     }
@@ -226,7 +247,7 @@ public class EngineWakeTests
     public void A_sleeping_engine_keeps_the_run_gate_open_and_offers_no_restart()
     {
         using var dir = new TempDir();
-        var (window, vm, probe, _, _) = AsleepShell(dir);
+        var (window, vm, _, _, waking) = AsleepShellWithHeldWake(dir);
         DispatcherPump.DrainToIdle();
 
         Assert.Null(vm.WhyRunCannotStart());
@@ -234,8 +255,6 @@ public class EngineWakeTests
         Assert.False(vm.IsEngineUnavailable);
         Assert.Equal(Visibility.Collapsed, window.Shell.Ribbon.RestartEngineAction.Visibility);
 
-        var waking = new TaskCompletionSource<EngineReadyEvent>();
-        probe.NextWake = () => waking.Task;
         _ = vm.SyncCommand.ExecuteAsync(null);
         DispatcherPump.DrainToIdle();
         Assert.Equal(EngineState.Waking, vm.EngineState); // ön-koşul (kırmızının yeri)
@@ -279,7 +298,7 @@ public class EngineWakeTests
         Assert.False(vm.StopEngineWhenIdle);
         Assert.Contains("the engine is no longer stopped when idle", vm.GetRunDocumentText());
         Assert.Equal(0, probe.WakeCalls);
-        Assert.Empty(sent);
+        Assert.Empty(sent.Commands);
         Assert.Equal(EngineState.Asleep, vm.EngineState);
         GC.KeepAlive(window);
     }
@@ -307,8 +326,8 @@ public class EngineWakeTests
         string console = vm.GetRunDocumentText();
         Assert.Equal(1, MainWindowHost.Occurrences(console, "[error] failed to send sync: "));
         Assert.Equal(1, MainWindowHost.Occurrences(console, "[error] failed to send listBranches: "));
-        Assert.Equal([typeof(SyncWorkspaceCommand), typeof(ListBranchesCommand)], sent.Select(s => s.Command.GetType()));
-        Assert.All(sent, s => Assert.Equal(EngineState.Dead, s.State));
+        Assert.Equal([typeof(SyncWorkspaceCommand), typeof(ListBranchesCommand)], sent.Commands.Select(c => c.GetType()));
+        Assert.All(sent.States, s => Assert.Equal(EngineState.Dead, s));
         Assert.Equal(0, probe.WakeCalls);
         Assert.False(vm.SyncBusy);
         GC.KeepAlive(window);
@@ -330,7 +349,7 @@ public class EngineWakeTests
         await vm.LoadProjectLogAsync(MainWindowHost.IdOf("A"));
 
         Assert.Equal(1, MainWindowHost.Occurrences(vm.GetRunDocumentText(), "[error] could not load project log: "));
-        Assert.IsType<GetProjectLogCommand>(Assert.Single(sent).Command);
+        Assert.IsType<GetProjectLogCommand>(Assert.Single(sent.Commands));
         Assert.Equal(0, probe.WakeCalls);
         Assert.False(vm.HasPendingLogLoad);
         GC.KeepAlive(window);
@@ -349,7 +368,7 @@ public class EngineWakeTests
 
         var sync = vm.SyncCommand.ExecuteAsync(null);
         DispatcherPump.DrainToIdle();
-        Assert.Empty(sent);
+        Assert.Empty(sent.Commands);
         Assert.Equal(0, probe.WakeCalls);
         Assert.True(vm.SyncBusy); // Sync düğmesi istek penceresinde
 
@@ -359,8 +378,8 @@ public class EngineWakeTests
 
         Assert.Equal(1, probe.SleepCalls);
         Assert.Equal(1, probe.WakeCalls);
-        Assert.Equal([typeof(SyncWorkspaceCommand), typeof(ListBranchesCommand)], sent.Select(s => s.Command.GetType()));
-        Assert.All(sent, s => Assert.Equal(EngineState.Ready, s.State));
+        Assert.Equal([typeof(SyncWorkspaceCommand), typeof(ListBranchesCommand)], sent.Commands.Select(c => c.GetType()));
+        Assert.All(sent.States, s => Assert.Equal(EngineState.Ready, s));
         GC.KeepAlive(window);
     }
 
@@ -371,25 +390,23 @@ public class EngineWakeTests
     public void Two_paths_during_one_wake_share_it()
     {
         using var dir = new TempDir();
-        var (window, vm, probe, sent, _) = AsleepShell(dir);
-        var waking = new TaskCompletionSource<EngineReadyEvent>();
-        probe.NextWake = () => waking.Task;
+        var (window, vm, probe, sent, waking) = AsleepShellWithHeldWake(dir);
         int readyLines = ReadyLines(vm);
 
         _ = vm.LoadProjectLogAsync(MainWindowHost.IdOf("A")); // uyanmayı başlatır
         vm.OnWindowActivated();                                // uyanma sürerken: katılır
         DispatcherPump.DrainToIdle();
         Assert.Equal(EngineState.Waking, vm.EngineState);
-        Assert.Empty(sent);
+        Assert.Empty(sent.Commands);
         Assert.True(vm.SyncBusy); // pencereye dönüşün Sync'i istek penceresinde, kapıda bekliyor
 
         waking.SetResult(Woken());
         DispatcherPump.DrainToIdle();
 
         Assert.Equal(1, probe.WakeCalls);
-        Assert.Contains(sent, s => s.Command is GetProjectLogCommand);
-        Assert.Contains(sent, s => s.Command is SyncWorkspaceCommand);
-        Assert.All(sent, s => Assert.Equal(EngineState.Ready, s.State));
+        Assert.Contains(sent.Commands, c => c is GetProjectLogCommand);
+        Assert.Contains(sent.Commands, c => c is SyncWorkspaceCommand);
+        Assert.All(sent.States, s => Assert.Equal(EngineState.Ready, s));
         Assert.Equal(WokenPid, vm.EnginePid);
         Assert.Equal(readyLines, ReadyLines(vm));
         GC.KeepAlive(window);
@@ -405,21 +422,19 @@ public class EngineWakeTests
     public void A_project_log_replaced_while_the_wake_runs_is_not_sent_after_it()
     {
         using var dir = new TempDir();
-        var (window, vm, probe, sent, _) = AsleepShell(dir);
-        var waking = new TaskCompletionSource<EngineReadyEvent>();
-        probe.NextWake = () => waking.Task;
+        var (window, vm, probe, sent, waking) = AsleepShellWithHeldWake(dir);
 
         var first = vm.LoadProjectLogAsync(MainWindowHost.IdOf("A"));  // uyanmayı başlatır
         _ = vm.LoadProjectLogAsync(MainWindowHost.IdOf("A"));          // uyanma sürerken ikinci tıklama: yerini alır
         DispatcherPump.DrainToIdle();
         Assert.Equal(EngineState.Waking, vm.EngineState); // ön-koşul: iki yükleme de kapıda, uyanma sürüyor
-        Assert.Empty(sent);
+        Assert.Empty(sent.Commands);
 
         waking.SetResult(Woken());
         DispatcherPump.DrainToIdle();
 
         Assert.True(first.IsCompleted); // eski yüklemenin çağrısı döndü — asılı kalmadı
-        var request = Assert.IsType<GetProjectLogCommand>(Assert.Single(sent).Command);
+        var request = Assert.IsType<GetProjectLogCommand>(Assert.Single(sent.Commands));
         Assert.Equal(2, request.RequestId); // ikinci tıklamanın kimliği (kabukta bundan önce yükleme yok)
         Assert.Equal(1, probe.WakeCalls);
         GC.KeepAlive(window);
@@ -447,15 +462,15 @@ public class EngineWakeTests
         _ = vm.SyncCommand.ExecuteAsync(null);
         DispatcherPump.DrainToIdle();
         Assert.NotNull(reentrant); // ön-koşul: yol kapıya uyanmanın içinden girdi
-        Assert.Empty(sent);
+        Assert.Empty(sent.Commands);
 
         waking.SetResult(Woken());
         DispatcherPump.DrainToIdle();
 
         Assert.Equal(1, probe.WakeCalls);
-        Assert.Contains(sent, s => s.Command is GetProjectLogCommand);
-        Assert.Contains(sent, s => s.Command is SyncWorkspaceCommand);
-        Assert.All(sent, s => Assert.Equal(EngineState.Ready, s.State));
+        Assert.Contains(sent.Commands, c => c is GetProjectLogCommand);
+        Assert.Contains(sent.Commands, c => c is SyncWorkspaceCommand);
+        Assert.All(sent.States, s => Assert.Equal(EngineState.Ready, s));
         Assert.Equal(EngineState.Ready, vm.EngineState);
         GC.KeepAlive(window);
     }
@@ -477,7 +492,7 @@ public class EngineWakeTests
         DispatcherPump.DrainToIdle();
         await build;
 
-        Assert.Empty(sent);
+        Assert.Empty(sent.Commands);
         Assert.Equal(EngineState.Ready, vm.EngineState); // motor uyandı; boşta kalırsa kendi kuralıyla yine uyur
         GC.KeepAlive(window);
     }
@@ -501,7 +516,7 @@ public class EngineWakeTests
         await build;
 
         Assert.Equal(0, probe.WakeCalls);
-        Assert.Empty(sent);
+        Assert.Empty(sent.Commands);
         Assert.Equal(EngineState.Asleep, vm.EngineState);
         GC.KeepAlive(window);
     }
@@ -528,7 +543,7 @@ public class EngineWakeTests
         DispatcherPump.DrainToIdle();
         await build;
 
-        Assert.Empty(sent);
+        Assert.Empty(sent.Commands);
         Assert.Null(vm.EngineDiedMessage);
         Assert.DoesNotContain("[error]", vm.GetRunDocumentText());
         GC.KeepAlive(window);
@@ -541,9 +556,7 @@ public class EngineWakeTests
     public async Task An_exit_requested_during_a_wake_withdraws_the_sync_waiting_in_the_gate()
     {
         using var dir = new TempDir();
-        var (window, vm, probe, sent, _) = AsleepShell(dir);
-        var waking = new TaskCompletionSource<EngineReadyEvent>();
-        probe.NextWake = () => waking.Task;
+        var (window, vm, probe, sent, waking) = AsleepShellWithHeldWake(dir);
         int exitReady = 0;
         vm.ExitReady += (_, _) => exitReady++;
         var sync = vm.SyncCommand.ExecuteAsync(null);
@@ -556,7 +569,7 @@ public class EngineWakeTests
         DispatcherPump.DrainToIdle();
         await sync;
 
-        Assert.Empty(sent);
+        Assert.Empty(sent.Commands);
         Assert.Equal(1, exitReady);
         Assert.False(vm.SyncBusy);
         Assert.DoesNotContain("[error]", vm.GetRunDocumentText());
@@ -582,7 +595,7 @@ public class EngineWakeTests
         await sync;
 
         Assert.Equal(0, probe.WakeCalls);
-        Assert.Empty(sent);
+        Assert.Empty(sent.Commands);
         Assert.Equal(EngineState.Asleep, vm.EngineState);
         Assert.Equal(1, exitReady);
         GC.KeepAlive(window);
@@ -597,9 +610,7 @@ public class EngineWakeTests
     public void An_exit_requested_while_only_a_project_log_waits_withdraws_it()
     {
         using var dir = new TempDir();
-        var (window, vm, probe, sent, _) = AsleepShell(dir);
-        var waking = new TaskCompletionSource<EngineReadyEvent>();
-        probe.NextWake = () => waking.Task;
+        var (window, vm, probe, sent, waking) = AsleepShellWithHeldWake(dir);
         int exitReady = 0;
         vm.ExitReady += (_, _) => exitReady++;
         var load = vm.LoadProjectLogAsync(MainWindowHost.IdOf("A"));
@@ -612,7 +623,7 @@ public class EngineWakeTests
         waking.SetResult(Woken());
         DispatcherPump.DrainToIdle();
 
-        Assert.Empty(sent);
+        Assert.Empty(sent.Commands);
         Assert.True(load.IsCompleted);
         Assert.False(vm.HasPendingLogLoad);
         GC.KeepAlive(window);
@@ -636,16 +647,15 @@ public class EngineWakeTests
         MainWindow window;
         RunViewModel vm;
         EngineSleepProbe probe;
-        List<Sent> sent;
+        SentLog sent;
         Task build;
         Action release;
         if (duringChoreography)
         {
-            (window, vm, probe, sent, _) = AsleepShell(dir);
+            TaskCompletionSource<EngineReadyEvent> waking;
+            (window, vm, probe, sent, waking) = AsleepShellWithHeldWake(dir);
             var choreography = new TaskCompletionSource();
-            var waking = new TaskCompletionSource<EngineReadyEvent>();
             vm.OperationChoreography = _ => choreography.Task;
-            probe.NextWake = () => waking.Task;
             build = vm.BuildCommand.ExecuteAsync(null);
             DispatcherPump.DrainToIdle();
             Assert.Equal(EngineState.Waking, vm.EngineState); // ön-koşul: koreografi sürüyor, tıklamada başlayan uyanma da
@@ -671,7 +681,7 @@ public class EngineWakeTests
         DispatcherPump.DrainToIdle();
         await build;
 
-        var start = Assert.IsType<StartRunCommand>(Assert.Single(sent).Command);
+        var start = Assert.IsType<StartRunCommand>(Assert.Single(sent.Commands));
         Assert.Equal(chosen, start.PerfMode);
         Assert.Equal(1, probe.WakeCalls);
         Assert.DoesNotContain("[error]", vm.GetRunDocumentText());
@@ -700,7 +710,7 @@ public class EngineWakeTests
         string console = vm.GetRunDocumentText();
         Assert.Equal(1, MainWindowHost.Occurrences(console, $"[error] engine not found: {exe}"));
         Assert.DoesNotContain("failed to send", console);
-        Assert.Empty(sent);
+        Assert.Empty(sent.Commands);
         Assert.Equal(1, probe.WakeCalls);
         Assert.Equal(EngineState.Unavailable, vm.EngineState);
         Assert.True(vm.IsEngineUnavailable);
@@ -730,9 +740,7 @@ public class EngineWakeTests
     public async Task A_wake_whose_engine_dies_reports_once_through_the_death_and_ends_nothing(bool deathFirst)
     {
         using var dir = new TempDir();
-        var (window, vm, probe, sent, _) = AsleepShell(dir);
-        var waking = new TaskCompletionSource<EngineReadyEvent>();
-        probe.NextWake = () => waking.Task;
+        var (window, vm, probe, sent, waking) = AsleepShellWithHeldWake(dir);
         int ended = vm.EndedOperationSerial;
 
         var sync = vm.SyncCommand.ExecuteAsync(null);
@@ -759,15 +767,15 @@ public class EngineWakeTests
         Assert.Equal(vm.EngineDiedMessage, window.Shell.Ribbon.PhaseText.Text);
         Assert.Equal(Visibility.Visible, window.Shell.Ribbon.RestartEngineAction.Visibility);
         Assert.Equal(EngineState.Dead, vm.EngineState);
-        Assert.Empty(sent);
+        Assert.Empty(sent.Commands);
         Assert.Equal(1, probe.WakeCalls);
         Assert.False(vm.SyncBusy);
         Assert.Equal(ended, vm.EndedOperationSerial);
 
         Assert.True(await vm.SyncSilentlyAsync(SilentSyncReason.Refresh));
         Assert.Equal(1, probe.WakeCalls);
-        Assert.Equal([typeof(SyncWorkspaceCommand), typeof(ListBranchesCommand)], sent.Select(s => s.Command.GetType()));
-        Assert.All(sent, s => Assert.Equal(EngineState.Dead, s.State));
+        Assert.Equal([typeof(SyncWorkspaceCommand), typeof(ListBranchesCommand)], sent.Commands.Select(c => c.GetType()));
+        Assert.All(sent.States, s => Assert.Equal(EngineState.Dead, s));
         GC.KeepAlive(window);
     }
 
@@ -781,9 +789,7 @@ public class EngineWakeTests
     public async Task A_wake_stranded_without_a_death_signal_becomes_a_death_at_the_next_click()
     {
         using var dir = new TempDir();
-        var (window, vm, probe, sent, _) = AsleepShell(dir);
-        var waking = new TaskCompletionSource<EngineReadyEvent>();
-        probe.NextWake = () => waking.Task;
+        var (window, vm, probe, sent, waking) = AsleepShellWithHeldWake(dir);
         var sync = vm.SyncCommand.ExecuteAsync(null);
         DispatcherPump.DrainToIdle();
         waking.SetException(new InvalidOperationException("the kill failed"));
@@ -797,10 +803,10 @@ public class EngineWakeTests
         DispatcherPump.DrainToIdle();
 
         Assert.Equal(EngineState.Dead, vm.EngineState);
-        Assert.Equal("Engine stopped unexpectedly (wake failed)", vm.EngineDiedMessage);
+        Assert.Equal("Engine stopped unexpectedly (wake failed)", vm.EngineDiedMessage); // metnin TEK literal pini (M-5)
         Assert.Equal(vm.EngineDiedMessage, window.Shell.Ribbon.PhaseText.Text);
         Assert.Equal(Visibility.Visible, window.Shell.Ribbon.RestartEngineAction.Visibility);
-        Assert.Empty(sent);
+        Assert.Empty(sent.Commands);
         Assert.Equal(1, probe.WakeCalls);
         Assert.Equal(console, vm.GetRunDocumentText());
 
@@ -833,7 +839,7 @@ public class EngineWakeTests
 
         Assert.False(vm.IsStarting);
         Assert.Equal(phaseBefore, vm.Phase);
-        Assert.Empty(sent);
+        Assert.Empty(sent.Commands);
         Assert.Equal(ended, vm.EndedOperationSerial);
         Assert.DoesNotContain("[error]", vm.GetRunDocumentText());
         Assert.Equal(EngineState.Dead, vm.EngineState);
@@ -878,7 +884,7 @@ public class EngineWakeTests
 
         Assert.False(vm.IsStarting);
         Assert.Equal(phaseBefore, vm.Phase);
-        Assert.Empty(sent);
+        Assert.Empty(sent.Commands);
         Assert.DoesNotContain("[error]", vm.GetRunDocumentText());
         Assert.Equal(1, probe.WakeCalls);
         Assert.Equal(ended, vm.EndedOperationSerial);
@@ -898,16 +904,16 @@ public class EngineWakeTests
 
         var sync = vm.SyncCommand.ExecuteAsync(null);
         DispatcherPump.DrainToIdle();
-        Assert.Empty(sent);
+        Assert.Empty(sent.Commands);
         string console = vm.GetRunDocumentText();
 
         sleeping.SetException(new InvalidOperationException("the kill failed"));
         DispatcherPump.DrainToIdle();
         await sync;
 
-        Assert.Equal("Engine stopped unexpectedly (idle shutdown failed)", vm.EngineDiedMessage);
+        Assert.Equal(RunViewModel.EngineDiedText(RunViewModel.IdleShutdownFailedCause), vm.EngineDiedMessage); // literal pini EngineSleepTests'te (M-5)
         Assert.Equal(EngineState.Dead, vm.EngineState);
-        Assert.Empty(sent);
+        Assert.Empty(sent.Commands);
         Assert.Equal(0, probe.WakeCalls);
         Assert.False(vm.SyncBusy);
         Assert.Equal(ended, vm.EndedOperationSerial);
@@ -925,9 +931,7 @@ public class EngineWakeTests
     public async Task A_late_death_after_the_stranded_wakes_report_only_renews_the_ribbon_text()
     {
         using var dir = new TempDir();
-        var (window, vm, probe, sent, _) = AsleepShell(dir);
-        var waking = new TaskCompletionSource<EngineReadyEvent>();
-        probe.NextWake = () => waking.Task;
+        var (window, vm, probe, sent, waking) = AsleepShellWithHeldWake(dir);
         var sync = vm.SyncCommand.ExecuteAsync(null);
         DispatcherPump.DrainToIdle();
         waking.SetException(new InvalidOperationException("the kill failed")); // ölüm sinyali gelmeyen düşmüş uyanma
@@ -957,7 +961,7 @@ public class EngineWakeTests
         Assert.False(vm.IsStarting);
         Assert.Equal(phaseBefore, vm.Phase);
         Assert.Equal(1, MainWindowHost.Occurrences(vm.GetRunDocumentText(), "[error] failed to send build: "));
-        Assert.IsType<StartRunCommand>(Assert.Single(sent).Command);
+        Assert.IsType<StartRunCommand>(Assert.Single(sent.Commands));
         Assert.Equal(ended, vm.EndedOperationSerial);
         Assert.Equal(1, probe.WakeCalls);
         GC.KeepAlive(window);
@@ -975,9 +979,7 @@ public class EngineWakeTests
     public void A_death_right_after_a_wake_ends_no_request_still_waiting_at_the_gate()
     {
         using var dir = new TempDir();
-        var (window, vm, probe, sent, _) = AsleepShell(dir);
-        var waking = new TaskCompletionSource<EngineReadyEvent>();
-        probe.NextWake = () => waking.Task;
+        var (window, vm, probe, sent, waking) = AsleepShellWithHeldWake(dir);
         _ = vm.LoadProjectLogAsync(MainWindowHost.IdOf("A")); // uyanmayı başlatır
         var sync = vm.SyncCommand.ExecuteAsync(null);         // katılır
         Assert.Equal(EngineState.Waking, vm.EngineState);     // ön-koşul: Sync kapıda, uyanma sürüyor
@@ -987,7 +989,7 @@ public class EngineWakeTests
         void Die()
         {
             atDeath = vm.EngineState;
-            syncSentAtDeath = sent.Any(s => s.Command is SyncWorkspaceCommand);
+            syncSentAtDeath = sent.Commands.Any(c => c is SyncWorkspaceCommand);
             syncWindowOpenAtDeath = vm.SyncBusy;
             vm.OnEngineExited(-1);
         }
@@ -1004,7 +1006,7 @@ public class EngineWakeTests
         Assert.Equal(ended, vm.EndedOperationSerial); // kapıda bekleyen Sync bitmiş sayılmadı
         Assert.False(vm.SyncBusy);                    // Sync'in kendi geri alımı
         Assert.True(sync.IsCompleted);
-        Assert.DoesNotContain(sent, s => s.Command is SyncWorkspaceCommand or ListBranchesCommand); // Sync gönderilmedi
+        Assert.DoesNotContain(sent.Commands, c => c is SyncWorkspaceCommand or ListBranchesCommand); // Sync gönderilmedi
         Assert.Equal(1, probe.WakeCalls);
         GC.KeepAlive(window);
     }
@@ -1017,9 +1019,7 @@ public class EngineWakeTests
     public async Task An_exit_requested_during_a_wake_withdraws_a_clean_waiting_in_the_gate()
     {
         using var dir = new TempDir();
-        var (window, vm, probe, sent, _) = AsleepShell(dir);
-        var waking = new TaskCompletionSource<EngineReadyEvent>();
-        probe.NextWake = () => waking.Task;
+        var (window, vm, probe, sent, waking) = AsleepShellWithHeldWake(dir);
         int exitReady = 0;
         vm.ExitReady += (_, _) => exitReady++;
         var clean = vm.CleanCommand.ExecuteAsync(null);
@@ -1033,7 +1033,7 @@ public class EngineWakeTests
         DispatcherPump.DrainToIdle();
         await clean;
 
-        Assert.Empty(sent);
+        Assert.Empty(sent.Commands);
         Assert.Equal(1, exitReady);
         Assert.False(vm.CleanBusy);
         Assert.DoesNotContain("[error]", vm.GetRunDocumentText());
@@ -1053,9 +1053,7 @@ public class EngineWakeTests
     public async Task A_builds_wake_starts_at_the_click_and_overlaps_the_choreography(bool wakeFirst)
     {
         using var dir = new TempDir();
-        var (window, vm, probe, sent, _) = AsleepShell(dir);
-        var waking = new TaskCompletionSource<EngineReadyEvent>();
-        probe.NextWake = () => waking.Task;
+        var (window, vm, probe, sent, waking) = AsleepShellWithHeldWake(dir);
         var choreography = new TaskCompletionSource();
         vm.OperationChoreography = _ => choreography.Task;
 
@@ -1067,7 +1065,7 @@ public class EngineWakeTests
         if (wakeFirst) waking.SetResult(Woken());
         else choreography.SetResult();
         DispatcherPump.DrainToIdle();
-        Assert.Empty(sent); // ikisinden biri sürerken komut gitmez
+        Assert.Empty(sent.Commands); // ikisinden biri sürerken komut gitmez
         Assert.True(vm.IsStarting);
 
         if (wakeFirst) choreography.SetResult();
@@ -1075,9 +1073,8 @@ public class EngineWakeTests
         DispatcherPump.DrainToIdle();
         await build;
 
-        var start = Assert.Single(sent);
-        Assert.IsType<StartRunCommand>(start.Command);
-        Assert.Equal(EngineState.Ready, start.State);
+        Assert.IsType<StartRunCommand>(Assert.Single(sent.Commands));
+        Assert.Equal(EngineState.Ready, Assert.Single(sent.States));
         Assert.Equal(1, probe.WakeCalls);
         GC.KeepAlive(window);
     }
@@ -1103,7 +1100,7 @@ public class EngineWakeTests
         DispatcherPump.DrainToIdle();
         await build;
 
-        Assert.Empty(sent); // ne startRun ne stopRun
+        Assert.Empty(sent.Commands); // ne startRun ne stopRun
         Assert.Equal(1, probe.WakeCalls);
         Assert.Equal(EngineState.Ready, vm.EngineState);
         Assert.False(vm.IsStarting);
@@ -1137,10 +1134,8 @@ public class EngineWakeTests
         }
         else
         {
-            EngineSleepProbe probe;
-            (window, vm, probe, _, _) = AsleepShell(dir);
-            var waking = new TaskCompletionSource<EngineReadyEvent>();
-            probe.NextWake = () => waking.Task;
+            TaskCompletionSource<EngineReadyEvent> waking;
+            (window, vm, _, _, waking) = AsleepShellWithHeldWake(dir);
             _ = vm.LoadProjectLogAsync(MainWindowHost.IdOf("A")); // uyanmayı başlatır
             complete = () => waking.SetResult(Woken());
             settled = EngineState.Ready;

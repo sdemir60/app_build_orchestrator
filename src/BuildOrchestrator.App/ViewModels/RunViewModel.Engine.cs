@@ -148,13 +148,18 @@ public sealed partial class RunViewModel
     }
 
     /// <summary>Uykusu düşen motorun ölüm satırındaki nedeni (<see cref="ReportEngineDead"/>): "Engine stopped unexpectedly (idle shutdown
-    /// failed)" — kendiliğinden ölümün çıkış kodu ya da protokol hatası yerine.</summary>
-    private const string IdleShutdownFailedCause = "idle shutdown failed";
+    /// failed)" — kendiliğinden ölümün çıkış kodu ya da protokol hatası yerine. <c>internal</c>: testler metni <see cref="EngineDiedText"/> ile
+    /// buradan kurar, literali bir kez pinler (M-5).</summary>
+    internal const string IdleShutdownFailedCause = "idle shutdown failed";
 
     /// <summary>[Fix round 1 · Mi1] Ölüm sinyali hiç gelmeyen düşmüş uyanmanın ölüm satırındaki nedeni: "Engine stopped unexpectedly (wake failed)"
     /// (<see cref="EnsureEngineAwakeAsync"/>). Aynı motorun geç gelen ölüm sinyali yalnız metni kendi nedeniyle yeniler — ölü motorun ikinci
-    /// bildirimi pencere bırakmaz (<see cref="ReportEngineDead"/>, M-3).</summary>
-    private const string WakeFailedCause = "wake failed";
+    /// bildirimi pencere bırakmaz (<see cref="ReportEngineDead"/>, M-3). <c>internal</c>: <see cref="IdleShutdownFailedCause"/> ile aynı gerekçe.</summary>
+    internal const string WakeFailedCause = "wake failed";
+
+    /// <summary>Şeridin ölüm satırı — biçimin TEK yeri (<see cref="ReportEngineDead"/>): <c>Engine stopped unexpectedly ({neden})</c>. Testler
+    /// bekleyen nedenlerin metnini bundan kurar; her metnin literal pini tektir (M-5).</summary>
+    internal static string EngineDiedText(string cause) => $"Engine stopped unexpectedly ({cause})";
 
     /// <summary>Motor hazır — TEK Ready geçişi: motorun kimliği (sürüm, PID — About bunları okur), durum <see cref="EngineState.Ready"/> ve son
     /// motor etkinliği ŞİMDİ. İki çağıran: hazır yolu (<see cref="OnEngineReady"/> — açılış ve yeniden başlatma) ve uyanma
@@ -364,7 +369,7 @@ public sealed partial class RunViewModel
         // [D1] Doğmuş bir motorun ölümü YENİDEN BAŞLATILABİLİR — şerit "Restart engine" aksiyonunu gösterir
         // (EngineDiedMessage yazan her yol bu bayrağı da yazar; bkz. EngineRestartable).
         EngineRestartable = true;
-        EngineDiedMessage = $"Engine stopped unexpectedly ({cause})";
+        EngineDiedMessage = EngineDiedText(cause);
         if (lost != EngineState.Dead && !InSleepCycle(lost)) ReleaseAfterEngineLoss();
     }
 

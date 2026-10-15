@@ -2,7 +2,6 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
-using System.Windows.Controls;
 using BuildOrchestrator.App;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
@@ -141,10 +140,6 @@ public class PullBeforeBuildTests
 
     // ---------------------------------------------------------------- görünüm
 
-    private static CheckBox PullSwitch(BuildOrchestrator.App.Views.SettingsDialog dialog) =>
-        DsResources.RealizedObjects(dialog.Page(BuildOrchestrator.App.Views.SettingsSection.General)).OfType<CheckBox>()
-            .Single(c => System.Windows.Automation.AutomationProperties.GetName(c) == AccessibilityNames.PullExternalsBeforeBuild);
-
     /// <summary>[DEĞİŞEN KURAL — design v1.19.0 §2.9] ESKİ İDDİA
     /// (<c>The_section_header_carries_the_caps_label_the_switch_and_its_tooltip</c>): switch External projects
     /// sayfasının başındaki kural satırında, <c>PULL BEFORE BUILD</c> caps etiketi ve açıklama tooltip'iyle dururdu.
@@ -158,7 +153,7 @@ public class PullBeforeBuildTests
         var (dialog, run, store, scope) = SettingsDialogHost.OpenRealized(r => r.ExternalProjects = [Mail]);
         using var _scope = scope;
 
-        var toggle = PullSwitch(dialog);
+        var toggle = SettingsDialogHost.GeneralSwitch(dialog, AccessibilityNames.PullExternalsBeforeBuild);
         Assert.Equal(dialog.FindResource("Ds.Switch"), toggle.Style);
         Assert.True(toggle.IsChecked);                                  // varsayılan AÇIK
         Assert.Null(toggle.ToolTip);
@@ -167,7 +162,7 @@ public class PullBeforeBuildTests
         Assert.False(dialog.Draft!.PullExternalsBeforeBuild);
         Assert.True(run.UpdateExternals);                               // Save'e kadar uygulanmaz
 
-        dialog.Save.RaiseEvent(new System.Windows.RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+        CommandPress.Click(dialog.Save);
 
         Assert.False(store.State.UpdateExternals);
         DispatcherPump.PumpUntil(() => !run.UpdateExternals, TimeSpan.FromSeconds(5));
@@ -181,6 +176,6 @@ public class PullBeforeBuildTests
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(run => run.UpdateExternals = false);
         using var _scope = scope;
 
-        Assert.False(PullSwitch(dialog).IsChecked);
+        Assert.False(SettingsDialogHost.GeneralSwitch(dialog, AccessibilityNames.PullExternalsBeforeBuild).IsChecked);
     }
 }
