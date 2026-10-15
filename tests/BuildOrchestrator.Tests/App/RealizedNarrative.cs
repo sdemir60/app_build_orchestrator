@@ -40,6 +40,19 @@ internal sealed class RealizedNarrative : IDisposable
     /// <summary>Anlatının sahibi — canlı satırlar önce buraya yazılır (<see cref="NarrativeSnapshots.Deliver"/>).</summary>
     public NarrativeStore Store { get; }
 
+    /// <summary>Bir proje sayfasının satırları (<c>page0</c>, <c>page1</c>, …) — sayfayı açan testlerin tek kaynağı.</summary>
+    public static string[] PageLines(int lines) => [.. Enumerable.Range(0, lines).Select(i => $"page{i}")];
+
+    /// <summary>Bir proje sayfası açılır — kabuğun kart seçimiyle aynı çağrı (<c>PlayCascade</c>) — ve yerleşim oturur.</summary>
+    public void OpenPage(int lines) => OpenPage(PageLines(lines));
+
+    /// <summary><see cref="OpenPage(int)"/>'in verilen satırlarla hâli (ör. yatay kaydırma isteyen uzun satırlar).</summary>
+    public void OpenPage(string[] page)
+    {
+        View.PlayCascade(ConsoleDocument.Text(page));
+        DispatcherPump.DrainToIdle();
+    }
+
     /// <summary>Okuyucunun dibe uzaklığı (px), yerleşim oturmuşken.</summary>
     public double DistanceFromBottom =>
         View.Editor.ExtentHeight - View.Editor.VerticalOffset - View.Editor.ViewportHeight;

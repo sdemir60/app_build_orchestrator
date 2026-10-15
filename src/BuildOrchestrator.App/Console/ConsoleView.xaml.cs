@@ -530,8 +530,9 @@ public partial class ConsoleView : UserControl
     /// yana kaydırıp okuyan okuyucu her batch'te sol kenara atılıyor, geniş satırlarda dibin 10 px üstünde kalıyordu. Yatay adım (←/→, yatay
     /// tekerlek) direksiyonu almaz, takip sürer; artık yatay konum da kalır. Mod geçişinin pini yatayı bilerek sıfırlar
     /// (<see cref="PinAfterModeSwitch"/>: yeni belge sol kenardan okunur).</para>
+    /// <para>internal: ölçüm testi isteğin kendisini tuşsuz çağırır (<c>ConsolePageEndMeasurementTests</c>) — paralel bir kopya yol değil.</para>
     /// </summary>
-    private void RequestBottom() =>
+    internal void RequestBottom() =>
         EditorControl.ScrollToVerticalOffset(Math.Max(0, EditorControl.TextArea.TextView.DocumentHeight - ScrollGeometry.ViewportHeight));
 
     // ---------------------------------------------------------------- colorizer

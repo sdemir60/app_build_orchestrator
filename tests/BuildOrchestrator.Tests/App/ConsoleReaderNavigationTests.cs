@@ -18,19 +18,6 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class ConsoleReaderNavigationTests
 {
-    /// <summary>Bir proje sayfasının satırları (<c>page0</c>, <c>page1</c>, …) — sayfayı açan testlerin tek kaynağı.</summary>
-    private static string[] Page(int lines) => [.. Enumerable.Range(0, lines).Select(i => $"page{i}")];
-
-    /// <summary>Bir proje sayfası açılır — kabuğun kart seçimiyle aynı çağrı (<c>PlayCascade</c>) — ve yerleşim oturur.</summary>
-    private static void OpenPage(RealizedNarrative narrative, int lines) => OpenPage(narrative, Page(lines));
-
-    /// <summary><see cref="OpenPage(RealizedNarrative, int)"/>'in verilen satırlarla hâli (ör. yatay kaydırma isteyen uzun satırlar).</summary>
-    private static void OpenPage(RealizedNarrative narrative, string[] page)
-    {
-        narrative.View.PlayCascade(ConsoleDocument.Text(page));
-        DispatcherPump.DrainToIdle();
-    }
-
     /// <summary>Okuyucu dipten ayrıldı: takip bırakıldı, <c>⌄ latest</c> görünür, prompt satırı (panele yaslı) gizli — dipte asılı
     /// kalsaydı okunan metnin üstüne binerdi.</summary>
     private static void AssertReleased(RealizedNarrative narrative)
@@ -200,7 +187,7 @@ public class ConsoleReaderNavigationTests
         narrative.WheelUp();
         narrative.WheelUp(); // okuyucu kaydırdı: direksiyon onda, bekleme kuruldu
 
-        OpenPage(narrative, lines: 300);
+        narrative.OpenPage(lines: 300);
 
         Assert.False(narrative.View.StickToBottom);
         Assert.Equal(Visibility.Visible, narrative.View.Pill.Visibility); // uzun sayfanın tepesi: dip uzakta
@@ -227,7 +214,7 @@ public class ConsoleReaderNavigationTests
         using var narrative = new RealizedNarrative(lines: 400);
         Assert.True(narrative.View.FollowsBottom); // ön-koşul: anlatı dibi izliyor
 
-        OpenPage(narrative, lines: 300);
+        narrative.OpenPage(lines: 300);
 
         Assert.False(narrative.View.FollowsBottom);
         Assert.Equal(0, narrative.View.Editor.VerticalOffset);
@@ -245,7 +232,7 @@ public class ConsoleReaderNavigationTests
     {
         using var narrative = new RealizedNarrative(lines: 400);
 
-        OpenPage(narrative, lines: 5);
+        narrative.OpenPage(lines: 5);
 
         Assert.True(narrative.View.Editor.ExtentHeight <= narrative.View.Editor.ViewportHeight, "test kurgusu: sayfa görünüme sığmalıydı");
         Assert.False(narrative.View.FollowsBottom);
@@ -274,7 +261,7 @@ public class ConsoleReaderNavigationTests
         narrative.View.Editor.TextArea.TextView.ScrollOffsetChanged += (_, _) =>
             decisions.Add((narrative.View.StickToBottom, narrative.View.Pill.Visibility)); // üretimin işleyicisinden SONRA koşar
 
-        narrative.View.PlayCascade(ConsoleDocument.Text(Page(lines: 300)));
+        narrative.View.PlayCascade(ConsoleDocument.Text(RealizedNarrative.PageLines(300)));
 
         Assert.NotEmpty(decisions); // ön-koşul: takas kaydırma olayı yaydı
         Assert.All(decisions, decision => Assert.Equal((false, Visibility.Visible), decision));
@@ -292,7 +279,7 @@ public class ConsoleReaderNavigationTests
     public void Back_from_a_project_page_the_reader_scrolled_follows_the_narrative_again()
     {
         using var narrative = new RealizedNarrative(lines: 400);
-        OpenPage(narrative, lines: 300);
+        narrative.OpenPage(lines: 300);
         narrative.Press(Key.PageDown); // okuyucu sayfada gezindi: direksiyon onda
 
         narrative.View.ReplaceRunDocument(NarrativeSnapshots.Of(narrative.Store)); // ← Back
@@ -315,7 +302,7 @@ public class ConsoleReaderNavigationTests
     {
         using var narrative = new RealizedNarrative(lines: 400);
 
-        OpenPage(narrative, lines: 1000);
+        narrative.OpenPage(lines: 1000);
 
         Assert.Equal(0, narrative.View.Editor.VerticalOffset);
         Assert.Equal("page0", narrative.TopLine());
@@ -340,7 +327,7 @@ public class ConsoleReaderNavigationTests
     public void Live_lines_of_a_building_project_land_in_order_after_its_log_wherever_the_reader_is(string where)
     {
         using var narrative = new RealizedNarrative(lines: 400);
-        OpenPage(narrative, lines: 1000);
+        narrative.OpenPage(lines: 1000);
         if (where == "middle") foreach (int _ in Enumerable.Range(0, 10)) narrative.Press(Key.PageDown);
         if (where == "end") narrative.PressCtrlEnd();
         double readingAt = narrative.View.Editor.VerticalOffset;
@@ -352,7 +339,7 @@ public class ConsoleReaderNavigationTests
             DispatcherPump.DrainToIdle();
         }
 
-        string[] logThenLive = [.. Page(1000), .. live];
+        string[] logThenLive = [.. RealizedNarrative.PageLines(1000), .. live];
         Assert.Equal(logThenLive, ConsoleDocument.LinesOf(narrative.View.Document));
         Assert.Equal(readingAt, narrative.View.Editor.VerticalOffset);
     }
@@ -370,7 +357,7 @@ public class ConsoleReaderNavigationTests
     public void A_project_page_scrolled_to_its_end_does_not_follow_new_lines()
     {
         using var narrative = new RealizedNarrative(lines: 400);
-        OpenPage(narrative, lines: 300);
+        narrative.OpenPage(lines: 300);
         narrative.PressCtrlEnd();
         Assert.Equal(0, narrative.DistanceFromBottom, precision: 1); // ön-koşul: okuyucu sayfanın sonunda
         double atTheEnd = narrative.View.Editor.VerticalOffset;
@@ -393,7 +380,7 @@ public class ConsoleReaderNavigationTests
     public void The_latest_pill_on_a_project_page_jumps_to_its_end_once_and_does_not_follow()
     {
         using var narrative = new RealizedNarrative(lines: 400);
-        OpenPage(narrative, lines: 1000);
+        narrative.OpenPage(lines: 1000);
         Assert.Equal(Visibility.Visible, narrative.View.Pill.Visibility); // ön-koşul: uzun sayfanın tepesi
 
         narrative.ClickLatest();
@@ -527,7 +514,7 @@ public class ConsoleReaderNavigationTests
     public void Page_down_and_page_up_move_a_project_page_one_viewport_at_a_time()
     {
         using var narrative = new RealizedNarrative(lines: 400);
-        OpenPage(narrative, lines: 1000);
+        narrative.OpenPage(lines: 1000);
         double start = narrative.ContentTop();
         double viewport = narrative.View.Editor.ViewportHeight;
 
@@ -586,7 +573,7 @@ public class ConsoleReaderNavigationTests
     public void End_takes_a_project_page_to_its_end_without_following()
     {
         using var narrative = new RealizedNarrative(lines: 400);
-        OpenPage(narrative, lines: 1000);
+        narrative.OpenPage(lines: 1000);
 
         narrative.Press(Key.End);
 
@@ -604,7 +591,7 @@ public class ConsoleReaderNavigationTests
     public void Home_takes_a_project_page_back_to_its_top_after_ctrl_end_and_page_ups()
     {
         using var narrative = new RealizedNarrative(lines: 400);
-        OpenPage(narrative, lines: 1000);
+        narrative.OpenPage(lines: 1000);
         narrative.PressCtrlEnd();
         foreach (int _ in Enumerable.Range(0, 3)) narrative.Press(Key.PageUp);
 
@@ -623,7 +610,7 @@ public class ConsoleReaderNavigationTests
     public void Down_after_two_page_downs_moves_a_project_page_one_more_line()
     {
         using var narrative = new RealizedNarrative(lines: 400);
-        OpenPage(narrative, lines: 1000);
+        narrative.OpenPage(lines: 1000);
         double start = narrative.ContentTop();
         double viewport = narrative.View.Editor.ViewportHeight;
         narrative.Press(Key.PageDown);
@@ -650,7 +637,7 @@ public class ConsoleReaderNavigationTests
     public void Arrows_scroll_long_lines_sideways_without_moving_the_page()
     {
         using var narrative = new RealizedNarrative(lines: 400);
-        OpenPage(narrative, [.. Enumerable.Range(0, 1000).Select(LongLine)]);
+        narrative.OpenPage([.. Enumerable.Range(0, 1000).Select(LongLine)]);
         narrative.Press(Key.PageDown);
         narrative.Press(Key.PageDown);
         var editor = narrative.View.Editor;
@@ -750,7 +737,7 @@ public class ConsoleReaderNavigationTests
     public void Shift_steps_still_select_text()
     {
         using var narrative = new RealizedNarrative(lines: 400);
-        OpenPage(narrative, lines: 1000);
+        narrative.OpenPage(lines: 1000);
         var editor = narrative.View.Editor;
 
         narrative.PressWithModifiers(Key.Down, ModifierKeys.Shift);
@@ -880,7 +867,7 @@ public class ConsoleReaderNavigationTests
     {
         using var motion = MotionScope.Enable(new FakeMotionSettings { AnimationsEnabled = true });
         using var narrative = new RealizedNarrative(lines: 400);
-        OpenPage(narrative, lines: 1000);
+        narrative.OpenPage(lines: 1000);
         var editor = narrative.View.Editor;
         double end = editor.ExtentHeight - editor.ViewportHeight;
 
@@ -913,7 +900,7 @@ public class ConsoleReaderNavigationTests
     public void The_latest_pill_returns_when_new_lines_grow_a_project_page_below_the_reader()
     {
         using var narrative = new RealizedNarrative(lines: 400);
-        OpenPage(narrative, lines: 1000);
+        narrative.OpenPage(lines: 1000);
         narrative.ClickLatest();
         Assert.Equal(Visibility.Collapsed, narrative.View.Pill.Visibility); // ön-koşul: sonda
         double landed = narrative.View.Editor.VerticalOffset;
@@ -936,7 +923,7 @@ public class ConsoleReaderNavigationTests
     public void A_short_project_page_that_grows_past_the_panel_offers_the_latest_pill()
     {
         using var narrative = new RealizedNarrative(lines: 400);
-        OpenPage(narrative, lines: 5);
+        narrative.OpenPage(lines: 5);
         Assert.Equal(Visibility.Collapsed, narrative.View.Pill.Visibility); // ön-koşul: sayfa sığıyor
 
         narrative.View.AppendBatch(string.Concat(Enumerable.Range(0, 100).Select(i => $"live{i}\n")));
@@ -1011,7 +998,7 @@ public class ConsoleReaderNavigationTests
     public void Back_from_a_short_project_page_never_flashes_the_latest_pill()
     {
         using var narrative = new RealizedNarrative(lines: 400);
-        OpenPage(narrative, lines: 5);
+        narrative.OpenPage(lines: 5);
         Assert.Equal(Visibility.Collapsed, narrative.View.Pill.Visibility); // ön-koşul
         using var pill = VisibilityToggles.Of(narrative.View.Pill);
 
@@ -1061,7 +1048,7 @@ public class ConsoleReaderNavigationTests
     public void A_project_page_never_shows_the_prompt_caret_while_the_latest_pill_comes_and_goes()
     {
         using var narrative = new RealizedNarrative(lines: 400);
-        OpenPage(narrative, lines: 1000);
+        narrative.OpenPage(lines: 1000);
         Assert.Equal(Visibility.Collapsed, narrative.View.ActiveLineOverlay.Visibility); // ön-koşul
         using var pill = VisibilityToggles.Of(narrative.View.Pill);
         using var caret = VisibilityToggles.Of(narrative.View.ActiveLineOverlay);
