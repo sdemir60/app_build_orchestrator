@@ -100,8 +100,10 @@ public class ConsoleReaderNavigationTests
     /// Dipten gerçek bir PageUp takibi İLK basışta bırakır.
     /// <para>KIRMIZI (ölçüldü): ilk basışın olayında ScrollViewer dipte (eski), TextView yukarıda — anchor yapışık kalıyordu; ancak ikinci
     /// basış (ScrollViewer artık ilkinin konumunda) bırakıyordu.</para>
-    /// <para>Not (bu testin konusu değil): editörün PageUp'ı imleci bir sayfa yukarı taşıyıp görünür kılar; imleç belgenin başında
-    /// durduğundan dipteki ilk PageUp dilimin tepesine sıçrar.</para>
+    /// <para>Not (bu testin konusu değil): PageUp görünümü bir görünür alan yukarı kaydırır (dalga 3 · karar 46 —
+    /// <see cref="A_real_page_up_at_the_bottom_of_the_narrative_moves_exactly_one_viewport"/>). Eskiden editörün kendi PageUp'ı koşuyordu:
+    /// imleci bir sayfa yukarı taşıyıp görünür kılıyordu ve imleç belgenin başında durduğundan dipteki ilk PageUp dilimin tepesine
+    /// sıçrıyordu. Bu testin iddiası (takip ilk basışta bırakılır) iki hâlde de aynıdır.</para>
     /// </summary>
     [StaFact]
     public void A_real_page_up_from_the_bottom_releases_the_console_on_the_first_press()
@@ -421,5 +423,113 @@ public class ConsoleReaderNavigationTests
 
         AssertFollowingAtTheBottom(narrative);
         Assert.EndsWith("live3\n", narrative.View.Document.Text);
+    }
+
+    // ---------------------------------------------------------------- [dalga 3 · karar 46] PageUp/PageDown bir görünür alan
+
+    /// <summary>
+    /// [dalga 3 · karar 46] Anlatının dibinde gerçek bir PageUp görünümü TAM BİR görünür alan yukarı kaydırır; tepeye yaklaşmadığı için
+    /// önceki dilim yüklenmez.
+    /// <para>KIRMIZI (karardan önce, ölçüldü dalga 2 dördüncü inceleme): editörün kendi PageUp'ı imleç-göreliydi — imleci bir sayfa yukarı
+    /// taşıyıp görünür kılıyordu; imleç belgenin başında (1. satır) durduğundan dipteki ilk PageUp 200 satırlık dilimin TEPESİNE sıçrıyor,
+    /// yükleyici de önceki dilimi getiriyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void A_real_page_up_at_the_bottom_of_the_narrative_moves_exactly_one_viewport()
+    {
+        using var narrative = new RealizedNarrative(lines: 600);
+        double before = narrative.ContentTop();
+        double viewport = narrative.View.Editor.ViewportHeight;
+
+        narrative.Press(Key.PageUp);
+
+        Assert.Equal(before - viewport, narrative.ContentTop(), precision: 1);
+        Assert.Null(narrative.View.LastPrepend);
+    }
+
+    /// <summary>
+    /// [dalga 3 · karar 46] PageUp'ın ardından PageDown anlatıyı dibine geri getirir; dibe ulaşmak her jestteki gibidir: okuyucu elini
+    /// çekince takip geri gelir (anchor kuralları değişmez).
+    /// <para>KIRMIZI (karardan önce): PageUp dilimin tepesine sıçrıyordu; PageDown da imleç-göreliydi — dibe dönmüyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void A_real_page_down_after_a_page_up_returns_the_narrative_to_its_bottom()
+    {
+        using var narrative = new RealizedNarrative(lines: 600);
+        double bottom = narrative.ContentTop();
+        narrative.Press(Key.PageUp);
+        AssertReleased(narrative); // ön-koşul: okuyucu paneli aldı
+
+        narrative.Press(Key.PageDown);
+
+        Assert.Equal(bottom, narrative.ContentTop(), precision: 1);
+        Assert.Equal(0, narrative.DistanceFromBottom, precision: 1);
+        narrative.ElapseAnchorTimers();
+        AssertFollowingAtTheBottom(narrative);
+    }
+
+    /// <summary>
+    /// [dalga 3 · karar 46] Anlatının dibinde gerçek bir PageDown dipte kalır — dibe ulaşmanın aynısı: pill çıkmaz, okuyucu elini çekince
+    /// takip sürer.
+    /// <para>KIRMIZI (karardan önce): editörün PageDown'ı imleci (belgenin başında, 1. satır) bir sayfa aşağı taşıyıp görünür kılıyordu —
+    /// dipteki okuyucu dilimin başına, yukarı sıçrıyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void A_real_page_down_at_the_bottom_of_the_narrative_stays_at_the_bottom()
+    {
+        using var narrative = new RealizedNarrative(lines: 600);
+
+        narrative.Press(Key.PageDown);
+
+        Assert.Equal(0, narrative.DistanceFromBottom, precision: 1);
+        Assert.Equal(Visibility.Collapsed, narrative.View.Pill.Visibility);
+        narrative.ElapseAnchorTimers();
+        AssertFollowingAtTheBottom(narrative);
+    }
+
+    /// <summary>
+    /// [dalga 3 · karar 46] Dipten art arda PageUp'lar anlatıda her basışta TAM BİR görünür alan yukarı yürür; belgenin tepesine varan
+    /// basış, her okuyucu jestindeki gibi orada durur ve önceki dilimi getirir (yükleyici + prepend telafisi): okuyucunun içerikteki yeri
+    /// sıçramaz, sıradaki basış yürüyüşü sürdürür — anlatının başına dek; sonunda belge anlatının tamamıdır.
+    /// <para>KIRMIZI (karardan önce): ilk basış dilimin tepesine sıçrıyordu (içerikte ~170 satır, bir görünür alan ~30 satır).</para>
+    /// </summary>
+    [StaFact]
+    public void Page_ups_walk_the_narrative_up_one_viewport_at_a_time_and_bring_the_previous_slices_on_the_way()
+    {
+        using var narrative = new RealizedNarrative(lines: 600);
+        double viewport = narrative.View.Editor.ViewportHeight;
+
+        for (int press = 0; press < 60 && narrative.ContentTop() > 0; press++)
+        {
+            double before = narrative.ContentTop();
+            double documentTop = narrative.DocumentTop(); // bir basış belgenin tepesinde durur (her jest gibi), dilim orada gelir
+            narrative.Press(Key.PageUp);
+            Assert.Equal(Math.Max(documentTop, before - viewport), narrative.ContentTop(), precision: 1);
+        }
+
+        Assert.Equal(0, narrative.ContentTop());
+        Assert.Equal(string.Concat(Enumerable.Range(0, 600).Select(i => $"line{i}\n")), narrative.View.Document.Text);
+    }
+
+    /// <summary>
+    /// [dalga 3 · karar 46] Proje sayfasında da PageDown/PageUp görünümü TAM BİR görünür alan kaydırır; sayfa izlemez.
+    /// <para>KIRMIZI (karardan önce): editörün PageDown'ı imleç-göreliydi — tepedeki sayfada imleci bir sayfa aşağı taşıyıp yalnız onu
+    /// görünür kılacak kadar kaydırıyordu (bir satır kadar).</para>
+    /// </summary>
+    [StaFact]
+    public void Page_down_and_page_up_move_a_project_page_one_viewport_at_a_time()
+    {
+        using var narrative = new RealizedNarrative(lines: 400);
+        OpenPage(narrative, lines: 1000);
+        double start = narrative.ContentTop();
+        double viewport = narrative.View.Editor.ViewportHeight;
+
+        narrative.Press(Key.PageDown);
+        Assert.Equal(start + viewport, narrative.ContentTop(), precision: 1);
+        narrative.Press(Key.PageDown);
+        Assert.Equal(start + 2 * viewport, narrative.ContentTop(), precision: 1);
+        narrative.Press(Key.PageUp);
+        Assert.Equal(start + viewport, narrative.ContentTop(), precision: 1);
+        Assert.False(narrative.View.FollowsBottom);
     }
 }

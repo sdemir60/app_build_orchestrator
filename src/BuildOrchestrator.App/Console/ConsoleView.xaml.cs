@@ -181,6 +181,8 @@ public partial class ConsoleView : UserControl
         // "Kullanıcı kaydırdı" HAM GİRDİDEN bildirilir — tekerlek, kaydırma çubuğu ve gezinme tuşları
         // (gerekçe: UserScrollSignal / BottomAnchorBehavior.NotifyUserScroll).
         UserScrollSignal.Wire(this, _bottomAnchor.NotifyUserScroll);
+        // [idle-memory · dalga 3 · karar 46] PageUp/PageDown görünümü bir görünür alan kaydırır (gerekçe: OnPreviewPageCommand).
+        CommandManager.AddPreviewExecutedHandler(EditorControl, OnPreviewPageCommand);
         // [A13/T5] Pill'in adı host'tan gelir (hangi akışın sonu — bkz. LatestPill.AccessibleName).
         Pill.AccessibleName = AccessibilityNames.LatestConsole;
         // [Task 6/design v1.17.0 §9] Konsol gövdesi standart OK imleci ister — AvalonEdit'in TextArea'sı kendi
@@ -1053,6 +1055,29 @@ public partial class ConsoleView : UserControl
     // [T59] Pill tıklaması → yumuşak (reduced-motion'da anında) dibe. [dalga 3 · karar 45] Anlatıda takip geri gelir; proje sayfasında
     // görünüm sona BİR KEZ gider ve takip açılmaz (anchor'ın takip izni — ctor'daki followAllowed).
     private void OnPillClick(object sender, RoutedEventArgs e) => _bottomAnchor.JumpToBottom();
+
+    /// <summary>
+    /// [idle-memory · dalga 3 · karar 46] <b>PageUp/PageDown görünümü TAM BİR görünür alan kaydırır</b> — anlatıda da proje sayfasında
+    /// da; komut ScrollViewer'dan geçer (<see cref="TextEditor.PageUp"/>/<see cref="TextEditor.PageDown"/> → TextView'in kendi bir-görünür-alan
+    /// adımı), konsolun diğer kaydırma komutları gibi.
+    /// <para>Editörün kendi PageUp/PageDown'ı imleç-görelidir: imleci bir sayfa taşıyıp görünür kılar. Konsolun imleci görünmez ve hiç
+    /// taşınmaz — yeniden kurulumdan sonra 1. satırdadır, eklemeler onu oynatmaz. Ölçüldü (dalga 2 dördüncü inceleme): dipteki ilk PageUp bir
+    /// sayfa yukarı değil, 200 satırlık dilimin TEPESİNE sıçrıyor (ve yükleyici önceki dilimi getiriyordu); dipteki PageDown da okuyucuyu
+    /// imlecin yanına, dilimin başına yakın bir yere yukarı atıyordu (dalga 3: 600 satırlık anlatıda dipten ~2645 px yukarı). Komut bu yüzden
+    /// tünelleyen önizlemede (editör, TextArea'nın atası) karşılanır ve editörün kendi işleyicisine inmez; imleç yine taşınmaz (seçim ve
+    /// Ctrl+C eskisi gibi).</para>
+    /// <para>Geri kalan her şey her jestteki gibidir: tuşun ham önizlemesi direksiyonu okuyucuya verir (<see cref="UserScrollSignal"/>),
+    /// kaydırmanın olayı takip kararını ve yükleyiciyi besler (<see cref="OnScrollOffsetChanged"/>) — tepeye varan bir PageUp anlatıda
+    /// önceki dilimi getirir, dibe varan bir PageDown dibe ulaşmanın aynısıdır. Ctrl+Home/Ctrl+End ve Shift'li seçim adımları editörün
+    /// kendisinde kalır.</para>
+    /// </summary>
+    private void OnPreviewPageCommand(object sender, ExecutedRoutedEventArgs e)
+    {
+        if (e.Command == System.Windows.Documents.EditingCommands.MoveUpByPage) EditorControl.PageUp();
+        else if (e.Command == System.Windows.Documents.EditingCommands.MoveDownByPage) EditorControl.PageDown();
+        else return;
+        e.Handled = true;
+    }
 
     // [T59] BottomAnchorBehavior'ın "scrollSmooth" delege'i. [M-1] Ortak desen (taze AnimationsEnabled + Duration.Slow
     // + KeySpline.EaseInOut + ScrollAnimator.AnimateTo) StickyLayerList.AnimateScrollTo ile PAYLAŞILIR —

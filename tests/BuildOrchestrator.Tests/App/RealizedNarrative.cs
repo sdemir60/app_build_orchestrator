@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Windows;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
@@ -58,6 +59,29 @@ internal sealed class RealizedNarrative : IDisposable
         RaiseKey(key, Keyboard.PreviewKeyDownEvent);
         ((RoutedCommand)binding.Command).Execute(binding.CommandParameter, textArea);
         DispatcherPump.DrainToIdle();
+    }
+
+    /// <summary>Okuyucunun İÇERİKTEKİ yeri (px): görünür alanın tepesindeki satırın içerik sırası × satır yüksekliği + o satırın içinde
+    /// kalan pay. Satırlar "önek + sıra" biçimindedir (anlatı <c>line</c>, proje sayfası <c>page</c>) ve hepsi bir satır yüksekliğindedir
+    /// (sarma yok). Belgenin tepesine dilim eklenince ofset sıçrar ama bu değer sıçramaz: bir kaydırmanın içerikte aldığı yol prepend'den
+    /// bağımsız okunur. Geometri TextView'in kendisinden okunur (konsolun tek kaynağı — <c>ConsoleView.ScrollGeometry</c>).</summary>
+    public double ContentTop()
+    {
+        var textView = View.Editor.TextArea.TextView;
+        double offset = textView.VerticalOffset;
+        var line = textView.GetDocumentLineByVisualTop(offset);
+        return Order(line) * textView.DefaultLineHeight + (offset - textView.GetVisualTopByDocumentLine(line.LineNumber));
+    }
+
+    /// <summary>Belgenin İLK satırının içerikteki yeri (px) — <see cref="ContentTop"/> ile aynı ölçek: okuyucu belgenin tepesindeyken
+    /// <see cref="ContentTop"/> bu değerdir. Tepeye bir dilim eklenince küçülür.</summary>
+    public double DocumentTop() => Order(View.Document.GetLineByNumber(1)) * View.Editor.TextArea.TextView.DefaultLineHeight;
+
+    /// <summary>Bir satırın içerik sırası: metnindeki önekten sonraki sayı.</summary>
+    private int Order(ICSharpCode.AvalonEdit.Document.DocumentLine line)
+    {
+        string text = View.Document.GetText(line);
+        return int.Parse(text.AsSpan(text.AsSpan().IndexOfAnyInRange('0', '9')), CultureInfo.InvariantCulture);
     }
 
     /// <summary>Değiştiricisiz bir tuş: önizleme, ardından gerçek KeyDown — editörün bağlamasını <c>CommandManager</c> eşleştirir.</summary>
