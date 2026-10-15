@@ -473,6 +473,14 @@ public sealed partial class RunViewModel : ObservableObject
     // isteğe verilmez). Yalnız UI thread'inde yazılır (LoadProjectLogAsync).
     private int _lastLogRequestId;
 
+    /// <summary>[idle-memory · dalga 3 · karar 37] App'in gördüğü SON koşunun disk log klasörü (<see cref="RunStartedEvent.LogDirectory"/>) —
+    /// değerin TEK sahibi. Bir koşu başlayınca yazılır (<see cref="OnRunStarted"/>) ve bir sonraki koşu başlayana dek kalır: satırlar o koşuyu
+    /// anlatır. İki okuyan: proje log isteği (<see cref="LoadProjectLogAsync"/> — <see cref="GetProjectLogCommand.RunDirectory"/>; uykudan
+    /// uyanmış ya da yeniden başlatılmış motor önceki koşuyu yalnız buradan bilir) ve branch değişimiyle kesilen koşunun özeti
+    /// (<see cref="TakeInterruptedRunSummary"/>). Uygulama açıldığından beri koşu başlamadıysa <c>null</c>: istek klasör taşımaz, motor bugünkü
+    /// gibi yalnız kendi koşularına bakar. Yalnız UI thread'inde yazılır.</summary>
+    private string? _lastRunLogDirectory;
+
     private string? _currentRunId;
     // [Task 2 review fix M-2] Bu run'ın modu — TEK yazıcı OnRunStarted'dır (koşulsuz, moddan bağımsız döngüyle
     // AYNI noktada). Eskiden Stream.cs partial'ının kendi `_streamRunMode`'u OKUNUYORDU: o alan
@@ -1946,6 +1954,7 @@ public sealed partial class RunViewModel : ObservableObject
         _currentRunId = e.RunId;
         _awaitingRunCompleted = true;
         RunSerial++; // [perf Faz C · C4] koşu kimliği — motorun koşu kimliği tekrar edebilir, sayaç etmez
+        _lastRunLogDirectory = e.LogDirectory; // [dalga 3 · karar 37] son koşunun klasörü — değerin tek yazımı
         BeginInterruptRecord(e);
         // [Task 2 review fix M-2] Mod'un TEK yazım noktası — InRunQueueFor/OnProjectSkipped bunu okur, hangi
         // sırada hangi partial'ın çalıştığına bağlı KALMADAN (bkz. alanın kendi XML yorumu).
@@ -3060,6 +3069,9 @@ public sealed partial class RunViewModel : ObservableObject
     /// kural orada; isteğin hâlâ istendiği koşulu: yerini yenisi almamış olması), sonra tek gönderimle (<see cref="SendWithFailureLineAsync"/>,
     /// bugünkü <c>[error] could not load project log: …</c> satırıyla). İki "gitmedi" de — kapının reddi (satırsız) ve düşen gönderim — aynı geri
     /// alımı alır. [round 2] Kapının geçişi gönderim boyunca tutulur (<see cref="GatePass"/>).</para>
+    /// <para>[idle-memory · dalga 3 · karar 37] İstek App'in gördüğü son koşunun klasörünü taşır (<see cref="_lastRunLogDirectory"/>): kendi
+    /// koşusu olmayan motor — uykudan uyanmış ya da yeniden başlatılmış — o koşunun projelerinin logunu oradan okur; kendi koşusu olan motor
+    /// klasöre bakmaz.</para>
     /// </summary>
     public async Task LoadProjectLogAsync(string projectId)
     {
@@ -3075,7 +3087,8 @@ public sealed partial class RunViewModel : ObservableObject
         NotifyPendingLogLoad(wasPending);
         bool sent;
         using (var pass = await EnsureEngineAwakeAsync(typeof(GetProjectLogCommand), stillWanted: () => ReferenceEquals(_pendingLoad, pending)))
-            sent = pass.Send && await SendWithFailureLineAsync(new GetProjectLogCommand(projectId, pending.RequestId), "[error] could not load project log", pass);
+            sent = pass.Send && await SendWithFailureLineAsync(new GetProjectLogCommand(projectId, pending.RequestId, _lastRunLogDirectory),
+                "[error] could not load project log", pass);
         if (!sent)
         {
             // İstek yola çıkmadı: gönderim düştü ya da motor kapısı "gönderme" dedi.

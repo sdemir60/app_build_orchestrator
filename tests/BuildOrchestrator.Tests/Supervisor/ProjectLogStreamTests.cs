@@ -121,7 +121,8 @@ public class ProjectLogStreamTests
                 innerJob: Job,
                 nowMs: () => Environment.TickCount64,
                 console: _ => { },
-                memoryTrim: NoRealGc.Collection);
+                memoryTrim: NoRealGc.Collection,
+                logsRoot: LogsRoot); // [dalga 3 · karar 37] Program.cs deseni: log fabrikasının AYNI kökü
             // [A5/T69] Sync/branch servisleri İZOLE köklerle bağlanır (bu harness onları kullanmaz, ama
             // kullanıcının gerçek cache dosyalarına hiçbir koşulda dokunulmamalıdır).
             // [optimize] Restore fabrikası da çağrılmamalıdır — çağrılırsa test sessizce geçmez.
@@ -316,6 +317,123 @@ public class ProjectLogStreamTests
         // (eski error(logNotFound) ile birlikte ya da ikinci bir boş chunk) araya girseydi sıradaki olay pong olmazdı.
         await h.SendAsync(new PingCommand(9));
         Assert.Equal(9, Assert.IsType<PongEvent>(await h.ReadEventAsync()).Seq);
+
+        await h.ShutdownAsync();
+    }
+
+    // ---------------------------------------------------------------- 4) [idle-memory · dalga 3 · karar 37] isteğin adını verdiği koşu klasörü
+
+    /// <summary>Başka bir motor sürecinin (uykudan önceki ya da ölmüş motorun) bıraktığı koşu: <paramref name="logsRoot"/> altında üretimin
+    /// yazıcısıyla açılmış bir koşu klasörü, A projesinin iki satırlık logu. Yazıcı kapanır — klasör diskte kalır, sınanan motor onu hiç
+    /// açmadı. Dönen değer klasörün yoludur: o koşunun <c>runStarted.LogDirectory</c>'si, App'in isteğe koyduğu değer.</summary>
+    private static string RunLeftByAnEarlierEngine(string logsRoot)
+    {
+        using var writer = new RunLogWriter(logsRoot, DateTimeOffset.Now);
+        using (var log = writer.OpenProjectLog(Id("A")))
+        {
+            log.AppendLine("line-1");
+            log.AppendLine("line-2");
+        }
+        return writer.RunDirectory;
+    }
+
+    /// <summary>A projesinin <paramref name="runDirectory"/>'deki log dosyası — adı üretimin TEK kuralından (<see cref="ProjectLogNaming"/>).</summary>
+    private static string LogOfAIn(string runDirectory) => Path.Combine(runDirectory, ProjectLogNaming.FileNameFor(Id("A")));
+
+    /// <summary>
+    /// [karar 37 · C2] Taze motor — kendi koşusu yok, canlı yazıcısı yok (uykudan uyanmış ya da yeniden başlatılmış süreç) — önceki motorun
+    /// koşusundaki bir projenin logunu isteğin adını verdiği klasörden okur: cevap o dosyanın metnidir, "log yok" değildir, isteğin kimliğini
+    /// yankılar ve dikiş noktası dosyanın satır sayısıdır. Kaynak sırası canlı yazıcı → motorun son koşusu → isteğin klasörü; burada ilk ikisi
+    /// yoktur.
+    /// <para>KIRMIZI: motor isteğin klasörünü hiç okumuyordu — tek, boş, <c>NotFound</c> bir chunk (uyandırılan motorda "No log yet").</para>
+    /// </summary>
+    [Fact]
+    public async Task A_fresh_engine_reads_an_earlier_runs_project_log_from_the_folder_the_request_names()
+    {
+        var invoker = new FakeInvoker((_, _, _) => throw new InvalidOperationException("no run in this test"));
+        using var h = new Harness(PlanOf(Node("A")), invoker);
+        Assert.IsType<EngineReadyEvent>(await h.ReadEventAsync());
+        string runDirectory = RunLeftByAnEarlierEngine(h.LogsRoot);
+
+        await h.SendAsync(new GetProjectLogCommand(Id("A"), RequestId: 4, RunDirectory: runDirectory));
+        var chunks = await ReadReplyAsync(h);
+
+        Assert.All(chunks, c => Assert.False(c.NotFound));
+        Assert.All(chunks, c => Assert.Equal(4, c.RequestId));
+        Assert.All(chunks, c => Assert.Equal(2, c.ThroughLineNumber));
+        Assert.Equal(await File.ReadAllTextAsync(LogOfAIn(runDirectory)), string.Concat(chunks.OrderBy(c => c.Sequence).Select(c => c.Text)));
+
+        await h.ShutdownAsync();
+    }
+
+    /// <summary>Taze motorun kendi koşu klasörü olmayan yer — her biri gerçek bir klasör ve içinde A'nın logu var: kabul edilseydi okunurdu.</summary>
+    public enum ForeignFolder
+    {
+        /// <summary>Koşu klasörü, ama başka bir log kökünde.</summary>
+        OutsideTheLogsRoot,
+        /// <summary>Koşu klasörü, kökün altında ama doğrudan altında değil (iç içe).</summary>
+        NestedUnderTheLogsRoot,
+        /// <summary>Kökün doğrudan altında, ama adı koşu klasörü kalıbına uymuyor.</summary>
+        NotARunFolderName,
+    }
+
+    /// <summary>
+    /// [karar 37] Taze motor isteğin klasörünü yalnız kendi log kökünün koşu klasörlerinden biriyse kabul eder (tam nitelikli, kökün doğrudan
+    /// altında, adı koşu klasörü kalıbında — <see cref="RunLogPaths.IsRunDirectoryOf"/>); aksi hâlde bugünkü "log yok" cevabıdır: tek, boş,
+    /// <c>NotFound</c> bir chunk. Klasörlerin hepsi gerçek ve A'nın logunu taşır — ret kuralın işidir, eksik dosyanın değil.
+    /// <para>KIRMIZI (mutasyon: kabul koşulu yokken — klasörü doğrulamadan okuyan geri düşüş): üç durumda da başka yerdeki log okunup
+    /// gönderiliyordu.</para>
+    /// </summary>
+    [Theory]
+    [InlineData(ForeignFolder.OutsideTheLogsRoot)]
+    [InlineData(ForeignFolder.NestedUnderTheLogsRoot)]
+    [InlineData(ForeignFolder.NotARunFolderName)]
+    public async Task A_fresh_engine_refuses_a_folder_that_is_not_one_of_its_run_folders(ForeignFolder kind)
+    {
+        var invoker = new FakeInvoker((_, _, _) => throw new InvalidOperationException("no run in this test"));
+        using var h = new Harness(PlanOf(Node("A")), invoker);
+        using var otherRoot = new TempDir();
+        Assert.IsType<EngineReadyEvent>(await h.ReadEventAsync());
+        string folder = kind switch
+        {
+            ForeignFolder.OutsideTheLogsRoot => RunLeftByAnEarlierEngine(otherRoot.Path),
+            ForeignFolder.NestedUnderTheLogsRoot => RunLeftByAnEarlierEngine(Path.Combine(h.LogsRoot, "nested")),
+            _ => Renamed(RunLeftByAnEarlierEngine(h.LogsRoot), "not-a-run"),
+        };
+        Assert.True(File.Exists(LogOfAIn(folder))); // ön-koşul: log orada — kabul edilseydi okunurdu
+
+        await h.SendAsync(new GetProjectLogCommand(Id("A"), RequestId: 6, RunDirectory: folder));
+        var reply = Assert.IsType<ProjectLogChunkEvent>(await h.ReadEventAsync());
+
+        Assert.Equal(ProjectLogIpc.NotFound(requestId: 6, Id("A")), reply);
+        await h.ShutdownAsync();
+
+        static string Renamed(string directory, string name)
+        {
+            string target = Path.Combine(Path.GetDirectoryName(directory)!, name);
+            Directory.Move(directory, target);
+            return target;
+        }
+    }
+
+    /// <summary>
+    /// [karar 37 · PİN] Kendi koşusu olan motor isteğin klasörüne BAKMAZ: kaynak sırası canlı yazıcı → motorun son koşusu → isteğin klasörü.
+    /// Koşusu tamamen bitmiş motor, isteğin adını verdiği (geçerli, A'nın iki satırlık logunu taşıyan) başka bir koşu klasörü yerine kendi son
+    /// koşusunun uzun logunu verir.
+    /// <para>PİN: isteğin klasörünü hiç okumayan bugünkü kod da yeşildir; bu test sıranın tersine dönmesini (isteğin klasörünün motorun kendi
+    /// koşusunu gölgelemesini) yakalar.</para>
+    /// </summary>
+    [Fact]
+    public async Task An_engine_with_its_own_last_run_answers_from_it_not_from_the_folder_the_request_names()
+    {
+        using var h = await CompletedRunWithALongLogAsync();
+        string earlier = RunLeftByAnEarlierEngine(h.LogsRoot); // kökün doğrudan altında, kabul edilebilir bir klasör
+
+        await h.SendAsync(new GetProjectLogCommand(Id("A"), RequestId: 8, RunDirectory: earlier));
+        var chunks = await ReadReplyAsync(h);
+
+        Assert.All(chunks, c => Assert.Equal(LongLogLineCount + 1, c.ThroughLineNumber)); // kendi koşusu (+1: komut satırı), iki satırlık değil
+        Assert.All(chunks, c => Assert.False(c.NotFound));
 
         await h.ShutdownAsync();
     }

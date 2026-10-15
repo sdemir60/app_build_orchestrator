@@ -309,6 +309,53 @@ public class EngineWakeTests
         GC.KeepAlive(window);
     }
 
+    // ---------------------------------------------------------------- önceki koşunun proje logu (karar 37 · C2)
+
+    /// <summary>[karar 37 · C2] Uyanmış motor yeni bir süreçtir ve önceki koşuyu bilmez; App bilir. Koşu biter, motor beş işsiz dakikada uyur,
+    /// kullanıcı o koşunun bir satırına tıklar: istek motoru uyandırır ve App'in gördüğü son koşunun klasörünü taşır
+    /// (<c>runStarted.LogDirectory</c> — satırların anlattığı koşu); motor logu oradan okur (Supervisor tarafı:
+    /// <c>ProjectLogStreamTests.A_fresh_engine_reads_an_earlier_runs_project_log_from_the_folder_the_request_names</c>).
+    /// <para>KIRMIZI: istek klasör taşımıyordu (<c>RunDirectory</c> null) — uyanan motor "log yok" cevabı veriyordu.</para></summary>
+    [WpfFact]
+    public void A_project_log_click_after_a_wake_names_the_previous_runs_folder()
+    {
+        using var dir = new TempDir();
+        long now = 1_000;
+        var (window, vm, probe) = ReadyShell(dir, () => now);
+        using var run = new SpoolDir(vm.Narrative);
+        MainWindowHost.StartBuildWithLogDirectory(vm, run.Path, "A");
+        MainWindowHost.FinishBuild(vm, "A");
+        DispatcherPump.DrainToIdle();
+        now += IdleAfterMs;
+        window.OnElapsedTick();
+        Assert.Equal(EngineState.Asleep, vm.EngineState); // ön-koşul: koşu bitti, motor uyudu
+        var sent = Record(vm);
+
+        _ = vm.LoadProjectLogAsync(MainWindowHost.IdOf("A"));
+        DispatcherPump.DrainToIdle();
+
+        Assert.Equal(1, probe.WakeCalls);
+        var request = Assert.IsType<GetProjectLogCommand>(Assert.Single(sent.Commands));
+        Assert.Equal(run.Path, request.RunDirectory);
+        Assert.Equal(EngineState.Ready, Assert.Single(sent.States));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[karar 37 · PİN] App henüz bir koşu başladığını görmediyse (uygulama yeni açıldı) istek klasör taşımaz — motor bugünkü gibi
+    /// yalnız kendi koşularına bakar. PİN: klasörü hiç göndermeyen bugünkü kod da yeşildir; bu test alanın bir koşu olmadan dolmasını yakalar.</summary>
+    [WpfFact]
+    public void A_project_log_click_before_any_run_names_no_folder()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _, sent, _) = AsleepShell(dir);
+
+        _ = vm.LoadProjectLogAsync(MainWindowHost.IdOf("A"));
+        DispatcherPump.DrainToIdle();
+
+        Assert.Null(Assert.IsType<GetProjectLogCommand>(Assert.Single(sent.Commands)).RunDirectory);
+        GC.KeepAlive(window);
+    }
+
     // ---------------------------------------------------------------- ölü ve erişilemez motor: bugünkü gönderim (R2)
 
     /// <summary>[Fix round 1 · I1 · R2] Ölü motor kapının işi değildir: uyandırma yok, gönderim bugünkü gibi gider ve bugünkü satırlarını yazar. Hazır

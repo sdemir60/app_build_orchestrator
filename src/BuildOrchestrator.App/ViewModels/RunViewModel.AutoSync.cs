@@ -105,15 +105,18 @@ public sealed partial class RunViewModel : IAutoSyncPort
     /// <summary>Kesme anında sabitlenen koşu kapsamı (<see cref="InterruptScope"/>) — özetin paydası.</summary>
     private readonly HashSet<string> _interruptScopeIds = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Bu koşunun disk log klasörü (<see cref="RunStartedEvent.LogDirectory"/>).</summary>
-    private string? _runLogDirectory;
+    /// <summary>[idle-memory · dalga 3 · karar 37] Kesme, isteği motora hiç gitmemiş bir koşuya denk geldi (açılış koreografisinde geri
+    /// alındı): özeti log klasörü ANMAZ — App'in bildiği son klasör (<see cref="_lastRunLogDirectory"/>) daha önceki bir koşunundur. Bir koşu
+    /// başlayınca düşer. Eskiden özetin klasörü ayrı bir alandaydı ve bu kesme onu siliyordu; klasörün tek sahibi artık o alandır, "bu özetin
+    /// klasörü yok" bilgisi kesme kaydındadır — davranış aynı.</summary>
+    private bool _interruptedBeforeSend;
 
     /// <summary><c>runStarted</c>'ta koşunun özet kaydı sıfırlanır. Planlama penceresinde kesilmiş koşunun kaydı
     /// (id ve kapsam) korunur: kesme isteği aynı id'yle gitti, runStarted onun ardından gelebilir.</summary>
     private void BeginInterruptRecord(RunStartedEvent e)
     {
         _trustedBuiltIds.Clear();
-        _runLogDirectory = e.LogDirectory;
+        _interruptedBeforeSend = false;
         if (!string.Equals(_interruptedRunId, e.RunId, StringComparison.Ordinal)) _interruptedRunId = null;
     }
 
@@ -142,7 +145,7 @@ public sealed partial class RunViewModel : IAutoSyncPort
         {
             // Başlamamış koşu: önceki koşunun başarıları ve log klasörü bu koşunun değildir.
             _trustedBuiltIds.Clear();
-            _runLogDirectory = null;
+            _interruptedBeforeSend = true;
             OpenInterruptRecord(pendingId);
             CancelPendingRun();
             return;
@@ -166,14 +169,15 @@ public sealed partial class RunViewModel : IAutoSyncPort
 
     /// <summary>[spec 2026-09-18 §6.2] Kesilen koşu bittiyse özeti — bir kez: <c>N built</c> güvenilir başarılar,
     /// <c>M not built</c> kesme anındaki kapsamın (<see cref="InterruptScope"/>) güvenilir bitmeyen kısmı, ardından log
-    /// klasörü. Koşu hâlâ uçuştaysa (<see cref="IsRunInFlight"/>) ya da kesilen koşu yoksa <c>null</c>.</summary>
+    /// klasörü (son koşunun klasörü; isteği hiç gitmemiş koşuda yok — <see cref="_interruptedBeforeSend"/>). Koşu hâlâ uçuştaysa
+    /// (<see cref="IsRunInFlight"/>) ya da kesilen koşu yoksa <c>null</c>.</summary>
     internal string? TakeInterruptedRunSummary()
     {
         if (_interruptedRunId is null || IsRunInFlight) return null;
         _interruptedRunId = null;
         int notBuilt = _interruptScopeIds.Count(id => !_trustedBuiltIds.Contains(id));
         return Core.Planning.PlanProgressLines.RunInterruptedByBranchChange(
-            _trustedBuiltIds.Count, notBuilt, _runLogDirectory);
+            _trustedBuiltIds.Count, notBuilt, _interruptedBeforeSend ? null : _lastRunLogDirectory);
     }
 }
 

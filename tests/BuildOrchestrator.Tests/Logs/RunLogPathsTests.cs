@@ -65,4 +65,57 @@ public sealed class RunLogPathsTests
         Assert.Null(thrown);
         if (!parsed) Assert.Equal(default(DateTimeOffset), startedAt);
     }
+
+    // ---------------------------------------------------------------- [idle-memory · dalga 3 · karar 37] isteğin adını verdiği klasör
+
+    /// <summary>Kuralın sınandığı log kökü — saf kural diske bakmaz, kökün var olması gerekmez.</summary>
+    private const string LogsRoot = @"C:\bo\logs";
+
+    /// <summary>[karar 37] Kendi koşusu olmayan motor (uykudan uyanmış ya da yeniden başlatılmış) proje log isteğinin adını verdiği klasörü
+    /// yalnız kendi log kökünün koşu klasörlerinden biriyse okur (<see cref="RunLogPaths.IsRunDirectoryOf"/>): tam nitelikli, kökün DOĞRUDAN
+    /// altında ve adı koşu klasörü kalıbına tam uyuyor — yazıcının açtığı klasörün biçimi (<c>logsRoot\run-…</c>). Yol normalleştirilerek
+    /// karşılaştırılır: sondaki ayırıcı, ileri eğik çizgi, kökün harf büyüklüğü ve kökün içinde kalan bir <c>..</c> sonucu değiştirmez.
+    /// <para>KIRMIZI: kural yoktu (gövde <c>NotImplementedException</c>).</para></summary>
+    [Theory]
+    [InlineData(@"C:\bo\logs\run-20261015-101010-123")]
+    [InlineData(@"C:\bo\logs\run-20261015-101010-123\")]       // sonda ayırıcı
+    [InlineData(@"C:/bo/logs/run-20261015-101010-123")]        // ileri eğik çizgi
+    [InlineData(@"c:\BO\LOGS\run-20261015-101010-123")]        // kök harf duyarsız (Windows yolu)
+    [InlineData(@"C:\bo\logs\x\..\run-20261015-101010-123")]   // normalleşince kökün doğrudan altında
+    public void A_run_folder_directly_under_the_logs_root_is_accepted(string path) =>
+        Assert.True(RunLogPaths.IsRunDirectoryOf(LogsRoot, path));
+
+    /// <summary>[karar 37] Başka her şey reddedilir — motor o zaman bugünkü "log yok" cevabını verir: klasörsüz istek, göreli ya da sürücüye
+    /// göreli yol (sürecin çalışma klasörüne düşerdi), kökün kendisi, kalıba uymayan ad, kökün doğrudan altında olmayan (iç içe) koşu klasörü,
+    /// başka bir kök, kökten dışarı çıkan yol ve adı kökle aynı başlayan komşu klasör. Okunamaz bir yol (gömülü null) FIRLATMAZ, reddedilir.
+    /// <para>KIRMIZI: kural yoktu (gövde <c>NotImplementedException</c>).</para></summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("run-20261015-101010-123")]                    // göreli
+    [InlineData(@"logs\run-20261015-101010-123")]              // göreli
+    [InlineData(@"C:run-20261015-101010-123")]                 // sürücüye göreli: tam nitelikli değil
+    [InlineData(@"C:\bo\logs")]                                // kökün kendisi
+    [InlineData(@"C:\bo\logs\evil")]                           // ad kalıba uymuyor
+    [InlineData(@"C:\bo\logs\sub\run-20261015-101010-123")]    // kökün doğrudan altında değil
+    [InlineData(@"C:\other\run-20261015-101010-123")]          // başka kök
+    [InlineData(@"C:\bo\logs\..\run-20261015-101010-123")]     // kökten dışarı çıkıyor (C:\bo\run-…)
+    [InlineData(@"C:\bo\logs-old\run-20261015-101010-123")]    // adı kökle aynı başlayan komşu klasör
+    [InlineData("C:\\bo\\logs\\run-20261015-101010-123\0")]    // gömülü null
+    public void Any_other_folder_is_refused(string? path)
+    {
+        bool accepted = true;
+
+        var thrown = Record.Exception(() => accepted = RunLogPaths.IsRunDirectoryOf(LogsRoot, path));
+
+        Assert.Null(thrown);
+        Assert.False(accepted);
+    }
+
+    /// <summary>[karar 37] Kökün kendisi de normalleştirilir: sonunda ayırıcı taşıyan bir kök (<c>--logs C:\bo\logs\</c>) altındaki koşu klasörünü
+    /// yine kabul eder.
+    /// <para>KIRMIZI: kural yoktu (gövde <c>NotImplementedException</c>).</para></summary>
+    [Fact]
+    public void A_logs_root_with_a_trailing_separator_still_accepts_its_run_folders() =>
+        Assert.True(RunLogPaths.IsRunDirectoryOf(LogsRoot + @"\", @"C:\bo\logs\run-20261015-101010-123"));
 }

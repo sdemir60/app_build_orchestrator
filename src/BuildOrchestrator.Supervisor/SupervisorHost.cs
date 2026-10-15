@@ -396,10 +396,12 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
     /// isteğiyle yalnız bundan eşleştirir. <b>Log yoksa cevap da bir chunk'tır</b> — tek, boş, son, <c>ThroughLineNumber</c> 0 ve
     /// <c>NotFound</c> bayraklı: boş bir snapshot. Ayrı bir yol yoktur: koordinatör "log yok"ta boş metin ve 0 verir, chunker boş
     /// metni tek bir son chunk'a çevirir. Eskiden cevap <c>error(logNotFound)</c>'du; ne isteği taşıyordu ne dikişten geçiyordu.</para>
+    /// <para>[idle-memory · dalga 3 · karar 37] İsteğin koşu klasörü (<see cref="GetProjectLogCommand.RunDirectory"/>) koordinatöre geçer: bu
+    /// süreç hiç koşu yürütmediyse (uyanmış ya da yeniden başlatılmış motor) okuma oradan yapılır — kabul kuralı koordinatördedir.</para>
     /// </summary>
     private async Task SendProjectLogAsync(GetProjectLogCommand g, CancellationToken ct)
     {
-        bool found = coordinator.TryGetProjectLogSnapshot(g.ProjectId, out string text, out int throughLineNumber);
+        bool found = coordinator.TryGetProjectLogSnapshot(g.ProjectId, out string text, out int throughLineNumber, g.RunDirectory);
         foreach (var c in LogChunker.Chunk(text))
             await writer.WriteAsync(new ProjectLogChunkEvent(g.ProjectId, c.Sequence, c.Text, c.IsLast, throughLineNumber,
                 g.RequestId, NotFound: !found), ct);

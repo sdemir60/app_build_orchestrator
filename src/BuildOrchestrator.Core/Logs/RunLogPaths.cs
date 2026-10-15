@@ -47,4 +47,33 @@ public static class RunLogPaths
             return false; // DateTime uçlarındaki (0001/9999) bir damga yerel ofsetle DateTimeOffset aralığından taşar
         }
     }
+
+    /// <summary>
+    /// [idle-memory · dalga 3 · karar 37] <paramref name="path"/> bu log kökünün koşu klasörlerinden biri mi: tam nitelikli (göreli bir yol
+    /// sürecin çalışma klasörüne düşerdi), normalleştirildiğinde kökün DOĞRUDAN altında (yazıcı koşu klasörünü orada açar —
+    /// <see cref="RunLogWriter"/>) ve adı koşu klasörü kalıbına tam uyuyor (<see cref="TryParseRunDirName"/>). Karşılaştırma Windows yolu gibi
+    /// harf duyarsızdır; sondaki ayırıcı, ileri eğik çizgi ve <c>.</c>/<c>..</c> bölümleri normalleştirilir — kökten dışarı çıkan bir yol
+    /// böylece dışarıda kalır. Saf: diske bakmaz (klasörün var olup olmadığını okuma sorar). Okunamayan bir yol (ör. gömülü null) fırlatmaz,
+    /// reddedilir.
+    /// <para>Tek kullanıcısı kendi koşusu olmayan motorun proje log okumasıdır (<c>RunCoordinator.TryGetProjectLogSnapshot</c>): istek App'in
+    /// gördüğü son koşunun klasörünü taşır ve motor onu yalnız bu kural doğruysa okur.</para>
+    /// </summary>
+    /// <param name="logsRoot">Motorun log kökü (koşu klasörlerini açtığı yer).</param>
+    /// <param name="path">Sınanan klasör — isteğin taşıdığı yol; <c>null</c> ya da boş reddedilir.</param>
+    public static bool IsRunDirectoryOf(string logsRoot, string? path)
+    {
+        ArgumentNullException.ThrowIfNull(logsRoot);
+        if (string.IsNullOrEmpty(path) || !Path.IsPathFullyQualified(path)) return false;
+        try
+        {
+            string folder = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+            string root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(logsRoot));
+            return string.Equals(Path.GetDirectoryName(folder), root, StringComparison.OrdinalIgnoreCase)
+                && TryParseRunDirName(Path.GetFileName(folder), out _);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false; // okunamayan yol (ör. gömülü null) bir koşu klasörü değildir
+        }
+    }
 }

@@ -152,6 +152,12 @@ public sealed record MsBuildToolset(IMsBuildInvoker Invoker, string MsBuildExePa
 /// sıkıştıran bir GC bütün test sürecini durdurur ve koordinatörü kuran her test her koşu bitişinde onu ödemesin diye testler
 /// bir sayaç ya da hiçbir şey yapmayan bir delege verir.
 /// </param>
+/// <param name="logsRoot">
+/// [idle-memory · dalga 3 · karar 37] <paramref name="logFactory"/>'nin koşu klasörlerini açtığı log kökü — üretimde <c>Program</c>'ın
+/// AYNI <c>logsRoot</c> değişkeni. Tek kullanıcısı <see cref="TryGetProjectLogSnapshot"/>'ın üçüncü kaynağıdır: kendi koşusu olmayan bir
+/// motor isteğin adını verdiği klasörü yalnız bu kökün koşu klasörlerinden biriyse okur. <c>null</c> ⇒ isteğin klasörü hiç kabul edilmez
+/// (bugünkü "log yok").
+/// </param>
 public sealed class RunCoordinator(
     Func<StartRunCommand, Action<string>, RunPlan> planner,
     Func<CancellationToken, Task<MsBuildToolset>> msbuildFactory,
@@ -166,7 +172,8 @@ public sealed class RunCoordinator(
     InFlightLedger? inFlight = null,
     Func<string, string?>? apiSurface = null,
     Func<(int Cores, long FreeBytes)>? machine = null,
-    Action? memoryTrim = null) : IDisposable
+    Action? memoryTrim = null,
+    string? logsRoot = null) : IDisposable
 {
     private readonly object _gate = new();
     private readonly ICpuGovernor _cpu = cpuGovernor ?? innerJob;
@@ -244,6 +251,13 @@ public sealed class RunCoordinator(
     /// hiç loglanmadıysa <c>false</c> döner — metin o zaman boş, satır no 0'dır: host "log yok" cevabını bundan, boş bir
     /// snapshot olarak yazar (<c>SupervisorHost.SendProjectLogAsync</c>).
     ///
+    /// <para>[idle-memory · dalga 3 · karar 37] <b>Üçüncü kaynak: isteğin klasörü.</b> Bu süreç hiç koşu yürütmediyse (uykudan uyanmış ya
+    /// da yeniden başlatılmış motor — <c>_lastRunDirectory</c> süreç içidir) okuma isteğin adını verdiği klasörden yapılır
+    /// (<paramref name="runDirectory"/> — App'in gördüğü son koşunun <c>runStarted.LogDirectory</c>'si). Klasör yalnız bu motorun log kökünün
+    /// koşu klasörlerinden biriyse kabul edilir (<see cref="RunLogPaths.IsRunDirectoryOf"/>: tam nitelikli, kökün doğrudan altında, adı koşu
+    /// klasörü kalıbında); aksi hâlde — ya da kök bilinmiyorsa — bugünkü "log yok". Sıra: canlı writer → motorun son koşusu → isteğin klasörü;
+    /// kendi koşusu olan motor isteğin klasörüne hiç bakmaz.</para>
+    ///
     /// <para>[Task 18] Gerçek disk okuması (<c>File.ReadAllText</c> / <c>ProjectLogFile.Snapshot</c>'ın
     /// FileStream'i) kilit DIŞINDA yapılır: kilit altında yalnız "hangi kaynaktan okunacağı" (canlı writer
     /// referansı ya da en son run dizini) yakalanır. Büyük bir proje logunun okunması artık stopRun/startRun
@@ -254,7 +268,12 @@ public sealed class RunCoordinator(
     /// burada canlı tutulur (GC toplamaz) ve <c>SnapshotProjectLog</c> kendi kilidiyle Dispose ile serileşir —
     /// canlı-writer anlık görüntüsü hâlâ tutarlıdır.</para>
     /// </summary>
-    public bool TryGetProjectLogSnapshot(string projectId, out string text, out int throughLineNumber)
+    /// <param name="projectId">İstenen projenin kimliği.</param>
+    /// <param name="text">Logun metni ("log yok"ta boş).</param>
+    /// <param name="throughLineNumber">Metne giren son satırın numarası — dikiş noktası ("log yok"ta 0).</param>
+    /// <param name="runDirectory">[karar 37] İsteğin adını verdiği koşu klasörü (<c>GetProjectLogCommand.RunDirectory</c>); <c>null</c> =
+    /// klasörsüz istek. Yalnız üçüncü kaynaktır.</param>
+    public bool TryGetProjectLogSnapshot(string projectId, out string text, out int throughLineNumber, string? runDirectory = null)
     {
         RunLogWriter? logs;
         string? lastRunDirectory;
@@ -263,9 +282,11 @@ public sealed class RunCoordinator(
             logs = _logs;
             lastRunDirectory = _lastRunDirectory;
         }
+        string? diskDirectory = lastRunDirectory
+            ?? (logsRoot is { } root && RunLogPaths.IsRunDirectoryOf(root, runDirectory) ? runDirectory : null);
         (string Text, int ThroughLineNumber)? snap = logs is not null
             ? logs.SnapshotProjectLog(projectId)
-            : lastRunDirectory is not null ? RunLogWriter.ReadProjectLogFromDisk(lastRunDirectory, projectId) : null;
+            : diskDirectory is not null ? RunLogWriter.ReadProjectLogFromDisk(diskDirectory, projectId) : null;
         if (snap is { } s) { text = s.Text; throughLineNumber = s.ThroughLineNumber; return true; }
         text = ""; throughLineNumber = 0; return false;
     }

@@ -53,7 +53,8 @@ public static class Program
             nowMs: () => Environment.TickCount64, // MONOTONİK — duvar saati geri atlayabilir, elapsed negatife düşerdi
             console: Console.Error.WriteLine,
             stateStore: stateStore, // [Task 19] projectSucceeded → BuildState persist
-            inFlight: inFlight); // [§5.5] dispatch → Add, sonuç → Remove, koşu çıkışı → Clear
+            inFlight: inFlight, // [§5.5] dispatch → Add, sonuç → Remove, koşu çıkışı → Clear
+            logsRoot: logsRoot); // [dalga 3 · karar 37] log fabrikasının AYNI kökü: kendi koşusu olmayan motor isteğin klasörünü bununla doğrular
         var host = new SupervisorHost(writer, new NdjsonReader(stdin), innerJob, coordinator,
             // [A5/T69] sync/branch komutları · [optimize] restore invoker'ı koordinatörle AYNI memoize
             // edilmiş toolset çözümünden gelir (ikinci bir vswhere araması yok).

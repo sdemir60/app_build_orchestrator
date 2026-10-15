@@ -68,7 +68,12 @@ public sealed record StopRunCommand(string RunId, StopKind Kind) : IpcCommand;
 /// aynen yankılar; App cevabı isteğiyle yalnız bundan eşleştirir — proje adı yetmez: aynı projenin art arda iki isteğinde ilkinin
 /// gecikmiş cevabı ikincinin yüklemesine dikilir ve sayfada sessiz bir delik açardı. Varsayılan <c>0</c> = kimliksiz: bu alandan
 /// ÖNCE yazılmış satırlar aynen çözülür; App hiçbir isteğe 0 vermez, kimliksiz bir cevap hiçbir yüklemeyle eşleşmez.</param>
-public sealed record GetProjectLogCommand(string ProjectId, int RequestId = 0) : IpcCommand;
+/// <param name="RunDirectory">[idle-memory · dalga 3 · karar 37] App'in gördüğü son koşunun disk log klasörü
+/// (<see cref="RunStartedEvent.LogDirectory"/>) — satırların anlattığı koşu. Kendi koşusu olmayan bir motor (uykudan uyanmış ya da
+/// yeniden başlatılmış: yeni süreç) logu buradan okur; motor yalnız canlı koşusu ve kendi son koşusu yoksa bakar ve klasörü yalnız tam
+/// nitelikli, kendi log kökünün koşu klasörlerinden biriyse kabul eder (aksi hâlde "log yok"). App henüz bir koşu başladığını görmediyse
+/// <c>null</c> (JSON'a yazılmaz); bu alandan ÖNCE yazılmış satırlar <c>null</c> çözülür.</param>
+public sealed record GetProjectLogCommand(string ProjectId, int RequestId = 0, string? RunDirectory = null) : IpcCommand;
 public sealed record DebugSpawnChildrenCommand(int Count, bool Breakaway) : IpcCommand;
 
 /// <summary>Bir koşunun KAPSAMINI seçer; NDJSON'a camelCase METİN olarak yazılır (<c>"cycles"</c>), sayı olarak
