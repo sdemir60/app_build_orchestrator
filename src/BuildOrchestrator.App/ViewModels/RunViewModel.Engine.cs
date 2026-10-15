@@ -301,8 +301,13 @@ public sealed partial class RunViewModel
         /// <summary>Beklemeden "gönder": motor uyku döngüsünde değildi — kayıt yok.</summary>
         public static GatePass Go => new(true, null, 0);
 
-        /// <summary>Beklemeden "gönderme": uyandırmayan komut ya da askıdaki uyanma — kayıt yok.</summary>
-        public static GatePass Refused => new(false, null, 0);
+        /// <summary>Beklemeden "gönderme": uyandırmayan komut ya da askıdaki uyanma — kayıt yok (<see cref="None"/>).</summary>
+        public static GatePass Refused => None;
+
+        /// <summary>[round 3] Kayıt yok — gönderime "devredilecek kayıt yok" demenin AÇIK yolu: <see cref="SendWithFailureLineAsync"/>'in geçişi
+        /// zorunludur, varsayılanı yoktur. Tek kullanıcısı kapıdan geçmiş Sync'in ikinci parçası, branch envanteridir: kapının kararı ve kaydı
+        /// Sync'in geçişindeydi ve Sync'in tesliminde bitti. Kararı "gönderme"dir; gönderim kararı okumaz.</summary>
+        public static GatePass None => default;
 
         /// <summary>Kapıda beklemiş isteğin geçişi — kararı ve kaydı.</summary>
         public static GatePass Held(bool send, RunViewModel owner, int ticket) => new(send, owner, ticket);
@@ -556,10 +561,12 @@ public sealed partial class RunViewModel
     /// motor hazır değilken (henüz başlamadı, öldü, erişilemez) <c>SendAsync</c>'in SENKRON fırlaması dahil — UI tıklaması çökmez, hata
     /// <c>{failureLine}: {hatanın metni}</c> olarak konsola TEK satır düşer, sessizce yutulmaz. Kapıyı çağıran sorar.</summary>
     /// <param name="failureLine">Düşen gönderimin satırının başı: <see cref="SendFailedLine"/> ya da isteğin kendi metni (proje logu).</param>
-    /// <param name="pass">[round 2] Kapının geçişi: kapıda beklemiş isteğin kaydı komut motora teslim edilmeden hemen ÖNCE biter (gerekçe
-    /// <see cref="GatePass"/>'te); çağıran geçişi yine <c>using</c> ile tutar. Verilmezse kayıt yoktur.</param>
+    /// <param name="pass">[round 2 · round 3] Kapının geçişi — ZORUNLU, varsayılanı yok: geçişi <c>using</c> ile tutup gönderime vermeyi unutan
+    /// bir çağıran derlenmez, kaydı yazımdan uzun yaşayamaz. Kapıda beklemiş isteğin kaydı komut motora teslim edilmeden hemen ÖNCE biter
+    /// (gerekçe <see cref="GatePass"/>'te); çağıran geçişi yine <c>using</c> ile tutar. Kapıya ayrıca sormayan ikinci parça (Sync'in branch
+    /// envanteri) bunu <see cref="GatePass.None"/> ile açıkça söyler.</param>
     /// <returns>Gönderim kabul edildi mi.</returns>
-    private async Task<bool> SendWithFailureLineAsync(IpcCommand cmd, string failureLine, GatePass pass = default)
+    private async Task<bool> SendWithFailureLineAsync(IpcCommand cmd, string failureLine, GatePass pass)
     {
         pass.Dispose(); // teslim: bundan sonra gelen bir motor kaybı isteği gönderilmiş sayar
         var send = SendToEngineAsync(cmd);

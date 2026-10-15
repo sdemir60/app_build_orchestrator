@@ -1373,8 +1373,9 @@ public sealed partial class RunViewModel : ObservableObject
         // buraya iner; (c) Sync salt-okurdur, tekrarı zararsızdır.
         // Ayrı bir komut olarak GİDER (Sync'in kendi event akışına karışmaz): Supervisor sıradaki komut olarak
         // işler ve hatası AYRI bir kodla döner ("branchListFailed", SupervisorHost.cs:138) — RunEndingErrorCodes'ta
-        // ve SyncErrorCodes'ta OLMADIĞI için bir Sync hatası gibi yanlış atfedilemez.
-        await SendWithFailureLineAsync(new ListBranchesCommand(RootPath), SendFailedLine("listBranches"));
+        // ve SyncErrorCodes'ta OLMADIĞI için bir Sync hatası gibi yanlış atfedilemez. [round 3] Kapı Sync'in geçişinde soruldu; envanterin
+        // devredeceği kayıt yoktur — GatePass.None bunu açıkça söyler (gönderimin geçişi zorunludur).
+        await SendWithFailureLineAsync(new ListBranchesCommand(RootPath), SendFailedLine("listBranches"), GatePass.None);
         return sent;
     }
     // [D1 review · A3] Motor erişilemezken gönderim anlamsız.
