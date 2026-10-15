@@ -421,6 +421,26 @@ public class ConsoleViewTests
         finally { window.Close(); }
     }
 
+    /// <summary>
+    /// [idle-memory · dalga 2 · üçüncü inceleme] Proje sayfası BAŞTAN açılır ve chunk yükleyici silahsızdır: tepede duran okuyucuya gelen
+    /// bir "tepe" olayı (yerleşim, programın kendi kaydırması) önceki dilimi kendiliğinden eklemez; önceki dilim okuyucu aşağı inip
+    /// yeniden tepeye çıktığında gelir.
+    /// <para>KIRMIZI (geçici bozma: takasın sonunda yükleyici koşulsuz silahlı): tepedeki ilk olay önceki dilimi kendiliğinden ekliyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void A_project_page_opens_with_the_chunk_loader_disarmed()
+    {
+        var view = LaidOutView();
+        view.PlayCascade([.. Enumerable.Range(0, 300).Select(i => $"page{i}")]); // son 200 belgede, sayfa tepede
+
+        view.EvaluateChunkScroll(0.0); // tepede bir olay — okuyucu kaydırmadı
+
+        Assert.Null(view.LastPrepend);
+        Assert.StartsWith("page100\n", view.Document.Text);
+        ScrollUpToTheTop(view);        // okuyucu aşağı inip tepeye döner: önceki dilim gelir
+        Assert.StartsWith("page0\n", view.Document.Text);
+    }
+
     /// <summary>[idle-memory · dalga 2 · inceleme M1] Bir kısmı okunamayan backlog — anlatı store'unun dosyası okunamadığında olduğu
     /// gibi: <see cref="ReadableFrom"/>'un altına uzanan her aralık <c>""</c> döner (asla kısmi metin — <see cref="IConsoleBacklog.Join"/>
     /// sözleşmesi); sınır inince aynı aralık tam gelir. Store gibi kırpılan satırları saklamaz.</summary>
