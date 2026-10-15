@@ -39,26 +39,32 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF STA kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class EngineWakeTests
 {
-    /// <summary>[O-4] Giden komutlar ve her gönderimin anındaki VM motor durumu. Komutların kaydı ortak kaydedicidir (<see cref="SentCommands"/> —
-    /// <see cref="SentCommands.Record"/> gönderim anında başka bir şeyi de ölçen testlerin yolu); durum aynı anda, aynı sırayla yanına yazılır.</summary>
+    /// <summary>[O-4 · round 2] Giden komutlar — her biri gönderim anındaki VM motor durumuyla TEK kayıtta (<see cref="Sent"/>); iki paralel liste yok.
+    /// Ortak <see cref="SentCommands"/> yalnız komutu kaydeder (gerçek motorun başka thread'de tamamladığı gönderimler için thread-safe); bu sınıfın
+    /// testleri dispatcher thread'inde koşar ve iddiaları komutu durumuyla birlikte okur. <see cref="Commands"/> ve <see cref="States"/> aynı
+    /// kayıtların iki görünüşüdür.</summary>
     private sealed class SentLog
     {
-        /// <summary>Giden komutlar, gönderim sırasıyla.</summary>
-        public SentCommands Commands { get; } = new();
+        private readonly List<Sent> _sends = [];
 
-        /// <summary>Her gönderimin anındaki motor durumu — <see cref="Commands"/> ile aynı sıra.</summary>
-        public List<EngineState> States { get; } = [];
+        /// <summary>Gönderilen bir komut ve gönderildiği andaki VM motor durumu.</summary>
+        public readonly record struct Sent(IpcCommand Command, EngineState State);
+
+        /// <summary>Bir gönderimi kaydeder (gözlemci gönderimden hemen ÖNCE çağrılır).</summary>
+        public void Add(IpcCommand command, EngineState state) => _sends.Add(new Sent(command, state));
+
+        /// <summary>Giden komutlar, gönderim sırasıyla.</summary>
+        public IEnumerable<IpcCommand> Commands => _sends.Select(s => s.Command);
+
+        /// <summary>Her gönderimin anındaki motor durumu, aynı sırayla.</summary>
+        public IEnumerable<EngineState> States => _sends.Select(s => s.State);
     }
 
-    /// <summary>Giden komutları gönderim anındaki motor durumuyla toplar (gözlemci gönderimden hemen ÖNCE çağrılır).</summary>
+    /// <summary>Giden komutları gönderim anındaki motor durumuyla toplar.</summary>
     private static SentLog Record(RunViewModel vm)
     {
         var sent = new SentLog();
-        vm.DebugOnCommandSent = command =>
-        {
-            sent.Commands.Record(command);
-            sent.States.Add(vm.EngineState);
-        };
+        vm.DebugOnCommandSent = command => sent.Add(command, vm.EngineState);
         return sent;
     }
 

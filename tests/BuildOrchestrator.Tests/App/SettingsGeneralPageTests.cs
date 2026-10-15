@@ -34,8 +34,6 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class SettingsGeneralPageTests
 {
-    private static void Click(ButtonBase button) => button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
-
     /// <summary>General sayfasındaki ToggleRow kökleri, yukarıdan aşağıya.</summary>
     private static List<Border> Rows(SettingsDialog dialog)
     {
@@ -369,7 +367,7 @@ public class SettingsGeneralPageTests
         foreach (var name in new[] { "Start with Windows", "Start minimized to tray", "Close to tray", "Show notifications" })
             SwitchNamed(dialog, name).IsChecked = !SwitchNamed(dialog, name).IsChecked;
 
-        Click(dialog.Save); // commit'in persist yarısı ilk await'ten ÖNCE, senkron yazılır
+        CommandPress.Click(dialog.Save); // commit'in persist yarısı ilk await'ten ÖNCE, senkron yazılır
         Assert.Equal(Visibility.Collapsed, dialog.Visibility);
 
         dialog.Open(run, store, () => null);
@@ -389,7 +387,7 @@ public class SettingsGeneralPageTests
         foreach (var name in new[] { "Close to tray", "Show notifications" })
             SwitchNamed(dialog, name).IsChecked = false;
 
-        Click(dialog.Save);
+        CommandPress.Click(dialog.Save);
         Assert.Equal(Visibility.Collapsed, dialog.Visibility);
         Assert.False(store.State.CloseToTray);
         Assert.False(store.State.ShowNotifications);
@@ -426,7 +424,7 @@ public class SettingsGeneralPageTests
         SwitchNamed(dialog, "Start with Windows").IsChecked = true;
         SwitchNamed(dialog, "Start minimized to tray").IsChecked = true;
 
-        Click(dialog.Save);
+        CommandPress.Click(dialog.Save);
         Assert.Equal(Visibility.Collapsed, dialog.Visibility);
         Assert.True(store.State.Autostart);
         Assert.True(store.State.StartMinimizedToTray);
@@ -445,7 +443,7 @@ public class SettingsGeneralPageTests
         using var _scope = scope;
         SwitchNamed(dialog, "Start with Windows").IsChecked = true;
 
-        Click(dialog.Save);
+        CommandPress.Click(dialog.Save);
 
         Assert.Equal(FakeAutostartRegistry.Command, registry.CommandFor(AutostartService.DefaultValueName));
     }
@@ -509,7 +507,7 @@ public class SettingsGeneralPageTests
         Assert.Equal("Pull before build", link.Content);
         Assert.Same(dialog.FindResource("Ds.Button.Ghost.Sm"), link.Style);
         Assert.Equal(-6.0, link.Margin.Left);
-        Click(link);
+        CommandPress.Click(link);
         dialog.UpdateLayout();
         Assert.True(dialog.RailItem(SettingsSection.General).IsChecked);
         Assert.Equal(Visibility.Visible, dialog.Page(SettingsSection.General).Visibility);

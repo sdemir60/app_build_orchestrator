@@ -24,8 +24,6 @@ public class SettingsDialogLayoutTests
     private static readonly SettingsSection[] Sections =
         [SettingsSection.General, SettingsSection.Workspace, SettingsSection.External, SettingsSection.Layers];
 
-    private static void Click(ButtonBase button) => button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
-
     private static TextBlock RailCount(RadioButton item)
     {
         item.ApplyTemplate();
@@ -91,7 +89,7 @@ public class SettingsDialogLayoutTests
         Assert.Same(dialog.FindResource("Icon.Close"), glyph.Data);
 
         dialog.Draft!.RepositoryRoot = @"D:\other";
-        Click(close);
+        CommandPress.Click(close);
 
         Assert.Equal(Visibility.Collapsed, dialog.Visibility);
         Assert.Equal(@"D:\repo", run.RootPath);     // taslak UYGULANMADI
@@ -370,7 +368,7 @@ public class SettingsDialogLayoutTests
         var add = DsResources.RealizedObjects(page).OfType<Button>()
             .Single(b => AutomationProperties.GetName(b) == AccessibilityNames.AddLayer);
         Assert.Equal(new Thickness(-10, 10, 0, 0), add.Margin);
-        for (int i = 0; i < 7; i++) Click(add);
+        for (int i = 0; i < 7; i++) CommandPress.Click(add);
         dialog.UpdateLayout();
 
         Assert.Equal(7, dialog.Draft!.Layers.Count);
@@ -508,7 +506,7 @@ public class SettingsDialogLayoutTests
         dialog.UpdateLayout();
         Assert.Equal(Visibility.Visible, reason.Visibility); // sayfa fark etmez
 
-        Click(dialog.Clear); // armed → geri bildirim satırı dolu
+        CommandPress.Click(dialog.Clear); // armed → geri bildirim satırı dolu
         dialog.UpdateLayout();
         Assert.NotEqual("", dialog.Feedback.Text);
         Assert.Equal(Visibility.Collapsed, reason.Visibility);

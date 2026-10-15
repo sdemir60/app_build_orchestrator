@@ -186,9 +186,8 @@ public class MainWindowInputTests
 
     // ---------------------------------------------------------------- 1.6 title-bar layout ikonları
 
-    /// <summary>Gerçek <see cref="ButtonBase.ClickEvent"/> — XAML'deki <c>Click="OnLayoutList"</c> kablosu
-    /// koparsa (ya da yanlış moda bağlanırsa) burası kırar.</summary>
-    private static void Click(ButtonBase button) => button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+    // Basış ortak CommandPress.Click: gerçek ButtonBase.ClickEvent — XAML'deki Click="OnLayoutList" kablosu koparsa (ya da yanlış moda
+    // bağlanırsa) aşağıdaki testler kırar.
 
     [StaFact]
     public void Clicking_the_list_layout_icon_hides_the_graph_and_applies_the_list_preset()
@@ -197,7 +196,7 @@ public class MainWindowInputTests
         var (window, _) = NewMainWindow(temp);
         window.Shell.ApplyLayout(new LayoutState(LayoutMode.Quad, 60, 74, 76)); // bilinen başlangıç (persist'ten bağımsız)
 
-        Click(window.LayListButton);
+        CommandPress.Click(window.LayListButton);
 
         Assert.Equal(LayoutMode.List, window.Shell.Layout.Mode);
         Assert.Equal(Visibility.Collapsed, window.Shell.GraphHost.Visibility);
@@ -214,7 +213,7 @@ public class MainWindowInputTests
         var (window, _) = NewMainWindow(temp);
         window.Shell.ApplyLayout(new LayoutState(LayoutMode.Quad, 60, 74, 50));
 
-        Click(window.LayFocusButton);
+        CommandPress.Click(window.LayFocusButton);
 
         Assert.Equal(LayoutMode.Focus, window.Shell.Layout.Mode);
         Assert.Equal(Visibility.Collapsed, window.Shell.GraphHost.Visibility);
@@ -230,7 +229,7 @@ public class MainWindowInputTests
         window.Shell.ApplyLayout(new LayoutState(LayoutMode.Focus, 60, 74, 76));
         Assert.Equal(Visibility.Collapsed, window.Shell.GraphHost.Visibility); // ön-koşul: graf gizli
 
-        Click(window.LayQuadButton);
+        CommandPress.Click(window.LayQuadButton);
 
         Assert.Equal(LayoutMode.Quad, window.Shell.Layout.Mode);
         Assert.Equal(Visibility.Visible, window.Shell.GraphHost.Visibility);
@@ -267,7 +266,7 @@ public class MainWindowInputTests
         var (window, _) = MainWindowHost.New(temp, compactConsole: null, stopEngineWhenIdle: null);
         Assert.False(File.Exists(path)); // ön-koşul: enjekte edilen store henüz yazılmadı
 
-        Click(window.LayFocusButton);
+        CommandPress.Click(window.LayFocusButton);
 
         Assert.True(File.Exists(path), "layout tıklaması enjekte edilen store'a YAZMADI");
         Assert.Equal(LayoutMode.Focus, new JsonUiStateStore(path).Load().LayoutMode);
