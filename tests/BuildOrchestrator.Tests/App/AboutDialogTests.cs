@@ -716,6 +716,38 @@ public class AboutDialogTests
         }
     }
 
+    /// <summary>[idle-memory · dalga 3 · karar 39] Motor boşta uyurken Environment sekmesinin PID satırı ve panoya kopyalanan metin
+    /// <c>asleep</c> okur — durum VM'in kendisinden (<c>RunViewModel.EngineState</c>) gelir. Motor üretimin yoluyla uyutulur: hazır yolu, ayar
+    /// açık, beş işsiz dakika ve bir tik; uyku dikişi ortak sahteden (<see cref="EngineSleepProbe"/>).
+    /// <para>KIRMIZI: satır "—" okuyordu (VM uyuyan motorun PID'ini tutmaz, durum rapora girmiyordu).</para></summary>
+    [StaFact]
+    public void The_environment_pid_row_and_the_copied_text_read_asleep_while_the_engine_sleeps()
+    {
+        long now = 1_000;
+        string? written = null;
+        var (dialog, run, scope) = AboutDialogHost.OpenRealized(vm =>
+        {
+            EngineSleepProbe.Attach(vm);
+            vm.StopEngineWhenIdle = true;
+            vm.OnEngineReady("9.9.9+test", 777);
+            now += EngineSleepProbe.IdleAfterMs;
+            vm.TickElapsed();
+        }, nowMs: () => now);
+        using (scope)
+        {
+            Assert.Equal(EngineState.Asleep, run.EngineState); // ön-koşul: motor uyudu
+            Select(dialog, EnvironmentTab);
+
+            Assert.Equal(DiagnosticsReport.Asleep, dialog.Diagnostics!.Runtime.Single(l => l.Label == "Engine PID").Value);
+            Assert.Contains(DiagnosticsReport.Asleep, VisibleTexts(dialog));
+
+            dialog.ClipboardWriter = text => { written = text; return true; };
+            dialog.CopyDiagnostics();
+            Assert.Contains(written!.Split(Environment.NewLine),
+                row => row.StartsWith("Engine PID", StringComparison.Ordinal) && row.EndsWith(DiagnosticsReport.Asleep, StringComparison.Ordinal));
+        }
+    }
+
     /// <summary>[design v1.19.0 §2.10] Footer: solda ghost sm <c>Copy diagnostics</c> — sol margin −10 ile etiket
     /// 18px gutter'a hizalanır; sağda secondary <c>Close</c>.</summary>
     [StaFact]

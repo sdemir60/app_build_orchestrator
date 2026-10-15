@@ -24,6 +24,7 @@ public class DiagnosticsReportTests
         Copyright: "© 2026 Delta Yazılım",
         EngineVersion: "1.0.0+engine",
         EnginePid: 4242,
+        EngineState: EngineState.Ready,
         Runtime: ".NET 10.0.0",
         Os: "Microsoft Windows 10.0.26200",
         Memory: new MemoryReading(PrivateBytes: 309 * Mb, CommittedBytes: 250 * Mb, HeapBytes: 8 * Mb),
@@ -124,6 +125,45 @@ public class DiagnosticsReportTests
 
         Assert.Equal(DiagnosticsReport.NotStarted, s.Engine.Value);
         Assert.Equal(DiagnosticsReport.Unknown, s.Runtime.Single(l => l.Label == "Engine PID").Value);
+    }
+
+    /// <summary>[idle-memory · dalga 3 · karar 39] Motor boşta uyurken (VM durumu <see cref="EngineState.Asleep"/>) PID satırı <c>asleep</c>
+    /// okur — Environment sekmesinde ve panoya kopyalanan metinde: süreç yok, ama "bilinmiyor" (<c>—</c>) da değil; sonraki iş motoru yeniden
+    /// başlatır. VM uyuyan motorun PID'ini tutmaz (null). Sürüm satırı değişmez (uyanan motor aynı ikilidir). Sabitin metni bir kez pinlenir.
+    /// <para>KIRMIZI: PID satırı uykuda "—" okuyordu (durum rapora hiç girmiyordu).</para></summary>
+    [Fact]
+    public void An_asleep_engine_reads_asleep_on_the_pid_row_and_in_the_copied_text()
+    {
+        Assert.Equal("asleep", DiagnosticsReport.Asleep); // metnin TEK literal pini
+
+        var s = DiagnosticsReport.Compose(Full() with { EnginePid = null, EngineState = EngineState.Asleep });
+
+        Assert.Equal(DiagnosticsReport.Asleep, s.Runtime.Single(l => l.Label == "Engine PID").Value);
+        Assert.Equal("1.0.0+engine", s.Engine.Value);
+        Assert.Contains(DiagnosticsReport.ToText(s).Split(Environment.NewLine),
+            row => row.StartsWith("Engine PID", StringComparison.Ordinal) && row.EndsWith(DiagnosticsReport.Asleep, StringComparison.Ordinal));
+    }
+
+    /// <summary>Uykudan başka her motor durumu — sözleşmeden okunur: yarın eklenen bir durum da kendiliğinden sınanır.</summary>
+    public static TheoryData<EngineState> StatesOtherThanAsleep()
+    {
+        var states = new TheoryData<EngineState>();
+        foreach (var state in Enum.GetValues<EngineState>())
+            if (state != EngineState.Asleep) states.Add(state);
+        return states;
+    }
+
+    /// <summary>[karar 39 · PİN] Uykudan başka her durumda PID satırı bugünkü gibidir: motorun PID'i varsa o, yoksa <c>—</c> — uyku sürerken
+    /// (süreç henüz duruyor), uyanırken (yeni süreç henüz hazır değil), ölü ya da erişilemez motorda da. PİN: durumu okumayan bugünkü rapor da
+    /// yeşildir; bu test "asleep"in başka bir duruma sızmasını yakalar.</summary>
+    [Theory]
+    [MemberData(nameof(StatesOtherThanAsleep))]
+    public void Every_other_engine_state_shows_the_pid_as_today(EngineState state)
+    {
+        Assert.Equal("4242", DiagnosticsReport.Compose(Full() with { EngineState = state })
+            .Runtime.Single(l => l.Label == "Engine PID").Value);
+        Assert.Equal(DiagnosticsReport.Unknown, DiagnosticsReport.Compose(Full() with { EngineState = state, EnginePid = null })
+            .Runtime.Single(l => l.Label == "Engine PID").Value);
     }
 
     /// <summary>

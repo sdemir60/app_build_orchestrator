@@ -158,6 +158,7 @@ public partial class AboutDialog : Controls.ModalDialog
             Copyright: AppIdentity.Copyright,
             EngineVersion: run.EngineVersion,
             EnginePid: run.EnginePid,
+            EngineState: run.EngineState,
             Runtime: RuntimeInformation.FrameworkDescription,
             Os: RuntimeInformation.OSDescription,
             Memory: MemoryLine.TryRead(),
