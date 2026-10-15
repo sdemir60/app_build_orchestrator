@@ -2,6 +2,7 @@
 using System.Windows.Automation.Peers;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
@@ -155,9 +156,11 @@ public partial class ConsoleView : UserControl
         // kancasından geçer. Konsol bunu Enable eden TEK panel: yatay taşması olan tek yüzey odur (WordWrap=False).
         HorizontalWheelScroll.Enable(this);
         _bottomAnchor = new BottomAnchorBehavior(
-            getOffset: () => EditorControl.VerticalOffset,
-            getExtent: () => EditorControl.ExtentHeight,
-            getViewport: () => EditorControl.ViewportHeight,
+            // Geometri TextView'in kendisinden (ScrollGeometry): karar TextView'in kaydırma olayında verilir ve ScrollViewer'ın
+            // aynası o an henüz eskidir. Kaydırma komutları ScrollViewer'dan geçer — onu güncel tutan yol odur.
+            getOffset: () => ScrollGeometry.VerticalOffset,
+            getExtent: () => ScrollGeometry.ExtentHeight,
+            getViewport: () => ScrollGeometry.ViewportHeight,
             scrollInstant: v => EditorControl.ScrollToVerticalOffset(v),
             scrollSmooth: AnimateToBottom,
             // Anlatı modunda kullanıcı elini çekince akış yeniden izlenir. PROJE-LOG modunda dönülmez:
@@ -274,11 +277,12 @@ public partial class ConsoleView : UserControl
     /// <para><b>[T59] Reconciliation:</b> ARTIK <see cref="BottomAnchorBehavior.IsStuck"/>'ın ince bir geçişidir —
     /// TEK bottom-anchor mekanizması <see cref="_bottomAnchor"/>'dır (görev talimatı: "çift iş yok"). Public API
     /// AYNI kaldı (3b testleri elle <c>StickToBottom = false</c> atar, bu hâlâ çalışır — <see cref="BottomAnchorBehavior.ForceStuck"/>
-    /// bir doğrudan override'dır). YENİ olan: gerçek uygulamada artık <see cref="OnScrollOffsetChanged"/> her scroll
-    /// olayında 48px eşiğine göre bunu OTOMATİK de günceller — önceden (Task 3b'de) hiçbir mekanizma bunu yapmıyordu
-    /// (MainWindow hiçbir yerde StickToBottom atamıyordu, konsol pratikte kalıcı yapışıktı). Headless testlerde
-    /// gerçek layout/scroll geometrisi oluşmadığından (bkz. ScrollOffsetChanged'in AvalonEdit'te layout gerektirmesi)
-    /// bu otomatik yol tetiklenmez — mevcut 3b testleri ETKİLENMEZ.</para>
+    /// bir doğrudan override'dır). YENİ olan: gerçek uygulamada <see cref="OnScrollOffsetChanged"/> bunu, direksiyon kullanıcıdayken
+    /// (ham girdi — <c>UserScrollSignal</c> — ile başlar, bekleme dolana dek sürer) her kaydırma olayında 48px eşiğine göre OTOMATİK de
+    /// günceller, geometriyi TextView'in kendisinden okuyarak (<see cref="ScrollGeometry"/>) — önceden (Task 3b'de) hiçbir mekanizma bunu yapmıyordu
+    /// (MainWindow hiçbir yerde StickToBottom atamıyordu, konsol pratikte kalıcı yapışıktı). Yerleşim koşmayan testlerde
+    /// (ölçülmemiş çıplak görünüm) kaydırma olayı doğmadığından bu otomatik yol tetiklenmez; yerleşimi koşan testlerde gerçek
+    /// olayla tetiklenir (<c>ConsoleReaderNavigationTests</c>).</para>
     /// </summary>
     public bool StickToBottom
     {
@@ -793,7 +797,7 @@ public partial class ConsoleView : UserControl
     /// <summary>
     /// [idle-memory · dalga 2 · takip — ölçüldü] Belge takasının TEK yolu (anlatı: <see cref="ReplaceRunDocument"/>, proje logu:
     /// <see cref="ReplaceProjectDocument"/>): yeni belge kurulur ve dibe ya da tepeye sabitlenir; ardından chunk yükleyicinin durumu
-    /// belgenin OTURDUĞU konumdan (<see cref="LoaderOffset"/>) okunur — tepeden uzaktaysa silahlı, tepedeyse silahsız. Dibe sabitlenen
+    /// belgenin OTURDUĞU konumdan (<see cref="ScrollGeometry"/>) okunur — tepeden uzaktaysa silahlı, tepedeyse silahsız. Dibe sabitlenen
     /// anlatıda okuyucunun TEK tepeye sıçraması (Ctrl+Home, kaydırma çubuğunun tek hamlesi) önceki dilimi getirir; tepeye sabitlenen proje
     /// sayfasında önceki dilim okuyucu aşağı inip yeniden tepeye çıktığında gelir.
     /// <para><b>Takasın geçici kaydırma olayları okuyucunun jesti değildir</b> ve yükleyiciye gitmez (<see cref="EvaluateChunkScroll"/>):
@@ -814,19 +818,25 @@ public partial class ConsoleView : UserControl
             PinAfterModeSwitch(toBottom);
         }
         finally { _swappingDocument = false; }
-        _armedForChunk = LoaderOffset > ChunkTopThresholdPx;
+        _armedForChunk = ScrollGeometry.VerticalOffset > ChunkTopThresholdPx;
     }
 
     /// <summary>
-    /// [idle-memory · dalga 2 · üçüncü inceleme — ölçüldü] Chunk yükleyicinin okuduğu dikey ofset: TextView'in KENDİ kaydırma ofseti —
-    /// kaydırma işleyicisi (<see cref="OnScrollOffsetChanged"/>), prepend'in telafisi (<see cref="PrependPreviousChunk"/>) ve takasın
-    /// bıraktığı durum (<see cref="SwapDocument"/>) aynı kaynağı okur. ScrollViewer'ın <c>VerticalOffset</c>'i TextView'in kaydırma olayında
-    /// henüz eskidir ve sonraki yerleşimde güncellenirken yeni olay gelmez — ölçüldü: gerçek pencerede editörün Ctrl+Home'u TEK olay üretir,
-    /// o olayda ScrollViewer 3173,4, TextView 0; ScrollViewer'ı okuyan işleyici "tepeden uzakta" deyip hiçbir şey yüklemiyordu
-    /// (<c>ConsoleViewTests.A_real_ctrl_home_in_a_rebuilt_narrative_loads_the_previous_slice</c>). İstem satırı da aynı olayda TextView'in
-    /// ofsetini okur (<see cref="PositionPrompt"/>).
+    /// [idle-memory · dalga 2 · üçüncü/dördüncü inceleme — ölçüldü] Konsolun kaydırma geometrisinin TEK kaynağı: TextView'in KENDİ
+    /// kaydırma verisi — ofset, içerik ve görünür alan yüksekliği. Chunk yükleyici (kaydırma işleyicisi, prepend'in telafisi, takasın
+    /// bıraktığı durum) ve bottom-anchor (takip kararı, <c>⌄ latest</c>, dibe dönüş hedefi) buradan okur; istem satırı da aynı olayda
+    /// TextView'in ofsetini okur (<see cref="PositionPrompt"/>).
+    /// <para>ScrollViewer'ın aynası (<c>VerticalOffset</c>, <c>ExtentHeight</c>) TextView'in kaydırma olayında henüz eskidir ve sonraki
+    /// yerleşimde güncellenirken yeni olay gelmez. Ölçüldü (gerçek pencere): editörün Ctrl+Home'u TEK olay üretir, o olayda ScrollViewer
+    /// 3173,4, TextView 0 — yükleyici hiçbir şey yüklemiyor, anchor dipten uzaklığı 0 sayıp takibi bırakmıyordu (pill yok, istem satırı
+    /// metnin üstünde); ilk PageUp de öyle; tekerlek takibi eşiği aşan çentikten bir çentik sonra bırakıyordu; dibe dönüşün olayları pill'i
+    /// dönüş öncesi ofsetle değerlendirip görünür bırakıyordu. İçerik yüksekliği de olayda geride kalır (prepend telafisinde ScrollViewer
+    /// 3738,6, TextView 7458,6) — bu yüzden üç değer aynı yerden. Bir <c>ScrollToEnd</c> isteği uygulanırken TextView'in ofseti tek bir
+    /// olayda +∞ olabilir: uzaklık o an 0 (dipte) sayılır, yükleyici için "tepeden uzak"tır.</para>
+    /// <para>Testler: <c>ConsoleViewTests.A_real_ctrl_home_in_a_rebuilt_narrative_loads_the_previous_slice</c>,
+    /// <c>ConsoleReaderNavigationTests</c>.</para>
     /// </summary>
-    private double LoaderOffset => EditorControl.TextArea.TextView.ScrollOffset.Y;
+    private IScrollInfo ScrollGeometry => EditorControl.TextArea.TextView;
 
     /// <summary>
     /// [design v1.7.0 §2.5 · animasyon spec §2] Panel geçişinin TEK hareketi. Log bloğu, <b>alt kenarı sabit
@@ -965,8 +975,8 @@ public partial class ConsoleView : UserControl
         // fırlatıyordu. İçerik büyümesini artık büyümeyi YAPAN yer bildirir (AppendBatch → ShouldFollow).
         _bottomAnchor.OnScrollChanged(extentHeightChange: 0);
 
-        // Chunk loader — üstteki eşik ayrı kavram. Ofset TextView'in kendisinden (LoaderOffset): ScrollViewer'ınki bu olayda henüz eski.
-        EvaluateChunkScroll(LoaderOffset);
+        // Chunk loader — üstteki eşik ayrı kavram. Ofset TextView'in kendisinden (ScrollGeometry): ScrollViewer'ınki bu olayda henüz eski.
+        EvaluateChunkScroll(ScrollGeometry.VerticalOffset);
 
         // Prompt AYNI olayda taşınır. Konumu belgenin son satırından gelir; kaydırma o satırı yukarı iterken
         // imleç eski yerinde kalsaydı — bir tık tekerlek çevirmek yetiyordu — bir kare boyunca metnin ÜSTÜNE
@@ -986,7 +996,7 @@ public partial class ConsoleView : UserControl
         MotionTokens.AnimateSlowEaseInOut(this, EditorControl, EditorControl.VerticalOffset, target);
 
     /// <summary>[3b I-2] Chunk-scroll kararı. Offset dışarıdan verilir — üretimde <see cref="OnScrollOffsetChanged"/>
-    /// TextView'in kendi ofsetiyle (<see cref="LoaderOffset"/>) çağırır; böylece GERÇEK yol (arm → tepeye-scroll → prepend → re-arm)
+    /// TextView'in kendi ofsetiyle (<see cref="ScrollGeometry"/>) çağırır; böylece GERÇEK yol (arm → tepeye-scroll → prepend → re-arm)
     /// canlı bir scroll event'i olmadan test edilebilir (paralel bir kopya yol DEĞİL — üretimin çağırdığı metodun
     /// ta kendisi). Kullanıcı tepeden uzaklaşınca "arm" (ilk layout'ta offset=0 iken spurious prepend olmaz);
     /// yalnız gerçek bir tepeye-scroll önceki chunk'ı yükler.
@@ -1050,7 +1060,7 @@ public partial class ConsoleView : UserControl
         try
         {
             var tv = EditorControl.TextArea.TextView;
-            double before = LoaderOffset; // kaydırma olayının içinden de doğru: ScrollViewer'ınki orada henüz eski
+            double before = ScrollGeometry.VerticalOffset; // kaydırma olayının içinden de doğru: ScrollViewer'ınki orada henüz eski
             int prependedLines = _loadedFrom - from;
             double delta = prependedLines * tv.DefaultLineHeight;
 

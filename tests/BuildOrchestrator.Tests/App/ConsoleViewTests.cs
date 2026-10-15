@@ -1,7 +1,6 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Input;
 using System.Windows.Markup;
 using System.Windows.Media;
 using ICSharpCode.AvalonEdit;
@@ -396,29 +395,17 @@ public class ConsoleViewTests
     /// <para>KIRMIZI (ölçüldü): tuş TEK bir kaydırma olayı üretir ve o olayda ScrollViewer'ın ofseti henüz eskidir (3173,4) — TextView'in kendi
     /// ofseti 0'dır. İşleyici ScrollViewer'ı okuyordu: "tepeden uzakta" deyip hiçbir şey yüklemiyordu; ScrollViewer sonraki yerleşimde 0'a
     /// iner ama yeni olay gelmez — okuyucu dilimin tepesinde kalıyordu, en tepede tekerlek de olay üretmez.</para>
+    /// <para>Kurulum ve tuş <see cref="RealizedNarrative"/>'tedir (konsolun gerçek gezinme testleri de onu kullanır); jest kanalı
+    /// kaydırma çubuğu yerine tuşun kendi önizlemesidir — ikisi de aynı <c>NotifyUserScroll</c>'a bağlı.</para>
     /// </summary>
     [StaFact]
     public void A_real_ctrl_home_in_a_rebuilt_narrative_loads_the_previous_slice()
     {
-        var view = new ConsoleView();
-        var window = DsResources.Realize(DsResources.NewHost(), view, 800, 600);
-        try
-        {
-            var store = new NarrativeStore();
-            foreach (int i in Enumerable.Range(0, 400)) store.Append($"line{i}");
-            view.ReplaceRunDocument(NarrativeSnapshots.Of(store)); // ← Back / tepsiden dönüş
-            DispatcherPump.DrainToIdle();
-            var textArea = view.Editor.TextArea;
-            var ctrlHome = textArea.InputBindings.OfType<KeyBinding>()
-                .Single(k => k.Key == Key.Home && k.Modifiers == ModifierKeys.Control);
+        using var narrative = new RealizedNarrative(lines: 400); // ← Back / tepsiden dönüş
 
-            UserScrollGesture.Raise(view);                                               // tuşun ham jest kanalı
-            ((RoutedCommand)ctrlHome.Command).Execute(ctrlHome.CommandParameter, textArea); // tuşun bağlaması
-            DispatcherPump.DrainToIdle();
+        narrative.PressCtrlHome();
 
-            Assert.Equal(string.Concat(Enumerable.Range(0, 400).Select(i => $"line{i}\n")), view.Document.Text);
-        }
-        finally { window.Close(); }
+        Assert.Equal(string.Concat(Enumerable.Range(0, 400).Select(i => $"line{i}\n")), narrative.View.Document.Text);
     }
 
     /// <summary>
@@ -604,24 +591,22 @@ public class ConsoleViewTests
     [StaFact]
     public void Real_OnScrollOffsetChanged_path_prepends_on_jump_to_top_and_releases_stuck_without_data_loss()
     {
-        // [I-1] EvaluateChunkScroll(offset) çağıran testlerin AKSİNE (yukarıdakiler), bu test AvalonEdit'in
-        // gerçek ScrollOffsetChanged'ine kablı OLAN, üretimin ta kendisi ConsoleView.OnScrollOffsetChanged'i
-        // ÇAĞIRIR (paralel bir kopya yol DEĞİL — internal, EvaluateChunkScroll'daki AYNI gerekçeyle: canlı bir
-        // scroll event'i beklemeden GERÇEK metodu tetikleyebilmek). Amaç: bottom-anchor'ın IsStuck yeniden-hesabı
-        // ile chunk-loader'ın prepend'i AYNI olayda (kullanıcı dipteyken tek hamlede tepeye/Ctrl+Home) çakıştığında
-        // (a) prepend'in delik BIRAKMADIĞINI (backlog bitişik) VE (b) kullanıcının artık dipte OLMADIĞININ doğru
-        // yansıtıldığını (StickToBottom=false — CompensatedOffset'in üzerine YANLIŞLIKLA "dibe git" yazılmadığının
-        // dolaylı kanıtı: bkz. BottomAnchorBehaviorTests.Growth_arriving_after_IsStuck_was_freshly_released_...)
-        // doğrular.
+        // [I-1] EvaluateChunkScroll(offset) çağıran testlerin AKSİNE (yukarıdakiler), bu test kaydırmayı AvalonEdit'in
+        // gerçek ScrollOffsetChanged'ine sürdürür: ScrollViewer kaydırma isteğini yerleşim geçişinde (UpdateLayout) TextView'e
+        // uygular, TextView olayı yayar ve üretimin kablosu ConsoleView.OnScrollOffsetChanged'i çağırır. Amaç: bottom-anchor'ın
+        // IsStuck yeniden-hesabı ile chunk-loader'ın prepend'i AYNI olayda (kullanıcı dipteyken tek hamlede tepeye/Ctrl+Home)
+        // çakıştığında (a) prepend'in delik BIRAKMADIĞINI (backlog bitişik) VE (b) kullanıcının artık dipte OLMADIĞININ doğru
+        // yansıtıldığını (StickToBottom=false — CompensatedOffset'in üzerine YANLIŞLIKLA "dibe git" yazılmadığının dolaylı kanıtı:
+        // bkz. BottomAnchorBehaviorTests.Growth_arriving_after_IsStuck_was_freshly_released_...) doğrular. Sıra-bağımlı koruma
+        // ayrıca BottomAnchorBehaviorTests'teki odaklı guard-logic testiyle kanıtlanır.
         //
-        // [Önemli — dürüstlük notu] Deneysel olarak doğrulandı: AvalonEdit'in ExtentHeight/VerticalOffset'i BU
-        // headless/offscreen host'ta document.Insert/ScrollToVerticalOffset'ten SONRA, araya GERÇEK bir layout
-        // pass girmeden senkron YANSIMAZ (bu yüzden aşağıda kaydırmanın ardından UpdateLayout çağrılır) — I-1'in
-        // tarif ettiği "aynı senkron çağrı içinde post-prepend extent'in stale-true IsStuck'a sızması" tam olarak
-        // BU testte yeniden üretilemiyor. Gerçek mekanizma yalnız AvalonEdit'in KENDİ iç re-entrant event'i
-        // üzerinden tetiklenebilir, ki bu headless bir StaFact'te DETERMİNİSTİK olarak zorlanamıyor. Bu yüzden bu
-        // test — GERÇEK yolu TAMAMEN test DIŞI bırakmamak için — sözleşmeyi (delik yok + doğru un-stick) doğrular;
-        // I-1'in SIRA-bağımlı koruması ayrıca BottomAnchorBehaviorTests'teki odaklı guard-logic testiyle kanıtlanır.
+        // [DEĞİŞEN KURULUM — dalga 2 dördüncü inceleme] Eski hâli her UpdateLayout'tan sonra OnScrollOffsetChanged'i bir kez daha
+        // DOĞRUDAN çağırıyordu ("headless'ta gerçek mekanizma zorlanamıyor" notuyla). Ölçüldü: gerçek olay bu host'ta da ateşleniyor;
+        // fakat anchor geometriyi ScrollViewer'dan okurken o olayda ofset henüz eskiydi — tepeye sıçrayan olay takibi BIRAKMIYORDU.
+        // Takibi testin fazladan çağrısı bırakıyordu: yerleşimden SONRA, oturmuş değerlerle — üretimin hiç göndermediği bir olay.
+        // Test o kusurla yeşil kaldı: anchor geçici olarak yeniden ScrollViewer'ı okutulduğunda konsol testlerinden yalnız gerçek
+        // gezinme testleri (ConsoleReaderNavigationTests) düştü, bu test geçti. Fazladan çağrılar kalktı; karar gerçek olayda verilir —
+        // aynı bozma altında bu test (b)'de kırmızıdır (StickToBottom true).
         //
         // [DEĞİŞEN ÖN-KOŞUL] Test eskiden panelin geçişten sonra TESADÜFEN tepede (offset≈19) kalmasına
         // dayanıyordu — ölçüldü. O bir kusurdu: design §2.5 mod geçişinde dibe pinlenmeyi ister ve pin artık
@@ -631,7 +616,7 @@ public class ConsoleViewTests
 
         // 300 satır kaskat → render dilimi son 200 (orig100..orig299), _loadedFrom=100 (backlog: orig0..orig99).
         var all = Enumerable.Range(0, 300).Select(i => $"orig{i}").ToArray();
-        view.PlayCascade(all); // _projectMode, StickToBottom=true (varsayılan/forced)
+        view.PlayCascade(all); // _projectMode; takip KAPALI açılır (proje logu baştan okunur)
         view.UpdateLayout();
 
         // [DEĞİŞEN ÖN-KOŞUL] Proje logu BAŞTAN açılır (kullanıcı kararı) — chunk latch'i ancak kullanıcı
@@ -639,16 +624,14 @@ public class ConsoleViewTests
         Assert.Equal(0.0, view.Editor.VerticalOffset);
         UserScrollGesture.Raise(view);
         view.Editor.ScrollToVerticalOffset(view.Editor.ExtentHeight);
-        view.UpdateLayout(); // bu host'ta kaydırma ancak bir yerleşim geçişinden SONRA offset'e yansır (ölçüldü)
-        view.OnScrollOffsetChanged(); // arm (tepeden uzaklaşıldı)
+        view.UpdateLayout(); // kaydırma yerleşim geçişinde uygulanır; gerçek olay yükleyiciyi kurar (tepeden uzaklaşıldı)
 
         // TEK hamlede tepeye (Ctrl+Home): kullanıcının HAM jesti — üretimin dinlediği kanal — VE gerçek
-        // kaydırma; ardından üretimin scroll handler'ı senkron tetiklenir. Jest olmadan takip BIRAKILMAZ:
+        // kaydırma; üretimin scroll handler'ını yerleşim geçişindeki gerçek olay çağırır. Jest olmadan takip BIRAKILMAZ:
         // takibi yalnız kullanıcı bırakır (bkz. BottomAnchorDecision.OnScrollChanged `userDriven`).
         UserScrollGesture.Raise(view);
         view.Editor.ScrollToVerticalOffset(0);
         view.UpdateLayout();
-        view.OnScrollOffsetChanged();
 
         // (a) Delik yok: prepend gerçekleşti, backlog (orig0..orig99) render dilimine (orig100..orig299) bitişik
         // dikildi — tekrar/kayıp yok.
