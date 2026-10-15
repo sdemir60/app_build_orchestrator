@@ -60,26 +60,14 @@ public class AboutDialogTests
         DsResources.Descendants(dialog).OfType<ScrollViewer>()
             .Single(sv => sv.DataContext is DiagnosticsLine line && line.Label == label);
 
-    /// <summary>Gerçek bir <c>MouseWheel</c> routed event'i — HWND/SendMessage GEREKMEZ (yalnız
-    /// <c>HorizontalWheelScroll</c>'un çözdüğü <c>WM_MOUSEHWHEEL</c> için gerekirdi, bkz. o sınıfın XML
-    /// doc'u); WPF düz dikey tekerleği zaten routed event olarak dağıttığı için doğrudan
-    /// <see cref="UIElement.RaiseEvent"/> yeterlidir. Kaydırma senkrondur (OnEnvironmentValueWheel bir
-    /// Dispatcher turu ERTELEMEZ), <c>UpdateLayout</c> yalnız yayınlanan <c>HorizontalOffset</c>'in bir
-    /// layout turu istediği ihtimaline karşı savunmacıdır.
-    ///
-    /// <para><b>İKİ faz raise edilir, çünkü WPF'in <c>InputManager</c>'ı da öyle yapar:</b> önce tünel
-    /// (<c>PreviewMouseWheel</c>), preview YUTMADIYSA baloncuk (<c>MouseWheel</c>). Baloncuk fazı ŞARTTIR:
-    /// <see cref="ScrollViewer"/>'ın olayı yutan class handler'ı (<c>OnMouseWheel</c>) YALNIZ orada koşar —
-    /// tek başına preview raise etmek "hücre olayı dışarı bırakıyor mu" sorusunu HİÇ sormaz.</para></summary>
+    /// <summary>Gerçek bir tekerlek hareketi (<see cref="MouseInput.Wheel"/> — iki fazın gerekçesi oradadır). Kaydırma senkrondur
+    /// (OnEnvironmentValueWheel bir Dispatcher turu ERTELEMEZ), <c>UpdateLayout</c> yalnız yayınlanan <c>HorizontalOffset</c>'in bir
+    /// layout turu istediği ihtimaline karşı savunmacıdır. İki faz şarttır: bu testler "hücre olayı dışarı bırakıyor mu" sorusunu
+    /// sorar ve <see cref="ScrollViewer"/>'ın olayı yutan class handler'ı yalnız baloncukta koşar.</summary>
     private static MouseWheelEventArgs RaiseWheel(
         BuildOrchestrator.App.Views.AboutDialog dialog, ScrollViewer target, int delta)
     {
-        var preview = new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, delta)
-            { RoutedEvent = UIElement.PreviewMouseWheelEvent };
-        target.RaiseEvent(preview);
-        if (!preview.Handled)
-            target.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, delta)
-                { RoutedEvent = UIElement.MouseWheelEvent });
+        var preview = MouseInput.Wheel(target, delta);
         dialog.UpdateLayout();
         return preview;
     }

@@ -196,7 +196,9 @@ public sealed class BottomAnchorBehavior
         });
     }
 
-    private static void DefaultScheduleOnce(TimeSpan delay, Action callback)
+    /// <summary>Üretimin zamanlayıcısı: tek seferlik bir <see cref="DispatcherTimer"/>. Kendi zamanlayıcı seam'ini dışa açan host
+    /// (<c>ConsoleView.AnchorScheduleOnce</c>) bunu varsayılan alır — ikinci bir tanım yazmaz.</summary>
+    internal static void DefaultScheduleOnce(TimeSpan delay, Action callback)
     {
         var timer = new DispatcherTimer { Interval = delay };
         timer.Tick += (_, _) => { timer.Stop(); callback(); };

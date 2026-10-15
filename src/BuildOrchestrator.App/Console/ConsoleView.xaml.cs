@@ -163,6 +163,7 @@ public partial class ConsoleView : UserControl
             getViewport: () => ScrollGeometry.ViewportHeight,
             scrollInstant: v => EditorControl.ScrollToVerticalOffset(v),
             scrollSmooth: AnimateToBottom,
+            scheduleOnce: (delay, callback) => AnchorScheduleOnce(delay, callback),
             // Anlatı modunda kullanıcı elini çekince akış yeniden izlenir. PROJE-LOG modunda dönülmez:
             // orada izlenecek canlı bir akış (ve prompt imleci) yoktur, kullanıcı bir logu okuyordur.
             autoResumeAllowed: () => !_projectMode);
@@ -260,6 +261,11 @@ public partial class ConsoleView : UserControl
         get => _motion.MotionSettings;
         set => _motion.MotionSettings = value;
     }
+
+    /// <summary>[test seam · D8] Bottom-anchor'ın zamanlayıcısı — bekleme dönüşü (<see cref="BottomAnchorDecision.IdleResumeMs"/>) ve
+    /// atlama penceresi. Üretimde <see cref="BottomAnchorBehavior.DefaultScheduleOnce"/>; test gerçek pencere ve tuşlarla sürerken onu
+    /// yakalayıp duvar saati beklemeden doldurur. Anchor her zamanlamada buradan okur, kurulduktan sonra değiştirmek yeterlidir.</summary>
+    internal Action<TimeSpan, Action> AnchorScheduleOnce { get; set; } = BottomAnchorBehavior.DefaultScheduleOnce;
 
     /// <summary>Test/host erişimi için altındaki AvalonEdit kontrolü.</summary>
     public TextEditor Editor => EditorControl;

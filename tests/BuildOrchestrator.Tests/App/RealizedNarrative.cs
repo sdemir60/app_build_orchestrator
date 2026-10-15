@@ -12,14 +12,19 @@ namespace BuildOrchestrator.Tests.App;
 ///
 /// <para>Neden gerçek pencere: kaydırma olayının içindeki geometri (hangi ofsetin o anda henüz eski olduğu) yalnız yerleşimi
 /// üretimdeki gibi koşan bir host'ta üretimle aynıdır; tuş ve tekerlek olayları da bir <see cref="PresentationSource"/> ister.</para>
+///
+/// <para>Bottom-anchor'ın zamanlayıcısı (bekleme dönüşü, atlama penceresi) konsolun seam'inden yakalanır
+/// (<c>ConsoleView.AnchorScheduleOnce</c>): hiçbir şey duvar saatiyle kendiliğinden dolmaz, test <see cref="ElapseAnchorTimers"/>
+/// ile doldurur.</para>
 /// </summary>
 internal sealed class RealizedNarrative : IDisposable
 {
     private readonly Window _window;
+    private readonly List<Action> _anchorTimers = [];
 
     public RealizedNarrative(int lines)
     {
-        View = new ConsoleView();
+        View = new ConsoleView { AnchorScheduleOnce = (_, callback) => _anchorTimers.Add(callback) };
         _window = DsResources.Realize(DsResources.NewHost(), View, 800, 600);
         Store = new NarrativeStore();
         foreach (int i in Enumerable.Range(0, lines)) Store.Append($"line{i}");
@@ -55,14 +60,10 @@ internal sealed class RealizedNarrative : IDisposable
         DispatcherPump.DrainToIdle();
     }
 
-    /// <summary>Tekerleğin bir çentiği yukarı, imlecin altındaki metin alanında: önizleme, ardından ScrollViewer'ın kendi işlediği olay.</summary>
+    /// <summary>Tekerleğin bir çentiği yukarı, imlecin altındaki metin alanında (<see cref="MouseInput.Wheel"/>).</summary>
     public void WheelUp()
     {
-        var textView = View.Editor.TextArea.TextView;
-        var preview = new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, 120) { RoutedEvent = Mouse.PreviewMouseWheelEvent };
-        textView.RaiseEvent(preview);
-        if (!preview.Handled)
-            textView.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, 120) { RoutedEvent = Mouse.MouseWheelEvent });
+        MouseInput.Wheel(View.Editor.TextArea.TextView, Mouse.MouseWheelDeltaForOneLine);
         DispatcherPump.DrainToIdle();
     }
 
@@ -70,6 +71,16 @@ internal sealed class RealizedNarrative : IDisposable
     public void ClickLatest()
     {
         View.Pill.PillButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+        DispatcherPump.DrainToIdle();
+    }
+
+    /// <summary>Okuyucu elini çekti ve süre geçti: anchor'ın o ana dek kurduğu zamanlayıcılar dolar (üretimdeki sırayla; eskimiş bir
+    /// bekleme kendi kuşak sayacıyla hiçbir şey yapmaz).</summary>
+    public void ElapseAnchorTimers()
+    {
+        var due = _anchorTimers.ToList();
+        _anchorTimers.Clear();
+        foreach (var callback in due) callback();
         DispatcherPump.DrainToIdle();
     }
 

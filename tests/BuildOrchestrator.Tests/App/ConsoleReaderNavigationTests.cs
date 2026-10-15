@@ -133,19 +133,21 @@ public class ConsoleReaderNavigationTests
 
     /// <summary>
     /// Gerçek bir Ctrl+Home'dan sonra okuyucu elini çekince (<see cref="BottomAnchorDecision.IdleResumeMs"/>) konsol dibe döner, akışı
-    /// yeniden izler ve pill kalkar — README'nin "about five seconds after you stop, it returns to the bottom" sözü. Gerçek zamanlayıcıyı
-    /// bekler (~5 sn).
-    /// <para>KIRMIZI (ölçüldü): dönüş oluyordu (anchor yanlışlıkla yapışık kaldığı için anında yetişme yolundan), ama pill dipte GÖRÜNÜR
-    /// kalıyordu — dönüş öncesi ofsetle değerlendirilmiş, dönüşün olayları da eski ofseti okumuştu.</para>
+    /// yeniden izler ve pill kalkar — README'nin "about five seconds after you stop, it returns to the bottom" sözü.
+    /// <para>KIRMIZI (ölçüldü, dördüncü inceleme): dönüş oluyordu (anchor yanlışlıkla yapışık kaldığı için anında yetişme yolundan), ama
+    /// pill dipte GÖRÜNÜR kalıyordu — dönüş öncesi ofsetle değerlendirilmiş, dönüşün olayları da eski ofseti okumuştu.</para>
+    /// <para>[DEĞİŞEN KURULUM — dalga 2 beşinci inceleme] Eskiden gerçek zamanlayıcıyı bekliyordu (<c>PumpUntil</c>, ~5 sn duvar saati).
+    /// Artık beklemeyi konsolun zamanlayıcı seam'i yakalar ve test onu doldurur (<see cref="RealizedNarrative.ElapseAnchorTimers"/>) — aynı
+    /// geri çağırma, aynı pencere ve tuşlar; iddia aynı. Tuştan sonra panelin okuyucuda olduğu ön-koşul olarak pinlenir.</para>
     /// </summary>
     [StaFact]
     public void The_console_returns_to_the_bottom_once_the_reader_lets_go_after_a_real_ctrl_home()
     {
         using var narrative = new RealizedNarrative(lines: 400);
         narrative.PressCtrlHome();
+        AssertReleased(narrative); // ön-koşul: bekleme dolana dek panel okuyucuda
 
-        DispatcherPump.PumpUntil(() => narrative.View.FollowsBottom, TimeSpan.FromMilliseconds(3 * BottomAnchorDecision.IdleResumeMs));
-        DispatcherPump.DrainToIdle();
+        narrative.ElapseAnchorTimers();
 
         AssertFollowingAtTheBottom(narrative);
     }

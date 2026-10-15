@@ -4,7 +4,7 @@ using System.Windows.Input;
 namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
-/// [A13/T1] Testlerde GERÇEK bir fare basışı yükseltmenin TEK yeri.
+/// [A13/T1] Testlerde GERÇEK bir fare girdisi — basış ve tekerlek — yükseltmenin TEK yeri.
 ///
 /// <para><b>Neden doğrudan handler çağrılmıyor:</b> WPF'te <see cref="UIElement.MouseLeftButtonDown"/>
 /// <b>Direct</b> yönlendirmelidir; "kabarma" görüntüsünü <see cref="Mouse.MouseDownEvent"/> (bubbling)
@@ -14,7 +14,8 @@ namespace BuildOrchestrator.Tests.App;
 ///
 /// <para><b>Neden ortak:</b> aynı beş satır <c>GraphClickTests</c> (düğüm/zemin tıklaması) ve
 /// <c>GraphPanZoomTests</c> (sinema modunda zemin basışının seçimi KALDIRMADIĞI) tarafından kullanılır —
-/// kopya YASAK (CLAUDE.md).</para>
+/// kopya YASAK (CLAUDE.md). Tekerleğin iki fazlı sentezi de öyle: <c>AboutDialogTests</c> (Environment hücreleri) ve
+/// <c>RealizedNarrative</c> (konsol) aynı <see cref="Wheel"/>'i kullanır.</para>
 /// </summary>
 internal static class MouseInput
 {
@@ -61,6 +62,33 @@ internal static class MouseInput
         };
         target.RaiseEvent(args);
         return args;
+    }
+
+    /// <summary>
+    /// Tekerleğin bir hareketi (<paramref name="delta"/>: pozitif yukarı). HWND/SendMessage gerekmez — WPF düz dikey tekerleği zaten
+    /// routed event olarak dağıtır (yatay tekerlek ayrıdır, bkz. <c>HorizontalWheelScroll</c>).
+    ///
+    /// <para><b>İKİ faz raise edilir, çünkü WPF'in <c>InputManager</c>'ı da öyle yapar:</b> önce tünel (<c>PreviewMouseWheel</c>),
+    /// önizleme YUTMADIYSA baloncuk (<c>MouseWheel</c>). Baloncuk fazı ŞARTTIR: <c>ScrollViewer</c>'ın olayı işleyip yutan class
+    /// handler'ı (<c>OnMouseWheel</c>) YALNIZ orada koşar — tek başına önizleme raise etmek kaydırmayı hiç sürmez. Dönen önizleme
+    /// argümanıyla <c>Handled</c> sınanabilir.</para>
+    /// </summary>
+    public static MouseWheelEventArgs Wheel(UIElement target, int delta)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        var preview = new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, delta)
+        {
+            RoutedEvent = UIElement.PreviewMouseWheelEvent,
+        };
+        target.RaiseEvent(preview);
+        if (!preview.Handled)
+        {
+            target.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, delta)
+            {
+                RoutedEvent = UIElement.MouseWheelEvent,
+            });
+        }
+        return preview;
     }
 
     /// <summary>Capture'ın DÜŞMESİ (Alt+Tab, popup, başka öğenin capture alması). Bu bir bırakma DEĞİL
