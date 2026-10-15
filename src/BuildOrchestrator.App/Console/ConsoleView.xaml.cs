@@ -160,8 +160,6 @@ public partial class ConsoleView : UserControl
         // ekleme, chunk-dikiş, mod değişimi) bant ESKİ satırda asılı kalmasın diye (bkz. RefreshHoverBand doc'u).
         // [B2 fix 1 · F1] ve izlenmeyen belgede pill'i yeniden okur (OnVisualLinesChanged).
         EditorControl.TextArea.TextView.VisualLinesChanged += (_, _) => OnVisualLinesChanged();
-        // [T59] Kullanıcı tekerleği çevirdiği anda uçuştaki pill-jump animasyonu iptal olur + suppress bayrağı kalkar.
-        ScrollAnimator.EnableUserCancellation(EditorControl);
         // Yatay tekerlek/touchpad: WPF WM_MOUSEHWHEEL'i HİÇ dağıtmaz, bu yüzden yatay kaydırma uygulamanın kendi
         // kancasından geçer. Konsol bunu Enable eden TEK panel: yatay taşması olan tek yüzey odur (WordWrap=False).
         HorizontalWheelScroll.Enable(this);
@@ -183,8 +181,9 @@ public partial class ConsoleView : UserControl
             followAllowed: () => !_projectMode);
         _bottomAnchor.Changed += OnBottomAnchorChanged;
         // "Kullanıcı kaydırdı" HAM GİRDİDEN bildirilir — tekerlek, kaydırma çubuğu ve gezinme tuşları
-        // (gerekçe: UserScrollSignal / BottomAnchorBehavior.NotifyUserScroll).
-        UserScrollSignal.Wire(this, _bottomAnchor.NotifyUserScroll);
+        // (gerekçe: UserScrollSignal / BottomAnchorBehavior.NotifyUserScroll). [T59 · B2 fix 2 madde 2] Aynı jest uçuştaki `⌄ latest`
+        // animasyonunu durdurur — kuralın tek tanımı sinyaldedir, bir uçuşu durdurduysa atlama penceresi de kapanır.
+        UserScrollSignal.Wire(this, EditorControl, _bottomAnchor.NotifyUserScroll);
         // [idle-memory · dalga 3 · karar 46 · B2 fix 1 F2] Klavye gezintisi görünümü kaydırır, gizli imleci değil (gerekçe:
         // OnPreviewNavigationCommand).
         CommandManager.AddPreviewExecutedHandler(EditorControl, OnPreviewNavigationCommand);
@@ -1115,16 +1114,15 @@ public partial class ConsoleView : UserControl
     /// sıçratıyordu. Ölçüldü: dipteki ilk PageUp 200 satırlık dilimin TEPESİNE sıçrıyor, PageDown dipten ~2645 px yukarı atıyordu (karar 46);
     /// ↑/↓/Home/End ve oklar aynı kökten (B2 fix 1: dipteki ↑ dilimin tepesine, iki sayfa aşağıdaki ↓ sayfanın tepesine, Ctrl+End sonrası
     /// Home sona sıçrıyor, End tepedeki sayfayı hiç oynatmıyordu).</para>
-    /// <para><b>Uçuştaki <c>⌄ latest</c> animasyonu önce durdurulur</b> (<see cref="ScrollAnimator.CancelForUser"/>, tekerleğin yaptığı
-    /// gibi): aksi hâlde sıradaki karesi tuşun kaydırmasını ezerdi (B2 fix 1 · M5). Geri kalan her şey her jestteki gibidir: tuşun ham
-    /// önizlemesi direksiyonu okuyucuya verir (<see cref="UserScrollSignal"/>), kaydırmanın olayı takip kararını ve yükleyiciyi besler
-    /// (<see cref="OnScrollOffsetChanged"/>). Shift'li seçim adımları, Alt+Shift kutu seçimi ve Ctrl+Home/Ctrl+End editörde kalır (seçim ve
-    /// Ctrl+C eskisi gibi).</para>
+    /// <para>Geri kalan her şey her jestteki gibidir: tuşun ham önizlemesi — komuttan ÖNCE — uçuştaki <c>⌄ latest</c> animasyonunu durdurur
+    /// (aksi hâlde sıradaki karesi tuşun kaydırmasını ezerdi — B2 fix 1 · M5) ve direksiyonu okuyucuya verir (<see cref="UserScrollSignal"/>);
+    /// kaydırmanın olayı takip kararını ve yükleyiciyi besler (<see cref="OnScrollOffsetChanged"/>). [B2 fix 2 · madde 2] İptal eskiden burada,
+    /// yalnız bu tablonun adımlarındaydı — editörde kalan tuşlar animasyonu durdurmuyordu; kural artık sinyalin tek tanımındadır. Shift'li seçim
+    /// adımları, Alt+Shift kutu seçimi ve Ctrl+Home/Ctrl+End editörde kalır (seçim ve Ctrl+C eskisi gibi).</para>
     /// </summary>
     private void OnPreviewNavigationCommand(object sender, ExecutedRoutedEventArgs e)
     {
         if (!NavigationScrolls.TryGetValue(e.Command, out var scroll)) return;
-        ScrollAnimator.CancelForUser(EditorControl);
         scroll(this);
         e.Handled = true;
     }

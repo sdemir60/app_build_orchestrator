@@ -16,11 +16,12 @@ namespace BuildOrchestrator.App.Controls;
 /// <see cref="TextEditor"/> (konsol) — ikisi de <c>ScrollToVerticalOffset(double)</c> sunar; TEK animasyon
 /// inşa/kablaj kodu paylaşılır (kopya YASAK).</para>
 ///
-/// <para><b>Wheel iptali:</b> WPF'te kullanıcı animasyon SÜRERKEN tekerleği çevirirse animasyon offset'i fethetmeye
+/// <para><b>Kullanıcı iptali:</b> WPF'te kullanıcı animasyon SÜRERKEN kaydırırsa animasyon offset'i fethetmeye
 /// devam eder (tarayıcının aksine — orada <c>behavior:'smooth'</c> kullanıcı girdisiyle OTOMATİK iptal olur).
-/// <see cref="EnableUserCancellation"/> bunu <c>PreviewMouseWheel</c>'e bağlayıp <c>BeginAnimation(prop, null)</c>
-/// ile iptal eder + <see cref="IsUserSuppressedProperty"/> bayrağını kaldırır (follow-mode'un T48 arbitration'ı bu
-/// bayrağı tüketir — burada yalnız primitif sağlanır, "ne zaman devam" politikası paket dışı).</para>
+/// <see cref="CancelForUser"/> onu <c>BeginAnimation(prop, null)</c> ile iptal eder + <see cref="IsUserSuppressedProperty"/>
+/// bayrağını kaldırır (follow-mode'un T48 arbitration'ı bu bayrağı tüketir — burada yalnız primitif sağlanır, "ne zaman
+/// devam" politikası paket dışı). İptali kullanıcının kaydırma jestine bağlayan TEK kablo <see cref="UserScrollSignal"/>'dir
+/// (tekerlek, kaydırma çubuğu, dikey kaydırma tuşları — üç panelde).</para>
 ///
 /// <para><b>Motion sözleşmesi:</b> <paramref name="animationsEnabled"/>/<paramref name="effectiveDuration"/> ÇAĞIRAN
 /// tarafından, animasyonun BAŞLADIĞI ANDA <c>App.Motion</c>'dan TAZE okunmalıdır (bkz. <see cref="AnimateTo"/> XML
@@ -36,7 +37,7 @@ public static class ScrollAnimator
     public static double GetVerticalOffset(DependencyObject d) => (double)d.GetValue(VerticalOffsetProperty);
     public static void SetVerticalOffset(DependencyObject d, double value) => d.SetValue(VerticalOffsetProperty, value);
 
-    /// <summary>Son kullanıcı-tetikli (wheel) iptalden bu yana kimse yeni bir <see cref="AnimateTo"/> BAŞLATMADI mı —
+    /// <summary>Son kullanıcı-tetikli (kaydırma jesti) iptalden bu yana kimse yeni bir <see cref="AnimateTo"/> BAŞLATMADI mı —
     /// follow-mode/T48 arbitration'ın "kullanıcıyla dövüşme" bayrağı. <see cref="AnimateTo"/> her çağrıldığında
     /// false'a döner (yeni bir programatik hareket, kullanıcı müdahalesi ARTIK geçerli değil).</summary>
     public static readonly DependencyProperty IsUserSuppressedProperty =
@@ -45,15 +46,20 @@ public static class ScrollAnimator
     public static bool GetIsUserSuppressed(DependencyObject d) => (bool)d.GetValue(IsUserSuppressedProperty);
     private static void SetIsUserSuppressed(DependencyObject d, bool value) => d.SetValue(IsUserSuppressedProperty, value);
 
-    /// <summary>Bir scroll host'a (ScrollViewer/TextEditor) BİR KEZ bağlanır: kullanıcı tekerleği çevirdiği ANDA
-    /// uçuştaki animasyonu iptal eder + suppress bayrağını kaldırır (feasibility §3.3 — WPF'in tarayıcıdan eksik
-    /// olduğu "kullanıcı girdisi otomatik iptal eder" davranışının elle karşılığı).</summary>
-    public static void EnableUserCancellation(UIElement scrollHost) =>
-        scrollHost.PreviewMouseWheel += (_, _) => CancelForUser(scrollHost);
+    /// <summary>[B2 fix 2 · madde 2b] Hedefin son başlatılan hareketinin saati — <see cref="CancelForUser"/>'ın "bir UÇUŞU mu durdurdum"
+    /// sorusunun cevabı. WPF uygulanan saati genel API'de sunmaz; <see cref="AnimateTo"/> saati kendisi kurar (<c>CreateClock</c> +
+    /// <c>ApplyAnimationClock</c> — <c>BeginAnimation</c>'ın kendi yaptığı) ve burada tutar. Hareket bırakılınca (iptal, yeni hareket) silinir.</summary>
+    private static readonly DependencyProperty FlightProperty =
+        DependencyProperty.RegisterAttached("Flight", typeof(AnimationClock), typeof(ScrollAnimator), new PropertyMetadata(null));
 
     /// <summary>Uçuştaki animasyonu (varsa) <c>BeginAnimation(prop, null)</c> ile iptal eder + suppress bayrağını
-    /// kaldırır. <see cref="EnableUserCancellation"/>'ın wheel kancası bunu çağırır; testler de doğrudan çağırabilir.
+    /// kaldırır. Kullanıcının kaydırma jesti bunu çağırır (<see cref="UserScrollSignal"/> — feasibility §3.3: WPF'in tarayıcıdan eksik
+    /// olduğu "kullanıcı girdisi otomatik iptal eder" davranışının elle karşılığı); testler de doğrudan çağırabilir.
     /// <c>BeginAnimation</c> <see cref="UIElement"/> üzerinde tanımlıdır (ScrollViewer/TextEditor ikisi de UIElement).
+    ///
+    /// <para><b>[B2 fix 2 · madde 2b] Döner: bir UÇUŞ durduruldu mu</b> — hareketin saati henüz dolum (<c>HoldEnd</c>) evresine geçmemişti
+    /// (etkin ya da ilk tikini bekliyor). İnmiş bir hareket hedefte durur, onu bırakmak bir uçuşu durdurmak değildir; hiç hareket yoksa da
+    /// cevap hayırdır. Konsol ve stream'in atlama penceresi bu cevaba bakar (<see cref="BottomAnchorBehavior.NotifyUserScroll"/>).</para>
     ///
     /// <para><b>İptal bir BIRAKMA'dır, geri alma DEĞİL — bu yüzden animasyonu bırakmadan ÖNCE panelin O ANKİ
     /// konumu DP'nin tabanına yazılır.</b> <see cref="AnimateTo"/> tabanı hareketin BAŞLANGIÇ noktasına tohumlar
@@ -64,11 +70,14 @@ public static class ScrollAnimator
     /// inildikten sonra tekerleğe dokunmak paneli dipten değil, pill'e basmadan önceki yerden sürdürüyordu.
     /// Taban ile efektif değer eşitlendiğinde bırakma hiçbir değişim üretmez; panel kullanıcının dokunduğu anda
     /// nerede duruyorsa orada kalır.</para></summary>
-    public static void CancelForUser(UIElement target)
+    public static bool CancelForUser(UIElement target)
     {
+        bool stoppedFlight = target.GetValue(FlightProperty) is AnimationClock { CurrentState: not ClockState.Filling };
         SetVerticalOffset(target, GetVerticalOffset(target)); // taban = animasyonun tuttuğu GERÇEK konum
         target.BeginAnimation(VerticalOffsetProperty, null);
+        target.ClearValue(FlightProperty);
         SuppressForUser(target);
+        return stoppedFlight;
     }
 
     /// <summary>Uçuştaki hareketi İPTAL ETMEDEN kullanıcı-suppress bayrağını kurar — kullanıcının KENDİ
@@ -119,6 +128,7 @@ public static class ScrollAnimator
 
         SetIsUserSuppressed(target, false); // yeni programatik hareket — önceki kullanıcı iptali artık geçersiz
         target.BeginAnimation(VerticalOffsetProperty, null); // HoldEnd'de asılı kalmış önceki hareketi bırak
+        target.ClearValue(FlightProperty);
         SetVerticalOffset(target, currentOffset); // DP'nin taban değerini GERÇEK konuma tohumla — klips/zıplama yok
 
         if (!animationsEnabled || effectiveDuration <= TimeSpan.Zero)
@@ -128,7 +138,10 @@ public static class ScrollAnimator
             return false;
         }
 
-        target.BeginAnimation(VerticalOffsetProperty, BuildAnimation(targetOffset, effectiveDuration, keySpline));
+        // BeginAnimation'ın kendi yaptığı (saat kur + uygula), saat elde tutularak: uçuşta mı sorusu ondan okunur (FlightProperty).
+        var flight = BuildAnimation(targetOffset, effectiveDuration, keySpline).CreateClock();
+        target.ApplyAnimationClock(VerticalOffsetProperty, flight);
+        target.SetValue(FlightProperty, flight);
         return true;
     }
 

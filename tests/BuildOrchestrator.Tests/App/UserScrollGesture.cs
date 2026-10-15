@@ -17,4 +17,9 @@ internal static class UserScrollGesture
     /// <summary>Kullanıcının kaydırma çubuğunu sürüklemesi — <paramref name="host"/> üretimde bu olayı dinler.</summary>
     public static void Raise(FrameworkElement host) =>
         host.RaiseEvent(new ScrollEventArgs(ScrollEventType.ThumbTrack, 0) { RoutedEvent = ScrollBar.ScrollEvent });
+
+    /// <summary>[B2 fix 2 · madde 2] Aynı jest, <paramref name="scrollHost"/>'un (konsolun editörü, stream'in ScrollViewer'ı) KENDİ dikey
+    /// çubuğundan: çubuk şablondan bulunur, olay ondan baloncuklanır — gerçek kablaj yolu (çubuk → ScrollViewer → panel).</summary>
+    public static void DragVerticalBarOf(DependencyObject scrollHost) =>
+        Raise(DsResources.Descendants(scrollHost).OfType<ScrollBar>().Single(bar => bar.Orientation == System.Windows.Controls.Orientation.Vertical));
 }

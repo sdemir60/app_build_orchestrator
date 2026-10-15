@@ -91,9 +91,9 @@ public partial class EventStreamView : UserControl
         _bottomAnchor.Changed += OnBottomAnchorChanged;
         PART_Scroll.ScrollChanged += (_, e) => _bottomAnchor.OnScrollChanged(e.ExtentHeightChange);
         // "Kullanıcı kaydırdı" HAM GİRDİDEN bildirilir — tekerlek, kaydırma çubuğu ve gezinme tuşları
-        // (gerekçe: UserScrollSignal / BottomAnchorBehavior.NotifyUserScroll).
-        UserScrollSignal.Wire(this, _bottomAnchor.NotifyUserScroll);
-        ScrollAnimator.EnableUserCancellation(PART_Scroll);
+        // (gerekçe: UserScrollSignal / BottomAnchorBehavior.NotifyUserScroll). [B2 fix 2 madde 2] Aynı jest uçuştaki `⌄ latest`
+        // animasyonunu durdurur (konsolla aynı tek kablo); bir uçuşu durdurduysa atlama penceresi de kapanır.
+        UserScrollSignal.Wire(this, PART_Scroll, _bottomAnchor.NotifyUserScroll);
         PART_Pill.Click += (_, _) => _bottomAnchor.JumpToBottom();
         // [A13/T5] Pill'in adı host'tan gelir (hangi akışın sonu — bkz. LatestPill.AccessibleName).
         PART_Pill.AccessibleName = AccessibilityNames.LatestEvents;

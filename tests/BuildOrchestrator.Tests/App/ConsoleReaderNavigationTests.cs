@@ -700,7 +700,7 @@ public class ConsoleReaderNavigationTests
 
     /// <summary>
     /// [B2 fix 1 · F2 · M5] <c>⌄ latest</c>'in kaydırma animasyonu sürerken basılan bir tuş animasyonu durdurur: sıradaki kare tuşun
-    /// kaydırmasını ezmez (tekerleğin zaten yaptığı gibi — <c>ScrollAnimator.EnableUserCancellation</c>).
+    /// kaydırmasını ezmez (her kullanıcı kaydırma jesti gibi — <c>UserScrollSignal</c>).
     /// <para>KIRMIZI (düzeltmeden önce): tuş animasyona dokunmuyordu — animasyon editöre bağlı kalıyor, sonraki kareler görünümü dibe
     /// sürmeye devam ediyordu.</para>
     /// <para>Ölçü animasyonun kendisidir (<c>ScrollAnimator.VerticalOffset</c> canlandırılıyor mu) — kareleri bekleyen bir duvar saati
@@ -719,6 +719,86 @@ public class ConsoleReaderNavigationTests
 
         Assert.False(IsAnimating(narrative));
         Assert.True(narrative.DistanceFromBottom > narrative.View.Editor.ViewportHeight / 2, "the key's scroll did not stand");
+    }
+
+    /// <summary>
+    /// [B2 fix 2 · madde 2] Okuyucunun HER kaydırma jesti <c>⌄ latest</c>'in uçuştaki animasyonunu durdurur — tekerlek, kaydırma çubuğu ve
+    /// editörün kendi işlediği tuşlar (Ctrl+End, Shift'li seçim adımı) da: kural tek yerdedir (<c>UserScrollSignal</c>), jest hangi kanaldan
+    /// gelirse gelsin. (Konsolun tuş tablosundaki adım: <see cref="A_key_pressed_during_the_latest_pills_animation_stops_it"/>.)
+    /// <para>KIRMIZI (madde 2'den önce): animasyonu yalnız tekerlek (<c>ScrollAnimator.EnableUserCancellation</c>) ve konsolun tuş tablosu
+    /// durduruyordu; çubuğu sürüklemek, Ctrl+End ve Shift+PageDown animasyona dokunmuyor, sıradaki kareler görünümü jestin altından dibe
+    /// sürmeye devam ediyordu. Tekerlek satırı PİN: eski kancanın yerine geçen kablonun tekerleği de taşıdığını korur.</para>
+    /// </summary>
+    [StaTheory]
+    [InlineData("wheel")]
+    [InlineData("scrollbar")]
+    [InlineData("Ctrl+End")]
+    [InlineData("Shift+PageDown")]
+    public void Every_scroll_gesture_during_the_latest_pills_animation_stops_it(string gesture)
+    {
+        using var motion = MotionScope.Enable(new FakeMotionSettings { AnimationsEnabled = true });
+        using var narrative = new RealizedNarrative(lines: 400);
+        narrative.WheelAwayFromTheBottom();
+        narrative.ClickLatest();
+        Assert.True(IsAnimating(narrative), "test kurgusu: pill bir kaydırma animasyonu başlatmalıydı");
+
+        switch (gesture)
+        {
+            case "wheel": narrative.WheelUp(); break;
+            case "scrollbar": narrative.DragTheScrollbar(); break;
+            case "Ctrl+End": narrative.PressCtrlEnd(); break;
+            default: narrative.PressWithModifiers(Key.PageDown, ModifierKeys.Shift); break;
+        }
+
+        Assert.False(IsAnimating(narrative));
+    }
+
+    /// <summary>
+    /// [B2 fix 2 · madde 2] Yana bir adım (→) <c>⌄ latest</c>'in animasyonunu DURDURMAZ: dikey bir kaydırma jesti değildir — animasyon
+    /// yalnız dikey konumu sürer, adım yalnız yataydır; direksiyonu da almaz (takip sürer — madde 3).
+    /// <para>KIRMIZI (madde 2'den önce): konsolun tuş tablosu her adımda — ←/→ dahil — animasyonu durduruyordu; kural artık jestin tek
+    /// tanımındadır (<c>UserScrollSignal</c>: tekerlek, çubuk, dikey kaydırma tuşları).</para>
+    /// </summary>
+    [StaFact]
+    public void A_sideways_step_during_the_latest_pills_animation_does_not_stop_it()
+    {
+        using var motion = MotionScope.Enable(new FakeMotionSettings { AnimationsEnabled = true });
+        using var narrative = new RealizedNarrative(lines: 400);
+        narrative.WheelAwayFromTheBottom();
+        narrative.ClickLatest();
+        HoldTheJumpMidway(narrative);
+
+        narrative.Press(Key.Right);
+
+        Assert.True(IsAnimating(narrative));
+    }
+
+    /// <summary>
+    /// [B2 fix 2 · madde 2b] Uçuştaki <c>⌄ latest</c> atlamasını durduran jest atlama penceresini de kapatır: kaydırma hemen bir okuyucu
+    /// kaydırması olarak yargılanır — tuştan hemen sonra takip bırakılmış, pill görünür, imleç gizlidir; sıradaki batch görünümü geri
+    /// çekmez.
+    /// <para>KIRMIZI (madde 2b'den önce): pencere (560 ms) açık kalıyordu — anchor tuşun kaydırmasını yok sayıyor, durum atlamanın iyimser
+    /// "dipte"sinde kalıyor ve pill pencere dolana dek gizli kalıyordu. Batch'in görünümü çekmemesi direksiyondandır (PİN). Uçuş belirlenimli
+    /// tutulur (<see cref="HoldTheJumpMidway"/>): kural dardır — yalnız GERÇEKTEN uçuşan bir atlamayı durduran jest pencereyi kapatır.</para>
+    /// </summary>
+    [StaFact]
+    public void A_page_up_that_stops_the_latest_pills_flight_hands_the_console_to_the_reader_at_once()
+    {
+        using var motion = MotionScope.Enable(new FakeMotionSettings { AnimationsEnabled = true });
+        using var narrative = new RealizedNarrative(lines: 400);
+        narrative.WheelAwayFromTheBottom();
+        narrative.ClickLatest();
+        HoldTheJumpMidway(narrative);
+
+        narrative.Press(Key.PageUp);
+
+        Assert.Equal(Visibility.Visible, narrative.View.Pill.Visibility); // tuştan hemen sonra, pencere dolmadan
+        AssertReleased(narrative);
+        double reading = narrative.View.Editor.VerticalOffset;
+        NarrativeSnapshots.Deliver(narrative.Store, narrative.View, ["live0", "live1", "live2", "live3"]);
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(reading, narrative.View.Editor.VerticalOffset);
+        Assert.False(narrative.View.FollowsBottom);
     }
 
     /// <summary>
@@ -984,11 +1064,25 @@ public class ConsoleReaderNavigationTests
     /// o anchor'ın zamanlayıcısıdır (<see cref="RealizedNarrative.ElapseAnchorTimers"/>).</summary>
     private static void LandTheJump(RealizedNarrative narrative)
     {
-        var clock = ActiveClockInspector.AppliedClock(narrative.View.Editor, ScrollAnimator.VerticalOffsetProperty)
-                    ?? throw new InvalidOperationException("no scroll animation is in flight");
+        var clock = JumpClock(narrative);
         clock.Controller!.SeekAlignedToLastTick(clock.NaturalDuration.TimeSpan, TimeSeekOrigin.BeginTime);
         DispatcherPump.DrainToIdle();
     }
+
+    /// <summary>Uçuştaki atlamayı yolun ortasında TUTAR: saat yarıya konumlanır (DP'ye bir tik beklemeden yazılır) ve duraklatılır —
+    /// sonraki jest, testi koşan makinenin hızından bağımsız olarak gerçekten uçuşan bir hareketle karşılaşır (yolun ortası, etkin evre).</summary>
+    private static void HoldTheJumpMidway(RealizedNarrative narrative)
+    {
+        var clock = JumpClock(narrative);
+        clock.Controller!.SeekAlignedToLastTick(clock.NaturalDuration.TimeSpan / 2, TimeSeekOrigin.BeginTime);
+        clock.Controller.Pause();
+        Assert.Equal(ClockState.Active, clock.CurrentState); // ön-koşul: atlama uçuşta
+    }
+
+    /// <summary>Konsolun kaydırma animasyonunun saati (<c>⌄ latest</c> atlaması).</summary>
+    private static AnimationClock JumpClock(RealizedNarrative narrative) =>
+        ActiveClockInspector.AppliedClock(narrative.View.Editor, ScrollAnimator.VerticalOffsetProperty)
+        ?? throw new InvalidOperationException("no scroll animation is in flight");
 
     /// <summary>Konsolun kaydırma animasyonu (<c>ScrollAnimator.VerticalOffset</c>) şu an editöre bağlı mı.</summary>
     private static bool IsAnimating(RealizedNarrative narrative) =>

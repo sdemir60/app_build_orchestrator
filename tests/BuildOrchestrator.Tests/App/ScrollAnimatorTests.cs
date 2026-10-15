@@ -204,17 +204,67 @@ public class ScrollAnimatorTests
         Assert.False(ScrollAnimator.GetIsUserSuppressed(sv));
     }
 
-    [StaFact]
-    public void EnableUserCancellation_wires_PreviewMouseWheel_to_CancelForUser()
+    /// <summary>
+    /// [B2 fix 2 · madde 2] Kullanıcının kaydırma jesti — HER kanaldan: tekerlek, kaydırma çubuğu, dikey kaydırma tuşu — uçuştaki animasyonu
+    /// durdurur ve suppress bayrağını kaldırır; tüketici jestin bir uçuşu durdurduğunu öğrenir. Kablo <c>UserScrollSignal</c>'dir (konsol,
+    /// event stream ve proje listesi aynı kabloyu kullanır).
+    /// <para>[DEĞİŞEN KURAL — B2 fix 2 · madde 2] Eski iddia (<c>EnableUserCancellation_wires_PreviewMouseWheel_to_CancelForUser</c>):
+    /// <c>ScrollAnimator.EnableUserCancellation</c> yalnız <c>PreviewMouseWheel</c>'i <see cref="ScrollAnimator.CancelForUser"/>'a bağlar.
+    /// Değişme gerekçesi: "kullanıcının girdisi animasyonu durdurur" kuralı tek tanıma taşındı — tekerlek kancası aynı çentik için sinyalin
+    /// yanında ikinci bir yoldu, kaydırma çubuğu ve tuşlar ise animasyonu hiç durdurmuyordu (ölçüldü: konsolda çubuk, Ctrl+End ve
+    /// Shift+PageDown; stream'de çubuk). Tekerlek satırı eski iddianın kendisidir.</para>
+    /// </summary>
+    [StaTheory]
+    [InlineData("wheel")]
+    [InlineData("scrollbar")]
+    [InlineData("key")]
+    public void A_user_scroll_gesture_on_any_channel_stops_the_running_animation(string channel)
     {
         var sv = NewLiveScrollViewer();
-        ScrollAnimator.AnimateTo(sv, 0, 500, true, TimeSpan.FromMilliseconds(500), new KeySpline(0.65, 0, 0.35, 1));
+        var stopped = new List<bool>();
+        UserScrollSignal.Wire(sv, sv, stopped.Add);
+        // Uzun bir uçuş: jest, testi koşan makinenin hızından bağımsız olarak hareketi yolda yakalar.
+        ScrollAnimator.AnimateTo(sv, 0, 500, true, TimeSpan.FromSeconds(30), new KeySpline(0.65, 0, 0.35, 1));
         DispatcherPump.PumpUntil(() => DependencyPropertyHelper.GetValueSource(sv, ScrollAnimator.VerticalOffsetProperty).IsAnimated, TimeSpan.FromSeconds(2));
-        ScrollAnimator.EnableUserCancellation(sv);
+        Assert.True(DependencyPropertyHelper.GetValueSource(sv, ScrollAnimator.VerticalOffsetProperty).IsAnimated); // ön-koşul
 
-        MouseInput.PreviewWheel(sv, System.Windows.Input.Mouse.MouseWheelDeltaForOneLine);
+        switch (channel)
+        {
+            case "wheel": MouseInput.PreviewWheel(sv, System.Windows.Input.Mouse.MouseWheelDeltaForOneLine); break;
+            case "scrollbar": UserScrollGesture.DragVerticalBarOf(sv); break;
+            default:
+                sv.RaiseEvent(new System.Windows.Input.KeyEventArgs(System.Windows.Input.Keyboard.PrimaryDevice, PresentationSource.FromVisual(sv)!, 0,
+                    System.Windows.Input.Key.PageDown) { RoutedEvent = System.Windows.Input.Keyboard.PreviewKeyDownEvent });
+                break;
+        }
 
         Assert.False(DependencyPropertyHelper.GetValueSource(sv, ScrollAnimator.VerticalOffsetProperty).IsAnimated);
         Assert.True(ScrollAnimator.GetIsUserSuppressed(sv));
+        Assert.Equal([true], stopped);
+    }
+
+    /// <summary>
+    /// [B2 fix 2 · madde 2b] <see cref="ScrollAnimator.CancelForUser"/> bir UÇUŞU durdurup durdurmadığını söyler: yoldaki hareket "evet"; hiç
+    /// başlamamış ve inmiş (<c>HoldEnd</c> ile hedefte duran) hareket "hayır". Konsol ve stream'in atlama penceresi yalnız gerçekten durdurulan
+    /// bir uçuşta kapanır (<c>BottomAnchorBehavior.NotifyUserScroll</c>). İniş belirlenimlidir: saat sonuna konumlanır
+    /// (<c>SeekAlignedToLastTick</c>) — konuma bakarak beklemek eğrinin sonunda saat bitmeden hedefe varır ve kararsızdır (ölçüldü).
+    /// </summary>
+    [StaFact]
+    public void CancelForUser_reports_whether_it_stopped_a_flight()
+    {
+        var sv = NewLiveScrollViewer();
+        var spline = new KeySpline(0.65, 0, 0.35, 1);
+        Assert.False(ScrollAnimator.CancelForUser(sv)); // hareket yok
+
+        ScrollAnimator.AnimateTo(sv, 0, 500, true, TimeSpan.FromSeconds(30), spline);
+        DispatcherPump.PumpUntil(() => DependencyPropertyHelper.GetValueSource(sv, ScrollAnimator.VerticalOffsetProperty).IsAnimated, TimeSpan.FromSeconds(2));
+        Assert.True(ScrollAnimator.CancelForUser(sv)); // yolda
+
+        ScrollAnimator.AnimateTo(sv, sv.VerticalOffset, 500, true, TimeSpan.FromSeconds(30), spline);
+        DispatcherPump.PumpUntil(() => DependencyPropertyHelper.GetValueSource(sv, ScrollAnimator.VerticalOffsetProperty).IsAnimated, TimeSpan.FromSeconds(2));
+        var clock = ActiveClockInspector.AppliedClock(sv, ScrollAnimator.VerticalOffsetProperty)!;
+        clock.Controller!.SeekAlignedToLastTick(clock.NaturalDuration.TimeSpan, TimeSeekOrigin.BeginTime);
+        Assert.Equal(ClockState.Filling, clock.CurrentState); // ön-koşul: hareket indi
+        Assert.False(ScrollAnimator.CancelForUser(sv)); // inmiş
     }
 }

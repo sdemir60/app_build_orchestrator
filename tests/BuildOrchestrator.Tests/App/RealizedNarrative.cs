@@ -113,6 +113,14 @@ internal sealed class RealizedNarrative : IDisposable
         DispatcherPump.DrainToIdle();
     }
 
+    /// <summary>Okuyucu editörün dikey kaydırma çubuğunu tuttu (<see cref="UserScrollGesture.DragVerticalBarOf"/>): çubuğun kendi olayı —
+    /// jestin kendisi, konum değişmez.</summary>
+    public void DragTheScrollbar()
+    {
+        UserScrollGesture.DragVerticalBarOf(View.Editor);
+        DispatcherPump.DrainToIdle();
+    }
+
     /// <summary>Okuyucu tekerlekle dipten ayrılır: eşiği (<see cref="BottomAnchorDecision.DefaultThresholdPx"/>) geçene dek çentik çentik
     /// yukarı. Çentiğin kaç piksel kaydırdığı sistem ayarına bağlıdır (Windows'un "satır sayısı"), bu yüzden çentik sayısı sabit değildir.</summary>
     public void WheelAwayFromTheBottom()

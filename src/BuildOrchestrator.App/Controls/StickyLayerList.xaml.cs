@@ -80,11 +80,12 @@ public partial class StickyLayerList : UserControl
         // panel duraklar, konsol/stream akmaya devam. Arbiter null ise izole test, no-op) + boşta-geri-açılma
         // penceresi (FrontierIdleResumeMs) sıfırlanır.
         // Sinyalin ÜÇ girdi kanalı (tekerlek · kaydırma çubuğu · gezinme tuşları) konsol ve event stream ile
-        // AYNI kablodan gelir: UserScrollSignal. Kök (this) hem Scroll'u hem Overlay'i kapsadığı için tünelleyen
-        // tekerlek ikisinde de burada yakalanır; çubuk olayı (ScrollBar.ScrollEvent) Scroll'un şablonundan
-        // baloncuklanarak ulaşır. Yarım kablo YASAK: yalnız tekerleği dinlemek, çubuğu sürükleyen kullanıcıyı
-        // takip eden listenin geri çekmesi demekti (bkz. UserScrollSignal doc'u, FrontierFollowPauseChannelsTests).
-        UserScrollSignal.Wire(this, OnUserScroll);
+        // AYNI kablodan gelir: UserScrollSignal — iptal de onun içindedir (kuralın tek tanımı). Kök (this) hem
+        // Scroll'u hem Overlay'i kapsadığı için tünelleyen tekerlek ikisinde de burada yakalanır; çubuk olayı
+        // (ScrollBar.ScrollEvent) Scroll'un şablonundan baloncuklanarak ulaşır. Yarım kablo YASAK: yalnız tekerleği
+        // dinlemek, çubuğu sürükleyen kullanıcıyı takip eden listenin geri çekmesi demekti (bkz. UserScrollSignal
+        // doc'u, FrontierFollowPauseChannelsTests). Jestin bir uçuşu durdurup durdurmadığı listeyi ilgilendirmez.
+        UserScrollSignal.Wire(this, Scroll, _ => OnUserScroll());
         // [v1.17.0 §2.4] Overlay artık hit-test'e AÇIK (başlıklar tıklanabilir) — bu, imlecin yığılmış başlık
         // bandındayken tekerlek olayının Scroll'a hiç ULAŞMAMASI riskini doğurur (Overlay, ScrollViewer'ın
         // KARDEŞİDİR, ATASI DEĞİL — routed event orada durur, aşağı Scroll'a bubble ETMEZ). ForwardWheelToScroll
@@ -302,10 +303,11 @@ public partial class StickyLayerList : UserControl
 
     /// <summary>
     /// "Kullanıcı listeyi kaydırdı" olayının TEK tüketicisi — üç girdi kanalını da (tekerlek, kaydırma çubuğu,
-    /// gezinme tuşları) <see cref="UserScrollSignal"/> kökten buraya bağlar. Üç şeyi birlikte yapar: uçuştaki
-    /// follow/seçim-scroll animasyonunu iptal eder + per-target suppress bayrağını kaldırır
-    /// (<see cref="ScrollAnimator.CancelForUser"/>), boşta-geri-açılma damgasını
-    /// (<see cref="_lastUserScrollAtMs"/>) tazeler, ve merkezi arbiter'a bölgesel suppress bildirir
+    /// gezinme tuşları) <see cref="UserScrollSignal"/> kökten buraya bağlar. Jestin üç işinden ilki sinyalin
+    /// kendisindedir: uçuştaki follow/seçim-scroll animasyonunu iptal eder + per-target suppress bayrağını kaldırır
+    /// (<see cref="ScrollAnimator.CancelForUser"/> — "kullanıcının girdisi hareketi durdurur" kuralının konsol ve
+    /// stream'le ortak tek tanımı, B2 fix 2 · madde 2). Burası geri kalanını yapar: boşta-geri-açılma damgasını
+    /// (<see cref="_lastUserScrollAtMs"/>) tazeler ve merkezi arbiter'a bölgesel suppress bildirir
     /// (<see cref="Arbiter"/>, null ise izole test no-op).
     ///
     /// <para><b>Ölçülen kusur — çubuk kanalı:</b> sinyal yalnız tekerlekten alınıyordu. Kaydırma çubuğunun
@@ -319,11 +321,7 @@ public partial class StickyLayerList : UserControl
     /// <see cref="ForwardWheelToScroll"/> yalnız asıl KAYDIRMAYI yeniden yükseltiyordu — bu üç bookkeeping'i
     /// ATLAYARAK. Kablo kökte (this) olduğu için o bant da artık aynı tünelden geçer.</para>
     /// </summary>
-    private void OnUserScroll()
-    {
-        ScrollAnimator.CancelForUser(Scroll);
-        MarkFollowPausedByUser();
-    }
+    private void OnUserScroll() => MarkFollowPausedByUser();
 
     /// <summary>"Kullanıcı listeyi taşıdı" muhasebesinin iptalden BAĞIMSIZ yarısı: boşta-geri-açılma damgası +
     /// arbiter'ın bölgesel suppress'i. Ham girdi (<see cref="OnUserScroll"/>) ve katman başlığı jump'ı

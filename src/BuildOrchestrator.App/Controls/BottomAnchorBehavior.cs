@@ -170,18 +170,41 @@ public sealed class BottomAnchorBehavior
     }
 
     /// <summary>
-    /// <b>Kullanıcı GERÇEKTEN kaydırdı</b> — host bunu ham girdiden (tekerlek) bildirir. O andan itibaren
-    /// bekleme dolana kadar direksiyon kullanıcıdadır: akan içerik görünümü dibe çekmez.
+    /// <b>Kullanıcı GERÇEKTEN kaydırdı</b> — host bunu ham girdiden (tekerlek, kaydırma çubuğu, dikey kaydırma tuşları —
+    /// <see cref="UserScrollSignal"/>) bildirir. O andan itibaren bekleme dolana kadar direksiyon kullanıcıdadır: akan içerik görünümü
+    /// dibe çekmez.
     ///
     /// <para>Sinyal neden hesaplanmıyor: bir ara sürüm "extent değişmeden gelen scroll olayı = kullanıcı"
     /// diye çıkarım yapıyordu. Yanlıştı — <c>ScrollChanged</c> yeniden yerleşimde, viewport değişiminde ve
     /// programatik kaydırmada da extent farkı olmadan ateşlenir; panel kendini kullanıcı kaydırmış sanıp
     /// takibi bırakıyor, kimse dokunmadan <c>⌄ latest</c> pill'i çıkıyordu.</para>
     /// </summary>
-    public void NotifyUserScroll()
+    /// <param name="stoppedJump">[B2 fix 2 · madde 2b] Jest uçuştaki bir dibe atlamayı DURDURDU mu (host'un kaydırma animatörü söyler —
+    /// <see cref="ScrollAnimator.CancelForUser"/>). Durdurduysa atlama penceresi hemen kapanır (<see cref="EndJumpForUser"/>).</param>
+    public void NotifyUserScroll(bool stoppedJump = false)
     {
-        _steering = true;
+        _steering = true; // önce: pencere kapanırken duyurulan durumda takip okuyucuya verilmiş olmalı
+        if (stoppedJump) EndJumpForUser();
         ArmIdleResume();
+    }
+
+    /// <summary>
+    /// [B2 fix 2 · madde 2b] <b>Kullanıcının jesti uçuştaki atlamayı durdurdu: atlama penceresi ŞİMDİ kapanır</b> ve panelin durduğu yer bir
+    /// kullanıcı kaydırması olarak yargılanır — pill, takip ve (konsolda) prompt imleci jestten hemen sonra okuyucuya göredir; bekleyen
+    /// pencere sonu artık hiçbir şey yapmaz (kuşak sayacı). Jestin kendi kaydırması ardından gelir ve her kullanıcı kaydırması gibi
+    /// yargılanır (<see cref="OnScrollChanged"/>).
+    /// <para>[DEĞİŞEN KURAL] Eskiden pencere jestten bağımsız olarak 560 ms açık kalıyordu: anchor jestin kaydırmasını yok sayıyor, durum
+    /// atlamanın iyimser "dipte"sinde kalıyor, pill pencere dolana dek gizli kalıyordu. Kural dardır — yalnız GERÇEKTEN uçuşan bir hareketi
+    /// durduran jest pencereyi kapatır; atlama inmiş, pencere hâlâ açıkken gelen jest bugünkü gibi pencere sonunda yargılanır.</para>
+    /// </summary>
+    private void EndJumpForUser()
+    {
+        if (!_state.IsJumping) return;
+        ++_jumpGeneration; // bekleyen pencere sonu bayatladı
+        var prev = _state;
+        _state = BottomAnchorDecision.OnScrollChanged(
+            BottomAnchorDecision.EndJump(_state), extentHeightChange: 0, DistanceFromBottom, userDriven: true, _thresholdPx);
+        Notify(prev);
     }
 
     /// <summary>

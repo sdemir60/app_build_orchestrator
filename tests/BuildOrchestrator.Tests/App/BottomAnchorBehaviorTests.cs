@@ -205,6 +205,53 @@ public class BottomAnchorBehaviorTests
         Assert.True(behavior.IsStuck);
     }
 
+    /// <summary>
+    /// [B2 fix 2 · madde 2b] Uçuştaki atlamayı DURDURAN kullanıcı jesti atlama penceresini hemen kapatır ve panelin durduğu yeri bir
+    /// kullanıcı kaydırması olarak yargılar: dipten uzakta durduysa takip bırakılır, pill görünür ve bu duyurulur; bekleyen pencere sonu
+    /// artık hiçbir şey yapmaz (yeniden duyurmaz).
+    /// <para>KIRMIZI (madde 2b'den önce): jest pencereye dokunmuyordu — atlama 560 ms boyunca sürüyor, durum iyimser "dipte"de kalıyordu.</para>
+    /// </summary>
+    [Fact]
+    public void A_user_gesture_that_stopped_the_jump_closes_the_window_and_judges_where_the_panel_stopped()
+    {
+        var f = new Fake { Extent = 1000, Offset = 0, Viewport = 200 };
+        var behavior = f.New();
+        behavior.JumpToBottom();
+        var windowEnd = f.PendingSchedule!;
+        f.Offset = 300; // atlama yolun ortasında durduruldu: dipten 500 px
+        int changed = 0;
+        behavior.Changed += (_, _) => changed++;
+
+        behavior.NotifyUserScroll(stoppedJump: true);
+
+        Assert.False(behavior.IsJumping);
+        Assert.False(behavior.IsStuck);
+        Assert.False(behavior.ShouldFollow);
+        Assert.True(behavior.PillShown);
+        Assert.Equal(1, changed);
+
+        windowEnd(); // pencerenin bayat sonu
+        Assert.Equal(1, changed);
+        Assert.False(behavior.IsStuck);
+    }
+
+    /// <summary>
+    /// [B2 fix 2 · madde 2b] Kural dardır: bir uçuşu DURDURMAYAN jest (atlama inmiş, pencere hâlâ açık) pencereyi kapatmaz — kaydırma
+    /// bugünkü gibi pencere sonunda yargılanır.
+    /// <para>PİN — madde 2b'den önce de yeşildi (bozma: jest her pencerede kapatırsa kırmızı).</para>
+    /// </summary>
+    [Fact]
+    public void A_user_gesture_that_stopped_no_flight_leaves_the_jump_window_open()
+    {
+        var f = new Fake { Extent = 1000, Offset = 0, Viewport = 200 };
+        var behavior = f.New();
+        behavior.JumpToBottom();
+
+        behavior.NotifyUserScroll(stoppedJump: false);
+
+        Assert.True(behavior.IsJumping);
+    }
+
     [Fact]
     public void JumpToBottom_when_instant_reduced_motion_sticks_immediately_without_a_jumping_window()
     {
