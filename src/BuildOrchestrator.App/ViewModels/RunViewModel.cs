@@ -992,6 +992,7 @@ public sealed partial class RunViewModel : ObservableObject
         _newRunId = newRunId;
         _nowMs = nowMs ?? (() => Environment.TickCount64);
         SleepEngine = engine.SleepAsync; // [idle-memory · dalga 3] üretimin uykusu: konağın kendisi
+        WakeEngine = () => engine.WakeAsync(); // [idle-memory · dalga 3 · Task 21] üretimin uyanması: konağın kendisi
         _osActions = osActions; // [E1/T67] null ise OS eylemleri güvenle no-op (test default'u); üretimde enjekte edilir
         _compact = new CompactNarrative(CompactConsole); // [O2] açılıştaki etkin kip ayarın kendisidir — ikinci bir literal yok
     }
@@ -1085,24 +1086,30 @@ public sealed partial class RunViewModel : ObservableObject
         // Kimlik koreografi olmasa da kurulur ve komuttan hemen önce HER yolda düşer: gönderilmiş bir koşuda kalamaz —
         // "komut henüz gitmedi" sorusunun (Stop, branch kesmesi) tek cevabıdır.
         _pendingRunId = runId;
-        if (OperationChoreography is { } playChoreography)
-        {
-            await playChoreography(scope);
-            // Koreografi sırasında Stop'a basıldıysa (ya da başka bir işlem devraldıysa) komut GİTMEZ.
-            if (!string.Equals(_pendingRunId, runId, StringComparison.Ordinal)) return;
-        }
+        bool StillPending() => string.Equals(_pendingRunId, runId, StringComparison.Ordinal);
+        if (OperationChoreography is { } playChoreography) await playChoreography(scope);
+        // [idle-memory · dalga 3 · Task 21 · karar 18 · C4] Uyuyan motor bekleyen-koşu penceresinin İÇİNDE, koreografiden sonra uyanır:
+        // uyanma sürerken kimlik durur — Stop/Esc, branch kesmesi ve çıkış komutu değil isteği geri alır (CancelPendingRun, komut gitmez).
+        bool awake = StillPending() && await EnsureEngineAwakeAsync(typeof(StartRunCommand));
+        // Koreografi ya da uyanma sırasında Stop'a basıldıysa (ya da başka bir işlem devraldıysa) komut GİTMEZ; geri alım onundur.
+        if (!StillPending()) return;
         _pendingRunId = null;
-        // [T20-b/K11] PerfMode de gider: paralellik (Parallelism) ve cap/priority (PerfMode) AYNI profil
-        // satırının iki yarısıdır — Supervisor cap'i o addan çözer, worker sayısını YENİDEN türetmez.
-        // [spec 2026-09-18 §1-1] Koşu daima RootPath'teki çalışma ağacında derlenir: branch/worktree gitmez.
-        var cmd = new StartRunCommand(runId, mode, RootPath, Configuration, Parallelism,
-            DependentMode.Safe, LayerPatterns, PerfMode,
-            ExternalProjectsForWire, UpdateExternals, scopeProjectId, runPerf.ResolveAtFullPriority);
-        if (!await TrySendAsync(cmd, RunModeLabel(mode)))
+        if (awake)
         {
-            IsStarting = false;
-            Phase = previousPhase; // hiçbir engine event'i gelmeyecek — faz Starting'te asılı bırakılamaz
+            // [T20-b/K11] PerfMode de gider: paralellik (Parallelism) ve cap/priority (PerfMode) AYNI profil
+            // satırının iki yarısıdır — Supervisor cap'i o addan çözer, worker sayısını YENİDEN türetmez.
+            // [spec 2026-09-18 §1-1] Koşu daima RootPath'teki çalışma ağacında derlenir: branch/worktree gitmez.
+            // [Task 21 · karar 18] Komut uyanmadan SONRA kurulur: uyanma sürerken değiştirilen perf profili koşuyla gider (o sırada perf
+            // chip'inin komutu uyanık olmayan motora gönderilmez).
+            var cmd = new StartRunCommand(runId, mode, RootPath, Configuration, Parallelism,
+                DependentMode.Safe, LayerPatterns, PerfMode,
+                ExternalProjectsForWire, UpdateExternals, scopeProjectId, runPerf.ResolveAtFullPriority);
+            if (await TrySendAsync(cmd, RunModeLabel(mode))) return;
         }
+        // Komut gitmedi (motor kapısı "gönderme" dedi ya da gönderim düştü): hiçbir engine event'i gelmeyecek — faz Starting'te asılı
+        // bırakılamaz. [karar 34] Kapıda beklerken motor kaybedildiyse bu geri alım yine buradadır, tek kez (motor kaybı onu yapmaz).
+        IsStarting = false;
+        Phase = previousPhase;
     }
 
     /// <summary>
@@ -1733,8 +1740,8 @@ public sealed partial class RunViewModel : ObservableObject
         // bildirir (Dead). [T20 incelemesi M3 · ikinci bilinen ayrışma] Ölüm sinyali gelmeyen iki hata Starting'i KALICI bırakır: çıkışta
         // dispose'un öne geçmesi (uygulama kapanıyor, ölen yok) ve eski motorun öldürülmesinin fırlatması (konakta konuşulacak süreç kalmaz).
         // Catch bu ikisini zaman aşımından ayıramaz: burada Dead yazmak en sık hatanın ölümünü EngineExited'in yanında İKİNCİ kez bildirirdi.
-        // Kalıcı Starting güvenli yöndedir: kural uyutmaz, gönderim bugünkü gibi gider ve konağın "Engine is not running." hatasıyla tek satır
-        // düşer; ölüm metni duruyorsa "Restart engine" görünür kalır (dalga öncesi davranış).
+        // Kalıcı Starting güvenli yöndedir: kural uyutmaz, motor kapısı Starting'te ne uyandırır ne bekler — gönderim bugünkü gibi gider ve
+        // konağın "Engine is not running." hatasıyla tek satır düşer; ölüm metni duruyorsa "Restart engine" görünür kalır (dalga öncesi davranış).
         EngineState = EngineState.Starting;
         EngineReadyEvent ready;
         try
@@ -1966,16 +1973,21 @@ public sealed partial class RunViewModel : ObservableObject
     /// <summary>Engine hazır değilken (henüz başlamadı/çöktü) SendAsync SENKRON fırlar — UI tıklaması bu
     /// yüzden çökmemeli; hata run dokümanına düşürülür, sessizce yutulmaz. Dönen <c>bool</c>, çağıranın
     /// gönderim BAŞARISIZ olduğunda kendi "starting" durumunu geri açabilmesi içindir — bu metot kendi başına
-    /// hiçbir bound-state'e dokunmaz. Gönderimin kendisi <see cref="SendToEngineAsync"/>'tir.</summary>
+    /// hiçbir bound-state'e dokunmaz. Gönderimin kendisi <see cref="SendToEngineAsync"/>'tir.
+    /// <para>[idle-memory · dalga 3 · Task 21 · karar 17/33] Gönderimden ÖNCE motor kapısı (<see cref="EnsureEngineAwakeAsync"/>): uyuyan
+    /// motoru uyandırır, uyku sürüyorsa bitmesini bekler; uyanık olmayan motora uyandırmayan komutu (Stop, perf chip) ve ölü ya da erişilemez
+    /// motora hiçbir komutu göndermez. Kapı "gönderme" derse satır YAZILMAZ — tek sinyal kapının özetindedir — ve <c>false</c> döner: çağıran
+    /// aynı geri alımı çalıştırır.</para></summary>
     private async Task<bool> TrySendAsync(IpcCommand cmd, string what)
     {
+        if (!await EnsureEngineAwakeAsync(cmd.GetType())) return false;
         var send = SendToEngineAsync(cmd);
         try { await send; return true; }
         catch (Exception ex) { AppendRunLine($"[error] failed to send {what}: {ex.Message}"); return false; }
     }
 
     /// <summary>Bir komutu motora göndermenin TEK yolu — <see cref="TrySendAsync"/> ve proje log isteği
-    /// (<see cref="LoadProjectLogAsync"/>) bunu kullanır: önce gözlemciye bildirir (<see cref="DebugOnCommandSent"/>), sonra
+    /// (<see cref="LoadProjectLogAsync"/>) bunu kullanır; ikisi de buraya motor kapısından (<see cref="EnsureEngineAwakeAsync"/>) geçerek gelir: önce gözlemciye bildirir (<see cref="DebugOnCommandSent"/>), sonra
     /// gönderimi test dikişine (<see cref="DebugSendOverride"/>) ya da motora yönlendirir. Gönderimin hatası — motor hazır değilken
     /// <c>SendAsync</c>'in SENKRON fırlaması dahil — dönen görevde taşınır; çağıran onu kendi hata satırıyla karşılar ve görev
     /// zaten düşmüşse <c>await</c> askıya almadan fırlatır. Gözlemcinin kendi istisnası bir gönderim hatası DEĞİLDİR, çağırana
@@ -2093,24 +2105,28 @@ public sealed partial class RunViewModel : ObservableObject
     // ---------------------------------------------------------------- motor uykusu (boşta kuralı)
 
     /// <summary>
-    /// [idle-memory · dalga 3 · spec §6.4 · karar 13-14] VM'in motor durumu — TEK alan: boşta kuralının motor girdisi. Yalnız UI thread'inde
-    /// ve durumu değiştiren olayla SENKRON yazılır:
+    /// [idle-memory · dalga 3 · spec §6.4 · karar 13-14 · 32] VM'in motor durumu — TEK alan: boşta kuralının motor girdisi ve motor kapısının
+    /// (<see cref="EnsureEngineAwakeAsync"/>) okuduğu tek şey. Yalnız UI thread'inde ve durumu değiştiren olayla SENKRON yazılır:
     /// <list type="bullet">
     /// <item><see cref="EngineState.Starting"/>: VM bu durumda doğar (kabuk motoru <c>Loaded</c>'da başlatır) ve "Restart engine" başlarken
     /// yeniden girer (<see cref="RestartEngineAsync"/>);</item>
-    /// <item><see cref="EngineState.Ready"/>: hazır yolu (<see cref="OnEngineReady"/> → <see cref="EnterEngineReady"/>);</item>
+    /// <item><see cref="EngineState.Ready"/>: hazır yolu (<see cref="OnEngineReady"/>) ya da uyanma (<see cref="OnEngineResumed"/>) — ikisi de
+    /// <see cref="EnterEngineReady"/>'den geçer;</item>
     /// <item><see cref="EngineState.Sleeping"/> → <see cref="EngineState.Asleep"/>: boşta kuralının uykusu (<see cref="PutEngineToSleepAsync"/>);</item>
+    /// <item><see cref="EngineState.Waking"/>: motor kapısının tek uçuşlu uyanması (<see cref="WakeEngineAsync"/>);</item>
     /// <item><see cref="EngineState.Dead"/>: motor kaybı — kendiliğinden ölüm (<see cref="OnEngineExited"/>) ya da düşen uyku; ikisi de
     /// <see cref="ReportEngineDead"/>'den geçer;</item>
-    /// <item><see cref="EngineState.Unavailable"/>: motor hiç doğamadı (<see cref="OnEngineUnavailable"/>).</item>
+    /// <item><see cref="EngineState.Unavailable"/>: motor hiç doğamadı (<see cref="OnEngineUnavailable"/> — açılışta, yeniden başlatmada ya da
+    /// uyanmada).</item>
     /// </list>
     /// Şeridin bayrakları (<see cref="EngineDiedMessage"/>, <see cref="EngineRestartable"/>, <see cref="IsEngineUnavailable"/>) UI'ın bayrakları
     /// olarak kalır ve AYNI yerlerde yazılır: Dead bir ölüm metniyle (yeniden başlatılabilir), Unavailable kalıcı bir eksik metniyle gelir;
     /// yeniden başlatmanın Ready'si metnin temizliğinden sonradır. Bilinen iki ayrışma, ikisi de güvenli yönde: (1) <see cref="OnRunStarted"/>
     /// ölüm metnini temizler ama durumu Ready'ye çekmez (Ready yalnız hazır yolundan gelir) — durum en kötü "ölü" kalır ve kural uyutmaz;
     /// (2) [T20 incelemesi M3] ölüm sinyali gelmeden düşen bir yeniden başlatma (çıkışta dispose öne geçti ya da eski motorun öldürülmesi
-    /// fırlattı) durumu <see cref="EngineState.Starting"/>'te bırakır — kural uyutmaz, gönderim bugünkü gibi gider (gerekçe
-    /// <see cref="RestartEngineAsync"/>'te).
+    /// fırlattı) durumu <see cref="EngineState.Starting"/>'te bırakır — kural uyutmaz, motor kapısı Starting'te ne uyandırır ne bekler, gönderim
+    /// bugünkü gibi gider (gerekçe <see cref="RestartEngineAsync"/>'te). Bilinen sınır (<see cref="WakeEngineAsync"/>): uyanmak için doğan motorun
+    /// ölüm sinyali hiç gelmezse (konakta öldürmenin kendisi fırlattı) durum <see cref="EngineState.Waking"/>'de kalır.
     /// </summary>
     internal EngineState EngineState { get; private set; } = EngineState.Starting;
 
@@ -2118,16 +2134,22 @@ public sealed partial class RunViewModel : ObservableObject
     /// sahtesini verir: sayan, bekletilen (TCS: uyku sürüyor) ya da vazgeçen bir görev. Karar ve VM'in durumu dikişin önündedir.</summary>
     internal Func<Task> SleepEngine { get; set; }
 
+    /// <summary>[test dikişi · Task 21] Uyuyan motoru uyandıran çağrı — üretimde konağın uyanması (<see cref="EngineHost.WakeAsync"/>, ctor'da
+    /// bağlanır). Testler sahtesini verir: sayan, bekletilen (TCS: uyanma sürüyor) ya da düşen bir görev. Karar ve VM'in durumu dikişin
+    /// önündedir.</summary>
+    internal Func<Task<EngineReadyEvent>> WakeEngine { get; set; }
+
     /// <summary>[spec §6.4 · karar 15] UI thread'inde, <see cref="TickElapsed"/> ile 200 ms'de bir — pencere gizliyken de (sessizlik
     /// bekçisinin yanında). Karar saf kuraldadır (<see cref="EngineIdleRule.ShouldSleep"/>); girdileri VM'in tek tanımlarıdır: ayar
     /// (<see cref="StopEngineWhenIdle"/>), <see cref="IsOperationInFlight"/>, <see cref="HasPendingLogLoad"/>, <see cref="EngineState"/> ve son
-    /// motor etkinliği (<see cref="_lastEngineSignalMs"/>). Doğruysa motor uyutulur.</summary>
+    /// motor etkinliği (<see cref="_lastEngineSignalMs"/>). Doğruysa motor uyutulur ve uykunun görevi saklanır: motor kapısı uyku sürerken gelen
+    /// komutu onun bitişine bekletir (<see cref="_sleepInFlight"/>).</summary>
     private void EvaluateEngineIdle()
     {
         if (EngineIdleRule.ShouldSleep(nowMs: _nowMs(), lastActivityMs: Volatile.Read(ref _lastEngineSignalMs),
                 settingOn: StopEngineWhenIdle, operationInFlight: IsOperationInFlight, pendingLogLoad: HasPendingLogLoad,
                 engine: EngineState))
-            _ = PutEngineToSleepAsync();
+            _sleepInFlight = PutEngineToSleepAsync();
     }
 
     /// <summary>
@@ -2180,15 +2202,127 @@ public sealed partial class RunViewModel : ObservableObject
     /// failed)" — kendiliğinden ölümün çıkış kodu ya da protokol hatası yerine.</summary>
     private const string IdleShutdownFailedCause = "idle shutdown failed";
 
-    /// <summary>Motor hazır: durum <see cref="EngineState.Ready"/> ve son motor etkinliği ŞİMDİ. Hazır bildirimi motorun konuştuğu andır;
-    /// damga hazır olayının olay pompasından geçişini beklemez — kabuğun hazır yolu ile pompanın sırası garanti değildir ve tik ikisinin arasına
-    /// düşerse boşta kuralı hiç yazılmamış (0) ya da açılıştan beri bayat damgayı okur, motoru hazır olur olmaz uyuturdu (C1). Aynı tek damga
-    /// (<see cref="_lastEngineSignalMs"/>) — ikinci bir etkinlik damgası yoktur.</summary>
-    private void EnterEngineReady()
+    /// <summary>Motor hazır — TEK Ready geçişi: motorun kimliği (sürüm, PID — About bunları okur), durum <see cref="EngineState.Ready"/> ve son
+    /// motor etkinliği ŞİMDİ. İki çağıran: hazır yolu (<see cref="OnEngineReady"/> — açılış ve yeniden başlatma) ve uyanma
+    /// (<see cref="OnEngineResumed"/>). Hazır bildirimi motorun konuştuğu andır; damga hazır olayının olay pompasından geçişini beklemez — kabuğun
+    /// hazır yolu ile pompanın sırası garanti değildir ve tik ikisinin arasına düşerse boşta kuralı hiç yazılmamış (0) ya da açılıştan beri bayat
+    /// damgayı okur, motoru hazır olur olmaz uyuturdu (C1). Uyanmada aynı damga sessizlik bekçisinin penceresini de uyanmanın sonundan başlatır:
+    /// uyanmanın süresi sessizlik sayılmaz. Aynı tek damga (<see cref="_lastEngineSignalMs"/>) — ikinci bir etkinlik damgası yoktur.</summary>
+    private void EnterEngineReady(string engineVersion, int pid)
     {
+        EngineVersion = engineVersion;
+        EnginePid = pid;
         StampEngineActivity();
         EngineState = EngineState.Ready;
     }
+
+    // ---------------------------------------------------------------- motor kapısı (uyandırma)
+
+    /// <summary>[Task 21 · karar 32] Uçuştaki (ya da son) uyku — motor kapısının bekleme tutamağı; <see cref="EvaluateEngineIdle"/> yazar.
+    /// Durumun tek kaynağı yine <see cref="EngineState"/>'tir: kapı bu göreve yalnız durum <see cref="EngineState.Sleeping"/> iken bakar. Görev
+    /// düşmez (<see cref="PutEngineToSleepAsync"/> her hatayı kendisi karşılar) ve bitişinde durum her yolda Sleeping'den çıkmıştır.</summary>
+    private Task _sleepInFlight = Task.CompletedTask;
+
+    /// <summary>[Task 21 · karar 32] Uçuştaki (ya da son) uyanma — TEK uçuş: durum <see cref="EngineState.Waking"/> iken kapıya gelen her yol bu
+    /// göreve katılır. Sonucu uyanan motorun hazır olup olmadığıdır (<see cref="WakeEngineAsync"/>).</summary>
+    private Task<bool> _wakeInFlight = Task.FromResult(false);
+
+    /// <summary>
+    /// [idle-memory · dalga 3 · spec §6.4 · Task 21 · karar 17/18/19/32/33] <b>Motor kapısı</b> — motora giden HER gönderim önce buradan geçer:
+    /// gönderimin tek yolu (<see cref="TrySendAsync"/>), proje log isteği (<see cref="LoadProjectLogAsync"/>) ve komutunu kurmadan önce bekleyen-koşu
+    /// penceresinde soran koşu (<see cref="BeginRunAsync"/>). Yalnız VM'in motor durumunu okur (<see cref="EngineState"/> — ölüm metnini ya da
+    /// konağın uykusunu değil) ve "bu komut uyandırır mı" sorusunu TEK tabloya sorar (<see cref="EngineWakeRule"/>):
+    /// <list type="bullet">
+    /// <item><see cref="EngineState.Ready"/> → gönder.</item>
+    /// <item><see cref="EngineState.Starting"/> → uyandırma da bekleme de yok: gönder — bugünkü gibi; açılışta ve yeniden başlatmada doğmakta olan
+    /// motorun borusu komutu tutar ya da konak bugünkü "Engine is not running." hatasını verir. Starting kalıcı da olabilir
+    /// (<see cref="EngineState"/>'in ikinci ayrışması); beklemek onu sonsuza dek bekletirdi.</item>
+    /// <item><see cref="EngineState.Sleeping"/> → uyandıran komut uykunun bitmesini bekler (ölmekte olan sürece yazılmaz) ve durumu yeniden okur.</item>
+    /// <item><see cref="EngineState.Asleep"/> → uyandıran komut TEK uyanmayı başlatır (<see cref="WakeEngineAsync"/>).</item>
+    /// <item><see cref="EngineState.Waking"/> → uyandıran komut uçuştaki uyanmaya katılır; uyandıysa durum yeniden okunur, uyanamadıysa gönderilmez.</item>
+    /// <item><see cref="EngineState.Dead"/> / <see cref="EngineState.Unavailable"/> → uyandırma yok, gönderme yok: kaybı ya da yokluğu şerit söyler
+    /// (tek sinyal); toparlamak "Restart engine"in ya da kurulumun işidir. Düşen bir uyanmadan sonra yeniden deneme de burada kesilir — Sync'in
+    /// ardından giden branch envanteri dahil (C23).</item>
+    /// <item>Uyandırmayan komut (Stop, perf chip) motor uyanık değilken — uyku sürerken, uyurken, uyanırken — hiç gönderilmez (karar 33).</item>
+    /// </list>
+    /// <c>false</c> "gönderme" demektir ve kapı konsola satır YAZMAZ: düşen uyanmanın tek sinyali kendi yolundadır (kurulum hatası
+    /// <see cref="OnEngineUnavailable"/>, ölüm <see cref="ReportEngineDead"/>); her çağıran bugünkü "gönderim düştü" geri alımını çalıştırır.
+    /// Bütün çağıranlar UI thread'indedir ve durum senkron yazılır — alanlar kilitsizdir. Motor hazırken kapı askıya girmez: gönderim bugünkü
+    /// gibi çağıranın ilk await'inden önce, senkron gider.
+    /// </summary>
+    /// <param name="command">Gönderilecek komutun türü — tablonun sorusu.</param>
+    /// <returns>Gönder (<c>true</c>) ya da gönderme (<c>false</c>).</returns>
+    private async Task<bool> EnsureEngineAwakeAsync(Type command)
+    {
+        bool wakes = EngineWakeRule.Wakes(command);
+        while (true)
+        {
+            var state = EngineState;
+            if (state is EngineState.Ready or EngineState.Starting) return true;
+            if (!wakes) return false;
+            if (state == EngineState.Sleeping)
+            {
+                await _sleepInFlight; // uyku her yolda Sleeping'den çıkar (Asleep ya da Dead) — sonra yeniden oku
+                continue;
+            }
+            if (state == EngineState.Asleep) _wakeInFlight = WakeEngineAsync();
+            else if (state != EngineState.Waking) return false; // Dead, Unavailable
+            if (!await _wakeInFlight) return false;
+            // Uyandı: durum yeniden okunur — hazırsa gönder; arada başka bir sinyal geldiyse (motor öldü) onun kuralı geçerlidir.
+        }
+    }
+
+    /// <summary>
+    /// [Task 21 · karar 19/20/32 · C5] Uyuyan motoru uyandırır — TEK uçuş: durum ÖNCE ve senkron <see cref="EngineState.Waking"/> olur, kapıya bu
+    /// arada gelen her yol bu göreve katılır (konakta da kapı tektir: iki eşzamanlı uyanma tek süreç doğurur). Dönen değer uyanan motorun hazır
+    /// olup olmadığıdır. Uyanma sürerken başka bir sinyal durumu değiştirdiyse (uyanan motor öldü) o kazanır: bitişte dokunulmaz, "hazır değil"
+    /// döner. Değiştirmediyse bitiş dört yoldan biridir:
+    /// <list type="bullet">
+    /// <item><b>Uyandı</b> → <see cref="OnEngineResumed"/>: kimlik ve hazır durumu; konsol satırı ve açılış Sync'i YOK.</item>
+    /// <item><b>Motor bulunamadı / başlatılamadı</b> (<see cref="EngineUnavailableException"/>) → bugünkü erişilemezlik yolu
+    /// (<see cref="OnEngineUnavailable"/>: TEK konsol satırı, kalıcı şerit, komutlar kapalı).</item>
+    /// <item><b>Çıkışta vazgeçildi</b> — dispose uyanmanın önüne geçti (<see cref="OperationCanceledException"/>) ya da konak çoktan dispose
+    /// edilmişti (<see cref="ObjectDisposedException"/>) → <see cref="EngineState.Asleep"/>: süreci çıkışın kapanışı alıyor; satır yok, ölüm yok.</item>
+    /// <item><b>Doğan motor hazır olamadı</b> (zaman aşımı, erken ölüm, çerçeve hatası) ya da konakta uyandırılacak motor yoktu (ölümü
+    /// bildirilmişti) → satır YOK ve durum burada yazılmaz: konak o motoru öldürür ve ölümünü <see cref="EngineHost.EngineExited"/> TEK sinyal olarak
+    /// bildirir (<see cref="OnEngineExited"/> → <see cref="EngineState.Dead"/>, şerit ve "Restart engine"). O sinyal gelene dek durum
+    /// <see cref="EngineState.Waking"/> kalır: kapıya gelen yol düşmüş uyanmaya katılır ve hemen "gönderme" alır — ikinci bir uyandırma denemesi
+    /// yoktur (C23). Bilinen sınır: ölüm sinyali hiç gelmezse (konakta öldürmenin kendisi fırlattı — T18'in uyku için de belgelediği boşluk)
+    /// durum <see cref="EngineState.Waking"/>'de kalır.</item>
+    /// </list>
+    /// </summary>
+    private async Task<bool> WakeEngineAsync()
+    {
+        EngineState = EngineState.Waking;
+        try
+        {
+            var ready = await WakeEngine();
+            if (EngineState != EngineState.Waking) return false;
+            OnEngineResumed(ready.EngineVersion, ready.Pid);
+            return true;
+        }
+        catch (Services.EngineUnavailableException ex)
+        {
+            if (EngineState == EngineState.Waking) OnEngineUnavailable(ex.ExePath, ex.Reason);
+            return false;
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException)
+        {
+            if (EngineState == EngineState.Waking) EngineState = EngineState.Asleep;
+            return false;
+        }
+        catch (Exception)
+        {
+            return false; // ölüm sinyali gelir — gerekçe özette
+        }
+    }
+
+    /// <summary>[Task 21 · karar 20 · Q8] Uyuyan motor uyandı: kimlik alanları ve hazır durumu — hazır yolunun ÇEKİRDEĞİ
+    /// (<see cref="EnterEngineReady"/>), açılışa özgü işleri OLMADAN. Konsola "Engine ready" satırı yazılmaz, eski havuz ipucu yazılmaz, açılış
+    /// Sync'i tekrarlanmaz: uyanan motor komutlar arası bir durum kaybetmedi (her komut kökünü ve ayarını taşır) ve Sync ekranın ihtiyacıdır,
+    /// motorun değil — ekran uyku boyunca değişmedi. Tek istisna motorun kendi bilgisidir (C21): uyanan motor açılışta yarım kalmış bir koşu
+    /// bulduysa hazır olayı <c>InterruptedProjects</c> taşır ve satırı olay akışından bugünkü gibi düşer (<see cref="OnEngineRecovered"/>).</summary>
+    private void OnEngineResumed(string engineVersion, int pid) => EnterEngineReady(engineVersion, pid);
 
     // ---------------------------------------------------------------- event → durum
 
@@ -3028,22 +3162,31 @@ public sealed partial class RunViewModel : ObservableObject
     /// <summary>[idle-memory · dalga 3] Motor öldü — kullanıcıya bildirmenin TEK yolu: kendiliğinden ölüm (<see cref="OnEngineExited"/>) ve
     /// uykusu düşüp kaybedilen motor (<see cref="PutEngineToSleepAsync"/>). Durum <see cref="EngineState.Dead"/>, şeritte kırmızı ölüm satırı
     /// ve "Restart engine"; uçuştaki pencereler bırakılır (<see cref="ReleaseAfterEngineLoss"/>). Konsola satır yazmaz (boşta bir motor
-    /// kaybı hiçbir işlemi bitirmez).</summary>
+    /// kaybı hiçbir işlemi bitirmez).
+    /// <para>[Task 21 · karar 34] <b>Bir geçişin ortasındaki kayıp hiçbir pencereyi bırakmaz.</b> Motor uyku ya da uyanma sürerken
+    /// kaybedildiyse (düşen uyku; uyanmak için doğan motorun ölümü) ona son hazır olduğu andan beri hiçbir şey GİTMEDİ: uyku yalnız uçuşta işlem
+    /// yokken başlar ve geçiş boyunca motor kapısı (<see cref="EnsureEngineAwakeAsync"/>) hiçbir komutu göndermez. O an açık görünen her istek
+    /// penceresi kapıda bekleyen — ya da açılış koreografisinde kapıya yürüyen — bir isteğindir; motor kaybı onu bırakmaz (hiç başlamamış bir
+    /// işlem bitmiş sayılmaz: ne Sync'in <c>EndSync</c>/<c>MarkOperationEnded</c>'ı, ne koşunun faz/<see cref="IsStarting"/> sıfırlaması). Kapı
+    /// "gönderme" deyince isteğin kendi "gönderim düştü" geri alımı bırakır — geri alım TEK yerde ve tek sırayla olur.</para></summary>
     /// <param name="cause">Ölüm satırının parantezindeki neden (İngilizce): <c>exit N</c>, <c>protocol error</c> ya da uykunun düşüşü.</param>
     private void ReportEngineDead(string cause)
     {
+        bool lostInTransition = EngineState is EngineState.Sleeping or EngineState.Waking;
         EngineState = EngineState.Dead;
         // [E2/T37 · İngilizce sweep] Şerit kalıcı-hata modu bu metni GÖSTERİR → İngilizce (tüm UI/konsol metni).
         // [D1] Doğmuş bir motorun ölümü YENİDEN BAŞLATILABİLİR — şerit "Restart engine" aksiyonunu gösterir
         // (EngineDiedMessage yazan her yol bu bayrağı da yazar; bkz. EngineRestartable).
         EngineRestartable = true;
         EngineDiedMessage = $"Engine stopped unexpectedly ({cause})";
-        ReleaseAfterEngineLoss();
+        if (!lostInTransition) ReleaseAfterEngineLoss();
     }
 
     /// <summary>Motor GİTTİ — beklenmedik ölümle (<see cref="OnEngineExited"/>) ya da kullanıcının kasıtlı
     /// yeniden başlatmasıyla (<see cref="RestartEngineAsync"/>). Her iki yolda da uçuştaki run/Sync pencereleri
-    /// serbest bırakılır: o motorun asla göndermeyeceği event'leri bekleyen hiçbir durum kalmamalıdır.
+    /// serbest bırakılır: o motorun asla göndermeyeceği event'leri bekleyen hiçbir durum kalmamalıdır. [Task 21 · karar 34] Bir geçişin
+    /// (uyku, uyanma) ortasındaki kayıpta çağrılmaz: o pencereler kapıda bekleyen, hiç gönderilmemiş isteklerindir ve kendi geri alımları
+    /// bırakır (gerekçe <see cref="ReportEngineDead"/>'de).
     ///
     /// <para><b>Neden iki çağıran:</b> <see cref="EngineHost.RestartAsync"/> önce <c>_generation</c>'ı artırır
     /// (eski exit-watcher susturulur) ve ancak sonra child'ı öldürür — yani YAŞAYAN bir motoru yeniden
@@ -3136,7 +3279,8 @@ public sealed partial class RunViewModel : ObservableObject
     /// <para>[spec 2026-09-18 §6.2 "Uygulama açılışı"] Motor hazır olduğunda, bir workspace varsa ve Sync'e izin
     /// varsa, fetch'li bir Sync başlar (<see cref="SyncMode.Appended"/>: boot satırları kalır, transkript altına akar).
     /// İki çağıran: kabuğun ilk açılışı (<c>MainWindow.StartEngineAsync</c>) ve <see cref="RestartEngineAsync"/>.
-    /// Yalnız eski havuz ipucu oturum başına BİR kez yazılır (<see cref="_engineWasReady"/>).</para>
+    /// Yalnız eski havuz ipucu oturum başına BİR kez yazılır (<see cref="_engineWasReady"/>). [idle-memory · dalga 3 · Task 21] Uyuyan motorun
+    /// uyanması bu yolu KULLANMAZ: yalnız ortak çekirdeği alır (<see cref="OnEngineResumed"/> — satır yok, açılış Sync'i yok).</para>
     /// <para><b>[DEĞİŞEN KURAL — final review I1]</b> Eskiden Sync yalnız ilk hazır oluşta giderdi ("restart dünyayı
     /// değiştirmez"). Oysa çökmeden sonra yeniden başlayan motor uçuştaki projeleri kurtarır (spec §5.5): ekranın
     /// kararları artık yanlıştır ve kurtarılan satırlar ancak bir Sync'le gri "never built" okunur.</para>
@@ -3146,9 +3290,9 @@ public sealed partial class RunViewModel : ObservableObject
     /// açılışın Sync'i motor hazır olunca buradan gider.</para></summary>
     public void OnEngineReady(string engineVersion, int pid)
     {
-        EngineVersion = engineVersion;
-        EnginePid = pid;
-        EnterEngineReady(); // [idle-memory · dalga 3] motor durumu + son motor etkinliği
+        // [idle-memory · dalga 3] Kimlik + motor durumu + son motor etkinliği — uyanmayla (OnEngineResumed) ORTAK çekirdek; aşağıdakiler
+        // (hazır satırı, eski havuz ipucu, açılış Sync'i) yalnız açılışın ve yeniden başlatmanındır.
+        EnterEngineReady(engineVersion, pid);
         AppendRunLine($"Engine ready — v{engineVersion}");
         if (!_engineWasReady)
         {
@@ -3542,6 +3686,9 @@ public sealed partial class RunViewModel : ObservableObject
     /// eklenir ve konsol proje moduna geçer — motorun "log yok" cevabı da böyle biter (bkz. <see cref="OnProjectLogChunk"/>).
     /// SendAsync engine hazır değilken senkron fırlarsa yutulur — UI
     /// tıklaması çökmemeli; dikiş silahlı kalır ve gecikmiş bir chunk'la yine tamamlanabilir.
+    /// <para>[idle-memory · dalga 3 · Task 21 · karar 33] Doğrudan gönderim de motor kapısından geçer (<see cref="EnsureEngineAwakeAsync"/>): uyuyan
+    /// motoru uyandırır, uyku sürüyorsa bitmesini bekler; ölü ya da erişilemez motora istek gitmez — kapının reddi düşen gönderimle aynı geri
+    /// alımı alır, satırsız (tek sinyal kapının özetinde).</para>
     /// </summary>
     public async Task LoadProjectLogAsync(string projectId)
     {
@@ -3551,14 +3698,27 @@ public sealed partial class RunViewModel : ObservableObject
         // [idle-memory · I1] Her istek yeni bir kimlik alır: eskisinin gecikmiş cevabı bu yüklemeyle eşleşmez (PendingLoad.IsAnsweredBy).
         var pending = new PendingLoad(projectId, ++_lastLogRequestId);
         bool wasPending = HasPendingLogLoad;
-        // [idle-memory] İstek gönderilmeden ÖNCE kurulur: OnProjectLog dikişin kuyruğunu buna bakarak tamponlar (gerekçe orada).
+        // [idle-memory] İstek gönderilmeden ÖNCE kurulur: OnProjectLog dikişin kuyruğunu buna bakarak tamponlar (gerekçe orada). Uyanma
+        // sürerken de kurulu kalır: boşta kuralı cevabı beklenen yüklemeyi uyutmaz (HasPendingLogLoad).
         _pendingLoad = pending;
         NotifyPendingLogLoad(wasPending);
-        var send = SendToEngineAsync(new GetProjectLogCommand(projectId, pending.RequestId));
-        try { await send; }
-        catch (Exception ex)
+        bool sent = false;
+        if (await EnsureEngineAwakeAsync(typeof(GetProjectLogCommand)))
         {
-            AppendRunLine($"[error] could not load project log: {ex.Message}");
+            var send = SendToEngineAsync(new GetProjectLogCommand(projectId, pending.RequestId));
+            try
+            {
+                await send;
+                sent = true;
+            }
+            catch (Exception ex)
+            {
+                AppendRunLine($"[error] could not load project log: {ex.Message}");
+            }
+        }
+        if (!sent)
+        {
+            // İstek yola çıkmadı: gönderim düştü ya da motor kapısı "gönderme" dedi.
             // [her projenin sayfası var] Proje moduna BURADA GEÇİLMEZ — motorun "log yok" cevabının aksine.
             // Fark cevabın kendisindedir: "log yok" motorun KESİN cevabıdır (dikilir ve sayfayı açar), gönderim
             // hatası ise hiç cevap DEĞİLDİR — istek yola bile çıkmadı ve `_pendingLoad` bilerek yaşatılıyor,
@@ -3566,7 +3726,7 @@ public sealed partial class RunViewModel : ObservableObject
             // bıraksa bile ActiveProjectId'yi o projede TAKILI bırakır ve run konsolu sessizce donar (ölçüldü:
             // RunViewModelTests.Deselecting_before_the_project_log_chunk_arrives_does_not_freeze_the_run_console).
             // [Fix wave 2, Finding 2] SendAsync engine ölüyken/hiç başlamamışken SENKRON fırlar (writer null) —
-            // bu catch `await` HİÇBİR suspension olmadan senkron çalışır. Önceden Completion burada asla
+            // bu dal `await` HİÇBİR suspension olmadan senkron çalışır. Önceden Completion burada asla
             // tamamlanmıyordu: hiçbir yanıt/event gelmeyeceğinden aşağıdaki `await pending.Completion.Task`
             // SONSUZA DEK asılı kalırdı (kart tıklaması hang). BİLEREK `_pendingLoad` null'LANMIYOR (bir cevabın
             // aksine): mevcut testler (ör. stitch testleri) engine hiç başlatılmadan aynı

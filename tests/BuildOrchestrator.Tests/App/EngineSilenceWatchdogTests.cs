@@ -228,6 +228,43 @@ public sealed class EngineSilenceWatchdogTests
         Assert.Null(overdueAtSendTime); // bekleyiş TAM BURADA başladı — bayat saatten yanlış alarm YOK
     }
 
+    /// <summary>[idle-memory · dalga 3 · spec §6.4 · C16 · karar 35] Uyanmanın süresi sessizlik sayılmaz: uyuyan motoru Sync uyandırır; bekleyiş
+    /// bugünkü gibi istekte kurulur ve uyanma — sahte saat burada eşiğin bir ms altına ilerler — motorun hazır bildirimiyle biter. Hazır bildirimi
+    /// motor etkinliğidir: sessizlik penceresi oradan başlar, yani gönderilen Sync'e motor iki ms sonra hâlâ cevap vermemişken (istekten bu yana
+    /// eşik aşılmışken) uyarı yoktur. Bu sınıfın VM'i uykuyu KAPALI açar (<see cref="NewVm"/>); bu test ayarı AÇIKÇA açar ve motoru gerçek tikle
+    /// uyutur — uyku ve uyanma ortak sahtededir (<see cref="EngineSleepProbe"/>).
+    /// <para>KIRMIZI (kapısız kod): uyanma hiç olmuyordu, Sync uyuyan motora gidiyordu. Pencerenin uyanmanın sonundan başladığı mutasyonla
+    /// gösterildi: uyanma damgayı yazmazsa uyarı çıkar.</para></summary>
+    [Fact]
+    public async Task The_wakes_duration_raises_no_silence_warning()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var (vm, clock) = NewVm(engine);
+        vm.StopEngineWhenIdle = true;
+        var probe = EngineSleepProbe.Attach(vm);
+        vm.DebugSendOverride = _ => Task.CompletedTask;
+        vm.OnEngineReady(EngineSleepProbe.EngineVersion, EngineSleepProbe.Pid); // workspace var: açılış Sync'i gider, motor cevaplar
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 0, 0));
+        clock.Advance(EngineSleepProbe.IdleAfterMs);
+        vm.TickElapsed();
+        Assert.Equal(EngineState.Asleep, vm.EngineState); // ön-koşul: motor uyudu
+        probe.NextWake = () =>
+        {
+            clock.Advance(RunViewModel.EngineSilenceThresholdMs - 1); // yavaş bir uyanma: eşiğin bir ms altı
+            return Task.FromResult(EngineSleepProbe.Woken());
+        };
+
+        await vm.SyncCommand.ExecuteAsync(null);
+        Assert.Equal(1, probe.WakeCalls);
+        Assert.True(vm.SyncBusy); // Sync gitti, cevabı bekleniyor — bekçi kurulu
+
+        clock.Advance(2);
+        vm.TickElapsed();
+
+        Assert.Null(vm.EngineOverdueMessage);
+    }
+
     /// <summary>Motorun HERHANGİ bir event'i saati sıfırlar: uzun ama KONUŞAN bir planlama/drain asla
     /// uyarı üretmez. Sinyal "yaşıyor mu" değil "susuyor mu" olduğu için event TÜRÜ önemsizdir.</summary>
     [Fact]

@@ -7,12 +7,12 @@ namespace BuildOrchestrator.Tests.App;
 /// saatsizdir — tablo doğrudan girdilerle sürülür; tik bağlaması (VM'in tek tanımlarının okunması, uyutma, tek uçuş) <c>EngineSleepTests</c>'tedir.
 ///
 /// <para><b>Tablonun mantığı:</b> ayar açık olmalı; uçuşta işlem ya da cevabı beklenen proje log yüklemesi varken HİÇ; motor hazır olmalı —
-/// başlarken (açılış, yeniden başlatma), uyku sürerken (geçiş: tek uçuş), uyurken, ölmüşken ya da hiç doğamamışken HİÇ; ve son motor
+/// başlarken (açılış, yeniden başlatma), uyku ya da uyanma sürerken (geçiş: tek uçuş), uyurken, ölmüşken ya da hiç doğamamışken HİÇ; ve son motor
 /// etkinliğinden bu yana en az <see cref="EngineIdleRule.IdleAfter"/> geçmiş olmalı (eşik dahil).</para>
 /// </summary>
 public class EngineIdleRuleTests
 {
-    private static readonly long IdleAfterMs = (long)EngineIdleRule.IdleAfter.TotalMilliseconds;
+    private static readonly long IdleAfterMs = EngineSleepProbe.IdleAfterMs; // ms hâlinin TEK tanımı ortak sahtededir
 
     /// <summary>Son motor etkinliği — 0 DEĞİL: "hiç yazılmamış damga" ile "t=0'da etkinlik" karışmasın.</summary>
     private const long LastActivityMs = 1_000;
@@ -27,6 +27,7 @@ public class EngineIdleRuleTests
     [InlineData(0,  true,  false, false, EngineState.Starting,    false)] // hazır değil: açılış ya da yeniden başlatma sürüyor (C1)
     [InlineData(0,  true,  false, false, EngineState.Sleeping,    false)] // geçiş sürüyor: uyku uçuşta — ikinci uyku yok (C3)
     [InlineData(0,  true,  false, false, EngineState.Asleep,      false)] // zaten uyuyor
+    [InlineData(0,  true,  false, false, EngineState.Waking,      false)] // geçiş sürüyor: uyanma uçuşta (Task 21) — pin, kural değişmedi
     [InlineData(0,  true,  false, false, EngineState.Dead,        false)] // kendiliğinden öldü: toparlamak "Restart engine"in işi
     [InlineData(0,  true,  false, false, EngineState.Unavailable, false)] // hiç doğamadı (kurulum)
     public void The_rule_table(long overMs, bool settingOn, bool operationInFlight, bool pendingLogLoad, EngineState engine, bool expected)

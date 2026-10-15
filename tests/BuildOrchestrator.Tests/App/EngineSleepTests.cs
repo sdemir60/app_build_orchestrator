@@ -3,6 +3,7 @@ using BuildOrchestrator.App;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Tests.Supervisor;
+using static BuildOrchestrator.Tests.App.EngineSleepProbe;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -12,10 +13,11 @@ namespace BuildOrchestrator.Tests.App;
 /// Kuralın motor girdisi VM'in TEK motor durumudur (<see cref="RunViewModel.EngineState"/>): yalnız hazır motor uyur — açılışta hazır bildirimi
 /// gelene dek hiç (C1), uyku sürerken ikinci kez değil (tek uçuş, C3). Son motor etkinliği tek damgadır (C8). Uykunun iki ters bitişi
 /// (T18 yeniden incelemesinin eki): çıkışta vazgeçilen uyku sessizdir; başka bir nedenle düşen uyku motoru kaybettirir ve bugünkü ölüm
-/// yolundan bildirilir. Uyandırma bu sınıfın değil Task 21'in işidir.
+/// yolundan bildirilir. Uyandırma bu sınıfın değil Task 21'in işidir (<c>EngineWakeTests</c>).
 ///
-/// <para><b>Test yüzeyleri:</b> saat testin elindedir (<c>nowMs</c>); uyku konağa gitmez — dikiş (<see cref="RunViewModel.SleepEngine"/>) sayar
-/// ve bitmiş, bekletilen (TCS: uyku sürüyor) ya da düşen bir görev döner, yani yarış pencereleri gerçek zamanlama olmadan açık tutulur.
+/// <para><b>Test yüzeyleri:</b> saat testin elindedir (<c>nowMs</c>); uyku konağa gitmez — dikişin sahtesi (<see cref="EngineSleepProbe"/>, uyku ve
+/// uyanmanın TEK sahtesi) sayar ve bitmiş, bekletilen (TCS: uyku sürüyor) ya da düşen bir görev döner, yani yarış pencereleri gerçek zamanlama
+/// olmadan açık tutulur.
 /// Tik üretimdeki gövdesiyle sürülür (<c>MainWindow.OnElapsedTick</c>). Fixture ayarı varsayılan KAPALI açar (<c>MainWindowHost.New</c>,
 /// karar 9): uyuyan her test ayarı fixture döndükten sonra açıkça açar. Dikişin üretim varsayılanını (konağın uykusu) ve yeniden başlatmanın
 /// beklemesini iki test gerçek motorla (izole önbellek) sınar.</para>
@@ -23,48 +25,8 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class EngineSleepTests
 {
-    private static readonly long IdleAfterMs = (long)EngineIdleRule.IdleAfter.TotalMilliseconds;
-
     /// <summary>Üretime benzer saat: makine günlerdir açık — VM'in üretim saati açılıştan beri geçen süredir (<c>Environment.TickCount64</c>).</summary>
     private static readonly long LongUptimeMs = (long)TimeSpan.FromDays(3).TotalMilliseconds;
-
-    private const string Version = "1.0.0";
-    private const int Pid = 4242;
-
-    /// <summary>Uyku dikişinin sahtesi: çağrıları sayar ve her çağrıda <see cref="Next"/>'in görevini döner (varsayılan: uyku hemen biter).</summary>
-    private sealed class SleepProbe
-    {
-        public int Calls { get; private set; }
-        public Func<Task> Next { get; set; } = () => Task.CompletedTask;
-
-        public Task Sleep()
-        {
-            Calls++;
-            return Next();
-        }
-    }
-
-    private static SleepProbe Probe(RunViewModel vm)
-    {
-        var probe = new SleepProbe();
-        vm.SleepEngine = probe.Sleep;
-        return probe;
-    }
-
-    /// <summary>Uyuyabilen kabuk: topolojisi akmış pencere (tek proje "A"), saat testin elinde, uyku dikişi sahte, ayar AÇIK (fixture döndükten
-    /// sonra — <paramref name="stopWhenIdle"/>) ve motor HAZIR: kabuğun açılış yolu — hazır bildirimi (<c>OnEngineReady</c>) açılış Sync'ini
-    /// gönderir, motor onu cevaplar. Dönüşte VM boştadır ve son motor etkinliği şimdidir.</summary>
-    private static (MainWindow Window, RunViewModel Vm, SleepProbe Sleep) ReadyShell(TempDir dir, Func<long> nowMs, bool stopWhenIdle = true)
-    {
-        var (window, vm, _) = MainWindowHost.NewWithProjectsAndClock(dir, nowMs, ("A", null));
-        if (stopWhenIdle) vm.StopEngineWhenIdle = true;
-        var sleep = Probe(vm);
-        MainWindowHost.AcceptSends(vm);
-        vm.OnEngineReady(Version, Pid);
-        MainWindowHost.ReplySync(vm, ("A", null));
-        Assert.False(vm.IsOperationInFlight); // ön-koşul: boşta
-        return (window, vm, sleep);
-    }
 
     // ---------------------------------------------------------------- açılış ve hazır yolu (C1)
 
@@ -78,7 +40,7 @@ public class EngineSleepTests
         long now = LongUptimeMs;
         var (window, vm) = MainWindowHost.New(dir, nowMs: () => now);
         vm.StopEngineWhenIdle = true;
-        var sleep = Probe(vm);
+        var sleep = Attach(vm);
 
         for (int i = 0; i < 3; i++)
         {
@@ -86,7 +48,7 @@ public class EngineSleepTests
             now += IdleAfterMs;
         }
 
-        Assert.Equal(0, sleep.Calls);
+        Assert.Equal(0, sleep.SleepCalls);
         Assert.Equal(EngineState.Starting, vm.EngineState);
         GC.KeepAlive(window);
     }
@@ -102,20 +64,20 @@ public class EngineSleepTests
         long now = LongUptimeMs;
         var (window, vm) = MainWindowHost.New(dir, nowMs: () => now);
         vm.StopEngineWhenIdle = true;
-        var sleep = Probe(vm);
+        var sleep = Attach(vm);
         Assert.False(vm.HasWorkspace); // ön-koşul: açılış Sync'i yok
 
-        vm.OnEngineReady(Version, Pid);
+        vm.OnEngineReady(EngineVersion, Pid);
         window.OnElapsedTick();
-        Assert.Equal(0, sleep.Calls);
+        Assert.Equal(0, sleep.SleepCalls);
 
         now += IdleAfterMs - 1;
         window.OnElapsedTick();
-        Assert.Equal(0, sleep.Calls);
+        Assert.Equal(0, sleep.SleepCalls);
 
         now += 1;
         window.OnElapsedTick();
-        Assert.Equal(1, sleep.Calls);
+        Assert.Equal(1, sleep.SleepCalls);
         GC.KeepAlive(window);
     }
 
@@ -136,21 +98,21 @@ public class EngineSleepTests
         MainWindowHost.RunBuild(vm, "A"); // son motor etkinliği: koşunun olayları (şimdi)
         now += IdleAfterMs - 1;
         window.OnElapsedTick();
-        Assert.Equal(0, sleep.Calls);
+        Assert.Equal(0, sleep.SleepCalls);
         string console = vm.GetRunDocumentText();
 
         now += 1;
         window.OnElapsedTick();
-        Assert.Equal(1, sleep.Calls);
+        Assert.Equal(1, sleep.SleepCalls);
         Assert.Equal(EngineState.Asleep, vm.EngineState);
         Assert.Equal(console, vm.GetRunDocumentText());
         Assert.Null(vm.EnginePid);
-        Assert.Equal(Version, vm.EngineVersion);
+        Assert.Equal(EngineVersion, vm.EngineVersion);
 
         now += IdleAfterMs;
         window.OnElapsedTick();
         window.OnElapsedTick();
-        Assert.Equal(1, sleep.Calls);
+        Assert.Equal(1, sleep.SleepCalls);
         GC.KeepAlive(window);
     }
 
@@ -166,11 +128,11 @@ public class EngineSleepTests
 
         now += IdleAfterMs * 10;
         window.OnElapsedTick();
-        Assert.Equal(0, sleep.Calls);
+        Assert.Equal(0, sleep.SleepCalls);
 
         vm.StopEngineWhenIdle = true;
         window.OnElapsedTick();
-        Assert.Equal(1, sleep.Calls);
+        Assert.Equal(1, sleep.SleepCalls);
         GC.KeepAlive(window);
     }
 
@@ -184,17 +146,17 @@ public class EngineSleepTests
         long now = 1_000;
         var (window, vm, sleep) = ReadyShell(dir, () => now);
         var sleeping = new TaskCompletionSource();
-        sleep.Next = () => sleeping.Task;
+        sleep.NextSleep = () => sleeping.Task;
 
         now += IdleAfterMs;
         window.OnElapsedTick();
-        Assert.Equal(1, sleep.Calls);
+        Assert.Equal(1, sleep.SleepCalls);
         for (int i = 0; i < 5; i++)
         {
             now += 200;
             window.OnElapsedTick();
         }
-        Assert.Equal(1, sleep.Calls);
+        Assert.Equal(1, sleep.SleepCalls);
         Assert.Equal(EngineState.Sleeping, vm.EngineState);
 
         sleeping.SetResult();
@@ -202,7 +164,7 @@ public class EngineSleepTests
         Assert.Equal(EngineState.Asleep, vm.EngineState);
         now += IdleAfterMs;
         window.OnElapsedTick();
-        Assert.Equal(1, sleep.Calls);
+        Assert.Equal(1, sleep.SleepCalls);
         GC.KeepAlive(window);
     }
 
@@ -220,12 +182,12 @@ public class EngineSleepTests
         Assert.True(vm.IsOperationInFlight); // ön-koşul: koşu uçuşta
         now += IdleAfterMs * 3;
         window.OnElapsedTick();
-        Assert.Equal(0, sleep.Calls);
+        Assert.Equal(0, sleep.SleepCalls);
 
         MainWindowHost.FinishBuild(vm, "A"); // son motor etkinliği
         now += IdleAfterMs;
         window.OnElapsedTick();
-        Assert.Equal(1, sleep.Calls);
+        Assert.Equal(1, sleep.SleepCalls);
         GC.KeepAlive(window);
     }
 
@@ -244,13 +206,13 @@ public class EngineSleepTests
         Assert.True(vm.HasPendingLogLoad); // ön-koşul: cevap bekleniyor
         now += IdleAfterMs * 3;
         window.OnElapsedTick();
-        Assert.Equal(0, sleep.Calls);
+        Assert.Equal(0, sleep.SleepCalls);
 
         vm.OnEvent(ProjectLogIpc.NotFound(request, projectId)); // cevap — son motor etkinliği
         Assert.False(vm.HasPendingLogLoad);
         now += IdleAfterMs;
         window.OnElapsedTick();
-        Assert.Equal(1, sleep.Calls);
+        Assert.Equal(1, sleep.SleepCalls);
         GC.KeepAlive(load);
         GC.KeepAlive(window);
     }
@@ -276,7 +238,7 @@ public class EngineSleepTests
 
         now += IdleAfterMs * 3;
         window.OnElapsedTick();
-        Assert.Equal(0, sleep.Calls);
+        Assert.Equal(0, sleep.SleepCalls);
         GC.KeepAlive(window);
     }
 
@@ -290,10 +252,10 @@ public class EngineSleepTests
         long now = 1_000;
         var (window, vm, sleep) = ReadyShell(dir, () => now);
         var sleeping = new TaskCompletionSource();
-        sleep.Next = () => sleeping.Task;
+        sleep.NextSleep = () => sleeping.Task;
         now += IdleAfterMs;
         window.OnElapsedTick();
-        Assert.Equal(1, sleep.Calls); // ön-koşul: uyku uçuşta
+        Assert.Equal(1, sleep.SleepCalls); // ön-koşul: uyku uçuşta
 
         vm.OnEngineExited(1);
         sleeping.SetResult();
@@ -303,7 +265,7 @@ public class EngineSleepTests
         Assert.NotNull(vm.EngineDiedMessage);
         now += IdleAfterMs;
         window.OnElapsedTick();
-        Assert.Equal(1, sleep.Calls);
+        Assert.Equal(1, sleep.SleepCalls);
         GC.KeepAlive(window);
     }
 
@@ -320,7 +282,7 @@ public class EngineSleepTests
         now += IdleAfterMs;
         window.OnElapsedTick();
 
-        Assert.Equal(1, sleep.Calls);
+        Assert.Equal(1, sleep.SleepCalls);
         Assert.Equal(EngineState.Asleep, vm.EngineState);
         GC.KeepAlive(window);
     }
@@ -339,7 +301,7 @@ public class EngineSleepTests
         using var dir = new TempDir();
         long now = 1_000;
         var (window, vm, sleep) = ReadyShell(dir, () => now);
-        sleep.Next = () => cancelled
+        sleep.NextSleep = () => cancelled
             ? Task.FromCanceled(new CancellationToken(canceled: true))
             : Task.FromException(new ObjectDisposedException(nameof(EngineHost)));
         string console = vm.GetRunDocumentText();
@@ -347,14 +309,14 @@ public class EngineSleepTests
         now += IdleAfterMs;
         window.OnElapsedTick();
         DispatcherPump.DrainToIdle();
-        Assert.Equal(1, sleep.Calls);
+        Assert.Equal(1, sleep.SleepCalls);
         Assert.Equal(console, vm.GetRunDocumentText());
         Assert.Null(vm.EngineDiedMessage);
         Assert.Equal(Visibility.Collapsed, window.Shell.Ribbon.RestartEngineAction.Visibility);
 
         now += IdleAfterMs;
         window.OnElapsedTick();
-        Assert.Equal(1, sleep.Calls);
+        Assert.Equal(1, sleep.SleepCalls);
         Assert.Equal(EngineState.Asleep, vm.EngineState);
         GC.KeepAlive(window);
     }
@@ -372,7 +334,7 @@ public class EngineSleepTests
         using var dir = new TempDir();
         long now = 1_000;
         var (window, vm, sleep) = ReadyShell(dir, () => now);
-        sleep.Next = () => Task.FromException(new InvalidOperationException("the kill failed"));
+        sleep.NextSleep = () => Task.FromException(new InvalidOperationException("the kill failed"));
         string console = vm.GetRunDocumentText();
         now += IdleAfterMs;
 
@@ -380,7 +342,7 @@ public class EngineSleepTests
         else vm.OnEngineExited(1);
         DispatcherPump.DrainToIdle();
 
-        Assert.Equal(sleepFailed ? 1 : 0, sleep.Calls);
+        Assert.Equal(sleepFailed ? 1 : 0, sleep.SleepCalls);
         Assert.Equal(EngineState.Dead, vm.EngineState);
         Assert.True(vm.EngineRestartable);
         Assert.False(vm.IsEngineUnavailable);
@@ -392,7 +354,7 @@ public class EngineSleepTests
 
         now += IdleAfterMs;
         window.OnElapsedTick();
-        Assert.Equal(sleepFailed ? 1 : 0, sleep.Calls);
+        Assert.Equal(sleepFailed ? 1 : 0, sleep.SleepCalls);
         GC.KeepAlive(window);
     }
 
@@ -407,26 +369,24 @@ public class EngineSleepTests
         using var sandbox = new SupervisorSandbox();
         await using var engine = sandbox.IsolatedEngineHost(TestPaths.WideStartupTimeout);
         long now = 1_000;
-        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1", () => now)
-            { LegacyWorktreePoolRoot = TestPaths.MissingLegacyPoolRoot }; // workspace yok: hazır yolu Sync göndermez
-        vm.StopEngineWhenIdle = true;
-        var sleep = Probe(vm);
-        vm.OnEngineReady(Version, Pid);
+        var vm = RealEngineVm(engine, () => now); // workspace yok: hazır yolu Sync göndermez
+        var sleep = Attach(vm);
+        vm.OnEngineReady(EngineVersion, Pid);
         now += IdleAfterMs; // pencere doldu: yeniden başlatma olmasa bu an uyuturdu
 
         var restart = vm.RestartEngineCommand.ExecuteAsync(null);
         Assert.False(restart.IsCompleted); // ön-koşul: yeni motor henüz hazır değil
         vm.TickElapsed();
-        Assert.Equal(0, sleep.Calls);
+        Assert.Equal(0, sleep.SleepCalls);
         Assert.Equal(EngineState.Starting, vm.EngineState);
 
         await restart;
         Assert.Equal(EngineState.Ready, vm.EngineState);
         vm.TickElapsed();
-        Assert.Equal(0, sleep.Calls); // pencere yeni motorun hazır anından başlar
+        Assert.Equal(0, sleep.SleepCalls); // pencere yeni motorun hazır anından başlar
         now += IdleAfterMs;
         vm.TickElapsed();
-        Assert.Equal(1, sleep.Calls);
+        Assert.Equal(1, sleep.SleepCalls);
     }
 
     /// <summary>Dikişin üretim varsayılanı konağın uykusudur (<see cref="EngineHost.SleepAsync"/>): kural doğru dediğinde GERÇEK motor durur —
@@ -438,9 +398,7 @@ public class EngineSleepTests
         await using var engine = sandbox.IsolatedEngineHost(TestPaths.WideStartupTimeout);
         var ready = await engine.StartAsync();
         long now = 1_000;
-        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1", () => now)
-            { LegacyWorktreePoolRoot = TestPaths.MissingLegacyPoolRoot }; // workspace yok: hazır yolu Sync göndermez
-        vm.StopEngineWhenIdle = true;
+        var vm = RealEngineVm(engine, () => now); // workspace yok: hazır yolu Sync göndermez
         Task? sleeping = null;
         var production = vm.SleepEngine;
         vm.SleepEngine = () => sleeping = production(); // yalnız gözlem: görevi testin beklemesi için tutar

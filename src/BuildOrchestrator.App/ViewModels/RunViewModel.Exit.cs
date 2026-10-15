@@ -18,7 +18,9 @@ namespace BuildOrchestrator.App.ViewModels;
 /// <para><b>Bekleyiş sonsuz değildir:</b> motor susarsa sessizlik bekçisinin uyarısı (<see cref="EngineOverdueMessage"/>)
 /// çıkışı serbest bırakır — bekçi çıkışın bulunabileceği her pencerede (Starting, Stopping, Syncing, workspace işi)
 /// zaten kuruludur. Motor ölürse <see cref="ReleaseAfterEngineLoss"/> her pencereyi bırakır ve koşul kendiliğinden
-/// doğrulanır.</para>
+/// doğrulanır. [idle-memory · dalga 3 · Task 21] Uyku ya da uyanma sürerken kaybedilen motorda pencereler motor kapısında bekleyen,
+/// hiç gönderilmemiş isteklerindir: onları kapı "gönderme" deyince kendi geri alımları bırakır (<c>ReportEngineDead</c>); uyanma
+/// sürerken istenen çıkışta bekleyen koşu Stop'un kuralıyla komutsuz geri alınır ve çıkış hemen hazırdır.</para>
 ///
 /// <para><b>Değerlendirme noktaları:</b> meşguliyet bildiriminin tek noktası (<see cref="OnWorkspaceBusyChanged"/> —
 /// her iş bayrağı ve koşu kilidi geçişi oraya iner) ve bekçinin uyarısı (<see cref="OnEngineOverdueMessageChanged"/>).

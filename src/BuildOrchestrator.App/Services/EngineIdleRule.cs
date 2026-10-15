@@ -4,8 +4,10 @@ namespace BuildOrchestrator.App.Services;
 /// [idle-memory · dalga 3 / spec §6.4 · karar 13-14] Motorun VM'in gözünden durumu — <see cref="EngineIdleRule"/>'ın motor girdisi. VM onu
 /// TEK alanda tutar (<c>RunViewModel.EngineState</c>) ve yalnız UI thread'inde, durumu değiştiren olayla SENKRON yazar. Şeridin bayrakları
 /// (<c>EngineDiedMessage</c>, <c>IsEngineUnavailable</c>) UI'ın bayrakları olarak kalır, aynı yerlerde yazılır ve onunla aynı şeyi söyler.
-/// Yalnız <see cref="Ready"/> motor uyutulabilir: geçişler (<see cref="Starting"/>, <see cref="Sleeping"/>) ve konuşacak süreci olmayan
-/// durumlar (<see cref="Asleep"/>, <see cref="Dead"/>, <see cref="Unavailable"/>) uyutulmaz.
+/// Yalnız <see cref="Ready"/> motor uyutulabilir: geçişler (<see cref="Starting"/>, <see cref="Sleeping"/>, <see cref="Waking"/>) ve konuşacak
+/// süreci olmayan durumlar (<see cref="Asleep"/>, <see cref="Dead"/>, <see cref="Unavailable"/>) uyutulmaz. Aynı alan VM'in motor kapısını
+/// da sürer (<c>RunViewModel.EnsureEngineAwakeAsync</c> — motora gönderimden önce hangi durumda uyandırılacağı, bekleneceği ya da
+/// gönderilmeyeceği).
 /// </summary>
 public enum EngineState
 {
@@ -22,6 +24,12 @@ public enum EngineState
 
     /// <summary>Motor kasıtlı durduruldu: süreci yok, konuşulacak motor yok; sonraki iş onu yeniden başlatır (uyandırma).</summary>
     Asleep,
+
+    /// <summary>[dalga 3 · Task 21 · karar 32] Uyanma sürüyor: bir komut yolu uyuyan motoru başlatıyor (<see cref="EngineHost.WakeAsync"/>
+    /// bitmedi) — geçiş. Uyanmayı isteyen her yol AYNI uyanmaya katılır (tek uçuş, <c>RunViewModel.EnsureEngineAwakeAsync</c>); kural
+    /// uyutmaz. Uyanma bitince <see cref="Ready"/>; düşerse kurulum hatasında <see cref="Unavailable"/>, doğup hazır olamayan motorda ölüm
+    /// sinyaliyle <see cref="Dead"/>.</summary>
+    Waking,
 
     /// <summary>Motor kaybedildi — kendiliğinden öldü (<see cref="EngineHost.EngineExited"/>) ya da uykusu durdurmanın ortasında düştü (ölüm
     /// sinyali gelmez, konak ne uyuyor ne canlı): şerit ölüm satırını ve "Restart engine"i gösterir; toparlamak yeniden başlatmanın işidir.</summary>
