@@ -77,6 +77,10 @@ public static class DiagnosticsReport
     /// yoktur — sonraki iş onu yeniden başlatır.</summary>
     public const string Asleep = "asleep";
 
+    /// <summary>[idle-memory · dalga 3 · B1 fix 1 · m-3] Motor PID satırının etiketi — değeri durum kuralına bağlı tek satır (<see cref="Asleep"/>,
+    /// <see cref="Unknown"/>); testler satırı bu adla bulur.</summary>
+    public const string EnginePidLabel = "Engine PID";
+
     /// <summary>Environment sekmesinin grup başlıkları — caps olarak çizilir.</summary>
     public const string RuntimeTitle = "Runtime";
     public const string PathsTitle = "Paths";
@@ -94,7 +98,7 @@ public static class DiagnosticsReport
             Copyright: new("Copyright", input.Copyright),
             Runtime:
             [
-                new("Engine PID", EnginePidValue(input)),
+                new(EnginePidLabel, EnginePidValue(input)),
                 new(".NET runtime", input.Runtime),
                 new("OS", input.Os),
                 new("App private", MemoryValue(input.Memory?.PrivateBytes)),

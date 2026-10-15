@@ -19,7 +19,8 @@ namespace BuildOrchestrator.Tests.App;
 ///
 /// <para><b>Bu sınıfın pinledikleri:</b> her uyandıran yol önce uyandırır ve komutu uyanmadan SONRA gönderir; uyanma sessizdir — konsola
 /// "Engine ready" yazmaz, açılış Sync'ini göndermez (karar 20; iddia gönderilen komut listesindedir, anlatının satır sayısında değil — C12;
-/// tek istisna kesilmiş bir koşu kurtaran uyanmadır: ardından TEK Sync — karar 42); uyanırken şerit motorun başladığını söyler (karar 38);
+/// tek istisna kesilmiş bir koşu kurtaran uyanmadır: uyandıran istekten SONRA TEK bir sessiz Sync — karar 42, 42a); uyanırken şerit motorun
+/// başladığını söyler (karar 38);
 /// uyanmış motora giden proje log isteği son koşunun klasörünü taşır (karar 37); motoru başlatamayan uyanma yeniden başlatılabilir ölümdür,
 /// bulamayan uyanma erişilemezlik (karar 41);
 /// hiç uyandırmayan yollar (tik, çıkış, boştaki Stop/Esc) uyandırmaz; ölü ve erişilemez motor bugünkü gönderimini ve satırını korur (R2);
@@ -128,10 +129,6 @@ public class EngineWakeTests
     /// <summary>Ölü ya da erişilemez motorun gönderimi: gönderim kabulü kaldırılır — komut fixture'ın hiç başlamamış konağına gider ve orada
     /// bugünkü gibi düşer ("Engine is not running.").</summary>
     private static void SendsReachTheDeadEngine(RunViewModel vm) => vm.DebugSendOverride = null;
-
-    /// <summary>Erişilemezlik ve başlatma hatası testlerinin Supervisor yolu — konsol satırının ve istisnanın taşıdığı TEK değer (var olması
-    /// gerekmez: konak sahtedir).</summary>
-    private const string SupervisorExe = @"C:\app\supervisor\BuildOrchestrator.Supervisor.exe";
 
     private static int ReadyLines(RunViewModel vm) => MainWindowHost.Occurrences(vm.GetRunDocumentText(), "Engine ready");
 
@@ -296,39 +293,76 @@ public class EngineWakeTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>Uyanan motor açılışta yarım kalmış bir koşu kurtarmış: hazır olayı <c>InterruptedProjects</c> 2 taşır (önceki motorun defteri
+    /// temizlenemedi). Uyanmanın sonucu da olay pompasının olayı da budur.</summary>
+    private static readonly EngineReadyEvent RecoveringWake = new(WokenPid, EngineVersion, InterruptedProjects: 2);
+
     /// <summary>
-    /// [karar 42 · M-4 · C21] Uyanan motor açılışta yarım kalmış bir koşu kurtardıysa (önceki motorun defteri temizlenemedi — hazır olayı
-    /// <c>InterruptedProjects</c> &gt; 0 taşır) ekranın kararları artık yanlıştır: uyanmanın ardından TEK bir Sync koşar — açılışın hazır yolunun
-    /// kipiyle (<see cref="SyncMode.Appended"/>: fetch'li, konsolu temizlemez — açılışın satırları ve "previous run was interrupted" satırı kalır).
-    /// Uyanmayı isteyen yol kendisi bir Sync ise (Sync düğmesi) ikinci bir Sync gitmez: o Sync ekranı zaten tazeler (uçuşta iş varken Sync
-    /// başlamaz). "Engine ready" satırı yine yazılmaz. Satırın kendisi bugünkü olay yolundandır (hazır olayı olay pompasından da geçer).
-    /// <para>KIRMIZI (proje logu yolu): uyanma hiç Sync çalıştırmıyordu — kurtarılan projelerin satırları uykudan önceki kararlarında kalıyordu.
-    /// Sync düğmesi yolu PİN'dir (tek Sync bugün de gidiyordu): ikinci bir Sync'in eklenmesini yakalar.</para>
+    /// [karar 42 · 42a · M-4 · C21] Uyanan motor yarım kalmış bir koşu kurtardıysa ekranın kararları artık yanlıştır: uyanmanın ardından TEK bir
+    /// SESSİZ Sync koşar (<c>SyncSilentlyAsync</c> — pencereye dönüşün girişi): satırlar yerinde tazelenir; seçim, açık proje sayfası ve konsol
+    /// kalır; fetch yok, pill yok, faz Syncing'e geçmez. Uyandıran istek Sync'ten ÖNCE gider. Uyanma gerçek tıklamayla sürülür: satır seçilir → kabuk
+    /// proje logunu yükler → kapı motoru uyandırır. Tıklanan projenin sayfası açılır; "Engine ready" satırı yazılmaz; "previous run was interrupted"
+    /// satırı olay yolundan düşer; Sync'in cevabı A'nın kararını değiştirir ve akışa TEK "synced · 1 projects changed" satırı düşer.
+    /// <para><b>[DEĞİŞEN KURAL — karar 42a]</b> Eski iddia (<c>A_woken_engine_that_recovered_interrupted_projects_syncs_once_after_the_wake</c>, proje
+    /// logu satırı): uyanmanın ardından açılışın hazır Sync'i koşar (<see cref="SyncMode.Appended"/>, fetch'li). Değişme gerekçesi: görünür bir Sync
+    /// seçimi düşürür — uyanmayı tetikleyen proje logu tıklamasının sayfası cevap gelse de hiç açılmıyordu — ve motor Sync'i (fetch dahil) logdan ÖNCE
+    /// işliyordu. Kontrolcü kararı 42a: sessiz Sync, uyandıran istekten sonra.</para>
+    /// <para>KIRMIZI (Appended Sync, 8ec8522b): seçim null, aktif proje null, sayfa gösterilmiyor, Sync fetch'li ve ilk giden komut, faz Syncing,
+    /// akış satırı Sync özeti.</para>
     /// </summary>
-    [WpfTheory]
-    [InlineData(WakingPath.ProjectLog)]
-    [InlineData(WakingPath.SyncButton)]
-    public async Task A_woken_engine_that_recovered_interrupted_projects_syncs_once_after_the_wake(WakingPath path)
+    [WpfFact]
+    public void A_woken_engine_that_recovered_interrupted_projects_refreshes_silently_and_keeps_the_page_the_click_opened()
     {
         using var dir = new TempDir();
         var (window, vm, probe, sent, _) = AsleepShell(dir);
-        var ready = new EngineReadyEvent(WokenPid, EngineVersion, InterruptedProjects: 2);
-        probe.NextWake = () => Task.FromResult(ready);
+        probe.NextWake = () => Task.FromResult(RecoveringWake);
+        string id = MainWindowHost.IdOf("A");
+        string? operationBefore = vm.CurrentOperation;
 
-        await Trigger(path, window, vm);
-        vm.OnEvent(ready); // aynı hazır olayının olay pompasından geçişi — satır bugünkü yolundan düşer
+        vm.SelectProject(id); // gerçek tıklama: seçim → kabuk proje logunu yükler → kapı motoru uyandırır
+        DispatcherPump.DrainToIdle();
+        vm.OnEvent(RecoveringWake); // aynı hazır olayının olay pompasından geçişi — interrupted satırı bugünkü yolundan
+        var request = Assert.Single(sent.Commands.OfType<GetProjectLogCommand>());
+        vm.OnEvent(ProjectLogIpc.Reply(request.RequestId, id, "line-1\n", through: 1));
+        DispatcherPump.DrainToIdle();
+        vm.OnEvent(new SyncStartedEvent(vm.RootPath, "main"));
+        var phaseDuringSync = vm.Phase;
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(id, "A", true, Reason: WillBuildReason.SignatureChanged, OwnFilesChanged: true)]));
+        vm.OnEvent(MainWindowHost.SyncCompleted(1));
         DispatcherPump.DrainToIdle();
 
         Assert.Equal(1, probe.WakeCalls);
-        var sync = Assert.Single(sent.Commands.OfType<SyncWorkspaceCommand>());
-        Assert.True(sync.Fetch);
+        Assert.Multiple(
+            () => Assert.IsType<GetProjectLogCommand>(sent.Commands.First()),
+            () => Assert.False(Assert.Single(sent.Commands.OfType<SyncWorkspaceCommand>()).Fetch),
+            () => Assert.All(sent.States, s => Assert.Equal(EngineState.Ready, s)),
+            () => Assert.Equal(id, vm.SelectedProjectId),
+            () => Assert.Equal(id, vm.ActiveProjectId),
+            () => Assert.True(vm.ShouldShowLoadedProject(id)),
+            () => Assert.NotEqual(AppPhase.Syncing, phaseDuringSync),
+            () => Assert.Equal(operationBefore, vm.CurrentOperation),
+            () => Assert.Equal(1, ReadyLines(vm)),
+            () => Assert.Contains(Core.Planning.PlanProgressLines.PreviousRunInterrupted(2), vm.GetRunDocumentText()),
+            () => Assert.Single(vm.StreamEvents, e => e.Text == StreamText.SyncedProjectsChanged(1)));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[karar 42 · 42a · PİN] Uyanmayı isteyen yol kendisi bir Sync ise (Sync düğmesi) kurtaran uyanma ikinci bir Sync göndermez: düğmenin
+    /// Sync'i ekranı zaten tazeler (uçuşta bir Sync varken sessiz Sync'in kapısı kapalıdır). TEK Sync gider, düğmenin kendi kipinde (Manual,
+    /// fetch'li). PİN: kurtaran uyanmanın Sync'i olmadan da tek Sync gidiyordu; bu test ikinci bir Sync'in eklenmesini yakalar.</summary>
+    [WpfFact]
+    public async Task A_sync_that_wakes_an_engine_that_recovered_interrupted_projects_stays_the_only_sync()
+    {
+        using var dir = new TempDir();
+        var (window, vm, probe, sent, _) = AsleepShell(dir);
+        probe.NextWake = () => Task.FromResult(RecoveringWake);
+
+        await vm.SyncCommand.ExecuteAsync(null);
+        DispatcherPump.DrainToIdle();
+
+        Assert.Equal(1, probe.WakeCalls);
+        Assert.True(Assert.Single(sent.Commands.OfType<SyncWorkspaceCommand>()).Fetch);
         Assert.All(sent.States, s => Assert.Equal(EngineState.Ready, s));
-        if (path == WakingPath.ProjectLog)
-        {
-            Assert.Single(sent.Commands.OfType<GetProjectLogCommand>());
-            Assert.Equal(1, ReadyLines(vm)); // konsol temizlenmedi: açılışın hazır satırı yerinde, yenisi yok
-        }
-        Assert.Contains(Core.Planning.PlanProgressLines.PreviousRunInterrupted(2), vm.GetRunDocumentText());
         GC.KeepAlive(window);
     }
 
@@ -471,7 +505,7 @@ public class EngineWakeTests
         using var dir = new TempDir();
         long now = 1_000;
         var (window, vm, probe) = ReadyShell(dir, () => now);
-        vm.OnEngineUnavailable(SupervisorExe);
+        vm.OnEngineUnavailable(TestPaths.AbsentSupervisorExe);
         SendsReachTheDeadEngine(vm);
         var sent = Record(vm);
 
@@ -863,14 +897,15 @@ public class EngineWakeTests
     {
         using var dir = new TempDir();
         var (window, vm, probe, sent, _) = AsleepShell(dir);
-        probe.NextWake = () => Task.FromException<EngineReadyEvent>(new EngineUnavailableException(SupervisorExe, EngineUnavailableReason.NotFound));
+        probe.NextWake = () => Task.FromException<EngineReadyEvent>(
+            new EngineUnavailableException(TestPaths.AbsentSupervisorExe, EngineUnavailableReason.NotFound));
         int ended = vm.EndedOperationSerial;
 
         await vm.SyncCommand.ExecuteAsync(null);
         DispatcherPump.DrainToIdle();
 
         string console = vm.GetRunDocumentText();
-        Assert.Equal(1, MainWindowHost.Occurrences(console, $"[error] engine not found: {SupervisorExe}"));
+        Assert.Equal(1, MainWindowHost.Occurrences(console, $"[error] engine not found: {TestPaths.AbsentSupervisorExe}"));
         Assert.DoesNotContain("failed to send", console);
         Assert.Empty(sent.Commands);
         Assert.Equal(1, probe.WakeCalls);
@@ -890,18 +925,20 @@ public class EngineWakeTests
     /// sisteminin geçici bir reddi, bellek sınırı, antivirüs kilidi) — oturum motorsuz kalmaz: kayıp yeniden başlatılabilir ölüm yolundan
     /// bildirilir (<c>ReportEngineDead</c>): şeritte "Engine stopped unexpectedly (wake failed)" ve "Restart engine", komutlar açık, erişilemezlik
     /// metni yok, konsola satır yok. Kapıda bekleyen istek (burada proje logu) gitmez ve kendi geri alımını yapar. "Restart engine" başlatmayı
-    /// yeniden dener: konağın yeniden başlatması çağrılır — bu kabuğun konağında exe yoktur, deneme onun ön kontrolüne ulaşır ve bugünkü "motor
-    /// bulunamadı" yoluna düşer (<c>EnginePreflightTests</c> o yolu pinler).
+    /// yeniden dener: konağın başlatma işi bir kez başlar (<see cref="EngineHost.DebugStartWorkBegins"/> sayılır). Fikstür notu: bu kabuğun
+    /// konağında exe yoktur — deneme ön kontrolde bugünkü "motor bulunamadı" yoluna düşer (<c>EnginePreflightTests</c> o yolu pinler); o son durum
+    /// fikstürün, yeniden denemenin kanıtı sayaçtır.
     /// <para>KIRMIZI: uyanmanın CannotStart'ı kurulum hatası yoluna gidiyordu — "Engine could not start — … reinstall required", Restart gizli,
-    /// komutlar kapalı: geçici bir başlatma hatası oturumun geri kalanını motorsuz bırakıyordu.</para>
+    /// komutlar kapalı: geçici bir başlatma hatası oturumun geri kalanını motorsuz bırakıyordu. [B1 fix 1 · m-1] Sayaç iddiası: mutasyonla kırmızı —
+    /// konağı çağırmadan erişilemezliğe düşen bir Restart eski son durum iddialarını yeşil geçiyordu, sayaç 0 okur.</para>
     /// </summary>
     [WpfFact]
     public async Task A_wake_that_cannot_launch_the_engine_offers_restart_instead_of_ending_the_session()
     {
         using var dir = new TempDir();
         var (window, vm, probe, sent, _) = AsleepShell(dir);
-        probe.NextWake = () => Task.FromException<EngineReadyEvent>(new EngineUnavailableException(SupervisorExe, EngineUnavailableReason.CannotStart,
-            new System.ComponentModel.Win32Exception(1455))); // ERROR_COMMITMENT_LIMIT — geçici bir başlatma reddi
+        probe.NextWake = () => Task.FromException<EngineReadyEvent>(new EngineUnavailableException(TestPaths.AbsentSupervisorExe,
+            EngineUnavailableReason.CannotStart, new System.ComponentModel.Win32Exception(1455))); // ERROR_COMMITMENT_LIMIT — geçici bir başlatma reddi
         string console = vm.GetRunDocumentText();
 
         await vm.LoadProjectLogAsync(MainWindowHost.IdOf("A"));
@@ -918,12 +955,14 @@ public class EngineWakeTests
         Assert.Empty(sent.Commands);
         Assert.Equal(1, probe.WakeCalls);
         Assert.False(vm.HasPendingLogLoad);
+        int launches = 0;
+        MainWindowHost.EngineOf(vm).DebugStartWorkBegins = () => Interlocked.Increment(ref launches);
 
         await vm.RestartEngineCommand.ExecuteAsync(null);
 
-        Assert.Equal(EngineState.Unavailable, vm.EngineState); // yeniden başlatma konağın başlatmasına ulaştı (bu kabukta exe yok)
-        Assert.Equal(RunViewModel.EngineMissingMessage, vm.EngineDiedMessage);
+        Assert.Equal(1, Volatile.Read(ref launches));            // "Restart engine" konağın başlatmasına ulaştı — yeniden deneme budur
         Assert.Equal(1, probe.WakeCalls);                        // yeniden başlatma uyandırma değildir
+        Assert.Equal(EngineState.Unavailable, vm.EngineState); // fikstür notu: bu kabuğun konağında exe yok — deneme ön kontrolde düşer
         GC.KeepAlive(window);
     }
 

@@ -36,6 +36,10 @@ public class DiagnosticsReportTests
     private static IEnumerable<DiagnosticsLine> AllLines(DiagnosticsSnapshot s) =>
         s.Identity.Concat(s.Runtime).Concat(s.Paths);
 
+    /// <summary>[dalga 3 · B1 fix 1 · m-3] Motor PID satırının değeri — satır üretimin etiket sabitiyle bulunur (etiketin literal pini yalnız
+    /// RUNTIME grubunun etiket sırası testindedir).</summary>
+    private static string PidValue(DiagnosticsSnapshot s) => s.Runtime.Single(l => l.Label == DiagnosticsReport.EnginePidLabel).Value;
+
     [Fact]
     public void The_identity_group_is_version_engine_and_copyright_in_that_order()
     {
@@ -124,7 +128,7 @@ public class DiagnosticsReportTests
         var s = DiagnosticsReport.Compose(Full() with { EngineVersion = null, EnginePid = null });
 
         Assert.Equal(DiagnosticsReport.NotStarted, s.Engine.Value);
-        Assert.Equal(DiagnosticsReport.Unknown, s.Runtime.Single(l => l.Label == "Engine PID").Value);
+        Assert.Equal(DiagnosticsReport.Unknown, PidValue(s));
     }
 
     /// <summary>[idle-memory · dalga 3 · karar 39] Motor boşta uyurken (VM durumu <see cref="EngineState.Asleep"/>) PID satırı <c>asleep</c>
@@ -138,10 +142,10 @@ public class DiagnosticsReportTests
 
         var s = DiagnosticsReport.Compose(Full() with { EnginePid = null, EngineState = EngineState.Asleep });
 
-        Assert.Equal(DiagnosticsReport.Asleep, s.Runtime.Single(l => l.Label == "Engine PID").Value);
+        Assert.Equal(DiagnosticsReport.Asleep, PidValue(s));
         Assert.Equal(Full().EngineVersion, s.Engine.Value);
         Assert.Contains(DiagnosticsReport.ToText(s).Split(Environment.NewLine),
-            row => row.StartsWith("Engine PID", StringComparison.Ordinal) && row.EndsWith(DiagnosticsReport.Asleep, StringComparison.Ordinal));
+            row => row.StartsWith(DiagnosticsReport.EnginePidLabel, StringComparison.Ordinal) && row.EndsWith(DiagnosticsReport.Asleep, StringComparison.Ordinal));
     }
 
     /// <summary>Uykudan başka her motor durumu — sözleşmeden okunur: yarın eklenen bir durum da kendiliğinden sınanır.</summary>
@@ -161,9 +165,8 @@ public class DiagnosticsReportTests
     public void Every_other_engine_state_shows_the_pid_as_today(EngineState state)
     {
         Assert.Equal(Full().EnginePid!.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            DiagnosticsReport.Compose(Full() with { EngineState = state }).Runtime.Single(l => l.Label == "Engine PID").Value);
-        Assert.Equal(DiagnosticsReport.Unknown, DiagnosticsReport.Compose(Full() with { EngineState = state, EnginePid = null })
-            .Runtime.Single(l => l.Label == "Engine PID").Value);
+            PidValue(DiagnosticsReport.Compose(Full() with { EngineState = state })));
+        Assert.Equal(DiagnosticsReport.Unknown, PidValue(DiagnosticsReport.Compose(Full() with { EngineState = state, EnginePid = null })));
     }
 
     /// <summary>
@@ -179,7 +182,7 @@ public class DiagnosticsReportTests
 
         Assert.All(new[] { "App private", "GC committed", "Managed heap" },
             label => Assert.Equal(DiagnosticsReport.Unknown, s.Runtime.Single(l => l.Label == label).Value));
-        Assert.Equal("4242", s.Runtime.Single(l => l.Label == "Engine PID").Value); // öbür satırlar etkilenmez
+        Assert.Equal("4242", PidValue(s)); // öbür satırlar etkilenmez
         Assert.Contains(DiagnosticsReport.ToText(s).Split(Environment.NewLine),
             row => row.StartsWith("App private", StringComparison.Ordinal) && row.EndsWith(DiagnosticsReport.Unknown, StringComparison.Ordinal));
     }

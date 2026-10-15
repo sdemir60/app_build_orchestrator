@@ -738,13 +738,13 @@ public class AboutDialogTests
             Assert.Equal(EngineState.Asleep, run.EngineState); // ön-koşul: motor uyudu
             Select(dialog, EnvironmentTab);
 
-            Assert.Equal(DiagnosticsReport.Asleep, dialog.Diagnostics!.Runtime.Single(l => l.Label == "Engine PID").Value);
+            Assert.Equal(DiagnosticsReport.Asleep, dialog.Diagnostics!.Runtime.Single(l => l.Label == DiagnosticsReport.EnginePidLabel).Value);
             Assert.Contains(DiagnosticsReport.Asleep, VisibleTexts(dialog));
 
             dialog.ClipboardWriter = text => { written = text; return true; };
             dialog.CopyDiagnostics();
             Assert.Contains(written!.Split(Environment.NewLine),
-                row => row.StartsWith("Engine PID", StringComparison.Ordinal) && row.EndsWith(DiagnosticsReport.Asleep, StringComparison.Ordinal));
+                row => row.StartsWith(DiagnosticsReport.EnginePidLabel, StringComparison.Ordinal) && row.EndsWith(DiagnosticsReport.Asleep, StringComparison.Ordinal));
         }
     }
 

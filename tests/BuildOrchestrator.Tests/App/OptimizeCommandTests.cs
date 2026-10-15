@@ -171,7 +171,7 @@ public class OptimizeCommandTests
         vm.OnEngineExited(1);
         Assert.True(vm.OptimizeCommand.CanExecute(null)); // restartable → kapı açık (Sync'in kuralı)
 
-        vm.OnEngineUnavailable(@"C:\app\supervisor\BuildOrchestrator.Supervisor.exe");
+        vm.OnEngineUnavailable(TestPaths.AbsentSupervisorExe);
         Assert.False(vm.OptimizeCommand.CanExecute(null));
     }
 

@@ -787,8 +787,9 @@ public sealed partial class RunViewModel
             : LastSyncStartedAtMs ?? LastSyncCompletedAtMs;
 
     /// <summary>
-    /// [spec 2026-09-18 §6.2] <b>Kendiliğinden Sync'in TEK girişi</b> — commit, pencereye dönüş ve HEAD'in branch
-    /// değişimi dışındaki hareketi buradan Sync'ler (<see cref="SyncMode.Silent"/>): konsol ve akış temizlenmez,
+    /// [spec 2026-09-18 §6.2] <b>Kendiliğinden Sync'in TEK girişi</b> — commit, pencereye dönüş, HEAD'in branch
+    /// değişimi dışındaki hareketi ve [idle-memory · dalga 3 · karar 42a] kesilmiş bir koşu kurtaran uyanma (<see cref="WakeEngineAsync"/>)
+    /// buradan Sync'ler (<see cref="SyncMode.Silent"/>): konsol ve akış temizlenmez,
     /// fetch yapılmaz, kalıcı işlem pill'i yazılmaz, seçim korunur; transkript gizlenir ama warn/error satırları
     /// yazılır; bitişte akışa tek satır (<paramref name="reason"/>'a göre, metinler <see cref="StreamText"/>'te).
     /// <para>Kapı Sync düğmesininkiyle AYNIdır (<see cref="CanSync"/>) + bir workspace: koşu, planlama, başka bir

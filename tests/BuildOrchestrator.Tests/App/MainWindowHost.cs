@@ -1,4 +1,5 @@
 using System.IO;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Windows;
 using System.Windows.Input;
@@ -105,6 +106,7 @@ internal static class MainWindowHost
         {
             LegacyWorktreePoolRoot = BuildOrchestrator.Tests.Supervisor.TestPaths.MissingLegacyPoolRoot, // [final review M8]
         };
+        Engines.Add(vm, engine);
         beforeVm?.Invoke(vm);
         var store = UiStateStore(uiStateDir);
         if (saved is not null) store.Save(saved);
@@ -114,6 +116,19 @@ internal static class MainWindowHost
         if (stopEngineWhenIdle is { } stop) vm.StopEngineWhenIdle = stop; // aynı gerekçe: seed'den SONRA
         return (window, vm);
     }
+
+    /// <summary>[idle-memory · dalga 3 · B1 fix 1 · m-1] <see cref="New"/>'ün VM'e verdiği konak — testlerin konağın dikişlerine (ör.
+    /// <c>EngineHost.DebugStartWorkBegins</c>) ulaştığı TEK yol. VM konağı dışarı vermez; fixture onu kurduğu anda kaydeder.</summary>
+    public static EngineHost EngineOf(RunViewModel vm)
+    {
+        ArgumentNullException.ThrowIfNull(vm);
+        return Engines.TryGetValue(vm, out var engine)
+            ? engine
+            : throw new InvalidOperationException("this view model was not built by MainWindowHost.New");
+    }
+
+    /// <summary><see cref="EngineOf"/>'un kaydı — VM yaşadıkça (zayıf anahtar: kayıt VM'i tutmaz).</summary>
+    private static readonly ConditionalWeakTable<RunViewModel, EngineHost> Engines = new();
 
     /// <summary>[design v1.23/v1.24 review C13] <see cref="New"/> + <see cref="Realize"/> (üretimin açılış boyutunda):
     /// realize edilmiş kabuk ve VM'i, veri akmadan. Böyle bir kabukla başlayan testlerin TEK kurulumu —

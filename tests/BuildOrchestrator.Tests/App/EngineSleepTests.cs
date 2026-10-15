@@ -231,7 +231,7 @@ public class EngineSleepTests
         var (window, vm, sleep) = ReadyShell(dir, () => now);
 
         if (died) vm.OnEngineExited(1);
-        else vm.OnEngineUnavailable(@"C:\app\supervisor\BuildOrchestrator.Supervisor.exe");
+        else vm.OnEngineUnavailable(TestPaths.AbsentSupervisorExe);
         Assert.Equal(died ? EngineState.Dead : EngineState.Unavailable, vm.EngineState);
         Assert.NotNull(vm.EngineDiedMessage);
         Assert.Equal(!died, vm.IsEngineUnavailable);
