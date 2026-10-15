@@ -1,8 +1,10 @@
 using System.Collections.Concurrent;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using BuildOrchestrator.App.Services;
+using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Tests.ProcessControl;
@@ -16,6 +18,14 @@ public class EngineHostTests
     // [B1/F1 · fix-1] Startup timeout GENİŞ geçilir; sabitin TEK sahibi TestPaths.WideStartupTimeout
     // (gerekçe orada). Üretim varsayılanı EngineHost.cs'te 5s'de kalır — bunu Default_startup_timeout_stays_five_seconds pinler.
     private static readonly TimeSpan WideStartupTimeout = TestPaths.WideStartupTimeout;
+
+    /// <summary>Var olmayan bir Supervisor yolu — motoru hiç doğmayan konak (ön kontrol <c>NotFound</c>).</summary>
+    private static string MissingExe => Path.Combine(AppContext.BaseDirectory, "does-not-exist.exe");
+
+    /// <summary>Windows saat kesmesinin varsayılan aralığı (15,625 ms). Zaman aşımı token'ının zamanlayıcısı süreyi bu kesmelerle
+    /// güncellenen bir saatten okur: "2 s doldu" dediği anda yüksek çözünürlüklü bir kronometre en çok bir kesme kadar eksik
+    /// ölçebilir. Alt sınır iddiası bu payı düşer — ölçüm hatasıdır, eşik gevşetmesi değil (anında öldüren bir uyku ms'lerde biter).</summary>
+    private static readonly TimeSpan ClockTick = TimeSpan.FromMilliseconds(16);
 
     [Fact]
     public async Task Start_receives_engineReady_and_ping_pong_works()
@@ -142,10 +152,18 @@ public class EngineHostTests
     }
 
     /// <summary>Çağıranın (UI thread'i) bağlamının taklidi: <c>Post</c> edilen devamı, kendisi <c>Current</c> iken bir havuz
-    /// thread'inde koşturur — bağlama dönen bir devam, altında çalıştığı bağlamı gözlemcisine gösterir.</summary>
+    /// thread'inde koşturur — bağlama dönen bir devam, altında çalıştığı bağlamı gözlemcisine gösterir. Post'ları da sayar: bağlamı
+    /// hiç yakalamayan bir yol sayacı 0 bırakır.</summary>
     private sealed class CallerContext : SynchronizationContext
     {
-        public override void Post(SendOrPostCallback d, object? state) =>
+        private int _posts;
+
+        /// <summary>Bu bağlama post edilen devam sayısı.</summary>
+        public int Posts => Volatile.Read(ref _posts);
+
+        public override void Post(SendOrPostCallback d, object? state)
+        {
+            Interlocked.Increment(ref _posts);
             ThreadPool.QueueUserWorkItem(_ =>
             {
                 var previous = Current;
@@ -153,6 +171,7 @@ public class EngineHostTests
                 try { d(state); }
                 finally { SetSynchronizationContext(previous); }
             });
+        }
     }
 
     /// <summary>[B1/F1 · fix-1 İŞ 1b] ÜRETİM VARSAYILANI 5 SANİYEDE KALIR — bu bir yasak sınırdır: büyütülürse
@@ -206,7 +225,7 @@ public class EngineHostTests
     {
         // [D1] Var olmayan exe → child HİÇ DOĞMAZ: pre-flight (File.Exists) StartAsync'i 5sn timeout'a hiç
         // düşürmeden EngineUnavailableException ile keser; hiçbir process/handle sızmaz.
-        await using var host = new EngineHost(Path.Combine(AppContext.BaseDirectory, "does-not-exist.exe"));
+        await using var host = new EngineHost(MissingExe);
         await Assert.ThrowsAnyAsync<Exception>(async () =>
             await host.StartAsync(new CancellationTokenSource(TimeSpan.FromSeconds(6)).Token));
         Assert.Null(host.EnginePid); // child referansı sızmadı/temizlendi
@@ -300,13 +319,15 @@ public class EngineHostTests
         var firstWatch = host.ExitWatch!;
         int exited = 0;
         host.EngineExited += _ => Interlocked.Increment(ref exited);
-        using var slept = Process.GetProcessById(first.Pid); // tanıtıcı uykudan ÖNCE açılır
+        using var slept = Process.GetProcessById(first.Pid);
+        _ = slept.SafeHandle; // tanıtıcı uykudan ÖNCE açılır (GetProcessById açmaz): PID başkasına geçemez, çıkış kodu sonra okunur
 
         await host.SleepAsync();
 
         Assert.True(host.IsAsleep);
         Assert.Null(host.EnginePid);
         Assert.True(slept.WaitForExit(TimeSpan.Zero), "the slept Supervisor had not ended when SleepAsync returned");
+        Assert.Equal(0, slept.ExitCode); // shutdown'la KENDİSİ çıktı (SupervisorHost 0 döner) — öldürülseydi -1 olurdu
         await firstWatch.WaitAsync(WideStartupTimeout); // eski bekçi çıkışı gördü ve kararını verdi
         Assert.Equal(0, Volatile.Read(ref exited));
         var refused = await Assert.ThrowsAsync<InvalidOperationException>(() => host.SendAsync(new PingCommand(1)));
@@ -435,17 +456,32 @@ public class EngineHostTests
     /// başlatılır. Sağlıklı bir motor <c>shutdown</c>'la kendisi çıkar ve öldürme hiç gerekmez; bu yüzden motor uykudan önce
     /// KİLİTLENİR (<see cref="NtSuspendProcess"/>): canlıdır ama <c>shutdown</c>'ı hiç okumaz, zarif bekleyiş dolar, öldürme gelir.</para>
     /// <para><b>[pin — kırmızısı yalnız derleme]</b> Plan taslağında öldürme, <c>shutdown</c> yazımının askıya girip girmemesine bağlı
-    /// bir yarışla havuza düşüyordu; burada sözleşme pinlenir.</para></summary>
+    /// bir yarışla havuza düşüyordu; burada sözleşme pinlenir.</para>
+    /// <para><b>[fix 1 · M2] Zarif bekleyiş gerçekten beklenir:</b> öldürme, uykunun başlamasından en az <see cref="EngineHost.SleepExitWait"/>
+    /// sonra gelir (alt sınır — yük onu yalnız uzatır; payı <see cref="ClockTick"/>). Bekleyişi Restart'ınki gibi sıfırlayan bir uyku
+    /// burada kırmızıdır.</para>
+    /// <para><b>[fix 1 · M5] Kasıtlı durdurma sürerken gönderim hemen düşer:</b> kapanış ilk iş yazıcıyı devralır; öldürme anında
+    /// (durdurmanın ortasında) gönderilen bir komut bugünkü "motor çalışmıyor" hatasıyla reddedilir — ölmekte olan sürecin borusuna
+    /// yazılıp kaybolmaz. Eskiden yazıcı öldürme bitene dek dururdu.</para></summary>
     [Fact]
     public async Task Sleep_kills_a_wedged_engine_off_the_callers_context()
     {
         using var sandbox = new SupervisorSandbox();
         var killContext = new TaskCompletionSource<SynchronizationContext?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sleepClock = new Stopwatch();
+        TimeSpan killedAfter = TimeSpan.Zero;
+        Exception? sendDuringStop = null;
+        EngineHost? stopping = null; // öldürme stratejisi konağa geri döner — konak kurulduktan sonra atanır
         await using var host = sandbox.IsolatedEngineHost(WideStartupTimeout, killStrategy: p =>
         {
+            killedAfter = sleepClock.Elapsed;
+            try { _ = stopping!.SendAsync(new PingCommand(9)); }
+            catch (Exception ex) { sendDuringStop = ex; } // öldürme yine gelsin — iddia aşağıda
             killContext.TrySetResult(SynchronizationContext.Current);
             p.Kill(entireProcessTree: true);
         });
+        stopping = host;
+        var notRunning = await Assert.ThrowsAsync<InvalidOperationException>(() => host.SendAsync(new PingCommand(0)));
         var ready = await host.StartAsync();
         using var wedged = Process.GetProcessById(ready.Pid);
         Assert.Equal(0, NtSuspendProcess(wedged.SafeHandle)); // motor kilitlendi: canlı, ama shutdown'ı hiç okumaz
@@ -454,12 +490,16 @@ public class EngineHostTests
         Task sleep;
         var previous = SynchronizationContext.Current;
         SynchronizationContext.SetSynchronizationContext(caller);
+        sleepClock.Start();
         try { sleep = host.SleepAsync(); } // devamlar ÇAĞIRANIN bağlamını yakalayabilir
         finally { SynchronizationContext.SetSynchronizationContext(previous); }
         await sleep.WaitAsync(WideStartupTimeout);
 
         Assert.True(killContext.Task.IsCompleted, "the wedged engine was not killed");
         Assert.NotSame(caller, await killContext.Task); // öldürme + ≤1 s bekleme çağıranın bağlamında koşmadı
+        Assert.True(killedAfter >= EngineHost.SleepExitWait - ClockTick,
+            $"the sleep killed the engine {killedAfter.TotalMilliseconds:0} ms after it began — before its graceful wait ran out");
+        Assert.Equal(notRunning.Message, sendDuringStop?.Message); // durdurma sürerken gönderim: bugünkü "çalışmıyor" hatası
         Assert.True(wedged.WaitForExit(TimeSpan.Zero), "the wedged Supervisor had not ended when SleepAsync returned");
         Assert.True(host.IsAsleep);
     }
@@ -478,4 +518,243 @@ public class EngineHostTests
     [Fact]
     public void Sleep_exit_wait_stays_two_seconds()
         => Assert.Equal(TimeSpan.FromSeconds(2), EngineHost.SleepExitWait);
+
+    // ==================================== [idle-memory · dalga 3 · fix 1] Dispose, yarışlar, bağlam ====================================
+
+    /// <summary>[fix 1 · I1] Çıkış, uçuştaki bir uyanmanın arkasında SIRAYA GİRMEZ: dispose kapıyı beklemeden önce nesli ilerletir
+    /// ve konağın ömür token'ını iptal eder; motorun hazır olmasını bekleyen uyanma milisaniyeler içinde vazgeçer
+    /// (<see cref="OperationCanceledException"/> — öldürmez, nesil ilerlediği için ölüm sinyali de yoktur) ve kapıyı bırakır; dispose
+    /// bugünkü kapanışı koşar (shutdown ≤ 500 ms + öldürme ≤ <see cref="EngineHost.KillExitWait"/>) ve job'ı kapatır.
+    /// <para><b>Neden:</b> <c>App.OnExit</c> disposal'ı en çok <see cref="AppShutdown.DisposalTimeout"/> bekler, sonra güncelleyiciyi
+    /// başlatır; kuyruğa giren bir dispose vazgeçilmiş sayılır ve <c>Update.exe</c>, Supervisor öldürülüp çıkışı beklenmeden
+    /// çalışırdı. Eskiden dispose uyanmanın tüm zaman aşımını (<see cref="EngineHost.StartupTimeout"/>) bekliyordu.</para>
+    /// <para><b>Kurgu:</b> uyanmanın yeni motoru hazır olmadan KİLİTLENİR (<see cref="NtSuspendProcess"/>; PID uyanma döner dönmez
+    /// bellidir) — uyanma tavanına (burada 60 s) dek bekleyecektir. Ölçüt üretimin çıkış yolunun kendisidir
+    /// (<see cref="AppShutdown.WaitForAsyncDisposal"/>, aynı tavan).</para></summary>
+    [Fact]
+    public async Task Dispose_preempts_a_wake_that_waits_for_a_frozen_engine()
+    {
+        using var sandbox = new SupervisorSandbox();
+        var host = sandbox.IsolatedEngineHost(WideStartupTimeout);
+        Process? frozen = null;
+        try
+        {
+            await host.StartAsync();
+            await host.SleepAsync();
+            var wake = host.WakeAsync();
+            frozen = Process.GetProcessById(host.EnginePid!.Value);
+            Assert.Equal(0, NtSuspendProcess(frozen.SafeHandle)); // yeni motor hazır olmadan kilitlendi
+            Assert.False(wake.IsCompleted, "the woken engine was ready before it was frozen — the precondition was not set up");
+
+            bool disposed = AppShutdown.WaitForAsyncDisposal(host, AppShutdown.DisposalTimeout); // App.OnExit'in yolu
+
+            Assert.True(disposed, "the disposal queued behind the wake and did not finish within AppShutdown.DisposalTimeout");
+            Assert.True(frozen.WaitForExit(TimeSpan.Zero), "the frozen engine was still alive after the disposal");
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => wake); // uyanma vazgeçti — öldürme dispose'undu
+        }
+        finally
+        {
+            KillIfAlive(frozen); // kırmızıda uyanma kapıyı bıraksın, bekleyen dispose bitsin
+            await host.DisposeAsync();
+        }
+    }
+
+    /// <summary>[fix 1 · I1] Uykunun zarif bekleyişi de çıkışı tutamaz: kilitli bir motorda uyku <see cref="EngineHost.SleepExitWait"/>
+    /// bekleyecekken gelen dispose onu keser — uyku vazgeçer (<see cref="OperationCanceledException"/>, öldürmeden, konak uyumaz),
+    /// dispose motoru öldürür ve <see cref="AppShutdown.DisposalTimeout"/> içinde biter. Eskiden dispose uykunun bekleyişini ve
+    /// öldürmesini bitirmesini beklerdi; uyku da "uyudum" diye biterdi.</summary>
+    [Fact]
+    public async Task Dispose_preempts_a_sleep_that_waits_for_a_wedged_engine()
+    {
+        using var sandbox = new SupervisorSandbox();
+        var host = sandbox.IsolatedEngineHost(WideStartupTimeout);
+        Process? wedged = null;
+        try
+        {
+            var ready = await host.StartAsync();
+            wedged = Process.GetProcessById(ready.Pid);
+            Assert.Equal(0, NtSuspendProcess(wedged.SafeHandle)); // shutdown'ı hiç okumaz: uyku tüm zarif bekleyişi bekleyecek
+            var sleep = host.SleepAsync(); // kapı alındı — uyku uçuşta
+
+            bool disposed = AppShutdown.WaitForAsyncDisposal(host, AppShutdown.DisposalTimeout);
+
+            Assert.True(disposed, "the disposal queued behind the sleep and did not finish within AppShutdown.DisposalTimeout");
+            Assert.True(wedged.WaitForExit(TimeSpan.Zero), "the wedged engine was still alive after the disposal");
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sleep); // uyku vazgeçti — öldürme dispose'undu
+            Assert.False(host.IsAsleep);
+        }
+        finally
+        {
+            KillIfAlive(wedged);
+            await host.DisposeAsync();
+        }
+    }
+
+    /// <summary>Test temizliği: kilitlenmiş motoru (varsa, hâlâ yaşıyorsa) öldürür ve tanıtıcıyı bırakır — kırmızı bir koşuda
+    /// uçuştaki işlem kapıyı bıraksın, bekleyen dispose bitsin.</summary>
+    private static void KillIfAlive(Process? process)
+    {
+        if (process is null) return;
+        try { process.Kill(); }
+        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception) { /* zaten çıktı */ }
+        process.Dispose();
+    }
+
+    /// <summary>[fix 1 · M1] Kendiliğinden ölüm ile kasıtlı uykunun yarışında uyku kazanır — iki yönde de: uyku nesli ilerletirken
+    /// GİDEN nesli de sahiplenir, böylece kontrolünü çoktan geçmiş (nesli güncel bulmuş) bir bekçi ölüm sinyalini artık veremez;
+    /// ölüm uyku sayılır. Ters yön (bekçi önce sahiplenir) uykuyu hiç başlatmaz — <see cref="Sleep_and_wake_change_nothing_once_the_engine_died"/>.
+    /// <para><b>Kurgu (dikişle deterministik):</b> bekçi kontrolü geçtiği anda <see cref="EngineHost.DebugExitWatchPassedCheck"/>'te
+    /// tutulur; motor dışarıdan öldürülür, uyku o pencerede gelir, sonra bekçi bırakılır. Eskiden uyku nesli yalnız ilerletiyordu:
+    /// bırakılan bekçi ölüm hakkını kazanır ve uyuyan motor için <see cref="EngineHost.EngineExited"/> atardı.</para></summary>
+    [Fact]
+    public async Task A_death_a_sleep_overtakes_counts_as_the_sleep()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var host = sandbox.IsolatedEngineHost(WideStartupTimeout);
+        var passedCheck = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        host.DebugExitWatchPassedCheck = () =>
+        {
+            passedCheck.TrySetResult();
+            release.Wait(WideStartupTimeout);
+        };
+        var ready = await host.StartAsync();
+        var watch = host.ExitWatch!;
+        int exited = 0;
+        host.EngineExited += _ => Interlocked.Increment(ref exited);
+        try
+        {
+            using (var engine = Process.GetProcessById(ready.Pid)) engine.Kill(); // kendiliğinden ölüm
+            await passedCheck.Task.WaitAsync(WideStartupTimeout); // bekçi nesli güncel buldu — ölümü henüz sahiplenmedi
+
+            await host.SleepAsync(); // ölümü geçer: nesli ilerletir, giden nesli sahiplenir
+
+            Assert.True(host.IsAsleep);
+        }
+        finally { release.Set(); }
+        await watch.WaitAsync(WideStartupTimeout); // bekçi kararını verdi
+        Assert.Equal(0, Volatile.Read(ref exited)); // ölüm uyku sayıldı — ölüm sinyali yok
+    }
+
+    /// <summary>[fix 1 · M1] Nesli geride kalmış bir çıkış bekçisi daha yeni bir başlatmayı ASLA düşüremez: her nesil kendi hazır
+    /// görevini taşır ve bekçi yalnız onu bozar. Eskiden bekçi alandaki güncel görevi (<c>_ready</c>) bozuyordu: kontrolünü
+    /// geçtikten sonra yeni bir nesil başlamışsa, yeni motor sağlam olduğu hâlde başlatma "Engine died during startup" ile düşer,
+    /// yeni motor öldürülür ve bir ölüm sinyali atılırdı.
+    /// <para><b>Kurgu (dikişle deterministik):</b> eski motor öldürülür, bekçisi kontrolü geçtiği anda tutulur; Restart yeni nesli
+    /// açar; job'ın IOCP'si (eski motor öldükten SONRA bağlanır — ilk doğum yeni motorundur) yeni motorun doğumunu bildirdiği anda
+    /// yeni neslin hazır görevi vardır ve motor henüz hazır olamaz; bekçi o anda bırakılır. Okuyucunun aynı yakalaması
+    /// (kendi neslinin görevi) dikişsizdir: süzgeçle tamamlama arasında tutulabilecek bir an yoktur — yapı gereği aynı kural.</para></summary>
+    [Fact]
+    public async Task A_stale_exit_watcher_never_fails_a_newer_start()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var host = sandbox.IsolatedEngineHost(WideStartupTimeout);
+        var passedCheck = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        host.DebugExitWatchPassedCheck = () =>
+        {
+            passedCheck.TrySetResult();
+            release.Wait(WideStartupTimeout);
+        };
+        var first = await host.StartAsync();
+        var staleWatch = host.ExitWatch!;
+        int exited = 0;
+        host.EngineExited += _ => Interlocked.Increment(ref exited);
+        Task<EngineReadyEvent> restart;
+        try
+        {
+            using (var engine = Process.GetProcessById(first.Pid)) engine.Kill(); // kendiliğinden ölüm
+            await passedCheck.Task.WaitAsync(WideStartupTimeout); // eski bekçi nesli güncel buldu
+            using var births = host.OuterJob.AttachCompletionPort(); // eski motor öldükten sonra: ilk doğum yeni motorundur
+
+            restart = host.RestartAsync();
+            JobBirths.Until(births, WideStartupTimeout, "the restarted engine was never born into the outer job", _ => true);
+        }
+        finally { release.Set(); } // yeni neslin hazır görevi bekliyor — eski bekçi şimdi bırakılır
+
+        var second = await restart;
+
+        Assert.NotEqual(first.Pid, second.Pid);
+        Assert.Equal(second.Pid, host.EnginePid);
+        await staleWatch.WaitAsync(WideStartupTimeout);
+        Assert.Equal(0, Volatile.Read(ref exited)); // ölüm Restart sayıldı; yeni motor ölmedi
+    }
+
+    /// <summary>[fix 1 · M3] Dispose edilmiş konak hiçbir başlatmayı kabul etmez ve uyumaz: Start/Restart/Wake HİÇBİR yan etkiden
+    /// önce <see cref="ObjectDisposedException"/> atar — exe'si olmayan bir konakta bile ön kontrolden ("not found") önce; uyku
+    /// no-op'tur; uyurken dispose edilen konak artık uyumaz. Eskiden dispose uykuyu olduğu gibi bırakıyordu (<c>IsAsleep</c> true),
+    /// başlatmalar kapalı job'a süreç doğurmaya çalışıp ancak orada düşüyordu.</summary>
+    [Fact]
+    public async Task A_disposed_host_refuses_every_start_and_is_not_asleep()
+    {
+        using var sandbox = new SupervisorSandbox();
+        var host = sandbox.IsolatedEngineHost(WideStartupTimeout);
+        await host.StartAsync();
+        await host.SleepAsync();
+        Assert.True(host.IsAsleep); // ön koşul: uyurken dispose edilecek
+
+        await host.DisposeAsync();
+
+        Assert.False(host.IsAsleep);
+        await host.SleepAsync(); // no-op
+        Assert.False(host.IsAsleep);
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => host.WakeAsync());
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => host.StartAsync());
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => host.RestartAsync());
+        Assert.Null(host.EnginePid);
+
+        var missing = new EngineHost(MissingExe); // ret ön kontrolden de önce gelir
+        await missing.DisposeAsync();
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => missing.StartAsync());
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => missing.RestartAsync());
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => missing.WakeAsync());
+    }
+
+    /// <summary>[fix 1 · M4] Öldürme fırlatsa bile motorun boruları ve tanıtıcısı bırakılır, yazıcı susturulmuş motoru göstermez:
+    /// <see cref="EngineHost.SendAsync"/> bugünkü "motor çalışmıyor" hatasını verir ve borusu kapanan motor kendiliğinden çıkar.
+    /// Eskiden fırlatan bir öldürme <c>child.Dispose()</c>'u ve yazıcının temizlenmesini atlıyordu: gönderim, nesli geride kalmış
+    /// (sinyali susturulmuş) motora yazılıyor, borular açık kalıyordu.
+    /// <para><b>Kurgu:</b> öldürme stratejisi fırlatır (erişim reddi); vazgeçilen başlatma öldürmeyi dener
+    /// (<see cref="A_start_that_gives_up_kills_the_engine_off_the_callers_context"/>'in iptal yolu).</para></summary>
+    [Fact]
+    public async Task A_kill_that_throws_still_releases_the_engines_pipes()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var host = sandbox.IsolatedEngineHost(WideStartupTimeout, killStrategy: _ => throw new Win32Exception(5));
+        using var giveUp = new CancellationTokenSource();
+        var start = host.StartAsync(giveUp.Token);
+        Assert.False(start.IsCompleted, "StartAsync returned before it began waiting — the precondition was not set up");
+        using var engine = Process.GetProcessById(host.EnginePid!.Value);
+
+        giveUp.Cancel(); // vazgeçilen başlatma öldürmeyi dener — öldürme fırlatır
+
+        await Assert.ThrowsAsync<Win32Exception>(() => start);
+        Assert.Null(host.EnginePid);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => host.SendAsync(new PingCommand(1))); // yazıcı bırakıldı
+        await engine.WaitForExitAsync().WaitAsync(WideStartupTimeout); // boruları kapandı: motor kendiliğinden çıktı
+    }
+
+    /// <summary>[fix 1] Uyku, çağıranın bağlamından (UI thread'i) hiçbir iş yapmadan ÖNCE ayrılır: kapı serbestse çağıranın
+    /// thread'inde alınır, sonra açık bir sıçrayışla havuza geçilir — shutdown yazımının devamları çağıranın bağlamına hiç
+    /// dönmez. Eskiden yazım çağıranın thread'inde başlıyordu ve <c>NdjsonWriter</c>'ın devamları Dispatcher'a post ediliyordu;
+    /// <c>OnExit</c> UI'ı bloklarken o yazım ancak 500 ms'lik zaman aşımıyla sonlanırdı. Ölçüt: çağıranın bağlamına yapılan
+    /// post sayısı (<see cref="CallerContext.Posts"/>) sıfır kalır.</summary>
+    [Fact]
+    public async Task A_sleep_started_on_the_callers_context_leaves_it_before_any_work()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var host = sandbox.IsolatedEngineHost(WideStartupTimeout);
+        await host.StartAsync();
+        var caller = new CallerContext();
+
+        Task sleep;
+        var previous = SynchronizationContext.Current;
+        SynchronizationContext.SetSynchronizationContext(caller);
+        try { sleep = host.SleepAsync(); }
+        finally { SynchronizationContext.SetSynchronizationContext(previous); }
+        await sleep.WaitAsync(WideStartupTimeout);
+
+        Assert.True(host.IsAsleep);
+        Assert.Equal(0, caller.Posts);
+    }
 }

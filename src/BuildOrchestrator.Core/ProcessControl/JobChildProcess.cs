@@ -27,7 +27,9 @@ public sealed class JobChildProcess : IDisposable
     {
         try
         {
-            var process = Process.GetProcessById(Pid);
+            // Her çağrı kendi Process nesnesini kurar; bekleyiş için açtığı tanıtıcı bekleyiş biter bitmez (iptal dahil) bırakılır,
+            // sonlandırıcıya kalmaz — aynı çocuk için tekrarlanan bekleyişler tanıtıcı biriktirmez.
+            using var process = Process.GetProcessById(Pid);
             return await ProcessExit.WaitForExitCodeAsync(process, ct);
         }
         catch (ArgumentException)

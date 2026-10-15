@@ -65,12 +65,25 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
 
     /// <summary>[idle-memory · dalga 3 · C3] Yaşam döngüsünün TEK kapısı: <see cref="StartAsync"/>, <see cref="RestartAsync"/>,
     /// <see cref="SleepAsync"/>, <see cref="WakeAsync"/> ve <see cref="DisposeAsync"/> bu kapının altında sıraya girer — iki eşzamanlı
-    /// uyanma iki süreç doğuramaz, bir uyku yarım kalmış bir başlatmayı öldüremez, dispose uçuştaki bir uyanmanın bitmesini bekler.
-    /// <see cref="SendAsync"/> kapıyı ALMAZ (sıcak yol; yazımları <c>NdjsonWriter</c>'ın kendi kilidi sıralar). Kapı hiç dispose
-    /// edilmez: bekleme tanıtıcısı istenmedikçe çekirdek nesnesi yoktur ve ikinci <see cref="DisposeAsync"/> da kapıdan geçebilmelidir.
-    /// Kapıdaki her bekleyiş <c>ConfigureAwait(false)</c>'tır: çıkıştaki disposal çağıranın (bloklu Dispatcher) bağlamına bağımlı
-    /// olamaz [T62 fix].</summary>
+    /// uyanma iki süreç doğuramaz, bir uyku yarım kalmış bir başlatmayı öldüremez. Dispose sıraya girmez, ÖNE GEÇER (bkz.
+    /// <see cref="_lifetime"/>). <see cref="SendAsync"/> kapıyı ALMAZ (sıcak yol; yazımları <c>NdjsonWriter</c>'ın kendi kilidi
+    /// sıralar). Kapı hiç dispose edilmez: bekleme tanıtıcısı istenmedikçe çekirdek nesnesi yoktur ve ikinci
+    /// <see cref="DisposeAsync"/> da kapıdan geçebilmelidir. Kapıdaki her bekleyiş <c>ConfigureAwait(false)</c>'tır: çıkıştaki
+    /// disposal çağıranın (bloklu Dispatcher) bağlamına bağımlı olamaz [T62 fix].</summary>
     private readonly SemaphoreSlim _lifecycle = new(1, 1);
+
+    /// <summary>[idle-memory · dalga 3 · fix 1 · I1] Konağın ömrü: <see cref="DisposeAsync"/> kapıyı beklemeden ÖNCE iptal eder.
+    /// Başlatmanın hazır bekleyişi ve kasıtlı durdurmanın (uyku, Restart) bekleyişleri buna bağlıdır — uçuştaki işlem milisaniyeler
+    /// içinde vazgeçer (<see cref="OperationCanceledException"/>), öldürmez, kapıyı bırakır; öldürmek dispose'un kendi kapanışının
+    /// işidir. Çıkış böylece bir uyanmanın (≤ <see cref="StartupTimeout"/>) ya da uykunun (≤ <see cref="SleepExitWait"/>) arkasında
+    /// beklemez: <c>App.OnExit</c> disposal'ı <see cref="Shell.AppShutdown.DisposalTimeout"/> kadar bekler, sonra güncelleyiciyi
+    /// başlatır — motor öldürülüp çıkışı beklenmeden değil. Hiç dispose edilmez (ikinci dispose da iptal edebilmeli).</summary>
+    private readonly CancellationTokenSource _lifetime = new();
+
+    /// <summary>[idle-memory · dalga 3 · fix 1 · M3] Konak dispose edildi: Start/Restart/Wake hiçbir yan etkiden önce
+    /// <see cref="ObjectDisposedException"/> atar, uyku no-op'tur. Dispose kapıyı beklemeden önce yazar, okuyanlar kapının içinde
+    /// sorar.</summary>
+    private volatile bool _disposed;
 
     /// <summary>[idle-memory · dalga 3] <see cref="IsAsleep"/>'in alanı — yalnız kapının içinde yazılır, her thread'den okunur.</summary>
     private volatile bool _asleep;
@@ -86,9 +99,10 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
 
     /// <summary>[idle-memory · dalga 3 · spec §6.4] Motor KASITLI olarak durduruldu (<see cref="SleepAsync"/>) ve bir sonraki
     /// <see cref="WakeAsync"/>'i bekliyor: süreç yok, <see cref="EnginePid"/> null, gönderim bugünkü "motor çalışmıyor" hatasıyla
-    /// reddedilir. Hiç başlamamış ya da kendiliğinden ölmüş bir konak UYUMAZ — ölüm <see cref="EngineExited"/>'in, toparlanması
-    /// <see cref="RestartAsync"/>'in işidir. Ön kontrolü geçen her başlatma (başlat, yeniden başlat, uyandır) uykuyu bitirir; ön
-    /// kontrolde düşen uyanma (exe yok) hiçbir şeye dokunmaz, uyku sürer. Her thread'den okunabilir.</summary>
+    /// reddedilir. Hiç başlamamış ya da ölmüş bir konak UYUMAZ — ölüm <see cref="EngineExited"/>'in, toparlanması
+    /// <see cref="RestartAsync"/>'in işidir; ölümle uykunun yarışı tek kuralla çözülür: <see cref="HasLiveReadyEngine"/>. Ön kontrolü
+    /// geçen her başlatma (başlat, yeniden başlat, uyandır) uykuyu bitirir; ön kontrolde düşen uyanma (exe yok) hiçbir şeye dokunmaz,
+    /// uyku sürer. Dispose edilmiş konak uyumaz. Her thread'den okunabilir.</summary>
     public bool IsAsleep => _asleep;
 
     /// <summary>Uçuştaki stderr drain'i (test yüzeyi) — motor yaşadığı sürece tamamlanmaz.</summary>
@@ -102,6 +116,12 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
     /// (<see cref="EngineExited"/> ya da sessizlik) biter. Kasıtlı bir durdurmanın ölüm sinyali ÜRETMEDİĞİ ancak bu bekçi bitince
     /// kesinleşir — sabit bir beklemeyle değil.</summary>
     internal Task? ExitWatch { get; private set; }
+
+    /// <summary>[test dikişi — idle-memory · dalga 3 · fix 1] YALNIZ testler ayarlar: çıkış bekçisi kendi neslini güncel bulduktan
+    /// SONRA, o neslin hazır görevine ve ölüm hakkına dokunmadan ÖNCE çağrılır. "Bekçi kontrolü geçti, ardından nesil değişti"
+    /// penceresi — kendiliğinden ölümle kasıtlı durdurmanın yarışı — ancak böyle tutulur (<c>EngineHostTests</c>). Üretimde hep
+    /// null.</summary>
+    internal Action? DebugExitWatchPassedCheck;
 
     /// <summary>[P3 · Task 5] Outer Job (test yüzeyi): gerçek motorla koşan testler ağacı — Supervisor ve onun
     /// <c>MSBuild.exe</c>'leri — bu job'un IOCP'si üzerinden izler (<c>SafeExitProcessTests</c>). Üretim job'a
@@ -138,7 +158,11 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
     public async Task<EngineReadyEvent> StartAsync(CancellationToken ct = default)
     {
         await _lifecycle.WaitAsync(ct).ConfigureAwait(false);
-        try { return await StartCoreAsync(ct).ConfigureAwait(false); }
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return await StartCoreAsync(ct).ConfigureAwait(false);
+        }
         finally { _lifecycle.Release(); }
     }
 
@@ -150,10 +174,15 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
         // DOKUNMADAN (hiçbir yan etki bırakmadan) ayrışan tür atılır.
         if (!File.Exists(supervisorExePath))
             throw new EngineUnavailableException(supervisorExePath, EngineUnavailableReason.NotFound);
+        // [fix 1 · I1] Dispose öne geçtiyse yeni bir süreç doğurulmaz (kapı alındıktan sonra gelen iptal; yan etki yok).
+        _lifetime.Token.ThrowIfCancellationRequested();
 
         int gen = Interlocked.Increment(ref _generation);
         _asleep = false; // [dalga 3] yeni nesil başladı: uyku (varsa) biter — başlatma düşse de konak artık uyuyan değildir
-        _ready = new TaskCompletionSource<EngineReadyEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
+        // [fix 1 · M1] Neslin KENDİ hazır görevi: bekçisi ve okuyucusu yalnız bunu tamamlar ya da bozar — alandaki (_ready) daha
+        // yeni bir neslin görevine asla dokunmazlar.
+        var ready = new TaskCompletionSource<EngineReadyEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _ready = ready;
         string cmdLine = WindowsCommandLine.Build(supervisorExePath, [.. supervisorArgs ?? []]);
         // [D1 review · A2] Pre-flight'ı GEÇEN ama başlatılamayan exe (bozuk/geçersiz binary, erişim reddi,
         // TOCTOU) de AYNI görünür yüzeye düşer: ham Win32Exception generic catch'te yutulurdu. Child hiç
@@ -170,7 +199,7 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
         }
         _writer = new NdjsonWriter(_child.StandardInput!);
         var reader = new NdjsonReader(_child.StandardOutput!);
-        ReadLoop = Task.Run(() => ReadLoopAsync(reader, gen), CancellationToken.None);
+        ReadLoop = Task.Run(() => ReadLoopAsync(reader, gen, ready), CancellationToken.None);
         // Yönlendirilen ÜÇ pipe'ın da tüketicisi olmak zorunda: stdin'i biz yazıyoruz, stdout'u yukarıdaki
         // okuma döngüsü tüketiyor, stderr ise hiç okunmuyordu — tamponu dolduğunda motor kendi tanı satırını
         // yazarken kilitleniyordu (bkz. DrainEngineStderrAsync).
@@ -181,22 +210,27 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
             int code = await watched.WaitForExitAsync(CancellationToken.None);
             if (Volatile.Read(ref _generation) == gen)
             {
+                DebugExitWatchPassedCheck?.Invoke();
                 // [D1 review · A3] Kullanıcıya ulaşabilen HER metin İngilizce (uygulama İngilizce-only).
-                _ready?.TrySetException(new InvalidOperationException($"Engine died during startup (exit {code}).")); // startup-crash tek sinyal
+                ready.TrySetException(new InvalidOperationException($"Engine died during startup (exit {code}).")); // startup-crash tek sinyal
                 if (TryClaimExit(gen)) EngineExited?.Invoke(code);
             }
         }, CancellationToken.None);
+        // [fix 1 · I1] Bekleyiş çağıranın iptaline VE konağın ömrüne bağlı: dispose öne geçerse milisaniyeler içinde vazgeçilir.
+        using var giveUp = CancellationTokenSource.CreateLinkedTokenSource(ct, _lifetime.Token);
         try
         {
             // ConfigureAwait(false): catch devamı çağıranın (UI thread'i) bağlamına DÖNMEZ. KillCurrent process'in çıkışını
             // en çok KillExitWait (1 s) bekler; bağlama dönseydi Dispatcher o kadar bloklanırdı (yavaş ilk açılış, antivirüs
             // taraması: 5 s aşılır). Çağıranlar (MainWindow.StartEngineAsync, RunViewModel.RestartEngineAsync) kendi
             // await'leriyle UI'a döner — burada dönmeye gerek yok. [final review #1]
-            return await _ready.Task.WaitAsync(StartupTimeout, ct).ConfigureAwait(false);
+            return await ready.Task.WaitAsync(StartupTimeout, giveUp.Token).ConfigureAwait(false);
         }
         catch
         {
-            if (Volatile.Read(ref _generation) == gen) KillCurrent(); // timeout/iptal → child sızmasın [it0-devir]
+            // timeout/iptal → child sızmasın [it0-devir]. Dispose öne geçtiyse öldürmek ONUN işidir: nesil zaten ilerledi, bu
+            // dal yalnız vazgeçer (öldürmez, ölüm sinyali yok).
+            if (Volatile.Read(ref _generation) == gen && !_lifetime.IsCancellationRequested) KillCurrent();
             throw;
         }
     }
@@ -211,7 +245,8 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
         await _lifecycle.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            await ShutdownGracefullyAsync().ConfigureAwait(false);
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            await ShutdownGracefullyAsync(giveUp: _lifetime.Token).ConfigureAwait(false);
             return await StartCoreAsync(ct).ConfigureAwait(false);
         }
         finally { _lifecycle.Release(); }
@@ -219,23 +254,26 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
 
     /// <summary>[idle-memory · dalga 3 · spec §6.4] İşsiz motoru KASITLI durdurur: <see cref="ShutdownCommand"/> gider, sürecin kendi
     /// çıkışı en çok <see cref="SleepExitWait"/> beklenir, çıkmazsa öldürülür. Kapanış yolu Restart ve çıkışla AYNIDIR
-    /// (<see cref="ShutdownGracefullyAsync"/>; uyku yalnız zarif bekleyiş süresini verir): nesil süreç gitmeden ÖNCE artar, eski bekçi
-    /// ve okuyucu susar — kasıtlı çıkış <see cref="EngineExited"/> ÜRETMEZ. Sonunda <see cref="IsAsleep"/> true,
-    /// <see cref="EnginePid"/> null.
-    /// <para>Yalnız canlı ve hazır bir motorda iş yapar (<see cref="HasLiveReadyEngine"/>); hiç başlamamış, hazır olamamış ya da
-    /// ölümü bildirilmiş bir konakta HİÇBİR durumu değiştirmez. Uyuyan konakta tekrar çağrı no-op'tur. "Motor işsiz mi" sorusu
-    /// çağıranındır (VM'in boşta kuralı); konak yalnız süreci yönetir.</para>
-    /// <para><b>Öldürme çağıranın bağlamında koşmaz</b> (çağıran tik, yani UI thread'i olabilir): öldürme ancak zarif bekleyiş süreç
-    /// YAŞARKEN dolunca gelir; o bekleyiş canlı süreçte hep askıya girer ve <c>ConfigureAwait(false)</c> ile havuzda devam eder —
-    /// ağaç öldürme + ≤ <see cref="KillExitWait"/> bekleme havuzda koşar. Bekleyiş askıya girmeden dönüyorsa süreç çoktan çıkmıştır;
-    /// öldürülecek bir şey kalmamıştır.</para></summary>
+    /// (<see cref="ShutdownGracefullyAsync"/>; uyku yalnız zarif bekleyiş süresini verir). Sonunda <see cref="IsAsleep"/> true,
+    /// <see cref="EnginePid"/> null; kasıtlı çıkış <see cref="EngineExited"/> ÜRETMEZ (<see cref="HasLiveReadyEngine"/>'in kuralı).
+    /// <para>Yalnız canlı ve hazır bir motorda iş yapar; hiç başlamamış, hazır olamamış, ölümü bildirilmiş ya da dispose edilmiş
+    /// bir konakta HİÇBİR durumu değiştirmez. Uyuyan konakta tekrar çağrı no-op'tur. "Motor işsiz mi" sorusu çağıranındır (VM'in
+    /// boşta kuralı); konak yalnız süreci yönetir.</para>
+    /// <para><b>Çağıranın bağlamında iş yapmaz</b> (çağıran tik, yani UI thread'i olabilir): kapı serbestse çağıranın thread'inde
+    /// alınır ve iki alan okunur, sonra açık bir sıçrayışla havuza geçilir — shutdown yazımı ve devamları, zarif bekleyiş, gerekirse
+    /// ağaç öldürme + ≤ <see cref="KillExitWait"/> bekleme havuzda koşar.</para>
+    /// <para>Dispose öne geçerse uyku vazgeçer: <see cref="OperationCanceledException"/>, öldürmeden ve uyumadan — öldürmek
+    /// dispose'un kendi kapanışının işidir (<see cref="_lifetime"/>).</para></summary>
     public async Task SleepAsync()
     {
         await _lifecycle.WaitAsync().ConfigureAwait(false);
         try
         {
-            if (!HasLiveReadyEngine()) return;
-            await ShutdownGracefullyAsync(SleepExitWait).ConfigureAwait(false);
+            if (_disposed || !HasLiveReadyEngine()) return;
+            // [fix 1] Çağıranın bağlamından havuza sıçra: ForceYielding tamamlanmış görevi de askıya aldırır, bağlam yakalanmadığı
+            // için devam havuzda koşar. Kapanışın hiçbir parçası (NdjsonWriter'ın devamları dahil) çağıranın thread'ine dönmez.
+            await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
+            await ShutdownGracefullyAsync(SleepExitWait, _lifetime.Token).ConfigureAwait(false);
             _asleep = true;
         }
         finally { _lifecycle.Release(); }
@@ -250,12 +288,15 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
     /// süreç.</para>
     /// <para>Başlatma düşerse <see cref="StartAsync"/>'in sözleşmesi geçerlidir: exe yoksa <see cref="EngineUnavailableException"/> ve
     /// hiçbir şey değişmez (uyku sürer); exe başlatılamadıysa yine o tür, ölüm sinyali yok; süreç doğdu ama hazır olamadıysa
-    /// (zaman aşımı, iptal, erken ölüm) öldürülür ve <see cref="EngineExited"/> TEK sinyaldir. Son ikisinde konak artık uyumaz.</para></summary>
+    /// (zaman aşımı, iptal, erken ölüm) öldürülür ve <see cref="EngineExited"/> TEK sinyaldir. Son ikisinde konak artık uyumaz.
+    /// Dispose öne geçerse uyanma vazgeçer (<see cref="OperationCanceledException"/>; öldürmek dispose'un işidir); dispose edilmiş
+    /// konakta <see cref="ObjectDisposedException"/>.</para></summary>
     public async Task<EngineReadyEvent> WakeAsync(CancellationToken ct = default)
     {
         await _lifecycle.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
             if (_asleep) return await StartCoreAsync(ct).ConfigureAwait(false);
             if (HasLiveReadyEngine()) return await _ready!.Task.ConfigureAwait(false);
             throw new InvalidOperationException(NotRunningMessage);
@@ -263,16 +304,24 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
         finally { _lifecycle.Release(); }
     }
 
-    /// <summary>Kapının içinde sorulur: bu neslin motoru hazır (<c>engineReady</c> geldi) ve ölümü bildirilmedi. Kendiliğinden ölüm
-    /// <see cref="EngineExited"/> ile bildirildiği ANDA cevap "hayır"a döner — konak ölümü VM ile aynı sinyalden öğrenir. Bildirimden
-    /// önceki kısa pencere (süreç çıktı, bekçisi henüz uyanmadı) bilinçli sınırdır: o anda uyutulan motorun ölümü uyku sayılır (nesil
-    /// artar, bekçi susar) ve sonraki komut taze bir motor uyandırır — uyku yalnız işsiz motora istenir, kaybolan iş yoktur.</summary>
+    /// <summary>Kapının içinde sorulur: bu neslin motoru hazır (<c>engineReady</c> geldi) ve ölümü sahiplenilmedi.
+    /// <para><b>Ölüm–durdurma kuralı (tek ifadesi burası):</b> bir neslin ölüm hakkını (<see cref="TryClaimExit"/>) önce alan
+    /// kazanır. Bekçi önce alırsa ölüm bildirilir (<see cref="EngineExited"/>), bu soru "hayır" döner ve uyku/uyanma hiçbir şey
+    /// yapmaz — ölümü <see cref="RestartAsync"/> toparlar. Kasıtlı bir durdurma (uyku, Restart, çıkış) önce alırsa — nesli ilerletirken
+    /// giden nesli de sahiplenir (<see cref="RetireGeneration"/>) — kontrolünü çoktan geçmiş bir bekçi bile hakkı kaybeder: ölüm o
+    /// durdurmanın parçası sayılır, ölüm sinyali yoktur (uykuda: uyku sayılır, sonraki komut taze bir motor uyandırır; uyku yalnız
+    /// işsiz motora istenir, kaybolan iş yok). Bekçi ve okuyucu yalnız KENDİ neslinin hazır görevine dokunur — daha yeni bir başlatmayı
+    /// düşüremez. Konak ölümü VM ile aynı sinyalden öğrenir; iki görüş ayrışmaz.</para></summary>
     private bool HasLiveReadyEngine() =>
         _child is not null
         && _ready is { Task.IsCompletedSuccessfully: true }
         && Volatile.Read(ref _exitReportedGen) < Volatile.Read(ref _generation);
 
-    private async Task ReadLoopAsync(NdjsonReader reader, int gen)
+    /// <summary>Nesli ilerletir ve GİDEN nesli sahiplenir: o neslin bekçisi — kontrolünü çoktan geçmiş olsa bile — ölüm sinyalini
+    /// artık veremez, okuyucusu olaylarını düşürür (<see cref="HasLiveReadyEngine"/>'in kuralı). Kasıtlı her durdurmanın ilk adımı.</summary>
+    private void RetireGeneration() => TryClaimExit(Interlocked.Increment(ref _generation) - 1);
+
+    private async Task ReadLoopAsync(NdjsonReader reader, int gen, TaskCompletionSource<EngineReadyEvent> ready)
     {
         try
         {
@@ -285,7 +334,7 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
                     // Bozuk frame = kalıcı sağırlık YARATMAZ; Supervisor exit-2 ile simetri: engine'i öldür + TEK sinyal. [it0-devir]
                     if (Volatile.Read(ref _generation) == gen)
                     {
-                        _ready?.TrySetException(new InvalidOperationException("Engine died with a framing error.")); // startup'ta anlık sinyal [it0-devir]
+                        ready.TrySetException(new InvalidOperationException("Engine died with a framing error.")); // startup'ta anlık sinyal [it0-devir]
                         Interlocked.Increment(ref _generation); // exit watcher'ı sustur → EngineExited tek kez
                         KillCurrent();
                         if (TryClaimExit(gen)) EngineExited?.Invoke(null); // tek raporcu kazanır, stale gen yeni geni bloklayamaz
@@ -298,35 +347,46 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
                 // tamamlardı — yeni motorunkiymiş gibi geçemez. Okuma sürer (continue): bayat bir süreç de borusu dolduğu için
                 // yazarken asılı kalmasın.
                 if (Volatile.Read(ref _generation) != gen) continue;
-                if (ev is EngineReadyEvent ready) _ready?.TrySetResult(ready);
+                if (ev is EngineReadyEvent readyEvent) ready.TrySetResult(readyEvent);
                 EventReceived?.Invoke(ev);
             }
         }
         catch { /* stream koptu — exit watcher bildirir */ }
     }
 
-    // ConfigureAwait(false): bu yol DisposeAsync'ten (App.OnExit → UI/Dispatcher thread'i) çağrılır. Çağıranın
-    // SynchronizationContext'i yakalanırsa continuation, o an bekleyişte bloklu olan Dispatcher'a post edilir →
-    // sync-over-async deadlock (process çıkamaz). Disposal yolu ASLA çağıranın context'ine bağımlı olmamalı. [T62 fix]
-    // [idle-memory · dalga 3 · C15] Kapanışın TEK yolu — Restart, çıkış ve uyku. Restart ile çıkış zarif çıkışı beklemez
-    // (gracefulExitWait varsayılanı sıfır: shutdown yazılır, hemen öldürülür); uyku SleepExitWait verir: süreç shutdown'la kendisi
-    // çıkarsa öldürmeye gerek kalmaz. Bekleyiş sürecin tanıtıcısına bağlıdır, sınırı bir zaman aşımı token'ıdır (D8: sleep yok);
-    // dolarsa — ya da yazım düşerse — öldürme devralır.
-    private async Task ShutdownGracefullyAsync(TimeSpan gracefulExitWait = default)
+    /// <summary>Kasıtlı durdurmanın TEK yolu — Restart, çıkış ve uyku [idle-memory · dalga 3 · C15]:
+    /// <list type="number">
+    /// <item>Nesil süreç gitmeden ÖNCE ilerler ve giden nesil sahiplenilir (<see cref="RetireGeneration"/>): eski bekçi ve okuyucu
+    /// susar, kasıtlı çıkış <see cref="EngineExited"/> ÜRETMEZ.</item>
+    /// <item>Yazıcı İLK iş devralınır [fix 1 · M5]: durdurma sürerken gelen bir <see cref="SendAsync"/> ölmekte olan sürecin borusuna
+    /// yazılıp kaybolmaz, bugünkü "motor çalışmıyor" hatasıyla hemen düşer; <see cref="ShutdownCommand"/> devralınan yazıcıdan gider
+    /// (≤ 500 ms).</item>
+    /// <item>Zarif çıkış yalnız <paramref name="gracefulExitWait"/> verilince beklenir (uyku: <see cref="SleepExitWait"/>; Restart ve
+    /// çıkış beklemez, varsayılan sıfır). Bekleyiş sürecin tanıtıcısına bağlıdır, sınırı bir zaman aşımı token'ıdır (D8: sleep
+    /// yok); dolarsa — ya da yazım düşerse — öldürme devralır.</item>
+    /// <item><paramref name="giveUp"/> (konağın ömrü) iptal edilirse — dispose öne geçti — yazım ve bekleyiş hemen kesilir ve yol
+    /// ÖLDÜRMEDEN <see cref="OperationCanceledException"/> ile çıkar: öldürmek dispose'un kendi kapanışının işidir.</item>
+    /// </list>
+    /// Her bekleyiş <c>ConfigureAwait(false)</c>'tır: bu yol <see cref="DisposeAsync"/>'ten de (App.OnExit → bloklu Dispatcher)
+    /// çağrılır; çağıranın bağlamına post edilen bir devam orada hiç koşmaz → sync-over-async deadlock [T62 fix].</summary>
+    private async Task ShutdownGracefullyAsync(TimeSpan gracefulExitWait = default, CancellationToken giveUp = default)
     {
-        Interlocked.Increment(ref _generation); // eski watcher/reader sustur — süreç gitmeden ÖNCE: kasıtlı çıkış EngineExited üretmez
+        RetireGeneration();
+        var writer = Interlocked.Exchange(ref _writer, null);
         var child = _child;
         try
         {
-            if (_writer is not null)
-                await _writer.WriteAsync(new ShutdownCommand()).WaitAsync(TimeSpan.FromMilliseconds(500)).ConfigureAwait(false); // graceful [it0-devir]
+            if (writer is not null)
+                await writer.WriteAsync(new ShutdownCommand()).WaitAsync(TimeSpan.FromMilliseconds(500), giveUp).ConfigureAwait(false); // graceful [it0-devir]
             if (child is not null && gracefulExitWait > TimeSpan.Zero)
             {
-                using var exitWait = new CancellationTokenSource(gracefulExitWait);
+                using var exitWait = CancellationTokenSource.CreateLinkedTokenSource(giveUp);
+                exitWait.CancelAfter(gracefulExitWait);
                 await child.WaitForExitAsync(exitWait.Token).ConfigureAwait(false);
             }
         }
-        catch { /* zaten ölmüş olabilir ya da zarif bekleyiş doldu — öldürme devralır */ }
+        catch { /* zaten ölmüş olabilir, zarif bekleyiş doldu ya da dispose öne geçti — aşağıda ayrılır */ }
+        giveUp.ThrowIfCancellationRequested();
         KillCurrent();
     }
 
@@ -385,18 +445,32 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
             KillAndAwaitExit(process, KillStrategy);
         }
         catch (ArgumentException) { /* zaten öldü */ }
-        child.Dispose();
-        _writer = null;
+        finally
+        {
+            // [fix 1 · M4] Öldürme fırlatsa bile: borular ve süreç tanıtıcısı bırakılır, yazıcı nesli geride kalmış (sinyali
+            // susturulmuş) motoru göstermez. Boruları kapanan canlı bir motor stdin'inde EOF görür ve kendisi çıkar.
+            child.Dispose();
+            _writer = null;
+        }
     }
 
+    /// <summary>Konağı kapatır: motoru durdurur (shutdown ≤ 500 ms, öldürme + çıkış bekleyişi ≤ <see cref="KillExitWait"/>) ve outer
+    /// job'ı kapatır (<c>KILL_ON_JOB_CLOSE</c>: her koşulda süpürge).
+    /// <para><b>Sıraya girmez, ÖNE GEÇER [idle-memory · dalga 3 · fix 1 · I1]:</b> kapıyı beklemeden önce konağı dispose edilmiş
+    /// işaretler, nesli ilerletir ve konağın ömrünü (<see cref="_lifetime"/>) iptal eder — uçuştaki başlatma/uyanma/uyku/Restart
+    /// milisaniyeler içinde vazgeçer (öldürmez; nesil ilerlediği için ölüm sinyali de yok) ve kapıyı bırakır. Böylece
+    /// <c>App.OnExit</c>'in bekleyişi (<see cref="Shell.AppShutdown.DisposalTimeout"/>) motor öldürülüp çıkışı beklenmeden dolmaz ve
+    /// güncelleyici Supervisor'ın DLL kilitleri bırakılmadan çalışmaz. Uyuyan konakta gönderilecek komut ve öldürülecek süreç
+    /// yoktur; dispose sonrasında konak uyumaz, başlatmalar <see cref="ObjectDisposedException"/> atar. İkinci çağrı zararsızdır.</para></summary>
     public async ValueTask DisposeAsync()
     {
-        // [idle-memory · dalga 3] Kapıdan geçer: uçuştaki bir başlatma/uyanma/uyku önce biter. Uyuyan konakta gönderilecek komut ve
-        // öldürülecek süreç yoktur — kapanış yalnız outer job'ı kapatır. Uzun bir bekleyiş çıkışı kilitleyemez: App.OnExit kendi
-        // tavanında (AppShutdown.DisposalTimeout) vazgeçer, process çıkışı job'ı kapatır ve KILL_ON_JOB_CLOSE ağacı toplar.
+        _disposed = true;
+        RetireGeneration();
+        _lifetime.Cancel();
         await _lifecycle.WaitAsync().ConfigureAwait(false);
         try
         {
+            _asleep = false;
             await ShutdownGracefullyAsync().ConfigureAwait(false); // bkz. ShutdownGracefullyAsync notu [T62 fix]
             _outerJob.Dispose(); // KILL_ON_JOB_CLOSE: her koşulda süpürge
         }

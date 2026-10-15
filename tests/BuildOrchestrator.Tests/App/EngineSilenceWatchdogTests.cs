@@ -307,12 +307,18 @@ public sealed class EngineSilenceWatchdogTests
     /// <para><b>[DEĞİŞEN KURAL — final review I1]</b> Eskiden restart'tan hemen sonra Build açık olurdu. Artık yeniden
     /// başlayan motor bir workspace açıkken tek bir Sync koşar (kurtarılan projelerin kararı değişmiş olabilir) ve
     /// Build — her Sync'te olduğu gibi — o Sync bitene dek bekler; koşu kilidi yine restart anında düşer.</para>
+    /// <para><b>[DEĞİŞEN KURULUM — idle-memory · dalga 3 · fix 1]</b> Eskiden konak zaman aşımı verilmeden kuruluyordu
+    /// (<c>sandbox.IsolatedEngineHost()</c>) ve yeniden başlayan motoru üretimin 5 s'si bekliyordu; odaklı bir koşunun paralel
+    /// yükünde (MSBuild derlemeleri + çok sayıda motor başlatma) motor 5 s'de hazır olamadı, restart zaman aşımına düştü ve test
+    /// <c>SyncBusy</c>'de kırmızı verdi (tek başına ×3 yeşil). Bu test başlatma süresini ölçmez: gerçek motor başlatan her test gibi
+    /// <see cref="TestPaths.WideStartupTimeout"/> geçer — üretimin 5 s'si <c>EngineHostTests.Default_startup_timeout_stays_five_seconds</c>
+    /// ile pinli kalır.</para>
     /// </summary>
     [Fact]
     public async Task Restarting_the_engine_releases_the_locked_run_state()
     {
         using var sandbox = new SupervisorSandbox(); // [§5.5] restart gerçek bir motor başlatır — izole önbellek
-        await using var engine = sandbox.IsolatedEngineHost();
+        await using var engine = sandbox.IsolatedEngineHost(TestPaths.WideStartupTimeout);
         var (vm, clock) = NewVm(engine);
         VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu sessizlik kapısı
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
