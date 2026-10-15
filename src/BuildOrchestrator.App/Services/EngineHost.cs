@@ -162,15 +162,44 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
         }
     }
 
-    public async Task<EngineReadyEvent> StartAsync(CancellationToken ct = default)
+    public Task<EngineReadyEvent> StartAsync(CancellationToken ct = default) =>
+        ThroughGateAsync(() => StartCoreAsync(ct), AfterDispose.Refuse, ct);
+
+    /// <summary>[idle-memory · dalga 3 · O-2] Yaşam döngüsü işleminin kapıdan geçişi — kuralın TEK ifadesi: <see cref="StartAsync"/>,
+    /// <see cref="RestartAsync"/>, <see cref="SleepAsync"/>, <see cref="WakeAsync"/> ve <see cref="DisposeAsync"/> kapıyı (<see cref="_lifecycle"/>)
+    /// burada alır ve her yolda burada bırakır; kapıdaki bekleyiş <c>ConfigureAwait(false)</c>'tır (gerekçe kapının özetinde). İçerideki iş
+    /// kapıyı ikinci kez istemez (kapı yeniden girilemez). Dispose başladıktan SONRA kapıya giren işlem <paramref name="afterDispose"/>'a göre
+    /// davranır — işin hiçbir yan etkisinden önce.</summary>
+    /// <param name="operation">Kapının içindeki iş.</param>
+    /// <param name="afterDispose">Dispose başladıktan sonra gelen işlemin davranışı.</param>
+    /// <param name="ct">Yalnız kapıdaki bekleyişin iptali; işin kendi iptalini iş taşır.</param>
+    private async Task<T> ThroughGateAsync<T>(Func<Task<T>> operation, AfterDispose afterDispose, CancellationToken ct = default)
     {
         await _lifecycle.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            ObjectDisposedException.ThrowIf(_disposed, this);
-            return await StartCoreAsync(ct).ConfigureAwait(false);
+            if (_disposed && afterDispose != AfterDispose.Proceed)
+            {
+                ObjectDisposedException.ThrowIf(afterDispose == AfterDispose.Refuse, this);
+                return default!; // Skip: işlem no-op'tur, sonucu kullanılmaz
+            }
+            return await operation().ConfigureAwait(false);
         }
         finally { _lifecycle.Release(); }
+    }
+
+    /// <summary>[O-2] Dispose başladıktan SONRA kapıya giren yaşam döngüsü işleminin davranışı (<see cref="ThroughGateAsync{T}"/>).</summary>
+    private enum AfterDispose
+    {
+        /// <summary>Başlatmalar (Start, Restart, Wake): <see cref="ObjectDisposedException"/> — exe'si olmayan konakta bile ön kontrolden
+        /// önce.</summary>
+        Refuse,
+
+        /// <summary>Uyku: no-op — dispose edilmiş konak uyumaz.</summary>
+        Skip,
+
+        /// <summary>Dispose'un kendisi: kapıdan her koşulda geçer (ikinci çağrı da).</summary>
+        Proceed,
     }
 
     /// <summary>Başlatmanın kendisi — yaşam döngüsü kapısının İÇİNDEN çağrılır (<see cref="StartAsync"/>, <see cref="RestartAsync"/>,
@@ -247,17 +276,12 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
     public Task SendAsync(IpcCommand command, CancellationToken ct = default) =>
         _writer?.WriteAsync(command, ct) ?? throw new InvalidOperationException(NotRunningMessage);
 
-    public async Task<EngineReadyEvent> RestartAsync(CancellationToken ct = default)
-    {
-        await _lifecycle.WaitAsync(ct).ConfigureAwait(false);
-        try
+    public Task<EngineReadyEvent> RestartAsync(CancellationToken ct = default) =>
+        ThroughGateAsync(async () =>
         {
-            ObjectDisposedException.ThrowIf(_disposed, this);
             await ShutdownGracefullyAsync(giveUp: _lifetime.Token).ConfigureAwait(false);
             return await StartCoreAsync(ct).ConfigureAwait(false);
-        }
-        finally { _lifecycle.Release(); }
-    }
+        }, AfterDispose.Refuse, ct);
 
     /// <summary>[idle-memory · dalga 3 · spec §6.4] İşsiz motoru KASITLI durdurur: <see cref="ShutdownCommand"/> gider, sürecin kendi
     /// çıkışı en çok <see cref="SleepExitWait"/> beklenir, çıkmazsa öldürülür. Kapanış yolu Restart ve çıkışla AYNIDIR
@@ -273,22 +297,21 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
     /// <para>Dispose öne geçerse uyku vazgeçer: <see cref="OperationCanceledException"/>, öldürmeden ve uyumadan — öldürmek
     /// dispose'un kendi kapanışının işidir; uyku öldürmenin İÇİNDEYSE o öldürme biter (<see cref="_lifetime"/>'ın istisnası) ve
     /// dispose ardından konağı uyutmaz.</para></summary>
-    public async Task SleepAsync()
+    public Task SleepAsync() => ThroughGateAsync(SleepInGateAsync, AfterDispose.Skip);
+
+    /// <summary>Uykunun kapının içindeki işi (<see cref="SleepAsync"/>); dönen değer konağın uyuyup uyumadığıdır.</summary>
+    private async Task<bool> SleepInGateAsync()
     {
-        await _lifecycle.WaitAsync().ConfigureAwait(false);
-        try
-        {
-            int gen = Volatile.Read(ref _generation); // kontrolün canlı bulduğu nesil — uyku tam olarak bunu sahiplenir
-            if (_disposed || !HasLiveReadyEngine(gen)) return;
-            // [fix 1] Çağıranın bağlamından havuza sıçra: ForceYielding tamamlanmış görevi de askıya aldırır, bağlam yakalanmadığı
-            // için devam havuzda koşar. Kapanışın hiçbir parçası (NdjsonWriter'ın devamları dahil) çağıranın thread'ine dönmez.
-            await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
-            DebugSleepPassedCheck?.Invoke();
-            // [fix 2 · N1] Sahiplenmeyi kaybettiyse ölüm kontrolden sonra bildirildi: süreç toparlandı ama konak uyumaz.
-            if (await ShutdownGracefullyAsync(SleepExitWait, _lifetime.Token, claim: gen).ConfigureAwait(false))
-                _asleep = true;
-        }
-        finally { _lifecycle.Release(); }
+        int gen = Volatile.Read(ref _generation); // kontrolün canlı bulduğu nesil — uyku tam olarak bunu sahiplenir
+        if (!HasLiveReadyEngine(gen)) return false;
+        // [fix 1] Çağıranın bağlamından havuza sıçra: ForceYielding tamamlanmış görevi de askıya aldırır, bağlam yakalanmadığı
+        // için devam havuzda koşar. Kapanışın hiçbir parçası (NdjsonWriter'ın devamları dahil) çağıranın thread'ine dönmez.
+        await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
+        DebugSleepPassedCheck?.Invoke();
+        // [fix 2 · N1] Sahiplenmeyi kaybettiyse ölüm kontrolden sonra bildirildi: süreç toparlandı ama konak uyumaz.
+        if (!await ShutdownGracefullyAsync(SleepExitWait, _lifetime.Token, claim: gen).ConfigureAwait(false)) return false;
+        _asleep = true;
+        return true;
     }
 
     /// <summary>[idle-memory · dalga 3 · spec §6.4] Uyuyan motoru başlatır — ilk başlatmanın yolu: yeni nesil, süreç outer job'a
@@ -303,18 +326,13 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
     /// (zaman aşımı, iptal, erken ölüm) öldürülür ve <see cref="EngineExited"/> TEK sinyaldir. Son ikisinde konak artık uyumaz.
     /// Dispose öne geçerse uyanma vazgeçer (<see cref="OperationCanceledException"/>; öldürmek dispose'un işidir); dispose edilmiş
     /// konakta <see cref="ObjectDisposedException"/>.</para></summary>
-    public async Task<EngineReadyEvent> WakeAsync(CancellationToken ct = default)
-    {
-        await _lifecycle.WaitAsync(ct).ConfigureAwait(false);
-        try
+    public Task<EngineReadyEvent> WakeAsync(CancellationToken ct = default) =>
+        ThroughGateAsync(async () =>
         {
-            ObjectDisposedException.ThrowIf(_disposed, this);
             if (_asleep) return await StartCoreAsync(ct).ConfigureAwait(false);
             if (HasLiveReadyEngine(Volatile.Read(ref _generation))) return await _ready!.Task.ConfigureAwait(false);
             throw new InvalidOperationException(NotRunningMessage);
-        }
-        finally { _lifecycle.Release(); }
-    }
+        }, AfterDispose.Refuse, ct);
 
     /// <summary>Kapının içinde sorulur: <paramref name="gen"/> neslinin motoru hazır (<c>engineReady</c> geldi) ve ölümü sahiplenilmedi.
     /// <para><b>Ölüm–durdurma kuralı (tek ifadesi burası):</b> bir neslin ölüm hakkını (<see cref="TryClaimExit"/>) önce alan kazanır.
@@ -497,13 +515,12 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
         _disposed = true;
         RetireGeneration();
         _lifetime.Cancel();
-        await _lifecycle.WaitAsync().ConfigureAwait(false);
-        try
+        await ThroughGateAsync(async () =>
         {
             _asleep = false;
             await ShutdownGracefullyAsync().ConfigureAwait(false); // bkz. ShutdownGracefullyAsync notu [T62 fix]
             _outerJob.Dispose(); // KILL_ON_JOB_CLOSE: her koşulda süpürge
-        }
-        finally { _lifecycle.Release(); }
+            return true; // kapının işlemi bir sonuç döner; dispose'unki kullanılmaz
+        }, AfterDispose.Proceed).ConfigureAwait(false); // çağıranın (bloklu Dispatcher) bağlamına dönmez [T62 fix]
     }
 }
