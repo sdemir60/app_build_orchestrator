@@ -36,9 +36,12 @@ namespace BuildOrchestrator.Tests.App;
 /// (gönderim kabulü kaldırılır: yazım konakta düşer). Dikişin üretim varsayılanını (konağın uyanması) bir test gerçek motorla sınar.</para>
 ///
 /// <para><b>Neden <c>[WpfFact]</c>:</b> kabuk testleri üretimin UI bağlamında koşar (<see cref="System.Windows.Threading.DispatcherSynchronizationContext"/>
-/// + pompa). Uyanmaya katılan İKİNCİ yolun devamı .NET'te zorla asenkrondur (aynı göreve birden çok await): üretimde UI bağlamına post
-/// edilir ve UI thread'inde koşar. <c>[StaFact]</c> bağlam kurmaz — orada o devam thread havuzuna gider, VM'i havuzda koşturur ve bağlı bir
-/// düğmenin <c>CanExecute</c>'una dokunduğu an test host'unu düşürür (ölçüldü: iki yolun tek uyanmayı paylaştığı testler).</para>
+/// + pompa). WPF'te her dispatcher işlemi kendi bağlam örneğini taşır; tamamlanmamış bir göreve yapılan <c>await</c>'in devamı, görevi
+/// tamamlayan işlem başka bir örnekte koştuğu için satır içi koşmaz — UI bağlamına post edilir ve UI thread'inde, kuyruğun sırasıyla koşar
+/// (ölçüldü: <see cref="A_held_wake_that_recovered_interrupted_projects_sends_the_waking_request_before_the_silent_sync"/>'in kırmızısı).
+/// <c>[StaFact]</c> bağlam kurmaz — orada uyanmaya katılan yolun devamı thread havuzuna
+/// gider, VM'i havuzda koşturur ve bağlı bir düğmenin <c>CanExecute</c>'una dokunduğu an test host'unu düşürür (ölçüldü: iki yolun tek uyanmayı
+/// paylaştığı testler). Uyanmayı üretimdeki gibi dispatcher DIŞINDA bitiren testler <see cref="CompleteOffTheDispatcher"/> kullanır.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF STA kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class EngineWakeTests
@@ -363,6 +366,105 @@ public class EngineWakeTests
         Assert.Equal(1, probe.WakeCalls);
         Assert.True(Assert.Single(sent.Commands.OfType<SyncWorkspaceCommand>()).Fetch);
         Assert.All(sent.States, s => Assert.Equal(EngineState.Ready, s));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Uyanmayı kabuk dışından, üretimdeki gibi bitirir: konağın uyanması havuz thread'inde biter (<c>EngineHost.WakeAsync</c>
+    /// <c>ConfigureAwait(false)</c>) — uyanmanın devamı dispatcher'a post edilir, tamamlayan thread'de koşmaz.</summary>
+    private static Task CompleteOffTheDispatcher(TaskCompletionSource<EngineReadyEvent> waking, EngineReadyEvent ready) =>
+        Task.Run(() => waking.SetResult(ready));
+
+    /// <summary>
+    /// [karar 42a · B1 fix 2 · I-1] Gerçek (tutulan) bir uyanmada da uyandıran istek sessiz Sync'ten ÖNCE gider. Uyanma üretimdeki gibi dispatcher
+    /// DIŞINDA biter; WPF'te her dispatcher işlemi kendi bağlam örneğini taşıdığı için tamamlanmamış göreve yapılan her <c>await</c> post eder —
+    /// kapının devamı ve ardından tıklamanın devamı kuyruğun SONUNA eklenir. Sessiz Sync, uyanmayı bekleyen her istek motora teslim edilene dek bekler
+    /// (kapının boşalması); getProjectLog önce, sonra TEK Sync (fetch'siz), hepsi motor hazırken.
+    /// <para>KIRMIZI (d630c769 — <c>Task.Yield</c> sırası): ilk giden <c>SyncWorkspaceCommand</c>'dı, getProjectLog ondan sonra — Yield'in devamı
+    /// kapının devamının arkasına girdi ama tıklamanın devamının ÖNÜNE; motor komutları sırayla işlediği için sayfa bütün Sync'i bekliyordu.</para>
+    /// </summary>
+    [WpfFact]
+    public async Task A_held_wake_that_recovered_interrupted_projects_sends_the_waking_request_before_the_silent_sync()
+    {
+        using var dir = new TempDir();
+        var (window, vm, probe, sent, waking) = AsleepShellWithHeldWake(dir);
+
+        vm.SelectProject(MainWindowHost.IdOf("A")); // gerçek tıklama: seçim → kabuk proje logunu yükler → kapı motoru uyandırır
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(EngineState.Waking, vm.EngineState); // ön-koşul: uyanma sürüyor, istek kapıda
+        Assert.Empty(sent.Commands);
+
+        await CompleteOffTheDispatcher(waking, RecoveringWake);
+        DispatcherPump.DrainToIdle();
+
+        Assert.Equal(1, probe.WakeCalls);
+        var ordered = sent.Commands.Where(c => c is GetProjectLogCommand or SyncWorkspaceCommand).ToList();
+        Assert.IsType<GetProjectLogCommand>(ordered.First());
+        Assert.False(Assert.IsType<SyncWorkspaceCommand>(Assert.Single(ordered.Skip(1))).Fetch);
+        Assert.All(sent.States, s => Assert.Equal(EngineState.Ready, s));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[karar 42a · B1 fix 2 · PİN] Proje logu tıklaması uyanmayı başlatır, Sync düğmesi ona katılır, uyanan motor kesilmiş bir koşu kurtarır:
+    /// TEK Sync gider — düğmenin Manual Sync'i (fetch'li); sessiz Sync başlamaz (uçuşta Sync varken kapısı kapalı). PİN: Yield'li sırada da tek Sync
+    /// gidiyordu; bu test kapının boşalmasını bekleyen tazelemenin ikinci bir Sync eklemesini yakalar.</summary>
+    [WpfFact]
+    public async Task A_sync_that_joins_a_recovering_wake_stays_the_only_sync()
+    {
+        using var dir = new TempDir();
+        var (window, vm, probe, sent, waking) = AsleepShellWithHeldWake(dir);
+
+        vm.SelectProject(MainWindowHost.IdOf("A")); // uyanmayı başlatır
+        _ = vm.SyncCommand.ExecuteAsync(null);     // uyanma sürerken katılır
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(EngineState.Waking, vm.EngineState); // ön-koşul
+        await CompleteOffTheDispatcher(waking, RecoveringWake);
+        DispatcherPump.DrainToIdle();
+
+        Assert.Equal(1, probe.WakeCalls);
+        Assert.True(Assert.Single(sent.Commands.OfType<SyncWorkspaceCommand>()).Fetch);
+        Assert.All(sent.States, s => Assert.Equal(EngineState.Ready, s));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[karar 42a · B1 fix 2 · PİN] Kesilmiş koşu kurtaran uyanmayı bekleyen bir Build: koşunun komutu gider, Sync gitmez — tazeleme koşunun
+    /// teslimini bekler ve o an koşu açılışı sürer (kapı kapalı); satırları koşunun kendi olayları tazeler. PİN: Yield'li sırada da Sync gitmiyordu.</summary>
+    [WpfFact]
+    public async Task A_build_waiting_for_a_recovering_wake_runs_and_no_sync_follows()
+    {
+        using var dir = new TempDir();
+        var (window, vm, probe, sent, waking, build, _) = BuildWaitingForWake(dir);
+
+        await CompleteOffTheDispatcher(waking, RecoveringWake);
+        DispatcherPump.DrainToIdle();
+        await build;
+        DispatcherPump.DrainToIdle();
+
+        Assert.Equal(1, probe.WakeCalls);
+        Assert.Single(sent.Commands.OfType<StartRunCommand>());
+        Assert.Empty(sent.Commands.OfType<SyncWorkspaceCommand>());
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[B1 fix 2 · 4d] Kurtaran uyanmanın tazelemesi beklenmedik biçimde düşerse (burada komut gözlemcisi Sync'te fırlatır) uyanmanın işi
+    /// düşmüş, gözlenmemiş bir görev bırakmaz: hata yakalanır ve yalnız tanı izine düşer (konsola satır yok) — <c>MainWindow.StartEngineAsync</c>'in
+    /// deseni. Uyanmanın işi ateşle-unut başlatılır; düşmüş bir görev kimsenin görmediği bir istisna olurdu.
+    /// <para>KIRMIZI: tazelemenin istisnası uyanmanın görevini düşürüyordu (<c>Faulted</c>).</para></summary>
+    [WpfFact]
+    public void A_refresh_that_fails_after_a_recovering_wake_leaves_no_faulted_work_behind()
+    {
+        using var dir = new TempDir();
+        var (window, vm, probe, _, _) = AsleepShell(dir);
+        probe.NextWake = () => Task.FromResult(RecoveringWake);
+        vm.DebugOnCommandSent = command =>
+        {
+            if (command is SyncWorkspaceCommand) throw new InvalidOperationException("observer failure in the refresh");
+        };
+
+        _ = vm.LoadProjectLogAsync(MainWindowHost.IdOf("A"));
+        DispatcherPump.DrainToIdle();
+
+        Assert.Equal(1, probe.WakeCalls);
+        Assert.True(vm.WakeWork.IsCompletedSuccessfully, $"the wake's work ended {vm.WakeWork.Status}");
         GC.KeepAlive(window);
     }
 
@@ -963,6 +1065,7 @@ public class EngineWakeTests
         Assert.Equal(1, Volatile.Read(ref launches));            // "Restart engine" konağın başlatmasına ulaştı — yeniden deneme budur
         Assert.Equal(1, probe.WakeCalls);                        // yeniden başlatma uyandırma değildir
         Assert.Equal(EngineState.Unavailable, vm.EngineState); // fikstür notu: bu kabuğun konağında exe yok — deneme ön kontrolde düşer
+        Assert.Equal(RunViewModel.EngineMissingMessage, vm.EngineDiedMessage); // ön kontrolün bugünkü "motor bulunamadı" metni
         GC.KeepAlive(window);
     }
 
