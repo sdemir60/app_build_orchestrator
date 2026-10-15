@@ -356,6 +356,39 @@ public class EngineWakeTests
         GC.KeepAlive(window);
     }
 
+    // ---------------------------------------------------------------- şerit: uyanma satırı (karar 38 · C10)
+
+    /// <summary>[karar 38 · C10] Uyanma sürerken şerit "▸ Starting the engine…" der ve bunu ekran okuyucuya duyurur; uyanma bitince önceki metnine
+    /// döner — dönüş de duyurulur. Satır VM'deki tek kompozisyondandır (<c>RunViewModel.RibbonLine</c> — şerit ve tepsi bildirimi aynı satırı
+    /// okur) ve şerit motor durumunun bildirimiyle tazelenir (<c>RunViewModel.EngineState</c> gözlemlenebilir). Uyanma bir proje logu tıklamasıyla
+    /// başlar: o yolun kendi bekleyiş yüzeyi yoktur (koşunun "Starting"i, Sync'in spinner'ı gibi) — tıklamanın kaydedildiğini şerit söyler.
+    /// <para>KIRMIZI: şerit uyanma boyunca önceki metni gösteriyordu, duyuru yoktu (durum gözlemlenebilir değildi, satırın girdisi yoktu).</para></summary>
+    [WpfFact]
+    public void The_ribbon_says_the_engine_is_starting_while_a_wake_runs_and_returns_after()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _, _, waking) = AsleepShellWithHeldWake(dir);
+        var ribbon = window.Shell.Ribbon;
+        string before = ribbon.PhaseText.Text;
+        int announced = ribbon.PhaseAnnouncements;
+
+        _ = vm.LoadProjectLogAsync(MainWindowHost.IdOf("A"));
+        DispatcherPump.DrainToIdle();
+
+        Assert.Equal(EngineState.Waking, vm.EngineState); // ön-koşul: uyanma sürüyor
+        Assert.Equal(RibbonText.StartingTheEngine, vm.RibbonLine.Text);
+        Assert.Equal(RibbonText.StartingTheEngine, ribbon.PhaseText.Text);
+        Assert.Equal(announced + 1, ribbon.PhaseAnnouncements);
+
+        waking.SetResult(Woken());
+        DispatcherPump.DrainToIdle();
+
+        Assert.Equal(EngineState.Ready, vm.EngineState);
+        Assert.Equal(before, ribbon.PhaseText.Text);
+        Assert.Equal(announced + 2, ribbon.PhaseAnnouncements);
+        GC.KeepAlive(window);
+    }
+
     // ---------------------------------------------------------------- ölü ve erişilemez motor: bugünkü gönderim (R2)
 
     /// <summary>[Fix round 1 · I1 · R2] Ölü motor kapının işi değildir: uyandırma yok, gönderim bugünkü gibi gider ve bugünkü satırlarını yazar. Hazır

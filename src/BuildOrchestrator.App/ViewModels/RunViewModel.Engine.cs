@@ -48,8 +48,19 @@ public sealed partial class RunViewModel
     /// en kötü "ölü" kalır ve kural uyutmaz; (2) [T20 incelemesi M3] ölüm sinyali gelmeden düşen bir yeniden başlatma (çıkışta dispose öne geçti ya
     /// da eski motorun öldürülmesi fırlattı) durumu <see cref="EngineState.Starting"/>'te bırakır — kural uyutmaz, kapı Starting'i bugünkü gibi
     /// geçirir (gerekçe <see cref="RestartEngineAsync"/>'te).
+    /// <para>[idle-memory · dalga 3 · karar 38] <b>Gözlemlenebilirdir:</b> her değişim <c>PropertyChanged</c> yayar — şerit uyanma satırını
+    /// (<see cref="RibbonText.StartingTheEngine"/>) bundan kurar (<see cref="RibbonLine"/>, <c>StickyRibbon</c>'ın tazeleme listesi). Ayrı bir
+    /// "uyanıyor" bayrağı yoktur (karar 32). Bildirim durumu değiştiren yazımın İÇİNDE, senkron yayılır: uykunun ve uyanmanın tutamağı durumdan
+    /// ÖNCE yazıldığı için (Mi5) bildirime senkron tepki veren bir yol uçuştaki geçişin kendisini bulur.</para>
     /// </summary>
-    internal EngineState EngineState { get; private set; } = EngineState.Starting;
+    internal EngineState EngineState
+    {
+        get => _engineState;
+        private set => SetProperty(ref _engineState, value);
+    }
+
+    /// <summary><see cref="EngineState"/>'in alanı — yalnız özelliğin setter'ı yazar (bildirim oradadır).</summary>
+    private EngineState _engineState = EngineState.Starting;
 
     /// <summary>[Fix round 1 · R2 · Mi2] Uyku döngüsü: uyku sürüyor, uyuyor ya da uyanıyor — motor uyanık değil ve ona hiçbir şey gönderilmez.
     /// Motor kapısının işi yalnız bu durumlardır (<see cref="EnsureEngineAwakeAsync"/>); bu durumlarda kaybedilen motor hiçbir pencereyi bırakmaz
