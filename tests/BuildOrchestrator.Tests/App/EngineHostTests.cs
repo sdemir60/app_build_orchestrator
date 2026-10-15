@@ -597,6 +597,30 @@ public class EngineHostTests
         }
     }
 
+    /// <summary>[idle-memory · dalga 3 · defter 6] Dikişte tutma — "kontrol geçti, ardından şu oldu" penceresini açık tutmanın TEK yolu. Konağın
+    /// test dikişine <see cref="Hold"/> verilir: dikiş çağrıldığı anda <see cref="Reached"/> tamamlanır ve dikişi çağıran thread
+    /// <see cref="Release"/>'e dek orada tutulur — en çok <see cref="WideStartupTimeout"/>: kırmızı bir koşu havuz thread'ini sonsuza dek
+    /// tutmasın. Testler bırakmayı <c>finally</c>'de yapar: erken düşen bir iddia tutulan thread'i ve onu bekleyen işlemi asılı bırakmaz. Olay
+    /// nesnesi bilerek dispose edilmez — bırakılan thread <c>Wait</c>'ten henüz çıkmamış olabilir.</summary>
+    private sealed class SeamHold
+    {
+        private readonly TaskCompletionSource _reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly ManualResetEventSlim _release = new();
+
+        /// <summary>Konağın dikişine verilen eylem: varıldığını bildirir ve bırakılana dek tutar.</summary>
+        public void Hold()
+        {
+            _reached.TrySetResult();
+            _release.Wait(WideStartupTimeout);
+        }
+
+        /// <summary>Dikişe varılmasını bekler (en çok <see cref="WideStartupTimeout"/>).</summary>
+        public Task Reached() => _reached.Task.WaitAsync(WideStartupTimeout);
+
+        /// <summary>Tutulan thread'i bırakır (tekrar çağrılabilir).</summary>
+        public void Release() => _release.Set();
+    }
+
     /// <summary>Test temizliği: kilitlenmiş motoru (varsa, hâlâ yaşıyorsa) öldürür ve tanıtıcıyı bırakır — kırmızı bir koşuda
     /// uçuştaki işlem kapıyı bıraksın, bekleyen dispose bitsin.</summary>
     private static void KillIfAlive(Process? process)
@@ -618,13 +642,8 @@ public class EngineHostTests
     {
         using var sandbox = new SupervisorSandbox();
         await using var host = sandbox.IsolatedEngineHost(WideStartupTimeout);
-        var passedCheck = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var release = new ManualResetEventSlim();
-        host.DebugExitWatchPassedCheck = () =>
-        {
-            passedCheck.TrySetResult();
-            release.Wait(WideStartupTimeout);
-        };
+        var watcher = new SeamHold();
+        host.DebugExitWatchPassedCheck = watcher.Hold;
         var ready = await host.StartAsync();
         var watch = host.ExitWatch!;
         int exited = 0;
@@ -632,13 +651,13 @@ public class EngineHostTests
         try
         {
             using (var engine = Process.GetProcessById(ready.Pid)) engine.Kill(); // kendiliğinden ölüm
-            await passedCheck.Task.WaitAsync(WideStartupTimeout); // bekçi nesli güncel buldu — ölümü henüz sahiplenmedi
+            await watcher.Reached(); // bekçi nesli güncel buldu — ölümü henüz sahiplenmedi
 
             await host.SleepAsync(); // ölümü geçer: nesli ilerletir, giden nesli sahiplenir
 
             Assert.True(host.IsAsleep);
         }
-        finally { release.Set(); }
+        finally { watcher.Release(); }
         await watch.WaitAsync(WideStartupTimeout); // bekçi kararını verdi
         Assert.Equal(0, Volatile.Read(ref exited)); // ölüm uyku sayıldı — ölüm sinyali yok
     }
@@ -651,19 +670,19 @@ public class EngineHostTests
     /// <para><b>Kurgu (dikişle deterministik):</b> uyku, motoru canlı bulup havuza sıçradığı anda
     /// <see cref="EngineHost.DebugSleepPassedCheck"/>'te tutulur; motor öldürülür, ölüm bildirilir (<see cref="EngineHost.EngineExited"/>),
     /// sonra uyku bırakılır. Çerçeve hatası yolu dikişsizdir (gerçek bir Supervisor bozuk satır yazdırılamaz) — sahiplenilen nesil aynı
-    /// olduğu için aynı kural.</para></summary>
+    /// olduğu için aynı kural.</para>
+    /// <para><b>[defter 4 · T18 OOS-2] Son durum — PİN:</b> sahiplenmeyi kaybeden uyku konağı tutarlı bırakır: süreç yok
+    /// (<see cref="EngineHost.EnginePid"/> null), gönderim ve uyanma bugünkü "motor çalışmıyor" hatasıyla düşer, <see cref="EngineHost.RestartAsync"/>
+    /// yeni bir motorla toparlar (VM'in ölüm yolu bunu sunar). Kırmızısı gösterilemez — bugünkü kod da yeşildir; ileride kaybeden uykunun
+    /// konağı yarım bırakmasını (yazıcı ya da süreç tanıtıcısı kalır, uyanma eski olayı döner) yakalar.</para></summary>
     [Fact]
     public async Task A_death_reported_after_the_sleeps_check_keeps_the_host_awake()
     {
         using var sandbox = new SupervisorSandbox();
         await using var host = sandbox.IsolatedEngineHost(WideStartupTimeout);
-        var sleepPassedCheck = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var releaseSleep = new ManualResetEventSlim();
-        host.DebugSleepPassedCheck = () =>
-        {
-            sleepPassedCheck.TrySetResult();
-            releaseSleep.Wait(WideStartupTimeout);
-        };
+        var sleeper = new SeamHold();
+        host.DebugSleepPassedCheck = sleeper.Hold;
+        var notRunning = await Assert.ThrowsAsync<InvalidOperationException>(() => host.SendAsync(new PingCommand(0)));
         var ready = await host.StartAsync();
         var watch = host.ExitWatch!;
         int exited = 0;
@@ -677,16 +696,27 @@ public class EngineHostTests
         var sleep = host.SleepAsync();
         try
         {
-            await sleepPassedCheck.Task.WaitAsync(WideStartupTimeout); // uyku motoru canlı buldu — nesli henüz sahiplenmedi
+            await sleeper.Reached(); // uyku motoru canlı buldu — nesli henüz sahiplenmedi
             using (var engine = Process.GetProcessById(ready.Pid)) engine.Kill(); // kendiliğinden ölüm
             await died.Task.WaitAsync(WideStartupTimeout); // ölüm bildirildi: bekçi nesli sahiplendi
         }
-        finally { releaseSleep.Set(); }
+        finally { sleeper.Release(); }
         await sleep.WaitAsync(WideStartupTimeout);
 
         Assert.False(host.IsAsleep); // ölüm uykudan önce sahiplenildi — konak uyumaz, Restart toparlar
         await watch.WaitAsync(WideStartupTimeout);
         Assert.Equal(1, Volatile.Read(ref exited)); // tek ölüm sinyali
+
+        // [defter 4 · PİN] son durum: süreç yok, gönderim ve uyanma bugünkü hatayla düşer, Restart toparlar
+        Assert.Null(host.EnginePid);
+        var send = await Assert.ThrowsAsync<InvalidOperationException>(() => host.SendAsync(new PingCommand(1)));
+        Assert.Equal(notRunning.Message, send.Message);
+        var wake = await Assert.ThrowsAsync<InvalidOperationException>(() => host.WakeAsync());
+        Assert.Equal(notRunning.Message, wake.Message);
+        var restarted = await host.RestartAsync();
+        Assert.NotEqual(ready.Pid, restarted.Pid);
+        Assert.Equal(restarted.Pid, host.EnginePid);
+        Assert.Equal(1, Volatile.Read(ref exited)); // yeniden başlatma ölüm sinyali üretmedi
     }
 
     /// <summary>[fix 1 · M1] Nesli geride kalmış bir çıkış bekçisi daha yeni bir başlatmayı ASLA düşüremez: her nesil kendi hazır
@@ -702,13 +732,8 @@ public class EngineHostTests
     {
         using var sandbox = new SupervisorSandbox();
         await using var host = sandbox.IsolatedEngineHost(WideStartupTimeout);
-        var passedCheck = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var release = new ManualResetEventSlim();
-        host.DebugExitWatchPassedCheck = () =>
-        {
-            passedCheck.TrySetResult();
-            release.Wait(WideStartupTimeout);
-        };
+        var staleWatcher = new SeamHold();
+        host.DebugExitWatchPassedCheck = staleWatcher.Hold;
         var first = await host.StartAsync();
         var staleWatch = host.ExitWatch!;
         int exited = 0;
@@ -717,13 +742,13 @@ public class EngineHostTests
         try
         {
             using (var engine = Process.GetProcessById(first.Pid)) engine.Kill(); // kendiliğinden ölüm
-            await passedCheck.Task.WaitAsync(WideStartupTimeout); // eski bekçi nesli güncel buldu
+            await staleWatcher.Reached(); // eski bekçi nesli güncel buldu
             using var births = host.OuterJob.AttachCompletionPort(); // eski motor öldükten sonra: ilk doğum yeni motorundur
 
             restart = host.RestartAsync();
             JobBirths.Until(births, WideStartupTimeout, "the restarted engine was never born into the outer job", _ => true);
         }
-        finally { release.Set(); } // yeni neslin hazır görevi bekliyor — eski bekçi şimdi bırakılır
+        finally { staleWatcher.Release(); } // yeni neslin hazır görevi bekliyor — eski bekçi şimdi bırakılır
 
         var second = await restart;
 
