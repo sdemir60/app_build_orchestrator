@@ -139,7 +139,7 @@ public class DiagnosticsReportTests
         var s = DiagnosticsReport.Compose(Full() with { EnginePid = null, EngineState = EngineState.Asleep });
 
         Assert.Equal(DiagnosticsReport.Asleep, s.Runtime.Single(l => l.Label == "Engine PID").Value);
-        Assert.Equal("1.0.0+engine", s.Engine.Value);
+        Assert.Equal(Full().EngineVersion, s.Engine.Value);
         Assert.Contains(DiagnosticsReport.ToText(s).Split(Environment.NewLine),
             row => row.StartsWith("Engine PID", StringComparison.Ordinal) && row.EndsWith(DiagnosticsReport.Asleep, StringComparison.Ordinal));
     }
@@ -160,8 +160,8 @@ public class DiagnosticsReportTests
     [MemberData(nameof(StatesOtherThanAsleep))]
     public void Every_other_engine_state_shows_the_pid_as_today(EngineState state)
     {
-        Assert.Equal("4242", DiagnosticsReport.Compose(Full() with { EngineState = state })
-            .Runtime.Single(l => l.Label == "Engine PID").Value);
+        Assert.Equal(Full().EnginePid!.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            DiagnosticsReport.Compose(Full() with { EngineState = state }).Runtime.Single(l => l.Label == "Engine PID").Value);
         Assert.Equal(DiagnosticsReport.Unknown, DiagnosticsReport.Compose(Full() with { EngineState = state, EnginePid = null })
             .Runtime.Single(l => l.Label == "Engine PID").Value);
     }

@@ -336,20 +336,18 @@ public class RibbonTextTests
             Assert.Equal(RibbonText.StartingTheEngine, line.Text);
         }
 
-        string[] outranking =
-        [
-            RunViewModel.EngineDiedText("exit 1"),
-            RunViewModel.EngineMissingMessage,
-            RunViewModel.EngineCannotStartMessage,
-        ];
-        foreach (string engineText in outranking)
-            Assert.Equal(engineText, RibbonText.Compose(AppPhase.Idle, true, false, Counters(), 10, 3, 14, 0, null, null, 0,
-                engineDiedMessage: engineText, engineWaking: true).Text);
-
-        Assert.Equal(RunViewModel.EngineSilentMessage, RibbonText.Compose(AppPhase.Idle, true, false, Counters(), 10, 3, 14, 0, null, null, 0,
-            engineOverdue: RunViewModel.EngineSilentMessage, engineWaking: true).Text);
-        Assert.Equal("▸ Stopping — wrapping up", RibbonText.Compose(AppPhase.Idle, true, false, Counters(), 10, 3, 14, 0, null, null, 0,
-            exitPending: true, engineWaking: true).Text);
+        // Üstteki her metin uyanma satırını ezer: uyanma girdisi açıkken satır, girdi kapalıykenkinin AYNISIDIR (metinler kendi testlerinde
+        // pinli — burada yeniden yazılmaz).
+        RibbonLine With(bool waking, string? engineDied = null, string? overdue = null, bool exitPending = false) =>
+            RibbonText.Compose(AppPhase.Idle, true, false, Counters(), 10, 3, 14, 0, null, null, 0,
+                engineDiedMessage: engineDied, engineOverdue: overdue, exitPending: exitPending, engineWaking: waking);
+        foreach (string engineText in new[] { RunViewModel.EngineDiedText("exit 1"), RunViewModel.EngineMissingMessage, RunViewModel.EngineCannotStartMessage })
+        {
+            Assert.Equal(engineText, With(waking: true, engineDied: engineText).Text);
+            Assert.Equal(With(waking: false, engineDied: engineText), With(waking: true, engineDied: engineText));
+        }
+        Assert.Equal(With(waking: false, overdue: RunViewModel.EngineSilentMessage), With(waking: true, overdue: RunViewModel.EngineSilentMessage));
+        Assert.Equal(With(waking: false, exitPending: true), With(waking: true, exitPending: true));
     }
 
     /// <summary>Eski metin <c>▸ Stopped — 3/10 · rest queued</c> idi. "queued" SÜRDÜRÜLEBİLİRLİK ima ediyordu

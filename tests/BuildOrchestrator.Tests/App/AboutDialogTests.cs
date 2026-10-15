@@ -729,7 +729,7 @@ public class AboutDialogTests
         {
             EngineSleepProbe.Attach(vm);
             vm.StopEngineWhenIdle = true;
-            vm.OnEngineReady("9.9.9+test", 777);
+            vm.OnEngineReady(EngineSleepProbe.EngineVersion, EngineSleepProbe.Pid);
             now += EngineSleepProbe.IdleAfterMs;
             vm.TickElapsed();
         }, nowMs: () => now);

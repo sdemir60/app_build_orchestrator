@@ -129,6 +129,10 @@ public class EngineWakeTests
     /// bugünkü gibi düşer ("Engine is not running.").</summary>
     private static void SendsReachTheDeadEngine(RunViewModel vm) => vm.DebugSendOverride = null;
 
+    /// <summary>Erişilemezlik ve başlatma hatası testlerinin Supervisor yolu — konsol satırının ve istisnanın taşıdığı TEK değer (var olması
+    /// gerekmez: konak sahtedir).</summary>
+    private const string SupervisorExe = @"C:\app\supervisor\BuildOrchestrator.Supervisor.exe";
+
     private static int ReadyLines(RunViewModel vm) => MainWindowHost.Occurrences(vm.GetRunDocumentText(), "Engine ready");
 
     // ---------------------------------------------------------------- tablo: her uyandıran yol önce uyandırır (karar 17, 20, 30)
@@ -467,7 +471,7 @@ public class EngineWakeTests
         using var dir = new TempDir();
         long now = 1_000;
         var (window, vm, probe) = ReadyShell(dir, () => now);
-        vm.OnEngineUnavailable(@"C:\app\supervisor\BuildOrchestrator.Supervisor.exe");
+        vm.OnEngineUnavailable(SupervisorExe);
         SendsReachTheDeadEngine(vm);
         var sent = Record(vm);
 
@@ -859,15 +863,14 @@ public class EngineWakeTests
     {
         using var dir = new TempDir();
         var (window, vm, probe, sent, _) = AsleepShell(dir);
-        const string exe = @"C:\app\supervisor\BuildOrchestrator.Supervisor.exe";
-        probe.NextWake = () => Task.FromException<EngineReadyEvent>(new EngineUnavailableException(exe, EngineUnavailableReason.NotFound));
+        probe.NextWake = () => Task.FromException<EngineReadyEvent>(new EngineUnavailableException(SupervisorExe, EngineUnavailableReason.NotFound));
         int ended = vm.EndedOperationSerial;
 
         await vm.SyncCommand.ExecuteAsync(null);
         DispatcherPump.DrainToIdle();
 
         string console = vm.GetRunDocumentText();
-        Assert.Equal(1, MainWindowHost.Occurrences(console, $"[error] engine not found: {exe}"));
+        Assert.Equal(1, MainWindowHost.Occurrences(console, $"[error] engine not found: {SupervisorExe}"));
         Assert.DoesNotContain("failed to send", console);
         Assert.Empty(sent.Commands);
         Assert.Equal(1, probe.WakeCalls);
@@ -897,8 +900,7 @@ public class EngineWakeTests
     {
         using var dir = new TempDir();
         var (window, vm, probe, sent, _) = AsleepShell(dir);
-        const string exe = @"C:\app\supervisor\BuildOrchestrator.Supervisor.exe";
-        probe.NextWake = () => Task.FromException<EngineReadyEvent>(new EngineUnavailableException(exe, EngineUnavailableReason.CannotStart,
+        probe.NextWake = () => Task.FromException<EngineReadyEvent>(new EngineUnavailableException(SupervisorExe, EngineUnavailableReason.CannotStart,
             new System.ComponentModel.Win32Exception(1455))); // ERROR_COMMITMENT_LIMIT — geçici bir başlatma reddi
         string console = vm.GetRunDocumentText();
 
