@@ -14,6 +14,14 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 internal static class ConsoleDocument
 {
+    /// <summary>Satırların sayfa metni: '\n' sonekli (konsolun kuralı — <see cref="ConsoleLines.Join"/>). Proje sayfasını satır listesinden
+    /// kuran testlerin tek dönüştürücüsü ([B2 fix 1 · O1] <c>ConsoleView.PlayCascade</c>/<c>ReplaceProjectDocument</c> metin alır).</summary>
+    public static string Text(IReadOnlyList<string> lines)
+    {
+        ArgumentNullException.ThrowIfNull(lines);
+        return ConsoleLines.Join(lines, 0, lines.Count);
+    }
+
     /// <summary>Belgenin gösterdiği satırlar — son satır ('\n' sonrası boş satır) hariç; ayraçlar atılır.</summary>
     public static List<string> LinesOf(TextDocument document)
     {

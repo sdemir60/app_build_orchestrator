@@ -5,9 +5,10 @@ namespace BuildOrchestrator.App.Console;
 /// görünümü anlatı belgesinin yalnız son dilimini tutar; kullanıcı tepeye kaydırınca önceki dilimi buradan ister.
 ///
 /// <para>Anlatıda backlog VM'in anlatı store'unun KENDİSİDİR (<see cref="NarrativeStore"/>) — görünüm satırları kopyalamaz, dilim
-/// ister. Görünümün kendi satır listesi (<see cref="ListBacklog"/>) yalnız anlatı bağlanmadan önceki görünümündür (kırpılan canlı
-/// satırlar) ve proje sayfasında boştur: [dalga 3 · karar 44] sayfa logun tamamını belgesinde taşır, arkasında bir şey yoktur. Eskiden
-/// proje sayfasının backlog'u o listeydi — diskten gelen log + kırpılan canlı satırlar.</para>
+/// ister. Arkasında bir şey olmayan iki yer tutucu — anlatı bağlanmadan önceki görünüm ve proje sayfası ([dalga 3 · karar 44] sayfa logun
+/// tamamını belgesinde taşır) — boş backlog'dur (<see cref="EmptyBacklog"/>, B2 fix 1 O2). Görünümün kendi satır listesi
+/// (<see cref="ListBacklog"/>) üretimde kullanılmaz; liste tabanlı anlatı snapshot'ları (testler) için kalır. Eskiden proje sayfasının
+/// backlog'u o listeydi — diskten gelen log + kırpılan canlı satırlar.</para>
 /// </summary>
 public interface IConsoleBacklog
 {

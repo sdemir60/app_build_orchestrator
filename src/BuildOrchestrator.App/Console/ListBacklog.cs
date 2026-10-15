@@ -2,10 +2,10 @@ namespace BuildOrchestrator.App.Console;
 
 /// <summary>
 /// [idle-memory · dalga 1] Görünümün KENDİ satır listesi olan backlog: verilen satırların kopyası (çağıranın listesi değişmez) ve canlı
-/// akışta belgeden kırpılan satırlar (<see cref="AcceptTrimmed"/>) — kırpılan hiçbir satır erişilmez olmaz. Üretimde anlatı bağlanmadan
-/// önceki görünümündür ve proje sayfasında boştur (sayfa logun tamamını belgesinde taşır, hiç kırpılmaz — dalga 3 · karar 44; eskiden
-/// proje sayfasının backlog'u diskten gelen logun kopyasıydı). Bağlı anlatıda kullanılmaz: orada backlog VM'in store'udur
-/// (<see cref="NarrativeStore"/>).
+/// akışta belgeden kırpılan satırlar (<see cref="AcceptTrimmed"/>) — kırpılan hiçbir satır erişilmez olmaz. Üretimde kullanılmaz: anlatıda
+/// backlog VM'in store'udur (<see cref="NarrativeStore"/>); anlatı bağlanmadan önceki görünüm ve proje sayfası boş backlog'dadır
+/// (<see cref="EmptyBacklog"/> — dalga 3 · karar 44, B2 fix 1 O2). Liste tabanlı anlatı snapshot'ları (testler) için kalır. Eskiden proje
+/// sayfasının backlog'u buydu: diskten gelen logun kopyası.
 /// </summary>
 public sealed class ListBacklog(IEnumerable<string> lines) : IConsoleBacklog
 {

@@ -713,13 +713,13 @@ public partial class MainWindow : Window
             Shell.ConsoleHeaderControl.ShowProjectLog(row, _vm.GetActiveLineCount());
             TrackHeaderRow(row); // [R1 finding 2] seçim SABİT kalsa da satırın kendi değişimi başlığı tazeler
             // [perf Faz A · A2] Gizli pencerede belge kurulmaz (bkz. ShowRunConsole): yükleme sürerken pencere tepsiye
-            // indiyse belgeyi dönüş kurulumu AYNI satır kuralıyla (ProjectDocumentLines) kurar. Başlık yukarıda güncellendi.
+            // indiyse belgeyi dönüş kurulumu AYNI sayfa kuralıyla (ProjectDocumentText) kurar. Başlık yukarıda güncellendi.
             if (IsSurfaceHidden) { _consoleStaleWhileHidden = true; return; }
             _consoleStaleWhileHidden = false; // görünür TAM kurulum: belge modelden kurulur, dönüş kurulumunun yapacağı iş kalmaz
             // [Solution B] Doküman TIKLAMA (yükleme tamamlanma) ANINDA senkron kurulur — pump'a bağlı DEĞİL.
             // [her projenin sayfası var] Log BOŞSA sayfa boş bırakılmaz: o projenin O ANKİ durumunu anlatan
             // metin gösterilir. Karar Console.ConsoleEmptyState'te (saf, test edilebilir); pencere yalnız uygular.
-            _vm.SeedProjectDocument(id!, text => Shell.ConsoleViewControl.PlayCascade(ProjectDocumentLines(row, text)));
+            _vm.SeedProjectDocument(id!, text => Shell.ConsoleViewControl.PlayCascade(ProjectDocumentText(row, text)));
         }
         catch (Exception ex)
         {
@@ -788,18 +788,22 @@ public partial class MainWindow : Window
     /// döner (bkz. <see cref="OnSelectedProjectChangedAsync"/>).</summary>
     private void OnBack() => _vm.SelectProject(null);
 
-    /// <summary>Proje-log belgesinin satırları: log BOŞSA sayfa boş bırakılmaz — o projenin O ANKİ durumunu anlatan
-    /// metin (<see cref="ConsoleEmptyState"/>, saf karar); aksi halde dikilmiş log satırları. Kart seçimi
-    /// (<see cref="OnSelectedProjectChangedAsync"/>) ile gizli pencere dönüşü (<see cref="ResyncAfterShow"/>) AYNI
-    /// kuralı kullanır (kopya YASAK). <paramref name="row"/> yoksa (proje topolojiden düşmüş) yalnız log satırları.
-    /// <para>[idle-memory · final review 90] Log konsolun TEK satır kuralıyla bölünür (<see cref="ConsoleLines.Split"/>: belgenin
-    /// ayraç kuralı) — sayfanın her girdisi belgede bir satırdır, sondaki boş satır dahil. <b>[DEĞİŞEN KURAL]</b> Kabuk eskiden kendi
-    /// kuralıyla bölüyordu (<c>TrimEnd('\n').Split('\n')</c>): sondaki boş satırlar düşüyor, tek başına '\r' belgede iki satır olurken
-    /// listede bir girdi kalıyordu — sayfa bir son dilim + backlog'ken indeks kayıyor, tepeye kaydırmada dikişte bir satır iki kez
-    /// geliyordu (<c>ConsoleModesTests</c>). [dalga 3 · karar 44] Sayfa artık logun tamamıdır (indeksli backlog yok); kural sayfanın
-    /// logu satır satır göstermesi için durur.</para></summary>
-    private static IReadOnlyList<string> ProjectDocumentLines(ProjectRowViewModel? row, string text) =>
-        text.Length == 0 && row is not null ? ConsoleEmptyState.ForEmptyLog(row) : ConsoleLines.Split(text);
+    /// <summary>Proje-log sayfasının METNİ: log BOŞSA sayfa boş bırakılmaz — o projenin O ANKİ durumunu anlatan satırlar
+    /// (<see cref="ConsoleEmptyState"/>, saf karar; konsolun kuralıyla '\n' sonekli birleştirilir); aksi halde dikilmiş logun KENDİSİ. Kart
+    /// seçimi (<see cref="OnSelectedProjectChangedAsync"/>) ile gizli pencere dönüşü (<see cref="ResyncAfterShow"/>) AYNI kuralı kullanır (kopya
+    /// YASAK). <paramref name="row"/> yoksa (proje topolojiden düşmüş) yalnız log. Sondaki '\n'i görünüm garanti eder (<c>ConsoleView.ReplaceProjectDocument</c>).
+    /// <para>[idle-memory · dalga 3 · B2 fix 1 O1] Log bölünmez, yeniden birleştirilmez: sayfa logun tamamıdır (indeksli backlog yok) ve
+    /// belge onu AvalonEdit'in kendi ayraç kuralıyla gösterir — sondaki boş satır ve tek başına '\r' dahil (<c>ConsoleModesTests</c>).
+    /// <b>[DEĞİŞEN KURAL]</b> Eskiden satırlar dönüyordu: log konsolun kuralıyla bölünüyor (<see cref="ConsoleLines.Split"/>), görünüm onları
+    /// yeniden birleştiriyordu — sayfa bir son dilim + backlog'ken indeksin belge satırıyla birebir yürümesi içindi (final review 90: kabuğun
+    /// daha eski kendi kuralı, <c>TrimEnd('\n').Split('\n')</c>, sondaki boş satırları düşürüyor ve tek başına '\r'de indeksi kaydırıyordu). Logun
+    /// tamamını taşıyan sayfada o tur yalnız iki tam kopya ve ayraçların '\n'e dönüşmesiydi.</para></summary>
+    private static string ProjectDocumentText(ProjectRowViewModel? row, string text)
+    {
+        if (text.Length > 0 || row is null) return text;
+        var emptyState = ConsoleEmptyState.ForEmptyLog(row);
+        return ConsoleLines.Join(emptyState, 0, emptyState.Count);
+    }
 
     /// <summary>[D1] VM'in katman gruplarını (topolojiden — App'te regex YOK) StickyLayerList'e verir.
     /// <see cref="ProjectRowViewModel"/> nesneleri satır olarak akar; isimsiz grup (null) StickyLayerList'te

@@ -26,7 +26,7 @@ public class ConsoleReaderNavigationTests
     /// <summary><see cref="OpenPage(RealizedNarrative, int)"/>'in verilen satırlarla hâli (ör. yatay kaydırma isteyen uzun satırlar).</summary>
     private static void OpenPage(RealizedNarrative narrative, string[] page)
     {
-        narrative.View.PlayCascade(page);
+        narrative.View.PlayCascade(ConsoleDocument.Text(page));
         DispatcherPump.DrainToIdle();
     }
 
@@ -263,7 +263,7 @@ public class ConsoleReaderNavigationTests
         narrative.View.Editor.TextArea.TextView.ScrollOffsetChanged += (_, _) =>
             decisions.Add((narrative.View.StickToBottom, narrative.View.Pill.Visibility)); // üretimin işleyicisinden SONRA koşar
 
-        narrative.View.PlayCascade(Page(lines: 300));
+        narrative.View.PlayCascade(ConsoleDocument.Text(Page(lines: 300)));
 
         Assert.NotEmpty(decisions); // ön-koşul: takas kaydırma olayı yaydı
         Assert.All(decisions, decision => Assert.Equal((false, Visibility.Visible), decision));

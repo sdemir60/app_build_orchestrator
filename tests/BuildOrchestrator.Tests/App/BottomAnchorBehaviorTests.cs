@@ -255,9 +255,9 @@ public class BottomAnchorBehaviorTests
         // extentHeightChange==0 (saf offset değişimi) recompute'u ÖNCE çalışıp IsStuck'ı false'a çevirir; prepend'in
         // KENDİ içerik-büyümesi (extentHeightChange>0) — ister AYNI olayda senkron gözlemlensin ister AvalonEdit'in
         // layout'u geciktirmesiyle SONRAKİ bir olayda — artık STALE-true bir IsStuck'a çarpmaz, CompensatedOffset'i
-        // ezen bir "dibe git" YANKI tetiklemez. Bu, ConsoleView seviyesinde gerçek AvalonEdit scroll geometrisiyle
-        // güvenilir biçimde yeniden üretilemeyen (bkz. ConsoleViewTests.Real_OnScrollOffsetChanged_path_... dürüstlük
-        // notu) SIRA korumasının SAF çekirdeğidir — WPF'siz, deterministik olarak burada kanıtlanır.
+        // ezen bir "dibe git" YANKI tetiklemez. Bu, SIRA korumasının SAF çekirdeğidir — WPF'siz, deterministik olarak burada kanıtlanır;
+        // gerçek pencerede gerçek tuşla eşi ConsoleViewTests.A_real_ctrl_home_in_a_rebuilt_narrative_loads_the_previous_slice'tadır
+        // ([B2 fix 1 · O3] eskiden ayrı bir ConsoleViewTests.Real_OnScrollOffsetChanged_path_… testindeydi; oraya katlandı).
         var f = new Fake { Extent = 1000, Offset = 900, Viewport = 200 }; // dipte (distance=0) → IsStuck kalır true
         var behavior = f.New();
         Assert.True(behavior.IsStuck);

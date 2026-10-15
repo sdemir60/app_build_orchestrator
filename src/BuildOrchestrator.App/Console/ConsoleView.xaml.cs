@@ -118,15 +118,17 @@ public partial class ConsoleView : UserControl
     /// VM'in tam metni bölünür, kırpılan canlı satırlar listeye eklenirdi — VM tamponunun ikinci kopyası, 83 k satırlık bir
     /// koşudan sonra tek başına 59 MB.</para>
     ///
-    /// <para><b>Liste backlog'u canlı büyür</b> (<see cref="ListBacklog"/>: anlatı bağlanmadan önceki görünüm): kırpma belgenin başından
-    /// satır siler; bu satırlar listenin ucunu aşıyorsa (yani daha önce hiç kaydedilmemiş CANLI satırlarsa) listeye EKLENİR. Eski kod bunu
-    /// yapmadığı için bir delik vardı: canlı gelen satırlar kırpılınca <see cref="_loadedFrom"/> bir clamp'e takılıyor
-    /// ("index'i yok") ve o satırlara bir daha ulaşılamıyordu.</para>
+    /// <para><b>Liste backlog'u canlı büyür</b> (<see cref="ListBacklog"/>: liste tabanlı bir anlatı snapshot'ı — üretimde yoktur, testler
+    /// kurar): kırpma belgenin başından satır siler; bu satırlar listenin ucunu aşıyorsa (yani daha önce hiç kaydedilmemiş CANLI satırlarsa)
+    /// listeye EKLENİR. Eski kod bunu yapmadığı için bir delik vardı: canlı gelen satırlar kırpılınca <see cref="_loadedFrom"/> bir clamp'e
+    /// takılıyor ("index'i yok") ve o satırlara bir daha ulaşılamıyordu.</para>
     ///
-    /// <para><b>[idle-memory · dalga 3 · karar 44] Proje sayfasının arkasında bir şey yoktur:</b> belge logun tamamıdır, backlog boş bir
-    /// listedir ve sayfa hiç izlemediği için kırpma ona hiçbir şey vermez (<see cref="ReplaceProjectDocument"/>). [DEĞİŞEN KURAL] Eskiden
-    /// proje sayfasının backlog'u logun kopyasıydı (belge son 200 satır) ve izlerken kırpılan canlı satırlarla büyüyordu.</para></summary>
-    private IConsoleBacklog _backlog = new ListBacklog([]);
+    /// <para><b>[idle-memory · dalga 3 · karar 44 · B2 fix 1 O2] Belgenin arkasında bir şey olmayan iki yer tutucu AÇIK boş backlog'dur</b>
+    /// (<see cref="EmptyBacklog"/>): anlatı bağlanmadan önceki görünüm (kabuk açılışta bağlar) ve proje sayfası — belge logun tamamıdır, sayfa
+    /// hiç izlemediği için kırpılmaz (<see cref="ReplaceProjectDocument"/>). [DEĞİŞEN KURAL] Eskiden proje sayfasının backlog'u logun
+    /// kopyasıydı (belge son 200 satır) ve izlerken kırpılan canlı satırlarla büyüyordu; dalga 3'ün ilk turunda iki yer tutucu boş bir görünüm
+    /// listesiydi (<c>new ListBacklog([])</c>) — kırpılan satırı saklayan bir liste gibi davranıyordu.</para></summary>
+    private IConsoleBacklog _backlog = EmptyBacklog.Instance;
 
     /// <summary>Belgenin ilk satırının <see cref="_backlog"/>'daki index'i — yani "backlog'un kaçıncı satırına kadarı
     /// belgeye yüklendi". <c>[0.._loadedFrom)</c> belgede DEĞİLDİR (geçmiş). Liste backlog'unda bu index listenin sonuna
@@ -710,10 +712,10 @@ public partial class ConsoleView : UserControl
     /// olandır ve panel canlı akışı izlemeye devam eder. Proje logu tersidir — bkz.
     /// <see cref="PlayCascade"/>.</para>
     ///
-    /// <para><b>Geçmiş erişilebilirdir</b> (bkz. <see cref="_backlog"/>): render dilimi bir SINIR değil
-    /// bir PENCEREdir — tepeye kaydırınca önceki dilim geri gelir, tıpkı proje logunda olduğu gibi. Kaynak
-    /// farkı önemsizdir: proje logu görünümün listesinden sayfalanır, anlatı VM'in anlatı store'undan — bu metot tam
-    /// metni değil store'un snapshot'ını alır (<see cref="NarrativeSnapshot"/>).</para>
+    /// <para><b>Geçmiş erişilebilirdir</b> (bkz. <see cref="_backlog"/>): render dilimi bir SINIR değil bir PENCEREdir — tepeye kaydırınca
+    /// önceki dilim VM'in anlatı store'undan geri gelir; bu metot tam metni değil store'un snapshot'ını alır (<see cref="NarrativeSnapshot"/>).
+    /// [DEĞİŞEN KURAL — dalga 3 · karar 44] Bu paragraf eskiden "tıpkı proje logunda olduğu gibi" diyordu: proje sayfası da son dilim + görünümün
+    /// listesiydi ve oradan sayfalanıyordu. Proje sayfası artık logun tamamını taşır; dilim ve pencere yalnız anlatınındır.</para>
     /// <para>[design v1.7.0 §2.5] Geçiş animasyonu İKİ YÖNDE de aynıdır (<see cref="PlayTiltIn"/>).</para></summary>
     public void ShowRunDocument(NarrativeSnapshot snapshot)
     {
@@ -725,9 +727,10 @@ public partial class ConsoleView : UserControl
     /// seferde kurulduğunu (gizliyken hiç kurulmadığını) sayıyla sınar. Üretimde zararsız bir sayaçtır.</summary>
     internal int RunDocumentReplacedCount { get; private set; }
 
-    /// <summary>[test yüzeyi] Backlog görünümün KENDİ satır listesi mi (<see cref="ListBacklog"/>) — proje logunda öyledir;
-    /// anlatıda backlog VM'in store'udur ve bu <c>false</c>'tur (görünüm anlatının kopyasını tutmaz). Kırpılan satırları saklayan
-    /// backlog'un (<see cref="IConsoleBacklog.KeepsTrimmedLines"/>) aynı sorusudur — cevap TEK yerde durur.</summary>
+    /// <summary>[test yüzeyi] Backlog görünümün KENDİ satır listesi mi (<see cref="ListBacklog"/>) — kırpılan satırları saklayan backlog'un
+    /// (<see cref="IConsoleBacklog.KeepsTrimmedLines"/>) aynı sorusudur, cevap TEK yerde durur. Üretimde hiçbir backlog öyle değildir: anlatıda
+    /// backlog VM'in store'udur (görünüm anlatının kopyasını tutmaz), proje sayfasında ve bağdan önce boş backlog (<see cref="EmptyBacklog"/>).
+    /// [DEĞİŞEN KURAL — dalga 3 · B2 fix 1 O2] Doc eskiden "proje logunda öyledir" diyordu: sayfanın backlog'u görünümün listesiydi.</summary>
     internal bool BacklogOwnsCopy => _backlog.KeepsTrimmedLines;
 
     /// <summary>
@@ -736,8 +739,10 @@ public partial class ConsoleView : UserControl
     /// (pompa kabuğun kurulumunda başlar; gizli açılışta batch'ler düşer ve dönüş kurulumu belgeyi store'dan yeniden kurar).
     ///
     /// <para><b>Neden ayrı bir bağ:</b> bağ olmasaydı görünüm ilk anlatı kurulumuna (mod geçişi, işlem temizliği, tepsiden
-    /// dönüş) kadar kendi boş listesinde kalır ve o arada belgeden kırpılan her satırı kopyalardı. Bağ bir yeniden kurulum
-    /// değildir: <see cref="RunDocumentReplacedCount"/> artmaz, belgeye ve prompt'a dokunulmaz.</para>
+    /// dönüş) kadar boş backlog'da (<see cref="EmptyBacklog"/>) kalır ve o arada belgeden kırpılan satırlar tepeye kaydırınca geri gelmezdi
+    /// (store'da dururlar ama görünüm onları istemeyi bilmez). [DEĞİŞEN KURAL — B2 fix 1 O2] Yer tutucu eskiden görünümün kendi boş listesiydi
+    /// ve o arada kırpılan her satırı KOPYALIYORDU. Bağ bir yeniden kurulum değildir: <see cref="RunDocumentReplacedCount"/> artmaz, belgeye ve
+    /// prompt'a dokunulmaz.</para>
     ///
     /// <para>[idle-memory · final review 92] <b>Ön-koşul sessizce varsayılmaz:</b> belge boş ve konsol anlatı modunda olmalıdır;
     /// değilse <see cref="InvalidOperationException"/>. Satır taşıyan bir belgeye kurulan bağ store'un hiç görmediği satırları store
@@ -817,9 +822,9 @@ public partial class ConsoleView : UserControl
     /// listedeki satırın kendisi. Üçüncü ve senkronu olmayan bir kanal, doğru olmadığı anlarda ekranı yalancı
     /// yapıyordu; senkronlamak yerine kaldırıldı.</para>
     /// </summary>
-    public void PlayCascade(IReadOnlyList<string> allLines)
+    public void PlayCascade(string text)
     {
-        ReplaceProjectDocument(allLines);
+        ReplaceProjectDocument(text);
         PlayTiltIn(fromAbove: false);
     }
 
@@ -828,30 +833,37 @@ public partial class ConsoleView : UserControl
     /// bunun ardına <see cref="PlayTiltIn"/> ekler; gizli pencere dönüşü (<c>MainWindow.ResyncAfterShow</c>) onu tilt'siz çağırır: panel
     /// geçişi değil, aynı proje logunun modelin tam metninden yeniden kurulmasıdır.
     ///
-    /// <para><b>[idle-memory · dalga 3 · karar 44] Belge logun TAMAMIDIR, ilk satırından.</b> Arkasında backlog yoktur (boş liste,
-    /// <see cref="_loadedFrom"/> 0): chunk yükleyici tepede yükleyecek bir şey bulmaz, takip kırpması da hiç koşmaz (sayfa izlemez). Derlenen
-    /// projenin canlı satırları belgenin sonuna eklenir (<see cref="AppendBatch"/>) — sırayla, hiçbiri kırpılmadan. Render dilimi ve yükleyici
-    /// anlatıya özgüdür. [DEĞİŞEN KURAL] Eskiden belge logun son <see cref="RenderSliceLines"/> satırıydı ve o dilimin TEPESİNE sabitleniyordu,
-    /// öncesi görünümün kendi listesindeydi (<see cref="ListBacklog"/>, logun kopyası): 1000 satırlık bir log 800. satırından açılıyordu, baş
-    /// ancak tepeye kaydırınca dilim dilim geliyordu — "baştan okunur" sözü yalnız ≤ 200 satırlık loglarda doğruydu.</para>
+    /// <para><b>[idle-memory · dalga 3 · karar 44] Belge logun TAMAMIDIR, ilk satırından.</b> Arkasında bir şey yoktur (boş backlog —
+    /// <see cref="EmptyBacklog"/>, <see cref="_loadedFrom"/> 0): chunk yükleyici tepede yükleyecek bir şey bulmaz, takip kırpması da hiç koşmaz
+    /// (sayfa izlemez). Derlenen projenin canlı satırları belgenin sonuna eklenir (<see cref="AppendBatch"/>) — sırayla, hiçbiri kırpılmadan.
+    /// Render dilimi ve yükleyici anlatıya özgüdür. [DEĞİŞEN KURAL] Eskiden belge logun son <see cref="RenderSliceLines"/> satırıydı ve o
+    /// dilimin TEPESİNE sabitleniyordu, öncesi görünümün kendi listesindeydi (<see cref="ListBacklog"/>, logun kopyası): 1000 satırlık bir log
+    /// 800. satırından açılıyordu, baş ancak tepeye kaydırınca dilim dilim geliyordu — "baştan okunur" sözü yalnız ≤ 200 satırlık loglarda
+    /// doğruydu.</para>
+    ///
+    /// <para><b>[B2 fix 1 · O1] Sayfa metni olduğu gibi alır</b> (<paramref name="text"/>: logun kendisi ya da boş logun durum satırları —
+    /// <c>MainWindow.ProjectDocumentText</c>): bölünmez, yeniden birleştirilmez; belge onu AvalonEdit'in ayraç kuralıyla gösterir. Tek garanti
+    /// sondaki '\n'dir (<see cref="ConsoleLines.Terminated"/>): sonradan gelen canlı batch yeni satırda başlar. [DEĞİŞEN KURAL] Eskiden sayfa
+    /// satır listesi alıyordu: kabuk logu konsolun kuralıyla bölüyor (<c>ConsoleLines.Split</c>), görünüm yeniden birleştiriyordu — logun iki
+    /// tam kopyası ve '\r'/"\r\n" ayraçlarının '\n'e dönüşmesi, her açılışta.</para>
     ///
     /// <para><b>Neden logun tamamı, aşağı doğru dilim yüklemesi değil (ölçüldü, 800×600 gerçek pencere, satır ~190 karakter, hareket
     /// açık):</b> 10 000 satırlık bir log eşzamanlı ~21 ms'de açılır (dilimle ~14 ms), sayfa açıkken yığın ~5,8 MB tutar (dilim + liste
-    /// kopyasıyla ~4,0 MB) ve Back'te ikisi de tamamen bırakılır; 100 000 satırda ~140 ms / ~57 MB (dilimle ~14 ms / ~38 MB). AvalonEdit
-    /// yalnız görünür satırları kurar, Ctrl+End ~3 ms'dir. Aşağı doğru yükleme açılışı dilimle aynı tutardı ama sonu yüklenmemiş bir belgeye
-    /// canlı satır eklemeyi (sıra), pill'in "gerçek sonunu" ve ikinci bir yükleyiciyi gerektirirdi — en basit doğru seçenek logun
-    /// tamamıdır.</para></summary>
-    public void ReplaceProjectDocument(IReadOnlyList<string> allLines)
+    /// kopyasıyla ~4,0 MB) ve Back'te ikisi de tamamen bırakılır; 100 000 satırda ~140 ms / ~57 MB (dilimle ~14 ms / ~38 MB) — B2 fix 1 O1
+    /// bölme → birleştirme turunu kaldırınca 100 000 satır ~70–90 ms (kabuğun ~20 ms'lik bölmesi de kalktı), 10 000 satır değişmedi. AvalonEdit
+    /// yalnız görünür satırları kurar. Aşağı doğru yükleme açılışı dilimle aynı tutardı ama sonu yüklenmemiş bir belgeye canlı satır eklemeyi
+    /// (sıra), pill'in "gerçek sonunu" ve ikinci bir yükleyiciyi gerektirirdi — en basit doğru seçenek logun tamamıdır.</para></summary>
+    public void ReplaceProjectDocument(string text)
     {
+        ArgumentNullException.ThrowIfNull(text);
         EnsureColorizer();
-        allLines ??= [];
         _projectMode = true;
         RefreshPrompt();                 // proje-log modunda prompt imleci yoktur
         _idleReady = false;
         ApplyPromptText();
-        _backlog = new ListBacklog([]);  // sayfanın arkasında bir şey yoktur: logun tamamı belgededir
+        _backlog = EmptyBacklog.Instance; // sayfanın arkasında bir şey yoktur: logun tamamı belgededir
         _loadedFrom = 0;
-        SwapDocument(ConsoleLines.Join(allLines, 0, allLines.Count), toBottom: false); // baştan okunur, izlenmez
+        SwapDocument(ConsoleLines.Terminated(text), toBottom: false); // baştan okunur, izlenmez
     }
 
     /// <summary>

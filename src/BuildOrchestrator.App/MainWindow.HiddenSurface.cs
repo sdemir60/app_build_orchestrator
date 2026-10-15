@@ -305,7 +305,7 @@ public partial class MainWindow
     /// öncesi store'da kalır), proje logu açıksa <c>RunViewModel.SeedProjectDocument</c> (dikilmiş tam log). İkisi de
     /// reseed-drop sentinel'ini yazar: uçuştaki bayat batch'ler
     /// <c>ConsoleBatchRouter</c> kararıyla düşer, YENİ bir tampon yolu açılmaz. Anlatı boşsa idle "ready" satırı geri gelir;
-    /// boş bir proje logu, kart seçimiyle AYNI kuralla (<c>ProjectDocumentLines</c>) o projenin boş-durum metnini gösterir.</para>
+    /// boş bir proje logu, kart seçimiyle AYNI kuralla (<c>ProjectDocumentText</c>) o projenin boş-durum metnini gösterir.</para>
     ///
     /// <para><b>Graf:</b> gizliyken statü, faz, seçim itişleri ve filtre yenilemesi yalnız bayrağı kaldırdı
     /// (<see cref="_graphStaleWhileHidden"/>); dönüşte dördü TEK seferde, üretimdeki sırayla uygulanır: koşu fazı,
@@ -344,7 +344,7 @@ public partial class MainWindow
             {
                 var row = _vm.FindRow(activeProjectId);
                 _vm.SeedProjectDocument(activeProjectId,
-                    text => Shell.ConsoleViewControl.ReplaceProjectDocument(ProjectDocumentLines(row, text)));
+                    text => Shell.ConsoleViewControl.ReplaceProjectDocument(ProjectDocumentText(row, text)));
             }
         }
         if (_listStaleWhileHidden)

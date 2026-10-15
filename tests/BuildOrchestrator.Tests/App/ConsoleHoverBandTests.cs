@@ -469,12 +469,17 @@ public class ConsoleHoverBandTests
     /// kalktı. Yeni uyaran ScrollViewer'ın düzen içinde yaptığı çağrının kendisidir — <c>IScrollInfo.SetVerticalOffset</c> (TextArea →
     /// TextView): gerçek olay gerçek kablodan, görsel satırlar hâlâ eski bölgedeyken ateşlenir (ön-koşullar pinli). Kurulum tepeye iki kez
     /// kaydırır: ilki kırpılan satırları geri yükleyip ofseti telafi eder, ikincisi belgenin gerçek tepesine götürür.</para>
+    /// <para>[DEĞİŞEN KURULUM — dalga 3 · B2 fix 1 O2] Eski kurulum bağsız görünüme ham <c>AppendBatch</c>'le basıyordu; kırpılan 100 satır
+    /// görünümün yer tutucu listesine düşüyor, tepeye kaydırmada oradan geri geliyordu. Yer tutucu artık boş backlog'dur (hiçbir şey saklamaz):
+    /// kurulum üretim düzenini kurar — anlatı store'u bağlanır, satırlar önce store'a, sonra batch olarak görünüme. İddia aynı.</para>
     /// </summary>
     [StaFact]
     public void Real_scroll_event_before_relayout_hides_then_the_later_VisualLinesChanged_recovers_the_band()
     {
         var view = Realized(width: 200, height: 80);
-        view.AppendBatch(string.Concat(Enumerable.Range(0, 300).Select(i => $"line{i}\n")));
+        var store = new NarrativeStore();
+        view.BindNarrative(store);
+        NarrativeSnapshots.Deliver(store, view, [.. Enumerable.Range(0, 300).Select(i => $"line{i}")]);
         view.UpdateLayout();
         view.StickToBottom = false;
         view.Editor.ScrollToVerticalOffset(0);

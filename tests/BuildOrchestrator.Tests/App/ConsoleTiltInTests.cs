@@ -84,7 +84,7 @@ public class ConsoleTiltInTests
     {
         var view = Realized();
 
-        view.PlayCascade(["first line"]);
+        view.PlayCascade("first line\n");
 
         Assert.Equal(-view.TiltHost.ActualHeight / 2, HingeCentreY(view), precision: 3); // menteşe ALT kenarda
 
@@ -123,7 +123,7 @@ public class ConsoleTiltInTests
     public void The_transition_hands_the_panel_back_to_the_real_editor()
     {
         var view = Realized();
-        view.PlayCascade(["first line"]);
+        view.PlayCascade("first line\n");
         Assert.Equal(0.0, view.TiltHost.Opacity); // ön-koşul: geçiş sürerken gerçek blok saklı
 
         DispatcherPump.PumpUntil(() => view.Tilt3D.Visibility == Visibility.Collapsed, TimeSpan.FromSeconds(3));
@@ -208,7 +208,7 @@ public class ConsoleTiltInTests
     {
         var view = Realized(width: 800, height: 400);
 
-        view.PlayCascade([.. Enumerable.Range(0, 1000).Select(i => $"page{i}")]);
+        view.PlayCascade(ConsoleDocument.Text([.. Enumerable.Range(0, 1000).Select(i => $"page{i}")]));
 
         Assert.Equal(0, view.Editor.VerticalOffset);
         var textView = view.Editor.TextArea.TextView;
@@ -250,7 +250,7 @@ public class ConsoleTiltInTests
         view.Arrange(new Rect(0, 0, 200, 100));
         view.UpdateLayout();
 
-        view.PlayCascade(["first line"]);
+        view.PlayCascade("first line\n");
 
         Assert.Equal(Visibility.Collapsed, view.Tilt3D.Visibility);
         Assert.Equal(1.0, view.TiltHost.Opacity);

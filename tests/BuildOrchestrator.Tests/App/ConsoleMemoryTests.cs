@@ -67,7 +67,7 @@ public class ConsoleMemoryTests
         var window = DsResources.Realize(DsResources.NewHost(), view);
         var lines = Enumerable.Range(0, 400).Select(i => $"raw msbuild line {i}").ToList();
 
-        view.ReplaceProjectDocument(lines);                     // proje logu: baştan okunur, takip kapalı
+        view.ReplaceProjectDocument(Text(lines));               // proje logu: baştan okunur, takip kapalı
         view.AppendBatch(ConsoleLines.Join(Lines(50, 9), 0, 50)); // canlı satırlar da aynı belgeye akar
 
         var document = view.Document;
@@ -128,7 +128,10 @@ public class ConsoleMemoryTests
         var console = window.Shell.ConsoleViewControl;
         Assert.Equal(0, vm.Narrative.Count); // ön-koşul: pompaya teslim edilmemiş açılış satırı yok (pompa bu fixture'da tick etmez)
 
-        Assert.False(console.BacklogOwnsCopy);             // KIRMIZI bağ yokken: görünüm kendi (kopya sahibi) listesinde
+        // [DEĞİŞEN KURULUM — B2 fix 1 O2] Bu satır eskiden "KIRMIZI bağ yokken: görünüm kendi (kopya sahibi) listesinde" diyordu. Bağdan
+        // önceki yer tutucu artık boş backlog'dur (kopya tutmaz): bağ yokken de false — ayırt etmez. Bağın kanıtı aşağıdaki prepend'dir: bağ
+        // yokken tepeye kaydırma boş backlog'dan hiçbir şey getirmez (StartsWith kırmızı).
+        Assert.False(console.BacklogOwnsCopy);
         Assert.Equal(0, console.RunDocumentReplacedCount); // bağ belgeyi kurmadı
 
         // Canlı akış, üretim sırasıyla: satır önce modele (store), sonra pompanın batch'i belgeye (batch'i test verir).
@@ -160,13 +163,44 @@ public class ConsoleMemoryTests
         Assert.Throws<InvalidOperationException>(() => view.BindNarrative(new NarrativeStore())); // KIRMIZI: bugün sessizce bağlar
     }
 
+    /// <summary>
+    /// [B2 fix 1 · O2] Belgenin arkasında hiçbir şey olmayan iki yer tutucu AÇIK boş backlog'dur — kopya tutmaz, kırpılan satırı saklamaz:
+    /// anlatı bağlanmadan önceki görünüm ve proje sayfası (logun tamamı belgededir, sayfa hiç kırpılmaz).
+    /// <para>KIRMIZI (O2'den önce): ikisi de boş bir görünüm listesiydi (<c>new ListBacklog([])</c>) — kırpılan satırları saklayan bir liste
+    /// gibi davranıyordu (<c>BacklogOwnsCopy</c> true).</para>
+    /// </summary>
+    [StaFact]
+    public void The_two_placeholders_keep_nothing_behind_the_document()
+    {
+        var unbound = new ConsoleView();
+        var page = new ConsoleView();
+        page.PlayCascade("page line\n");
+
+        Assert.False(unbound.BacklogOwnsCopy); // anlatı bağlanmadan önce
+        Assert.False(page.BacklogOwnsCopy);    // proje sayfası
+    }
+
+    /// <summary>[B2 fix 1 · O2] Boş backlog'un sözleşmesi: satırı yok, her aralık <c>""</c>, kırpılan satırları saklamaz ve verilenleri tutmaz.
+    /// <para>KIRMIZI: tür yoktu (derleme hatası).</para></summary>
+    [Fact]
+    public void The_empty_backlog_has_no_lines_and_keeps_none()
+    {
+        var empty = EmptyBacklog.Instance;
+
+        empty.AcceptTrimmed(["trimmed"]);
+
+        Assert.Equal(0, empty.Count);
+        Assert.Equal("", empty.Join(0, 10));
+        Assert.False(empty.KeepsTrimmedLines);
+    }
+
     /// <summary>[idle-memory · final review 92] Proje logu açıkken anlatı bağı kurulmaz: belge o sayfanındır (logun tamamı). Anlatıya
     /// dönüş belgeyi store'dan kurar (<c>ReplaceRunDocument</c>); bağ yalnız kabuğun açılışındaki boş anlatı belgesi içindir.</summary>
     [StaFact]
     public void Binding_the_narrative_while_a_project_log_is_shown_fails_fast()
     {
         var view = new ConsoleView();
-        view.ReplaceProjectDocument([]); // proje logu sayfası — belgesi boş
+        view.ReplaceProjectDocument(""); // proje logu sayfası — belgesi boş
 
         Assert.Throws<InvalidOperationException>(() => view.BindNarrative(new NarrativeStore())); // KIRMIZI: bugün sessizce bağlar
     }

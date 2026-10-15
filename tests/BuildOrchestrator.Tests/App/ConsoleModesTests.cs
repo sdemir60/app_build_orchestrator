@@ -158,8 +158,9 @@ public class ConsoleModesTests
         // Tıklama anı: başlık + gövde SENKRON proje-loguna geçer (pump beklenmeden).
         header.ShowProjectLog(ConsoleHeaderRow.For("A", ProjectRowState.Started, inCycle: false,
             depIssues: null, namePrefix: ""), vm.GetActiveLineCount());
-        // Sayfa kabuğun kuralıyla bölünür: konsolun TEK satır kuralı (testin kendi bölme kopyası yok — final review 90).
-        vm.SeedProjectDocument(projectId, text => view.PlayCascade(ConsoleLines.Split(text)));
+        // [B2 fix 1 · O1] Sayfa logun metnidir, bölünmez (kabuğun kuralı — MainWindow.ProjectDocumentText; eskiden konsolun satır kuralıyla
+        // bölünüp görünümde yeniden birleştiriliyordu).
+        vm.SeedProjectDocument(projectId, view.PlayCascade); // kabuğun kart seçimi: logun metni olduğu gibi
 
         Assert.Equal(ConsoleHeader.HeaderMode.ProjectLog, header.Mode);
         Assert.DoesNotContain(previousRunText, view.Document.Text, StringComparison.Ordinal);
@@ -189,7 +190,7 @@ public class ConsoleModesTests
         vm.OnEvent(ProjectLogIpc.Reply(request, projectId, string.Concat(Enumerable.Range(1, 1000).Select(n => $"log{n}\n")), through: 1000));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
 
-        vm.SeedProjectDocument(projectId, text => view.PlayCascade(ConsoleLines.Split(text))); // kabuğun kart seçimi (satır kuralı tek)
+        vm.SeedProjectDocument(projectId, view.PlayCascade); // kabuğun kart seçimi: logun metni olduğu gibi (bölünmez)
         view.AppendBatch("log1011\nlog1012\n");                                             // sayfa açıldıktan sonra gelenler
 
         Assert.Equal(Enumerable.Range(1, 1012).Select(n => $"log{n}"), LinesOf(view.Document));
@@ -522,7 +523,7 @@ public class ConsoleModesTests
 
         Assert.Equal(projectId, vm.ActiveProjectId);
         Assert.True(vm.ShouldShowLoadedProject(projectId));
-        // Sayfanın metni boş: kabuk boş metinde projenin boş durum sayfasını kurar (MainWindow.ProjectDocumentLines) — "log yok"
+        // Sayfanın metni boş: kabuk boş metinde projenin boş durum sayfasını kurar (MainWindow.ProjectDocumentText) — "log yok"
         // cevabı boş bir snapshot olarak dikilse de bu kural aynen işler [idle-memory I1].
         Assert.Equal("", vm.GetProjectDocumentText(projectId));
         // Ve gerekçe satırda tutuluyor — sayfa metni onu okuyacak.
@@ -530,62 +531,46 @@ public class ConsoleModesTests
         Assert.Equal(SkipReasons.UpToDate, row.SkipReason);
     }
 
-    // ---------------------------------------------------------------- proje sayfası konsolun satır kuralıyla bölünür
+    // ---------------------------------------------------------------- proje sayfası logun metninin kendisidir
 
     /// <summary>
-    /// [idle-memory · final review 90] <b>Proje sayfası konsolun TEK satır kuralıyla bölünür</b> (<see cref="ConsoleLines.Split"/>:
-    /// AvalonEdit'in ayraç kuralı) — anlatı store'u ve görünümün kırpması da onu kullanır; sayfanın backlog indeksi belge satırıyla
-    /// birebir yürür. <b>Fark 1 — sondaki boş satır:</b> bir derleme logunun boş bir satırla bitmesi sık görülür; sayfa onu da
-    /// gösterir ve sonradan gelen canlı satır boş satırın ALTINA düşer.
-    /// <para><b>[DEĞİŞEN KURAL]</b> Kabuk sayfayı kendi kuralıyla bölüyordu (<c>TrimEnd('\n').Split('\n')</c>): sondaki BÜTÜN boş
-    /// satırlar düşüyordu, sonradan gelen canlı satır onların yerine oturuyordu — sayfanın ortasında logdaki bir satır eksik
-    /// kalıyordu.</para>
+    /// [dalga 3 · B2 fix 1 · O1] <b>Proje sayfası logun METNİNİN KENDİSİDİR</b> — kabuk sayfayı bölmez, yeniden birleştirmez
+    /// (<c>MainWindow.ProjectDocumentText</c>); belge logu AvalonEdit'in kendi ayraç kuralıyla gösterir. İki fark pinlenir. <b>Fark 1 — sondaki
+    /// boş satır:</b> bir derleme logunun boş bir satırla bitmesi sık görülür; sayfa onu da gösterir ve sonradan gelen canlı satır boş satırın
+    /// ALTINA düşer. <b>Fark 2 — tek başına '\r':</b> belge onu satır ayracı sayar; sayfa, log + canlı satırların belgede gösterdiği satırların
+    /// aynısıdır (kâhin AvalonEdit'in kendi belgesi) — tekrar yok, kayıp yok.
+    /// <para>[DEĞİŞEN KURAL — final review 90] Kabuk sayfayı kendi kuralıyla bölüyordu (<c>TrimEnd('\n').Split('\n')</c>): sondaki BÜTÜN boş
+    /// satırlar düşüyor, sonradan gelen canlı satır onların yerine oturuyordu (KIRMIZI: Fark 1); tek başına '\r' listede bir girdi kalıp belgede
+    /// iki satır oluyor, sayfa son dilim + backlog'ken indeks kayıyordu — tepeye kaydırmada dikişte bir satır iki kez (KIRMIZI:
+    /// <c>line161</c>). Final review 90 kabuğu konsolun satır kuralına (<c>ConsoleLines.Split</c>) bağlamıştı.</para>
+    /// <para>[DEĞİŞEN KURAL — dalga 3 · karar 44-45 · B2 fix 1 O1/M2] Sayfa logun tamamıdır ve hiç izlenmez (indeksli backlog yok, kırpma yok):
+    /// Fark 2'nin kayması artık doğamaz ve ayrı '\r' testi (<c>A_lone_carriage_return_in_a_project_log_shows_the_page_line_for_line</c>) hiçbir
+    /// şeyi ayırt etmiyordu (inceleme M2) — iddiası buraya katlandı; Fark 1'in testi (<c>A_project_page_keeps_the_empty_line_its_log_ends_with</c>)
+    /// da. O1 bölme → birleştirme turunu kaldırdı: sayfa metni olduğu gibi alır. KIRMIZI (O1'den önce): belgenin metni logunkinden farklıydı —
+    /// '\r' bölünüp '\n' olarak geri yazılıyordu.</para>
     /// </summary>
     [StaFact]
-    public void A_project_page_keeps_the_empty_line_its_log_ends_with()
+    public void A_project_page_is_its_log_text_itself_line_for_line()
     {
         using var dir = new TempDir();
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
         var console = window.Shell.ConsoleViewControl;
         var row = MainWindowHost.ProjectOf(vm, "A");
-        vm.ActiveProjectId = row.Id;                            // proje logu açık (motor round-trip'i yok: mod doğrudan kurulur)
-        MainWindowHost.LogLine(vm, "A", 1, "Build succeeded.");
-        MainWindowHost.LogLine(vm, "A", 2, "");                 // log boş bir satırla bitiyor
-        Assert.Equal("Build succeeded.\n\n", vm.GetProjectDocumentText(row.Id)); // ön-koşul
+        vm.ActiveProjectId = row.Id;                                     // proje logu açık (motor round-trip'i yok: mod doğrudan kurulur)
+        MainWindowHost.LogLine(vm, "A", 1, "restore 50%\rrestore 100%"); // Fark 2: tek başına '\r'
+        MainWindowHost.LogLine(vm, "A", 2, "Build succeeded.");
+        MainWindowHost.LogLine(vm, "A", 3, "");                          // Fark 1: log boş bir satırla bitiyor
+        string log = vm.GetProjectDocumentText(row.Id);
+        Assert.Equal("restore 50%\rrestore 100%\nBuild succeeded.\n\n", log); // ön-koşul
 
-        vm.SelectProject(row.Id);                               // kart seçildi → sayfa kurulur (PlayCascade)
+        vm.SelectProject(row.Id);                                        // kart seçildi → sayfa kurulur (PlayCascade)
         window.AppendConsoleBatch("Time Elapsed 00:00:01.23\n", window.ConsoleReseedGen); // canlı satır, pompanın yolundan
 
-        Assert.Equal("Build succeeded.\n\nTime Elapsed 00:00:01.23\n", console.Document.Text); // KIRMIZI: bugün boş satır düşer
-        GC.KeepAlive(window);
-    }
-
-    /// <summary>
-    /// [idle-memory · final review 90] <b>Fark 2 — tek başına '\r':</b> belge onu satır ayracı sayar, kabuğun eski kuralı saymıyordu.
-    /// Kâhin AvalonEdit'in kendi belgesidir: sayfa, log + canlı satırların belgede gösterdiği satırların aynısıdır — tekrar yok, kayıp yok.
-    /// <para>[DEĞİŞEN KURAL — dalga 3 · karar 44-45] Eski iddia: sayfanın bir girdisi belgede iki satır olunca backlog indeksi belgeden bir
-    /// satır kayardı; kayma, takip açıkken (<c>StickToBottom = true</c>, "kullanıcı dibe indi") gelen canlı satırlar sayfayı render dilimine
-    /// kırpınca tepeye kaydırmada görünürdü — dikişte bir satır İKİ kez (KIRMIZI: <c>line161</c>). Değişme gerekçesi (sahip kararları 44-45):
-    /// proje sayfası logun tamamını taşır (arkasında indeksli bir backlog yoktur) ve hiç izlemez (kırpılmaz) — o kayma artık doğamaz. Kalan
-    /// iddia sayfanın kendisidir: kart seçilince belge logun tamamı ve ardından canlı satırlardır, satır satır; kaydırma gerekmez.</para>
-    /// </summary>
-    [StaFact]
-    public void A_lone_carriage_return_in_a_project_log_shows_the_page_line_for_line()
-    {
-        using var dir = new TempDir();
-        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
-        var console = window.Shell.ConsoleViewControl;
-        var row = MainWindowHost.ProjectOf(vm, "A");
-        vm.ActiveProjectId = row.Id;
-        for (int i = 0; i < 300; i++)
-            MainWindowHost.LogLine(vm, "A", i + 1, i == 150 ? "restore 50%\rrestore 100%" : $"line{i}");
-        string log = vm.GetProjectDocumentText(row.Id);
-        vm.SelectProject(row.Id);                               // sayfa: logun tamamı
-        string[] live = [.. Enumerable.Range(0, 60).Select(i => $"live{i}")];
-        foreach (var line in live) window.AppendConsoleBatch(line + "\n", window.ConsoleReseedGen);
-
-        var oracle = new TextDocument(log + string.Concat(live.Select(line => line + "\n")));
-        Assert.Equal(ConsoleDocument.LinesOf(oracle), ConsoleDocument.LinesOf(console.Document));
+        string page = log + "Time Elapsed 00:00:01.23\n";
+        Assert.Equal(page, console.Document.Text);                       // sayfa logun metnidir
+        string[] shown = ["restore 50%", "restore 100%", "Build succeeded.", "", "Time Elapsed 00:00:01.23"]; // Fark 2 + Fark 1
+        Assert.Equal(shown, ConsoleDocument.LinesOf(console.Document));
+        Assert.Equal(ConsoleDocument.LinesOf(new TextDocument(page)), ConsoleDocument.LinesOf(console.Document)); // AvalonEdit'in kuralı
         GC.KeepAlive(window);
     }
 
