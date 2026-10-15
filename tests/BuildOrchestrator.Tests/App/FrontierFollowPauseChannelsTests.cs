@@ -48,10 +48,6 @@ public class FrontierFollowPauseChannelsTests(ITestOutputHelper output)
         VerticalBarOf(list).RaiseEvent(new ScrollEventArgs(ScrollEventType.ThumbTrack, 0)
         { RoutedEvent = ScrollBar.ScrollEvent });
 
-    private static void RaiseWheel(StickyLayerList list) =>
-        list.Scroll.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, -120)
-        { RoutedEvent = UIElement.PreviewMouseWheelEvent });
-
     /// <summary>Gezinme tuşu — olay <see cref="StickyLayerList.Scroll"/>'dan TÜNELLENİR (üretimde odak satırdadır,
     /// sinyali kökteki kablo yakalamalıdır).</summary>
     private static void PressScrollKey(StickyLayerList list, Key key) =>
@@ -85,7 +81,7 @@ public class FrontierFollowPauseChannelsTests(ITestOutputHelper output)
 
         switch (gesture)
         {
-            case "wheel": RaiseWheel(list); break;
+            case "wheel": MouseInput.PreviewWheel(list.Scroll, -Mouse.MouseWheelDeltaForOneLine); break;
             case "scrollbar": DragScrollBar(list); break;
             case "keyboard": PressScrollKey(list, Key.PageDown); break;
             default: throw new InvalidOperationException(gesture);

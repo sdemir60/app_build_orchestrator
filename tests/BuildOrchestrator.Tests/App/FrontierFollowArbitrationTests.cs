@@ -36,10 +36,6 @@ public class FrontierFollowArbitrationTests
     private static bool FollowWouldEngage(StickyLayerList list, ScrollArbiter arbiter) =>
         arbiter.CanFollowFrontier && !ScrollAnimator.GetIsUserSuppressed(list.Scroll);
 
-    private static void RaiseFrontierWheel(StickyLayerList list) =>
-        list.Scroll.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, -120)
-        { RoutedEvent = UIElement.PreviewMouseWheelEvent });
-
     /// <summary>
     /// [DEĞİŞEN KURAL] Tekerlek İKİ suppress'i de kurar ve kullanıcı listenin NERESİNE giderse gitsin — dibine
     /// inse bile — duraklama kalkmaz. Eski iddia bunun tersiydi: dibe 48 px kala duraklama anında kalkardı
@@ -62,7 +58,7 @@ public class FrontierFollowArbitrationTests
         Assert.True(FollowWouldEngage(list, arbiter));
 
         // 1) Kullanıcı listeyi tekerlekle kaydırdı → İKİ suppress de kurulur (arbiter regional bit + ScrollAnimator flag).
-        RaiseFrontierWheel(list);
+        MouseInput.PreviewWheel(list.Scroll, -Mouse.MouseWheelDeltaForOneLine);
         Assert.True(arbiter.IsSuppressed(ScrollPanel.Frontier));
         Assert.True(ScrollAnimator.GetIsUserSuppressed(list.Scroll));
         Assert.False(FollowWouldEngage(list, arbiter));                  // follow DURAKLADI

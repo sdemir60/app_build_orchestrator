@@ -14,8 +14,9 @@ namespace BuildOrchestrator.Tests.App;
 ///
 /// <para><b>Neden ortak:</b> aynı beş satır <c>GraphClickTests</c> (düğüm/zemin tıklaması) ve
 /// <c>GraphPanZoomTests</c> (sinema modunda zemin basışının seçimi KALDIRMADIĞI) tarafından kullanılır —
-/// kopya YASAK (CLAUDE.md). Tekerleğin iki fazlı sentezi de öyle: <c>AboutDialogTests</c> (Environment hücreleri) ve
-/// <c>RealizedNarrative</c> (konsol) aynı <see cref="Wheel"/>'i kullanır.</para>
+/// kopya YASAK (CLAUDE.md). Tekerlek de öyle: iki fazlı jesti (<see cref="Wheel"/>) <c>AboutDialogTests</c> (Environment hücreleri)
+/// ve <c>RealizedNarrative</c> (konsol), yalnız tünel yarısını (<see cref="PreviewWheel"/>) listenin takip, animasyon iptali ve
+/// başlık bandı testleri kullanır.</para>
 /// </summary>
 internal static class MouseInput
 {
@@ -75,12 +76,7 @@ internal static class MouseInput
     /// </summary>
     public static MouseWheelEventArgs Wheel(UIElement target, int delta)
     {
-        ArgumentNullException.ThrowIfNull(target);
-        var preview = new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, delta)
-        {
-            RoutedEvent = UIElement.PreviewMouseWheelEvent,
-        };
-        target.RaiseEvent(preview);
+        var preview = PreviewWheel(target, delta);
         if (!preview.Handled)
         {
             target.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, delta)
@@ -88,6 +84,23 @@ internal static class MouseInput
                 RoutedEvent = UIElement.MouseWheelEvent,
             });
         }
+        return preview;
+    }
+
+    /// <summary>
+    /// Tekerleğin YALNIZ tünel yarısı (<c>PreviewMouseWheel</c>) — BİLEREK tek faz. Bunu kullanan testler tünelde dinleyen üretim
+    /// kablosunu tek başına sınar: kullanıcı-kaydırma sinyali (takibi duraklatır), uçuştaki animasyonun iptali, yığılmış başlık
+    /// bandının tekerleği listeye iletmesi. Baloncuk fazı ScrollViewer'ın kendi kaydırmasını da koştururdu (<see cref="Wheel"/>) ve
+    /// ölçülen şeye ikinci bir neden karışırdı. Tam jest gereken yerde <see cref="Wheel"/>.
+    /// </summary>
+    public static MouseWheelEventArgs PreviewWheel(UIElement target, int delta)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        var preview = new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, delta)
+        {
+            RoutedEvent = UIElement.PreviewMouseWheelEvent,
+        };
+        target.RaiseEvent(preview);
         return preview;
     }
 

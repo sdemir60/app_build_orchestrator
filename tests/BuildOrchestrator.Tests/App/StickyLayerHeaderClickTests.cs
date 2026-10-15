@@ -423,8 +423,7 @@ public class StickyLayerHeaderClickTests
         // girdi bunu OS'ten otomatik ateşler, testte AYNI (tunnel) olayı doğrudan yükseltmek gerekir; bubbling
         // MouseWheelEvent'i raise etmek PreviewMouseWheel handler'ını TETİKLEMEZ (ayrı bir RoutedEvent'tir).
         // Pozitif delta → WPF varsayılanı yukarı kaydırır, VerticalOffset AZALIR.
-        list.Overlay.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice, 0, 120)
-        { RoutedEvent = UIElement.PreviewMouseWheelEvent });
+        MouseInput.PreviewWheel(list.Overlay, Mouse.MouseWheelDeltaForOneLine);
         list.UpdateLayout();
 
         Assert.True(list.Scroll.VerticalOffset < before,
@@ -456,8 +455,7 @@ public class StickyLayerHeaderClickTests
         Assert.False(list.IsFollowSuppressedByUser); // ön-koşul
         Assert.False(arbiter.IsSuppressed(ScrollPanel.Frontier)); // ön-koşul
 
-        list.Overlay.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice, 0, 120)
-        { RoutedEvent = UIElement.PreviewMouseWheelEvent });
+        MouseInput.PreviewWheel(list.Overlay, Mouse.MouseWheelDeltaForOneLine);
 
         Assert.True(list.IsFollowSuppressedByUser, "overlay tekerleği follow-mode'u DURAKLATMADI");
         Assert.True(arbiter.IsSuppressed(ScrollPanel.Frontier), "overlay tekerleği arbiter'a HABER VERMEDİ");
@@ -483,8 +481,7 @@ public class StickyLayerHeaderClickTests
         Click(list, InFlowHeaderBorder(list, "L1"));
         Assert.True(list.Scroll.HasAnimatedProperties, "ön-koşul: tıklama GERÇEKTEN uçuşan bir animasyon başlatmadı");
 
-        list.Overlay.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice, 0, 120)
-        { RoutedEvent = UIElement.PreviewMouseWheelEvent });
+        MouseInput.PreviewWheel(list.Overlay, Mouse.MouseWheelDeltaForOneLine);
 
         Assert.False(list.Scroll.HasAnimatedProperties, "overlay tekerleği uçuştaki animasyonu İPTAL ETMEDİ");
         Assert.True(list.IsFollowSuppressedByUser);

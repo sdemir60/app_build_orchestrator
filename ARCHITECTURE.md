@@ -6091,10 +6091,12 @@ Shared test infrastructure lives in one place per concern rather than being copi
 (`DsResources`, `IconResources`), window and dialog hosts (`MainWindowHost` — with the MSBuild lines the console tests
 feed, `WarningLine`, `ErrorLine` and `CommandLine` —, `SettingsDialogHost`, `AboutDialogHost`, `SplitterHost`,
 `GraphTestView`), shared assertions (`FocusTrap`, the modal focus-trap proof both dialogs use), input synthesis
-(`MouseInput`, the one place a real mouse press is raised, both halves of the gesture), dispatcher pumping and
-animation hosting (`DispatcherPump`, `AnimationHost`, `MotionScope`), a manual STA thread for tests that must skip
-dynamically (`StaThread` — the STA runner does not recognise a skip), the console document (`ConsoleDocument` — a
-document read as lines, a laid-out bare view, the reader's scroll to the top), the narrative's spool (`SpoolDir`, a run
+(`MouseInput`, the one place a real mouse press or wheel is raised, both halves of the gesture or the tunnel alone),
+dispatcher pumping and animation hosting (`DispatcherPump`, `AnimationHost`, `MotionScope`), a manual STA thread for
+tests that must skip dynamically (`StaThread` — the STA runner does not recognise a skip), the console document
+(`ConsoleDocument` — a document read as lines, a laid-out bare view, the reader's scroll to the top), the console in a
+real window (`RealizedNarrative` — a rebuilt narrative pinned to its end, the reader's real keys, wheel and `⌄ latest`
+click, and the bottom anchor's timers captured rather than waited for), the narrative's spool (`SpoolDir`, a run
 folder whose disposal closes the spool before the folder goes, and `SpoolScope`, that same close for a folder the test
 does not own; `SpoolDir.NeverOnDisk` and `FailingSpoolStream.InstallOn`, the two failing-disk seams), the record of the
 commands a view model sent (`SentCommands`, thread-safe, because a real engine completes a send on another thread),

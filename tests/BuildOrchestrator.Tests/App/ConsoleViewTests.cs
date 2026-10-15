@@ -434,6 +434,23 @@ public class ConsoleViewTests
     }
 
     /// <summary>
+    /// [idle-memory · dalga 2 · altıncı inceleme] İki ardışık GERÇEK Ctrl+Home iki önceki dilimi getirir: ilk prepend'in telafi olayı
+    /// yükleyiciyi yeniden kurar, ikinci sıçrama bir önceki dilimi yükler — tek dilimle kalmaz.
+    /// <para>PİN — yeşil doğar.</para>
+    /// </summary>
+    [StaFact]
+    public void Two_real_ctrl_home_presses_load_two_previous_slices()
+    {
+        using var narrative = new RealizedNarrative(lines: 600);
+
+        narrative.PressCtrlHome();
+        Assert.StartsWith("line200\n", narrative.View.Document.Text); // ilk dilim geldi
+        narrative.PressCtrlHome();
+
+        Assert.Equal(string.Concat(Enumerable.Range(0, 600).Select(i => $"line{i}\n")), narrative.View.Document.Text);
+    }
+
+    /// <summary>
     /// [idle-memory · dalga 2 · üçüncü inceleme] Proje sayfası BAŞTAN açılır ve chunk yükleyici silahsızdır: tepede duran okuyucuya gelen
     /// bir "tepe" olayı (yerleşim, programın kendi kaydırması) önceki dilimi kendiliğinden eklemez; önceki dilim okuyucu aşağı inip
     /// yeniden tepeye çıktığında gelir.

@@ -206,6 +206,52 @@ public class ConsoleReaderNavigationTests
     }
 
     /// <summary>
+    /// Görünüme sığan KISA bir proje sayfası (birkaç satır) izlemeden açılır ve <c>⌄ latest</c>'i göstermez — dip zaten ekranda. Uzun
+    /// sayfanın pininin öbür yüzü: pill'in tek kuralı (dipten uzaklık) takasın sonunda oturmuş geometriyle uygulanır.
+    /// <para>PİN — yeşil doğar (takip kararı beşinci incelemeden beri takasın sonunda).</para>
+    /// </summary>
+    [StaFact]
+    public void A_short_project_page_opens_without_the_latest_pill_and_does_not_follow()
+    {
+        using var narrative = new RealizedNarrative(lines: 400);
+
+        narrative.View.PlayCascade([.. Enumerable.Range(0, 5).Select(i => $"page{i}")]);
+        DispatcherPump.DrainToIdle();
+
+        Assert.True(narrative.View.Editor.ExtentHeight <= narrative.View.Editor.ViewportHeight, "test kurgusu: sayfa görünüme sığmalıydı");
+        Assert.False(narrative.View.FollowsBottom);
+        Assert.Equal(Visibility.Collapsed, narrative.View.Pill.Visibility);
+    }
+
+    /// <summary>
+    /// Belge takası takip kararını TEK kez, sonunda verir: takasın kendi kaydırma olayları (yeni belge atanınca sıfırlanan kaydırma
+    /// verisi, pin'in isteği) anchor'a gitmez. Gözlem üretimin olayından: her takas olayında anchor'ın kararı (yapışık mı, pill) takastan
+    /// önceki hâlinde kalır.
+    /// <para>Senaryo, olayın kararı değiştireceği durumdur: okuyucu kaydırmış (takip bırakılmış, direksiyon onda) ve uzun bir proje
+    /// sayfası açılıyor. Takastan önceki ve sonraki karar aynıdır (yapışık değil, pill görünür) — aradaki her farklılık takasın ortasında
+    /// verilmiş bir karardır. KIRMIZI (bozma: anchor takas olaylarını yeniden görür — beşinci incelemede bu bozma altında bütün setler
+    /// yeşil kalmıştı): sıfırlama olayında yapışık, pill gizli.</para>
+    /// </summary>
+    [StaFact]
+    public void A_document_swap_decides_following_once_at_its_end_and_never_on_its_own_scroll_events()
+    {
+        using var narrative = new RealizedNarrative(lines: 400);
+        narrative.WheelUp();
+        narrative.WheelUp();
+        AssertReleased(narrative); // ön-koşul: takastan önceki karar
+        var decisions = new List<(bool Stuck, Visibility Pill)>();
+        narrative.View.Editor.TextArea.TextView.ScrollOffsetChanged += (_, _) =>
+            decisions.Add((narrative.View.StickToBottom, narrative.View.Pill.Visibility)); // üretimin işleyicisinden SONRA koşar
+
+        narrative.View.PlayCascade([.. Enumerable.Range(0, 300).Select(i => $"page{i}")]);
+
+        Assert.NotEmpty(decisions); // ön-koşul: takas kaydırma olayı yaydı
+        Assert.All(decisions, decision => Assert.Equal((false, Visibility.Visible), decision));
+        Assert.False(narrative.View.StickToBottom);
+        Assert.Equal(Visibility.Visible, narrative.View.Pill.Visibility);
+    }
+
+    /// <summary>
     /// Okuyucunun kaydırdığı bir proje sayfasından ← Back: anlatı dibine sabitlenir ve akışı HEMEN yeniden izler — direksiyon geri
     /// alınır, beklemeyi beklemez.
     /// <para>Takip kararı takasın sonunda verilir (<c>SwapDocument</c>); onsuz anlatı sayfanın "izleme" durumunu taşırdı (bozma: karar

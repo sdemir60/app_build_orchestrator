@@ -74,8 +74,9 @@ internal sealed class RealizedNarrative : IDisposable
         DispatcherPump.DrainToIdle();
     }
 
-    /// <summary>Okuyucu elini çekti ve süre geçti: anchor'ın o ana dek kurduğu zamanlayıcılar dolar (üretimdeki sırayla; eskimiş bir
-    /// bekleme kendi kuşak sayacıyla hiçbir şey yapmaz).</summary>
+    /// <summary>Okuyucu elini çekti ve süre geçti: anchor'ın o ana dek kurduğu zamanlayıcılar KURULDUKLARI sırayla, gecikmeleri yok
+    /// sayılarak çalışır (eskimiş bir bekleme kendi kuşak sayacıyla hiçbir şey yapmaz); bir geri çağırmanın kurduğu zamanlayıcı bu
+    /// çağrıda çalışmaz, sonrakine kalır.</summary>
     public void ElapseAnchorTimers()
     {
         var due = _anchorTimers.ToList();

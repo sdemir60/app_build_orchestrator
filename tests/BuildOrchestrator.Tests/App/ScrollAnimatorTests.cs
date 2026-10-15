@@ -212,9 +212,7 @@ public class ScrollAnimatorTests
         DispatcherPump.PumpUntil(() => DependencyPropertyHelper.GetValueSource(sv, ScrollAnimator.VerticalOffsetProperty).IsAnimated, TimeSpan.FromSeconds(2));
         ScrollAnimator.EnableUserCancellation(sv);
 
-        sv.RaiseEvent(new System.Windows.Input.MouseWheelEventArgs(
-            System.Windows.Input.Mouse.PrimaryDevice, Environment.TickCount, 120)
-        { RoutedEvent = UIElement.PreviewMouseWheelEvent });
+        MouseInput.PreviewWheel(sv, System.Windows.Input.Mouse.MouseWheelDeltaForOneLine);
 
         Assert.False(DependencyPropertyHelper.GetValueSource(sv, ScrollAnimator.VerticalOffsetProperty).IsAnimated);
         Assert.True(ScrollAnimator.GetIsUserSuppressed(sv));
