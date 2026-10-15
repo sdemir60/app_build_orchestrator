@@ -793,17 +793,17 @@ public partial class ConsoleView : UserControl
     /// <summary>
     /// [idle-memory · dalga 2 · takip — ölçüldü] Belge takasının TEK yolu (anlatı: <see cref="ReplaceRunDocument"/>, proje logu:
     /// <see cref="ReplaceProjectDocument"/>): yeni belge kurulur ve dibe ya da tepeye sabitlenir; ardından chunk yükleyicinin durumu
-    /// belgenin OTURDUĞU konumdan okunur — tepeden uzaktaysa silahlı, tepedeyse silahsız. Dibe sabitlenen anlatıda okuyucunun TEK tepeye
-    /// sıçraması (Ctrl+Home, kaydırma çubuğunun tek hamlesi) önceki dilimi getirir; tepeye sabitlenen proje sayfasında ilk dilim okuyucu
-    /// aşağı inip yeniden tepeye çıktığında gelir.
+    /// belgenin OTURDUĞU konumdan (<see cref="LoaderOffset"/>) okunur — tepeden uzaktaysa silahlı, tepedeyse silahsız. Dibe sabitlenen
+    /// anlatıda okuyucunun TEK tepeye sıçraması (Ctrl+Home, kaydırma çubuğunun tek hamlesi) önceki dilimi getirir; tepeye sabitlenen proje
+    /// sayfasında önceki dilim okuyucu aşağı inip yeniden tepeye çıktığında gelir.
     /// <para><b>Takasın geçici kaydırma olayları okuyucunun jesti değildir</b> ve yükleyiciye gitmez (<see cref="EvaluateChunkScroll"/>):
     /// ölçüldü — takas, eski belgenin ofsetini taşıyan bir olay yayar (yükleyici "tepeden uzaklaştı" diye silahlanırdı), yeni belgenin ilk
     /// yerleşimi ofseti sıfıra çeker ("tepeye ulaştı"). Dipteki bir belgenin yerine anlatı kurulurken ikisi birleşip önceki 200 satırı
     /// kendiliğinden ekliyor, ardından takip kırpması fazlayı atıyordu — belge son 199 satır kalıyor, UI thread'i boşuna bir dilim okuyup
     /// ekleyip kırpıyordu (<c>ConsoleViewTests.Rebuilding_the_narrative_over_a_…</c>). Bottom-anchor bu olayları görmeye devam eder.</para>
-    /// <para>[DEĞİŞEN KURAL — ikinci inceleme] Eskiden takastan sonra yükleyici koşulsuz silahsız bırakılıyordu. Olaylar yok sayılınca
-    /// sabitlemenin kendi dibe kaydırması da sayılmıyordu (önceki hâlde yükleyiciyi silahlandıran oydu): yeniden kurulan anlatıda tek bir
-    /// tepeye sıçrama hiçbir şey yüklemiyordu (<c>ConsoleViewTests.A_rebuilt_narrative_brings_the_previous_slice_on_a_single_jump_to_the_top</c>).</para>
+    /// <para>[DEĞİŞEN KURAL — ikinci inceleme] Eskiden takastan sonra yükleyici koşulsuz silahsız bırakılıyordu; takasın olayları (sabitlemenin
+    /// dibe kaydırması dahil) yok sayıldığından onu hiçbir şey silahlandırmıyordu: yeniden kurulan anlatıda tek bir tepeye sıçrama hiçbir
+    /// şey yüklemiyordu (<c>ConsoleViewTests.A_rebuilt_narrative_brings_the_previous_slice_on_a_single_jump_to_the_top</c>).</para>
     /// </summary>
     private void SwapDocument(string text, bool toBottom)
     {
@@ -814,8 +814,19 @@ public partial class ConsoleView : UserControl
             PinAfterModeSwitch(toBottom);
         }
         finally { _swappingDocument = false; }
-        _armedForChunk = EditorControl.VerticalOffset > ChunkTopThresholdPx;
+        _armedForChunk = LoaderOffset > ChunkTopThresholdPx;
     }
+
+    /// <summary>
+    /// [idle-memory · dalga 2 · üçüncü inceleme — ölçüldü] Chunk yükleyicinin okuduğu dikey ofset: TextView'in KENDİ kaydırma ofseti —
+    /// kaydırma işleyicisi (<see cref="OnScrollOffsetChanged"/>), prepend'in telafisi (<see cref="PrependPreviousChunk"/>) ve takasın
+    /// bıraktığı durum (<see cref="SwapDocument"/>) aynı kaynağı okur. ScrollViewer'ın <c>VerticalOffset</c>'i TextView'in kaydırma olayında
+    /// henüz eskidir ve sonraki yerleşimde güncellenirken yeni olay gelmez — ölçüldü: gerçek pencerede editörün Ctrl+Home'u TEK olay üretir,
+    /// o olayda ScrollViewer 3173,4, TextView 0; ScrollViewer'ı okuyan işleyici "tepeden uzakta" deyip hiçbir şey yüklemiyordu
+    /// (<c>ConsoleViewTests.A_real_ctrl_home_in_a_rebuilt_narrative_loads_the_previous_slice</c>). İstem satırı da aynı olayda TextView'in
+    /// ofsetini okur (<see cref="PositionPrompt"/>).
+    /// </summary>
+    private double LoaderOffset => EditorControl.TextArea.TextView.ScrollOffset.Y;
 
     /// <summary>
     /// [design v1.7.0 §2.5 · animasyon spec §2] Panel geçişinin TEK hareketi. Log bloğu, <b>alt kenarı sabit
@@ -954,7 +965,8 @@ public partial class ConsoleView : UserControl
         // fırlatıyordu. İçerik büyümesini artık büyümeyi YAPAN yer bildirir (AppendBatch → ShouldFollow).
         _bottomAnchor.OnScrollChanged(extentHeightChange: 0);
 
-        EvaluateChunkScroll(EditorControl.VerticalOffset); // [3b, DEĞİŞMEDİ] chunk loader — üstteki eşik ayrı kavram
+        // Chunk loader — üstteki eşik ayrı kavram. Ofset TextView'in kendisinden (LoaderOffset): ScrollViewer'ınki bu olayda henüz eski.
+        EvaluateChunkScroll(LoaderOffset);
 
         // Prompt AYNI olayda taşınır. Konumu belgenin son satırından gelir; kaydırma o satırı yukarı iterken
         // imleç eski yerinde kalsaydı — bir tık tekerlek çevirmek yetiyordu — bir kare boyunca metnin ÜSTÜNE
@@ -974,7 +986,7 @@ public partial class ConsoleView : UserControl
         MotionTokens.AnimateSlowEaseInOut(this, EditorControl, EditorControl.VerticalOffset, target);
 
     /// <summary>[3b I-2] Chunk-scroll kararı. Offset dışarıdan verilir — üretimde <see cref="OnScrollOffsetChanged"/>
-    /// <c>EditorControl.VerticalOffset</c> ile çağırır; böylece GERÇEK yol (arm → tepeye-scroll → prepend → re-arm)
+    /// TextView'in kendi ofsetiyle (<see cref="LoaderOffset"/>) çağırır; böylece GERÇEK yol (arm → tepeye-scroll → prepend → re-arm)
     /// canlı bir scroll event'i olmadan test edilebilir (paralel bir kopya yol DEĞİL — üretimin çağırdığı metodun
     /// ta kendisi). Kullanıcı tepeden uzaklaşınca "arm" (ilk layout'ta offset=0 iken spurious prepend olmaz);
     /// yalnız gerçek bir tepeye-scroll önceki chunk'ı yükler.
@@ -1038,7 +1050,7 @@ public partial class ConsoleView : UserControl
         try
         {
             var tv = EditorControl.TextArea.TextView;
-            double before = EditorControl.VerticalOffset;
+            double before = LoaderOffset; // kaydırma olayının içinden de doğru: ScrollViewer'ınki orada henüz eski
             int prependedLines = _loadedFrom - from;
             double delta = prependedLines * tv.DefaultLineHeight;
 

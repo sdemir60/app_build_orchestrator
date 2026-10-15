@@ -108,11 +108,12 @@ public static class ConsoleLineClassifier
     public static bool IsOwnWarning(ReadOnlySpan<char> text) =>
         text.TrimStart().StartsWith(OwnWarningPrefix, StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>Uygulamanın ve motorun uyarı öneki — App'teki TEK tanımı: tanıma (<see cref="IsOwnWarning"/>) ve akış satırının öneki
-    /// düşürmesi (<c>StreamText.RunStartWarning</c>) bunu okur. Satırları üreten motor (Core/Supervisor) öneki kendi metnine yazar; App
-    /// yalnız tanır ve düşürür.
-    /// <para>[DEĞİŞEN KURULUM — ikinci inceleme] Eskiden <c>StreamText</c> öneki ayrıca tanımlıyordu (<c>"warning: "</c>) ve buradaki
-    /// "tek tanım" cümlesi onu gizliyordu; artık oradaki sabit bundan türer.</para></summary>
+    /// <summary>Uygulamanın ve motorun uyarı öneki — App'teki TEK tanımı: tanıma (<see cref="IsOwnWarning"/>), akış satırının öneki
+    /// düşürmesi (<c>StreamText.RunStartWarning</c>) ve App'in kendi yazdığı uyarı satırları (anlatı spool'unun yazım ve geri okuma
+    /// uyarısı — <see cref="NarrativeStore"/>) bunu okur. Motorun (Core/Supervisor) ürettiği satırlar öneki kendi metinlerinde taşır.
+    /// <para>[DEĞİŞEN KURULUM — ikinci inceleme · üçüncü inceleme] Eskiden <c>StreamText</c> öneki ayrıca tanımlıyordu (<c>"warning: "</c>)
+    /// ve <see cref="NarrativeStore"/>'un iki uyarısı onu metnin içinde yazıyordu; buradaki "tek tanım" cümlesi ikisini gizliyordu. Artık
+    /// hepsi bu sabitten türer.</para></summary>
     internal const string OwnWarningPrefix = "warning:";
 
     /// <summary>

@@ -253,13 +253,14 @@ public sealed class NarrativeStore : IConsoleBacklog
         _pendingWarning = warning;
     }
 
-    /// <summary>Yazım uyarısı (İngilizce): istisnanın TÜR adını taşır, yerelleştirilmiş OS iletisini değil.</summary>
+    /// <summary>Yazım uyarısı (İngilizce): istisnanın TÜR adını taşır, yerelleştirilmiş OS iletisini değil. Öneki uygulamanın uyarı
+    /// önekinin TEK tanımındandır (<see cref="ConsoleLineClassifier.OwnWarningPrefix"/>) — satır onunla tanınır ve amber boyanır.</summary>
     private static string WriteWarning(string path, Exception failure) =>
-        $"warning: console history could not be written to {path} — kept in memory ({failure.GetType().Name})";
+        $"{ConsoleLineClassifier.OwnWarningPrefix} console history could not be written to {path} — kept in memory ({failure.GetType().Name})";
 
-    /// <summary>Okuma uyarısı (İngilizce): tahliye edilmiş satırlar dosyadan geri okunamadı.</summary>
+    /// <summary>Okuma uyarısı (İngilizce): tahliye edilmiş satırlar dosyadan geri okunamadı. Öneki <see cref="WriteWarning"/>'inki.</summary>
     private static string ReadWarning(string path, Exception failure) =>
-        $"warning: console history could not be read back from {path} ({failure.GetType().Name})";
+        $"{ConsoleLineClassifier.OwnWarningPrefix} console history could not be read back from {path} ({failure.GetType().Name})";
 
     /// <summary>Anlatıyı boşaltır (yeni işlem). [idle-memory · final review m3] Satır dizisi de bırakılır: <c>List.Clear</c> onu en
     /// büyük işlemin boyunda tutardı — 100 k satırlık bir koşudan sonra ≈ 1 MB (LOH'ta), daha küçük bir işlem onu silse bile uygulama
