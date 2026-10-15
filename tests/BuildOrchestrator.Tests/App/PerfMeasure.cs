@@ -47,4 +47,16 @@ internal static class PerfMeasure
     /// <summary>Tek skaler ölçüm için kısa yol: warmup + GC + medyan.</summary>
     public static double MedianOf(Func<double> measure, int warmups, int samples)
         => Median(Sample(measure, warmups, samples));
+
+    /// <summary>[idle-memory · dalga 2 · fix 1] Eylemin TEST THREAD'İNDE ayırdığı bayt (<c>GC.GetAllocatedBytesForCurrentThread</c> —
+    /// süreç geneli değil: paralel koşan başka bir testin ayırması sayıya girmez). Ayırma pinlerinin TEK ölçüm yeri (konsol görünümünün
+    /// kopya pinleri ve kompakt konsolun sıcak yol pinleri). Ölçülecek eylemi kuran lambda çağrıdan ÖNCE yaratılır: kendi kapanışı
+    /// sayılmaz.</summary>
+    public static long AllocatedBy(Action action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        action();
+        return GC.GetAllocatedBytesForCurrentThread() - before;
+    }
 }

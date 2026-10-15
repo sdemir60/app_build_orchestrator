@@ -205,11 +205,12 @@ re-runs a failed release's failed jobs once. Installed copies pick the release u
    settings file, *Import settings…* on the invitation opens the dialog and, once it has settled, the file
    picker, centred over the window.
 
-   **General** holds switches in four groups — Startup, Build, Branches and Notifications. *Pull before build*
-   (see step 4), *Resolve cycles at full priority* (see [Performance modes](#performance-modes)), *Stash and
-   switch branches* (see step 3), *Start with Windows*, *Start minimized to tray*, *Close
-   to tray* and *Show notifications* all work, and *Save* keeps them. *Close to tray* and *Show notifications* are
-   on by default; what they change is described with the tray, further down.
+   **General** holds switches in five groups — Startup, Build, Branches, Console and Notifications. *Pull before
+   build* (see step 4), *Resolve cycles at full priority* (see [Performance modes](#performance-modes)), *Stash and
+   switch branches* (see step 3), *Compact console* (on by default; see the console, further down), *Start with
+   Windows*, *Start minimized to tray*, *Close to tray* and *Show notifications* all work, and *Save* keeps them.
+   *Close to tray* and *Show notifications* are on by default; what they change is described with the tray, further
+   down.
 
    *Start with Windows* starts the app when you sign in to Windows. *Save* applies it at once, and the switch
    always shows what Windows will actually do. *Start minimized to tray* (available while *Start with Windows* is
@@ -510,6 +511,13 @@ back up. Nothing is deleted from the top while you are reading, either, so the t
 still. The event stream behaves the same way and keeps a caret of its own on a timestamped line from the
 moment you open the app, whether or not anything has happened yet.
 
+**The console is compact by default.** For each project it shows a `building <name>` line, the project's errors in
+full, its first three distinct warnings and, once the project is done, one amber line that counts the rest by code —
+`App.Core: 214 more warnings — CS1591 ×180, CS0618 ×30, MSB3277 ×4 — see the project log`. Every other MSBuild line
+stays in the project's log: click the project to read it whole. The tool's own lines are never hidden, and while the
+console writes this way its header says `compact` beside the line count. Turn *Settings → General → Compact console*
+off to see every line; the change applies from the next run, and what is already on screen is not rewritten.
+
 A project's log opens **at the beginning** and stays there — what you are looking for in a build log is the
 first error, not the last line — so it does not follow the output and does not return on its own. Scroll to
 the bottom yourself and it starts following again. The header's `Back` button (an arrow icon and the word
@@ -678,8 +686,9 @@ rehearsal), and `BO_UPDATE_PRERELEASE=1` also offers pre-releases.
 ### State on disk
 
 Everything the app persists lives under `%LOCALAPPDATA%\BuildOrchestrator\`: `logs\run-<timestamp>\` (per-run
-and per-project logs, removed at the first engine start more than three days after their run — the latest run's
-folder always stays), `build-state.json`, `evaluation-cache.json`, `source-hash-cache.json`, `ui-state.json`
+and per-project logs, plus `narrative.log`, the run's console text as the app showed it; removed at the first engine
+start more than three days after their run — the latest run's folder always stays), `build-state.json`,
+`evaluation-cache.json`, `source-hash-cache.json`, `ui-state.json`
 and, only while a build is running, `run-inflight.json` — the projects being compiled right now. If the engine
 dies mid-build (a crash, Task Manager, a closed session), the next start finds that file, marks those projects
 as not built and prints `previous run was interrupted; N projects will rebuild`, so a half-written output is
@@ -772,10 +781,12 @@ The reasoning behind all three is in [`ARCHITECTURE.md` §11](ARCHITECTURE.md#11
 - **A full memory collection ends every operation.** When a run, Sync, Clean or Optimize ends, the app runs one
   blocking garbage collection to give back what the operation used — in a visible window after the closing lights
   (when the operation has them) and a short pause, in the tray as soon as the app is idle — for a run, once the
-  corner mark has played out. It stops the interface for as long as it takes, so a click inside that moment waits;
-  and the last operation's console text stays in memory until a new console section opens — the next run, Clean or
-  Optimize, a Sync you press, a branch or Debug/Release change, or closing the workspace. A pull and every other
-  Sync add to that text instead.
+  corner mark has played out. It stops the interface for as long as it takes, so a click inside that moment waits.
+  A run's console text goes to its run folder (`narrative.log`) and only its latest lines stay in memory — scrolling
+  further up reads the rest back from the file; the console text of a Sync, Deep Clean or Optimize, which have no run
+  folder, stays in memory until a new console section opens — the next run, Clean or Optimize, a Sync you press, a
+  branch or Debug/Release change, or closing the workspace. A pull and every other Sync add to the open section
+  instead.
 - **The IPC has no field-level schema validation.** A malformed *JSON* line is recoverable — the Supervisor
   answers `error(badCommand)` and keeps going — but a **framing** error (over-long or truncated line) is treated
   as unrecoverable: it writes `error(framing)` and exits with code 2, and the App reports the engine as dead.

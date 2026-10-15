@@ -479,8 +479,7 @@ public class SettingsDialogTests
         run.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 0, 0, Behind: 2));
         await run.PullRepositoryCommand.ExecuteAsync(null);
         Assert.True(run.PullBusy); // ön-koşul: pull uçuşta
-        var sent = new List<IpcCommand>();
-        run.DebugOnCommandSent = sent.Add;
+        var sent = SentCommands.RecordOn(run); // gerçek motor: gönderim devamı thread havuzunda koşabilir
 
         IReadOnlyList<LayerPattern> patterns = [new LayerPattern(0, "^A", "Alpha")];
         await run.ApplySettingsAsync(patterns, @"D:\other\repo", []);

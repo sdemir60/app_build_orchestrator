@@ -37,8 +37,8 @@ public sealed class BottomAnchorBehavior
     /// <param name="getOffset">Anlık VerticalOffset (px).</param>
     /// <param name="getExtent">Anlık ExtentHeight (px, toplam içerik yüksekliği).</param>
     /// <param name="getViewport">Anlık ViewportHeight (px).</param>
-    /// <param name="scrollInstant">İçerik-büyümesi yakalaması — ANINDA (animasyonsuz) dibe kaydırır (AppendBatch/
-    /// ScrollToEnd desenine eşdeğer).</param>
+    /// <param name="scrollInstant">İçerik-büyümesi yakalaması ve bekleme dönüşü — verilen ofsete (dibin kendisi,
+    /// <see cref="BottomOffset"/>) ANINDA (animasyonsuz) kaydırır.</param>
     /// <param name="scrollSmooth">Pill tıklaması — yumuşak (ya da reduced-motion'da anında) dibe kaydırır; bir
     /// animasyon BAŞLATILDIYSA true döner (host tipik olarak <see cref="ScrollAnimator.AnimateTo"/>'ya sarar).</param>
     /// <param name="scheduleOnce">560ms "jumping" penceresini zamanlar — testte enjekte edilebilir (D8); üretim
@@ -77,7 +77,14 @@ public sealed class BottomAnchorBehavior
     /// kaydırılamaz hâle geliyordu.</para>
     /// </summary>
     public bool ShouldFollow => _state.IsStuck && !_state.IsJumping && !_steering;
-    public double DistanceFromBottom => Math.Max(0, _getExtent() - _getOffset() - _getViewport());
+    public double DistanceFromBottom => Math.Max(0, BottomOffset - _getOffset());
+
+    /// <summary>Dibin ofseti — "dip"in TEK tanımı: içerik eksi görünür alan (sığan içerikte 0). Uzaklık ondan ölçülür, dibe her gidiş
+    /// (atlama, içerik büyümesi yakalaması, bekleme dönüşü) onu hedefler. Host da oturmuş bir kaydırma konumunun üst sınırı olarak okur
+    /// (konsol: yükleyicinin okuduğu konum buna kenetlenir — +∞ ya da dibin ötesindeki geçici bir istek dipte sayılır). İçerik
+    /// yüksekliği yalnız yerleşimde güncellenen bir host (ScrollViewer'ın <c>ExtentHeight</c>'ı — event stream) eşzamanlı bir yakalamada
+    /// henüz eski dibi hedefler; yeni dibe, yerleşimin ardından gelen kendi kaydırma olayıyla (içerik büyümesi) iner.</summary>
+    public double BottomOffset => Math.Max(0, _getExtent() - _getViewport());
     public bool ShowPill => BottomAnchorDecision.ShouldShowPill(_state, DistanceFromBottom, _thresholdPx);
 
     /// <summary>Elle üzerine yaz (ör. ConsoleView.StickToBottom setter'ı ile geriye dönük uyum) — dipten uzaklığı
@@ -98,7 +105,7 @@ public sealed class BottomAnchorBehavior
             _state, extentHeightChange, DistanceFromBottom, userDriven: _steering, _thresholdPx);
 
         if (extentHeightChange > 0 && ShouldFollow)
-            _scrollInstant(_getExtent()); // içerik büyümesi yakalaması — ANINDA, AppendBatch/ScrollToEnd ile aynı desen
+            _scrollInstant(BottomOffset); // içerik büyümesi yakalaması — ANINDA, dibin kendisine
         Notify(prev);
         // Bekleme sayacı BURADA kurulmaz: bu olayı akan içerik de doğurabilir ve o zaman sayaç hiç dolmazdı
         // (gerekçe: ArmIdleResume doc'u). Yalnız ham girdi onu ileri iter.
@@ -169,7 +176,7 @@ public sealed class BottomAnchorBehavior
             {
                 // Zaten dipteydi (kullanıcı kendi eliyle dibe indi): takip sürer. Durum değişmedi ama takip GERİ GELDİ —
                 // host'lar duyar [idle-memory · final review m1]: konsol takibe bağlı kırpmasını sonraki batch'i beklemeden yapar.
-                _scrollInstant(_getExtent());
+                _scrollInstant(BottomOffset);
                 RaiseChanged();
                 return;
             }
@@ -181,8 +188,7 @@ public sealed class BottomAnchorBehavior
     public void JumpToBottom()
     {
         _steering = false; // açık "şimdi dibe git" (pill ya da bekleme sonu) — takip yeniden devralır
-        double target = Math.Max(0, _getExtent() - _getViewport());
-        bool animated = _scrollSmooth(target);
+        bool animated = _scrollSmooth(BottomOffset);
         if (!animated) { ForceStuck(true); return; } // reduced-motion/instant — jumping penceresine gerek yok
 
         _state = BottomAnchorDecision.BeginJump(_state);
@@ -196,7 +202,10 @@ public sealed class BottomAnchorBehavior
         });
     }
 
-    private static void DefaultScheduleOnce(TimeSpan delay, Action callback)
+    /// <summary>Üretimin tek seferlik zamanlayıcısının TEK tanımı: bir <see cref="DispatcherTimer"/>, bir kez. Zamanlayıcısı enjekte
+    /// edilebilen her kullanıcı varsayılan olarak bunu alır — bu sınıf, <see cref="FollowScrollController"/> ve konsolun seam'i
+    /// (<c>ConsoleView.AnchorScheduleOnce</c>); ikinci bir tanım yazılmaz.</summary>
+    internal static void DefaultScheduleOnce(TimeSpan delay, Action callback)
     {
         var timer = new DispatcherTimer { Interval = delay };
         timer.Tick += (_, _) => { timer.Stop(); callback(); };

@@ -2,6 +2,7 @@ namespace BuildOrchestrator.Core.Planning;
 
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Discovery;
 using BuildOrchestrator.Core.Scheduling;
 
 /// <summary>Koşullu bir projenin sırası geldiğinde verilen karar.</summary>
@@ -249,7 +250,7 @@ public static class ConditionalRebuild
         ArgumentNullException.ThrowIfNull(nameOf);
         if (reason != WillBuildReason.WaitingForDependency || state?.DepIssueRoots is not { Count: > 0 } roots) return null;
         return [.. roots
-            .Select(id => nameOf(id) ?? Path.GetFileNameWithoutExtension(id))
+            .Select(id => nameOf(id) ?? ProjectDisplayName.FromPath(id))
             .Distinct(StringComparer.Ordinal)
             .OrderBy(name => name, StringComparer.Ordinal)];
     }

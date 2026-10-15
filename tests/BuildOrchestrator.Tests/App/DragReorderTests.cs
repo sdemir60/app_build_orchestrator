@@ -125,10 +125,7 @@ public class DragReorderTests
             var grip0 = Grip(itemsControl, rows[0])!;
 
             // Grip'e basış → davranış MOUSE'U YAKALAR (OLE DragDrop DEĞİL).
-            grip0.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left)
-            {
-                RoutedEvent = UIElement.MouseLeftButtonDownEvent,
-            });
+            MouseInput.PressLeft(grip0);
 
             Assert.True(grip0.IsMouseCaptured);                     // "uses mouse capture"
             Assert.Same(grip0, Mouse.Captured);
@@ -148,10 +145,7 @@ public class DragReorderTests
             Assert.Same(grip0, Mouse.Captured);
 
             // Bırakış → yakalama serbest, sürükleme durumu temizlenir.
-            grip0.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left)
-            {
-                RoutedEvent = UIElement.MouseLeftButtonUpEvent,
-            });
+            MouseInput.ReleaseLeft(grip0);
 
             Assert.Null(Mouse.Captured);
             Assert.Null(DragReorderBehavior.ActiveSession);

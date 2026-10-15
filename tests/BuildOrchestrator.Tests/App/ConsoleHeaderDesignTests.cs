@@ -190,6 +190,27 @@ public class ConsoleHeaderDesignTests
         Assert.Equal(8.0, header.LinesText.Margin.Left);
     }
 
+    // ---------------------------------------------------------------- compact etiketi (anlatı modu)
+
+    /// <summary>[idle-memory · dalga 2 · spec §6.5] Anlatı kompakt yazılırken sağ blokta sayacın HEMEN sağında <c>compact</c>
+    /// etiketi durur — sayaçla AYNI tipografi (Geist Mono 11, soluk metin) ve başlığın öğe aralığı (8px). Realize edilmiş başlıkta
+    /// ÇÖZÜLEN değerler okunur: yazılı bir DynamicResource'un doğru çözüldüğünü yalnız realize kanıtlar.</summary>
+    [StaFact]
+    public void The_compact_tag_follows_the_line_counter_in_its_typography_eight_pixels_apart()
+    {
+        var (header, window, host) = Realize(h => { h.ShowNarrative(1234); h.SetCompact(true); });
+
+        Assert.Equal(Visibility.Visible, header.CompactText.Visibility);
+        Assert.Equal("compact", header.CompactText.Text);
+        Assert.Equal(header.RightBlock.Children.IndexOf(header.LinesText) + 1, header.RightBlock.Children.IndexOf(header.CompactText));
+        Assert.Equal(8.0, header.CompactText.Margin.Left);
+        Assert.Same(AppFonts.Mono, header.CompactText.FontFamily);
+        Assert.Equal(header.LinesText.FontSize, header.CompactText.FontSize);
+        Assert.Equal(DsResources.TokenColor(host, "Brush.TextFaint"), DsResources.ColorOf(header.CompactText.Foreground));
+        Assert.True(header.CompactText.ActualWidth > 0, "the tag was laid out in the realized header");
+        GC.KeepAlive(window);
+    }
+
     // ---------------------------------------------------------------- Copy log → DS IconButton
 
     /// <summary>Eski sapma: Copy log özel bir kabuktu (<c>Style="{x:Null}"</c>, elle Background/BorderThickness/

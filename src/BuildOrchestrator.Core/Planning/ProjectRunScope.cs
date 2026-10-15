@@ -1,6 +1,7 @@
 namespace BuildOrchestrator.Core.Planning;
 
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Discovery;
 using BuildOrchestrator.Core.Scheduling;
 
 /// <summary>
@@ -91,5 +92,5 @@ public sealed record ProjectRunScope(BuildPlan Plan, ProjectNode Target, IReadOn
 
     /// <summary>Kullanıcıya giden gerekçe (planlama-hatası kanalı): hedef planda yok — topoloji bayat.</summary>
     public static string NotInPlanMessage(string targetId) =>
-        $"'{Path.GetFileNameWithoutExtension(targetId)}' is not in the workspace plan — it may have been moved or removed. Sync, then build it again.";
+        $"'{ProjectDisplayName.FromPath(targetId)}' is not in the workspace plan — it may have been moved or removed. Sync, then build it again.";
 }

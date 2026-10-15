@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Windows;
 using BuildOrchestrator.App.Console;
 using ICSharpCode.AvalonEdit.Document;
+using static BuildOrchestrator.Tests.App.ConsoleDocument;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -190,8 +191,7 @@ public class ConsoleMemoryTests
 
         Assert.True(view.Document.LineCount <= ConsoleView.SeededDocumentLines, // KIRMIZI: bugün belge 1001 satırda kalır
             $"the narrative document still holds {view.Document.LineCount} lines after following resumed");
-        view.EvaluateChunkScroll(100.0); // arm: kullanıcı tepeden uzaklaştı
-        view.EvaluateChunkScroll(0.0);   // tepeye kaydırma: önceki dilim store'dan
+        ScrollUpToTheTop(view); // tepeye kaydırma: önceki dilim store'dan
         int shown = view.Document.LineCount - 1;                                        // son satır: '\n' sonrası boş satır
         Assert.Equal(store.Join(store.Count - shown, store.Count), view.Document.Text); // store'un son dilimi, bitişik
         GC.KeepAlive(window);
@@ -249,8 +249,8 @@ public class ConsoleMemoryTests
         foreach (var line in Lines(2000, seed: 7, padding: 500)) store.Append(line); // üretim sırası: önce store, sonra batch
         string batch = store.Join(from, store.Count);
 
-        long viewCost = AllocatedBy(() => view.AppendNarrativeBatch(batch));
-        long documentCost = AllocatedBy(() => InsertAndTrim(twin.Document, batch));
+        long viewCost = PerfMeasure.AllocatedBy(() => view.AppendNarrativeBatch(batch));
+        long documentCost = PerfMeasure.AllocatedBy(() => InsertAndTrim(twin.Document, batch));
 
         Assert.True(view.Document.LineCount <= ConsoleView.SeededDocumentLines, "ön-koşul: belge render dilimine kırpılmadı (vakum)");
         long copy = batch.Length * (long)sizeof(char);
@@ -286,8 +286,8 @@ public class ConsoleMemoryTests
         int textBefore = stale.Document.TextLength;
         staleStore.Clear(); // gizliyken yeni işlem: VM anlatıyı boşalttı, görünüm yeniden bağlanmadı (kabuk yalnız bayat bayrağını kaldırdı)
 
-        long twinCost = AllocatedBy(() => twin.StickToBottom = true);   // takip geri geldi → kırpma sorulur; kuyruk boş, okuma yok
-        long staleCost = AllocatedBy(() => stale.StickToBottom = true); // aynı kırpma; kuyruk kırpılanların TAMAMI, okuma kapısı kapalı
+        long twinCost = PerfMeasure.AllocatedBy(() => twin.StickToBottom = true);   // takip geri geldi → kırpma sorulur; kuyruk boş, okuma yok
+        long staleCost = PerfMeasure.AllocatedBy(() => stale.StickToBottom = true); // aynı kırpma; kuyruk kırpılanların TAMAMI, okuma kapısı kapalı
 
         Assert.True(stale.Document.LineCount <= ConsoleView.SeededDocumentLines, "ön-koşul: bayat belge render dilimine kırpılmadı (vakum)");
         Assert.Equal(twin.Document.TextLength, stale.Document.TextLength); // ikisi de aynı kırpmayı yaptı
@@ -326,13 +326,5 @@ public class ConsoleMemoryTests
         var lastAbove = document.GetLineByNumber(document.LineCount - ConsoleView.RenderSliceLines);
         document.Remove(0, lastAbove.EndOffset + lastAbove.DelimiterLength);
         document.EndUpdate();
-    }
-
-    /// <summary>Eylemin test thread'inde ayırdığı bayt.</summary>
-    private static long AllocatedBy(Action action)
-    {
-        long before = GC.GetAllocatedBytesForCurrentThread();
-        action();
-        return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 }

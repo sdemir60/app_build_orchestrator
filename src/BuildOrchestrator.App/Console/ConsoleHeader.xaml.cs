@@ -18,7 +18,10 @@ namespace BuildOrchestrator.App.Console;
 ///
 /// <para>[3b] Copy-log butonu (Ek A #3): yalnız proje-log modunda (log varken) görünür; <see cref="LogTextProvider"/>'ın
 /// döndürdüğü TAM log metnini <see cref="ClipboardWriter"/> (retry sarmalayıcı) ile panoya yazar; başarıda ikon
-/// 1400ms ✓ + "Copied" tooltip (<see cref="CopyLogFeedback"/>).</para></summary>
+/// 1400ms ✓ + "Copied" tooltip (<see cref="CopyLogFeedback"/>).</para>
+///
+/// <para>[idle-memory · dalga 2 · spec §6.5] Anlatı kompakt yazılırken sayacın yanında <c>compact</c> etiketi
+/// (<see cref="SetCompact"/>) — yalnız anlatı modunda ve workspace varken.</para></summary>
 public partial class ConsoleHeader : UserControl
 {
     /// <summary>UIA rolü — gerekçe ve ölçüm <see cref="UserControlRolePeer"/>'de.</summary>
@@ -69,7 +72,8 @@ public partial class ConsoleHeader : UserControl
     /// Testte fail/success enjekte edilir (gerçek panoya dokunmadan görsel toggle doğrulanır — D8).</summary>
     public Func<string, bool> ClipboardWriter { get; set; } = ClipboardRetry.SetText;
 
-    /// <summary>Anlatı modu: caps "CONSOLE" etiketi + N lines; proje başlığı öğeleri + copy butonu gizli.</summary>
+    /// <summary>Anlatı modu: caps "CONSOLE" etiketi + N lines (+ anlatı kompakt yazılıyorsa <c>compact</c>); proje başlığı öğeleri +
+    /// copy butonu gizli.</summary>
     public void ShowNarrative(int lineCount)
     {
         Mode = HeaderMode.Narrative;
@@ -77,6 +81,7 @@ public partial class ConsoleHeader : UserControl
         ProjectLogGroup.Visibility = Visibility.Collapsed;
         ResetCopyVisual();
         CopyLogButton.Visibility = Visibility.Collapsed;
+        ApplyCompactTag();
         SetLineCount(lineCount);
     }
 
@@ -91,6 +96,7 @@ public partial class ConsoleHeader : UserControl
         Mode = HeaderMode.ProjectLog;
         ConsoleLabel.Visibility = Visibility.Collapsed;
         ProjectLogGroup.Visibility = Visibility.Visible;
+        ApplyCompactTag(); // proje sayfası her zaman tamdır: etiket düşer
 
         ProjectNameText.Text = row.Name;
         ApplyStatus(row);
@@ -146,9 +152,38 @@ public partial class ConsoleHeader : UserControl
     }
 
     /// <summary>[design v1.8.0 §3.1 · prototip panel başlığı] Workspace yokken <c>N lines</c> sayacı gizlidir — konsol
-    /// yalnız workspace bekler. Kabuk bunu <c>RunViewModel.HasWorkspace</c>'ten sürer (<c>ShellRoot.SetHasWorkspace</c>).</summary>
-    public void SetHasWorkspace(bool hasWorkspace) =>
+    /// yalnız workspace bekler. Kabuk bunu <c>RunViewModel.HasWorkspace</c>'ten sürer (<c>ShellRoot.SetHasWorkspace</c>). Sayaçla
+    /// birlikte <c>compact</c> etiketi de gider (<see cref="ApplyCompactTag"/>).</summary>
+    public void SetHasWorkspace(bool hasWorkspace)
+    {
+        _hasWorkspace = hasWorkspace;
         LinesText.Visibility = hasWorkspace ? Visibility.Visible : Visibility.Collapsed;
+        ApplyCompactTag();
+    }
+
+    /// <summary>Workspace var mı — sayacın görünürlüğüyle aynı başlangıç (XAML'de sayaç görünür).</summary>
+    private bool _hasWorkspace = true;
+
+    /// <summary>Konsol bundan sonra kompakt mı yazıyor (<see cref="SetCompact"/>).</summary>
+    private bool _compact;
+
+    /// <summary>[idle-memory · dalga 2 · spec §6.5 · karar 204] Konsolun proje çıktısını BUNDAN SONRA yazacağı kip kompakt mı — kabuk bunu
+    /// <c>RunViewModel.CompactConsoleInEffect</c>'ten sürer: ayarın kendisi değil, etkin kip. İşlem uçuştayken o işlemin başında
+    /// yakaladığı kiptir; uçuşta işlem yokken ayarın kendisidir (boştaki Save'de hemen, işlem sürerken yapılan Save'de o işlem bitince).
+    /// Ekrandaki metnin hangi kiple yazıldığını söylemez: özet satırları kendini anlatır.</summary>
+    public void SetCompact(bool compact)
+    {
+        _compact = compact;
+        ApplyCompactTag();
+    }
+
+    /// <summary>[karar 12 · preflight C8] <c>compact</c> etiketi yalnız anlatı modunda ve workspace varken görünür: "N lines" orada
+    /// anlatının (kompakt) satırlarını sayar. Proje sayfası her zaman tamdır — orada etiket yalan olurdu; workspace yokken sayacın
+    /// kendisi de yoktur. Etiket proje modunda hiç görünmediği için sağ bloğun genişliğini proje adının payından düşürmez.</summary>
+    private void ApplyCompactTag() =>
+        CompactText.Visibility = _compact && _hasWorkspace && Mode == HeaderMode.Narrative
+            ? Visibility.Visible
+            : Visibility.Collapsed;
 
     /// <summary>[perf Faz A · A6 test yüzeyi] <see cref="SetLineCount"/> çağrı sayacı — gizliyken 200 ms'lik tikin sayacı
     /// yazmadığını, dönüşte TEK kez yenilediğini pinler.</summary>

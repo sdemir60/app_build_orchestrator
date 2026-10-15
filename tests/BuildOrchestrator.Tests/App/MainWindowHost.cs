@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -32,6 +33,22 @@ internal static class MainWindowHost
     /// <summary>Konsol pompası test boyunca hiç tick etmesin — batcher sonsuza dek bekler.</summary>
     public static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
 
+    /// <summary>[idle-memory · dalga 2 · fix 1 · M5] Pompası testin elinde olan konsol: tick beklemez, kanal <see cref="DrainPosted"/> ile
+    /// tek seferde boşaltılır — VM'in pompaya NE gönderdiğini sınayan testlerin TEK kurulumu (<see cref="NeverTickingBatcher"/>'ın eşi).</summary>
+    public static ConsoleBatcher DrainableBatcher() => new(_ => Task.CompletedTask);
+
+    /// <summary>[fix 1 · M5] Kanalı tamamlar ve üretimin pompasıyla tek seferde boşaltır; postlanan metni döner (her satır '\n' sonekli,
+    /// bir reseed sentinel'i kendinden önceki satırları atar — üretimdeki gibi). Pompaya gideni store'la karşılaştıran testlerin TEK
+    /// boşaltma yeri.</summary>
+    public static async Task<string> DrainPosted(ConsoleBatcher console)
+    {
+        ArgumentNullException.ThrowIfNull(console);
+        var posted = new StringBuilder();
+        console.Complete();
+        await console.PumpAsync((text, _) => posted.Append(text), CancellationToken.None);
+        return posted.ToString();
+    }
+
     /// <summary>Üretim kablajının TAMAMIYLA kurulu bir <see cref="MainWindow"/>'u + onun VM'i.</summary>
     /// <param name="beforeVm">[A13/T6 · t1] VM kurulduktan SONRA, pencere ctor'u onu SEED etmeden ÖNCE koşar.
     /// Pencerenin ctor'unda olan biteni (kalıcı durumdan repo/branch/perf seed'i — <c>MainWindow.xaml.cs:126</c>)
@@ -56,9 +73,18 @@ internal static class MainWindowHost
     /// (<see cref="NeverTickingBatcher"/>): satırlar kanalda bekler, belgeye yalnız testin kendisi batch verir. Pompayı kendisi
     /// süren testler (ör. bellek bütçesi ölçümü: tick etmeyen pompanın kanalında biriken satırlar üretimde yoktur) kendi
     /// pompasını verir.</param>
+    /// <param name="compactConsole">[idle-memory · dalga 2 · spec §6.5] Kabuğun konsolu kompakt mı yazsın. Varsayılan KAPALI
+    /// (<c>false</c>): üretimin varsayılanı açıktır, ama pencere kuran testlerin anlatı iddiaları (her proje satırı anlatıda, "N
+    /// lines" satır satır, model ile belge eşitliği) her satırın geçtiği kipi pinler — kompakt kip bilgi ve komut satırlarını gizler
+    /// ve onları sessizce boşa düşürürdü. Kompakt kipi sınayan testler <c>true</c> verir; <c>null</c> ⇒ dokunulmaz: değer pencerenin
+    /// kalıcı durumdan tohumladığıdır (açılış seed'ini gözleyen testler). Değer pencere kurulduktan SONRA atanır — ctor kalıcı
+    /// durumdan tohumlar ve önce atanan bir değeri ezerdi (<paramref name="beforeVm"/>'deki bir atama da ezilir). İşlem yokken
+    /// atandığı için hemen etkindir (<see cref="RunViewModel.CompactConsoleInEffect"/>). Atama tohumdan farklıysa kabuğun kalıcılık
+    /// zinciri enjekte edilen store'u yazar (yalnız temp dosyası): store'un henüz yazılmadığını ön-koşul alan test <c>null</c>
+    /// verir.</param>
     public static (MainWindow window, RunViewModel vm) New(TempDir uiStateDir, Action<RunViewModel>? beforeVm = null,
         UiState? saved = null, AutostartService? autostart = null, Func<long>? nowMs = null,
-        bool productionMemoryCollector = false, ConsoleBatcher? console = null)
+        bool productionMemoryCollector = false, ConsoleBatcher? console = null, bool? compactConsole = false)
     {
         ArgumentNullException.ThrowIfNull(uiStateDir);
         var engine = new EngineHost(Path.Combine(AppContext.BaseDirectory, "no-such-supervisor.exe"));
@@ -75,6 +101,7 @@ internal static class MainWindowHost
         if (saved is not null) store.Save(saved);
         var window = new MainWindow(engine, vm, batcher, DsResources.NewScope(), store, autostart);
         if (!productionMemoryCollector) window.MemoryCollector = NoRealGc.Collection;
+        if (compactConsole is { } compact) vm.CompactConsole = compact; // ctor'un seed'inden SONRA (yukarıdaki param doc'u)
         return (window, vm);
     }
 
@@ -268,11 +295,24 @@ internal static class MainWindowHost
     /// (<see cref="SafeExitTests"/>) ve kabuk (<see cref="CloseToTrayTests"/>) testlerinin ORTAK başlangıcı — iki
     /// harness'ta ayrı ayrı yazılıyordu. <paramref name="names"/> koşunun proje adlarıdır (toplam proje = adet);
     /// verilmezse tek projelik koşu (eski davranış birebir). Aynı adlar <see cref="FinishBuild"/>'e verilir.</summary>
-    public static void StartBuild(RunViewModel vm, params string[] names)
+    public static void StartBuild(RunViewModel vm, params string[] names) => StartBuildIn(vm, logDirectory: null, names);
+
+    /// <summary>[idle-memory · dalga 2 · spec §6.3] <see cref="StartBuild"/> + motorun bildirdiği koşu klasörü
+    /// (<c>runStarted.LogDirectory</c>): VM koşu anlatısını o klasördeki dosyaya yayar. Ayrı adlıdır — <see cref="StartBuild"/>'e
+    /// <c>params</c>'tan önce isteğe bağlı bir klasör parametresi eklenemezdi: <c>StartBuild(vm, "A")</c> "A"yı klasör sanırdı.
+    /// Klasörü <see cref="SpoolDir"/> verir; dispose'u spool'u kapatır.</summary>
+    public static void StartBuildWithLogDirectory(RunViewModel vm, string logDirectory, params string[] names)
+    {
+        ArgumentNullException.ThrowIfNull(logDirectory);
+        StartBuildIn(vm, logDirectory, names);
+    }
+
+    /// <summary><see cref="StartBuild"/> ile <see cref="StartBuildWithLogDirectory"/>'nin TEK gövdesi: olay tek yerde kurulur.</summary>
+    private static void StartBuildIn(RunViewModel vm, string? logDirectory, string[] names)
     {
         ArgumentNullException.ThrowIfNull(vm);
         ArgumentNullException.ThrowIfNull(names);
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, Math.Max(names.Length, 1), 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, Math.Max(names.Length, 1), 1, "Debug", 0, LogDirectory: logDirectory));
     }
 
     /// <summary>[perf A1 fix 1] Koşu biter: her proje derlenir (<c>projectStarted</c> + <c>projectSucceeded</c>) ve
@@ -338,6 +378,21 @@ internal static class MainWindowHost
         ArgumentNullException.ThrowIfNull(text);
         vm.OnEvent(new ProjectLogEvent("r1", IdOf(name), lineNumber, text));
     }
+
+    /// <summary>[idle-memory · dalga 2 · fix 1 · M5] MSBuild'in satır içi uyarı satırı (girintili, <c>&lt;dosya&gt;(&lt;satır&gt;,1): warning
+    /// &lt;KOD&gt;: &lt;metin&gt;</c>) — her satır numarası ayrı, TEKİL bir uyarıdır. Kompakt konsolun süzgeç ve VM testlerinin TEK satır
+    /// kurucusu.</summary>
+    public static string WarningLine(int line, string code = "CS1591", string text = "Missing XML comment") =>
+        $"  C:\\r\\A.cs({line},1): warning {code}: {text}";
+
+    /// <summary>[dalga 2 son inceleme · defter 9] MSBuild'in satır içi hata satırı (girintili, <c>&lt;dosya&gt;(&lt;satır&gt;,1): error
+    /// CS0103: …</c>) — <see cref="WarningLine"/>'ın eşi: her satır numarası ayrı bir hatadır. Kompakt konsolun süzgeç, VM ve sınıflandırıcı
+    /// testlerinin TEK satır kurucusu.</summary>
+    public static string ErrorLine(int line) => $"  C:\\r\\A.cs({line},1): error CS0103: The name 'x' does not exist";
+
+    /// <summary>[dalga 2 son inceleme O5] Bir proje logunun ilk satırı: motorun yazdığı MSBuild komut satırı (tırnakla başlar — bilgi
+    /// satırı, kompakt kipte gizlenir). Süzgeç ve VM testlerinin TEK komut satırı girdisi.</summary>
+    public const string CommandLine = "\"C:\\Program Files\\MSBuild.exe\" C:\\p\\A.csproj -t:Build -v:minimal";
 
     /// <summary>[perf A3/A4 fix] Bir derlemenin TÜM olay akışı: plan (<see cref="PreviewBuild"/>), başlangıç
     /// (<see cref="StartBuild"/>), her projenin derlenmesi ve bitiş (<see cref="FinishBuild"/>). Gizli-pencere testleri

@@ -1,5 +1,6 @@
 using System.Linq;
 using System.Windows;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using BuildOrchestrator.App.Console;
@@ -473,6 +474,15 @@ public class ConsoleHoverBandTests
     /// yansıtır. Doğru davranış: o anda GEÇİCİ olarak gizlenmek (eşleşme yok, GERÇEKTEN) ama imleç konumunu
     /// SAKLAMAK — biraz sonra gelecek gerçek <c>VisualLinesChanged</c> (yeniden ölçüm bitince) bandı doğru
     /// satırda GERİ GETİRMELİDİR.
+    /// <para>[DEĞİŞEN KURULUM — dalga 2 üçüncü inceleme] İddia aynı; uyaran ve kurulum değişti. Eski hâli
+    /// <c>Editor.ScrollToVerticalOffset(far)</c> ardından <see cref="ConsoleView.OnScrollOffsetChanged"/>'i doğrudan çağırıyordu. Ölçüldü:
+    /// ScrollViewer kaydırma komutunu düzen geçişine erteler — o çağrıdan sonra iki ofset de yerinde kalıyor, olay doğmuyordu; uzak atlama
+    /// hiç gerçekleşmiyordu. Test yine de yeşildi, çünkü doğrudan çağrı chunk yükleyicisini ateşliyordu: takipte kırpılan 100 satır tepeye
+    /// eklenince görsel satırlar geçersizleşti (bant bu yüzden gizlendi), düzen de telafi ofsetinde oturdu (bant bu yüzden geri geldi).
+    /// Kaydırma işleyicisi TextView'in kendi ofsetini okumaya başlayınca yükleyici kurulumun kendi tepeye kaydırmasında çalıştı ve o tesadüf
+    /// kalktı. Yeni uyaran ScrollViewer'ın düzen içinde yaptığı çağrının kendisidir — <c>IScrollInfo.SetVerticalOffset</c> (TextArea →
+    /// TextView): gerçek olay gerçek kablodan, görsel satırlar hâlâ eski bölgedeyken ateşlenir (ön-koşullar pinli). Kurulum tepeye iki kez
+    /// kaydırır: ilki kırpılan satırları geri yükleyip ofseti telafi eder, ikincisi belgenin gerçek tepesine götürür.</para>
     /// </summary>
     [StaFact]
     public void Real_scroll_event_before_relayout_hides_then_the_later_VisualLinesChanged_recovers_the_band()
@@ -482,7 +492,11 @@ public class ConsoleHoverBandTests
         view.UpdateLayout();
         view.StickToBottom = false;
         view.Editor.ScrollToVerticalOffset(0);
-        view.UpdateLayout();
+        view.UpdateLayout();                    // tepe: kırpılan 100 satır geri yüklenir, ofset telafi edilir
+        view.Editor.ScrollToVerticalOffset(0);
+        view.UpdateLayout();                    // belgenin gerçek tepesi: yüklenecek eski satır kalmadı
+        Assert.StartsWith("line0\n", view.Document.Text);           // ön-koşul: belge tam
+        Assert.Equal(0, view.Editor.TextArea.TextView.ScrollOffset.Y); // ön-koşul: tepede
 
         const double fixedScreenY = 5;
         view.UpdateHoverBand(fixedScreenY);
@@ -491,10 +505,12 @@ public class ConsoleHoverBandTests
         var textView = view.Editor.TextArea.TextView;
         double farOffset = textView.DefaultLineHeight * 250; // eski viewport'un ÇOK ötesinde bir atlama
 
-        // ÜRETİM SIRASI: scroll offset'i değiştir ve GERÇEK ScrollOffsetChanged kablosunun çağırdığı metodu
-        // hemen çağır — UpdateLayout BİLEREK burada henüz çağrılmaz (VisualLines hâlâ ESKİ viewport'u yansıtır).
-        view.Editor.ScrollToVerticalOffset(farOffset);
-        view.OnScrollOffsetChanged();
+        // ÜRETİM SIRASI: ScrollViewer'ın düzen içinde yaptığı çağrı — TextView ofseti değiştirir ve GERÇEK
+        // ScrollOffsetChanged'i (üretim kablosu → OnScrollOffsetChanged) yeniden ölçümden ÖNCE ateşler.
+        // UpdateLayout BİLEREK burada henüz çağrılmaz (VisualLines hâlâ ESKİ viewport'u yansıtır).
+        ((IScrollInfo)view.Editor.TextArea).SetVerticalOffset(farOffset);
+        Assert.Equal(farOffset, textView.ScrollOffset.Y, precision: 1);         // ön-koşul: olay yeni ofsetle doğdu
+        Assert.Equal(1, textView.VisualLines[0].FirstDocumentLine.LineNumber); // ön-koşul: görsel satırlar hâlâ eski bölgede
 
         Assert.Equal(0, ((SolidColorBrush)view.HoverBand.Fill).Color.A); // eski VisualLines'ta karşılık yok → gizlenir
 

@@ -5,8 +5,8 @@
              xmlns:app="clr-namespace:BuildOrchestrator.App">
   <!-- [T56/3a → v1.18.0 §9 "Konsol başlığı ve `Back` satırı"] Konsol panel başlığı — README §9 v1.18.0 alt
        bölümüyle BİREBİR: 28px sabit, 10px yatay padding, öğeler arası 8px, zemin surface, alt 1px
-       border-subtle. İki hâl aynı kabuktadır: anlatı (caps "CONSOLE" + sağda N lines) ve proje-log (Back +
-       proje adı + statü glyph/adı + [dep-issue] + [cycle] solda, Copy log + N lines sağda).
+       border-subtle. İki hâl aynı kabuktadır: anlatı (caps "CONSOLE" + sağda N lines, anlatı kompakt yazılıyorsa yanında
+       "compact") ve proje-log (Back + proje adı + statü glyph/adı + [dep-issue] + [cycle] solda, Copy log + N lines sağda).
 
        Sol/sağ ayrımı DIŞ Grid'in iki sütunuyladır (* / Auto): sağ blok (Copy log + N lines) HER ZAMAN tam
        genişliğindedir — asla kırpılmaz. Sol taraftaki İÇ Grid'in ALTI sütunu da Auto'dur (proje adı DAHİL) —
@@ -108,8 +108,9 @@
       </Grid>
 
       <!-- SAĞ: Copy log (yalnız proje-log modunda, log varken) + N lines (TAM tampon uzunluğu — Ek A #23;
-           render dilimi DEĞİL). Auto sütunda durur — asla kırpılmaz. x:Name="RightBlock": ApplyProjectNameShrink
-           sol bloğun payını RootGrid.ActualWidth'ten BUNUN GERÇEK genişliğini düşerek hesaplar. -->
+           render dilimi DEĞİL) + compact (yalnız anlatı modunda, kompakt yazılırken). Auto sütunda durur — asla kırpılmaz.
+           x:Name="RightBlock": ApplyProjectNameShrink sol bloğun payını RootGrid.ActualWidth'ten BUNUN GERÇEK genişliğini
+           düşerek hesaplar. -->
       <StackPanel x:Name="RightBlock" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
         <!-- [3b/Ek A #3 → v1.18.0] DS IconButton (22×22, sm ölçüsü zaten budur). İkon fontu YOK: Icon.Copy →
              başarılı kopyada Icon.Check + "Copied" tooltip (1400ms), ikisi de Icons.xaml'den çizilmiş
@@ -126,6 +127,12 @@
         <TextBlock x:Name="LinesText" Margin="8,0,0,0" VerticalAlignment="Center"
                    FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="11"
                    Foreground="{DynamicResource Brush.TextFaint}" />
+        <!-- [idle-memory · dalga 2 · spec §6.5] "compact": anlatıyı kompakt kip yazıyorsa sayacın hemen sağında — sayaçla AYNI
+             tipografi (mono 11, soluk), öğeler arası 8px. Yalnız anlatı modunda ve workspace varken görünür; görünürlük
+             kod-tarafıdır (SetCompact · ApplyCompactTag). -->
+        <TextBlock x:Name="CompactText" Text="compact" Margin="8,0,0,0" VerticalAlignment="Center"
+                   FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="11"
+                   Foreground="{DynamicResource Brush.TextFaint}" Visibility="Collapsed" />
       </StackPanel>
     </Grid>
   </Border>

@@ -7,6 +7,8 @@ using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Tests.Supervisor;
 using ICSharpCode.AvalonEdit.Document;
+using static BuildOrchestrator.Tests.App.MainWindowHost;
+using static BuildOrchestrator.Tests.App.ConsoleDocument;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -17,8 +19,6 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class ConsoleModesTests
 {
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
-
     // ---------------------------------------------------------------- başlık modları
 
     // [v1.18.0 §9] Sol grubun tamamı (Back + ad + statü + rozetler) artık TEK bir konteynerdir
@@ -131,7 +131,7 @@ public class ConsoleModesTests
         // reseed yolunda apply yalnız pump sentinel'e uğrayınca çağrılırdı → gövde eski içeriği gösterirdi (RED);
         // Solution B'de doküman senkron kurulur → gövde eski içeriği ARTIK göstermez (GREEN).
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var batcher = new ConsoleBatcher(_ => Task.Delay(Timeout.Infinite)); // pump asla ilerlemez
+        var batcher = NeverTickingBatcher(); // pump asla ilerlemez
         var vm = new RunViewModel(engine, batcher, () => "r1");
         var view = new ConsoleView();
         var header = new ConsoleHeader();
@@ -480,7 +480,7 @@ public class ConsoleModesTests
     public async Task Clicking_a_project_without_a_log_still_opens_its_page()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe); // hiç başlatılmadı
-        var vm = new RunViewModel(engine, new ConsoleBatcher(_ => Task.Delay(Timeout.Infinite)), () => "r1");
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         const string projectId = @"C:\p\skipped.csproj";
         vm.OnEvent(new ProjectSkippedEvent("r1", projectId, SkipReasons.UpToDate));
 
@@ -551,8 +551,7 @@ public class ConsoleModesTests
         string[] live = [.. Enumerable.Range(0, 60).Select(i => $"live{i}")];
         foreach (var line in live) window.AppendConsoleBatch(line + "\n", window.ConsoleReseedGen);
 
-        console.EvaluateChunkScroll(100.0); // arm: kullanıcı tepeden uzaklaştı
-        console.EvaluateChunkScroll(0.0);   // tepeye kaydırma: önceki dilim backlog'dan
+        ScrollUpToTheTop(console); // tepeye kaydırma: önceki dilim backlog'dan
 
         var oracle = new TextDocument(log + string.Concat(live.Select(line => line + "\n")));
         Assert.Equal(ConsoleDocument.LinesOf(oracle), ConsoleDocument.LinesOf(console.Document)); // KIRMIZI: bugün dikişte line161 iki kez
@@ -561,11 +560,16 @@ public class ConsoleModesTests
 
     // ---------------------------------------------------------------- N lines = TAM tampon (Ek A #23)
 
+    /// <summary>"N lines" anlatının tamamını sayar (render dilimini değil) — satır satır.
+    /// <para>[DEĞİŞEN KURULUM — idle-memory dalga 2 · spec §6.5] VM kompakt konsolu açıkça KAPALI kurar: eskiden her proje satırı
+    /// anlatıya aynen girerdi; üretim varsayılanı artık kompakt kiptir ve buradaki üç bilgi satırını gizler (sayaç 1: yalnız
+    /// başlık). İddia aynı, tam kipte — kompakt kipte sayacın anlatının gerçek satırlarını (başlık ve özet dahil) saydığı
+    /// <see cref="CompactConsoleTests"/>'tedir.</para></summary>
     [Fact]
     public async Task GetActiveLineCount_reflects_full_run_buffer_length_line_for_line()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe); // hiç başlatılmadı — OnEvent engine'e dokunmaz
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { CompactConsole = false };
 
         Assert.Equal(0, vm.GetActiveLineCount());
 

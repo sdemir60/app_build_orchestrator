@@ -93,6 +93,10 @@ public sealed class SafeExitProcessTests
             LegacyWorktreePoolRoot = TestPaths.MissingLegacyPoolRoot, // [final review M8]
         };
 
+        // [idle-memory · dalga 2] Motor runStarted'la sandbox'taki koşu klasörünü bildirir ve VM anlatıyı oraya yayar. Üretimde süreç
+        // çıkışta biter ve tutamacı sistem kapatır; test sürecinde VM yaşar — spool, test nasıl biterse bitsin (düşen bir iddia, Skip)
+        // sandbox silinmeden önce kapanır: kapsam bu metot dönerken kapanır, sandbox'ı çağıran ondan sonra siler.
+        using var spool = new SpoolScope(vm.Narrative);
         // Motorun olayları MainWindow'daki gibi VM'in thread'ine, dispatcher kuyruğuyla taşınır; sıra korunur. Yol
         // InvokeAsync DEĞİL BeginInvoke'tur [Task 5 fix round 1 · M3]: InvokeAsync, VM'den (ya da ExitReady
         // handler'ından) kaçan bir istisnayı kendi görevinde sessizce tutar ve test bir zaman aşımına düşerdi;
@@ -116,11 +120,11 @@ public sealed class SafeExitProcessTests
         engine.EngineExited += code => dispatcher.BeginInvoke(() => vm.OnEngineExited(code));
 
         // (1)'in ölçüsü: stopRun giderken ExitReady kaç kez atılmıştı. (2)'ninki: ExitReady ANINDAKİ durum.
-        var sent = new List<IpcCommand>();
+        var sent = new SentCommands(); // gerçek motor: gönderim devamı thread havuzunda koşabilir
         int readyCount = 0, readyAtStop = -1;
         vm.DebugOnCommandSent = cmd =>
         {
-            sent.Add(cmd);
+            sent.Record(cmd);
             if (cmd is StopRunCommand) readyAtStop = readyCount;
         };
         ExitMoment? atReady = null;

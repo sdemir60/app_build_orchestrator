@@ -4,10 +4,12 @@ using CommunityToolkit.Mvvm.ComponentModel;
 namespace BuildOrchestrator.App.ViewModels;
 
 /// <summary>[design v1.19.0 §2.9] Settings → General sayfasının anahtarları.
-/// <para>Yedi anahtarın hepsi gerçektir. <see cref="PullBeforeBuild"/>
+/// <para>Sekiz anahtarın hepsi gerçektir. <see cref="PullBeforeBuild"/>
 /// (<see cref="SettingsDraftViewModel.PullExternalsBeforeBuild"/>), <see cref="StashOnBranchSwitch"/>
 /// (<see cref="SettingsDraftViewModel.StashOnBranchSwitch"/>) ve <see cref="ResolveAtFullPriority"/>
-/// (<see cref="SettingsDraftViewModel.ResolveAtFullPriority"/>) motora giden iş akışı tercihleridir; kalan dördü kabuk
+/// (<see cref="SettingsDraftViewModel.ResolveAtFullPriority"/>) motora giden iş akışı tercihleridir;
+/// <see cref="CompactConsole"/> (<see cref="SettingsDraftViewModel.CompactConsole"/>) App-içi bir tercihtir — konsol
+/// anlatısının proje çıktısını nasıl göstereceğini söyler ve motora GİTMEZ; kalan dördü kabuk
 /// anahtarıdır ve <see cref="ShellSwitches"/> tablosu üzerinden kalıcıdır: Save'de yazılır, diyalog kayıtlı değeri
 /// gösterir, Export/Import taşır, değişince konsola not düşer.</para>
 /// <para><b>[DEĞİŞEN KURAL — P3 2026-09-28 · P4 2026-09-29, kullanıcı kararları]</b> ESKİ: dört kabuk anahtarı
@@ -37,6 +39,10 @@ public enum GeneralSetting
     /// <summary>[RESOLVE Faz 4 / karar 11] Gerçek bayrak: <see cref="SettingsDraftViewModel.ResolveAtFullPriority"/> —
     /// Resolve cycles koşusu profilin işçi sayısıyla ama cap'siz ve Normal öncelikte mi koşsun.</summary>
     ResolveAtFullPriority,
+    /// <summary>[idle-memory · dalga 2 / spec §6.5] Gerçek bayrak: <see cref="SettingsDraftViewModel.CompactConsole"/> —
+    /// konsol anlatısı proje çıktısını kompakt mı göstersin (hatalar tam, her projenin ilk uyarıları ve kalanın sayısı;
+    /// kapalıyken her satır). Motora gitmez; değişiklik bir sonraki işlemde geçerli olur.</summary>
+    CompactConsole,
 }
 
 /// <summary>General sayfasındaki tek bir ayar satırının tanımı (prototip <c>GENERAL_GROUPS</c> satırı).</summary>
@@ -85,6 +91,12 @@ public static class GeneralSettingsCatalog
             new(GeneralSetting.StashOnBranchSwitch, "Stash and switch branches",
                 "When the working tree has uncommitted changes, stash them (including untracked files) and switch. "
                 + "Off: switching stops and asks you to commit or stash first.", Default: false),
+        ]),
+        new("CONSOLE",
+        [
+            new(GeneralSetting.CompactConsole, "Compact console",
+                "Errors in full, the first warnings of each project and a count of the rest; every other MSBuild line stays in "
+                + "the project log. Off: every line.", Default: true),
         ]),
         new("NOTIFICATIONS",
         [

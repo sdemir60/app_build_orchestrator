@@ -116,7 +116,10 @@ public class BottomAnchorIdleResumeTests
         Assert.Equal(afterScroll, f.Offset); // okuyucu yerinde kaldı
     }
 
-    /// <summary>Bekleme dolunca takip geri alınır — dipteyken de akış yeniden izlenmeye başlar.</summary>
+    /// <summary>Bekleme dolunca takip geri alınır — dipteyken de akış yeniden izlenmeye başlar.
+    /// <para>[DEĞİŞEN KURAL — dalga 2 altıncı inceleme] Eski iddia: yakalamanın hedefi içerik yüksekliğiydi (<c>f.Extent</c> — dibi aşan
+    /// istek, host kenetliyordu). Dibe her gidiş artık dibin tek tanımını hedefler (<see cref="BottomAnchorBehavior.BottomOffset"/>);
+    /// host'ta oturulan konum aynı — gerçek pencereli bekleme dönüşü testi yeşil kaldı.</para></summary>
     [Fact]
     public void When_the_wait_expires_following_resumes_even_from_inside_the_threshold()
     {
@@ -130,7 +133,7 @@ public class BottomAnchorIdleResumeTests
 
         f.Extent += 40;
         behavior.OnScrollChanged(40);
-        Assert.Equal(f.Extent, f.Offset); // içerik büyümesi yakalaması yeniden devrede
+        Assert.Equal(f.Extent - f.Viewport, f.Offset); // içerik büyümesi yakalaması yeniden devrede — yeni dipte
     }
 
     /// <summary>

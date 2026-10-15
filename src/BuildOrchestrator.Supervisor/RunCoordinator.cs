@@ -6,6 +6,7 @@ using Stopwatch = System.Diagnostics.Stopwatch;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Diagnostics;
+using BuildOrchestrator.Core.Discovery;
 using BuildOrchestrator.Core.Externals;
 using BuildOrchestrator.Core.Incremental;
 using BuildOrchestrator.Core.Io;
@@ -1379,7 +1380,7 @@ public sealed class RunCoordinator(
             string roots = string.Join(", ", ConditionalRebuild.DescribeStillFailingRoots(
                 recorded!.DepIssueRoots, run.Scheduler.Completed, run.NodeById.ContainsKey, run.LedgerAtStart,
                 ReasonOf(run),
-                id => run.NodeById.GetValueOrDefault(id)?.Name ?? Path.GetFileNameWithoutExtension(id)));
+                id => run.NodeById.GetValueOrDefault(id)?.Name ?? ProjectDisplayName.FromPath(id)));
             ReportSkipped(run.Events, run.Logs, run.RunId, projectId, NameOf(run, projectId),
                 SkipReasons.DependencyStillFailing, cycleUnconverged: false, detail: roots);
         }
@@ -1651,7 +1652,7 @@ public sealed class RunCoordinator(
                 if (roots is { Count: > 0 }) run.DepIssuesById[id] = roots; // birikim: miras kaybolmaz
                 string described = string.Join(", ", ConditionalRebuild.DescribeStillFailingRoots(
                     roots, run.Scheduler.Completed, run.NodeById.ContainsKey, run.LedgerAtStart, ReasonOf(run),
-                    rootId => run.NodeById.GetValueOrDefault(rootId)?.Name ?? Path.GetFileNameWithoutExtension(rootId)));
+                    rootId => run.NodeById.GetValueOrDefault(rootId)?.Name ?? ProjectDisplayName.FromPath(rootId)));
                 ReportSkipped(run.Events, run.Logs, run.RunId, id, node.Name,
                     SkipReasons.DependencyStillFailing, cycleUnconverged: false, detail: described);
             }
@@ -2520,7 +2521,7 @@ public sealed class RunCoordinator(
         if (create(inc, signature) is not { } state) return;
         try { run.StateStore.Upsert(state); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        { console("warning: build-state could not be written (" + Path.GetFileNameWithoutExtension(projectId) + "): " + ex.Message); }
+        { console("warning: build-state could not be written (" + ProjectDisplayName.FromPath(projectId) + "): " + ex.Message); }
     }
 
     /// <summary>[design v1.14.0 §9] Kayda yazılan revizyon: HEAD ve branch ANA REPOYU anlatır; harici proje kendi çalışma
@@ -2740,7 +2741,7 @@ public sealed class RunCoordinator(
         if (run.StateStore is null) return;
         try { run.StateStore.Remove(projectId); }
         catch (Exception ex)
-        { console("warning: build-state could not be cleared (" + Path.GetFileNameWithoutExtension(projectId) + "): " + ex.Message); }
+        { console("warning: build-state could not be cleared (" + ProjectDisplayName.FromPath(projectId) + "): " + ex.Message); }
     }
 
     /// <summary>
@@ -2811,7 +2812,7 @@ public sealed class RunCoordinator(
             });
         }
         catch (Exception ex)
-        { console("warning: build-state could not be invalidated (" + Path.GetFileNameWithoutExtension(projectId) + "): " + ex.Message); }
+        { console("warning: build-state could not be invalidated (" + ProjectDisplayName.FromPath(projectId) + "): " + ex.Message); }
     }
 
     /// <summary>

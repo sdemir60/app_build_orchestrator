@@ -290,6 +290,31 @@ public sealed class CloseToTrayTests
         Assert.Equal(0, h.BroughtForward);
     }
 
+    // ---------------------------------------------------------------- tam çıkış: konsol geçmişi diske
+
+    /// <summary>[idle-memory · dalga 2 · spec §6.3 · inceleme M2] <b>Tam çıkış konsol geçmişinin kuyruğunu diske indirir.</b> Koşunun
+    /// anlatısı koşu klasöründeki <c>narrative.log</c>'a yayılır; yazıcı bölüm boyunca açık kalır ve tamponunu işlem sonlarında boşaltır.
+    /// Son işlemden SONRA, işlem dışında eklenen bir satır (burada motorun koşuyu bitirmeyen bir hatası) tamponda bekler — süreç
+    /// kapanırken sonlandırıcı koşmadığı için dosyaya hiç inmezdi. Pencere her tam çıkışta gerçekten kapanır: kapanış kuyruğu boşaltır.</summary>
+    [StaFact]
+    public void A_full_exit_writes_the_console_history_tail_to_the_run_folder()
+    {
+        using var temp = new TempDir();
+        var h = Harness.New(temp);
+        using var logs = new SpoolDir(h.Vm.Narrative);
+        MainWindowHost.StartBuildWithLogDirectory(h.Vm, logs.Path, "A");
+        MainWindowHost.LogLine(h.Vm, "A", 1, "a line of the run");
+        MainWindowHost.FinishBuild(h.Vm, "A");                              // koşunun sonu tamponu boşaltır
+        h.Vm.OnEvent(new ErrorEvent("badCommand", "a line after the run")); // işlem dışında bir satır
+        Assert.Equal("a line of the run\n", logs.ReadText());              // ön-koşul: koşu diskte, son satır tamponda
+
+        h.Window.ExitFromTray();
+        h.Window.Close();
+        Assert.True(h.Closed); // ön-koşul: pencere gerçekten kapandı
+
+        Assert.Equal(h.Vm.GetRunDocumentText(), logs.ReadText()); // KIRMIZI: son satır dosyaya hiç inmezdi
+    }
+
     // ---------------------------------------------------------------- kablo (kaynak)
 
     /// <summary>[kaynak] Tepsi menüsündeki Exit'in TEK aboneliği güvenli çıkıştır (<c>ExitFromTray</c>) ve MainWindow'da
@@ -308,6 +333,22 @@ public sealed class CloseToTrayTests
         Assert.Single(SourceGuard.ScanText(relative, source,
             new Regex(@"_tray\.ExitRequested\s*\+=\s*ExitFromTray\s*;"), skipCommentLines: true));
         Assert.Single(SourceGuard.ScanText(relative, source, new Regex(@"\.Shutdown\("), skipCommentLines: true));
+    }
+
+    /// <summary>[kaynak · dalga 2 son inceleme · defter 1] Pencere son kez kapanırken konsol geçmişinin kuyruğunu diske indirmek
+    /// (<c>_vm.Narrative.Flush()</c>) <c>OnClosed</c>'un İLK deyimidir: ondan önce koşan bir bırakma (kısayol kaydı, tepsi simgesi, HEAD
+    /// izleyicisi) fırlatsaydı boşaltma hiç koşmaz, son satırlar dosyaya inmezdi. Boşaltma kendisi fırlatmaz (store her hatayı yutar).
+    /// Kural kaynakta pinlenir: bırakmaların fırlatmasını sağlayacak bir dikiş yoktur ve tepsi headless süitte kurulmaz —
+    /// <see cref="MainWindow_wires_the_tray_exit_item_to_the_safe_exit"/> ile AYNI desen; aradaki yorum satırları sayılmaz.
+    /// <para>KIRMIZI: boşaltma, kısayol ve tepsi bırakmalarından, HEAD izleyicisinden ve yoklama zamanlayıcısından SONRA geliyordu.</para></summary>
+    [Fact]
+    public void MainWindow_writes_the_console_history_tail_first_when_it_closes()
+    {
+        const string relative = "MainWindow.xaml.cs";
+        string source = File.ReadAllText(Path.Combine(RepoPaths.AppSrcRoot, relative));
+
+        Assert.Single(SourceGuard.ScanText(relative, source,
+            new Regex(@"protected override void OnClosed\(EventArgs e\)\s*\{(?:\s*//[^\n]*)*\s*_vm\.Narrative\.Flush\(\);")));
     }
 
     /// <summary>[kaynak · final review F7] Pencereyi öne getiren çağrının (<see cref="MainWindow.BringForward"/>) TEK

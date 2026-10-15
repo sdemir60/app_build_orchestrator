@@ -1584,6 +1584,17 @@ by exactly one worker (the scheduler guarantees it); `decision.log` is written f
 inside a single MSBuild output line is normalized to a space so that one appended line is always one physical
 line, and a strange line stitch in MSBuild output cannot desynchronize the chunk reader.
 
+One more file in the folder is written by the App, not the engine: `narrative.log` (`RunLogPaths.NarrativeFileName`),
+the run's console narrative as the App wrote it — the application's own lines and each project's output as the console
+shows it: filtered by the compact console while that is in effect (the default, §13.5), every line when it is off — one
+console line per file line, UTF-8 without a byte-order mark and newline-terminated. The App opens it once `runStarted`
+names the folder, writes the lines the console already held first and keeps it open until the next console section
+opens (§13.5); an operation that adds to the section instead of opening one — an automatic Sync, a pull — adds to the
+file too, so the file holds the section, not only the run. The App flushes it whenever an operation ends and once more,
+before it releases anything else, when its window closes for good, so a line added outside any operation reaches the
+file as well; an App that dies instead of exiting leaves the unflushed tail out. It is where the console's history
+lives once it leaves memory (§13.5), and it is pruned with its folder like every other file there.
+
 Run logs are kept for three days, and the newest run's folder always stays however old it is, so the last run
 can always be read. The engine prunes them once, in the background, as soon as it has built its host: the sweep
 neither delays `engineReady` nor the first command, and the run that is starting is safe by construction — its
@@ -1596,8 +1607,9 @@ link, and never anything outside the logs root; a link found inside a folder tha
 is, never followed, and so is a folder swapped for a link after the sweep chose it: only the link goes and its
 target is not entered. One sweep removes a bounded number of folders, oldest first, so a long backlog is worked off
 over several starts rather than stalling one; an I/O error (a log still open in an editor, say) leaves that
-folder for the next start. A sweep that removed, or failed to remove, something writes one summary line to
-stderr — stdout stays NDJSON only.
+folder for the next start. The narrative the App holds open is never in the way: it is always in the newest run's
+folder, because a new run closes it — its section opens — before the engine creates the next folder. A sweep that
+removed, or failed to remove, something writes one summary line to stderr — stdout stays NDJSON only.
 
 ### 8.6 Planning pipeline
 
@@ -2792,12 +2804,15 @@ implementation `VelopackUpdater` reads the feed of §12.5, and `UpdateService`, 
 view model on the UI thread — and the view models. Two application-wide singletons are exposed statically because
 their owners have no constructor seam: the reduced-motion settings and the hero-motion coordinator.
 
-Engine events reach the view model on the UI thread through one pump. `projectLog` lines go straight from the
-reader thread into the console batcher; every other event joins a single queue that one drain empties in arrival
-order, in time slices of about 8 ms (`EngineEventPump.SliceBudgetMs`) — a slice closes once its time is up and the
-event in hand is done. An event that finds the queue empty is handled at once, at the priority a single event
-always had; when a slice is used up with events still waiting, the rest is handed to a priority below input and
-rendering, so a frame is drawn and a key or click is handled between slices. The reason is the start of a run: the
+Engine events reach the view model on the UI thread through one pump. `projectLog` lines skip it: the reader thread
+hands each one to the view model, which under its lock writes it — or, while the compact console is in effect, what
+that keeps of it (§13.5) — to the narrative store, and to the console batcher while the narrative is on screen; when
+that project's page is open, the page gets the full line instead. Every other event — a project's result, and with
+it the compact summary it may bring, among them — joins a single queue that one drain empties in arrival order, in
+time slices of about 8 ms (`EngineEventPump.SliceBudgetMs`) — a slice closes once its time is up and the event in
+hand is done. An event that finds the queue empty is handled at once, at the priority a single event always had;
+when a slice is used up with events still waiting, the rest is handed to a priority below input and rendering, so a
+frame is drawn and a key or click is handled between slices. The reason is the start of a run: the
 engine announces it with `runStarted`, `buildPreview` and one `projectSkipped` per project it skips — on the real
 workspace close to two hundred events at once — and handled one dispatcher operation each, above rendering and
 input, they held the interface for a few hundred milliseconds in one piece at the start of every run. The
@@ -3177,9 +3192,10 @@ window is the first-run screen: the project list carries the setup invitation (`
 checklist of the root and the layer count, *Open settings* and *Import settings…*), the graph its dashed
 *Graph appears after Sync* box, the console's prompt line `Waiting for a workspace` (§13.5), the ribbon
 `Not configured — repository root not set`. The panel headers carry no counts — no `N projects · N
-dependencies`, `N lines` or `N events` — and the PROJECTS header neither the `build-order` label nor the filter
-box: there is nothing to count or filter. Sync, Build, the maintenance box and the action bar's chips are
-disabled. One switch drives the panel side of this from `HasWorkspace` (`ShellRoot.SetHasWorkspace`).
+dependencies`, `N lines` or `N events`, nor the console's `compact` tag — and the PROJECTS header neither the
+`build-order` label nor the filter box: there is nothing to count or filter. Sync, Build, the maintenance box and
+the action bar's chips are disabled. One switch drives the panel side of this from `HasWorkspace`
+(`ShellRoot.SetHasWorkspace`).
 
 **While a Sync discovers the project set** (§10.2), neither left panel sits empty. The graph's body is a centred
 block on `surface-base` — Lucide *network* at 28 px, 1.4 stroke, `text-faint` at 70 % opacity, and 10 px below it
@@ -4048,16 +4064,24 @@ on the first input of that page: the repository root input, or the first switch.
 The rail exists because settings grow. A single column put every section under the previous one and each new
 setting squeezed it further; a section list keeps each page short and gives the next settings a place to land
 without widening the dialog. **General** is that place. Its rows come from one catalog
-(`GeneralSettingsCatalog`) in four groups — *Startup* (*Start with Windows*, *Start minimized to tray*, *Close
-to tray*), *Build* (*Pull before build*, *Resolve cycles at full priority*), *Branches* (*Stash and switch branches*, §10.3) and *Notifications*
-(*Show notifications*) — and every row is drawn by
-one template (`Ds.Settings.ToggleRow`): the name over a single line of description on the left, a switch on the
-right, a hairline between rows but not above a group's first. Adding a setting is adding a catalog row; there is
-no layout work. A row that depends on another (*Start minimized to tray* on *Start with Windows*) fades to the
-switch's own disabled opacity and stops taking input while its parent is off, without moving anything. Every
-switch on the page drives behaviour. *Stash and switch branches* follows the pull switch's rules: saved with
+(`GeneralSettingsCatalog`) in five groups — *Startup* (*Start with Windows*, *Start minimized to tray*, *Close
+to tray*), *Build* (*Pull before build*, *Resolve cycles at full priority*), *Branches* (*Stash and switch
+branches*, §10.3), *Console* (*Compact console*, §13.5) and *Notifications* (*Show notifications*) — and every row
+is drawn by one template (`Ds.Settings.ToggleRow`): the name over a single line of description on the left, a
+switch on the right, a hairline between rows but not above a group's first. Adding a setting is adding a catalog
+row; there is no layout work. A row that depends on another (*Start minimized to tray* on *Start with Windows*)
+fades to the switch's own disabled opacity and stops taking input while its parent is off, without moving anything.
+Every switch on the page drives behaviour. *Stash and switch branches* follows the pull switch's rules: saved with
 *Save*, carried to the engine on the next checkout, and a console note written only when its value actually
 changed. *Resolve cycles at full priority* follows the same rules and travels with every `startRun` (§11.1).
+*Compact console* is saved and noted the same way — `Compact console on — errors, the first warnings of each project
+and a warning count from the next run`, or `Compact console off — every MSBuild line is shown from the next run` — but
+it never reaches the engine: it is the App's own choice of how the console writes each project's output (§13.5). The
+mode in effect follows the switch whenever no work is in flight — no run, Sync, Clean, Optimize, checkout or pull;
+while work is in flight the mode it had when that work started holds, so a run's narrative is written in one mode and
+no project's count of warnings changes its rules halfway. A *Save* made while nothing is in flight therefore takes
+effect at once, and one made during a run or any other work the moment none is left, however that work ended — a pull
+the engine refused or a run that never started included. Text already on screen is never rewritten.
 
 *Start with Windows*, *Start minimized to tray*, *Close to tray* and *Show notifications* are **shell switches**:
 they drive the start, the window and the tray (§12.3), not how anything builds, so they never travel to the
@@ -4175,15 +4199,15 @@ change deferred — …`. A root entered afterwards is a first setup again: sile
 
 **Export · Import · Clear.** The footer carries three icon buttons on its left. Export writes
 `build-orchestrator-settings.json` — `{ app, version, repositoryRoot, externalProjects[{ path }],
-pullExternalBeforeBuild, stashOnBranchSwitch, resolveAtFullPriority, startWithWindows, startMinimizedToTray, closeToTray,
-showNotifications, layers[{ name, pattern }] }`, the external array sitting between the root and the layers (the
-field order the file is written in, not just a key that happens to be present) and holding only cards with a
-non-blank path; import reads one back **into the form**; clear empties the root, every layer and every external
-card, and returns every General switch to its catalog default — *Pull before build*, *Resolve cycles at full
-priority*, *Close to tray* and *Show notifications* on, the rest off. Every General switch travels in the file, so
-saving an imported file that has *Start with Windows* on turns it on for that machine — deliberately. All three
-touch the draft only: nothing is
-applied until *Save*, and there is no confirmation dialog. Clear's confirmation is the button itself — the
+pullExternalBeforeBuild, stashOnBranchSwitch, resolveAtFullPriority, compactConsole, startWithWindows,
+startMinimizedToTray, closeToTray, showNotifications, layers[{ name, pattern }] }`, the external array sitting between
+the root and the layers (the field order the file is written in, not just a key that happens to be present) and
+holding only cards with a non-blank path; import reads one back **into the form**; clear empties the root, every
+layer and every external card, and returns every General switch to its catalog default — *Pull before build*,
+*Resolve cycles at full priority*, *Compact console*, *Close to tray* and *Show notifications* on, the rest off.
+Every General switch travels in the file, so saving an imported file that has *Start with Windows* on turns it on for
+that machine — deliberately. All three touch the draft only: nothing is applied until *Save*, and there is no
+confirmation dialog. Clear's confirmation is the button itself — the
 first press turns the icon red and prints a warning, cancels itself after 2.4 s, and only a second press
 empties the form. Feedback for all three sits on the same footer line for 2.4 s, green or red. A malformed
 file is not an error but a result: the user picked the wrong file, and the line says `Invalid settings file`
@@ -4209,9 +4233,10 @@ highlighted pattern`, in that order of priority. The draft derives the reason fr
 conditions that gate *Save* (`SaveBlockedReason`, with `CanSave` defined as "no reason"), so the button and the
 line cannot disagree.
 
-A file that omits a switch's key (`pullExternalBeforeBuild`, `stashOnBranchSwitch`, `resolveAtFullPriority`, `startWithWindows`,
-`startMinimizedToTray`, `closeToTray` or `showNotifications`) leaves that switch where it is, the same rule the
-external list already follows: a file cannot silently reset a setting it does not carry.
+A file that omits a switch's key (`pullExternalBeforeBuild`, `stashOnBranchSwitch`, `resolveAtFullPriority`,
+`compactConsole`, `startWithWindows`, `startMinimizedToTray`, `closeToTray` or `showNotifications`) leaves that switch
+where it is, the same rule the external list already follows: a file cannot silently reset a setting it does not
+carry.
 
 Import is tolerant on the way in: an `externalProjects` entry can be the object above or a bare path string,
 the two forms the design package's own prototype accepts. Any other key on an entry is ignored — the `vcs` an
@@ -4435,22 +4460,26 @@ individually coloured, and MSBuild-verbose volume must not stall the UI. `TextBl
 lines.
 
 - **The header is one 28 px shell with two mutually exclusive contents**, never two controls. Its outer `Grid` has a
-  `*` column and an `Auto` column: the right block (Copy log + `N lines`) sits in the `Auto` column and never shrinks.
-  The left content's own inner `Grid` makes **every** column `Auto`, project name included — deliberately not `*`. A
-  `*` column always claims the whole remainder regardless of what its content actually needs, and every `Auto` column
-  after it starts at that column's *full* width rather than at the text's rendered edge; with the name in a `*`
-  column, a wide panel and a short name left a visible gap before the status glyph instead of the two sitting flush
-  (the prototype's name `span` is `white-space: nowrap` with no flex-grow — it shrinks, never grows, and its
-  neighbours are always immediately to its right). The real shrink-on-demand behaviour is computed by hand instead:
-  `ApplyProjectNameShrink` reads the *actual* rendered width of Back, the status glyph, the status name and whichever
-  badges are visible (each plus its own margin), subtracts their sum from the available space, and caps the name's
-  `MaxWidth` at what's left — recomputed after every `ShowProjectLog`/`RefreshStatus` call, on the right block's own
-  `SizeChanged` (Copy log appearing or disappearing, or the `N lines` text widening from 999 to 1000), and on the
-  header's own `SizeChanged` (a live splitter drag). Because WPF only refreshes `ActualWidth` after a layout pass, the
-  method forces one (`UpdateLayout`) before reading its neighbours — the same idiom `ConsoleView`'s scroll-pin logic
-  already uses for the same reason. In the narrative half only the caps `CONSOLE` label shows; in the project-log half
-  `Back` is a ghost/sm button (`Ds.Button.Ghost.Sm`, 24 px) whose content — the drawn `Icon.Back` arrow plus the word
-  "Back" — is built once in the constructor and bound to the button's own *animated* `Foreground`
+  `*` column and an `Auto` column: the right block (Copy log + `N lines` + `compact`) sits in the `Auto` column and
+  never shrinks. The left content's own inner `Grid` makes **every** column `Auto`, project name included —
+  deliberately not `*`. A `*` column always claims the whole remainder regardless of what its content actually
+  needs, and every `Auto` column after it starts at that column's *full* width rather than at the text's rendered
+  edge; with the name in a `*` column, a wide panel and a short name left a visible gap before the status glyph
+  instead of the two sitting flush (the prototype's name `span` is `white-space: nowrap` with no flex-grow — it
+  shrinks, never grows, and its neighbours are always immediately to its right). The real shrink-on-demand behaviour
+  is computed by hand instead: `ApplyProjectNameShrink` reads the *actual* rendered width of Back, the status glyph,
+  the status name and whichever badges are visible (each plus its own margin), subtracts their sum from the available
+  space, and caps the name's `MaxWidth` at what's left — recomputed after every `ShowProjectLog`/`RefreshStatus` call,
+  on the right block's own `SizeChanged` (Copy log appearing or disappearing, or the `N lines` text widening from 999
+  to 1000), and on the header's own `SizeChanged` (a live splitter drag). Because WPF only refreshes `ActualWidth`
+  after a layout pass, the method forces one (`UpdateLayout`) before reading its neighbours — the same idiom
+  `ConsoleView`'s scroll-pin logic already uses for the same reason. In the narrative half only the caps `CONSOLE`
+  label shows on the left; on the right, 8 px past `N lines` and in the counter's own type (mono 11, `text-faint`), the
+  `compact` tag shows while the console writes in compact mode (*The compact console keeps the narrative short*,
+  below) — never on a project page, which is always full, and not without a workspace, where the counter is hidden
+  too; since it never shows in the project-log half, it never takes room from the project name. In the project-log
+  half `Back` is a ghost/sm button (`Ds.Button.Ghost.Sm`, 24 px) whose content — the drawn `Icon.Back` arrow plus the
+  word "Back" — is built once in the constructor and bound to the button's own *animated* `Foreground`
   (`IconVisual.BoundToForeground`), so the icon tracks the same hover fade the label text does; its `-6px` left margin
   is not a clipping bug and not a full cancellation either — Ghost.Sm's own left padding is 10 px, so `-6` only takes
   back six of those ten, leaving the icon 4 px further in than the panel's own 10 px inset, not flush with it. The
@@ -4487,12 +4516,20 @@ lines.
   tick still owns only `SetLineCount` — status changes are comparatively rare (a handful per project per run) and are
   pushed the instant they happen rather than polled, so the idle-tick stays allocation-free exactly as before.
 - The document stays **plain text**, so what the user copies is meaningful. Colour comes from an offset-based
-  `DocumentColorizingTransformer`, and only lines whose *format is known* get one: MSBuild's own diagnostic
-  shape (`… : error CS0103: …`, `… : warning MSB3277: …`) and the prefixes the application itself prints
-  (`[error]`, `warning:`, a command line). Everything else is one tone. Scanning free text for `failed` or
-  `succeeded` was tried and dropped: it caught the word inside a project name just as readily, and a colour
-  that is sometimes wrong is worth less than no colour at all. Warnings are amber and errors red; orange left
-  the console with the rest of the interface (§14.3).
+  `DocumentColorizingTransformer`, and only lines whose *format is known* get one: the prefixes the application
+  itself prints (`[error]`, `warning:` — the engine's notes in a project's log included —, a command line), the
+  compact console's summary line (amber; its shape is defined once, by the filter that writes it) and MSBuild's
+  canonical diagnostic shape (`… : error CS0103: …`, `… : warning MSB3277: …`). That shape is an origin — a file
+  path (a drive letter and an `N>` node prefix allowed), a tool such as `MSBUILD` or `csc`, or a project file — then an
+  optional subcategory (`XamlCompiler`), `error` or `warning` and at most one code. Without an origin it counts only at
+  the start of the line, and a line that starts with a category word is read that way first, so `error X1: see the
+  warning list: y` is an error with the code `X1`. The first category word decides — words in the text do not, so
+  `… : error NU1605: Warning As Error: …` is red — and the shape is recognised before the command words, so
+  `MSBUILD : error MSB1009: …` is an error rather than a command line. Everything else is one tone. Scanning free
+  text for `failed` or `succeeded` was tried and dropped: it caught the word inside a project name just as readily,
+  and a colour that is sometimes wrong is worth less than no colour at all. Warnings are amber and errors red; orange
+  left the console with the rest of the interface (§14.3). Classifying a line allocates nothing: the compact console
+  asks for every project line on the reader thread, the colorizer for every line it draws.
 - Appends are batched: IPC → channel → ~50 ms flush → exactly one `BeginUpdate → Insert → EndUpdate`. The
   window opens when a line arrives, not on a clock, so a console with nothing to print never wakes the pump.
 - The live document is capped at a render slice of 200 lines. That cap is a **window, not a limit**: scrolling
@@ -4503,33 +4540,98 @@ lines.
   from the log on disk (§5.5), and it grows as the window slides: lines trimmed off the top while the panel is
   following are added to it, so nothing that scrolled past is unreachable. The narrative's backlog is the view
   model's `NarrativeStore` itself — the console keeps no copy of the narrative at all, and a line trimmed off the top
-  of the document is simply a line the store already holds, so the console does not even read the trimmed text off
-  the document for it. Leaving the narrative without a backlog was measured as the console "losing" its history — a
-  parallel build streams hundreds of lines a second, so the 200-line window turned over in seconds and everything
-  older became unreachable even though the text was still buffered.
-- **The run's narrative has exactly one owner: the view model's `NarrativeStore`.** Every line of the run — each
-  project's MSBuild output and the application's own narrative lines alike — is appended to it under the view model's
-  lock and before the batching pump gets it, so a line is in the store before it can be on screen; the console document
-  is only the render slice of it. The store keeps lines as the document will show them. An entry is one document line,
+  of the document is simply a line the store already holds — in memory or in its file (below) — so the console does
+  not even read the trimmed text off the document for it. Leaving the narrative without a backlog was measured as the
+  console "losing" its history — a parallel build streams hundreds of lines a second, so the 200-line window turned
+  over in seconds and everything older became unreachable even though the text was still buffered.
+  A scroll to the top loads only after the view has been away from the top, and a document that is built anew takes
+  that state from where it settles: the narrative, pinned to its end, brings the previous slice on the first jump to
+  the top, while a project page, pinned to the top of its document, loads the lines before it only once the reader
+  has left the top and come back. Both documents are swapped in through one path (`SwapDocument`), and the swap's own
+  scroll events are not the reader's: assigning the new document clears the text view's scroll data to zero before the
+  pin reports where it lands, which the loader, still armed from the old document's position, would read as arriving at
+  the top — a narrative rebuilt over a document at its end, on `Back` or on the return from the tray, would prepend a
+  slice nobody asked for and trim it off again — and the bottom anchor, for a reader who had just scrolled, as a
+  distance of zero — a project page opened then would start following once the wait ran out, and its next live line
+  would trim its top and throw the reader to the bottom — so neither decides on them: when the swap ends the loader is
+  armed from where the document settled and the anchor follows from the end the document is pinned to (a narrative
+  follows, a project page does not), with only its pill read from the settled distance.
+- **The run's narrative has exactly one owner: the view model's `NarrativeStore`.** Every narrative line — the
+  application's own and each project's output as the console writes it, every line of it or what the compact console
+  keeps (below) — is appended to it under the view model's lock and before the batching pump gets it, so a line is in
+  the store before it can be on screen; the console document is only the render slice of it. The store keeps lines as
+  the document will show them. An entry is one document line,
   so a multi-line entry (an error message with a stack, git's stderr) is split by the console's one line rule
   (`ConsoleLines.Split`, AvalonEdit's own: `\r\n`, `\r` and `\n` each end a line), and the header's `N lines` is the
   store's count — what the document would show if it held everything, never the 200 of the render slice — or, on a
   project page, that page's line count. The store hands out slices and never the whole text: no production path builds
-  the narrative as one string. Clearing it, as a new section does, lets go of its line array as well as its lines, so
-  the capacity of the largest operation does not outlive it. The console is bound to the store once, when the shell is
-  built, while its document is still empty and before the pump starts (`BindNarrative`; a non-empty document or an open
-  project page is refused, since the document's first line is taken as the store's first), and that bind is not a
-  rebuild of the document. Every later setup of the narrative document — a new section, the return from a project
-  page, the window coming back from the tray — rebinds it with a snapshot, the store plus its count at that instant
-  (`NarrativeSnapshot`), and seeds the document from the store's last 200 lines. The one exception is a new section in
-  a visible window: it binds the emptied store with a count of zero, on purpose (*A new section empties the narrative
-  in place*, below).
+  the narrative as one string. Clearing it, as a new section does, lets go of its line array and its offset index (next
+  item) as well as its lines, so the capacity of the largest operation does not outlive it. The console is bound to
+  the store once, when the shell is built, while its document is still empty and before the pump starts
+  (`BindNarrative`; a non-empty document or an open project page is refused, since the document's first line is taken
+  as the store's first), and that bind is not a rebuild of the document. Every later setup of the narrative
+  document — a new section, the return from a project page, the window coming back from the tray — rebinds it with a
+  snapshot, the store plus its count at that instant (`NarrativeSnapshot`), and seeds the document from the store's
+  last 200 lines. The one exception is a new section in a visible window: it binds the emptied store with a count of
+  zero, on purpose (*A new section empties the narrative in place*, below).
+- **A run's narrative spills to disk; memory keeps a window of it.** Once `runStarted` names the run folder, the view
+  model has the store spool the narrative into `narrative.log` there (§8.5): the store writes the lines it already
+  holds, then every new line through a buffered writer, and keeps each line's starting byte offset in an index —
+  eight bytes a line. Memory then holds at most the last 2,000 lines (`NarrativeStore.MemoryWindowLines`): when the
+  window is full its oldest block is flushed to the file and dropped, and a slice reaching back past the window reads
+  those lines from the file by their offsets. The render slice sits far inside the window, so the document is normally
+  built from memory and the disk is read when the reader scrolls past the window; the read happens outside the store's
+  lock, so the run keeps appending meanwhile, and a slice is either exactly the lines asked for or empty — a missing or
+  short file never yields partial text, because the console computes its stitch from indices. An empty slice is not
+  skipped: the console keeps its place and asks for the same slice again on the next scroll to the top, and a document
+  whose last slice could not be read starts at the narrative's end, so its indices still match what it shows — the last slice
+  is read again when the narrative is next rebuilt (on `Back` or on the return from the tray) or, while the run streams,
+  once the document is tall enough to scroll away from the top and back, after any live lines trimmed off its top in the
+  meantime; a new section discards it with the rest of the narrative. The one
+  exception is a store that has fallen behind the document — a narrative cleared while the window was hidden, under a
+  document that stays stale until the return rebuilds it: there is nothing to load, so the index steps back as if the
+  slice had been read and the stale document never takes lines of the new section. The count stays the total, so the
+  console's indices and `N lines` never see the split. Without a spool the store keeps everything in
+  memory: a Sync, a Deep Clean or an Optimize has no run folder, and neither has a run whose folder the engine did not
+  name as a fully qualified path. The spool is an optimisation, never a dependency: a file that cannot be opened or
+  written leaves the store in memory — new lines stay there, lines already dropped are still read back from the
+  file — and the section's console gets one `warning:` line saying so, as it does when dropped lines cannot be read
+  back. The store never calls out from under its lock; the view model takes the warning inside its own locked
+  section — after the line whose write failed, right after a failed open, at an operation's end, and on its 200 ms
+  tick while the window is visible, since a read the console made appends no line — so the store's order stays the
+  pump's. A new section closes the file, which stays in its run folder; a read that fails after its section ended
+  warns nothing in the next one.
+- **The compact console keeps the narrative short; a project's page keeps every line.** With *Compact console* on —
+  the default (§13.3) — the narrative takes from each project's output (`projectLog`) only what a reader acts on; the
+  application's own lines are never filtered. One pure filter decides (`CompactConsoleFilter`); the view model holds it,
+  with the mode in effect and the projects' names, in one place it only touches under its lock (`CompactNarrative`).
+  Within an operation each project gets one header, `building <name>`, written on the reader thread together with the
+  project's first line, shown or hidden, so it can never land after that project's lines — and only once, even when
+  cycle rounds compile the project again. Errors pass in full, repeats included. A project's first three *distinct*
+  warnings pass; every later distinct warning is hidden and counted by its code (`other` for MSBuild's code-less
+  `warning :`). A warning's identity is its trimmed text without the ` [<path>proj]` or ` [<path>proj::<properties>]`
+  MSBuild appends to it, kept as a 64-bit fingerprint rather than as text, so the copies MSBuild repeats in its closing
+  summary are neither shown again nor counted. The engine's own `warning:` notes at the head of a project's log (§8.3)
+  always pass and neither count nor use up the three. Every other line — information, command lines, blank lines — is
+  hidden. When a project's result arrives — success, failure or skip — a project that had warnings hidden gets one
+  amber summary, once: `<name>: <n> more warnings — MSB3277 ×200, CS1591 ×90 — see the project log`, in the singular
+  for one, naming the three most frequent codes (ties in alphabetical order) while `<n>` counts them all. A project
+  whose result never comes — the engine was lost mid-run — gets its summary when the run ends, whatever mode is in
+  effect by then, and before the end of the run flushes the narrative's file; a late line of that project, still
+  delivered from the lost engine's output, is neither shown again nor counted twice while the mode stays compact.
+  The names come from the run's rows and its preview, else from the project file (`ProjectDisplayName`). `N lines`
+  counts the narrative as written, headers and summaries included, and `narrative.log` holds the same lines (§8.5). A
+  project's page is never filtered — its live lines, a pending load's stitch and the log on disk are always whole —
+  so opening the project shows every line the narrative left out. Off, the narrative takes every line, a record that
+  arrives without text as an empty one. The console writes in the mode in effect (§13.3), and that is what the
+  header's `compact` tag shows: the mode for what comes next, not the mode of the text on screen — a *Save* while
+  nothing is in flight turns the tag at once, while what is already on screen keeps the mode it was written in.
 - The documents keep **no undo history**. AvalonEdit records every insert and removal on the document's undo
   stack and keeps the removed text alive as rope slices, so with the default unbounded stack a trim released
   nothing: after a long visible run about half of the live managed heap was the whole narrative, retained behind
   a 200-line window. Every console document is created with its undo limit at zero (the console is read-only),
-  so a trimmed line is freed the moment it leaves the window; the narrative's lasting copy is the store, a project
-  page's the log on disk.
+  so a trimmed line is freed the moment it leaves the window; the narrative's lasting copy is the store — its window in
+  memory, the rest in the run folder's `narrative.log` — a project page's the log on disk.
 - **A line is only text.** There is no wall-clock column and no `▸` marker: every line starts at the same left
   edge as the caret and the line's kind is carried by colour alone. A real run streams hundreds of lines a
   second and a stamp on each of them carried no information; time lives in one place, the event stream and the
@@ -4640,7 +4742,8 @@ lines.
   the click of Clean or Optimize, a branch change, a switch between Debug and Release and closing the workspace
   (an empty root saved in Settings) do (§10.2); a pull, the Sync a maintenance job chains and
   every automatic Sync append to what is already there, and a refused or failed checkout only adds its line.
-  Clearing never touches the disk logs — it is for the screen. The view-model empties the store and says so
+  Clearing never deletes a log on disk — it is for the screen; the store only closes the narrative's file, which stays
+  in its run folder (§8.5). The view-model empties the store and says so
   (`ConsoleCleared`); the shell binds the document to the emptied store with a count of **zero** — it does not read the
   count a second time, because a line that arrived between the clear and the bind is already in the store and reaches
   the document as a batch, so a bind that counted it too would show it twice — and resets the document at once, without
@@ -5907,13 +6010,13 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 
 | Path | Content | Corruption behaviour |
 |---|---|---|
-| `logs\run-<timestamp>\` | per-run and per-project logs; a run's folder is removed at the first engine start more than three days after the run, except the newest run's, which always stays (§8.5) | — |
+| `logs\run-<timestamp>\` | per-run and per-project logs, written by the engine, and `narrative.log`, the run's console narrative, written by the App from the moment `runStarted` names the folder until the next console section opens (§8.5, §13.5); a run's folder is removed at the first engine start more than three days after the run, except the newest run's, which always stays (§8.5) | — |
 | `build-state.json` | per-project signature, commit, result, duration, dependency-issue note with its root project ids, non-convergent cycle signature, the fed outputs learned from the last success (§7.6), the `packages.config` content hash behind the restore decision (§9.3), a cycle member's term, the sibling surfaces it read and the engine fingerprint behind round one's compile decision (§7.5, §8.8); projects from external roots share the file under the same key shape, without a commit or branch (§7.5). A record written before a field existed loads with that field empty | falls back to empty |
 | `evaluation-cache.json` | csproj evaluation cache; each entry records the schema it was written under, and an entry written under another schema is re-evaluated rather than served (§6.2); an SDK-style entry also records the `Directory.Build.*` files its layout decision read, and is re-evaluated when one of them changes or appears; Optimize removes such entries outright, whatever root they belong to | falls back to empty |
 | `source-hash-cache.json` | source content hashes keyed by path, size and modification time (§7.1) — this is what turns the content decision into one stat pass per run | falls back to empty (the next run re-reads and rebuilds it) |
 | `run-inflight.json` | the ids of the projects the engine has dispatched and not yet reported — written at dispatch, erased at the result, emptied at the end of every run; left non-empty only by an engine that died mid-run, and read once at the next engine start (§8.7). Absent while no run is in flight | an unparsable file is deleted and nothing is recovered; an unreadable one stays for the next start |
 | `msbuild\wpf-temporary-assembly.targets`, `msbuild\wpf-temporary-assembly-friend.cs` | the two files behind `-p:CustomBeforeMicrosoftCommonTargets` (§9.2). An engine writes them the first time it resolves `MSBuild.exe` — on its first run or its first Optimize — and only when the content on disk differs from its own; both files carry a fixed, old modification time however they were written (§9.2); the path carries no version, and a missing or edited file is repaired the next time a new engine resolves MSBuild | rewritten from the engine's own copy the next time a new engine resolves MSBuild; if they cannot be written or pinned, builds run without the argument |
-| `ui-state.json` | layout mode + three splits, repository root, configuration, perf mode, layer patterns, external roots (path) and whether to update them (§10.4), whether to stash before a branch switch (§10.3), hotkey, *Start with Windows* (`Autostart`) and *Start minimized to tray*, whether closing the window hides to the tray and whether tray notifications are shown (§12.3), tray-balloon-shown, last-seen release-notes version. The branch is not stored: it is whatever is checked out. Fields older versions wrote and this one no longer reads are ignored | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
+| `ui-state.json` | layout mode + three splits, repository root, configuration, perf mode, layer patterns, external roots (path) and whether to update them (§10.4), whether to stash before a branch switch (§10.3), whether *Resolve cycles* runs at full priority (§11.1) and whether the console is compact (§13.5) — both on when the field is absent —, hotkey, *Start with Windows* (`Autostart`) and *Start minimized to tray*, whether closing the window hides to the tray and whether tray notifications are shown (§12.3), tray-balloon-shown, last-seen release-notes version. The branch is not stored: it is whatever is checked out. Fields older versions wrote and this one no longer reads are ignored | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
 
 *Start with Windows* additionally writes one `HKCU\...\Run` value, and turning it on removes Task Manager's
 disabled mark for that value under `HKCU\...\Explorer\StartupApproved\Run` when there is one (§12.3).
@@ -5989,15 +6092,30 @@ guards. It targets `net10.0-windows` with `UseWPF` because a meaningful portion 
 STA thread.
 
 Shared test infrastructure lives in one place per concern rather than being copied: resource realization
-(`DsResources`, `IconResources`), window and dialog hosts (`MainWindowHost`, `SettingsDialogHost`,
-`AboutDialogHost`, `SplitterHost`, `GraphTestView`), shared assertions (`FocusTrap`, the modal focus-trap
-proof both dialogs use), input synthesis (`MouseInput`, the one place a real mouse press is raised, both
-halves of the gesture), dispatcher pumping and animation hosting (`DispatcherPump`, `AnimationHost`,
-`MotionScope`), a manual STA thread for tests that must skip dynamically (`StaThread` — the STA runner does not
-recognise a skip), fixtures (`GitTestRepo`, `LegacyFixture`, `SyntheticGraph`, `JobTestChildren`, `VmTopology`,
-`FakeMotionSignal`, `FakeMotionSettings`) and measurement
-(`PerfMeasure`). Tests that cannot run concurrently declare it explicitly through serial collections — the
-CPU-saturating job tests, the console UI tests and the build-state store tests.
+(`DsResources`, `IconResources`), window and dialog hosts (`MainWindowHost` — with the MSBuild lines the console tests
+feed, `WarningLine`, `ErrorLine` and `CommandLine` —, `SettingsDialogHost`, `AboutDialogHost`, `SplitterHost`,
+`GraphTestView`), shared assertions (`FocusTrap`, the modal focus-trap proof both dialogs use), input synthesis
+(`MouseInput`, the one place a real mouse press or wheel is raised, both halves of the gesture or the tunnel alone),
+dispatcher pumping and animation hosting (`DispatcherPump`, `AnimationHost`, `MotionScope`), a manual STA thread for
+tests that must skip dynamically (`StaThread` — the STA runner does not recognise a skip), the console document
+(`ConsoleDocument` — a document read as lines, a laid-out bare view, the reader's scroll to the top), the console in a
+real window (`RealizedNarrative` — a rebuilt narrative pinned to its end, the reader's real keys, wheel and `⌄ latest`
+click, and the bottom anchor's timers captured rather than waited for), the narrative's spool (`SpoolDir`, a run
+folder whose disposal closes the spool before the folder goes, and `SpoolScope`, that same close for a folder the test
+does not own; `SpoolDir.NeverOnDisk` and `FailingSpoolStream.InstallOn`, the two failing-disk seams), the record of the
+commands a view model sent (`SentCommands`, thread-safe, because a real engine completes a send on another thread),
+fixtures (`GitTestRepo`, `LegacyFixture`, `SyntheticGraph`, `JobTestChildren`, `VmTopology`, `FakeMotionSignal`,
+`FakeMotionSettings`) and measurement (`PerfMeasure` — timings, and the bytes an action allocates on the test thread).
+Tests that cannot run concurrently declare it explicitly through serial collections — the CPU-saturating job tests,
+the console UI tests and the build-state store tests.
+
+**Window tests write the console in full.** The production default is the compact console (§13.5), but the window
+fixture (`MainWindowHost.New`) turns it off unless a test passes `compactConsole: true`, and `null` leaves the window's
+own seed alone, for the tests that watch the start. The value is applied after the window has built itself, since
+the window seeds the switch from the saved state and would overwrite anything set before. Tests that read the
+narrative line by line — every project line in it, `N lines` counting them, the model equal to the document — assume
+the mode where every line passes; the compact console's own tests opt in, and one opens a window on its own seed to
+pin the production start with its `compact` tag.
 
 The release scripts are tested by running them under Windows PowerShell 5.1, the shell the release itself uses
 (`ReleaseScriptsTests`): the note cut checked against the App's own release-note parser, the release count read
@@ -6142,13 +6260,21 @@ frames it draws, one line per five-second window (frames drawn, longest gap, gap
 is how an animation freeze under a real, full-priority run is measured; without the variable nothing is created.
 
 The memory budget (`NarrativeBudgetTests`) has two halves. The measurement drives a long synthetic run through the real
-shell and view model, the test ticking the batching pump along its production path — so a copy the console kept would
-count — then runs the operation-end trim with the production collector and asserts that the managed heap grew by no
-more than a fixed multiple of the narrative's own text. An overrun is reported and never absorbed by loosening the budget. It reads
-the whole process's heap, which is why it is gated and runs alone. The structural half is not gated and runs with the
-normal suite: after the same run the store holds each line once, the console holds no copy of it, no live-line buffer
-exists without a waiting request, and a new operation resets the store, that buffer, the run text and the console
-document.
+shell and view model — a run that names its run folder, as the engine's do, so the narrative spools to disk (§13.5) —
+the test ticking the batching pump along its production path, so a copy the console kept would count; then it runs the
+operation-end trim with the production collector and asserts that the managed heap grew by no more than a fixed
+ceiling (8 MB), whatever the length of the run's text. An overrun is reported and never absorbed by loosening the
+budget. It reads the whole process's heap, which is why it is gated and runs alone. The structural half is not gated
+and runs with the normal suite: after the same run the store holds each line once and keeps no more than its window
+in memory, the run folder's file holds every line, the console holds no copy of it, no live-line buffer exists without
+a waiting request, and a new operation resets the store and closes its file, that buffer, the run text and the console
+document. Both halves run with the compact console off — the worst case, every line entering the narrative; a
+structural pin beside them runs the same hundred thousand warnings compact and finds five narrative lines: the
+project's header, its first three warnings and the one summary. The compact console's hot path is pinned at zero
+bytes after a warm-up — the classifier, the filter's hidden lines, repeated warnings and newly counted ones, and a
+hidden line's whole path through the view model, the one the reader thread takes. Those pins read the test thread's
+own allocation counter (`PerfMeasure.AllocatedBy`), which nothing running beside them can disturb, so they are not
+gated and run with the normal suite.
 
 A third category, `LocalOnly`, marks a test that cannot run on the hosted CI runner — a timing budget a shared
 runner cannot hold, say. Only CI's filter excludes it (`Category!=Acceptance&Category!=LocalOnly`, §18); the local
@@ -6457,11 +6583,13 @@ do, and how the interface works around each — useful to know before attempting
   in roughly 130 ms and a 1000-node one in roughly 300 ms. Below that the pitch keeps shrinking until nodes
   reach their 8 px floor, at which point a very large workspace is legible as a shape rather than as
   individual projects.
-- **The run's narrative stays in memory until a new section clears it.** The view model's store holds every line
-  of the last operation — each project's MSBuild output and the application's own lines — from its first line until a
-  new section starts, so after a long run that text stays resident while the application is idle; the operation-end
-  trim (§12.3) compacts it but cannot release it. The console document holds only the render slice, and the older
-  lines are read back from the store when the reader scrolls up (§13.5).
+- **A section without a run folder keeps its narrative in memory.** A run spools its narrative into its run folder and
+  keeps only a window of it in memory (§13.5), but a section that has no run folder — a Sync, a Deep Clean, an
+  Optimize, a run whose folder the engine did not name — keeps every narrative line in the view model's store until a
+  new section clears it, and so does a run whose file could not be opened, and the lines a run adds after its file
+  failed. The operation-end trim (§12.3) compacts that text but cannot release it. A spooled run still keeps one byte
+  offset per line in memory until the next section. The console document holds only the render slice either way, and
+  the older lines are read back from the store — from memory or from the file — when the reader scrolls up.
 - **The memory trim is a pause.** The collection is blocking and compacting, so it stops the UI thread for as long as
   the live heap takes to mark and compact — the longer, the more the application still holds, which is why it is
   longest right after a large run. The application only chooses its moment: once per operation, in a visible window
@@ -6746,6 +6874,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 |---|---|
 | Workspace scan, ignore list | `Core/Discovery/WorkspaceScanner.cs` |
 | Raw csproj XML evaluation; the output path (`OutputFileFor` — the legacy `OutputPath` reading and an SDK-style project's default layout, with the settings and the nearest `Directory.Build.*` files that move it) and resolved `HintPath` targets | `Core/Discovery/CsprojEvaluator.cs` |
+| A project's display name from its path — the one fallback the plan, the engine's lines and the App use for an id they hold no name for; not the evaluator's `AssemblyName` default, which follows MSBuild's own rule (`CsprojEvaluator.MsBuildProjectName`) | `Core/Discovery/ProjectDisplayName.cs` |
 | Evaluation cache (mtime + length fingerprint, schema, the `Directory.Build.*` files an SDK-style layout decision read; written only when dirty, as a stream) | `Core/Discovery/EvaluationCache.cs` |
 | `.sln` parsing, project↔solution map | `Core/Discovery/SolutionMapper.cs` |
 | Stale-`obj` diagnosis (warn-only, two consumers: the run-start warner and Optimize's removal step), TFM derivation | `Core/Discovery/StaleObjDetector.cs`, `TargetFrameworkMonikerDeriver.cs`, `Supervisor/StaleObjRunStartWarner.cs` |
@@ -6799,7 +6928,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Bounded synchronous retry (used by state store and clipboard) | `Core/Scheduling/SyncRetry.cs` |
 | Worker loop, event pump, stop bookkeeping, perf lifecycle, cycle round loop (it applies the settled rule as it reports the members: a settled member's success is trusted, a settled carried member is reported up to date, an unsettled carried member of a group with a verdict is reported skipped with its record discarded (`ReportDiscardedCarry`), every other success is invalidated) and non-convergence memory; the build-slot budget and who holds it (a worker from dispatch to result, a cycle member from `projectStarted` to `cycleMemberHeld`); the interrupt flag and the one reporting gate that stops trusting results after it; the dependency-issue computation that precedes every compile and cannot throw (`DepIssuesForCompile`); in-flight ledger calls | `Supervisor/RunCoordinator.cs` |
 | Failure-evidence classification (compiler exit vs. timeout/stop/invoke error) — the one clause the evidence gate reads | `Core/State/FailureClassification.cs` |
-| Per-run and per-project logs, decision log | `Core/Logs/RunLogWriter.cs`, `RunLogPaths.cs`, `ProjectLogNaming.cs` |
+| Per-run and per-project logs, decision log; the name of the App's narrative file in the run folder | `Core/Logs/RunLogWriter.cs`, `RunLogPaths.cs` (`NarrativeFileName`), `ProjectLogNaming.cs` |
 | Run-log retention: the three-day window, the newest run kept, the bounded sweep and its one stderr line; the sweep started in the background at engine start | `Core/Logs/RunLogRetention.cs`, `Core/Logs/RunLogPaths.cs` (`TryParseRunDirName`), `Supervisor/Program.cs` |
 | The engine's operation-end trim and memory line: the single collection; the line format, the process read (`Read`, returning a `MemoryReading`, and the guarded `TryRead` the About dialog uses), the one MB rule (`Megabytes`) and the sink that swallows its own errors; after a run, a Sync, a Clean and an Optimize — whatever the outcome — the engine trims, then writes the line to stderr: the collection skipped while a run holds the slot, one warning line when it throws | `Core/Diagnostics/MemoryTrim.cs`, `MemoryLine.cs`, `Supervisor/RunCoordinator.cs` (`TrimAndReportMemory`, `IsRunActive`), `Supervisor/SupervisorHost.cs` (`SyncWorkspaceAsync`, `CleanWorkspaceAsync`, `OptimizeWorkspaceAsync` — each in its `finally`), the stderr channel in `Supervisor/Program.cs` |
 | Log chunking for the UI | `Core/Logs/LogChunker.cs` |
@@ -6973,16 +7102,19 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 
 | Behaviour | File |
 |---|---|
-| AvalonEdit host, batching, active line, cascade, chunk paging, cursor + row hover band, the hidden native caret; the bind to the narrative store (`BindNarrative`) and the trim to the render slice, on a batch and when following comes back (`TrimToRenderSlice`, `TrimNarrativeWhenFollowing`) | `App/Console/ConsoleView.xaml(.cs)` |
-| The run narrative's one owner: its lines, slices and count, and a clear that lets go of its array | `App/Console/NarrativeStore.cs` |
+| AvalonEdit host, batching, active line, cascade, chunk paging (an unreadable slice keeps the index and is asked for again — `PrependPreviousChunk`, `ReplaceRunDocument`; the one document swap, whose scroll events reach neither the loader nor the follow decision (`OnScrollOffsetChanged`) and which, when it ends, arms the loader from where the document settles and sets the follow from the end it is pinned to — `SwapDocument`, `SettledOffset`), cursor + row hover band, the hidden native caret; the bind to the narrative store (`BindNarrative`) and the trim to the render slice, on a batch and when following comes back (`TrimToRenderSlice`, `TrimNarrativeWhenFollowing`) | `App/Console/ConsoleView.xaml(.cs)` |
+| The run narrative's one owner: its lines, slices and count; the spool to the run folder — the memory window, the offset index, block eviction, slices read back from the file outside the lock, one warning per section; and a clear that closes the file and lets go of its array and index | `App/Console/NarrativeStore.cs` |
+| Opening the narrative's spool when `runStarted` names the run folder, taking its warning after the line that met the failure or on the visible tick, flushing it when an operation ends and when the window closes for good | `App/ViewModels/RunViewModel.cs` (`BeginNarrativeSpool`, `AppendSpoolWarningLocked`, `TickElapsed`, `MarkOperationEnded`), `App/MainWindow.xaml.cs` (`OnClosed`) |
 | The backlog behind the document — the contract (`IConsoleBacklog`), the project page's own list (`ListBacklog`) and the seed the document is built from, the store plus its count (`NarrativeSnapshot`) | `App/Console/IConsoleBacklog.cs`, `ListBacklog.cs`, `NarrativeSnapshot.cs` |
 | The console's one line rule — splitting text into document lines, joining lines newline-terminated; shared by the store, the page list, the trimmed tail and the shell's project page | `App/Console/ConsoleLines.cs`, `App/MainWindow.xaml.cs` (`ProjectDocumentLines`) |
-| Line colouring | `App/Console/ConsoleColorizer.cs`, `ConsolePalette.cs`, `ConsoleLine.cs` |
+| Line colouring and the one classification behind it — the canonical diagnostic parse and its code (`Classify(span, out code)`), the application's warning prefix — its one definition, which the event stream's prefix drop also reads (`OwnWarningPrefix`, `IsOwnWarning`; `StreamText.RunStartWarning`) —, the compact summary recognised by the filter's own shape (`CompactConsoleFilter.IsSummary`) | `App/Console/ConsoleColorizer.cs`, `ConsolePalette.cs`, `ConsoleLine.cs` |
+| The compact console's filter — what of a project's output reaches the narrative: one header per project, errors, the first three distinct warnings, the engine's own notes; a warning's identity; the count by code; the summary (its count inflected by `StreamText.Counted`) and its recognition; the pending summaries of a lost run | `App/Console/CompactConsoleFilter.cs` |
+| The compact console in the view model — the filter, the mode in effect and the projects' names in one place (`CompactNarrative`); the mode captured when a section opens and following the setting whenever no work is in flight; the header and the filtered line on the reader thread, the open page's full line; a summary on every result and the drain before the run's flush; the Save note; the seed, the persistence and the header tag | `App/Console/CompactNarrative.cs`, `App/ViewModels/RunViewModel.cs` (`CompactConsoleInEffect`, `RecaptureCompactWhenIdle`, `MarkOperationEnded`, `MarkRunEnded`, `ClearConsoleForNewOperation`, `OnBuildPreview`, `OnProjectLog`, `AppendCompactSummary`, `AppendPendingCompactSummaries`), `RunViewModel.Workspace.cs` (`NotifyOperationInFlight`), `RunViewModel.ActionBar.cs` (`ApplyCompactConsole`), `App/MainWindow.xaml.cs` (`OnWorkflowPreferenceChanged`) |
 | Row hover band target-line geometry (pure) | `App/Console/ConsoleHoverBand.cs` |
 | Typewriter timing for the active stream line (pure) | `App/Console/TypewriterScheduler.cs` |
 | Batching — a reseed's generation travels in its sentinel and the pump stamps a batch with the last one it consumed —, routing, render slice (the limit's one definition) | `App/Console/ConsoleBatcher.cs`, `ConsoleBatchRouter.cs`, `ConsoleRenderSlice.cs` |
 | Chunk stitch and scroll compensation | `App/Console/ChunkStitch.cs` |
-| Header, empty states, copy log, timestamps | `App/Console/ConsoleHeader.xaml(.cs)`, `ConsoleEmptyState.cs`, `CopyLogFeedback.cs`, `ClipboardRetry.cs`, `WallClockFormat.cs` |
+| Header, empty states, copy log, timestamps; the `compact` tag (`SetCompact`, `ApplyCompactTag`) | `App/Console/ConsoleHeader.xaml(.cs)`, `ConsoleEmptyState.cs`, `CopyLogFeedback.cs`, `ClipboardRetry.cs`, `WallClockFormat.cs` |
 
 **Graph rendering**
 

@@ -48,6 +48,13 @@ public class BottomAnchorBehaviorTests
         Assert.Equal(500, behavior.DistanceFromBottom);
     }
 
+    /// <summary>
+    /// Takipteyken içerik büyürse görünüm ANINDA (animasyonsuz) yeni dibe gider.
+    /// <para>[DEĞİŞEN KURAL — dalga 2 altıncı inceleme] Eski iddia: anında kaydırmanın hedefi içerik yüksekliğinin kendisiydi (1050 —
+    /// <c>ScrollToEnd</c> gibi dibi aşan bir istek, host kenetliyordu). "Dip"in artık tek tanımı var
+    /// (<see cref="BottomAnchorBehavior.BottomOffset"/>: içerik eksi görünür alan) ve dibe her gidiş onu hedefler. Gerçek host'ta oturulan
+    /// konum aynıdır (kenetleme) — gerçek pencereli takip ve kaydırma pinleri değişiklikten sonra yeşil kaldı.</para>
+    /// </summary>
     [Fact]
     public void OnScrollChanged_with_content_growth_while_stuck_performs_an_instant_catch_up()
     {
@@ -59,7 +66,7 @@ public class BottomAnchorBehaviorTests
         behavior.OnScrollChanged(extentHeightChange: 50);
 
         Assert.Single(f.InstantScrolls);
-        Assert.Equal(1050, f.InstantScrolls[0]); // ANINDA yeni dibe (AppendBatch/ScrollToEnd deseni — animasyon YOK)
+        Assert.Equal(f.Extent - f.Viewport, f.InstantScrolls[0]); // ANINDA yeni dibe — animasyon YOK
     }
 
     [Fact]
@@ -246,6 +253,9 @@ public class BottomAnchorBehaviorTests
         // >0'ıyla karşılaşır — davranış (bu sınıfın kendisi, ConsoleView'dan bağımsız SAF) BUNU YAKALAR: dibe anında
         // bir kaydırma TETİKLENİR. Bu test, I-1'in düzeltmediği (SIRA yanlışken) durumda gerçekten neyin ters
         // gideceğini SOMUT gösterir — ConsoleView'ın düzeltmesi tam olarak yukarıdaki testteki SIRAYI garanti eder.
+        //
+        // [DEĞİŞEN KURAL — dalga 2 altıncı inceleme] Eski iddia: çekişin hedefi içerik yüksekliğiydi (1300, host kenetliyordu). Dibe her
+        // gidiş artık dibin tek tanımını hedefler (BottomAnchorBehavior.BottomOffset) — host'ta oturulan konum aynı.
         var f = new Fake { Extent = 1000, Offset = 900, Viewport = 200 }; // dipte, IsStuck=true
         var behavior = f.New();
 
@@ -255,6 +265,6 @@ public class BottomAnchorBehaviorTests
 
         Assert.True(behavior.IsStuck); // stale — kullanıcı aslında tepeye zıplamıştı, ama bu henüz yansımadı
         Assert.Single(f.InstantScrolls);
-        Assert.Equal(1300, f.InstantScrolls[0]); // YANK: CompensatedOffset'i ezip dibe (extent) kaydırır — I-1 riski
+        Assert.Equal(f.Extent - f.Viewport, f.InstantScrolls[0]); // YANK: CompensatedOffset'i ezip dibe kaydırır — I-1 riski
     }
 }

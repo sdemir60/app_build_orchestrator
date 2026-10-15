@@ -7,8 +7,10 @@ using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Discovery;
 using BuildOrchestrator.Core.Formatting;
 using BuildOrchestrator.Core.Incremental;
+using BuildOrchestrator.Core.Logs;
 using BuildOrchestrator.Core.Paths;
 using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Core.ProcessControl;
@@ -436,7 +438,8 @@ public sealed partial class RunViewModel : ObservableObject
     // [Kısıt 4] _projectText/_liveLines HEM arka plan thread'inden (OnProjectLog — marshal YOK, A13.2) HEM UI
     // thread'inden (chunk/Get*DocumentText) dokunulur — düz Dictionary/StringBuilder thread-safe DEĞİLDİR, bu yüzden
     // tüm erişimler _gate altındadır. Anlatı (Narrative) kendi kilidini taşır; VM onu yine _gate altında yazar ve okur
-    // (sıra her yerde _gate → store kilidi). ActiveProjectId'nin kendisi (WPF binding'e bağlı [ObservableProperty])
+    // (sıra her yerde _gate → store kilidi). Tek istisna spool'un açılışıdır (BeginNarrativeSpool): satır eklemez, yalnız
+    // store kilidini alır — sıra yine tersine dönmez. ActiveProjectId'nin kendisi (WPF binding'e bağlı [ObservableProperty])
     // SADECE UI thread'inde yazılır (OnProjectLogChunk marshallı) — kilide gerek yok, yalnız OKUNURKEN arka plandan
     // (benign race: referans türü ataması atomiktir, en kötü tek satır yanlış hedefe gider — kabul edilebilir ölçek
     // [It-2 iskelesi]). _pendingLoad da aynı kuraldadır: UI thread'inde yazılır, OnProjectLog hangi projenin satırını
@@ -446,12 +449,25 @@ public sealed partial class RunViewModel : ObservableObject
     private readonly Dictionary<string, List<ProjectLogEvent>> _liveLines = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, int> _projectLineCount = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>[idle-memory · dalga 1 · spec §6.2] Koşu anlatısının bellekteki TEK sahibi: tüm projelerin satırları + anlatı
-    /// satırları, işlem boyunca. Konsol görünümü belgeyi bundan kurar ve geçmiş dilimini bundan ister — kopya tutmaz (kabuk
-    /// açılışta bağlar: <c>ConsoleView.BindNarrative</c>). "N lines" sayacı da budur (<see cref="GetActiveLineCount"/>: tam
-    /// anlatı, render dilimi DEĞİL — Ek A #23). Yazım <c>_gate</c> altında, pompaya gönderimle AYNI bölümdedir (reseed nesil
-    /// guard'ı ona dayanır — <see cref="SeedRunDocument"/>).</summary>
+    /// <summary>[idle-memory · dalga 1 · spec §6.2] Koşu anlatısının TEK sahibi: tüm projelerin satırları + anlatı satırları, işlem
+    /// boyunca — [dalga 2 · spec §6.5] kompakt kipte projelerin süzülmüş satırları (başlık, hatalar, ilk uyarılar, özet; tam çıktı proje
+    /// logundadır: <see cref="CompactConsoleInEffect"/>). Konsol görünümü belgeyi bundan kurar ve geçmiş dilimini bundan ister — kopya
+    /// tutmaz (kabuk açılışta bağlar: <c>ConsoleView.BindNarrative</c>). "N lines" sayacı da budur
+    /// (<see cref="GetActiveLineCount"/>: tam anlatı, render dilimi DEĞİL — Ek A #23). Yazım <c>_gate</c> altında, pompaya gönderimle
+    /// AYNI bölümdedir (reseed nesil guard'ı ona dayanır — <see cref="SeedRunDocument"/>).
+    /// <para>[idle-memory · dalga 2 · spec §6.3] Koşu başlayınca koşu klasörüne yayılır (<see cref="BeginNarrativeSpool"/>): bellekte
+    /// yalnız son pencere kalır, öncesi o klasördeki dosyadan okunur. Spool'un uyarısını VM kendi bölümünde alır
+    /// (<see cref="AppendSpoolWarningLocked"/>), işlemin sonunda tamponu diske indirir (<see cref="MarkOperationEnded"/>; kabuk da
+    /// penceresi son kez kapanırken — <c>MainWindow.OnClosed</c>); yeni bölüm (<see cref="ClearConsoleForNewOperation"/>) store'u
+    /// temizlerken spool'u da kapatır.</para></summary>
     internal NarrativeStore Narrative { get; } = new();
+
+    /// <summary>[idle-memory · dalga 2 · spec §6.5 · son inceleme O1] Kompakt konsolun TEK durumu (<see cref="CompactNarrative"/>): süzgeç,
+    /// etkin kip (<see cref="CompactConsoleInEffect"/>) ve proje adları — proje çıktısının anlatıya giden hâli. Durumu işlemindir
+    /// (<see cref="ClearConsoleForNewOperation"/> sıfırlar). Kilitsizdir; her çağrı <c>_gate</c> altındadır (sıra yine <c>_gate</c> →
+    /// store kilidi, kilit altında dışarı bildirim yok) — satırlar IPC thread'inden (<see cref="OnProjectLog"/>), sonuçlar ve işlem
+    /// sınırları UI thread'inden gelir. Açılıştaki etkin kip ayarın kendisidir (ctor).</summary>
+    private readonly CompactNarrative _compact;
 
     private PendingLoad? _pendingLoad; // yalnız UI thread'inde YAZILIR (LoadProjectLogAsync, CompletePendingLoad); OnProjectLog arka plandan okur
     // [idle-memory · I1] Son proje log isteğinin kimliği — her yükleme bir artırır (ilk istek 1; 0 "kimliksiz" demektir ve hiçbir
@@ -889,6 +905,48 @@ public sealed partial class RunViewModel : ObservableObject
     /// <para><see cref="ObservablePropertyAttribute"/>: kalıcılık bu bildirimden sürer (MainWindow).</para></summary>
     [ObservableProperty] private bool _resolveAtFullPriority = true;
 
+    /// <summary>[idle-memory · dalga 2 / spec §6.5] Settings → General → CONSOLE "Compact console": konsol anlatısı proje
+    /// çıktısını kompakt mı göstersin — açık ⇒ hatalar tam, her projenin ilk uyarıları ve kalanın sayısı; kapalı ⇒ her
+    /// satır. Proje logu sayfası ve disk her zaman tamdır. Varsayılanın TEK tanımı kataloğun satırıdır
+    /// (<see cref="GeneralSettingsCatalog"/> — onaylanmış değer: açık). Değişiklik bir SONRAKİ işlemde geçerli olur (mevcut anlatı
+    /// yeniden yazılmaz; <see cref="CompactConsoleInEffect"/>). Bayrak yalnız App içidir — motora GİTMEZ (komutlarda alanı yoktur).
+    /// <para><see cref="ObservablePropertyAttribute"/>: kalıcılık bu bildirimden sürer (MainWindow).</para></summary>
+    [ObservableProperty]
+    private bool _compactConsole = GeneralSettingsCatalog.Definition(GeneralSetting.CompactConsole).Default;
+
+    /// <summary>
+    /// [idle-memory · dalga 2 · spec §6.5 · karar 8 · karar 204] Konsolun proje çıktısını BUNDAN SONRA yazacağı kip —
+    /// <see cref="CompactConsole"/>'un etkin değeri; başlıktaki <c>compact</c> etiketi bunu gösterir (MainWindow). Tek kural: <b>uçuşta işlem
+    /// yokken etkin kip ayarı izler; uçuştaki bir işlem yakaladığı kipi tutar.</b> Değer her işlemin başında yakalanır
+    /// (<see cref="ClearConsoleForNewOperation"/>) ve işlem uçuştayken değişmez — koşunun anlatısı tek kiple yazılır, süzgecin "ilk 3"
+    /// sayımı ortada bozulmaz; uçuşta işlem kalmadığı her an (<see cref="IsOperationInFlight"/> düşer — işlem sayılmayan bitişler de:
+    /// reddedilen pull/checkout, hiç başlamayan koşu) ayarın kendisidir (<see cref="RecaptureCompactWhenIdle"/>) ve sıradaki çıktı (yeni
+    /// bölüm ya da eklenen bir satır) kaydedilen kiple yazılır. Alanı <c>_gate</c> altındadır: IPC thread'i her proje satırında okur
+    /// (<see cref="OnProjectLog"/>).
+    /// </summary>
+    public bool CompactConsoleInEffect
+    {
+        get { lock (_gate) return _compact.InEffect; }
+    }
+
+    /// <summary>[karar 8] Ayar değişti: işlem yokken hemen etkin kip olur; işlem uçuştayken uçuştaki işlerin bitişini bekler
+    /// (<see cref="RecaptureCompactWhenIdle"/>).</summary>
+    partial void OnCompactConsoleChanged(bool value) => RecaptureCompactWhenIdle();
+
+    /// <summary>[karar 8 · dalga 2 son inceleme F1] Etkin kipin TEK yakalama yardımcısı — kural: uçuşta işlem yokken etkin kip ayarı
+    /// izler, uçuştaki bir işlem yakaladığı kipi tutar. Yakalama kilit altında, bildirim (kabuk başlığın etiketini tazeler) kilit DIŞINDA.
+    /// Tetikleri: ayarın değişimi (<see cref="OnCompactConsoleChanged"/>), uçuştaki işlerin bittiği an (<see cref="NotifyOperationInFlight"/>'ın
+    /// false kenarı — işlem sayılmayan bitişler dahil) ve bir işlemin bitişi (<see cref="MarkOperationEnded"/> — false kenarı bildirilmeyen
+    /// bitişler: <c>runCompleted</c> beklemesinin bildirimsiz bırakıldığı koşu-bitiren hata ve motor kaybı). Uçuştayken yeni değer
+    /// uçuştaki işlerin bitişini bekler.</summary>
+    private void RecaptureCompactWhenIdle()
+    {
+        if (IsOperationInFlight) return;
+        bool changed;
+        lock (_gate) changed = _compact.Recapture(CompactConsole);
+        if (changed) OnPropertyChanged(nameof(CompactConsoleInEffect));
+    }
+
     /// <summary>[T12] Koşarken (veya planlama penceresinde) branch/configuration kontrolleri kilitli;
     /// perf chip'i CANLI kalır. UI <c>IsEnabled</c> bunu okur.</summary>
     public bool IsMidRunLocked => IsRunning || IsStarting;
@@ -919,6 +977,7 @@ public sealed partial class RunViewModel : ObservableObject
         _newRunId = newRunId;
         _nowMs = nowMs ?? (() => Environment.TickCount64);
         _osActions = osActions; // [E1/T67] null ise OS eylemleri güvenle no-op (test default'u); üretimde enjekte edilir
+        _compact = new CompactNarrative(CompactConsole); // [O2] açılıştaki etkin kip ayarın kendisidir — ikinci bir literal yok
     }
 
     // ---------------------------------------------------------------- komutlar
@@ -1928,10 +1987,16 @@ public sealed partial class RunViewModel : ObservableObject
     /// <c>PropertyChanged</c>'dir ve görünmeyen ekranı yeniden yazdırırdı. Motor sessizlik bekçisi
     /// (<see cref="EvaluateEngineSilence"/>) <b>gizliyken de koşar</b>: tepsiden Exit + susmuş motorda bekleyen çıkışı
     /// bekçinin uyarısı serbest bırakır (<c>RunViewModel.Exit.cs</c>), yani bu tik durursa uygulama kapanmaz. Bu yüzden
-    /// zamanlayıcı durdurulmaz; bu bayrak kullanılır.</para></summary>
+    /// zamanlayıcı durdurulmaz; bu bayrak kullanılır.</para>
+    /// <para>[idle-memory · dalga 2 · inceleme M1] Görünürken anlatı spool'unun bekleyen uyarısı da alınır
+    /// (<see cref="AppendSpoolWarningLocked"/>): geri okuma hatası satır EKLEMEYEN bir yoldan gelir — görünüm tepeye kaydırınca
+    /// diskten dilim ister — ve satır gelmeyen, boştaki bir konsolda uyarı aksi hâlde bir sonraki satırı ya da işlem sonunu bekler,
+    /// arada yeni bölüm açılırsa hiç görünmeden düşerdi. Ekleme yolları uyarıyı kendi satırlarının ardından, aynı kilit bölümünde
+    /// almaya devam eder; tik onların arasına giremez.</para></summary>
     /// <param name="surfaceVisible">Yüzey görünür mü. Varsayılan <c>true</c>: mevcut çağıranlar değişmez.</param>
     public void TickElapsed(bool surfaceVisible = true)
     {
+        if (surfaceVisible) lock (_gate) AppendSpoolWarningLocked();
         if (surfaceVisible && IsRunning && _elapsedStartMs is { } startMs)
         {
             ElapsedMs = _nowMs() - startMs;
@@ -2140,6 +2205,24 @@ public sealed partial class RunViewModel : ObservableObject
             AppendRunLine(warning);
         UpdateEta(); // runStarted anında henüz hiçbir completion yok → X/N fallback (ETA numarası YOK)
         RefreshRunSurface();
+        // [idle-memory · dalga 2 · spec §6.3] Anlatı koşu klasörüne yayılır — handler'ın SONUNDA: koşunun durumu (IsRunning/Phase/
+        // IsStarting) çoktan yazıldı; spool açılamasa da şerit "Starting"te kalamaz. Yukarıdaki satırlar dosyaya önce yazılır.
+        BeginNarrativeSpool(e.LogDirectory);
+    }
+
+    /// <summary>
+    /// [idle-memory · dalga 2 · spec §6.3] Koşunun anlatısını <c>runStarted</c>'ın bildirdiği koşu klasöründeki dosyaya yayar
+    /// (<see cref="RunLogPaths.NarrativeFileName"/>). Klasör yoksa ya da tam nitelikli değilse (boş/göreli — dosya adı sürecin çalışma
+    /// klasörüne düşerdi) spool açılmaz: anlatı, koşu klasörü olmayan bölümlerdeki gibi — Sync, bakım kutusunun Deep Clean'i, Optimize —
+    /// bellekte kalır (Build menüsünün Clean'i bir koşudur: klasörü vardır, yayılır). Açılamazsa store bellekte devam eder ve
+    /// bölümün tek uyarısı konsola düşer. Temizlik bu çağrıdan ÖNCEDİR: koşunun bölümü <see cref="BeginRunAsync"/>'te açıldı,
+    /// <c>runStarted</c> onun ardından gelir — dosyaya yalnız bu bölümün satırları yazılır.
+    /// </summary>
+    private void BeginNarrativeSpool(string? logDirectory)
+    {
+        if (logDirectory is null || !Path.IsPathFullyQualified(logDirectory)) return;
+        if (Narrative.BeginSpool(Path.Combine(logDirectory, RunLogPaths.NarrativeFileName))) return;
+        lock (_gate) AppendSpoolWarningLocked();
     }
 
     /// <summary>[PERF Faz D / karar 10 · kırpma notu görünür] Motor işçi sayısını makineye göre kırptıysa kullanıcıya
@@ -2175,6 +2258,9 @@ public sealed partial class RunViewModel : ObservableObject
     /// proje (özellikle döngü üyesi) yeşil/"up to date" takılı kalmaz.</para></summary>
     private void OnBuildPreview(BuildPreviewEvent e)
     {
+        // [idle-memory · dalga 2 · karar 10] Kompakt konsolun başlık/özet adları: koşunun projeleri artık biliniyor — satır listesinde
+        // henüz olmayan yeni bir proje de (işlem başı listeden doldurur: ClearConsoleForNewOperation).
+        lock (_gate) _compact.Name(e.Items.Select(item => (item.ProjectId, item.Name)));
         foreach (var item in e.Items)
         {
             var row = EnsureRow(item.ProjectId, item.Name, ProjectRowState.Pending);
@@ -2296,6 +2382,7 @@ public sealed partial class RunViewModel : ObservableObject
 
     private void OnProjectSkipped(ProjectSkippedEvent e)
     {
+        AppendCompactSummary(e.ProjectId); // [spec §6.5 "her sonuç"] atlanan proje de (önceki turlarda gizlediklerini) özetler
         // [Task 2/cycles — kök neden B · review fix I-1] Kapsam-dışı pre-skip bu run'ın parçası DEĞİLDİR: motor
         // kapsam dışı her projeyi kendiliğinden atlar (SkipReasons.OutOfCycleScope, RunCoordinator.cs) ama
         // kullanıcı bu projeyi hiç istemedi — satır motorun "atladım" STATÜSÜNÜ TAŞIMAZ, nötr (Pending/
@@ -2312,13 +2399,13 @@ public sealed partial class RunViewModel : ObservableObject
         // yoldan Skipped'a geçmeye devam eder.
         if (_currentRunMode == RunMode.Cycles && e.Reason == SkipReasons.OutOfCycleScope)
         {
-            EnsureRow(e.ProjectId, Path.GetFileNameWithoutExtension(e.ProjectId), ProjectRowState.Pending).SkipReason = e.Reason;
+            EnsureRow(e.ProjectId, ProjectDisplayName.FromPath(e.ProjectId), ProjectRowState.Pending).SkipReason = e.Reason;
             _outOfScopeSkipCount++; // [Task 2 review fix M-1/I-2] bkz. alanın kendi XML yorumu
             UpdateEta(); // [Task 17 deseni — Task 2 review fix M-1] bu da motor açısından bir "tamamlanma"dır
             return;
         }
 
-        var row = EnsureRow(e.ProjectId, Path.GetFileNameWithoutExtension(e.ProjectId), ProjectRowState.Skipped);
+        var row = EnsureRow(e.ProjectId, ProjectDisplayName.FromPath(e.ProjectId), ProjectRowState.Skipped);
         row.State = ProjectRowState.Skipped;
         row.SkipReason = e.Reason; // proje sayfası "neden boş" sorusunu bundan cevaplar
         row.CycleUnconverged = e.CycleUnconverged; // [cycle rounds/Task 8] kalıcı kırık döngü — render Task 9'undur
@@ -2386,6 +2473,7 @@ public sealed partial class RunViewModel : ObservableObject
     private void OnProjectDone(string projectId, ProjectRowState state, long durationMs, IReadOnlyList<string>? depIssues,
         bool cycleUnsettled = false, bool evidence = false, bool trusted = true)
     {
+        AppendCompactSummary(projectId); // [spec §6.5 "her sonuç"] satırdan bağımsız: anlatının özeti satır listesine bağlı değil
         var row = FindRow(projectId);
         if (row is null) return; // protokole göre Started her zaman önce gelir — savunmacı no-op
         row.State = state;
@@ -2639,14 +2727,35 @@ public sealed partial class RunViewModel : ObservableObject
 
     private int _endedOperationSerial;
 
-    /// <summary><see cref="EndedOperationSerial"/>'ın TEK yazıcısı — bir işlemin bitiş noktaları bunu çağırır.</summary>
-    private void MarkOperationEnded() => EndedOperationSerial++;
+    /// <summary><see cref="EndedOperationSerial"/>'ın TEK yazıcısı — bir işlemin bitiş noktaları bunu çağırır.
+    /// <para>[idle-memory · dalga 2 · spec §6.3 · I9] Anlatı spool'unun tamponu da burada diske iner: koşunun sonu (<see cref="MarkRunEnded"/>)
+    /// ve açık spool'a ekleyen işlemlerin (Appended/Silent Sync) sonu. Yazıcı bölüm boyunca açık kalır ve süreç kapanırken
+    /// sonlandırıcı koşmaz — boşaltılmayan kuyruk dosyaya hiç inmezdi. Son işlemden sonra, işlem dışında eklenen satırları kabuk
+    /// penceresi son kez kapanırken boşaltır (<c>MainWindow.OnClosed</c>). Spool yoksa hiçbir şey yapmaz; boşaltma düşerse uyarısı
+    /// konsola düşer.</para>
+    /// <para>[idle-memory · dalga 2 son inceleme F1] Kompakt konsolun etkin kipi de burada ayara döner — uçuşta başka işlem kalmadıysa
+    /// (<see cref="RecaptureCompactWhenIdle"/>; kural: uçuşta işlem yokken etkin kip ayarı izler, uçuştaki bir işlem yakaladığı kipi
+    /// tutar).</para></summary>
+    private void MarkOperationEnded()
+    {
+        lock (_gate)
+        {
+            Narrative.Flush();
+            AppendSpoolWarningLocked();
+        }
+        // [idle-memory · dalga 2 son inceleme F1 · karar 204] İşlem bitti: uçuşta başka işlem kalmadıysa etkin kip ayarın kendisidir.
+        // Uçuştaki işlerin bitişi çoğunlukla zaten bildirilmiştir (NotifyOperationInFlight'ın false kenarı); burası bildirilmeyen bitişleri
+        // kapsar — runCompleted beklemesinin bildirimsiz bırakıldığı koşu-bitiren hata ve motor kaybı. İkinci yakalama değişiklik bulmaz.
+        RecaptureCompactWhenIdle();
+        EndedOperationSerial++;
+    }
 
     /// <summary>
     /// [perf Faz C · C4] Koşunun HER bitiş yolu buradan geçer: <c>runCompleted</c> (<see cref="OnRunCompleted"/> — Stop'un bitişi
     /// dahil: <c>runStopped</c> koşuyu bitirmez, <see cref="IsRunInFlight"/> <c>runCompleted</c>'a dek sürer), koşu-bitiren hata
-    /// (<see cref="OnError"/>) ve motor kaybı (<see cref="ReleaseAfterEngineLoss"/>). "Koşu bitti" sinyali yazılır
-    /// (<see cref="EndedRunSerial"/>), SONRA işlemin bitişi bildirilir (<see cref="EndedOperationSerial"/>). Koşu
+    /// (<see cref="OnError"/>) ve motor kaybı (<see cref="ReleaseAfterEngineLoss"/>). Önce kompakt konsolun bekleyen özetleri anlatıya
+    /// yazılır (<see cref="AppendPendingCompactSummaries"/> — işlemin sonundaki boşaltmadan önce: dosyaya da iner), sonra "koşu bitti"
+    /// sinyali (<see cref="EndedRunSerial"/>), SONRA işlemin bitişi bildirilir (<see cref="EndedOperationSerial"/>). Koşu
     /// yokken çağrılırsa (motor boştayken gitti, planlama düştü) ya da aynı koşunun ikinci bitişinde (<c>runCompleted</c>'dan sonra
     /// motor kaybı) iki sinyal de değişmez: bitecek bir koşu kalmamıştır. Bekleyen koşu-başlangıç akış durumu da burada bırakılır
     /// (<see cref="ForgetPendingRunStart"/>): önizlemesine varmadan biten koşunun başlangıç, kırpma ve uyarı satırları sonraki
@@ -2658,8 +2767,27 @@ public sealed partial class RunViewModel : ObservableObject
     {
         ForgetPendingRunStart();
         if (EndedRunSerial == RunSerial) return; // bitecek koşu yok ya da bu koşunun bitişi zaten işaretli
+        AppendPendingCompactSummaries();          // [fix 1 · M2] işlemin sonundaki boşaltmadan ÖNCE: özetler koşu klasörüne de iner
         EndedRunSerial = RunSerial;
         MarkOperationEnded();
+    }
+
+    /// <summary>
+    /// [idle-memory · dalga 2 · fix 1 · M2] Koşu bitti ama bazı projelerin sonucu hiç gelmedi — motor kaybında
+    /// (<see cref="ReleaseAfterEngineLoss"/>) uçuştaki projeler için ne başarı ne hata yazılır: gizledikleri uyarıların özeti bir
+    /// sonraki işlemin sıfırlamasında sessizce düşerdi. Bekleyen özetler (<see cref="CompactConsoleFilter.DrainPending"/>) normal anlatı
+    /// yolundan, kilit altında yazılır — o anki etkin kipten bağımsız (<see cref="CompactNarrative.Drain"/>: motor kaybında kip, uçuştaki
+    /// işler bittiği an, bu boşaltmadan ÖNCE ayara dönmüş olabilir). Normal bitişte (<c>runCompleted</c>, koşu-bitiren hata) her proje
+    /// sonucunu çoktan almıştır: yazılacak bir şey yoktur.
+    /// </summary>
+    private void AppendPendingCompactSummaries()
+    {
+        lock (_gate)
+            foreach (string summary in _compact.Drain())
+            {
+                AppendRunLineLocked(summary);
+                AppendSpoolWarningLocked();
+            }
     }
 
     /// <summary>[T8 fix round 1 · I1] Bu koşuya ait olmayan bir koşu-sonu olayı: başka bir koşunun id'si, ya da
@@ -2915,6 +3043,9 @@ public sealed partial class RunViewModel : ObservableObject
     /// ObservableProperty/ObservableCollection'a ASLA dokunulmaz.</summary>
     private void OnProjectLog(ProjectLogEvent e)
     {
+        // [idle-memory · dalga 2 son inceleme F4] Metin BİR kez normalleşir: süzgeç, anlatı ve sayfa aynı metni görür. Metni olmayan
+        // bozuk bir kayıt (konumsal kayıt — eksik alan null bağlanır) her yerde boş bir satırdır; "null" yalnız süzgecin "gizle"sidir.
+        string text = e.Text ?? "";
         lock (_gate)
         {
             // [idle-memory · spec §6.2] Canlı satır YALNIZ bekleyen bir log yüklemesinin projesi için tamponlanır: dikişin tek
@@ -2933,19 +3064,50 @@ public sealed partial class RunViewModel : ObservableObject
                 list.Add(e);
             }
 
-            // Anlatı proje modunda bile birikmeye devam eder — ekranda görünmese de.
-            Narrative.Append(e.Text);
-            if (string.Equals(ActiveProjectId, e.ProjectId, StringComparison.OrdinalIgnoreCase))
-                AppendProjectTextLocked(e.ProjectId, e.Text);
+            // Anlatı proje modunda bile birikmeye devam eder — ekranda görünmese de. [idle-memory · dalga 2 · spec §6.5 · karar 9/10]
+            // Kompakt kipte süzülmüş hâliyle: projenin işlemdeki ilk satırından önce başlığı — aynı bölümde, pompadan geç gelebilen
+            // projectStarted'a bağlı değil — sonra satırın kendisi ya da hiçbir şey. Süzgeç her satırı kipten (anlatı/proje) bağımsız
+            // görür: sayaçları ekrandakine bağlı değildir. Gizlenen satır ne store'a ne pompaya gider (store sayısı postlanan anlatı
+            // satırı sayısıdır). Ad tembeldir: yalnız başlık ya da özet yazılırken sorulur (CompactNarrative).
+            var (header, shown) = _compact.Line(e.ProjectId, text);
+            if (header is not null) AppendRunLineLocked(header);
 
             // [Fix wave 1, Finding 3] Post ARTIK AYNI kilit altında: eskiden kilit DIŞINDaydı, bu da
             // "buffer'a yazıldı ama kanala henüz post edilmedi" aralığını SeedRunDocument/SeedProjectDocument'ın
             // (kendi _gate kilidiyle) atomik biçimde kapatmasını engelliyordu (mod değişiminde kopya satır —
             // bkz. task-12-report.md Fix wave 1). Post kilitsiz/hızlı (Channel.Writer.TryWrite) olduğundan
             // kilidi gereksiz uzatmaz. Store'a yazım da aynı bölümdedir: store önce yazılır, sonra pompa — görünüm
-            // backlog'unun belgeden hep ileride olması buna dayanır.
-            if (ActiveProjectId is null || string.Equals(ActiveProjectId, e.ProjectId, StringComparison.OrdinalIgnoreCase))
-                _console.Post(e.Text);
+            // backlog'unun belgeden hep ileride olması buna dayanır. Anlatının yazımı tek yerdedir (AppendRunLineLocked: store,
+            // anlatı ekrandaysa pompa).
+            if (shown is not null) AppendRunLineLocked(shown);
+
+            // Aynı pompanın öbür yönü (kabuk ActiveProjectId'ye göre yönlendirir): açık proje sayfası TAM metni alır — proje logu
+            // süzülmez (karar 9 · preflight C1: süzülmüş metni postlamak sayfanın canlı satırlarını kaçırırdı).
+            if (string.Equals(ActiveProjectId, e.ProjectId, StringComparison.OrdinalIgnoreCase))
+            {
+                AppendProjectTextLocked(e.ProjectId, text);
+                _console.Post(text);
+            }
+            // [idle-memory · dalga 2] Bu satırın spool yazımı düştüyse uyarısı satırın ARDINDAN gelir — store'da da pompada da.
+            AppendSpoolWarningLocked();
+        }
+    }
+
+    /// <summary>
+    /// [idle-memory · dalga 2 · spec §6.5 · karar 11] Bir projenin sonucu geldi — başarı, hata ya da atlama ("her sonuç"): bu işlem
+    /// kompakt yazılıyorsa ve süzgeç projenin uyarılarından bazılarını gizlediyse anlatıya TEK özet satırı düşer. Normal anlatı yolundan
+    /// ve kilit altında: süzgece IPC thread'i de dokunur (preflight C3). Sıra güvenlidir: sonuç olayı pompadan gelir ve motor onu
+    /// projenin satırlarından SONRA yazar, satırlar ise IPC thread'inde olay pompaya girmeden işlenmiştir — özet projenin satırlarının
+    /// ardındadır (araya başka projelerin satırları girebilir). Aynı sonucun tekrarı özeti ikilemez (süzgeç sayacı özetle düşer). Ad
+    /// yalnız özet yazılırken sorulur (son inceleme O7): özeti olmayan sonuç ad aramaz.
+    /// </summary>
+    private void AppendCompactSummary(string projectId)
+    {
+        lock (_gate)
+        {
+            if (_compact.Summary(projectId) is not { } summary) return;
+            AppendRunLineLocked(summary);
+            AppendSpoolWarningLocked();
         }
     }
 
@@ -2976,20 +3138,26 @@ public sealed partial class RunViewModel : ObservableObject
     /// biter (<see cref="CompletePendingLoad"/>). Gönderimi düştü ya da motoru gitti (<see cref="StopAwaitingReply"/>): o isteğe
     /// cevap yazacak motor yoktur; gecikmiş chunk'ının tek fırsatı motor kaybıyla bu sınır arasıdır. Bitmeseydi awaiter'ı hiç serbest
     /// kalmaz ve projesinin satırları sonraki HER koşuda yeniden tamponlanırdı (<see cref="OnProjectLog"/>). Cevabı hâlâ beklenen
-    /// yükleme bitmez: motor komutları sırayla işler, isteğin cevabı yeni işlemin olaylarından önce gelir.</para></summary>
+    /// yükleme bitmez: motor komutları sırayla işler, isteğin cevabı yeni işlemin olaylarından önce gelir.</para>
+    /// <para>[idle-memory · dalga 2 · spec §6.5 · karar 8/10] <b>Kompakt konsolun işlem başı da buradadır:</b> ayarın etkin değeri
+    /// (<see cref="CompactConsoleInEffect"/>) yakalanır — değişiklik bir sonraki işlemde geçerli olur —, süzgecin sayaçları ve başlıkları
+    /// sıfırlanır ve proje adları satır listesinden alınır: koşunun satırları önizlemesini de geçebilir (ikisi de pompadan gelir).</para></summary>
     private void ClearConsoleForNewOperation()
     {
         if (_pendingLoad is { ReplyExpected: false } unanswered) CompletePendingLoad(unanswered);
+        bool compactChanged;
         lock (_gate)
         {
             _liveLines.Clear();
             _projectText.Clear();
             Narrative.Clear();
             _projectLineCount.Clear();
+            compactChanged = _compact.BeginOperation(CompactConsole, Projects.Select(row => (row.Id, row.Name)));
             // Uçuştaki bayat batch'ler düşer (SeedRunDocument ile AYNI sentinel): temizlikten ÖNCE pompaya girmiş
             // bir önceki işlemin satırı, temizlikten SONRA ekrana sızamaz (nesil damgası — ConsoleBatcher).
             _console.PostReseedDrop();
         }
+        if (compactChanged) OnPropertyChanged(nameof(CompactConsoleInEffect)); // kilit DIŞINDA: kabuk başlığın etiketini tazeler
         ConsoleCleared?.Invoke(this, EventArgs.Empty); // kilit DIŞINDA: kabuk WPF belgesini kurar
     }
 
@@ -3013,9 +3181,30 @@ public sealed partial class RunViewModel : ObservableObject
         // böler, yani "N lines" ekrandaki satırları sayar.
         lock (_gate)
         {
-            Narrative.Append(text);
-            if (ActiveProjectId is null) _console.Post(text);
+            AppendRunLineLocked(text);
+            AppendSpoolWarningLocked();
         }
+    }
+
+    /// <summary>Bir anlatı satırının TEK yazımı (kilit altında): önce store, sonra — anlatı ekrandaysa — pompa.</summary>
+    private void AppendRunLineLocked(string text)
+    {
+        Narrative.Append(text);
+        if (ActiveProjectId is null) _console.Post(text);
+    }
+
+    /// <summary>
+    /// [idle-memory · dalga 2 · spec §6.3] Anlatı spool'unun bekleyen uyarısını (<see cref="NarrativeStore.TakeWarning"/>) bir anlatı
+    /// satırı olarak ekler — kilit altında ve çağıranın kendi satırını pompaya gönderdikten SONRA: store sırası pompa sırasıyla aynı
+    /// kalır (belgenin ilk satırı store indeksidir). Store dışarı çağırmaz — olay yok; uyarıyı VM alır: satır ekleyen iki yol
+    /// (<see cref="OnProjectLog"/>, <see cref="AppendRunLine"/>), açılamayan spool (<see cref="BeginNarrativeSpool"/>), işlemin sonundaki
+    /// boşaltma (<see cref="MarkOperationEnded"/>) ve görünürken 200 ms'lik tik (<see cref="TickElapsed"/> — satır eklemeyen geri okuma
+    /// hatası için). Uyarı bölüm başına bir kezdir ve eklenirken ya spool kapanmıştır (yazım hatası) ya da bölümün uyarısı alınmıştır:
+    /// ekleme yeni bir uyarı doğurmaz.
+    /// </summary>
+    private void AppendSpoolWarningLocked()
+    {
+        if (Narrative.TakeWarning() is { } warning) AppendRunLineLocked(warning);
     }
 
     /// <summary>[T56/3a] Konsol başlığındaki "N lines" için AKTİF tampon (run ya da seçili proje) satır sayısı —
@@ -3190,7 +3379,7 @@ public sealed partial class RunViewModel : ObservableObject
         var row = FindRow(projectId);
         if (row is not null) return row.Name;
         var node = Topology.FirstOrDefault(n => string.Equals(n.Id, projectId, StringComparison.OrdinalIgnoreCase));
-        return node?.Name ?? Path.GetFileNameWithoutExtension(projectId);
+        return node?.Name ?? ProjectDisplayName.FromPath(projectId);
     }
 
     /// <summary>[D4 review §2/§3] <see cref="LoadProjectLogAsync"/> bittikten sonra proje-log gösterilmeli mi:
