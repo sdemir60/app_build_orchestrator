@@ -419,7 +419,7 @@ public sealed partial class RunViewModel
     /// <para>[Task 21 · karar 34 · Fix round 1 · Mi2] <b>Uyku döngüsündeki kayıp hiçbir pencereyi bırakmaz.</b> Motor uyku sürerken, uyurken ya da
     /// uyanırken kaybedildiyse (düşen uyku; uyutulan motorun geç gelen ölüm sinyali; uyanmak için doğan motorun ölümü) ona son hazır olduğu andan
     /// beri hiçbir şey GİTMEDİ: uyku yalnız uçuşta işlem yokken başlar ve uyku döngüsünde gönderim yoktur (<see cref="EnsureEngineAwakeAsync"/>).
-    /// O an açık görünen her istek penceresi kapıda bekleyen — ya da açılış koreografisinde kapıya yürüyen — bir isteğindir; motor kaybı onu
+    /// O an açık görünen her istek penceresi kapıda bekleyen bir isteğindir (koşu da kapıya tıklamada, koreografisiyle örtüşerek sorar); motor kaybı onu
     /// bırakmaz (hiç başlamamış bir işlem bitmiş sayılmaz: ne Sync'in <c>EndSync</c>/<c>MarkOperationEnded</c>'ı, ne koşunun faz/<see cref="IsStarting"/>
     /// sıfırlaması). İsteğin kendi "gönderim düştü" geri alımı bırakır — geri alım TEK yerde ve tek sırayla olur.</para>
     /// <para>[M-3 · T21 N1] <b>Ölü motorun ikinci bildirimi yalnız metni yeniler.</b> Dead'e iki kez yalnız aynı kayıp ulaşır: ölüm sinyali hiç gelmeyen
