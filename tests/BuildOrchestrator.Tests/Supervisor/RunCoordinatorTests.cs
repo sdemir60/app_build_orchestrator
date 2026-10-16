@@ -897,9 +897,10 @@ public class RunCoordinatorTests
     }
 
     /// <summary>[B1 fix 3] Uyarıyı yazmak da cevabı bozamaz: tanı kanalı satırı yazarken patlarsa (kapanmış stderr borusu) okuma yine "log yok"
-    /// döner, istisna yükselmez — <see cref="RunCoordinator.TrimAndReportMemory"/>'in iç yakalamasıyla aynı kural. İstek kimliksizdir ve kabul edilen
-    /// bir koşu klasörünü adlandırır (klasörün diskte olması gerekmez: adlandırma kuralı okumadan önce düşer).
-    /// <para>KIRMIZI (f611591c): istisna koordinatörden yükseliyordu (yakalama yoktu). Mutasyon (iç yakalama yok) yine kırmızı.</para></summary>
+    /// döner, istisna yükselmez — <see cref="RunCoordinator.TrimAndReportMemory"/>'in trim uyarısıyla aynı kural ve [B1 fix 4] aynı tek yardımcı
+    /// (koordinatörün <c>ReportDiagnostic</c>'i). İstek kimliksizdir ve kabul edilen bir koşu klasörünü adlandırır (klasörün diskte olması gerekmez:
+    /// adlandırma kuralı okumadan önce düşer).
+    /// <para>KIRMIZI (f611591c): istisna koordinatörden yükseliyordu (yakalama yoktu). Mutasyon (yardımcının yakalaması yok) yine kırmızı.</para></summary>
     [Fact]
     public void A_console_that_fails_while_a_read_failure_is_reported_never_breaks_the_answer()
     {

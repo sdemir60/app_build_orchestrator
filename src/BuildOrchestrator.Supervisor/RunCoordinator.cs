@@ -274,8 +274,9 @@ public sealed class RunCoordinator(
     /// <para>[idle-memory · dalga 3 · B1 fix 3] <b>Okumanın her hatasını "log yok"a çeviren TEK yer burasıdır</b> — disk okuması (paylaşım ihlali,
     /// erişim reddi), canlı yazıcının anlık görüntüsü, bozuk bir istek (kimliksiz), klasör kuralı: hata hiçbir yolda çağırana (host'un komut
     /// döngüsüne) yükselmez ve tanı kanalına TEK <c>warning: project log could not be read (&lt;proje&gt;): &lt;ileti&gt;</c> satırı düşer. Kanal
-    /// motorun stderr'idir; App onu boşaltır ve ATAR — satır harness'ler ve tanı içindir, kullanıcıya ulaşmaz. Satırı biçimlemek ya da yazmak patlarsa
-    /// o hata da yutulur (<see cref="TrimAndReportMemory"/>'in iç yakalaması): iz, cevaptan ağır bir hata üretemez. YOK olan log (Core'un
+    /// motorun stderr'idir; App onu boşaltır ve ATAR — satır harness'ler ve tanı içindir, kullanıcıya ulaşmaz. Satırın biçimi kimliksiz istekte de
+    /// fırlatmaz (proje alanı boş kalır); satırı yazmak patlarsa o hata da yutulur (<see cref="ReportDiagnostic"/>): iz, cevaptan ağır bir hata
+    /// üretemez. YOK olan log (Core'un
     /// <c>null</c>'ı, <see cref="RunLogWriter.ReadProjectLogFromDisk"/>) ve kuralın reddettiği klasör ise birer karardır, hata değil: sessiz
     /// "log yok", satır yok.</para>
     ///
@@ -315,8 +316,7 @@ public sealed class RunCoordinator(
         catch (Exception ex)
         {
             snap = null; // okunamayan log "log yok"tur — kuralın tek yeri
-            try { console($"warning: project log could not be read ({projectId}): {ex.Message}"); }
-            catch (Exception) { /* tanı kanalı da yazılamıyor — vazgeç, cevabı bozma */ }
+            ReportDiagnostic($"warning: project log could not be read ({projectId}): {ex.Message}");
         }
         if (snap is { } s) { text = s.Text; throughLineNumber = s.ThroughLineNumber; return true; }
         text = ""; throughLineNumber = 0; return false;
@@ -378,7 +378,7 @@ public sealed class RunCoordinator(
     /// <para>Toplama bir OPTİMİZASYONDUR: fırlatırsa hata yutulur, satırı ve çağıran işi (Sync, koşu kapanışı) bozmaz.
     /// [idle-memory · final review 49] Yutulan hata izsiz kalmaz: konsola (stderr) tek <c>warning: memory trim failed: &lt;ileti&gt;</c>
     /// satırı düşer ve bellek satırından ÖNCE yazılır — satır toplanmamış bir yığını taşır, okuyan bilmelidir. İz de bir tanıdır: o
-    /// satırı yazmak patlarsa o hata da yutulur; satırı yazan <c>MemoryLine.Report</c> da hata yutar.</para>
+    /// satırı yazmak patlarsa o hata da yutulur (<see cref="ReportDiagnostic"/>); satırı yazan <c>MemoryLine.Report</c> da hata yutar.</para>
     /// </summary>
     public void TrimAndReportMemory()
     {
@@ -388,11 +388,24 @@ public sealed class RunCoordinator(
             catch (Exception ex)
             {
                 // trim bir optimizasyondur; raporu ve işi bozmaz — ama sessiz de kalmaz (tanı kanalına tek satır).
-                try { console("warning: memory trim failed: " + ex.Message); }
-                catch (Exception) { /* tanı kanalı da yazılamıyor — vazgeç, işi bozma */ }
+                ReportDiagnostic("warning: memory trim failed: " + ex.Message);
             }
         }
         MemoryLine.Report(console);
+    }
+
+    /// <summary>
+    /// [idle-memory · dalga 3 · B1 fix 4] Bir cevabı ya da bir işin kapanışını taşıyan yoldan tanı kanalına TEK satır yazar; satır yazılamazsa
+    /// (ör. kapanmış stderr borusu) hata yutulur — iz, taşıdığı cevaptan ya da işten ağır bir hata üretemez. Yalnız iki yol kullanır: işlem sonu
+    /// bellek raporunun trim uyarısı (<see cref="TrimAndReportMemory"/> — Sync/Clean/Optimize ve koşu kapanışı bozulmamalı) ve okunamayan proje
+    /// logunun uyarısı (<see cref="TryGetProjectLogSnapshot"/> — "log yok" cevabı bozulmamalı). Öteki tanı satırları kanalı doğrudan yazar; kapsam
+    /// bilerek bu iki yolla sınırlıdır.
+    /// </summary>
+    /// <param name="line">Yazılacak satır (çağıran kurar; kimliksiz bir istekte proje alanı boş kalır, biçimleme fırlatmaz).</param>
+    private void ReportDiagnostic(string line)
+    {
+        try { console(line); }
+        catch (Exception) { /* tanı kanalı da yazılamıyor — vazgeç, cevabı ve işi bozma */ }
     }
 
     /// <summary>
