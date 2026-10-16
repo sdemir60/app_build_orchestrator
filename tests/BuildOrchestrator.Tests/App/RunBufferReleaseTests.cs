@@ -952,7 +952,7 @@ public class RunBufferReleaseTests
         Assert.Equal(1, MainWindowHost.Occurrences(text, "first"));      // kayıpsız ve çiftsiz: belge == model
         Assert.Equal(1, MainWindowHost.Occurrences(text, "second"));
         Assert.True(text.IndexOf("first", StringComparison.Ordinal) < text.IndexOf("second", StringComparison.Ordinal));
-        Assert.Equal(Visibility.Collapsed, console.Tilt3D.Visibility);   // tilt'siz: tilt mod geçişinin işidir
+        Assert.False(console.IsTransitioning);                           // tilt'siz: tilt mod geçişinin işidir
         GC.KeepAlive(window);
     }
 }
