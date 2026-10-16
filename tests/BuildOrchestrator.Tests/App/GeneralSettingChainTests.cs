@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text.RegularExpressions;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
@@ -20,7 +21,16 @@ namespace BuildOrchestrator.Tests.App;
 /// <para><b>[DEĞİŞEN DÜZEN — B3]</b> Eskiden her ayarın kendi zincir sınıfı vardı ve her yeni ayar bir öncekinin kopyasıydı (Pull →
 /// Stash → Resolve → Compact → Stop engine; kabuk anahtarlarında <c>ShellSwitchesTests</c> ile <c>StartWithWindowsTests</c>'in ikiz
 /// testleri). Kopyalar ayrışmıştı: Resolve'un satır/bayrak testi, Pull'un kabuk tohumu ve uygulamanın ayarı taşımadığı durum yalnız
-/// bazı ayarlarda vardı. Eski test → satır eşlemesi B3 raporundadır (<c>w3-b3-report.md</c>); hiçbir iddia düşmedi.</para>
+/// bazı ayarlarda vardı. Her eski testin iddiası zincirin adımına göre bir teoriye taşındı, hiçbiri düşmedi: varsayılan →
+/// <c>Every_reader_of_a_setting_starts_on_the_catalogs_default</c> + <c>Every_setting_has_its_approved_default</c>; satır ile taslak bayrağı →
+/// <c>A_workflow_settings_row_and_its_draft_flag_are_one_value</c>; taslağın açılışı → <c>The_draft_opens_on_the_live_value_it_is_given</c> /
+/// <c>The_draft_opens_a_shell_switch_on_its_saved_value</c>; ayar dosyası → <c>Every_setting_round_trips_through_the_settings_file</c> +
+/// <c>A_file_without_the_setting_leaves_the_form_untouched</c>; Save → <c>Save_persists_a_workflow_setting_and_applies_it_in_the_same_commit</c>;
+/// notlar → <c>A_changed_workflow_setting_notes_it_once_and_an_unchanged_one_stays_quiet</c> /
+/// <c>A_changed_shell_switch_is_saved_and_noted_once_each_way_and_the_others_stay_quiet</c>; ayarı anmayan uygulama →
+/// <c>An_apply_that_does_not_carry_a_workflow_setting_leaves_it_unchanged_and_quiet</c>; kabuğun tohumu ve kalıcılığı →
+/// <c>The_shell_seeds_a_workflow_setting_and_persists_its_changes</c>; sayfa → <c>The_general_page_realizes_a_workflow_switch_and_save_applies_it</c>;
+/// ui-state → <c>A_saved_shell_switch_reads_its_saved_value</c> + <c>A_shell_switch_survives_the_json_store_and_a_null_token_reads_as_the_default</c>.</para>
 /// <para>Kabuk anahtarlarının davranışı bu sınıfta BAĞLANMAZ — pencere kapanışını <c>MainWindow.OnClosing</c>, tepsi balonlarını
 /// <c>FirstCloseBalloonGate</c>/<c>TrayBuildIndicatorController</c>/<c>SecondInstanceGate</c>/<c>MainWindow.OnGlobalHotkey</c>, açılış yolunu
 /// <c>StartupArgs.Decide</c> okur (<see cref="ShellSwitches"/> üzerinden; testleri <see cref="CloseToTrayTests"/> ve tepsi testleri).</para>
@@ -32,16 +42,16 @@ public class GeneralSettingChainTests
     public static TheoryData<GeneralSetting> EverySetting() => DataOf(GeneralSettingsCatalog.Groups.SelectMany(g => g.Rows).Select(r => r.Setting));
 
     /// <summary>VM'de yaşayan beş iş akışı tercihi.</summary>
-    public static TheoryData<GeneralSetting> WorkflowSettings() => DataOf(Workflow.Select(c => c.Setting));
+    public static TheoryData<GeneralSetting> WorkflowSettings() => DataOf(WorkflowRows.Select(c => c.Setting));
 
     /// <summary>Dört kabuk anahtarı.</summary>
-    public static TheoryData<GeneralSetting> ShellSettings() => DataOf(Shell.Select(c => c.Setting));
+    public static TheoryData<GeneralSetting> ShellSettings() => DataOf(ShellRows.Select(c => c.Setting));
 
     /// <summary>Her iş akışı tercihi, diyalog iki değerin her biriyle açılarak.</summary>
     public static TheoryData<GeneralSetting, bool> WorkflowSettingsBothWays()
     {
         var data = new TheoryData<GeneralSetting, bool>();
-        foreach (var chain in Workflow)
+        foreach (var chain in WorkflowRows)
         {
             data.Add(chain.Setting, true);
             data.Add(chain.Setting, false);
@@ -69,7 +79,7 @@ public class GeneralSettingChainTests
     public void The_table_has_one_row_per_catalog_row_and_the_shell_rows_are_the_shell_switches()
     {
         Assert.Equal(GeneralSettingsCatalog.Groups.SelectMany(g => g.Rows).Select(r => r.Setting), All.Select(c => c.Setting));
-        Assert.Equal(ShellSwitches.All.Select(s => s.Setting), Shell.Select(c => c.Setting));
+        Assert.Equal(ShellSwitches.All.Select(s => s.Setting), ShellRows.Select(c => c.Setting));
         Assert.All(All, c => Assert.True((c.Workflow is null) != (c.Shell is null), $"{c.Setting}: a row is either a workflow setting or a shell switch"));
     }
 
@@ -131,6 +141,79 @@ public class GeneralSettingChainTests
 
         Assert.Equal(setting, row.Setting);
         Assert.Equal(chain.ApprovedDefault, row.Default);
+    }
+
+    /// <summary>Literal varsayılan guard'ının tanıdığı adlar — iş akışı tercihi başına VM alanı, taslak/uygulama parametresi ve ui-state
+    /// özelliği. Küme tablonun iş akışı satırlarıyla aynı olmak zorundadır (<see cref="No_workflow_setting_starts_from_a_literal_default"/>):
+    /// yeni bir tercih buraya girmeden guard kırmızıdır.</summary>
+    private static readonly IReadOnlyDictionary<GeneralSetting, (string Field, string Parameter, string State)> GuardedNames =
+        new Dictionary<GeneralSetting, (string, string, string)>
+        {
+            [GeneralSetting.PullBeforeBuild] = ("_updateExternals", "pullExternalsBeforeBuild", nameof(UiState.UpdateExternals)),
+            [GeneralSetting.StashOnBranchSwitch] = ("_stashOnBranchSwitch", "stashOnBranchSwitch", nameof(UiState.StashOnBranchSwitch)),
+            [GeneralSetting.ResolveAtFullPriority] = ("_resolveAtFullPriority", "resolveAtFullPriority", nameof(UiState.ResolveAtFullPriority)),
+            [GeneralSetting.CompactConsole] = ("_compactConsole", "compactConsole", nameof(UiState.CompactConsole)),
+            [GeneralSetting.StopEngineWhenIdle] = ("_stopEngineWhenIdle", "stopEngineWhenIdle", nameof(UiState.StopEngineWhenIdle)),
+        };
+
+    private static string AnyOf(Func<(string Field, string Parameter, string State), string> name) =>
+        "(?:" + string.Join("|", GuardedNames.Values.Select(n => Regex.Escape(name(n)))) + ")";
+
+    /// <summary>Literal varsayılanın dört biçimi: alan literalle ya da ilk değersiz; taslak/uygulama parametresi literalle; kabuğun tohumu
+    /// <c>?? literal</c>.</summary>
+    private static Regex LiteralDefaultRule() => new(
+        @"\bbool\s+" + AnyOf(n => n.Field) + @"\s*(?:=\s*(?:true|false)\b|;)"
+        + @"|\bbool\??\s+" + AnyOf(n => n.Parameter) + @"\s*=\s*(?:true|false)\b"
+        + @"|\bsaved\." + AnyOf(n => n.State) + @"\s*\?\?\s*(?:true|false)\b",
+        RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// [son temizlik · madde 18] Varsayılan koda literal olarak geri dönemez. <see cref="Every_reader_of_a_setting_starts_on_the_catalogs_default"/>
+    /// yalnız kataloğun değerinden AYRIŞAN bir yeri görür: bugünkü değerle aynı bir literal (ör. <c>private bool _stashOnBranchSwitch = false;</c>,
+    /// ilk değersiz bir alan, ctor'da <c>bool? compactConsole = true</c>, kabukta <c>saved.CompactConsole ?? true</c>) o pinde yeşil kalır ve
+    /// katalog değişene dek ikinci bir tanım olarak yaşar. Bu guard tüm üretim kaynağını yorumları ve literalleri ayıklanmış kodda tarar
+    /// (<see cref="SourceGuard.ScanSrcIdentifiers"/>). Bilinçli kapsam dışı: Contracts'taki tel varsayılanları
+    /// (<c>StartRunCommand.UpdateExternals = true</c>) — eski bir NDJSON satırında alan yoksa ne olacağını söyler, UI varsayılanı değildir ve
+    /// Contracts kataloğu göremez; adları PascalCase olduğu için kural onları görmez. Vakum karşıtı: beş VM alanının kataloğun varsayılanından
+    /// başladığı ayrıca sayılır.
+    /// <para>KIRMIZI (iki geçici bozma, ikisinde de <see cref="Every_reader_of_a_setting_starts_on_the_catalogs_default"/> 9/9 yeşil kaldı):
+    /// <c>_stashOnBranchSwitch</c> alanına <c>= false</c> → <c>BuildOrchestrator.App\ViewModels\RunViewModel.cs:818: bool _stashOnBranchSwitch = false</c>;
+    /// kabuğun tohumuna <c>?? false</c> → <c>BuildOrchestrator.App\MainWindow.xaml.cs:210: saved.StashOnBranchSwitch ?? false</c>.</para>
+    /// </summary>
+    [Fact]
+    public void No_workflow_setting_starts_from_a_literal_default()
+    {
+        Assert.Equal(WorkflowRows.Select(c => c.Setting).Order(), GuardedNames.Keys.Order()); // guard her iş akışı tercihini tanıyor
+
+        var offenders = SourceGuard.ScanSrcIdentifiers("*.cs", LiteralDefaultRule());
+
+        Assert.True(offenders.Count == 0,
+            "bir iş akışı tercihi varsayılanını literalden alıyor (tek tanım kataloğun satırı — DefaultOf):" + Environment.NewLine + "  "
+            + string.Join(Environment.NewLine + "  ", offenders));
+        var catalogBacked = new Regex(@"\bbool\s+" + AnyOf(n => n.Field) + @"\s*=\s*GeneralSettingsCatalog\.DefaultOf\(",
+            RegexOptions.CultureInvariant);
+        Assert.Equal(GuardedNames.Count, SourceGuard.ScanSrcIdentifiers("RunViewModel.cs", catalogBacked).Count); // tarama alanları GÖRÜYOR
+    }
+
+    /// <summary>Guard'ın kendi kanıtı: literal varsayılanın dört biçimi satırıyla yakalanır; kataloktan okuyan alan, yorum ve string literali
+    /// yakalanmaz.</summary>
+    [Fact]
+    public void The_literal_default_guard_catches_every_form_and_ignores_comments_and_strings()
+    {
+        const string source = """
+            // [ObservableProperty] private bool _compactConsole = true;
+            [ObservableProperty] private bool _compactConsole = true;
+            [ObservableProperty] private bool _stashOnBranchSwitch;
+            public Draft(bool? resolveAtFullPriority = false) { }
+            void Seed() { _vm.StopEngineWhenIdle = saved.StopEngineWhenIdle ?? true; }
+            private bool _updateExternals = GeneralSettingsCatalog.DefaultOf(GeneralSetting.PullBeforeBuild);
+            string text = "private bool _stopEngineWhenIdle = false;";
+            """;
+
+        var offenders = SourceGuard.ScanCodeIdentifiers("Fake.cs", source, LiteralDefaultRule());
+
+        Assert.Equal(["Fake.cs:2", "Fake.cs:3", "Fake.cs:4", "Fake.cs:5"],
+            offenders.Select(o => o[..o.IndexOf(": ", StringComparison.Ordinal)]));
     }
 
     // ---------------------------------------------------------------- taslak
@@ -405,10 +488,10 @@ public class GeneralSettingChainTests
         using var temp = new TempDir();
         string path = UiStatePath(temp);
         var saved = new UiState { LayoutMode = LayoutMode.List };
-        foreach (var c in Shell) c.SetState(saved, !DefaultOf(c.Setting)); // dört anahtar da varsayılan DIŞI
+        foreach (var c in ShellRows) c.SetState(saved, !DefaultOf(c.Setting)); // dört anahtar da varsayılan DIŞI
         new JsonUiStateStore(path).Save(saved);
         var before = new JsonUiStateStore(path).Load();
-        Assert.All(Shell, c =>                                                 // kayıt diskten aynen döner, okuyucular onu okur
+        Assert.All(ShellRows, c =>                                             // kayıt diskten aynen döner, okuyucular onu okur
         {
             Assert.Equal<bool?>(!DefaultOf(c.Setting), c.State(before));
             Assert.Equal(!DefaultOf(c.Setting), c.Shell!.Reads(before));
@@ -422,7 +505,7 @@ public class GeneralSettingChainTests
 
         Assert.Equal(DefaultOf(setting), ShellSwitches.IsOn(reloaded, setting));  // null token → katalog varsayılanı
         Assert.Equal(DefaultOf(setting), chain.Shell.Reads(reloaded));
-        Assert.All(Shell.Where(c => c.Setting != setting), c =>                    // diğer anahtarlar KORUNUR
+        Assert.All(ShellRows.Where(c => c.Setting != setting), c =>                // diğer anahtarlar KORUNUR
         {
             Assert.Equal(!DefaultOf(c.Setting), ShellSwitches.IsOn(reloaded, c.Setting));
             Assert.Equal(!DefaultOf(c.Setting), c.Shell!.Reads(reloaded));
@@ -445,7 +528,7 @@ public class GeneralSettingChainTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var run = NewRun(engine);
         var store = new SettingsDialogHost.FakeStore();
-        var others = Shell.Where(c => c.Setting != setting).ToList();
+        var others = ShellRows.Where(c => c.Setting != setting).ToList();
 
         var draft = new SettingsDraftViewModel(null, Root, saved: store.Load()); // diyaloğun açılışı
         draft.GeneralRow(setting).IsOn = other;

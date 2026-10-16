@@ -64,7 +64,8 @@ public class StartWithWindowsTests
 
     // [B3 · katlama] Kabuk anahtarlarının ortak zinciri — kayıtlı/varsayılan okuma, ui-state dosyasındaki null token, taslağın kayıtlı
     // değerle açılışı, Windows yüzeyi olmadan Save'in yazdığı ve notları (iki yön), ayar dosyası — dört anahtar için birlikte
-    // GeneralSettingChainTests'tedir (bu sınıfın yedi ikiz testi oraya katlandı; eşleme B3 raporunda).
+    // GeneralSettingChainTests'tedir (bu sınıfın yedi ikiz testi oraya katlandı; hangi teorinin zincirin hangi adımını taşıdığı o sınıfın
+    // özetindedir).
 
     // ---------------------------------------------------------------- Windows kaydı: gerçek durum + Save anında
 

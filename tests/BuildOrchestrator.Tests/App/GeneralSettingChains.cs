@@ -107,11 +107,12 @@ internal static class GeneralSettingChains
         All.SingleOrDefault(c => c.Setting == setting)
         ?? throw new Xunit.Sdk.XunitException($"{setting}: the catalog has a row the chain table does not — add one to GeneralSettingChains");
 
-    /// <summary>VM'de yaşayan beş iş akışı tercihi.</summary>
-    public static IEnumerable<GeneralSettingChain> Workflow => All.Where(c => c.Workflow is not null);
+    /// <summary>VM'de yaşayan beş iş akışı tercihinin satırları (satırın kendi <see cref="GeneralSettingChain.Workflow"/> yüzüyle karışmasın diye
+    /// ad <c>…Rows</c>).</summary>
+    public static IEnumerable<GeneralSettingChain> WorkflowRows => All.Where(c => c.Workflow is not null);
 
-    /// <summary><see cref="ShellSwitches"/>'in dört kabuk anahtarı.</summary>
-    public static IEnumerable<GeneralSettingChain> Shell => All.Where(c => c.Shell is not null);
+    /// <summary><see cref="ShellSwitches"/>'in dört kabuk anahtarının satırları (<see cref="GeneralSettingChain.Shell"/> yüzüyle karışmasın).</summary>
+    public static IEnumerable<GeneralSettingChain> ShellRows => All.Where(c => c.Shell is not null);
 }
 
 /// <summary>Tablonun bir satırı: bir General ayarının zincirdeki yüzleri.</summary>
