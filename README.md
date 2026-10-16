@@ -214,8 +214,8 @@ re-runs a failed release's failed jobs once. Installed copies pick the release u
 
    *Stop the engine when idle* lets the engine process exit after five minutes without work — with the window open
    or in the tray — so an idle app holds less memory. The next piece of work that needs it — a build, a Sync, a Clean
-   or Optimize, the branch menu or a branch switch, a pull, a project's log — starts it again in a moment; meanwhile
-   the ribbon reads `▸ Starting the engine…`, and the last run's project logs stay readable. Turning the switch off
+   or Optimize, a branch switch, a pull, a project's log — starts it again in a moment; meanwhile the ribbon reads
+   `▸ Starting the engine…`, and the last run's project logs stay readable. Turning the switch off
    does not wake an engine that is already asleep; it stays asleep until the next piece of work.
 
    *Start with Windows* starts the app when you sign in to Windows. *Save* applies it at once, and the switch
@@ -373,11 +373,12 @@ re-runs a failed release's failed jobs once. Installed copies pick the release u
    failed had its recorded state invalidated, so it is stale again, while everything that finished green is
    skipped as up to date.
 
-   Nothing compiles the moment you click, and *Stop* is available throughout. While the opening sequence is
-   playing the engine has not been asked for anything yet, so a stop there cancels the run outright — the
-   console says `Cancelled — build not started` and nothing is sent. Once the sequence ends the engine works
-   out what to build — updating external working copies if that is on, scanning, building the graph, then
-   computing what changed — which on a large repository takes seconds; the ribbon reads
+   Nothing compiles the moment you click, and *Stop* is available throughout. Until the command goes out — while
+   the opening sequence is playing, or while a sleeping engine is still starting (the ribbon then reads
+   `▸ Starting the engine…`) — the engine has not been asked for anything yet, so a stop there cancels the run
+   outright — the console says `Cancelled — build not started` and nothing is sent. Once the command has gone out
+   the engine works out what to build — updating external working copies if that is on, scanning, building the
+   graph, then computing what changed — which on a large repository takes seconds; the ribbon reads
    *"▸ Starting — resolving what to build"* and the console lists each step as it completes. A stop in that
    window is a real stop, and it still compiles nothing.
 6. **Stop** — nothing new is dispatched and the in-flight `MSBuild.exe` children finish, including their
@@ -636,8 +637,8 @@ the tagline on the left; a *licensed to* block with the company logo on the righ
 - **Environment** — two groups: *Runtime* (engine PID, .NET runtime, OS, and the app's own memory — *App
   private*, *GC committed* and *Managed heap*, in MB: a snapshot taken when the screen opens and once more when
   `MSBuild.exe` resolves, not a live reading, and `—` when it cannot be read; the engine PID reads `asleep` while
-  the engine sleeps) and *Paths* (the resolved
-  `MSBuild.exe` and its version, the repository root, and the state and log paths).
+  the engine sleeps) and *Paths* (the resolved `MSBuild.exe` and its version, the repository root, and the state
+  and log paths).
 - **Shortcuts** — the table above in three groups, *Global*, *Build* and *Application*, rendered from the same
   source the app binds its keys from, so a rebound key can never drift from what the screen claims.
 

@@ -66,7 +66,7 @@ solution fresh).
 | DI | Microsoft.Extensions.DependencyInjection 10 | Composition root in `App.OnStartup` |
 | Console host | AvalonEdit 6.3 | The only WPF control that gives text selection + per-line colouring + MSBuild-verbose volume together |
 | Tray icon | H.NotifyIcon.Wpf 2.4 | Notify icon + OS balloon |
-| Test framework | xUnit 2.9 + StaFact + SkippableFact | STA tests are required for WPF realization; `[WpfFact]`, StaFact's runner that adds a dispatcher synchronization context, serves the shell tests where two paths await one task (§17.1) |
+| Test framework | xUnit 2.9 + StaFact + SkippableFact | STA tests are required for WPF realization; `[WpfFact]`, StaFact's runner that adds a dispatcher synchronization context, serves the engine sleep and wake shell tests (`EngineWakeTests`), where two paths can await one task (§17.1) |
 | Build engine | `MSBuild.exe`, located via `vswhere` | **Not** `dotnet build` — the target repository is predominantly legacy .NET Framework |
 | Process control | Win32 job objects, `CreateProcessW`, `RegisterHotKey`, `WindowChrome`, DWM | P/Invoke in `Core/ProcessControl` and `App/Shell` |
 | Fonts | Geist / Geist Mono, static OTF, embedded | SIL OFL 1.1; variable fonts are not usable by WPF |
@@ -203,7 +203,7 @@ indefinitely. One unread pipe, both symptoms.
 |---|---|---|
 | App | everything | Disposing the outer job closes the last handle → cascade |
 | App | Supervisor only | `Process.Kill(entireProcessTree: true)`, then a wait of at most a second for it to end — the kill is asynchronous, and an update must not meet the engine's files still locked (§12.5) |
-| App | Supervisor only, to put an idle engine to sleep (§4.7) | The engine's generation is retired first, so the exit raises no `EngineExited`; `shutdown` is written (at most 500 ms) and the engine's own exit is awaited for at most two seconds (`SleepExitWait`); what is still alive is then killed as in the row above. An exit that arrives meanwhile pre-empts a sleep or a wake in flight instead of waiting behind it |
+| App | Supervisor only, to put an idle engine to sleep (§4.7) | The engine's generation is retired first, so the exit raises no `EngineExited`; `shutdown` is written (at most 500 ms) and the engine's own exit is awaited for at most two seconds (`SleepExitWait`); what is still alive is then killed as in the row above. An exit that arrives meanwhile pre-empts a sleep or a wake in flight instead of waiting behind it (one already inside its own kill finishes that kill) |
 | Supervisor | the whole MSBuild tree | `TerminateJobObject(inner)` — the hard stop |
 | Supervisor | one project | `Kill(entireProcessTree: true)` on that `MSBuild.exe` |
 | Supervisor | App | not possible — the App's death reaches it as stdin EOF and it exits cleanly |
@@ -353,7 +353,7 @@ same step as the event that changes it. The idle rule, the gate below and the ri
 | Ready | up and answering — the only state the rule may put to sleep | the rule → Sleeping; a death → Dead |
 | Sleeping | the host is stopping the process | the stop ends → Asleep; the stop fails → Dead; an engine that dies on its own meanwhile wins over both |
 | Asleep | no process | the first request that needs the engine → Waking |
-| Waking | the host is starting the process | the ready report → Ready; a failure → Dead or Unavailable (below) |
+| Waking | the host is starting the process | the ready report → Ready; a failure → Dead or Unavailable (below); the exit pre-empts it → Asleep |
 | Dead | the engine was lost — it died, would not stop or would not wake | *Restart engine* → Starting |
 | Unavailable | no engine can be had — the supervisor was never found, or would not launch (§13.3) | — |
 
@@ -373,7 +373,9 @@ is *Restart engine*'s job.
 Start, restart, sleep, wake and dispose pass through one lifecycle gate, so two concurrent wakes start one process and
 a sleep cannot cut a start in half. Dispose does not queue: before it asks for the gate it marks the host disposed,
 retires the generation and cancels the host's lifetime, so a start, wake, sleep or restart in flight gives up at once
-and leaves the killing to the exit. An exit therefore never waits behind a wake of up to the start-up timeout or a
+and leaves the killing to the exit — except one already inside its own kill (a sleep past its graceful wait, a start
+past its timeout), which finishes that kill, at most the kill wait and the tree scan and still inside the exit's
+budget. An exit therefore never waits behind a wake of up to the start-up timeout or a
 sleep of up to two seconds; once the host is disposed, start, restart and wake throw and sleep does nothing.
 
 **Going to sleep.** The rule's yes sets the state to Sleeping before the host is asked, so the next tick sees a
@@ -388,7 +390,8 @@ state returns to Asleep without a word, since nothing has died and the applicati
 engine state and one table, `EngineWakeRule`, which says for each command type whether it wakes a sleeping engine. A
 run (`startRun`: Build, Rebuild, Resolve cycles, the Build menu's Clean, a row's commands, the tray hotkey's Build), a
 Sync of any kind — the button, the return to the window, after a commit, a branch change, Debug/Release, the Sync that
-Settings Save sends and the one a checkout, pull, Clean or Optimize chains — the branch inventory, a maintenance Clean,
+Settings Save sends and the one a checkout, pull, Clean or Optimize chains — the branch inventory (a table row; it only
+ever goes out behind a Sync), a maintenance Clean,
 an Optimize, a checkout, a pull and a project-log request all wake it. Stop, a perf-chip change, `ping` and `shutdown`
 never do: a sleeping engine has no run to stop, the profile travels with the next run anyway, the watchdog counts
 silence instead of pinging, and the host writes `shutdown` itself. A command type with no row counts as waking, and a
@@ -3323,7 +3326,8 @@ tag at all.
 
 **Installing.** Nothing is installed while the application runs: Windows does not let a running program's files be
 replaced. The last step of `App.OnExit` — after the build engine has been shut down and its process waited for
-(§4.4; a sleep or a wake still in flight is pre-empted, never waited behind, §4.7), and the single-instance handles
+(§4.4; a sleep or a wake still in flight is pre-empted instead of waited behind — one already inside its own kill
+finishes that kill, within the exit's budget — §4.7), and the single-instance handles
 released — asks `UpdateService` to install the ready offer. That starts
 `Update.exe` through `WaitExitThenApplyUpdates`, silent, so Velopack shows no window of its own; `Update.exe` waits
 for this process to exit, replaces `current\`, and starts the new version only if the user chose *Restart to
@@ -4367,8 +4371,8 @@ then the pending repository root (which resets the project rows to hollow), then
 order is load-bearing, because the Sync command carries the layer patterns and the external list — sent before
 they were applied, it would carry stale ones: the grouping would be wrong for a whole Sync and the external rows
 would describe the previous list. The Sync itself is unconditional: Save does not compare old and new state to
-decide whether to run it. The five workflow preferences ride along as optional values: *Save* gives all five, and an
-application that leaves one out leaves that setting as it was, without a note.
+decide whether to run it. The five workflow preferences ride along as optional values: *Save* gives all five, and a
+caller that leaves one out leaves that setting as it was, without a note.
 
 The pull switch has a note of its own, and it is quieter still: it prints only when the value actually changed
 *and* external projects are defined — `Pull before build on — external working copies update first`, or
@@ -4894,8 +4898,8 @@ lines.
   project page never follows — there is no live stream to follow there and the reader is looking at a log — whether it
   was just opened, its end was reached by hand or `⌄ latest` was pressed. The pill jumps to the end once and leaves
   the page where it lands, and lines that arrive meanwhile are added after it without moving the view. This is a
-  deliberate departure from §2.5, which says a reader's position is never touched once they scroll away; without the
-  return the panel simply stopped following and never came back.
+  deliberate departure from the design spec's §2.5, which says a reader's position is never touched once they scroll
+  away; without the return the panel simply stopped following and never came back.
 - **While the panel is yours, nothing is deleted from the top of it either.** The render slice trims the
   document from the beginning, and a trim moves the text out from under a reader whose scroll offset is an
   absolute pixel — the position holds still while the content races upward past it. Trimming therefore waits
@@ -4994,7 +4998,7 @@ lines.
   thing is the latest line and the panel goes on following the stream. A project log pins to the **top** — the log's
   first line — and **never follows**: what you are looking for in a build log is the first error, and following would
   have thrown you to the bottom on the next live line. Reaching its end by hand or with `⌄ latest` leaves the reader
-  there. This is a deliberate departure from §5.1, which pins both directions to the bottom.
+  there. This is a deliberate departure from the design spec's §5.1, which pins both directions to the bottom.
 - **A new section empties the narrative in place.** Not every operation opens one: a run, the Sync button,
   the click of Clean or Optimize, a branch change, a switch between Debug and Release and closing the workspace
   (an empty root saved in Settings) do (§10.2); a pull, the Sync a maintenance job chains and
@@ -6369,9 +6373,10 @@ a General switch and of its catalog row —, `AboutDialogHost`, which takes the 
 it, `SplitterHost`, `GraphTestView`), the MSBuild-shaped lines the console tests feed (`MsBuildLines`: `Warning`, a
 realistic warning as long as a real build line; `WarningLine`, `ErrorLine` and `CommandLine`, the inline lines of the
 compact console's tests; and `BudgetWarning`, the memory budget's fixed input), shared assertions (`FocusTrap`, the
-modal focus-trap proof both dialogs use), input synthesis (`MouseInput`, the one place a real mouse press or wheel is
-raised, both halves of the gesture or the tunnel alone, the horizontal wheel included; `KeyInput`, its keyboard twin
-and the one place a key event is built, which takes the presentation source from outside for a window that is not
+modal focus-trap proof both dialogs use), input synthesis (`MouseInput`, the shared place a real mouse press or wheel
+is raised — the only one for the wheel — both halves of the gesture or the tunnel alone, the horizontal wheel
+included; `KeyInput`, its keyboard twin and the one place a key event is built, which takes the presentation source
+from outside for a window that is not
 shown; `CommandPress`, whose `Click` is the one place a button's click event is raised; and `UserScrollGesture`, which
 drags the vertical or the horizontal bar of a scroll host), dispatcher pumping and animation hosting
 (`DispatcherPump`, `AnimationHost`, `MotionScope`; `ScrollAnimation`, which reads the scroll animation applied to a
@@ -6494,7 +6499,7 @@ A category of tests that assert properties of the *source*, not of a run:
 | Automation roles (`AutomationRoleTests`) | every `UserControl` of the app declares its automation role through an override in the app assembly — never WPF's default custom type, which the post-layout peer walk re-enumerates on every pass (§15) |
 | One trim definition (`MemoryTrimGuardTests`) | `GC.Collect` is written exactly once in the source, in `Core/Diagnostics/MemoryTrim.cs`; and every `RunCoordinator` the tests construct — an explicit `new`, or a target-typed one — passes a trim seam (`memoryTrim:`, not `null`), so none falls back to the real blocking collection; the rules are shown to catch each form of the call and to ignore prose |
 | One memory read (`MemoryReadGuardTests`) | the process's memory (`PrivateMemorySize64`, `GetGCMemoryInfo`, `GC.GetTotalMemory`) is read only in `Core/Diagnostics/MemoryLine.cs` (§11.4), and `GC.GetTotalMemory` only with the literal `false` — any other argument may be a hidden full collection, which the `GC.Collect` guard cannot see |
-| One engine gate (`EngineGateGuardTests`) | every request to the engine passes the gate of §4.7 and nothing walks around it: `SendWithFailureLineAsync(` is called only from the four methods that ask the gate first (`TrySendAsync`, `BeginRunAsync`, `SyncCoreAsync`, `LoadProjectLogAsync`); `SendToEngineAsync(` only from `SendWithFailureLineAsync`, and the host's `SendAsync(` — through any reference — only from `SendToEngineAsync`; a request is registered with the gate (`EngineGate.Enter`, whatever the receiver) only from `EnsureEngineAwakeAsync`, and every call of the gate holds its pass with `using`; the gate questions that `ReleaseAfterEngineLoss` asks are exactly the list of window-holding types the loss theory walks; and the branch inventory never asks the gate. The scans read code only — comments and string literals are skipped — and each rule is shown to catch its form of bypass. Two things stay for review: a send made inside an allowed method without asking the gate, and an allowed method bound to a delegate and called from elsewhere |
+| One engine gate (`EngineGateGuardTests`) | every request to the engine passes the gate of §4.7 and nothing walks around it: `SendWithFailureLineAsync(` is called only from the four methods that ask the gate first (`TrySendAsync`, `BeginRunAsync`, `SyncCoreAsync`, `LoadProjectLogAsync`); `SendToEngineAsync(` only from `SendWithFailureLineAsync`, and the host's `SendAsync(` — through any reference — only from `SendToEngineAsync`; a request is registered with the gate (`EngineGate.Enter`, whatever the receiver) only from `EnsureEngineAwakeAsync`, and every call of the gate holds its pass with `using`; the gate questions that `ReleaseAfterEngineLoss` asks are exactly the list of window-holding types the loss theory walks; and the branch inventory never asks the gate. The scans read code only — comments and string literals are skipped — and the call-form rules each have a proof test that catches their form of bypass. Two things stay for review: a send made inside an allowed method without asking the gate, and an allowed method bound to a delegate and called from elsewhere |
 | One infinite bottom request (`ConsoleBottomRequestGuardTests`) | the console asks for an infinite bottom (`ScrollToEnd(`) only in the mode switch's pin, `PinAfterModeSwitch`; the follow's and End's request is finite and vertical (§13.4). The scan reads code only, proves first that the pin still asks for it, and is shown to see a request outside the pin and to ignore a comment, a literal and a brace inside the pin |
 | No literal default (`GeneralSettingChainTests.No_workflow_setting_starts_from_a_literal_default`) | none of the five workflow preferences starts from a literal in the source: not the view model's field (written with `true` or `false`, or left unset), not the draft's or the apply call's parameter, not the window's seed from a key-less state (`?? true`); the catalog row is the one default (§13.3). The wire records of the contracts keep their own field defaults, which only say how a line without the field reads, and lie outside the rule. The rule is shown to catch each form, and to ignore a comment, a string and a field that reads the catalog |
 
@@ -7113,7 +7118,7 @@ An honest list, kept because omitting it would make the guarantees above read wi
    behalf are in no job by design, and a build step that delegates work to another parent through COM/WMI/task
    scheduler creates a process that never enters the job at all.
 8. **The project-log run folder check is lexical.** A junction or symbolic link named like a run folder inside the
-   logs root is followed when the log is read; the logs root is the user's own folder (§21.1). A path the system
+   logs root is followed when the log is read; the logs root is the user's own folder (§21.5). A path the system
    cannot normalize — an embedded null, beyond the 32,767-character limit — is refused, never thrown: a throw would
    count as a read failure and be warned about, while a refused folder is silent.
 
