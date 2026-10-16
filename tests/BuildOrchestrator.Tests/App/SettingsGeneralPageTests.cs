@@ -19,12 +19,13 @@ namespace BuildOrchestrator.Tests.App;
 /// gruplar ve tek <c>ToggleRow</c> şablonu; <c>Pull before build</c>'in buraya taşınması ve External projects sayfasının
 /// altındaki "nereye gitti" satırı.
 ///
-/// <para>Sekiz anahtarın hepsi gerçektir: <c>Pull before build</c> (<see cref="PullBeforeBuildTests"/>), <c>Resolve
-/// cycles at full priority</c> (<see cref="ResolveAtFullPrioritySettingsTests"/>), <c>Stash and
-/// switch branches</c> (<see cref="StashOnBranchSwitchTests"/>), <c>Compact console</c>
-/// (<see cref="CompactConsoleSettingsTests"/>), <c>Start with Windows</c> ve <c>Start minimized to
-/// tray</c> (<see cref="StartWithWindowsTests"/>), <c>Close to tray</c> ve <c>Show notifications</c>
-/// (<see cref="ShellSwitchesTests"/>; davranışları <see cref="CloseToTrayTests"/> ve tepsi balonu testleri).</para>
+/// <para>Dokuz anahtarın hepsi gerçektir; her birinin zinciri (varsayılan, taslak, ayar dosyası, Save, kabuğun tohumu ve kalıcılığı)
+/// <see cref="GeneralSettingChainTests"/>'tedir. Ayara özgü davranış kendi sınıfındadır: <c>Pull before build</c>
+/// (<see cref="PullBeforeBuildTests"/>), <c>Resolve cycles at full priority</c> (<see cref="ResolveAtFullPrioritySettingsTests"/>),
+/// <c>Stash and switch branches</c> (<see cref="BranchCheckoutTests"/>), <c>Compact console</c> (<see cref="CompactConsoleTests"/>),
+/// <c>Stop the engine when idle</c> (<see cref="StopEngineWhenIdleSettingsTests"/>), <c>Start with Windows</c> ve <c>Start minimized to
+/// tray</c> (<see cref="StartWithWindowsTests"/>), <c>Close to tray</c> ve <c>Show notifications</c> (<see cref="CloseToTrayTests"/> ve
+/// tepsi balonu testleri).</para>
 /// <para><b>[DEĞİŞEN KURAL — P3 2026-09-28 · P4 2026-09-29, kullanıcı kararları]</b> ESKİ (kullanıcı kararı 1): dört
 /// kabuk anahtarı (<c>Start with Windows</c>, <c>Start minimized to tray</c>, <c>Close to tray</c>, <c>Show
 /// notifications</c>) YALNIZ taslakta yaşardı — kaydedilmez, dosyaya yazılmaz, her açılışta varsayılana dönerdi. Artık
@@ -33,8 +34,6 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class SettingsGeneralPageTests
 {
-    private static void Click(ButtonBase button) => button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
-
     /// <summary>General sayfasındaki ToggleRow kökleri, yukarıdan aşağıya.</summary>
     private static List<Border> Rows(SettingsDialog dialog)
     {
@@ -45,9 +44,6 @@ public class SettingsGeneralPageTests
     }
 
     private static CheckBox SwitchOf(Border row) => DsResources.Descendants(row).OfType<CheckBox>().Single();
-
-    private static CheckBox SwitchNamed(SettingsDialog dialog, string name) =>
-        Rows(dialog).Select(SwitchOf).Single(s => AutomationProperties.GetName(s) == name);
 
     private static Border RowNamed(SettingsDialog dialog, string label) =>
         Rows(dialog).Single(r => DsResources.Descendants(r).OfType<TextBlock>().Any(t => t.Text == label));
@@ -64,19 +60,27 @@ public class SettingsGeneralPageTests
     /// <para><b>[DEĞİŞEN KURAL — idle-memory dalga 2 / spec §6.5]</b> Eski iddia: katalog dört gruptu (STARTUP, BUILD,
     /// BRANCHES, NOTIFICATIONS) ve NOTIFICATIONS dördüncüydü. Kompakt konsol bir ayar oldu: BRANCHES ile NOTIFICATIONS
     /// arasına beşinci grup CONSOLE ve tek satırı <c>Compact console</c> girdi; NOTIFICATIONS beşinci sıraya kaydı
-    /// (ayrıntı <see cref="CompactConsoleSettingsTests"/>).</para></summary>
+    /// (ayrıntı <see cref="CompactConsoleTests"/>; zinciri <see cref="GeneralSettingChainTests"/>).</para>
+    /// <para><b>[DEĞİŞEN KURAL — idle-memory dalga 3 / spec §6.4]</b> Eski iddia: katalog beş gruptu (STARTUP, BUILD, BRANCHES,
+    /// CONSOLE, NOTIFICATIONS) ve NOTIFICATIONS beşinciydi. Boştaki motoru durdurmak bir ayar oldu: CONSOLE ile NOTIFICATIONS
+    /// arasına altıncı grup ENGINE ve tek satırı <c>Stop the engine when idle</c> girdi (metin spec'in birebir cümlesidir);
+    /// NOTIFICATIONS altıncı sıraya kaydı.</para>
+    /// <para><b>[DEĞİŞEN KURAL — idle-memory dalga 3 / karar 12]</b> Eski iddia: <c>Close to tray</c> açıklaması "Closing the window
+    /// leaves the engine running in the tray." derdi. Gerekçe: motor artık tepside beş boşta dakikadan sonra kendiliğinden çıkabilir
+    /// (<c>Stop the engine when idle</c>) — "motor çalışır kalır" cümlesi yanlışlaşırdı. Pencerenin kapanınca uygulamanın tepside
+    /// çalışmaya devam ettiği ise hep doğrudur: yeni metin "Closing the window leaves the app running in the tray."</para></summary>
     [Fact]
     public void The_catalog_carries_the_groups_and_their_rows_verbatim()
     {
         var actual = GeneralSettingsCatalog.Groups
             .Select(g => (g.Title, Rows: g.Rows.Select(r => (r.Label, r.Description)).ToList())).ToList();
 
-        Assert.Equal(["STARTUP", "BUILD", "BRANCHES", "CONSOLE", "NOTIFICATIONS"], actual.Select(g => g.Title));
+        Assert.Equal(["STARTUP", "BUILD", "BRANCHES", "CONSOLE", "ENGINE", "NOTIFICATIONS"], actual.Select(g => g.Title));
         Assert.Equal(
         [
             ("Start with Windows", "Launch when you sign in to Windows."),
             ("Start minimized to tray", "No window on start — the tray icon brings it back."),
-            ("Close to tray", "Closing the window leaves the engine running in the tray."),
+            ("Close to tray", "Closing the window leaves the app running in the tray."),
         ], actual[0].Rows);
         Assert.Equal(
         [
@@ -95,9 +99,13 @@ public class SettingsGeneralPageTests
                 + "stays in the project log. Off: every line.")],
             actual[3].Rows);
         Assert.Equal(
+            [("Stop the engine when idle", "After five minutes without work the engine process exits. "
+                + "It starts again in a moment when you build or sync.")],
+            actual[4].Rows);
+        Assert.Equal(
             [("Show notifications", "Tray notifications: a build's result, the first close to the tray, a Build shortcut that could not start, "
                 + "and a second launch that could not bring the window forward.")],
-            actual[4].Rows);
+            actual[5].Rows);
     }
 
     /// <summary>Taslak satırları katalogdan doğar (sıra ve metin kopyalanmaz); dört yeni anahtarın varsayılanı
@@ -119,22 +127,6 @@ public class SettingsGeneralPageTests
 
         Assert.Equal([GeneralSetting.StartMinimizedToTray],
             GeneralSettingsCatalog.Groups.SelectMany(g => g.Rows).Where(r => r.DependsOn is not null).Select(r => r.Setting));
-    }
-
-    /// <summary>Pull satırı taslağın GERÇEK bayrağıdır: iki yüz aynı değeri okur ve yazar.</summary>
-    [Fact]
-    public void The_pull_row_and_the_draft_flag_are_one_value()
-    {
-        var draft = new SettingsDraftViewModel(null, @"D:\repo");
-        var notified = new List<string?>();
-        draft.PropertyChanged += (_, e) => notified.Add(e.PropertyName);
-
-        draft.GeneralRow(GeneralSetting.PullBeforeBuild).IsOn = false;
-        Assert.False(draft.PullExternalsBeforeBuild);
-        Assert.Contains(nameof(SettingsDraftViewModel.PullExternalsBeforeBuild), notified);
-
-        draft.PullExternalsBeforeBuild = true;
-        Assert.True(draft.GeneralRow(GeneralSetting.PullBeforeBuild).IsOn);
     }
 
     /// <summary>Bağımlı satır üst anahtar kapalıyken etkin DEĞİLDİR; açılınca etkinleşir.</summary>
@@ -163,28 +155,14 @@ public class SettingsGeneralPageTests
         Assert.True(draft.PullExternalsBeforeBuild);
     }
 
-    /// <summary>Dört kabuk anahtarı ayar dosyasında taşınır: dördü çevrilip dışa aktarılan dosya yeni bir taslağa
-    /// yüklenince dördü de çevrik gelir — tablonun (<see cref="ShellSwitches.All"/>) her satırı Export/Import'a bağlıdır.
-    /// <para><b>[DEĞİŞEN KURAL — P3 2026-09-28 · P4 2026-09-29, kullanıcı kararları]</b> ESKİ İDDİA
-    /// (<c>The_four_new_switches_are_not_written_to_the_settings_file</c>): dört anahtarın hiçbiri ayar dosyasına
-    /// girmezdi — çevrilseler de export JSON'u varsayılanla aynıydı. Artık dördü de kalıcıdır; tek tek round-trip
-    /// testleri <see cref="ShellSwitchesTests"/> ve <see cref="StartWithWindowsTests"/>'tedir.</para></summary>
-    [Fact]
-    public void The_four_shell_switches_travel_in_the_settings_file()
-    {
-        var flipped = new SettingsDraftViewModel(null, @"D:\repo");
-        foreach (var s in ShellSwitches.All) flipped.GeneralRow(s.Setting).IsOn = !flipped.GeneralRow(s.Setting).IsOn;
-
-        var loaded = new SettingsDraftViewModel(null, @"D:\repo");
-        loaded.LoadFrom(SettingsFile.TryParse(flipped.ToFile().ToJson())!);
-
-        Assert.All(ShellSwitches.All, s =>
-            Assert.Equal(!GeneralSettingsCatalog.Definition(s.Setting).Default, loaded.GeneralRow(s.Setting).IsOn));
-    }
+    // [B3 · katlama] Dört kabuk anahtarının ayar dosyasında taşınması (eski The_four_shell_switches_travel_in_the_settings_file) ve
+    // pull satırının taslağın bayrağıyla tek değer oluşu (eski The_pull_row_and_the_draft_flag_are_one_value) öteki General ayarlarıyla
+    // birlikte GeneralSettingChainTests'tedir (Every_setting_round_trips_through_the_settings_file,
+    // A_workflow_settings_row_and_its_draft_flag_are_one_value).
 
     // ---------------------------------------------------------------- realize
 
-    /// <summary>Beş grup: caps başlık 11px/500 <c>text-dim</c>, başlık → satırlar 5px, gruplar arası 22px; satırların
+    /// <summary>Altı grup: caps başlık 11px/500 <c>text-dim</c>, başlık → satırlar 5px, gruplar arası 22px; satırların
     /// sırası ve metinleri katalogla aynı; UIA adı etiket (pull: mevcut ad).
     /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §6.3]</b> Eski iddia (<c>The_general_page_realizes_three_groups_with_their_rows</c>):
     /// sayfa üç grup, beş satır realize ederdi. BRANCHES grubu (<c>Stash and switch branches</c>) eklendi — yeni satır
@@ -194,7 +172,12 @@ public class SettingsGeneralPageTests
     /// <para><b>[DEĞİŞEN KURAL — idle-memory dalga 2 / spec §6.5]</b> Eski iddia: dört grup (son grup NOTIFICATIONS), yedi satır.
     /// BRANCHES ile NOTIFICATIONS arasına CONSOLE ve tek satırı <c>Compact console</c> girdi — sekiz satır, beş başlık;
     /// NOTIFICATIONS'ın satırı yedinci indekse kaydı. Yeni satır aynı <c>ToggleRow</c> şablonuyla realize olur (XAML'e dokunulmaz:
-    /// gruplar katalogdan çizilir) ve aralık kuralı yeni grubu da kapsar.</para></summary>
+    /// gruplar katalogdan çizilir) ve aralık kuralı yeni grubu da kapsar.</para>
+    /// <para><b>[DEĞİŞEN KURAL — idle-memory dalga 3 / spec §6.4]</b> Eski iddia: beş grup (son grup NOTIFICATIONS), sekiz satır.
+    /// CONSOLE ile NOTIFICATIONS arasına ENGINE ve tek satırı <c>Stop the engine when idle</c> girdi — dokuz satır, altı başlık;
+    /// NOTIFICATIONS'ın satırı sekizinci indekse kaydı. Yeni satır aynı <c>ToggleRow</c> şablonuyla realize olur (XAML'e
+    /// dokunulmaz) ve aralık kuralı yeni grubu da kapsar: CONSOLE'un satırından ENGINE başlığına 22, başlıktan satıra 5; ENGINE'in
+    /// satırından NOTIFICATIONS başlığına 22, başlıktan satıra 5.</para></summary>
     [StaFact]
     public void The_general_page_realizes_its_groups_with_their_rows()
     {
@@ -205,7 +188,7 @@ public class SettingsGeneralPageTests
         var headingStyle = dialog.FindResource("Ds.Settings.GroupHeading");
         var headings = DsResources.Descendants(page).OfType<TextBlock>().Where(t => ReferenceEquals(t.Style, headingStyle))
             .OrderBy(t => t.TranslatePoint(new Point(0, 0), page).Y).ToList();
-        Assert.Equal(["STARTUP", "BUILD", "BRANCHES", "CONSOLE", "NOTIFICATIONS"], headings.Select(h => h.Text));
+        Assert.Equal(["STARTUP", "BUILD", "BRANCHES", "CONSOLE", "ENGINE", "NOTIFICATIONS"], headings.Select(h => h.Text));
         Assert.All(headings, h =>
         {
             Assert.Equal(11.0, h.FontSize);
@@ -215,11 +198,12 @@ public class SettingsGeneralPageTests
 
         var rows = Rows(dialog);
         Assert.Equal(["Start with Windows", "Start minimized to tray", "Close to tray", "Pull before build",
-                "Resolve cycles at full priority", "Stash and switch branches", "Compact console", "Show notifications"],
+                "Resolve cycles at full priority", "Stash and switch branches", "Compact console", "Stop the engine when idle",
+                "Show notifications"],
             rows.Select(r => DsResources.Descendants(r).OfType<TextBlock>().First().Text));
         Assert.Equal(["Start with Windows", "Start minimized to tray", "Close to tray",
                 AccessibilityNames.PullExternalsBeforeBuild, "Resolve cycles at full priority", "Stash and switch branches",
-                "Compact console", "Show notifications"],
+                "Compact console", "Stop the engine when idle", "Show notifications"],
             rows.Select(r => AutomationProperties.GetName(SwitchOf(r))));
 
         // Başlık → ilk satır 5px; bir grubun son satırı → sonraki başlık 22px.
@@ -234,6 +218,8 @@ public class SettingsGeneralPageTests
         Assert.Equal(5.0, Top(rows[6]) - Bottom(headings[3]), precision: 1);
         Assert.Equal(22.0, Top(headings[4]) - Bottom(rows[6]), precision: 1);
         Assert.Equal(5.0, Top(rows[7]) - Bottom(headings[4]), precision: 1);
+        Assert.Equal(22.0, Top(headings[5]) - Bottom(rows[7]), precision: 1);
+        Assert.Equal(5.0, Top(rows[8]) - Bottom(headings[5]), precision: 1);
     }
 
     /// <summary>ToggleRow: padding <c>13 0</c>, satırlar arası 1px <c>border-subtle</c> (grubun ilk satırında yok);
@@ -249,7 +235,12 @@ public class SettingsGeneralPageTests
         // [DEĞİŞEN KURAL — RESOLVE Faz 4] Eski: altı satır. BUILD'in ikinci satırı (Resolve cycles at full priority) hairline taşır.
         // [DEĞİŞEN KURAL — idle-memory dalga 2 / spec §6.5] Eski: yedi satır, son iki grup tek satırlıydı. CONSOLE grubunun tek
         // satırı (Compact console) kendi grubunun ilkidir — hairline taşımaz; Show notifications yine kendi grubunun ilkidir.
-        var firstOfGroup = new[] { true, false, false, true, false, true, true, true };
+        // [DEĞİŞEN KURAL — idle-memory dalga 3 / spec §6.4] Eski: sekiz satır, son üç grup tek satırlıydı. ENGINE grubunun tek satırı
+        // (Stop the engine when idle) de kendi grubunun ilkidir — hairline taşımaz; Show notifications sekizinci indekse kaydı.
+        // Satır sayısı da pinlenir: döngü yalnız gerçek satırlar kadar döner, bu yüzden dizi uzunluğuyla kıyaslanmadıkça
+        // eksik bir satır (ENGINE satırı yokken sekiz satır) dokuz uzunluklu dizide sessizce yeşil kalırdı.
+        var firstOfGroup = new[] { true, false, false, true, false, true, true, true, true };
+        Assert.Equal(firstOfGroup.Length, rows.Count);
         for (int i = 0; i < rows.Count; i++)
         {
             Assert.Equal(new Thickness(0, 13, 0, 13), rows[i].Padding);
@@ -283,14 +274,17 @@ public class SettingsGeneralPageTests
     /// <summary>Switch'lerin açılış değerleri: <c>off/off/on/on</c> + pull, Resolve tam öncelik, stash ve Compact console
     /// canlı değerden. [DEĞİŞEN KURAL — RESOLVE Faz 4] Eski: altı switch; BUILD'e Resolve tam öncelik (varsayılan açık)
     /// eklendi. [DEĞİŞEN KURAL — idle-memory dalga 2 / spec §6.5] Eski: yedi switch; CONSOLE grubuna Compact console
-    /// (varsayılan açık) eklendi — Show notifications yedinci indekse kaydı.</summary>
+    /// (varsayılan açık) eklendi — Show notifications yedinci indekse kaydı.
+    /// <para><b>[DEĞİŞEN KURAL — idle-memory dalga 3 / spec §6.4]</b> Eski: sekiz switch; ENGINE grubuna Stop the engine when idle
+    /// (varsayılan açık) eklendi — Show notifications sekizinci indekse kaydı.</para></summary>
     [StaFact]
     public void The_switches_open_on_their_defaults()
     {
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(r => r.UpdateExternals = false);
         using var _scope = scope;
 
-        Assert.Equal([false, false, true, false, true, false, true, true], Rows(dialog).Select(r => SwitchOf(r).IsChecked == true));
+        Assert.Equal([false, false, true, false, true, false, true, true, true],
+            Rows(dialog).Select(r => SwitchOf(r).IsChecked == true));
     }
 
     /// <summary>Start with Windows kapalıyken <c>Start minimized to tray</c> satırı %45 opak ve etkileşimsiz; açınca
@@ -301,7 +295,7 @@ public class SettingsGeneralPageTests
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
         using var _scope = scope;
 
-        var parent = SwitchNamed(dialog, "Start with Windows");
+        var parent = SettingsDialogHost.GeneralSwitch(dialog, "Start with Windows");
         var row = RowNamed(dialog, "Start minimized to tray");
         var toggle = SwitchOf(row);
         var textColumn = (FrameworkElement)VisualTreeHelper.GetParent(
@@ -329,22 +323,25 @@ public class SettingsGeneralPageTests
     /// (<c>The_four_new_switches_are_not_saved_and_reopen_on_their_defaults</c>): dört anahtarın hiçbiri Save'de
     /// UiState'e girmezdi ve yeniden açılışta varsayılana dönerdi. Artık dördü de kalıcıdır.</para>
     /// <para><b>[DEĞİŞEN KURAL — idle-memory dalga 2 / spec §6.5]</b> Eski iddia: yeniden açılış yedi switch gösterirdi.
-    /// CONSOLE grubu eklendi — Compact console (açık) canlı değerinde kalır, Show notifications yedinci indekse kaydı.</para></summary>
+    /// CONSOLE grubu eklendi — Compact console (açık) canlı değerinde kalır, Show notifications yedinci indekse kaydı.</para>
+    /// <para><b>[DEĞİŞEN KURAL — idle-memory dalga 3 / spec §6.4]</b> Eski iddia: yeniden açılış sekiz switch gösterirdi. ENGINE grubu
+    /// eklendi — Stop the engine when idle (açık) canlı değerinde kalır, Show notifications sekizinci indekse kaydı.</para></summary>
     [StaFact]
     public void The_four_shell_switches_are_saved_and_reopen_on_the_saved_value()
     {
         var (dialog, run, store, scope) = SettingsDialogHost.OpenRealized();
         using var _scope = scope;
         foreach (var name in new[] { "Start with Windows", "Start minimized to tray", "Close to tray", "Show notifications" })
-            SwitchNamed(dialog, name).IsChecked = !SwitchNamed(dialog, name).IsChecked;
+            SettingsDialogHost.GeneralSwitch(dialog, name).IsChecked = !SettingsDialogHost.GeneralSwitch(dialog, name).IsChecked;
 
-        Click(dialog.Save); // commit'in persist yarısı ilk await'ten ÖNCE, senkron yazılır
+        CommandPress.Click(dialog.Save); // commit'in persist yarısı ilk await'ten ÖNCE, senkron yazılır
         Assert.Equal(Visibility.Collapsed, dialog.Visibility);
 
         dialog.Open(run, store, () => null);
         dialog.UpdateLayout();
-        // [RESOLVE Faz 4] Pull ve Resolve tam öncelik canlı (açık) değerlerinde kalır; [idle-memory dalga 2] Compact console da.
-        Assert.Equal([true, true, false, true, true, false, true, false], Rows(dialog).Select(r => SwitchOf(r).IsChecked == true));
+        // [RESOLVE Faz 4] Pull ve Resolve tam öncelik canlı (açık) değerlerinde kalır; [idle-memory dalga 2] Compact console da;
+        // [dalga 3] Stop the engine when idle da.
+        Assert.Equal([true, true, false, true, true, false, true, true, false], Rows(dialog).Select(r => SwitchOf(r).IsChecked == true));
     }
 
     /// <summary>[P3] Close to tray ve Show notifications Save'de UiState'e yazılır ve yeniden açılışta KAYITLI değeri
@@ -355,9 +352,9 @@ public class SettingsGeneralPageTests
         var (dialog, run, store, scope) = SettingsDialogHost.OpenRealized();
         using var _scope = scope;
         foreach (var name in new[] { "Close to tray", "Show notifications" })
-            SwitchNamed(dialog, name).IsChecked = false;
+            SettingsDialogHost.GeneralSwitch(dialog, name).IsChecked = false;
 
-        Click(dialog.Save);
+        CommandPress.Click(dialog.Save);
         Assert.Equal(Visibility.Collapsed, dialog.Visibility);
         Assert.False(store.State.CloseToTray);
         Assert.False(store.State.ShowNotifications);
@@ -365,41 +362,43 @@ public class SettingsGeneralPageTests
         dialog.Open(run, store, () => null);
         dialog.UpdateLayout();
 
-        Assert.False(SwitchNamed(dialog, "Close to tray").IsChecked);
-        Assert.False(SwitchNamed(dialog, "Show notifications").IsChecked);
+        Assert.False(SettingsDialogHost.GeneralSwitch(dialog, "Close to tray").IsChecked);
+        Assert.False(SettingsDialogHost.GeneralSwitch(dialog, "Show notifications").IsChecked);
     }
 
     /// <summary>[Task 1] Diyalog kayıtlı KAPALI değerle açılır — Close to tray ve Show notifications switch'leri
-    /// kapalı realize olur (<see cref="ShellSwitchesTests.The_draft_opens_on_the_saved_values"/>'ın realize eşi).</summary>
+    /// kapalı realize olur (<see cref="GeneralSettingChainTests.The_draft_opens_a_shell_switch_on_its_saved_value"/>'ın realize eşi).</summary>
     [StaFact]
     public void The_general_page_opens_on_the_saved_switch_values()
     {
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(saved: new UiState { CloseToTray = false, ShowNotifications = false });
         using var _scope = scope;
 
-        Assert.False(SwitchNamed(dialog, "Close to tray").IsChecked);
-        Assert.False(SwitchNamed(dialog, "Show notifications").IsChecked);
+        Assert.False(SettingsDialogHost.GeneralSwitch(dialog, "Close to tray").IsChecked);
+        Assert.False(SettingsDialogHost.GeneralSwitch(dialog, "Show notifications").IsChecked);
     }
 
     /// <summary>[P4] İki başlangıç anahtarı Save'de UiState'e yazılır ve diyalog yeniden açılınca kayıtlı değerle
     /// gelir (switch'e tıklamanın bağladığı gerçek yol). [DEĞİŞEN KURAL — idle-memory dalga 2 / spec §6.5] Eski: yedi
-    /// switch; CONSOLE grubundaki Compact console (açık) altıncı indekste eklendi.</summary>
+    /// switch; CONSOLE grubundaki Compact console (açık) altıncı indekste eklendi.
+    /// <para><b>[DEĞİŞEN KURAL — idle-memory dalga 3 / spec §6.4]</b> Eski: sekiz switch; ENGINE grubundaki Stop the engine when idle
+    /// (açık) yedinci indekste eklendi — Show notifications sekizinci indekse kaydı.</para></summary>
     [StaFact]
     public void The_startup_switches_are_saved_and_reopen_on_the_saved_value()
     {
         var (dialog, run, store, scope) = SettingsDialogHost.OpenRealized();
         using var _scope = scope;
-        SwitchNamed(dialog, "Start with Windows").IsChecked = true;
-        SwitchNamed(dialog, "Start minimized to tray").IsChecked = true;
+        SettingsDialogHost.GeneralSwitch(dialog, "Start with Windows").IsChecked = true;
+        SettingsDialogHost.GeneralSwitch(dialog, "Start minimized to tray").IsChecked = true;
 
-        Click(dialog.Save);
+        CommandPress.Click(dialog.Save);
         Assert.Equal(Visibility.Collapsed, dialog.Visibility);
         Assert.True(store.State.Autostart);
         Assert.True(store.State.StartMinimizedToTray);
 
         dialog.Open(run, store, () => null);
         dialog.UpdateLayout();
-        Assert.Equal([true, true, true, true, true, false, true, true], Rows(dialog).Select(r => SwitchOf(r).IsChecked == true));
+        Assert.Equal([true, true, true, true, true, false, true, true, true], Rows(dialog).Select(r => SwitchOf(r).IsChecked == true));
     }
 
     /// <summary>[P4] Uçtan uca: switch'e tıklayıp Save → diyaloğun servisi Windows'un başlangıç kaydını ANINDA yazar.</summary>
@@ -409,9 +408,9 @@ public class SettingsGeneralPageTests
         var registry = new FakeAutostartRegistry();
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(autostart: registry.Service());
         using var _scope = scope;
-        SwitchNamed(dialog, "Start with Windows").IsChecked = true;
+        SettingsDialogHost.GeneralSwitch(dialog, "Start with Windows").IsChecked = true;
 
-        Click(dialog.Save);
+        CommandPress.Click(dialog.Save);
 
         Assert.Equal(FakeAutostartRegistry.Command, registry.CommandFor(AutostartService.DefaultValueName));
     }
@@ -475,7 +474,7 @@ public class SettingsGeneralPageTests
         Assert.Equal("Pull before build", link.Content);
         Assert.Same(dialog.FindResource("Ds.Button.Ghost.Sm"), link.Style);
         Assert.Equal(-6.0, link.Margin.Left);
-        Click(link);
+        CommandPress.Click(link);
         dialog.UpdateLayout();
         Assert.True(dialog.RailItem(SettingsSection.General).IsChecked);
         Assert.Equal(Visibility.Visible, dialog.Page(SettingsSection.General).Visibility);

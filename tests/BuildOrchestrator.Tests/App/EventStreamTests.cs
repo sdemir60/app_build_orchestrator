@@ -69,10 +69,8 @@ public class EventStreamTests
 
     // ============================================================ GÖRÜNÜM ([StaFact])
 
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
-
     private static RunViewModel NewVm() =>
-        new(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        new(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
 
     // [Task 4] WorkspaceTopologyEvent düğümü — _cycleGroups üyeliğini kurmak için Cycles listesiyle birlikte kullanılır.
     private static ProjectNode Node(string id, string name, int buildOrder, bool inCycle = false) =>
@@ -315,7 +313,7 @@ public class EventStreamTests
     public async Task A_cycles_run_opens_the_stream_with_its_own_line_not_the_build_one()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1");
         const string upstreamId = @"C:\p\u.csproj";
         const string m1Id = @"C:\p\m1.csproj";
         const string m2Id = @"C:\p\m2.csproj";

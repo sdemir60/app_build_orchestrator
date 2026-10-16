@@ -10,6 +10,7 @@ using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Tests.Git;
 using BuildOrchestrator.Tests.MsBuild;
+using BuildOrchestrator.Tests.ProcessControl;
 using BuildOrchestrator.Tests.Supervisor;
 using Microsoft.Win32.SafeHandles;
 
@@ -270,15 +271,19 @@ public sealed class SafeExitProcessTests
 
         private void Watch()
         {
-            while (true)
+            // Süresiz bekleyiş: zaman aşımı hiç gelmez, döngü yalnız port kapanınca biter. Pin kendi beklenen hatalarını
+            // yutar; Win32/ObjectDisposed ancak kapanan porttan gelir.
+            try
             {
-                JobNotification? n;
-                try { n = _port.WaitNext(Timeout.InfiniteTimeSpan); }
-                catch (Exception ex) when (_closing && ex is (Win32Exception or ObjectDisposedException))
+                JobBirths.Until(_port, Timeout.InfiniteTimeSpan, "unreachable: the wait has no timeout", pid =>
                 {
-                    return; // port kapandı (Dispose): bloklu bekleyiş ERROR_ABANDONED_WAIT_0 ile döner — izleme biter
-                }
-                if (n is { MessageId: NativeMethods.JOB_OBJECT_MSG_NEW_PROCESS } born) Pin(born.Pid);
+                    Pin(pid);
+                    return false;
+                });
+            }
+            catch (Exception ex) when (_closing && ex is (Win32Exception or ObjectDisposedException))
+            {
+                // port kapandı (Dispose): bloklu bekleyiş ERROR_ABANDONED_WAIT_0 ile döner — izleme biter
             }
         }
 

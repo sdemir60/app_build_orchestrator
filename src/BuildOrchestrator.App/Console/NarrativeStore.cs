@@ -398,11 +398,4 @@ public sealed class NarrativeStore : IConsoleBacklog
 
     /// <summary>Dosyadaki bir satır aralığı: yol, [Start, End) baytları, satır sayısı ve aralığın alındığı bölüm.</summary>
     private readonly record struct SpoolRange(string FilePath, long Start, long End, int Lines, int Section);
-
-    /// <summary>Store kırpılan satırları SAKLAMAZ: belgedeki her anlatı satırı önce store'a yazılmıştır, kopyası tutulmaz — görünüm
-    /// de kırpılan metni onun için belgeden okumaz (<see cref="IConsoleBacklog.KeepsTrimmedLines"/>).</summary>
-    public bool KeepsTrimmedLines => false;
-
-    /// <summary>Kırpılan satırlar zaten store'dadır: yapılacak bir şey yok (<see cref="IConsoleBacklog.AcceptTrimmed"/>).</summary>
-    public void AcceptTrimmed(IReadOnlyList<string> lines) { }
 }

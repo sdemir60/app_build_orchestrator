@@ -23,14 +23,17 @@ internal static class AboutDialogHost
     /// <param name="backgroundSibling">Verilirse diyalog, bu kontrolle AYNI kökün altında realize edilir —
     /// odak tuzağı testi "Tab arka plandaki bir kontrole kaçıyor mu" sorusunu ancak böyle sorabilir.</param>
     /// <param name="hotkeyRegistered">Global kısayolun kaydı tuttu mu (eylem başına); verilmezse hepsi kayıtlı.</param>
+    /// <param name="nowMs">[idle-memory · dalga 3 · karar 39] VM'in saati (<c>RunViewModel</c> ctor'unun <c>nowMs</c>'i) — motoru boşta
+    /// kuralıyla uyutan testler saati kendisi ilerletir. Verilmezse üretim saati.</param>
     public static (AboutDialog dialog, RunViewModel run, IDisposable scope) OpenRealized(
         Action<RunViewModel>? configure = null,
         Func<GlobalHotkeyAction, bool>? hotkeyRegistered = null,
         Func<Task<string>>? resolveMsBuild = null,
-        FrameworkElement? backgroundSibling = null)
+        FrameworkElement? backgroundSibling = null,
+        Func<long>? nowMs = null)
     {
         var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1")
+        var run = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1", nowMs)
             { RootPath = @"D:\repo", LegacyWorktreePoolRoot = TestPaths.MissingLegacyPoolRoot }; // [final review M8]
         configure?.Invoke(run);
 

@@ -16,10 +16,8 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 public class CleanCommandTests
 {
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
-
     private static RunViewModel NewVm(Func<long>? nowMs = null) =>
-        new(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1", nowMs) { RootPath = @"D:\repo" };
+        new(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1", nowMs) { RootPath = @"D:\repo" };
 
     private static ProjectNode Node(string id, string name) => new(id, name, id, ["Osys"], [], 0, null, null, false, null);
 
@@ -81,7 +79,7 @@ public class CleanCommandTests
     [Fact]
     public void Clean_is_disabled_without_a_workspace()
     {
-        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1");
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1");
         Assert.False(vm.CleanCommand.CanExecute(null));
 
         vm.RootPath = @"D:\repo";

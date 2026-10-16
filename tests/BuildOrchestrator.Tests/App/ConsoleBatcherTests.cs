@@ -113,7 +113,7 @@ public class ConsoleBatcherTests
     [Fact]
     public void Post_never_blocks_even_without_a_reader()
     {
-        var batcher = new ConsoleBatcher(_ => Task.Delay(Timeout.Infinite));
+        var batcher = MainWindowHost.NeverTickingBatcher();
         for (int i = 0; i < 1000; i++) batcher.Post($"line{i}"); // TryWrite üzerinde: hiçbir okuyucu koşmasa bile senkron döner
     }
 

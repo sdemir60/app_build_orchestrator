@@ -203,16 +203,14 @@ public partial class MainWindow : Window
         // yanı başında) — null-safe desen kardeşleriyle hizalı. Seed yalnız App içi listeyi doldurur, hiçbir
         // IPC/Sync tetiklemez; liste bir sonraki Sync/Build komutuyla motora gider.
         if (saved.ExternalProjects is { Count: > 0 }) _vm.ExternalProjects = saved.ExternalProjects;
-        // [design v1.14.0 §9] Bayrak hiç yazılmamışsa (ya da bayat bir null token'sa) varsayılan GÜNCELLE:
-        // bayrak öncesi kaydedilmiş bir dosya özelliğin bugünkü davranışını korumalıdır.
-        _vm.UpdateExternals = saved.UpdateExternals ?? true;
-        // [spec 2026-09-18 §6.3] Stash ayarı: hiç yazılmamışsa KAPALI — araç commit'lenmemiş işi kendiliğinden kenara koymaz.
-        _vm.StashOnBranchSwitch = saved.StashOnBranchSwitch ?? false;
-        // [RESOLVE Faz 4 / karar 11] Resolve tam öncelik: hiç yazılmamışsa AÇIK — onaylanmış varsayılan; eski dosya da onu alır.
-        _vm.ResolveAtFullPriority = saved.ResolveAtFullPriority ?? true;
-        // [idle-memory · dalga 2 / spec §6.5] Compact console: hiç yazılmamışsa kataloğun varsayılanı (onaylanmış değer: açık) — eski
-        // dosya da onu alır. Varsayılanın TEK tanımı kataloğun satırıdır; burada ikinci bir literal yazılmaz (son inceleme · defter 12).
-        _vm.CompactConsole = saved.CompactConsole ?? GeneralSettingsCatalog.Definition(GeneralSetting.CompactConsole).Default;
+        // [B3 · karar 47a] Beş iş akışı tercihi: kayıtlı değer ?? kataloğun varsayılanı. Anahtar hiç yazılmamışsa (ayar öncesi kaydedilmiş
+        // bir dosya ya da bayat bir null token) ayar kataloğun varsayılanıyla açılır. Varsayılanın TEK tanımı kataloğun satırıdır
+        // (onaylanmış değerler ve gerekçeleri orada); burada ikinci bir literal yazılmaz.
+        _vm.UpdateExternals = saved.UpdateExternals ?? GeneralSettingsCatalog.DefaultOf(GeneralSetting.PullBeforeBuild);
+        _vm.StashOnBranchSwitch = saved.StashOnBranchSwitch ?? GeneralSettingsCatalog.DefaultOf(GeneralSetting.StashOnBranchSwitch);
+        _vm.ResolveAtFullPriority = saved.ResolveAtFullPriority ?? GeneralSettingsCatalog.DefaultOf(GeneralSetting.ResolveAtFullPriority);
+        _vm.CompactConsole = saved.CompactConsole ?? GeneralSettingsCatalog.DefaultOf(GeneralSetting.CompactConsole);
+        _vm.StopEngineWhenIdle = saved.StopEngineWhenIdle ?? GeneralSettingsCatalog.DefaultOf(GeneralSetting.StopEngineWhenIdle);
         _vm.PropertyChanged += OnWorkflowPreferenceChanged;
 
         // [design v1.11.0 §2.1] Title bar'ın mono bağlam metni (OSYS · main · main-2) KALDIRILDI — başlık
@@ -710,13 +708,13 @@ public partial class MainWindow : Window
             Shell.ConsoleHeaderControl.ShowProjectLog(row, _vm.GetActiveLineCount());
             TrackHeaderRow(row); // [R1 finding 2] seçim SABİT kalsa da satırın kendi değişimi başlığı tazeler
             // [perf Faz A · A2] Gizli pencerede belge kurulmaz (bkz. ShowRunConsole): yükleme sürerken pencere tepsiye
-            // indiyse belgeyi dönüş kurulumu AYNI satır kuralıyla (ProjectDocumentLines) kurar. Başlık yukarıda güncellendi.
+            // indiyse belgeyi dönüş kurulumu AYNI sayfa kuralıyla (ProjectDocumentText) kurar. Başlık yukarıda güncellendi.
             if (IsSurfaceHidden) { _consoleStaleWhileHidden = true; return; }
             _consoleStaleWhileHidden = false; // görünür TAM kurulum: belge modelden kurulur, dönüş kurulumunun yapacağı iş kalmaz
             // [Solution B] Doküman TIKLAMA (yükleme tamamlanma) ANINDA senkron kurulur — pump'a bağlı DEĞİL.
             // [her projenin sayfası var] Log BOŞSA sayfa boş bırakılmaz: o projenin O ANKİ durumunu anlatan
             // metin gösterilir. Karar Console.ConsoleEmptyState'te (saf, test edilebilir); pencere yalnız uygular.
-            _vm.SeedProjectDocument(id!, text => Shell.ConsoleViewControl.PlayCascade(ProjectDocumentLines(row, text)));
+            _vm.SeedProjectDocument(id!, text => Shell.ConsoleViewControl.PlayCascade(ProjectDocumentText(row, text)));
         }
         catch (Exception ex)
         {
@@ -785,16 +783,22 @@ public partial class MainWindow : Window
     /// döner (bkz. <see cref="OnSelectedProjectChangedAsync"/>).</summary>
     private void OnBack() => _vm.SelectProject(null);
 
-    /// <summary>Proje-log belgesinin satırları: log BOŞSA sayfa boş bırakılmaz — o projenin O ANKİ durumunu anlatan
-    /// metin (<see cref="ConsoleEmptyState"/>, saf karar); aksi halde dikilmiş log satırları. Kart seçimi
-    /// (<see cref="OnSelectedProjectChangedAsync"/>) ile gizli pencere dönüşü (<see cref="ResyncAfterShow"/>) AYNI
-    /// kuralı kullanır (kopya YASAK). <paramref name="row"/> yoksa (proje topolojiden düşmüş) yalnız log satırları.
-    /// <para>[idle-memory · final review 90] Log konsolun TEK satır kuralıyla bölünür (<see cref="ConsoleLines.Split"/>: belgenin
-    /// ayraç kuralı) — sayfanın backlog indeksi belge satırıyla birebir yürür. <b>[DEĞİŞEN KURAL]</b> Kabuk eskiden kendi kuralıyla
-    /// bölüyordu (<c>TrimEnd('\n').Split('\n')</c>): sondaki boş satırlar düşüyor, tek başına '\r' belgede iki satır olurken listede
-    /// bir girdi kalıyordu — indeks kayıyor, tepeye kaydırmada dikişte bir satır iki kez geliyordu (<c>ConsoleModesTests</c>).</para></summary>
-    private static IReadOnlyList<string> ProjectDocumentLines(ProjectRowViewModel? row, string text) =>
-        text.Length == 0 && row is not null ? ConsoleEmptyState.ForEmptyLog(row) : ConsoleLines.Split(text);
+    /// <summary>Proje-log sayfasının METNİ: log BOŞSA sayfa boş bırakılmaz — o projenin O ANKİ durumunu anlatan satırlar
+    /// (<see cref="ConsoleEmptyState"/>, saf karar; konsolun kuralıyla '\n' sonekli birleştirilir); aksi halde dikilmiş logun KENDİSİ. Kart
+    /// seçimi (<see cref="OnSelectedProjectChangedAsync"/>) ile gizli pencere dönüşü (<see cref="ResyncAfterShow"/>) AYNI kuralı kullanır (kopya
+    /// YASAK). <paramref name="row"/> yoksa (proje topolojiden düşmüş) yalnız log. Sondaki '\n'i görünüm garanti eder (<c>ConsoleView.ReplaceProjectDocument</c>).
+    /// <para>[idle-memory · dalga 3 · B2 fix 1 O1] Log bölünmez, yeniden birleştirilmez: sayfa logun tamamıdır (indeksli backlog yok) ve
+    /// belge onu AvalonEdit'in kendi ayraç kuralıyla gösterir — sondaki boş satır ve tek başına '\r' dahil (<c>ConsoleModesTests</c>).
+    /// <b>[DEĞİŞEN KURAL]</b> Eskiden satırlar dönüyordu: log konsolun kuralıyla bölünüyor (<see cref="ConsoleLines.Split"/>), görünüm onları
+    /// yeniden birleştiriyordu — sayfa bir son dilim + backlog'ken indeksin belge satırıyla birebir yürümesi içindi (final review 90: kabuğun
+    /// daha eski kendi kuralı, <c>TrimEnd('\n').Split('\n')</c>, sondaki boş satırları düşürüyor ve tek başına '\r'de indeksi kaydırıyordu). Logun
+    /// tamamını taşıyan sayfada o tur yalnız iki tam kopya ve ayraçların '\n'e dönüşmesiydi.</para></summary>
+    private static string ProjectDocumentText(ProjectRowViewModel? row, string text)
+    {
+        if (text.Length > 0 || row is null) return text;
+        var emptyState = ConsoleEmptyState.ForEmptyLog(row);
+        return ConsoleLines.Join(emptyState, 0, emptyState.Count);
+    }
 
     /// <summary>[D1] VM'in katman gruplarını (topolojiden — App'te regex YOK) StickyLayerList'e verir.
     /// <see cref="ProjectRowViewModel"/> nesneleri satır olarak akar; isimsiz grup (null) StickyLayerList'te
@@ -898,12 +902,13 @@ public partial class MainWindow : Window
     /// üretimde yalnız gerçek zamanlayıcıdan gelir; testler gövdeyi doğrudan sürer (<see cref="OnGlobalHotkey"/> deseni) —
     /// enjekte saatle 3 sn'lik bir tik dizisini gerçek zamanı beklemeden ancak bu yüzeyle sınayabilirler.
     ///
-    /// <para><b>[perf Faz A · A6] Gizliyken yalnız motor sessizlik bekçisi koşar.</b> Canlı süreler (koşu süresi, building
-    /// satırların süresi, ETA), konsol başlığının satır sayacı, grafın statü itişi ve frontier takibi görünmeyen bir ekranı
-    /// yeniden yazardı: hepsi yalnız görünürken koşar. Gizliyken <c>_tickStaleWhileHidden</c> kalkar ve dönüşte
+    /// <para><b>[perf Faz A · A6] Gizliyken yalnız motorun iki tik işi koşar: sessizlik bekçisi ve boşta kuralı.</b> Canlı süreler
+    /// (koşu süresi, building satırların süresi, ETA), konsol başlığının satır sayacı, grafın statü itişi ve frontier takibi görünmeyen bir
+    /// ekranı yeniden yazardı: hepsi yalnız görünürken koşar. Gizliyken <c>_tickStaleWhileHidden</c> kalkar ve dönüşte
     /// <see cref="ResyncAfterShow"/> süreleri ve sayacı bir kez yeniler. Bekçi gizliyken de koşar — tepsiden Exit + susmuş
     /// motorda bekleyen çıkışı bekçinin uyarısı serbest bırakır (<c>RunViewModel.Exit.cs</c>) — bu yüzden zamanlayıcı
-    /// <b>durdurulmaz</b>.</para>
+    /// <b>durdurulmaz</b>. [idle-memory · dalga 3] Boşta kuralı da gizliyken sorulur (tepsideki uygulamanın işsiz motoru uyur); kararı ve
+    /// uyutmayı VM verir (<c>RunViewModel.TickElapsed</c>), kabuk yalnız zamanlayıcıyı sürer.</para>
     /// </summary>
     internal void OnElapsedTick()
     {
@@ -1303,7 +1308,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>[D6 fold] İş akışı tercihi (RepositoryRoot/Configuration/PerfMode/UpdateExternals/StashOnBranchSwitch/ResolveAtFullPriority/
-    /// CompactConsole) değişince kalıcı duruma yazar — yerleşim persist'iyle AYNI desen (Load → muta → Save; düşük frekans).
+    /// CompactConsole/StopEngineWhenIdle) değişince kalıcı duruma yazar — yerleşim persist'iyle AYNI desen (Load → muta → Save; düşük frekans).
     /// [D7 M3] RootPath değişimi (Settings → Save ile uygulanan kök, ilk kurulum dahil)
     /// TEK noktadan buradan persist edilir; açılışta seed edilip hatırlanır.</summary>
     private void OnWorkflowPreferenceChanged(object? sender, PropertyChangedEventArgs e)
@@ -1317,6 +1322,7 @@ public partial class MainWindow : Window
             case nameof(RunViewModel.StashOnBranchSwitch):
             case nameof(RunViewModel.ResolveAtFullPriority):
             case nameof(RunViewModel.CompactConsole):
+            case nameof(RunViewModel.StopEngineWhenIdle):
                 var s = _uiState.Load();
                 s.RepositoryRoot = _vm.RootPath;
                 s.Configuration = _vm.Configuration;
@@ -1325,6 +1331,7 @@ public partial class MainWindow : Window
                 s.StashOnBranchSwitch = _vm.StashOnBranchSwitch;
                 s.ResolveAtFullPriority = _vm.ResolveAtFullPriority;
                 s.CompactConsole = _vm.CompactConsole;
+                s.StopEngineWhenIdle = _vm.StopEngineWhenIdle;
                 _uiState.Save(s);
                 break;
         }

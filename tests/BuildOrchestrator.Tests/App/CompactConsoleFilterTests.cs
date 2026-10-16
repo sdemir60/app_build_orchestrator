@@ -1,5 +1,5 @@
 using BuildOrchestrator.App.Console;
-using static BuildOrchestrator.Tests.App.MainWindowHost;
+using static BuildOrchestrator.Tests.App.MsBuildLines;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -14,7 +14,7 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 public class CompactConsoleFilterTests
 {
-    // Komut, uyarı ve hata satırları ortak kurucudan (MainWindowHost.CommandLine / WarningLine / ErrorLine): her satır numarası ayrı,
+    // Komut, uyarı ve hata satırları ortak kurucudan (MsBuildLines.CommandLine / WarningLine / ErrorLine): her satır numarası ayrı,
     // tekil bir tanıdır.
 
     /// <summary>Motorun projenin loguna yazdığı bir bağımlılık notu (<c>RunCoordinator.DepIssueWarnLines</c>'ın ilk biçimi) — bu sınıfın

@@ -132,7 +132,7 @@ public class ProjectFilterChipTests
         vm.ToggleFilter(ProjectFilter.Failed);
         var chip = Assert.Single(HeaderChips(window));
 
-        chip.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent)); // GERÇEK routed event
+        CommandPress.Click(chip); // GERÇEK routed event
 
         Assert.Empty(vm.ActiveFilters);
         Assert.Empty(HeaderChips(window));
@@ -233,7 +233,7 @@ public class ProjectFilterChipTests
         var toggle = (IToggleProvider)new ToggleButtonAutomationPeer(chip).GetPattern(PatternInterface.Toggle)!;
         toggle.Toggle();                                                       // ToggleButton.OnToggle
         Assert.False(chip.IsChecked);                                          // ...IsChecked GERÇEKTEN düştü
-        chip.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));           // ...ardından base.OnClick
+        CommandPress.Click(chip);                                              // ...ardından base.OnClick
 
         Assert.Empty(vm.ActiveFilters);              // tıklama filtreyi GERÇEKTEN kaldırdı
         Assert.Empty(HeaderChips(window));

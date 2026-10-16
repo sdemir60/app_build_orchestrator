@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+
 namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
@@ -47,6 +49,39 @@ internal static class PerfMeasure
     /// <summary>Tek skaler ölçüm için kısa yol: warmup + GC + medyan.</summary>
     public static double MedianOf(Func<double> measure, int warmups, int samples)
         => Median(Sample(measure, warmups, samples));
+
+    [DllImport("kernel32.dll")]
+    private static extern nint GetCurrentThread();
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool QueryThreadCycleTime(nint thread, out ulong cycles);
+
+    /// <summary>[B2 fix 3 · madde 14] Çağıran thread'in o ana dek harcadığı CPU döngüsü (<c>QueryThreadCycleTime</c>) — UI thread
+    /// ölçümlerinin TEK sayacı (<see cref="HiddenSurfaceMeasurementTests"/>, <see cref="ConsolePageEndMeasurementTests"/>). Çağrı başarısız
+    /// olursa 0 basmak yerine fırlatır: sessiz 0, okumayı sahte bir "sıfır maliyet"e çevirirdi.</summary>
+    public static ulong ThreadCycles()
+    {
+        if (!QueryThreadCycleTime(GetCurrentThread(), out ulong cycles))
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        return cycles;
+    }
+
+    /// <summary>[B2 fix 3 · madde 14] <see cref="ThreadCycles"/>'ın milisaniyedeki döngüsü — CPU zamanına çevirmenin TEK kalibrasyonu: thread
+    /// bir süre kesintisiz döner ve döngü sayacının o süredeki artışı okunur; üç denemenin en büyüğü alınır (bir kesinti oranı yalnız
+    /// düşürür). Sayaç sabit hızlıdır: sonuç işlemcinin anma frekansıdır (ms başına milyon döngü ≈ GHz).</summary>
+    public static double CyclesPerMs()
+    {
+        double best = 0;
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            ulong start = ThreadCycles();
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (clock.ElapsedMilliseconds < 200) { }
+            best = Math.Max(best, (ThreadCycles() - start) / clock.Elapsed.TotalMilliseconds);
+        }
+        return best;
+    }
 
     /// <summary>[idle-memory · dalga 2 · fix 1] Eylemin TEST THREAD'İNDE ayırdığı bayt (<c>GC.GetAllocatedBytesForCurrentThread</c> —
     /// süreç geneli değil: paralel koşan başka bir testin ayırması sayıya girmez). Ayırma pinlerinin TEK ölçüm yeri (konsol görünümünün

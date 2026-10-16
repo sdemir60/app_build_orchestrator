@@ -443,11 +443,11 @@ public class RunViewModelStateTests
 
         await vm.SyncCommand.ExecuteAsync(null);
 
-        // Bu harness'te engine hiç başlatılmaz (sınıf özeti) — gönderim SENKRON düşer ve TrySendAsync kendi
+        // Bu harness'te engine hiç başlatılmaz (sınıf özeti) — gönderim SENKRON düşer ve gönderim yolu (SendWithFailureLineAsync) kendi
         // "[error] failed to send sync: …" satırını YENİ konsola yazar (meşru, BU Sync denemesinin satırı).
         // Asıl iddia stale içeriğin GİTMİŞ olması: önceki işlemin "Build succeeded" satırı bir daha görünmez.
         Assert.DoesNotContain("Build succeeded", vm.GetRunDocumentText());
-        Assert.Equal(0, vm.StreamEventCount); // TrySendAsync hatası yalnız konsola yazar, stream'e dokunmaz
+        Assert.Equal(0, vm.StreamEventCount); // gönderim hatası yalnız konsola yazar, stream'e dokunmaz
     }
 
     // ---------------------------------------------------------------- [idle-memory · dalga 2 · spec §6.3] koşu anlatısının spool'u

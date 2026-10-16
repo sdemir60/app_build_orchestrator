@@ -59,6 +59,69 @@ public class RunLogWriterTests : IDisposable
         Assert.Null(w.SnapshotProjectLog(@"C:\repo\Nope\Nope.csproj"));
     }
 
+    /// <summary>[idle-memory · dalga 3 · B1 fix 3] Okunamayan bir proje logu (başka bir süreç dosyayı paylaşımsız tutuyor) FIRLATIR: "okunamadı"
+    /// "yok" değildir. Okumanın hatasını "log yok"a çeviren ve tanı satırını yazan TEK yer koordinatördür (<c>RunCoordinator.TryGetProjectLogSnapshot</c>);
+    /// Core yalnız yokluğu söyler (<see cref="An_absent_project_log_reads_as_no_log"/>).
+    /// <para><b>[DEĞİŞEN KURAL — B1 fix 3]</b> Eski iddia (<c>A_project_log_that_cannot_be_read_reads_as_no_log</c>, B1 fix 1 · m-5): paylaşım ihlali
+    /// "log yok" (<c>null</c>) okunur, istisna yükselmez. Değişme gerekçesi (kontrolcü kararı): Core ilkeli "yok" ile "okunamadı"yı tek <c>null</c>'a
+    /// karıştırıyordu ve "okunamadı → log yok" kuralı üç katmana yayılmıştı (Core, host, koordinatör); kural koordinatörde tek yere toplandı ve
+    /// okunamayan log artık iz bırakır (tanı satırı).</para>
+    /// <para>KIRMIZI (f611591c): istisna yükselmiyordu — Core paylaşım ihlalini sessizce <c>null</c>'a çeviriyordu.</para></summary>
+    [Fact]
+    public void A_project_log_that_cannot_be_read_throws()
+    {
+        using var w = new RunLogWriter(_root, Ts);
+        string id = @"C:\repo\A\A.csproj";
+        using (var log = w.OpenProjectLog(id)) log.AppendLine("first");
+        using var held = new FileStream(w.ProjectLogPath(id), FileMode.Open, FileAccess.Read, FileShare.None); // başka bir sürecin kilidi
+
+        Assert.Throws<IOException>(() => RunLogWriter.ReadProjectLogFromDisk(w.RunDirectory, id));
+    }
+
+    /// <summary>[B1 fix 3] YOK olan log <c>null</c>'dır, istisna değil: koşu klasöründe dosya yok ya da klasörün kendisi yok — uyanan motorun açılıştaki
+    /// saklama süpürmesi klasörü okunurken siler (beklenen yarış). Yokluğu okumanın kendisi söyler (<see cref="FileNotFoundException"/>,
+    /// <see cref="DirectoryNotFoundException"/>): önceden <c>File.Exists</c> sorulmaz, "hiç yoktu" ile "okunurken gitti" tek daldır ve bu test o dalı sınar.
+    /// <para>PİN: bugünkü kod da <c>null</c> döner (ön kontrolle). Mutasyon: yokluğun yakalaması kaldırılınca kırmızı.</para></summary>
+    [Theory]
+    [InlineData(false)] // klasör var, dosya yok
+    [InlineData(true)]  // klasörün kendisi yok
+    public void An_absent_project_log_reads_as_no_log(bool folderGone)
+    {
+        string runDirectory = Path.Combine(_root, RunLogPaths.RunDirName(Ts));
+        if (!folderGone) Directory.CreateDirectory(runDirectory);
+
+        Assert.Null(RunLogWriter.ReadProjectLogFromDisk(runDirectory, @"C:\repo\A\A.csproj"));
+    }
+
+    /// <summary>[B1 fix 4 · PİN] Erişimi reddedilen log da FIRLATIR — "yok" değildir: logun yerinde, onun adını taşıyan bir klasör var (okuma
+    /// <see cref="UnauthorizedAccessException"/> atar). Okumanın hatasını "log yok"a çeviren tek yer koordinatördür.
+    /// <para>PİN: bugünkü kod fırlatır. Mutasyon (Core'un yokluk süzgecine <c>or UnauthorizedAccessException</c> eklemek — erişim reddi yine sessizce
+    /// <c>null</c> olur) kırmızı.</para></summary>
+    [Fact]
+    public void A_project_log_whose_access_is_denied_throws()
+    {
+        using var w = new RunLogWriter(_root, Ts);
+        string id = @"C:\repo\A\A.csproj";
+        Directory.CreateDirectory(w.ProjectLogPath(id)); // logun yerinde, adını taşıyan bir klasör
+
+        Assert.Throws<UnauthorizedAccessException>(() => RunLogWriter.ReadProjectLogFromDisk(w.RunDirectory, id));
+    }
+
+    /// <summary>[B1 fix 4 · PİN] Canlı dalın sözleşmesi (<see cref="RunLogWriter.SnapshotProjectLog"/>): kayıtlı bir projenin dosyası diskten gittiyse
+    /// (yazıcısı kapandıktan sonra silindi) anlık görüntü <see cref="FileNotFoundException"/> fırlatır — disk dalının yokluk <c>null</c>'ı canlı dala
+    /// uzanmaz; "log yok"a çeviren tek yer koordinatördür.
+    /// <para>PİN: bugünkü kod fırlatır. Mutasyon (canlı dalda yokluğu yutmak) kırmızı.</para></summary>
+    [Fact]
+    public void A_registered_project_log_that_vanished_throws()
+    {
+        using var w = new RunLogWriter(_root, Ts);
+        string id = @"C:\repo\A\A.csproj";
+        using (var log = w.OpenProjectLog(id)) log.AppendLine("first");
+        File.Delete(w.ProjectLogPath(id)); // kayıt durur, dosya gitti
+
+        Assert.Throws<FileNotFoundException>(() => w.SnapshotProjectLog(id));
+    }
+
     [Fact] // decision log çok worker'dan yazılır: satır kaybı/karışması YOK
     public void Decision_log_is_thread_safe()
     {

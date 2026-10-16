@@ -107,6 +107,28 @@ public class IpcMessagesTests
         Assert.False(legacy.NotFound);
     }
 
+    /// <summary>[idle-memory · dalga 3 · karar 37] Proje log isteği App'in gördüğü son koşunun klasörünü taşır (<c>runDirectory</c>, camelCase) ve
+    /// geri döner. Geriye uyumludur: klasör yoksa alan JSON'a YAZILMAZ (App henüz bir koşu görmedi — bugünkü istek satırı aynen) ve alandan ÖNCE
+    /// yazılmış bir satır klasörsüz (<c>null</c>) okunur.
+    /// <para>KIRMIZI: derleme — sözleşmede alan yoktu.</para></summary>
+    [Fact]
+    public void A_project_log_request_carries_the_run_folder_and_reads_null_when_absent()
+    {
+        IpcCommand request = new GetProjectLogCommand(@"C:\p\a.csproj", RequestId: 7,
+            RunDirectory: @"C:\Users\u\AppData\Local\BuildOrchestrator\logs\run-20261015-101010-123");
+        string json = JsonSerializer.Serialize(request, IpcJson.Options);
+        Assert.Contains("\"runDirectory\":", json, StringComparison.Ordinal);
+        Assert.Equal(request, JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
+
+        string withoutFolder = JsonSerializer.Serialize<IpcCommand>(new GetProjectLogCommand(@"C:\p\a.csproj", RequestId: 7), IpcJson.Options);
+        Assert.DoesNotContain("runDirectory", withoutFolder, StringComparison.Ordinal);
+
+        var legacy = Assert.IsType<GetProjectLogCommand>(JsonSerializer.Deserialize<IpcCommand>(
+            """{"type":"getProjectLog","projectId":"C:\\p\\a.csproj","requestId":7}""", IpcJson.Options));
+        Assert.Null(legacy.RunDirectory);
+        Assert.Equal(7, legacy.RequestId);
+    }
+
     [Theory]
     [InlineData(RunMode.Build, "\"mode\":\"build\"")]
     [InlineData(RunMode.Cycles, "\"mode\":\"cycles\"")]

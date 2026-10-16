@@ -4,12 +4,13 @@ using CommunityToolkit.Mvvm.ComponentModel;
 namespace BuildOrchestrator.App.ViewModels;
 
 /// <summary>[design v1.19.0 §2.9] Settings → General sayfasının anahtarları.
-/// <para>Sekiz anahtarın hepsi gerçektir. <see cref="PullBeforeBuild"/>
+/// <para>Dokuz anahtarın hepsi gerçektir. <see cref="PullBeforeBuild"/>
 /// (<see cref="SettingsDraftViewModel.PullExternalsBeforeBuild"/>), <see cref="StashOnBranchSwitch"/>
 /// (<see cref="SettingsDraftViewModel.StashOnBranchSwitch"/>) ve <see cref="ResolveAtFullPriority"/>
 /// (<see cref="SettingsDraftViewModel.ResolveAtFullPriority"/>) motora giden iş akışı tercihleridir;
-/// <see cref="CompactConsole"/> (<see cref="SettingsDraftViewModel.CompactConsole"/>) App-içi bir tercihtir — konsol
-/// anlatısının proje çıktısını nasıl göstereceğini söyler ve motora GİTMEZ; kalan dördü kabuk
+/// <see cref="CompactConsole"/> (<see cref="SettingsDraftViewModel.CompactConsole"/>) ve <see cref="StopEngineWhenIdle"/>
+/// (<see cref="SettingsDraftViewModel.StopEngineWhenIdle"/>) App-içi tercihlerdir — ilki konsol anlatısının proje çıktısını nasıl
+/// göstereceğini, ikincisi App'in boştaki motor sürecini ne zaman durduracağını söyler ve ikisi de motora GİTMEZ; kalan dördü kabuk
 /// anahtarıdır ve <see cref="ShellSwitches"/> tablosu üzerinden kalıcıdır: Save'de yazılır, diyalog kayıtlı değeri
 /// gösterir, Export/Import taşır, değişince konsola not düşer.</para>
 /// <para><b>[DEĞİŞEN KURAL — P3 2026-09-28 · P4 2026-09-29, kullanıcı kararları]</b> ESKİ: dört kabuk anahtarı
@@ -43,10 +44,16 @@ public enum GeneralSetting
     /// konsol anlatısı proje çıktısını kompakt mı göstersin (hatalar tam, her projenin ilk uyarıları ve kalanın sayısı;
     /// kapalıyken her satır). Motora gitmez; değişiklik bir sonraki işlemde geçerli olur.</summary>
     CompactConsole,
+    /// <summary>[idle-memory · dalga 3 / spec §6.4] Gerçek bayrak: <see cref="SettingsDraftViewModel.StopEngineWhenIdle"/> —
+    /// <see cref="Services.EngineIdleRule.IdleAfter"/> kadar işsiz kalan motor süreci çıksın mı (sonraki iş onu yeniden başlatır).
+    /// Motora gitmez: App'in kendi kararını sürer.</summary>
+    StopEngineWhenIdle,
 }
 
 /// <summary>General sayfasındaki tek bir ayar satırının tanımı (prototip <c>GENERAL_GROUPS</c> satırı).</summary>
-/// <param name="Default">Taslağın açılış değeri ve Clear'ın döndüğü değer.</param>
+/// <param name="Default">Ayarın varsayılanının TEK tanımı: taslağın açılış değeri, Clear'ın döndüğü değer, VM alanlarının ilk değeri,
+/// kabuğun anahtarsız bir ui-state'ten tohumu ve kabuk anahtarlarının okuyucusu bunu okur (<see cref="GeneralSettingsCatalog.DefaultOf"/>) —
+/// başka hiçbir yerde literal yazılmaz.</param>
 /// <param name="DependsOn">Bu satır yalnız o anahtar açıkken etkindir (prototip <c>dep</c>).</param>
 /// <param name="AutomationName">Switch'in UIA adı; <c>null</c> ise etiket.</param>
 public sealed record GeneralSettingDefinition(
@@ -74,13 +81,15 @@ public static class GeneralSettingsCatalog
                 "No window on start — the tray icon brings it back.", Default: false,
                 DependsOn: GeneralSetting.StartWithWindows),
             new(GeneralSetting.CloseToTray, "Close to tray",
-                "Closing the window leaves the engine running in the tray.", Default: true),
+                "Closing the window leaves the app running in the tray.", Default: true),
         ]),
         new("BUILD",
         [
+            // Açık: ayardan önce kaydedilmiş bir kurulum (anahtarı olmayan ui-state) bugünkü davranışını — güncellemeyi — korur.
             new(GeneralSetting.PullBeforeBuild, "Pull before build",
                 "Update every external working copy first — a fast-forward-only git pull, one per copy.", Default: true,
                 AutomationName: AccessibilityNames.PullExternalsBeforeBuild),
+            // Açık: onaylanmış varsayılan (RESOLVE Faz 4 / karar 11, kullanıcı onayı).
             new(GeneralSetting.ResolveAtFullPriority, "Resolve cycles at full priority",
                 "Resolve cycles runs at normal priority with no CPU cap, whatever the performance mode — it finishes "
                 + "sooner on a busy machine, but other apps may slow down while it runs. Off: it follows the performance mode.",
@@ -88,15 +97,24 @@ public static class GeneralSettingsCatalog
         ]),
         new("BRANCHES",
         [
+            // Kapalı: araç kullanıcının commit'lenmemiş işini kendiliğinden kenara koymaz (spec 2026-09-18 §6.3).
             new(GeneralSetting.StashOnBranchSwitch, "Stash and switch branches",
                 "When the working tree has uncommitted changes, stash them (including untracked files) and switch. "
                 + "Off: switching stops and asks you to commit or stash first.", Default: false),
         ]),
         new("CONSOLE",
         [
+            // Açık: onaylanmış varsayılan (idle-memory spec §6.5) — anlatı derleme çıktısını kısaltır; her satır proje logunda ve diskte kalır.
             new(GeneralSetting.CompactConsole, "Compact console",
                 "Errors in full, the first warnings of each project and a count of the rest; every other MSBuild line stays in "
                 + "the project log. Off: every line.", Default: true),
+        ]),
+        new("ENGINE",
+        [
+            // Açık: onaylanmış varsayılan (idle-memory spec §6.4) — işsiz motor süreci belleğini bırakır; sonraki iş onu yeniden başlatır.
+            new(GeneralSetting.StopEngineWhenIdle, "Stop the engine when idle",
+                "After five minutes without work the engine process exits. It starts again in a moment when you build or sync.",
+                Default: true),
         ]),
         new("NOTIFICATIONS",
         [
@@ -110,6 +128,12 @@ public static class GeneralSettingsCatalog
     /// literal olarak tekrarlamaz.</summary>
     public static GeneralSettingDefinition Definition(GeneralSetting setting) =>
         Groups.SelectMany(g => g.Rows).Single(r => r.Setting == setting);
+
+    /// <summary>[B3 · karar 47a] Ayarın varsayılanı — satırın <see cref="GeneralSettingDefinition.Default"/>'u. Varsayılanı okuyan HER yer
+    /// bunu çağırır: <see cref="RunViewModel"/>'in beş ayar alanı, kabuğun açılış tohumu (<c>MainWindow</c>: kayıtlı ?? bu) ve kabuk
+    /// anahtarlarının okuyucusu (<see cref="ShellSwitches.IsOn"/>); taslağın satırları tanımın kendisinden açılır. İkinci bir literal
+    /// yazılmaz (kopya YASAK).</summary>
+    public static bool DefaultOf(GeneralSetting setting) => Definition(setting).Default;
 }
 
 /// <summary>General sayfasındaki bir satırın taslak durumu — <c>Ds.Settings.ToggleRow</c> şablonu buna bağlanır.</summary>

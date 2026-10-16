@@ -20,10 +20,8 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public sealed class EnginePreflightTests
 {
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
-
     private static RunViewModel NewVm() =>
-        new(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1")
+        new(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1")
             { RootPath = @"D:\repo", LegacyWorktreePoolRoot = TestPaths.MissingLegacyPoolRoot }; // [final review M8]
 
     private static string MissingSupervisorPath =>
@@ -185,7 +183,7 @@ public sealed class EnginePreflightTests
     public async Task Restarting_into_a_missing_supervisor_switches_to_the_unavailable_state_instead_of_offering_another_retry()
     {
         await using var host = new EngineHost(MissingSupervisorPath);
-        var vm = new RunViewModel(host, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(host, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         vm.OnEngineExited(3); // doğmuş motor öldü → aksiyon görünür, komutlar açık
         Assert.True(vm.EngineRestartable);
         Assert.True(vm.SyncCommand.CanExecute(null));

@@ -16,8 +16,8 @@ namespace BuildOrchestrator.App.ViewModels;
 /// konsol + akış + liste + graf temizlenir, bölümün ilk satırı yeni configuration'dır; fetch YOK (uzakta değişen bir
 /// şey yok). Sync başlarken satırlar kararlarını bırakır: elde duranlar eski configuration'ındır.</description></item>
 /// <item><term><see cref="Silent"/></term><description>Kendiliğinden Sync (commit, pencereye dönüş, HEAD'in branch
-/// değişimi dışındaki hareketi): temizlik yok, fetch yok, pill yok, seçim korunur; transkript gizlenir ama
-/// warn/error satırları yine yazılır; akışa tek satır (<see cref="SilentSyncReason"/>).</description></item>
+/// değişimi dışındaki hareketi, kesilmiş bir koşu kurtaran motor uyanması — karar 42a): temizlik yok, fetch yok, pill yok, seçim
+/// korunur; transkript gizlenir ama warn/error satırları yine yazılır; akışa tek satır (<see cref="SilentSyncReason"/>).</description></item>
 /// </list>
 /// </summary>
 public enum SyncMode
@@ -70,7 +70,7 @@ public enum SilentSyncReason
     /// <summary>Bir commit görüldü: satır her zaman yazılır (<see cref="StreamText.SyncedAfterCommit"/>).</summary>
     Commit,
 
-    /// <summary>Pencereye dönüş ya da HEAD'in branch değişimi dışındaki bir hareketi: satır yalnız kararı değişen
-    /// satır varsa yazılır (<see cref="StreamText.SyncedProjectsChanged"/>).</summary>
+    /// <summary>Pencereye dönüş, HEAD'in branch değişimi dışındaki bir hareketi ya da kesilmiş bir koşu kurtaran motor uyanması (karar 42a):
+    /// satır yalnız kararı değişen satır varsa yazılır (<see cref="StreamText.SyncedProjectsChanged"/>).</summary>
     Refresh,
 }

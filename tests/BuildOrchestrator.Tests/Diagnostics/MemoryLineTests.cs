@@ -4,7 +4,6 @@ using System.Text.RegularExpressions;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Diagnostics;
-using BuildOrchestrator.Core.Logs;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Supervisor;
 using BuildOrchestrator.Tests.App;
@@ -155,7 +154,7 @@ public class MemoryLineWiringTests
 
         using var job = JobObject.CreateKillOnClose();
         using var coordinator = SupervisorHostHarness.NewIdleCoordinator(job, writer, line => { lock (console) console.Add(line); },
-            logFactory: startedAt => new RunLogWriter(Path.Combine(sandbox, "logs"), startedAt));
+            logsRoot: Path.Combine(sandbox, "logs"));
         var services = WorkspaceServices.Default(sandbox, _ => throw new NotSupportedException("no restore in this test"));
         if (configure is not null) services = configure(services);
         var host = new SupervisorHost(writer, new NdjsonReader(stdin), job, coordinator, services);

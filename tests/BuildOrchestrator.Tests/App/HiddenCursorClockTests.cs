@@ -30,7 +30,7 @@ public class HiddenCursorClockTests
 {
     // [perf B4] internal: CursorClockTests aynı VM'i ve aynı "saat dönüyor mu" ölçüsünü kullanır (kopya fixture YASAK).
     internal static RunViewModel NewVm() =>
-        new(new EngineHost(TestPaths.SupervisorExe), new ConsoleBatcher(_ => Task.Delay(Timeout.Infinite)), () => "r1")
+        new(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1")
         { RootPath = @"D:\repo" };
 
     internal static bool Ticking(UIElement cursor) =>

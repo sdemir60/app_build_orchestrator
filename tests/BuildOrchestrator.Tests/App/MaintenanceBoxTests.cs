@@ -22,10 +22,8 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class MaintenanceBoxTests
 {
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
-
     private static RunViewModel NewVm() =>
-        new(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        new(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
 
     private static ProjectNode Node(string id, string name, int buildOrder,
         string[]? deps = null, bool? willBuild = null) =>
@@ -140,7 +138,7 @@ public class MaintenanceBoxTests
     [StaFact]
     public void Optimize_is_disabled_without_a_repository_and_while_a_clean_is_in_flight()
     {
-        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1");
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1");
         var (box, window) = Realize(vm);
         Assert.False(box.OptimizeButton.IsEnabled); // repo yok
 
@@ -156,7 +154,7 @@ public class MaintenanceBoxTests
     [StaFact]
     public void Clean_is_disabled_without_a_repository_and_while_a_sync_is_in_flight()
     {
-        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1");
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1");
         var (box, window) = Realize(vm);
         Assert.False(box.CleanButton.IsEnabled); // repo yok
 

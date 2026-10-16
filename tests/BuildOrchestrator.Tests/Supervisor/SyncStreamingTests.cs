@@ -5,7 +5,6 @@ using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Core.Discovery;
 using BuildOrchestrator.Core.Git;
 using BuildOrchestrator.Core.Incremental;
-using BuildOrchestrator.Core.Logs;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Core.Processes;
 using BuildOrchestrator.Core.State;
@@ -109,7 +108,7 @@ public class SyncStreamingTests
 
         using var job = JobObject.CreateKillOnClose();
         using var coordinator = SupervisorHostHarness.NewIdleCoordinator(job, writer, _ => { },
-            logFactory: startedAt => new RunLogWriter(Path.Combine(sandbox, "logs"), startedAt));
+            logsRoot: Path.Combine(sandbox, "logs"));
 
         // Sync servisi GERÇEK; yalnız git process runner'ı kapılı. Diğer fabrikalar bu testte kullanılmaz.
         var services = new WorkspaceServices(

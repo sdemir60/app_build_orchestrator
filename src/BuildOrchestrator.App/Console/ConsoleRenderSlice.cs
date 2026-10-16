@@ -5,10 +5,11 @@ namespace BuildOrchestrator.App.Console;
 /// (in-memory belge tamponu bu kadarla sınırlı; hacim/performans). "N lines" sayacı bu dilimden ETKİLENMEZ —
 /// TAM mantıksal sayacı VM (<c>RunViewModel.GetActiveLineCount</c>) taşır (render dilimi DEĞİL).
 ///
-/// <para>Sınırın TEK tanımıdır. Belge her kurulumda backlog'un son diliminden kurulur (<c>ConsoleView.ReplaceRunDocument</c>,
-/// <c>ConsoleView.ReplaceProjectDocument</c>), canlı append'te ve takip geri gelince aynı sınırla baştan kırpılır
-/// (<c>ConsoleView.AppendBatch</c>). [idle-memory · final review 90] Metin kırpan eski yardımcı (<c>LastLines</c>) kalktı: tohumlama
-/// metinden değil backlog'dan yapıldığından üretimde çağıranı yoktu.</para>
+/// <para>Sınırın TEK tanımıdır. Anlatı belgesi her kurulumda backlog'un son diliminden kurulur (<c>ConsoleView.ReplaceRunDocument</c>),
+/// canlı append'te ve takip geri gelince aynı sınırla baştan kırpılır (<c>ConsoleView.AppendBatch</c>). Proje sayfası bu sınırın dışındadır:
+/// logun tamamını taşır ve hiç izlemediği için kırpılmaz (<c>ConsoleView.ReplaceProjectDocument</c>, dalga 3 · karar 44-45).
+/// [idle-memory · final review 90] Metin kırpan eski yardımcı (<c>LastLines</c>) kalktı: tohumlama metinden değil backlog'dan yapıldığından
+/// üretimde çağıranı yoktu.</para>
 /// </summary>
 public static class ConsoleRenderSlice
 {

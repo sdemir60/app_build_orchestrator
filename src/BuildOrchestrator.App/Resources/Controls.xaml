@@ -1219,7 +1219,7 @@
     <Setter Property="Foreground" Value="{DynamicResource Brush.TextFaint}" />
   </Style>
 
-  <!-- [design v1.19.0 §2.9 · prototip `caps`] General sayfasının grup başlığı (STARTUP · BUILD · BRANCHES · CONSOLE · NOTIFICATIONS):
+  <!-- [design v1.19.0 §2.9 · prototip `caps`] General sayfasının grup başlığı (STARTUP · BUILD · BRANCHES · CONSOLE · ENGINE · NOTIFICATIONS):
        kolon başlığıyla AYNI font kimliği, tek farkı text-dim (kolon başlıkları text-faint'tir, prototip `colCap`). -->
   <Style x:Key="Ds.Settings.GroupHeading" TargetType="TextBlock" BasedOn="{StaticResource Ds.Settings.CapsHeading}">
     <Setter Property="Foreground" Value="{DynamicResource Brush.TextDim}" />

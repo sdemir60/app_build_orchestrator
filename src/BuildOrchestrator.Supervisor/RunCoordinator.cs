@@ -115,8 +115,6 @@ public sealed record MsBuildToolset(IMsBuildInvoker Invoker, string MsBuildExePa
 /// bloklamaz).</para></param>
 /// <param name="msbuildFactory">MSBuild takımını (ham invoker + exe yolu) LAZY çözer: vswhere/VS yoksa Supervisor
 /// yine ayağa kalkar, hata ancak <c>startRun</c>'da <c>error(msbuildNotFound)</c> olarak bildirilir.</param>
-/// <param name="logFactory">Run başına TEK <see cref="RunLogWriter"/> üretir; HER koşu kendi writer'ını
-/// (kendi run dizinini) açar — "aynı writer'ı paylaşan" bir sonraki koşu senaryosu YOK.</param>
 /// <param name="nowMs">MONOTONİK zaman kaynağı (üretimde <c>Environment.TickCount64</c>); duvar saati
 /// KULLANILMAZ — geri atlarsa elapsed negatife düşerdi.</param>
 /// <param name="console">Konsol (stderr) uyarı/özet kanalı. stdout YALNIZ NDJSON'dır [D4], bu yüzden buradan
@@ -152,10 +150,19 @@ public sealed record MsBuildToolset(IMsBuildInvoker Invoker, string MsBuildExePa
 /// sıkıştıran bir GC bütün test sürecini durdurur ve koordinatörü kuran her test her koşu bitişinde onu ödemesin diye testler
 /// bir sayaç ya da hiçbir şey yapmayan bir delege verir.
 /// </param>
+/// <param name="logsRoot">
+/// [idle-memory · dalga 3 · karar 37 · B1 fix 1 · I-2/O-2] Motorun log kökü — koordinatöre TEK girişi: koşu klasörleri onun DOĞRUDAN altında
+/// açılır (varsayılan yazıcı fabrikası, <see cref="_logFactory"/>) ve <see cref="TryGetProjectLogSnapshot"/>'ın üçüncü kaynağı isteğin adını
+/// verdiği klasörü yalnız bu kökün koşu klasörlerinden biriyse okur. Üretimde <c>Program</c>'ın <c>logsRoot</c>'u (<c>--logs</c> ya da
+/// varsayılan yol). Kök ayrıca fabrikanın içinde yaşamaz: bağlantı kopsa koşular log yazamaz, yani kopukluk sessiz kalamaz. <c>null</c> ⇒
+/// isteğin klasörü hiç kabul edilmez (bugünkü "log yok") ve <paramref name="logFactory"/> ZORUNLUDUR.
+/// </param>
+/// <param name="logFactory">[test dikişi] Run başına TEK <see cref="RunLogWriter"/> üreten fabrika; HER koşu kendi writer'ını (kendi run dizinini)
+/// açar — "aynı writer'ı paylaşan" bir sonraki koşu senaryosu YOK. Verilmezse <paramref name="logsRoot"/>'tan kurulur (üretim); testler
+/// yazıcıyı gözlemek ya da koşuyu yasaklamak için kendisininkini verir.</param>
 public sealed class RunCoordinator(
     Func<StartRunCommand, Action<string>, RunPlan> planner,
     Func<CancellationToken, Task<MsBuildToolset>> msbuildFactory,
-    Func<DateTimeOffset, RunLogWriter> logFactory,
     NdjsonWriter writer,
     JobObject innerJob,
     Func<long> nowMs,
@@ -166,10 +173,22 @@ public sealed class RunCoordinator(
     InFlightLedger? inFlight = null,
     Func<string, string?>? apiSurface = null,
     Func<(int Cores, long FreeBytes)>? machine = null,
-    Action? memoryTrim = null) : IDisposable
+    Action? memoryTrim = null,
+    string? logsRoot = null,
+    Func<DateTimeOffset, RunLogWriter>? logFactory = null) : IDisposable
 {
     private readonly object _gate = new();
     private readonly ICpuGovernor _cpu = cpuGovernor ?? innerJob;
+
+    /// <summary>[B1 fix 1 · O-2] Koşunun log yazıcısının fabrikası — üretimde log kökünden (kökün koordinatöre TEK girişi), testte dikişten. Hiçbiri
+    /// yoksa kurulum düşer: log yazamayacak bir koordinatör sessizce kurulmaz.</summary>
+    private readonly Func<DateTimeOffset, RunLogWriter> _logFactory = logFactory
+        ?? (logsRoot is { } root
+            ? startedAt => new RunLogWriter(root, startedAt)
+            : throw new ArgumentException("A run coordinator needs a logs root or a log factory.", nameof(logsRoot)));
+
+    /// <summary>[karar 37] Motorun log kökü (<paramref name="logsRoot"/>) — isteğin klasörünün kabul kuralı onu okur.</summary>
+    private readonly string? _logsRoot = logsRoot;
 
     /// <summary>[PERF Faz D / karar 10] Koşu başında makinenin görüntüsü — üretimde <see cref="MachineResources.Snapshot"/>.</summary>
     private readonly Func<(int Cores, long FreeBytes)> _machine = machine ?? MachineResources.Snapshot;
@@ -244,6 +263,22 @@ public sealed class RunCoordinator(
     /// hiç loglanmadıysa <c>false</c> döner — metin o zaman boş, satır no 0'dır: host "log yok" cevabını bundan, boş bir
     /// snapshot olarak yazar (<c>SupervisorHost.SendProjectLogAsync</c>).
     ///
+    /// <para>[idle-memory · dalga 3 · karar 37] <b>Üçüncü kaynak: isteğin klasörü.</b> Bu süreç hiç koşu yürütmediyse (uykudan uyanmış ya
+    /// da yeniden başlatılmış motor — <c>_lastRunDirectory</c> süreç içidir) okuma isteğin adını verdiği klasörden yapılır
+    /// (<paramref name="runDirectory"/> — App'in gördüğü son koşunun <c>runStarted.LogDirectory</c>'si). Klasör yalnız bu motorun log kökünün
+    /// koşu klasörlerinden biriyse kabul edilir (<see cref="RunLogPaths.TryGetRunDirectory"/>: tam nitelikli, kökün doğrudan altında, adı koşu
+    /// klasörü kalıbında) ve okuma kuralın döndüğü NORMALLEŞTİRİLMİŞ klasörden yapılır — isteğin ham metninden değil [B1 fix 1 · m-2]; aksi hâlde —
+    /// ya da kök bilinmiyorsa — bugünkü "log yok". Sıra: canlı writer → motorun son koşusu → isteğin klasörü; kendi koşusu olan motor isteğin
+    /// klasörüne hiç bakmaz.</para>
+    ///
+    /// <para>[idle-memory · dalga 3 · B1 fix 3] <b>Okumanın her hatasını "log yok"a çeviren TEK yer burasıdır</b> — disk okuması (paylaşım ihlali,
+    /// erişim reddi), canlı yazıcının anlık görüntüsü (kayıtlı projenin dosyası gitti), bozuk bir istek (kimliksiz): hata hiçbir yolda çağırana
+    /// (host'un komut döngüsüne) yükselmez ve tanı kanalına TEK <c>warning: project log could not be read (&lt;proje&gt;): &lt;ileti&gt;</c> satırı
+    /// düşer. Kanal motorun stderr'idir; App onu boşaltır ve ATAR — satır harness'ler ve tanı içindir, kullanıcıya ulaşmaz. Satırın biçimi kimliksiz
+    /// istekte de fırlatmaz (proje alanı boş kalır); satırı yazmak patlarsa o hata da yutulur (<see cref="ReportDiagnostic"/>): iz, cevaptan ağır bir
+    /// hata üretemez. YOK olan log (Core'un <c>null</c>'ı, <see cref="RunLogWriter.ReadProjectLogFromDisk"/>) ve klasör kuralının reddettiği klasör
+    /// (<see cref="RunLogPaths.TryGetRunDirectory"/> fırlatmaz, reddeder) ise birer karardır, hata değil: sessiz "log yok", satır yok.</para>
+    ///
     /// <para>[Task 18] Gerçek disk okuması (<c>File.ReadAllText</c> / <c>ProjectLogFile.Snapshot</c>'ın
     /// FileStream'i) kilit DIŞINDA yapılır: kilit altında yalnız "hangi kaynaktan okunacağı" (canlı writer
     /// referansı ya da en son run dizini) yakalanır. Büyük bir proje logunun okunması artık stopRun/startRun
@@ -254,7 +289,12 @@ public sealed class RunCoordinator(
     /// burada canlı tutulur (GC toplamaz) ve <c>SnapshotProjectLog</c> kendi kilidiyle Dispose ile serileşir —
     /// canlı-writer anlık görüntüsü hâlâ tutarlıdır.</para>
     /// </summary>
-    public bool TryGetProjectLogSnapshot(string projectId, out string text, out int throughLineNumber)
+    /// <param name="projectId">İstenen projenin kimliği.</param>
+    /// <param name="text">Logun metni ("log yok"ta boş).</param>
+    /// <param name="throughLineNumber">Metne giren son satırın numarası — dikiş noktası ("log yok"ta 0).</param>
+    /// <param name="runDirectory">[karar 37] İsteğin adını verdiği koşu klasörü (<c>GetProjectLogCommand.RunDirectory</c>); <c>null</c> =
+    /// klasörsüz istek. Yalnız üçüncü kaynaktır.</param>
+    public bool TryGetProjectLogSnapshot(string projectId, out string text, out int throughLineNumber, string? runDirectory = null)
     {
         RunLogWriter? logs;
         string? lastRunDirectory;
@@ -263,9 +303,20 @@ public sealed class RunCoordinator(
             logs = _logs;
             lastRunDirectory = _lastRunDirectory;
         }
-        (string Text, int ThroughLineNumber)? snap = logs is not null
-            ? logs.SnapshotProjectLog(projectId)
-            : lastRunDirectory is not null ? RunLogWriter.ReadProjectLogFromDisk(lastRunDirectory, projectId) : null;
+        (string Text, int ThroughLineNumber)? snap;
+        try
+        {
+            string? diskDirectory = lastRunDirectory
+                ?? (_logsRoot is { } root && RunLogPaths.TryGetRunDirectory(root, runDirectory, out string? requested) ? requested : null);
+            snap = logs is not null
+                ? logs.SnapshotProjectLog(projectId)
+                : diskDirectory is not null ? RunLogWriter.ReadProjectLogFromDisk(diskDirectory, projectId) : null;
+        }
+        catch (Exception ex)
+        {
+            snap = null; // okunamayan log "log yok"tur — kuralın tek yeri
+            ReportDiagnostic($"warning: project log could not be read ({projectId}): {ex.Message}");
+        }
         if (snap is { } s) { text = s.Text; throughLineNumber = s.ThroughLineNumber; return true; }
         text = ""; throughLineNumber = 0; return false;
     }
@@ -326,7 +377,7 @@ public sealed class RunCoordinator(
     /// <para>Toplama bir OPTİMİZASYONDUR: fırlatırsa hata yutulur, satırı ve çağıran işi (Sync, koşu kapanışı) bozmaz.
     /// [idle-memory · final review 49] Yutulan hata izsiz kalmaz: konsola (stderr) tek <c>warning: memory trim failed: &lt;ileti&gt;</c>
     /// satırı düşer ve bellek satırından ÖNCE yazılır — satır toplanmamış bir yığını taşır, okuyan bilmelidir. İz de bir tanıdır: o
-    /// satırı yazmak patlarsa o hata da yutulur; satırı yazan <c>MemoryLine.Report</c> da hata yutar.</para>
+    /// satırı yazmak patlarsa o hata da yutulur (<see cref="ReportDiagnostic"/>); satırı yazan <c>MemoryLine.Report</c> da hata yutar.</para>
     /// </summary>
     public void TrimAndReportMemory()
     {
@@ -336,12 +387,26 @@ public sealed class RunCoordinator(
             catch (Exception ex)
             {
                 // trim bir optimizasyondur; raporu ve işi bozmaz — ama sessiz de kalmaz (tanı kanalına tek satır).
-                try { console("warning: memory trim failed: " + ex.Message); }
-                catch (Exception) { /* tanı kanalı da yazılamıyor — vazgeç, işi bozma */ }
+                ReportDiagnostic("warning: memory trim failed: " + ex.Message);
             }
         }
         MemoryLine.Report(console);
     }
+
+    /// <summary>
+    /// [idle-memory · dalga 3 · B1 fix 4] Bir cevabı ya da bir işin kapanışını taşıyan yoldan tanı kanalına TEK satır yazar; satır yazılamazsa
+    /// (ör. kapanmış stderr borusu) hata yutulur — iz, taşıdığı cevaptan ya da işten ağır bir hata üretemez. Yazıp yutmanın kendisi Core'un tek
+    /// yerindedir (<see cref="DiagnosticLine.Write"/> — motorun bellek satırı da onu kullanır). Yalnız iki yol kullanır: işlem sonu bellek raporunun
+    /// trim uyarısı (<see cref="TrimAndReportMemory"/> — Sync/Clean/Optimize ve koşu kapanışı bozulmamalı) ve okunamayan proje logunun uyarısı
+    /// (<see cref="TryGetProjectLogSnapshot"/> — "log yok" cevabı bozulmamalı).
+    /// <para>[son temizlik · K-6] <b>Öteki tanı satırları kanalı doğrudan yazar, çünkü bir cevabı taşımazlar:</b> koşunun kendi işinin uyarılarıdır
+    /// (planlama, karar logu, koşullu derleme ve yüzey kapısı, build-state, uçuş defteri, perf). Koşunun içinde yazılanların hatası koşunun
+    /// yakalamasına düşer — koşu <c>runFailed</c> ile kapanır, App beklemede kalmaz. Kapsam bilerek bu iki yolla sınırlıdır; ama korumasız
+    /// satırların hepsi koşunun içinde değildir: uçuş defterinin ve perf geri alımının uyarıları koşu çıkışının <c>finally</c>'sinde de yazılır,
+    /// Stop ve perf değişiminin uyarıları host'un komut yolunda — kanal orada fırlatırsa istisna yükselir.</para>
+    /// </summary>
+    /// <param name="line">Yazılacak satır (çağıran kurar; kimliksiz bir istekte proje alanı boş kalır, biçimleme fırlatmaz).</param>
+    private void ReportDiagnostic(string line) => DiagnosticLine.Write(console, () => line);
 
     /// <summary>
     /// [I2-K1] Aktif run'ın Stop'unu sahiplenir. <c>true</c> → <c>runStopped</c>'ı (in-flight sonuçları
@@ -823,7 +888,7 @@ public sealed class RunCoordinator(
             lock (_gate)
             {
                 _logs?.Dispose(); // runStarted'a varmadan dönmüş önceki koşunun (msbuildNotFound ya da beklenmeyen hata) kapanmamış writer'ı — finally'si hiç koşmadı
-                logs = _logs = logFactory(DateTimeOffset.Now);
+                logs = _logs = _logFactory(DateTimeOffset.Now);
                 _lastRunDirectory = logs.RunDirectory;
                 depIssuesById = new ConcurrentDictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase); // [T54] taze run → taze birikim
             }

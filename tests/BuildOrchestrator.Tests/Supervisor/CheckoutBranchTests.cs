@@ -3,7 +3,6 @@ using System.IO;
 using System.Text.Json;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
-using BuildOrchestrator.Core.Logs;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Supervisor;
 using BuildOrchestrator.Tests.Git;
@@ -104,7 +103,7 @@ public class CheckoutBranchTests
             var releasePlanning = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             using var coordinator = SupervisorHostHarness.NewIdleCoordinator(job, writer, _ => { },
                 planner: (_, _) => { releasePlanning.Task.GetAwaiter().GetResult(); throw new InvalidOperationException("plan yok"); },
-                logFactory: startedAt => new RunLogWriter(Path.Combine(sandbox, "logs"), startedAt));
+                logsRoot: Path.Combine(sandbox, "logs"));
 
             // startRun slotu SENKRON tutar; dispatch loop serildir — checkoutBranch okunduğunda run KESİNLİKLE aktiftir.
             var stdin = await SupervisorHostHarness.StdinWith(
@@ -136,7 +135,7 @@ public class CheckoutBranchTests
             var writer = new NdjsonWriter(stdout);
             using var job = JobObject.CreateKillOnClose();
             using var coordinator = SupervisorHostHarness.NewIdleCoordinator(job, writer, _ => { },
-                logFactory: startedAt => new RunLogWriter(Path.Combine(sandbox, "logs"), startedAt));
+                logsRoot: Path.Combine(sandbox, "logs"));
             var services = WorkspaceServices.Default(sandbox, _ => throw new NotSupportedException("bu testte restore yok"))
                 with { Git = _ => throw new InvalidOperationException("beklenmeyen hata") };
 

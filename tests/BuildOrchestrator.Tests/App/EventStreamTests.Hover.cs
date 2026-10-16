@@ -33,10 +33,8 @@ public class EventStreamHoverTests
 {
     private static readonly TimeSpan PumpTimeout = TimeSpan.FromSeconds(2);
 
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
-
     private static RunViewModel NewVm() =>
-        new(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        new(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
 
     private static (EventStreamView view, Window window, System.Windows.Controls.Border host) Realize(
         RunViewModel vm, bool forceAnimations = false)

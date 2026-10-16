@@ -25,10 +25,8 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 public class OperationPipelineTests
 {
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
-
     private static RunViewModel NewVm() =>
-        new(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        new(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
 
     private static ProjectNode Node(string id, string name, int buildOrder, bool inCycle = false) =>
         new(id, name, id, SolutionNames: [], Dependencies: [], buildOrder,

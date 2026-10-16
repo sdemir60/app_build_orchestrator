@@ -178,9 +178,7 @@ public class DialogShellTests
         reopen();
         dialog.UpdateLayout();
         Assert.Equal(Visibility.Visible, dialog.Visibility);
-        var esc = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(dialog)!, 0, Key.Escape)
-            { RoutedEvent = Keyboard.KeyDownEvent };
-        ((UIElement)dialog.Frame.Child).RaiseEvent(esc);
+        var esc = KeyInput.Raise((UIElement)dialog.Frame.Child, Key.Escape, Keyboard.KeyDownEvent);
         Assert.True(esc.Handled, "Esc handled dönmedi");
         Assert.Equal(Visibility.Collapsed, dialog.Visibility);
     }

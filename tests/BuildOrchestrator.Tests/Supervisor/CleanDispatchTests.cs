@@ -10,7 +10,6 @@ using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Core.Discovery;
 using BuildOrchestrator.Core.Git;
 using BuildOrchestrator.Core.Incremental;
-using BuildOrchestrator.Core.Logs;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Core.Processes;
 using BuildOrchestrator.Core.State;
@@ -109,7 +108,7 @@ public class CleanDispatchTests : IDisposable
         var releasePlanning = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var coordinator = SupervisorHostHarness.NewIdleCoordinator(job, writer, _ => { },
             planner: (_, _) => { releasePlanning.Task.GetAwaiter().GetResult(); throw new InvalidOperationException("plan yok"); },
-            logFactory: startedAt => new RunLogWriter(Path.Combine(_sandbox, "logs"), startedAt));
+            logsRoot: Path.Combine(_sandbox, "logs"));
 
         // startRun SENKRON olarak slotu tutar ve döner; dispatch loop serildir, yani cleanWorkspace okunduğunda
         // run KESİNLİKLE aktiftir — yarış yok.
@@ -149,5 +148,5 @@ public class CleanDispatchTests : IDisposable
 
     private RunCoordinator NewCoordinator(NdjsonWriter writer, JobObject job) =>
         SupervisorHostHarness.NewIdleCoordinator(job, writer, _ => { },
-            logFactory: startedAt => new RunLogWriter(Path.Combine(_sandbox, "logs"), startedAt));
+            logsRoot: Path.Combine(_sandbox, "logs"));
 }

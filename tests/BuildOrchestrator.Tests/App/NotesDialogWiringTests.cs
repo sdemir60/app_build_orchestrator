@@ -2,7 +2,6 @@ using System.IO;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using BuildOrchestrator.App;
 using BuildOrchestrator.App.Services;
@@ -20,17 +19,7 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class NotesDialogWiringTests
 {
-    private static void Click(ButtonBase button) =>
-        button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
-
-    /// <summary>Pencere-seviyesi bir tuş bağlamasını, üretimdeki yolun AYNISIYLA (InputBinding'in komutu)
-    /// tetikler — WPF olay yönlendirmesi gerçek bir HWND olmadan güvenilir değildir.</summary>
-    private static void Invoke(MainWindow window, Key key, ModifierKeys modifiers)
-    {
-        var binding = window.InputBindings.OfType<KeyBinding>()
-            .Single(k => k.Key == key && k.Modifiers == modifiers);
-        if (binding.Command.CanExecute(null)) binding.Command.Execute(null);
-    }
+    // Pencere-seviyesi tuş bağlamaları üretimdeki yolun AYNISIYLA (bağlamanın komutu) basılır: MainWindowHost.PressKeyBinding / PressEscape.
 
     // ---------------------------------------------------------------- title bar butonu
 
@@ -114,7 +103,7 @@ public class NotesDialogWiringTests
         MainWindowHost.Realize(window);
 
         Assert.Equal(Visibility.Collapsed, window.NotesOverlay.Visibility);
-        Click(window.NotesButton);
+        CommandPress.Click(window.NotesButton);
         Assert.Equal(Visibility.Visible, window.NotesOverlay.Visibility);
         GC.KeepAlive(window);
     }
@@ -148,8 +137,8 @@ public class NotesDialogWiringTests
         var (window, _) = MainWindowHost.New(temp);
         MainWindowHost.Realize(window);
 
-        Click(window.NotesButton);
-        Click(window.GearButton);
+        CommandPress.Click(window.NotesButton);
+        CommandPress.Click(window.GearButton);
 
         Assert.Equal(Visibility.Collapsed, window.SettingsOverlay.Visibility);
         Assert.Equal(Visibility.Visible, window.NotesOverlay.Visibility);
@@ -165,10 +154,10 @@ public class NotesDialogWiringTests
         var (window, _) = MainWindowHost.New(temp);
         MainWindowHost.Realize(window);
 
-        Click(window.NotesButton);
+        CommandPress.Click(window.NotesButton);
         Assert.Equal(Visibility.Visible, window.NotesOverlay.Visibility);
 
-        Invoke(window, Key.Escape, ModifierKeys.None);
+        MainWindowHost.PressEscape(window);
         Assert.Equal(Visibility.Collapsed, window.NotesOverlay.Visibility);
         GC.KeepAlive(window);
     }
@@ -190,20 +179,20 @@ public class NotesDialogWiringTests
         var (window, _) = MainWindowHost.New(temp);
         MainWindowHost.Realize(window);
 
-        Click(window.GearButton);
-        Invoke(window, Key.F1, ModifierKeys.None);
+        CommandPress.Click(window.GearButton);
+        MainWindowHost.PressKeyBinding(window, Key.F1);
         window.AboutOverlay.UpdateLayout();
-        Click(window.AboutOverlay.WhatsNewButton);
+        CommandPress.Click(window.AboutOverlay.WhatsNewButton);
 
         Assert.Equal(Visibility.Visible, window.SettingsOverlay.Visibility);
         Assert.Equal(Visibility.Collapsed, window.AboutOverlay.Visibility);
         Assert.Equal(Visibility.Visible, window.NotesOverlay.Visibility);
 
-        Invoke(window, Key.Escape, ModifierKeys.None);
+        MainWindowHost.PressEscape(window);
         Assert.Equal(Visibility.Collapsed, window.NotesOverlay.Visibility);
         Assert.Equal(Visibility.Visible, window.SettingsOverlay.Visibility); // ALT katman DURUYOR
 
-        Invoke(window, Key.Escape, ModifierKeys.None);
+        MainWindowHost.PressEscape(window);
         Assert.Equal(Visibility.Collapsed, window.SettingsOverlay.Visibility);
         GC.KeepAlive(window);
     }
@@ -269,7 +258,7 @@ public class NotesDialogWiringTests
         MainWindowHost.Realize(window);
         Assert.Equal(Visibility.Visible, window.UnseenNotesDot.Visibility); // ön-koşul
 
-        Click(window.NotesButton);
+        CommandPress.Click(window.NotesButton);
 
         Assert.Equal(Visibility.Collapsed, window.UnseenNotesDot.Visibility);
         Assert.Equal(ReleaseNotes.WhatsNewTooltip, ((ToolTip)window.NotesButton.ToolTip).Content);

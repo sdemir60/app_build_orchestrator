@@ -1,6 +1,5 @@
 ﻿using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using BuildOrchestrator.App.Controls;
@@ -433,7 +432,7 @@ public class AboutDialogTests
 
             int requests = 0;
             dialog.WhatsNewRequested += () => requests++;
-            button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            CommandPress.Click(button);
 
             Assert.Equal(1, requests);
             Assert.Equal(Visibility.Collapsed, dialog.Visibility);
@@ -713,6 +712,38 @@ public class AboutDialogTests
             foreach (var line in EnvironmentLines(dialog))
                 Assert.Contains(line.Value, written, StringComparison.Ordinal);
             Assert.True(dialog.IsShowingCopied);
+        }
+    }
+
+    /// <summary>[idle-memory · dalga 3 · karar 39] Motor boşta uyurken Environment sekmesinin PID satırı ve panoya kopyalanan metin
+    /// <c>asleep</c> okur — durum VM'in kendisinden (<c>RunViewModel.EngineState</c>) gelir. Motor üretimin yoluyla uyutulur: hazır yolu, ayar
+    /// açık, beş işsiz dakika ve bir tik; uyku dikişi ortak sahteden (<see cref="EngineSleepProbe"/>).
+    /// <para>KIRMIZI: satır "—" okuyordu (VM uyuyan motorun PID'ini tutmaz, durum rapora girmiyordu).</para></summary>
+    [StaFact]
+    public void The_environment_pid_row_and_the_copied_text_read_asleep_while_the_engine_sleeps()
+    {
+        long now = 1_000;
+        string? written = null;
+        var (dialog, run, scope) = AboutDialogHost.OpenRealized(vm =>
+        {
+            EngineSleepProbe.Attach(vm);
+            vm.StopEngineWhenIdle = true;
+            vm.OnEngineReady(EngineSleepProbe.EngineVersion, EngineSleepProbe.Pid);
+            now += EngineSleepProbe.IdleAfterMs;
+            vm.TickElapsed();
+        }, nowMs: () => now);
+        using (scope)
+        {
+            Assert.Equal(EngineState.Asleep, run.EngineState); // ön-koşul: motor uyudu
+            Select(dialog, EnvironmentTab);
+
+            Assert.Equal(DiagnosticsReport.Asleep, dialog.Diagnostics!.Runtime.Single(l => l.Label == DiagnosticsReport.EnginePidLabel).Value);
+            Assert.Contains(DiagnosticsReport.Asleep, VisibleTexts(dialog));
+
+            dialog.ClipboardWriter = text => { written = text; return true; };
+            dialog.CopyDiagnostics();
+            Assert.Contains(written!.Split(Environment.NewLine),
+                row => row.StartsWith(DiagnosticsReport.EnginePidLabel, StringComparison.Ordinal) && row.EndsWith(DiagnosticsReport.Asleep, StringComparison.Ordinal));
         }
     }
 

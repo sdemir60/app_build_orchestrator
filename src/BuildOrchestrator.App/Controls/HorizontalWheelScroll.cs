@@ -48,6 +48,12 @@ public static class HorizontalWheelScroll
     /// Windows varsayılanı. (Yatayda "bir ekran" kaydırma diye bir gelenek yoktur.)</summary>
     internal const int FallbackWheelScrollLines = 3;
 
+    /// <summary>[son temizlik · madde 1] Yatay tekerlek paneli YANA kaydırdı — kullanıcının yana bir jesti. Kanca kaydırmayı istedikten hemen
+    /// sonra panelden yükseltir (baloncuklanır). Ham girdinin tek kablajı (<see cref="UserScrollSignal"/>) bunu yana kanal olarak dinler: WPF
+    /// yatay tekerleği hiç dağıtmadığı için jest başka hiçbir yoldan duyulmazdı.</summary>
+    public static readonly RoutedEvent ScrolledEvent = EventManager.RegisterRoutedEvent(
+        "Scrolled", RoutingStrategy.Bubble, typeof(RoutedEventHandler), typeof(HorizontalWheelScroll));
+
     /// <summary>Bu panelin üzerindeyken gelen yatay tekerlek mesajlarını panelin yatay kaydırılabilir içeriğine
     /// bağlar. Panel canlı bir pencereye (HWND) bağlandığında kancalanır, ayrıldığında bırakılır; HWND yokken
     /// (headless test/ölçüm) sessizce no-op'tur.</summary>
@@ -68,7 +74,11 @@ public static class HorizontalWheelScroll
             double offset = NextOffset(ref desired, ref lastMessageMs, Environment.TickCount64,
                 target.HorizontalOffset, delta, target.ScrollableWidth, SystemParameters.WheelScrollLines);
 
-            panel.Dispatcher.BeginInvoke(DispatcherPriority.Input, () => target.ScrollToHorizontalOffset(offset));
+            panel.Dispatcher.BeginInvoke(DispatcherPriority.Input, () =>
+            {
+                target.ScrollToHorizontalOffset(offset);
+                panel.RaiseEvent(new RoutedEventArgs(ScrolledEvent)); // yana jest — UserScrollSignal'in yana kanalı
+            });
             handled = true;
             return 0;
         };

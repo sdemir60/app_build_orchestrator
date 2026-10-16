@@ -84,7 +84,7 @@ public class ConsoleTiltInTests
     {
         var view = Realized();
 
-        view.PlayCascade(["first line"]);
+        view.PlayCascade("first line\n");
 
         Assert.Equal(-view.TiltHost.ActualHeight / 2, HingeCentreY(view), precision: 3); // menteşe ALT kenarda
 
@@ -123,7 +123,7 @@ public class ConsoleTiltInTests
     public void The_transition_hands_the_panel_back_to_the_real_editor()
     {
         var view = Realized();
-        view.PlayCascade(["first line"]);
+        view.PlayCascade("first line\n");
         Assert.Equal(0.0, view.TiltHost.Opacity); // ön-koşul: geçiş sürerken gerçek blok saklı
 
         DispatcherPump.PumpUntil(() => view.Tilt3D.Visibility == Visibility.Collapsed, TimeSpan.FromSeconds(3));
@@ -199,6 +199,25 @@ public class ConsoleTiltInTests
     }
 
     /// <summary>
+    /// [dalga 3 · karar 44] <b>Uzun bir proje logu, geçişini logun İLK satırı çizilmiş olarak başlatır.</b> Açılış dönüşün aynasıdır:
+    /// dokunun alındığı karede belgenin ilk satırı — logun ilk satırı — görünür satırların başındadır ve geçiş oynar.
+    /// <para>KIRMIZI (karardan önce): sayfa logun son 200 satırıyla kuruluyordu — 1000 satırlık logun geçişi <c>page800</c>'le başlıyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void A_long_project_log_starts_its_transition_with_its_first_line_already_drawn()
+    {
+        var view = Realized(width: 800, height: 400);
+
+        view.PlayCascade(ConsoleDocument.Text([.. Enumerable.Range(0, 1000).Select(i => $"page{i}")]));
+
+        Assert.Equal(0, view.Editor.VerticalOffset);
+        var textView = view.Editor.TextArea.TextView;
+        Assert.True(textView.VisualLinesValid, "görsel satırlar geçiş anında kurulmamış — doku boş/bayat bir kare taşır");
+        Assert.Equal("page0", view.Document.GetText(textView.VisualLines[0].FirstDocumentLine));
+        Assert.Equal(Visibility.Visible, view.Tilt3D.Visibility); // geçiş oynuyor
+    }
+
+    /// <summary>
     /// <b>Dönüşte kaydırma animasyonu YOKTUR.</b> Panel geçişten önce zaten son satırdadır; hareket eden tek
     /// şey menteşedir. İki animasyonu üst üste bindirmek (geçiş + kaydırma) kullanıcı kararıyla reddedildi:
     /// dönüş bir yer değiştirme değil, bir mod değişimidir.
@@ -212,7 +231,7 @@ public class ConsoleTiltInTests
         double landedAt = view.Editor.VerticalOffset;
 
         Assert.False(
-            DependencyPropertyHelper.GetValueSource(view.Editor, ScrollAnimator.VerticalOffsetProperty).IsAnimated,
+            ScrollAnimation.IsAnimating(view.Editor),
             "dönüşte kaydırma animasyonu kuruldu — geçiş tek hareket olmalı");
 
         DispatcherPump.PumpUntil(() => view.Tilt3D.Visibility == Visibility.Collapsed, TimeSpan.FromSeconds(3));
@@ -231,7 +250,7 @@ public class ConsoleTiltInTests
         view.Arrange(new Rect(0, 0, 200, 100));
         view.UpdateLayout();
 
-        view.PlayCascade(["first line"]);
+        view.PlayCascade("first line\n");
 
         Assert.Equal(Visibility.Collapsed, view.Tilt3D.Visibility);
         Assert.Equal(1.0, view.TiltHost.Opacity);

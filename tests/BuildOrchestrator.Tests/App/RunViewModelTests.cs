@@ -3417,6 +3417,40 @@ public class RunViewModelTests
         vm.DisableAutoSync();
     }
 
+    /// <summary>[idle-memory · dalga 3 · karar 37 · PİN] Açılış koreografisinde geri alınan Build'in özeti — önceki bir koşunun klasörü
+    /// bilinirken de — log klasörü ANMAZ: geri alınan koşu hiç başlamadı, klasörü yoktur. Önceki koşunun klasörü yine de silinmez: App'in son
+    /// koşu klasörünün TEK sahibi alanı onu bir sonraki koşu başlayana dek tutar (proje log isteği taşır); özetin "klasörsüz" bilgisi kesme
+    /// kaydındadır.
+    /// <para>PİN: davranış değişmedi (eski kod özetin klasörünü bu kesmede siliyordu); bu test klasörün tek sahibe taşınmasında özete
+    /// sızmasını yakalar.</para></summary>
+    [Fact]
+    public async Task An_interrupt_during_the_opening_choreography_names_no_folder_even_after_an_earlier_run()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
+        using var logs = new TempDir(); // önceki koşunun klasörü — spool'unu Build'in yeni bölümü kapatır, düşen bir testte kapsam kapatır
+        var posted = new Queue<Action>();
+        var vm = SyncedTwoRowVm(engine);
+        using var spool = new SpoolScope(vm.Narrative); // klasörden SONRA tanımlı: önce kapanır
+        vm.OnEvent(new RunStartedEvent("r0", RunMode.Build, 2, 1, "Debug", LogDirectory: logs.Path));
+        vm.OnEvent(new RunCompletedEvent("r0", RunOutcome.Completed, 0, 0, 0, 2, 100));
+        vm.EnableAutoSync(posted.Enqueue, _ => new Core.Git.HeadState("feature", CommittedSha), () => new FakeHeadWatcher());
+        var choreography = new TaskCompletionSource();
+        vm.OperationChoreography = _ => choreography.Task;
+        var sent = SentCommands.RecordOn(vm);
+
+        var build = vm.BuildCommand.ExecuteAsync(null);
+        await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
+        choreography.SetResult();
+        await build;
+        Drain(posted);
+
+        Assert.Empty(sent.OfType<StartRunCommand>());
+        string first = vm.GetRunDocumentText().ReplaceLineEndings("\n").Split('\n')[0];
+        Assert.Equal(Core.Planning.PlanProgressLines.RunInterruptedByBranchChange(0, 2, null), first);
+        vm.DisableAutoSync();
+    }
+
     /// <summary>Güvenlik ağı: izleyici HEAD değişimini kaçırdıysa koşu bitince yakalanır — aynı branch'te yeni commit
     /// sessiz Sync'tir; kesme yoktu, özet yok.</summary>
     [Fact]

@@ -305,7 +305,7 @@ public partial class MainWindow
     /// öncesi store'da kalır), proje logu açıksa <c>RunViewModel.SeedProjectDocument</c> (dikilmiş tam log). İkisi de
     /// reseed-drop sentinel'ini yazar: uçuştaki bayat batch'ler
     /// <c>ConsoleBatchRouter</c> kararıyla düşer, YENİ bir tampon yolu açılmaz. Anlatı boşsa idle "ready" satırı geri gelir;
-    /// boş bir proje logu, kart seçimiyle AYNI kuralla (<c>ProjectDocumentLines</c>) o projenin boş-durum metnini gösterir.</para>
+    /// boş bir proje logu, kart seçimiyle AYNI kuralla (<c>ProjectDocumentText</c>) o projenin boş-durum metnini gösterir.</para>
     ///
     /// <para><b>Graf:</b> gizliyken statü, faz, seçim itişleri ve filtre yenilemesi yalnız bayrağı kaldırdı
     /// (<see cref="_graphStaleWhileHidden"/>); dönüşte dördü TEK seferde, üretimdeki sırayla uygulanır: koşu fazı,
@@ -319,7 +319,7 @@ public partial class MainWindow
     /// <c>RefreshVisibleRows</c> çağırmak boş bir karşılaştırma olurdu. Sticky şerit, Build menüsü, alt çubuğun sayaç chip'leri ve
     /// satırlar burada DEĞİL: kalıtsal sinyalin kendi değişiminde (<c>OnPropertyChanged</c>) her biri kendi bayrağıyla yetişir.</para>
     ///
-    /// <para><b>Tik:</b> gizliyken 200 ms'lik tik yalnız motor sessizlik bekçisini koşturdu
+    /// <para><b>Tik:</b> gizliyken 200 ms'lik tik yalnız motorun iki tik işini — sessizlik bekçisini ve boşta kuralını — koşturdu
     /// (<c>RunViewModel.TickElapsed(false)</c>); canlı süreler ve konsol başlığının satır sayacı yazılmadı
     /// (<see cref="_tickStaleWhileHidden"/>). Dönüşte tek <c>TickElapsed(true)</c> hepsini yetiştirir ve sayaç yenilenir —
     /// kullanıcı bir sonraki tiki beklemeden güncel süreyi görür.</para>
@@ -344,7 +344,7 @@ public partial class MainWindow
             {
                 var row = _vm.FindRow(activeProjectId);
                 _vm.SeedProjectDocument(activeProjectId,
-                    text => Shell.ConsoleViewControl.ReplaceProjectDocument(ProjectDocumentLines(row, text)));
+                    text => Shell.ConsoleViewControl.ReplaceProjectDocument(ProjectDocumentText(row, text)));
             }
         }
         if (_listStaleWhileHidden)
@@ -366,7 +366,8 @@ public partial class MainWindow
         if (_tickStaleWhileHidden)
         {
             _tickStaleWhileHidden = false;
-            // Gizliyken tik yalnız bekçiyi koşturdu: canlı süreler ve satır sayacı bir sonraki tiki beklemeden modele yetişir.
+            // Gizliyken tik yalnız motorun iki işini (sessizlik bekçisi, boşta kuralı) koşturdu: canlı süreler ve satır sayacı bir sonraki
+            // tiki beklemeden modele yetişir.
             _vm.TickElapsed(true);
             Shell.ConsoleHeaderControl.SetLineCount(_vm.GetActiveLineCount());
         }

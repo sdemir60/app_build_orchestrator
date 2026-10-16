@@ -69,7 +69,9 @@ public partial class StickyRibbon : UserControl
     private readonly Dictionary<string, ToggleButton> _buildingChipById = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ToggleButton> _failureChipById = new(StringComparer.Ordinal);
     private StackPanel? _failureStrip; // hata kümesinin tek şerit paneli (chip'ler + "+N more"); küme boşalınca atılır
-    private AppPhase? _lastAnnouncedPhase; // [E5/T47] live-region: yalnız faz DEĞİŞİMİNDE duyur (elapsed tick'te değil)
+    // [E5/T47] live-region: yalnız faz DEĞİŞİMİNDE duyur (elapsed tick'te değil). [dalga 3 · karar 38] Anahtar fazla birlikte uyanma satırını da
+    // taşır: uyanma fazı değiştirmeden satırı değiştirir (proje logu tıklamasında faz Idle kalır) ve duyurulmalıdır — girişi de çıkışı da.
+    private (AppPhase Phase, bool EngineWaking)? _lastAnnounced;
     /// <summary>[W2] Provider + <c>MotionSettings</c> seam'i + subscribe-once kablajı TEK yerde
     /// (<see cref="Controls.MotionGate"/>) — latch'siz kip (ProjectRow ile aynı).</summary>
     private readonly Controls.MotionGate _motion;
@@ -187,7 +189,7 @@ public partial class StickyRibbon : UserControl
     ///
     /// <para><b>Bilinen sınır:</b> <see cref="RefreshAll"/> faz duyurusunu yapmaz, yalnız bayrağı düşürür. Gizliyken bir
     /// <c>Loaded</c> ya da DataContext tam kurulumu koşarsa bayrak düşer ve dönüşteki <see cref="AnnouncePhaseIfChanged"/> çağrısı
-    /// hiç yapılmaz: <c>_lastAnnouncedPhase</c> bayat kalır, yani gizlilikte değişen fazın duyurusu dönüşte ÖDENMEZ — bir sonraki
+    /// hiç yapılmaz: <c>_lastAnnounced</c> bayat kalır, yani gizlilikte değişen fazın duyurusu dönüşte ÖDENMEZ — bir sonraki
     /// faz bildirimine (<see cref="AnnouncePhaseIfChanged"/>'e giren sonraki şerit bildirimi, tipik olarak sonraki faz değişimi)
     /// kalır. Yol dardır (DataContext bir kez bağlanır; ilk gösterimde <c>IsVisibleChanged</c>'in <c>Loaded</c>'dan önce geldiği
     /// varsayılır, yani o kurulum yüzey görünürken koşar — bu sıra WPF davranışıdır, depoda bir testle pinli DEĞİLDİR) ve bilinçli
@@ -232,6 +234,7 @@ public partial class StickyRibbon : UserControl
             case nameof(RunViewModel.IsMidRunLocked): // pill'in canlılığı koşu kilidine bakar
             case nameof(RunViewModel.EngineOverdueMessage): // motor sustu: amber satır + "Restart engine" kapısı
             case nameof(RunViewModel.ExitPending): // [P3 · Task 2] çıkış işi bekliyor: faz değişmese de satır Stopping olur
+            case nameof(RunViewModel.EngineState): // [dalga 3 · karar 38] uyanan motor: faz değişmese de satır "Starting the engine…" olur
                 RefreshText();
                 RefreshProgress();
                 AnnouncePhaseIfChanged(); // [E5/T47] faz değişimini ekran okuyucuya duyur (live region)
@@ -356,13 +359,21 @@ public partial class StickyRibbon : UserControl
 
     /// <summary>[E5/T47] Faz metni bir live region'dır: faz ENUM'u DEĞİŞTİĞİNDE (elapsed/ETA tick'inde DEĞİL)
     /// ekran okuyucuya <c>LiveRegionChanged</c> yükselt — SR yeni faz metnini duyurur (<see cref="LiveRegion.Announce"/>,
-    /// duyurunun tek yeri).</summary>
+    /// duyurunun tek yeri). [idle-memory · dalga 3 · karar 38] Uyanma satırının girişi ve çıkışı da duyurulur (motor durumu
+    /// <c>Waking</c>'e girer ya da çıkar): faz değişmese de şeridin satırı değişti.</summary>
     private void AnnouncePhaseIfChanged()
     {
-        if (_vm is null || _vm.Phase == _lastAnnouncedPhase) return;
-        _lastAnnouncedPhase = _vm.Phase;
+        if (_vm is null) return;
+        var announced = (_vm.Phase, EngineWaking: _vm.EngineState == Services.EngineState.Waking);
+        if (announced == _lastAnnounced) return;
+        _lastAnnounced = announced;
+        PhaseAnnouncements++;
         LiveRegion.Announce(PART_PhaseText);
     }
+
+    /// <summary>[idle-memory · dalga 3 · karar 38 · test yüzeyi] Faz metninin ekran okuyucuya kaç kez duyurulduğu
+    /// (<see cref="AnnouncePhaseIfChanged"/>) — <c>ShellRoot.DiscoveryAnnouncements</c> deseni.</summary>
+    internal int PhaseAnnouncements { get; private set; }
 
     // ---------------------------------------------------------------- progress
     private void RefreshProgress()

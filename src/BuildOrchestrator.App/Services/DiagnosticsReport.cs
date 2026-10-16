@@ -12,7 +12,8 @@ public readonly record struct DiagnosticsLine(string Label, string Value);
 /// <c>RuntimeInformation</c>, <c>MsBuildResolver</c>, <see cref="MemoryLine.TryRead()"/>, uygulamanın kendi yol static'leri), bu tip
 /// yalnız taşır. Böylece rapor mantığı WPF'siz ve process'siz test edilir. <see cref="Memory"/> App sürecinin bellek okumasıdır
 /// (bayt) — raporun kurulduğu anın görüntüsü, canlı değil; okunamadıysa <c>null</c> (üç bellek satırı
-/// <see cref="DiagnosticsReport.Unknown"/> gösterir, tanı ekranı bozulmaz).
+/// <see cref="DiagnosticsReport.Unknown"/> gösterir, tanı ekranı bozulmaz). <see cref="EngineState"/> [idle-memory · dalga 3 · karar 39]
+/// VM'in motor durumudur (<c>RunViewModel.EngineState</c>) — PID satırının uyku değeri ondan okunur.
 /// </summary>
 public sealed record DiagnosticsInput(
     string Product,
@@ -20,6 +21,7 @@ public sealed record DiagnosticsInput(
     string Copyright,
     string? EngineVersion,
     int? EnginePid,
+    EngineState EngineState,
     string Runtime,
     string Os,
     MemoryReading? Memory,
@@ -71,6 +73,13 @@ public static class DiagnosticsReport
     public const string NoRepository = "no repository";
     /// <summary>MSBuild çözümü sürüyor (vswhere child process'i).</summary>
     public const string Resolving = "resolving…";
+    /// <summary>[idle-memory · dalga 3 · karar 39] Motor boşta uyuyor (VM'in motor durumu <see cref="EngineState.Asleep"/>): süreci yok, PID'i
+    /// yoktur — sonraki iş onu yeniden başlatır.</summary>
+    public const string Asleep = "asleep";
+
+    /// <summary>[idle-memory · dalga 3 · B1 fix 1 · m-3] Motor PID satırının etiketi — değeri durum kuralına bağlı tek satır (<see cref="Asleep"/>,
+    /// <see cref="Unknown"/>); testler satırı bu adla bulur.</summary>
+    public const string EnginePidLabel = "Engine PID";
 
     /// <summary>Environment sekmesinin grup başlıkları — caps olarak çizilir.</summary>
     public const string RuntimeTitle = "Runtime";
@@ -89,7 +98,7 @@ public static class DiagnosticsReport
             Copyright: new("Copyright", input.Copyright),
             Runtime:
             [
-                new("Engine PID", input.EnginePid is { } pid ? pid.ToString(CultureInfo.InvariantCulture) : Unknown),
+                new(EnginePidLabel, EnginePidValue(input)),
                 new(".NET runtime", input.Runtime),
                 new("OS", input.Os),
                 new("App private", MemoryValue(input.Memory?.PrivateBytes)),
@@ -126,6 +135,13 @@ public static class DiagnosticsReport
 
     private static string Or(string? value, string fallback) =>
         string.IsNullOrWhiteSpace(value) ? fallback : value;
+
+    /// <summary>PID satırının değeri: motor boşta uyuyorsa (<see cref="EngineState.Asleep"/>) <see cref="Asleep"/> — süreci yok, ama bilinmiyor
+    /// da değil [idle-memory · dalga 3 · karar 39]; başka her durumda motorun PID'i, yoksa <see cref="Unknown"/>.</summary>
+    private static string EnginePidValue(DiagnosticsInput input) =>
+        input.EngineState == EngineState.Asleep ? Asleep
+        : input.EnginePid is { } pid ? pid.ToString(CultureInfo.InvariantCulture)
+        : Unknown;
 
     /// <summary>Bellek satırının değeri: sayı motorun bellek satırıyla AYNI kuraldan (<see cref="MemoryLine.Megabytes"/>), birim
     /// burada — <c>"309 MB"</c>. Okunamayan bellek (<c>null</c>) satırı kaybetmez, <see cref="Unknown"/> yazar.</summary>

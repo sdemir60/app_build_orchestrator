@@ -1,5 +1,4 @@
 using System.Windows;
-using System.Windows.Controls.Primitives;
 using BuildOrchestrator.App.Controls;
 
 namespace BuildOrchestrator.Tests.App;
@@ -45,12 +44,13 @@ public class LatestPillTests
                 scrollInstant: v => Offset = v,
                 scrollSmooth: target => { LastSmoothTarget = target; if (AnimatesOnJump) return true; Offset = target; return false; },
                 scheduleOnce: (_, _) => { }); // 560ms penceresi bu testlerde önemsiz — StaFact hemen sonrasını kontrol eder
-            // [T59] ConsoleView.xaml.cs'teki KABLAJIN BİREBİR AYNISI: Changed → Visibility, Click → JumpToBottom.
-            Anchor.Changed += (_, _) => Pill.Visibility = Anchor.ShowPill ? Visibility.Visible : Visibility.Collapsed;
+            // [T59] ConsoleView.xaml.cs'teki KABLAJIN BİREBİR AYNISI: Changed → Visibility (duyurulan değerden — PillShown, B2 fix 3 ·
+            // madde 6), Click → JumpToBottom.
+            Anchor.Changed += (_, _) => Pill.Visibility = Anchor.PillShown ? Visibility.Visible : Visibility.Collapsed;
             Pill.Click += (_, _) => Anchor.JumpToBottom();
         }
 
-        public void Click() => Pill.PillButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+        public void Click() => CommandPress.Click(Pill.PillButton);
     }
 
     [StaFact]

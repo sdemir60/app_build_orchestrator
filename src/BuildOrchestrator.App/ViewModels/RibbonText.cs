@@ -68,6 +68,9 @@ public static class RibbonText
     /// iddia etmez.</summary>
     public const string SyncingWithoutFetch = "▸ Sync…";
 
+    /// <summary>[idle-memory · dalga 3 · karar 38] Uyuyan motor uyanırken (VM'in motor durumu <c>Waking</c>) — metnin TEK yeri.</summary>
+    public const string StartingTheEngine = "▸ Starting the engine…";
+
     /// <summary>[T38] 11 koşulun her biri için TEK satır (design-v1 <c>BuildApp.jsx:752-770</c> birebir).</summary>
     /// <param name="phase">Uygulama fazı.</param>
     /// <param name="hasWorkspace">Repo seçili mi (prototip <c>workspace</c>).</param>
@@ -87,13 +90,15 @@ public static class RibbonText
     /// (<see cref="SyncingWithFetch"/> / <see cref="SyncingWithoutFetch"/>).</param>
     /// <param name="exitPending">[P3 · Task 2] Güvenli çıkış uçuştaki işi bekliyor mu (<see cref="RunViewModel.ExitPending"/>)
     /// — satır fazdan bağımsız Stopping satırıdır (<see cref="StoppingLine"/>).</param>
+    /// <param name="engineWaking">[idle-memory · dalga 3 · karar 38] Uyuyan motor uyanıyor mu (VM'in motor durumu <c>Waking</c>) — satır
+    /// <see cref="StartingTheEngine"/>'dir; yeri öncelik zincirinde aşağıda.</param>
     public static RibbonLine Compose(AppPhase phase, bool hasWorkspace, bool allClean, RunCounters c,
                                      int willBuild, int finishedOfWillBuild, int totalProjects,
                                      long elapsedMs, long? etaMs, long? checkDurMs, int warnings,
                                      string? engineDiedMessage = null, string? syncError = null,
                                      string? runError = null, string? engineOverdue = null,
                                      bool resolvingCycles = false, int cycleRound = 0, int cycleRoundCap = 0,
-                                     bool syncFetches = true, bool exitPending = false)
+                                     bool syncFetches = true, bool exitPending = false, bool engineWaking = false)
     {
         // [E2/T37 · EngineDiedMessage ÖNCELİĞİ] Engine process öldüyse şerit, HANGİ Phase'de olursa olsun (F3:
         // mid-run ölümde Phase kozmetik olarak Stopped'a çekilse de) bu KALICI KIRMIZI hata metnini gösterir —
@@ -116,6 +121,13 @@ public static class RibbonText
         // Uçuştaki sayı yalnız bir derleme drain'deyken anlamlıdır (faz Stopping); aksi hâlde "wrapping up".
         if (exitPending)
             return StoppingLine(phase == AppPhase.Stopping ? c.Building : 0, finishedOfWillBuild, willBuild);
+
+        // [idle-memory · dalga 3 · karar 38] Uyuyan motor uyanıyor: bir komut kapıda motorun başlamasını bekliyor. CANLI bir bekleyiştir —
+        // Sync/koşu hatası (geçmişe ait olgu) ve faz satırları ("motor çalışıyor" varsayar; uyanmayı bekleyen Sync'in fetch satırı henüz doğru
+        // değil) onun ALTINDADIR. Ölüm/erişilemezlik metinleri, motor sessizliği ve çıkış bekleyişi ÜSTTE kalır: uyanmadan büyük ya da onu
+        // kesen olgulardır. Biçim şeridin faz satırlarınınki: ▸, ikincil metin rengi, glyph yok — sonuç değil bekleyiş.
+        if (engineWaking)
+            return new RibbonLine(StartingTheEngine, "Brush.TextSecondary", null);
 
         if (!hasWorkspace)
             return new RibbonLine(NotConfigured, "Brush.TextFaint", null);

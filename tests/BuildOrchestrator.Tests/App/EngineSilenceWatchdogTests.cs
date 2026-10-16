@@ -37,8 +37,6 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 public sealed class EngineSilenceWatchdogTests
 {
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
-
     private sealed class FakeClock
     {
         private long _now = 1_000; // 0 DEĞİL: "hiç sinyal alınmadı" ile "t=0'da sinyal" karışmasın
@@ -46,11 +44,17 @@ public sealed class EngineSilenceWatchdogTests
         public void Advance(long ms) => _now += ms;
     }
 
+    /// <summary>Bekçinin VM'i, saati testin elinde. [idle-memory · dalga 3 · Q10] Boştaki motorun uykusu KAPALI açılır: bu sınıf saati
+    /// <c>EngineIdleRule.IdleAfter</c>'ın çok ötesine (15 dk) alır ve aynı tik bekçiyle birlikte boşta kuralını da sorar; bekçinin iddiaları
+    /// motorun uyutulup uyutulmamasına bağlı kalmasın (uyku <c>EngineSleepTests</c>'in konusudur) — üretimin varsayılanı açıktır. Testlerin çoğu
+    /// hazır yolundan geçmez (motor durumu <c>Starting</c>: kural zaten uyutmaz, C1); ikisi geçer —
+    /// <see cref="Restarting_the_engine_releases_the_locked_run_state"/> (yeniden başlatma hazır yolundan döner) ve
+    /// <see cref="The_wakes_duration_raises_no_silence_warning"/> (hazır yolunu kendisi çağırır ve uykuyu sınadığı için ayarı AÇIKÇA açar).</summary>
     private static (RunViewModel Vm, FakeClock Clock) NewVm(EngineHost engine)
     {
         var clock = new FakeClock();
-        return (new RunViewModel(engine, NeverTickingBatcher(), () => "r1", () => clock.Now)
-                { RootPath = @"D:\repo", LegacyWorktreePoolRoot = TestPaths.MissingLegacyPoolRoot },
+        return (new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1", () => clock.Now)
+                { RootPath = @"D:\repo", LegacyWorktreePoolRoot = TestPaths.MissingLegacyPoolRoot, StopEngineWhenIdle = false },
                 clock);
     }
 
@@ -224,6 +228,43 @@ public sealed class EngineSilenceWatchdogTests
         Assert.Null(overdueAtSendTime); // bekleyiş TAM BURADA başladı — bayat saatten yanlış alarm YOK
     }
 
+    /// <summary>[idle-memory · dalga 3 · spec §6.4 · C16 · karar 35] Uyanmanın süresi sessizlik sayılmaz: uyuyan motoru Sync uyandırır; bekleyiş
+    /// bugünkü gibi istekte kurulur ve uyanma — sahte saat burada eşiğin bir ms altına ilerler — motorun hazır bildirimiyle biter. Hazır bildirimi
+    /// motor etkinliğidir: sessizlik penceresi oradan başlar, yani gönderilen Sync'e motor iki ms sonra hâlâ cevap vermemişken (istekten bu yana
+    /// eşik aşılmışken) uyarı yoktur. Bu sınıfın VM'i uykuyu KAPALI açar (<see cref="NewVm"/>); bu test ayarı AÇIKÇA açar ve motoru gerçek tikle
+    /// uyutur — uyku ve uyanma ortak sahtededir (<see cref="EngineSleepProbe"/>).
+    /// <para>KIRMIZI (kapısız kod): uyanma hiç olmuyordu, Sync uyuyan motora gidiyordu. Pencerenin uyanmanın sonundan başladığı mutasyonla
+    /// gösterildi: uyanma damgayı yazmazsa uyarı çıkar.</para></summary>
+    [Fact]
+    public async Task The_wakes_duration_raises_no_silence_warning()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var (vm, clock) = NewVm(engine);
+        vm.StopEngineWhenIdle = true;
+        var probe = EngineSleepProbe.Attach(vm);
+        vm.DebugSendOverride = _ => Task.CompletedTask;
+        vm.OnEngineReady(EngineSleepProbe.EngineVersion, EngineSleepProbe.Pid); // workspace var: açılış Sync'i gider, motor cevaplar
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 0, 0));
+        clock.Advance(EngineSleepProbe.IdleAfterMs);
+        vm.TickElapsed();
+        Assert.Equal(EngineState.Asleep, vm.EngineState); // ön-koşul: motor uyudu
+        probe.NextWake = () =>
+        {
+            clock.Advance(RunViewModel.EngineSilenceThresholdMs - 1); // yavaş bir uyanma: eşiğin bir ms altı
+            return Task.FromResult(EngineSleepProbe.Woken());
+        };
+
+        await vm.SyncCommand.ExecuteAsync(null);
+        Assert.Equal(1, probe.WakeCalls);
+        Assert.True(vm.SyncBusy); // Sync gitti, cevabı bekleniyor — bekçi kurulu
+
+        clock.Advance(2);
+        vm.TickElapsed();
+
+        Assert.Null(vm.EngineOverdueMessage);
+    }
+
     /// <summary>Motorun HERHANGİ bir event'i saati sıfırlar: uzun ama KONUŞAN bir planlama/drain asla
     /// uyarı üretmez. Sinyal "yaşıyor mu" değil "susuyor mu" olduğu için event TÜRÜ önemsizdir.</summary>
     [Fact]
@@ -307,12 +348,18 @@ public sealed class EngineSilenceWatchdogTests
     /// <para><b>[DEĞİŞEN KURAL — final review I1]</b> Eskiden restart'tan hemen sonra Build açık olurdu. Artık yeniden
     /// başlayan motor bir workspace açıkken tek bir Sync koşar (kurtarılan projelerin kararı değişmiş olabilir) ve
     /// Build — her Sync'te olduğu gibi — o Sync bitene dek bekler; koşu kilidi yine restart anında düşer.</para>
+    /// <para><b>[DEĞİŞEN KURULUM — idle-memory · dalga 3 · fix 1]</b> Eskiden konak zaman aşımı verilmeden kuruluyordu
+    /// (<c>sandbox.IsolatedEngineHost()</c>) ve yeniden başlayan motoru üretimin 5 s'si bekliyordu; odaklı bir koşunun paralel
+    /// yükünde (MSBuild derlemeleri + çok sayıda motor başlatma) motor 5 s'de hazır olamadı, restart zaman aşımına düştü ve test
+    /// <c>SyncBusy</c>'de kırmızı verdi (tek başına ×3 yeşil). Bu test başlatma süresini ölçmez: gerçek motor başlatan her test gibi
+    /// <see cref="TestPaths.WideStartupTimeout"/> geçer — üretimin 5 s'si <c>EngineHostTests.Default_startup_timeout_stays_five_seconds</c>
+    /// ile pinli kalır.</para>
     /// </summary>
     [Fact]
     public async Task Restarting_the_engine_releases_the_locked_run_state()
     {
         using var sandbox = new SupervisorSandbox(); // [§5.5] restart gerçek bir motor başlatır — izole önbellek
-        await using var engine = sandbox.IsolatedEngineHost();
+        await using var engine = sandbox.IsolatedEngineHost(TestPaths.WideStartupTimeout);
         var (vm, clock) = NewVm(engine);
         VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu sessizlik kapısı
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));

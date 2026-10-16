@@ -768,6 +768,155 @@ public class RunCoordinatorTests
         Assert.Equal(h.LogWriters[^1].RunDirectory, Assert.Single(h.Events.OfType<RunStartedEvent>()).LogDirectory);
     }
 
+    /// <summary>[dalga 3 · B1 fix 1 · O-2 · B1 fix 2] Log kökü de log fabrikası da verilmeyen koordinatör KURULMAZ: koşuları log yazamayacak bir
+    /// motor sessizce açılmaz — kurulum <see cref="ArgumentException"/> ile düşer ve eksik girişi (<c>logsRoot</c>, kökün koordinatöre TEK girişi)
+    /// adlandırır. Üretimde kök hep verilir (<c>Program</c>); testler kökü ya da kendi fabrikasını verir.
+    /// <para>PİN: kural B1 fix 1'de (O-2) geldi; bu test onun gevşemesini — kurulumun geçip ilk koşunun log açarken düşmesini — yakalar.</para></summary>
+    [Fact]
+    public void A_coordinator_without_a_logs_root_or_a_log_factory_is_never_built()
+    {
+        using var job = JobObject.CreateKillOnClose();
+
+        var thrown = Assert.Throws<ArgumentException>(() => new RunCoordinator(
+            planner: (_, _) => throw new InvalidOperationException("no run in this test"),
+            msbuildFactory: _ => throw new InvalidOperationException("no run in this test"),
+            writer: new NdjsonWriter(Stream.Null), innerJob: job, nowMs: () => 0, console: _ => { },
+            memoryTrim: NoRealGc.Collection));
+
+        Assert.Equal("logsRoot", thrown.ParamName);
+    }
+
+    // ---------------------------------------------------------------- [dalga 3 · B1 fix 3] okunamayan proje logu: tek yer, tek satır
+
+    /// <summary>Okuma hatası uyarısının başı — satırın biçimi koordinatördedir (<c>warning: project log could not be read (&lt;proje&gt;):
+    /// &lt;ileti&gt;</c>); testlerin literal pini burada, tek yerde.</summary>
+    private const string UnreadableWarning = "warning: project log could not be read (";
+
+    /// <summary>Koşusu tamamen bitmiş koordinatör: A tek projesini derledi; yazıcı kapandı, okuma koşu klasöründen (diskten) yapılır. Harness'i
+    /// çağıran dispose eder.</summary>
+    private static async Task<Harness> CompletedRunOfAAsync()
+    {
+        var h = new Harness(PlanOf(Node("A")), AllSucceed());
+        await h.Sut.StartAsync(Start(), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+        return h;
+    }
+
+    /// <summary>Koordinatörün tanı kanalına düşen okuma hatası uyarıları.</summary>
+    private static List<string> UnreadableWarnings(Harness h)
+    {
+        lock (h.ConsoleLines) return [.. h.ConsoleLines.Where(l => l.StartsWith(UnreadableWarning, StringComparison.Ordinal))];
+    }
+
+    /// <summary>Okunamayan bir logun cevabı: "log yok" (boş metin, satır 0) ve tanı kanalında TEK uyarı — okumanın kendi iletisiyle
+    /// (<paramref name="readFailure"/>: testin aynı dosyayı okurken aldığı hata).</summary>
+    private static void AssertNoLogWithOneWarning(Harness h, string projectId, Exception readFailure)
+    {
+        bool found = h.Sut.TryGetProjectLogSnapshot(projectId, out string text, out int throughLineNumber);
+
+        Assert.False(found);
+        Assert.Equal(("", 0), (text, throughLineNumber));
+        Assert.Equal($"{UnreadableWarning}{projectId}): {readFailure.Message}", Assert.Single(UnreadableWarnings(h)));
+    }
+
+    /// <summary>
+    /// [B1 fix 3] Okunamayan bir proje logu (başka bir süreç dosyayı paylaşımsız tutuyor) "log yok"tur ve tanı kanalına TEK satır düşer:
+    /// <c>warning: project log could not be read (&lt;proje&gt;): &lt;ileti&gt;</c>. Okumanın her hatasını "log yok"a çeviren TEK yer koordinatördür
+    /// (<see cref="RunCoordinator.TryGetProjectLogSnapshot"/>); Core yalnız yokluğu söyler, host'un kendi yakalaması yoktur.
+    /// <para>KIRMIZI (f611591c): satır yoktu — Core paylaşım ihlalini sessizce <c>null</c>'a çeviriyordu.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_project_log_that_cannot_be_read_is_no_log_with_one_warning_line()
+    {
+        using var h = await CompletedRunOfAAsync();
+        string path = h.LogWriters[^1].ProjectLogPath(Id("A"));
+        using var held = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None); // başka bir sürecin kilidi
+        var refused = Assert.ThrowsAny<IOException>(() => File.ReadAllText(path)); // okumanın hatası — satır onun iletisini taşır
+
+        AssertNoLogWithOneWarning(h, Id("A"), refused);
+    }
+
+    /// <summary>[B1 fix 4 · PİN] Erişimi reddedilen log da "log yok"tur ve tek uyarı satırı bırakır — kilitli dosyayla aynı yol: Core fırlatır,
+    /// koordinatör çevirir. Logun yerinde, adını taşıyan bir klasör var (okuma <see cref="UnauthorizedAccessException"/> atar); B koşuda yoktu, yeri
+    /// boştu.
+    /// <para>PİN: bugünkü kod yeşil. Mutasyon (Core'un yokluk süzgecine <c>or UnauthorizedAccessException</c> eklemek) kırmızı: satır yazılmaz.</para></summary>
+    [Fact]
+    public async Task A_project_log_whose_access_is_denied_is_no_log_with_one_warning_line()
+    {
+        using var h = await CompletedRunOfAAsync();
+        string path = h.LogWriters[^1].ProjectLogPath(Id("B"));
+        Directory.CreateDirectory(path); // logun yerinde, adını taşıyan bir klasör
+        var denied = Assert.ThrowsAny<UnauthorizedAccessException>(() => File.ReadAllText(path)); // okumanın hatası — satır onun iletisini taşır
+
+        AssertNoLogWithOneWarning(h, Id("B"), denied);
+    }
+
+    /// <summary>
+    /// [B1 fix 3] Bozuk bir istek (kimliksiz — <c>projectId</c> yok) fırlatmaz: "log yok" ve tek uyarı satırı; satırın proje alanı boş kalır ve
+    /// biçimlenmesi de fırlatmaz.
+    /// <para>KIRMIZI (f611591c): istisna koordinatörden yükseliyordu (adlandırma kuralı kimliksiz isteği okuyamaz); onu host'un yakalaması
+    /// karşılıyordu.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_malformed_project_log_request_is_no_log_with_one_warning_line_and_never_throws()
+    {
+        using var h = await CompletedRunOfAAsync();
+        bool found = true;
+
+        var thrown = Record.Exception(() => found = h.Sut.TryGetProjectLogSnapshot(null!, out _, out _));
+
+        Assert.Null(thrown);
+        Assert.False(found);
+        Assert.StartsWith(UnreadableWarning + "): ", Assert.Single(UnreadableWarnings(h)), StringComparison.Ordinal);
+    }
+
+    /// <summary>[B1 fix 3 · PİN] YOK olan log bir karardır, hata değil: koşuda logu olmayan proje sessiz "log yok"tur — uyarı satırı yazılmaz.
+    /// <para>PİN: bugünkü kod da yazmıyordu. Mutasyon (Core yokluğu fırlatır) kırmızı.</para></summary>
+    [Fact]
+    public async Task An_absent_project_log_is_no_log_without_a_warning()
+    {
+        using var h = await CompletedRunOfAAsync();
+
+        Assert.False(h.Sut.TryGetProjectLogSnapshot(Id("Yok"), out _, out _));
+        Assert.Empty(UnreadableWarnings(h));
+    }
+
+    /// <summary>[B1 fix 3 · PİN] Kuralın reddettiği klasör de bir karardır (<see cref="RunLogPaths.TryGetRunDirectory"/>): kendi koşusu olmayan
+    /// motora gelen istek log kökünün koşu klasörlerinden birini adlandırmıyorsa sessiz "log yok" — tanı kanalına satır düşmez.
+    /// <para>PİN: bugünkü kod da yazmıyordu. Mutasyon (reddi uyarıyla bildirmek) kırmızı.</para></summary>
+    [Fact]
+    public void A_refused_run_folder_is_no_log_without_a_warning()
+    {
+        using var root = new TempDir();
+        var lines = new List<string>();
+        using var job = JobObject.CreateKillOnClose();
+        using var coordinator = SupervisorHostHarness.NewIdleCoordinator(job, new NdjsonWriter(Stream.Null), lines.Add, logsRoot: root.Path);
+
+        Assert.False(coordinator.TryGetProjectLogSnapshot(Id("A"), out _, out _, runDirectory: Path.Combine(root.Path, "not-a-run")));
+        Assert.Empty(lines);
+    }
+
+    /// <summary>[B1 fix 3] Uyarıyı yazmak da cevabı bozamaz: tanı kanalı satırı yazarken patlarsa (kapanmış stderr borusu) okuma yine "log yok"
+    /// döner, istisna yükselmez — <see cref="RunCoordinator.TrimAndReportMemory"/>'in trim uyarısıyla aynı kural ve [B1 fix 4] aynı tek yardımcı
+    /// (koordinatörün <c>ReportDiagnostic</c>'i). İstek kimliksizdir ve kabul edilen bir koşu klasörünü adlandırır (klasörün diskte olması gerekmez:
+    /// adlandırma kuralı okumadan önce düşer).
+    /// <para>KIRMIZI (f611591c): istisna koordinatörden yükseliyordu (yakalama yoktu). Mutasyon (yardımcının yakalaması yok) yine kırmızı.</para></summary>
+    [Fact]
+    public void A_console_that_fails_while_a_read_failure_is_reported_never_breaks_the_answer()
+    {
+        using var root = new TempDir();
+        using var job = JobObject.CreateKillOnClose();
+        using var coordinator = SupervisorHostHarness.NewIdleCoordinator(job, new NdjsonWriter(Stream.Null),
+            _ => throw new IOException("stderr pipe closed"), logsRoot: root.Path);
+        string accepted = Path.Combine(root.Path, RunLogPaths.RunDirName(DateTimeOffset.Now));
+        bool found = true;
+
+        var thrown = Record.Exception(() => found = coordinator.TryGetProjectLogSnapshot(null!, out _, out _, accepted));
+
+        Assert.Null(thrown);
+        Assert.False(found);
+    }
+
     // [Task 18] TryGetProjectLogSnapshot artık gerçek disk okumasını (canlı writer'ın FileStream'i ya da
     // ReadProjectLogFromDisk'in File.ReadAllText'i) _gate DIŞINDA yapıyor — kilit altında yalnız "hangi
     // kaynaktan okunacağı" (canlı writer referansı / en son run dizini) yakalanır. Bu test, bir proje

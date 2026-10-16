@@ -27,10 +27,8 @@ public class EventStreamWiringTests
 {
     private const string ProjectId = @"C:\p\a.csproj";
 
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
-
     private static RunViewModel NewVm() =>
-        new(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        new(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
 
     /// <summary>
     /// [fix-1 · I-B] ÜRETİM SIRASI: kabuk BOŞ VM ile realize edilir, olaylar SONRA akar.
@@ -150,6 +148,42 @@ public class EventStreamWiringTests
         DispatcherPump.DrainToIdle();
 
         Assert.Equal(view.Scroll.ScrollableHeight, view.Scroll.VerticalOffset, precision: 1);
+        GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- [B2 fix 2 · madde 2] kullanıcı jesti pill animasyonunu durdurur
+
+    /// <summary>
+    /// [B2 fix 2 · madde 2] Stream'de de okuyucunun kaydırma jesti <c>⌄ latest</c>'in uçuştaki animasyonunu durdurur — tekerlek de kaydırma
+    /// çubuğu da: kural konsol ve listeyle aynı tek kablodadır (<c>UserScrollSignal</c>).
+    /// <para>KIRMIZI (madde 2'den önce, çubuk): stream'de animasyonu yalnız tekerlek durduruyordu (<c>ScrollAnimator.EnableUserCancellation</c>);
+    /// çubuğu sürüklemek animasyona dokunmuyordu. Tekerlek satırı PİN: eski kancanın yerine geçen kablonun tekerleği de taşıdığını korur.</para>
+    /// </summary>
+    [StaTheory]
+    [InlineData("wheel")]
+    [InlineData("scrollbar")]
+    public void A_scroll_gesture_during_the_streams_latest_pill_animation_stops_it(string gesture)
+    {
+        using var motion = MotionScope.Enable(new FakeMotionSettings { AnimationsEnabled = true });
+        var vm = NewVm();
+        var (view, window) = RealizeEmpty(vm);
+        for (int i = 0; i < 60; i++)
+            vm.OnEvent(new ProjectSkippedEvent("r1", $@"C:\p\proj{i}.csproj", SkipReasons.UpToDate));
+        DispatcherPump.DrainToIdle();
+        UserScrollGesture.DragVerticalBarOf(view.Scroll); // okuyucu çubuğu tuttu...
+        view.Scroll.ScrollToVerticalOffset(0); // ...ve tepeye çıktı
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(Visibility.Visible, view.Pill.Visibility); // ön-koşul: dipten uzakta
+
+        CommandPress.Click(view.Pill.PillButton); // ⌄ latest
+        DispatcherPump.DrainToIdle();
+        Assert.True(ScrollAnimation.IsAnimating(view.Scroll), "test kurgusu: pill bir kaydırma animasyonu başlatmalıydı");
+
+        if (gesture == "wheel") MouseInput.Wheel(view.Scroll, System.Windows.Input.Mouse.MouseWheelDeltaForOneLine);
+        else UserScrollGesture.DragVerticalBarOf(view.Scroll);
+        DispatcherPump.DrainToIdle();
+
+        Assert.False(ScrollAnimation.IsAnimating(view.Scroll));
         GC.KeepAlive(window);
     }
 }

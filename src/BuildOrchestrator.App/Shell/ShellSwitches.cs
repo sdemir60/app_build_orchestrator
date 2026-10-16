@@ -77,7 +77,7 @@ internal static class ShellSwitches
     /// <summary>Anahtarın GEÇERLİ değeri: kayıtlı ?? katalog varsayılanı. Davranış okuyucularının TEK kapısı
     /// (aşağıdaki dört kısaltma bunun birer kısaltmasıdır).</summary>
     public static bool IsOn(UiState state, GeneralSetting setting) =>
-        Find(setting).Read(state) ?? GeneralSettingsCatalog.Definition(setting).Default;
+        Find(setting).Read(state) ?? GeneralSettingsCatalog.DefaultOf(setting);
 
     /// <summary>[P4] Uygulamanın tercihi: Windows oturumu açılınca başlasın mı. Açılış bunu Windows kaydıyla hizalar
     /// (<see cref="Services.AutostartService.Apply"/>).</summary>

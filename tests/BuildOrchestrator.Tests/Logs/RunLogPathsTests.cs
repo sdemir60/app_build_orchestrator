@@ -1,3 +1,4 @@
+using System.IO;
 using BuildOrchestrator.Core.Logs;
 using Xunit;
 
@@ -64,5 +65,94 @@ public sealed class RunLogPathsTests
 
         Assert.Null(thrown);
         if (!parsed) Assert.Equal(default(DateTimeOffset), startedAt);
+    }
+
+    // ---------------------------------------------------------------- [idle-memory · dalga 3 · karar 37] isteğin adını verdiği klasör
+
+    /// <summary>Kuralın sınandığı log kökü — saf kural diske bakmaz, kökün var olması gerekmez.</summary>
+    private const string LogsRoot = @"C:\bo\logs";
+
+    /// <summary>[karar 37] Kendi koşusu olmayan motor (uykudan uyanmış ya da yeniden başlatılmış) proje log isteğinin adını verdiği klasörü
+    /// yalnız kendi log kökünün koşu klasörlerinden biriyse okur (<see cref="RunLogPaths.TryGetRunDirectory"/>): tam nitelikli, kökün DOĞRUDAN
+    /// altında ve adı koşu klasörü kalıbına tam uyuyor — yazıcının açtığı klasörün biçimi (<c>logsRoot\run-…</c>). Yol normalleştirilerek
+    /// karşılaştırılır: sondaki ayırıcı, ileri eğik çizgi, kökün harf büyüklüğü ve kökün içinde kalan bir <c>..</c> sonucu değiştirmez.
+    /// <para>KIRMIZI: kural yoktu (gövde <c>NotImplementedException</c>).</para></summary>
+    [Theory]
+    [InlineData(@"C:\bo\logs\run-20261015-101010-123")]
+    [InlineData(@"C:\bo\logs\run-20261015-101010-123\")]       // sonda ayırıcı
+    [InlineData(@"C:/bo/logs/run-20261015-101010-123")]        // ileri eğik çizgi
+    [InlineData(@"c:\BO\LOGS\run-20261015-101010-123")]        // kök harf duyarsız (Windows yolu)
+    [InlineData(@"C:\bo\logs\x\..\run-20261015-101010-123")]   // normalleşince kökün doğrudan altında
+    public void A_run_folder_directly_under_the_logs_root_is_accepted(string path) =>
+        Assert.True(RunLogPaths.TryGetRunDirectory(LogsRoot, path, out _));
+
+    /// <summary>[karar 37] Başka her şey reddedilir — motor o zaman bugünkü "log yok" cevabını verir: klasörsüz istek, göreli ya da sürücüye
+    /// göreli yol (sürecin çalışma klasörüne düşerdi), kökün kendisi, kalıba uymayan ad, kökün doğrudan altında olmayan (iç içe) koşu klasörü,
+    /// başka bir kök, kökten dışarı çıkan yol ve adı kökle aynı başlayan komşu klasör. Okunamaz bir yol (gömülü null) FIRLATMAZ, reddedilir.
+    /// <para>KIRMIZI: kural yoktu (gövde <c>NotImplementedException</c>).</para></summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("run-20261015-101010-123")]                    // göreli
+    [InlineData(@"logs\run-20261015-101010-123")]              // göreli
+    [InlineData(@"C:run-20261015-101010-123")]                 // sürücüye göreli: tam nitelikli değil
+    [InlineData(@"C:\bo\logs")]                                // kökün kendisi
+    [InlineData(@"C:\bo\logs\evil")]                           // ad kalıba uymuyor
+    [InlineData(@"C:\bo\logs\sub\run-20261015-101010-123")]    // kökün doğrudan altında değil
+    [InlineData(@"C:\other\run-20261015-101010-123")]          // başka kök
+    [InlineData(@"C:\bo\logs\..\run-20261015-101010-123")]     // kökten dışarı çıkıyor (C:\bo\run-…)
+    [InlineData(@"C:\bo\logs-old\run-20261015-101010-123")]    // adı kökle aynı başlayan komşu klasör
+    [InlineData("C:\\bo\\logs\\run-20261015-101010-123\0")]    // gömülü null
+    [InlineData(@"\\srv\share\bo\logs\run-20261015-101010-123")] // [B1 fix 1 · m-2 · PİN] UNC: başka bir kök
+    [InlineData(@"\\?\C:\bo\logs\run-20261015-101010-123")]     // [m-2 · PİN] aygıt yolu: normalleşmez, kökle eşleşmez
+    [InlineData(@"\\.\C:\bo\logs\run-20261015-101010-123")]     // [m-2 · PİN] DOS aygıt yolu: aynı
+    public void Any_other_folder_is_refused(string? path) => AssertRefusedWithoutThrowing(path);
+
+    /// <summary>[B1 fix 2 · 4b · B1 fix 3] Sistemin normalleştiremeyeceği kadar uzun bir yol (Windows'un 32 767 karakterlik sınırının ötesi) de
+    /// FIRLATMAZ, reddedilir: kural bir karardır — fırlatsaydı koordinatör onu okuma hatası sayar ve reddedilen bir klasör için uyarı satırı yazardı
+    /// (reddedilen klasör sessizdir). Ön-koşul yolun gerçekten normalleştirilemediğidir: kural yakalamasına bu yoldan ulaşılır.
+    /// <para>PİN — YALNIZ <see cref="PathTooLongException"/> üyesini pinler. Yakalama bugün IO hatası ailesinin tamamıdır, ama ailenin başka bir üyesini
+    /// (düz <see cref="IOException"/>) üreten bir girdi kurulamadı: yakalamanın <c>PathTooLongException</c>'a geri daralması bu testte yeşil kalır.
+    /// Mutasyon (yakalamadan IO ailesi tamamen çıkar) kırmızı.</para></summary>
+    [Fact]
+    public void A_path_too_long_to_normalize_is_refused()
+    {
+        string path = @"C:\bo\logs\" + new string('a', 40_000);
+        Assert.ThrowsAny<IOException>(() => Path.GetFullPath(path)); // ön-koşul: sistem bu yolu normalleştiremez
+
+        AssertRefusedWithoutThrowing(path);
+    }
+
+    /// <summary>Kural <paramref name="path"/>'i fırlatmadan reddeder: <c>false</c> ve klasör <c>null</c>.</summary>
+    private static void AssertRefusedWithoutThrowing(string? path)
+    {
+        bool accepted = true;
+        string? folder = "unset";
+
+        var thrown = Record.Exception(() => accepted = RunLogPaths.TryGetRunDirectory(LogsRoot, path, out folder));
+
+        Assert.Null(thrown);
+        Assert.False(accepted);
+        Assert.Null(folder);
+    }
+
+    /// <summary>[karar 37] Kökün kendisi de normalleştirilir: sonunda ayırıcı taşıyan bir kök (<c>--logs C:\bo\logs\</c>) altındaki koşu klasörünü
+    /// yine kabul eder.
+    /// <para>KIRMIZI: kural yoktu (gövde <c>NotImplementedException</c>).</para></summary>
+    [Fact]
+    public void A_logs_root_with_a_trailing_separator_still_accepts_its_run_folders() =>
+        Assert.True(RunLogPaths.TryGetRunDirectory(LogsRoot + @"\", @"C:\bo\logs\run-20261015-101010-123", out _));
+
+    /// <summary>[B1 fix 1 · m-2] Kabul edilen klasör NORMALLEŞTİRİLMİŞ hâliyle döner — sondaki ayırıcı atılmış, eğik çizgi Windows ayırıcısı,
+    /// <c>..</c> çözülmüş: motor isteğin ham metnini değil, doğruladığı klasörü okur (doğrulanan ile okunan aynı yol).
+    /// <para>KIRMIZI: dönüş yoktu — kural yalnız evet/hayır diyordu ve okuma isteğin ham metniyle yapılıyordu.</para></summary>
+    [Theory]
+    [InlineData(@"C:\bo\logs\run-20261015-101010-123\")]
+    [InlineData(@"C:/bo/logs/run-20261015-101010-123")]
+    [InlineData(@"C:\bo\logs\x\..\run-20261015-101010-123")]
+    public void An_accepted_folder_comes_back_normalized(string path)
+    {
+        Assert.True(RunLogPaths.TryGetRunDirectory(LogsRoot, path, out var folder));
+        Assert.Equal(@"C:\bo\logs\run-20261015-101010-123", folder);
     }
 }

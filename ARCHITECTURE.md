@@ -66,7 +66,7 @@ solution fresh).
 | DI | Microsoft.Extensions.DependencyInjection 10 | Composition root in `App.OnStartup` |
 | Console host | AvalonEdit 6.3 | The only WPF control that gives text selection + per-line colouring + MSBuild-verbose volume together |
 | Tray icon | H.NotifyIcon.Wpf 2.4 | Notify icon + OS balloon |
-| Test framework | xUnit 2.9 + StaFact + SkippableFact | STA tests are required for WPF realization |
+| Test framework | xUnit 2.9 + StaFact + SkippableFact | STA tests are required for WPF realization; `[WpfFact]`, StaFact's runner that adds a dispatcher synchronization context, serves the engine sleep and wake shell tests (`EngineWakeTests`), where two paths can await one task (§17.1) |
 | Build engine | `MSBuild.exe`, located via `vswhere` | **Not** `dotnet build` — the target repository is predominantly legacy .NET Framework |
 | Process control | Win32 job objects, `CreateProcessW`, `RegisterHotKey`, `WindowChrome`, DWM | P/Invoke in `Core/ProcessControl` and `App/Shell` |
 | Fonts | Geist / Geist Mono, static OTF, embedded | SIL OFL 1.1; variable fonts are not usable by WPF |
@@ -185,9 +185,10 @@ of them an active end: it writes stdin, and it must *read* stdout and stderr for
 pipe nobody reads fills its buffer — a few kilobytes — and then the next write from the child blocks forever,
 inside whatever the child happened to be doing. The App drains the Supervisor's stderr for exactly this
 reason and discards the bytes: a run's diagnostics already reach disk through `decision.log`; the engine's
-start-up and warning lines — among them the run-log retention summary (§8.5) and the memory line (§11.4) — go
-to stderr alone and serve only whoever reads it directly; anything the user must see travels as an IPC event.
-The drain exists to keep the pipe moving, not to collect anything.
+start-up and warning lines — among them the run-log retention summary (§8.5), the memory line (§11.4) and the
+warning for a project log that could not be read (§5.3) — go to stderr alone and serve only whoever reads it
+directly; anything the user must see travels as an IPC event. The drain exists to keep the pipe moving, not to
+collect anything.
 
 This is not theoretical. A line per project is enough: on a 177-project workspace that is tens of kilobytes, far
 more than that buffer. With nothing reading stderr, the engine blocks partway through such a loop before
@@ -202,6 +203,7 @@ indefinitely. One unread pipe, both symptoms.
 |---|---|---|
 | App | everything | Disposing the outer job closes the last handle → cascade |
 | App | Supervisor only | `Process.Kill(entireProcessTree: true)`, then a wait of at most a second for it to end — the kill is asynchronous, and an update must not meet the engine's files still locked (§12.5) |
+| App | Supervisor only, to put an idle engine to sleep (§4.7) | The engine's generation is retired first, so the exit raises no `EngineExited`; `shutdown` is written (at most 500 ms) and the engine's own exit is awaited for at most two seconds (`SleepExitWait`); what is still alive is then killed as in the row above. An exit that arrives meanwhile pre-empts a sleep or a wake in flight instead of waiting behind it (one already inside its own kill finishes that kill) |
 | Supervisor | the whole MSBuild tree | `TerminateJobObject(inner)` — the hard stop |
 | Supervisor | one project | `Kill(entireProcessTree: true)` on that `MSBuild.exe` |
 | Supervisor | App | not possible — the App's death reaches it as stdin EOF and it exits cleanly |
@@ -270,10 +272,18 @@ lowered past the Balanced floor. The "no torn DLL" guarantee is not negotiated a
 ### 4.6 Engine failure and restart
 
 The App watches the Supervisor process. If the engine dies, the sticky ribbon enters a persistent error state
-with a *Restart engine* action — there is no banner and no toast. A framing error on either side is treated as
-unrecoverable: the Supervisor writes `error(framing)` and exits with code 2; the App kills the engine, bumps an
-internal generation counter and raises exactly one `EngineExited` signal, so a late read from a dead generation
-cannot produce a second one.
+with a *Restart engine* action — there is no banner and no toast. An engine lost while it goes to sleep or while
+it wakes reaches the same state, with a cause of its own — a wake that cannot launch the supervisor at all included
+(§4.7). A framing error on either side is treated as unrecoverable: the Supervisor writes `error(framing)` and exits
+with code 2; the App kills the engine, bumps an internal generation counter and raises exactly one `EngineExited`
+signal, so a late read from a dead generation cannot produce a second one.
+
+The generation quiets an engine that is stopped on purpose — for a sleep, a restart or the exit — the same way. The
+counter moves before the process goes, so the deliberate exit raises no `EngineExited`, and any late event of the
+retired engine is dropped by the reader instead of passing as the next engine's. A death and a deliberate stop that
+race for one generation are settled by a single rule: whichever claims the generation's exit first wins. A death
+that wins is reported and the host does not sleep; a stop that wins counts the death as part of the stop and
+reports none.
 
 A process that dies announces itself. A process that *hangs* does not, and the App would otherwise wait for an
 event that is never coming — the failure mode §4.3 describes, where a wedged planner leaves the phase on
@@ -281,9 +291,11 @@ event that is never coming — the failure mode §4.3 describes, where a wedged 
 where an answer is owed: a run has been requested and `runStarted` has not arrived, a stop has been requested
 and `runStopped` has not, a Sync has been requested and `syncCompleted` has not, a maintenance job has been
 requested and its own completion — `cleanCompleted` or `optimizeCompleted` — has not, or a checkout or a pull
-has been sent and `checkoutCompleted` or `pullCompleted` has not. Any event from the engine
-resets the clock; crossing the threshold with no event at all raises an amber ribbon line and reveals the same
-*Restart engine* action.
+has been sent and `checkoutCompleted` or `pullCompleted` has not. The clock is the engine's last activity: any event
+it sends, the moment the App starts waiting for an answer, and the engine's ready report. A wake therefore ends with
+a fresh clock — its own duration is never counted as silence — and the idle rule of §4.7 reads the same stamp.
+Crossing the threshold with no activity at all raises an amber ribbon line and reveals the same *Restart engine*
+action.
 
 Sync earns its place in that list twice over. It is a wait like the others — an engine wedged mid-Sync leaves
 the ribbon on `▸ Sync — git fetch origin…` with no way out — and it is now the only way out, because the Sync
@@ -312,6 +324,163 @@ silences the old exit watcher *before* killing the child, so restarting a live-b
 `EngineExited` — the path that used to unlock everything never ran in exactly the case the action exists for.
 The one wait the alarm ends by itself is an exit the user has already asked for: nothing is unlocked, the
 application simply closes, and its shutdown takes the silent engine with it (§12.3).
+
+### 4.7 Engine sleep and wake
+
+An engine with nothing to do still holds its memory: the process keeps its heaps, caches and pipes for as long as it
+lives, and a tool left in the tray lives for days. So an idle engine sleeps — the App stops its process — and the next
+piece of work starts it again. Sleeping is not dying: the stop is deliberate, no failure is raised, and the engine
+comes back by itself when something needs it. The App decides; the Supervisor is stopped with the `shutdown` it has
+always obeyed and started like any other engine.
+
+**When it sleeps.** It is a setting — *Stop the engine when idle*, Settings → General → Engine, on by default
+(§13.3) — and one pure rule, `EngineIdleRule.ShouldSleep`, whose single constant `IdleAfter` is five minutes. The
+engine is put to sleep when the setting is on, no operation is in flight (`IsOperationInFlight`, the one definition of
+"busy" that the operation-end trim and the automatic Sync read too, §12.3), no project-log reply is awaited, the
+engine's state is Ready — not starting, waking, asleep, lost or missing — and the last engine activity is at least
+`IdleAfter` old. That activity is the one stamp the silence watchdog keeps (§4.6); there is no second clock. The
+question is asked on the 200 ms tick beside the watchdog, and a hidden window's tick asks it too (§12.3), so an engine
+idles away in the tray as well. Switching the setting off stops further sleeps and wakes nothing: an engine that is
+already asleep stays asleep until its next piece of work.
+
+**The state.** The view model keeps the engine's state in one field, `EngineState`, written on the UI thread in the
+same step as the event that changes it. The idle rule, the gate below and the ribbon all read it, and it raises
+`PropertyChanged`.
+
+| State | Meaning | Left by |
+|---|---|---|
+| Starting | the engine is being started — the view model is born in it, and *Restart engine* re-enters it | the ready report → Ready; no engine can be had → Unavailable; a death → Dead |
+| Ready | up and answering — the only state the rule may put to sleep | the rule → Sleeping; a death → Dead |
+| Sleeping | the host is stopping the process | the stop ends → Asleep; the stop fails → Dead; an engine that dies on its own meanwhile wins over both |
+| Asleep | no process | the first request that needs the engine → Waking |
+| Waking | the host is starting the process | the ready report → Ready; a failure → Dead or Unavailable (below); the exit pre-empts it → Asleep |
+| Dead | the engine was lost — it died, would not stop or would not wake | *Restart engine* → Starting |
+| Unavailable | no engine can be had — the supervisor was never found, or would not launch (§13.3) | — |
+
+Sleeping, Asleep and Waking together are the *sleep cycle*: the engine is not awake and nothing is sent to it.
+
+**The host.** `EngineHost` does the stopping and the starting; the view model only decides when. A sleep acts on a
+live, ready engine and on nothing else: a host that never started, never became ready, was reported dead or is disposed
+changes no state. It retires the engine's generation first (§4.6), takes the writer so that nothing more is written to a
+dying process, writes `shutdown`, waits for the process to leave by itself for at most two seconds and kills what is
+still there (§4.4) — all off the caller's context, since the caller is the UI tick. The host is then asleep: it has no
+process and no PID, and a send is refused with the same *Engine is not running.* as on a host that never started. A
+wake starts a sleeping host down the path of the first start — a new generation, the process created into the outer
+job, the ready report awaited for the same start-up timeout — again off the caller's context. On an awake engine it
+returns the ready report already in hand; on a host that is neither asleep nor alive it throws, since raising the dead
+is *Restart engine*'s job.
+
+Start, restart, sleep, wake and dispose pass through one lifecycle gate, so two concurrent wakes start one process and
+a sleep cannot cut a start in half. Dispose does not queue: before it asks for the gate it marks the host disposed,
+retires the generation and cancels the host's lifetime, so a start, wake, sleep or restart in flight gives up at once
+and leaves the killing to the exit — except one already inside its own kill (a sleep past its graceful wait, a start
+past its timeout), which finishes that kill, at most the kill wait and the tree scan and still inside the exit's
+budget. An exit therefore never waits behind a wake of up to the start-up timeout or a
+sleep of up to two seconds; once the host is disposed, start, restart and wake throw and sleep does nothing.
+
+**Going to sleep.** The rule's yes sets the state to Sleeping before the host is asked, so the next tick sees a
+transition and starts no second sleep. When the host returns, the state becomes Asleep and the PID is dropped — a
+process that is gone must not look alive in About — while the engine's version stays, since the engine that wakes is
+the same binary. If the engine died on its own meanwhile, that signal has already set the state and the end of the
+sleep leaves it alone; if the sleep itself failed, the engine is lost (below); and if the exit pre-empted the sleep the
+state returns to Asleep without a word, since nothing has died and the application is closing.
+
+**The gate.** Every request headed for the engine asks `EnsureEngineAwakeAsync` first: the default send, the Sync
+(once, for the Sync and the branch inventory behind it), the project-log request and the run. The gate reads the
+engine state and one table, `EngineWakeRule`, which says for each command type whether it wakes a sleeping engine. A
+run (`startRun`: Build, Rebuild, Resolve cycles, the Build menu's Clean, a row's commands, the tray hotkey's Build), a
+Sync of any kind — the button, the return to the window, after a commit, a branch change, Debug/Release, the Sync that
+Settings Save sends and the one a checkout, pull, Clean or Optimize chains — the branch inventory (a table row; it only
+ever goes out behind a Sync), a maintenance Clean,
+an Optimize, a checkout, a pull and a project-log request all wake it. Stop, a perf-chip change, `ping` and `shutdown`
+never do: a sleeping engine has no run to stop, the profile travels with the next run anyway, the watchdog counts
+silence instead of pinging, and the host writes `shutdown` itself. A command type with no row counts as waking, and a
+test keeps the table complete.
+
+What the gate does depends on the state it finds. Outside the sleep cycle — Ready, Starting, Dead, Unavailable — the
+request is not its business and is sent as ever: a dead or unavailable engine fails the send, and the request writes
+its usual `[error] failed to send …` line. In the sleep cycle a request that never wakes is not sent and writes
+nothing. One that wakes waits: for a sleep still running to finish, since nothing is written to a process on its way
+out; then, if the engine is asleep, it starts the wake, and if a wake is already running it joins it — one wake,
+whichever path gets there first. After every wait, and before it starts a wake, the gate asks whether the request is
+still wanted: it is not if the exit was asked for, if the pending run was taken back or if a newer project-log request
+replaced it, and such a request is not sent and starts no wake. When the wait ends the state is read again. Ready, or
+Starting, sends the request; anything else — the sleep or the wake lost the engine — sends nothing and writes no line,
+because the loss has its own signal. A request that waited and was not sent is never retried; its caller's roll-back,
+the one a failed send runs, puts the screen back.
+
+**Requests that wait stay registered.** A request that waited at the gate is registered with it (`EngineGate`) until it
+has been handed to the engine. The gate returns a pass that every caller holds with a `using` — a source guard checks
+that (§17.2) — and gives to the one send that is allowed, which cannot be called without it and gives the registration
+up just before the command goes to the engine. While the request is registered, losing the engine does not release its
+window — the Sync's busy state, the run's `starting` phase, the maintenance lock, the checkout and pull locks: nothing
+of it was sent, and its own roll-back puts everything back, once. After the hand-over a lost engine ends the request as
+it ends any request sent to a dying engine. An exit that has been asked for withdraws everything at the gate (§12.3):
+nothing is sent, no wake starts, and the roll-backs release the windows.
+
+**The run asks at the click.** At the click the phase moves to `starting`, the opening choreography begins (§14.5) and
+the gate is asked at once, so a sleeping engine is already waking while the wave plays and the command waits only for
+the longer of the two. The command is built after both, profile and all — a perf chip pressed meanwhile is carried by
+the run — and only if the run is still wanted. Stop or Esc in this window, a branch change that interrupts the run, or
+the exit take the pending run back — *Cancelled — build not started*, with neither `startRun` nor `stopRun` sent — and
+a wake already started is let finish: it is shared work, and the engine simply comes up Ready. A hidden window plays no
+choreography, so there the command goes out as soon as the engine is awake.
+
+**What the user sees.** While the state is Waking the ribbon reads `▸ Starting the engine…`, in a phase line's style
+and without a glyph. It is a live wait, so it ranks under the engine's death, its silence and the exit's Stopping line
+and over the failed Sync and the failed run (§13.2); it is announced when it appears and when it goes (§15). About →
+Environment shows the engine PID as `asleep` while the state is Asleep — the process is gone, but the engine is not
+unknown — and `—` when there is no PID at all (§13.3). Nothing else changes on screen: the first command after an idle
+sleep simply waits for the engine to start. *Restart engine* is not offered for any of this; it belongs to the death
+and silence lines.
+
+**When a sleep or a wake fails** the engine is lost, and how it is reported depends on what was lost.
+
+- *The supervisor is not there* — the file is missing: the permanent *Engine missing … reinstall required* line of a
+  failed start, with its one console line. The commands close and there is no *Restart engine*, since a restart would
+  not bring the file back.
+- *The supervisor is there but the process would not start*: `Engine stopped unexpectedly (wake failed)` with *Restart
+  engine*, which tries the launch again. The refusal may be passing — memory pressure, a scanner holding the file — and
+  must not leave the rest of the session without an engine. No console line is written and the commands stay open.
+- *The process started but never became ready* — a time-out, an early exit, a framing error: the host kills it and
+  reports its death like any other, `Engine stopped unexpectedly (exit N)` or `(protocol error)`, and the state follows
+  that signal. The requests that joined the wake are not sent.
+- *No death signal ever comes* — the kill itself threw: the state stays Waking and requests that join it are refused at
+  once. The next request to reach the gate fresh reports the loss, `(wake failed)` with *Restart engine*; a real death of
+  the same engine that arrives later only renews the text and releases nothing a second time.
+- *The sleep could not stop the process*: `Engine stopped unexpectedly (idle shutdown failed)` with *Restart engine*.
+
+A loss in the sleep cycle ends no operation, since none had started: the windows that are open belong to requests still
+waiting at the gate, and their own roll-backs close them. Every command type that wakes a sleeping engine is classified
+for this case. Either its window is kept while it waits at the gate — six types, a run, a Sync, a maintenance Clean, an
+Optimize, a checkout and a pull, one gate question each in `ReleaseAfterEngineLoss` — or it is a reasoned exception:
+the project-log request, whose reply expectation is released even while it waits, so that an old load left at the gate
+cannot hold the expectation of a newer one that was sent, and the branch inventory, which the table lists as waking but
+nothing asks the gate for, since it goes out on the Sync's pass. The questions are written out, not derived: a drift
+test fails until a new waking type is classified, a theory drives each of the six through a loss at the gate, and a scan
+of the source requires the questions to be exactly the list of window-holding types (§17.2).
+
+**The previous run's project log survives a wake.** A woken engine is a new process that has run nothing, so it has no
+last run to read a project's log from. The App therefore says which run its rows describe: `getProjectLog` carries
+`runDirectory`, the log folder of the last run the App saw start (`runStarted.logDirectory`), and carries none until a
+run has started since the application opened. The engine reads a project's log from its live run, else from its own
+latest run, and only if it has neither from that folder — accepted when it is fully qualified, a direct child of the
+engine's logs root and named like a run folder (§5.3, §21.2). The retention sweep that every start makes keeps the
+newest run folder, which is the previous run's (§8.5). An engine started by *Restart engine* reads the same way.
+
+**A wake is silent, with one exception.** It prints no `Engine ready` line, leaves no pool hint and starts no startup
+Sync (§12.1), since a sleeping engine lost no state — every command carries its own root and settings — and the screen
+did not change while it slept. The exception is the engine's own news: every start reads the in-flight ledger and
+invalidates what an engine that died mid-run left behind (§8.7), and a woken engine normally finds nothing. If its
+ready report does name interrupted projects, the console says so and the decisions on the screen are stale, and the
+wake refreshes them with one silent Sync (§10.2). Silent, so that the selection, an open project page and the console
+stay — a visible Sync drops the selection, and with it the page the click that woke the engine was waiting to open —
+and no fetch and no pill appear. The Sync starts only after every request that waited for the wake has been handed to
+the engine, so the waking request goes first, and only while the engine is still Ready. It does not start when the
+workspace gate is closed, which is the case when the waking request is itself a Sync, a run, a Clean, an Optimize, a
+checkout or a pull: that work refreshes the screen by itself, and the refresh is not retried. It enters through the
+silent Sync's own entry, not through the automatic-Sync coordinator. An unexpected failure of the refresh is caught and
+leaves only debug output (not present in Release builds), no console line.
 
 ---
 
@@ -437,7 +606,10 @@ restore step drops out. The repair degrades; it does not stop.
 `getProjectLog` names one project and carries a **`requestId`**, a counter the App raises for every request — the
 first is 1. Zero means "no id": it is never given to a request, and a line written before the field existed decodes
 as zero. The engine echoes the id on every chunk of its answer (§5.3), and the App matches an answer to its request
-by that id alone (§5.5).
+by that id alone (§5.5). It may also carry **`runDirectory`**, the log folder of the last run the App saw start
+(`runStarted.logDirectory`), for an engine that has run nothing itself — one woken from sleep or restarted (§4.7) — to
+read from (§5.3). It is absent until a run has started since the application opened, and a line written before the
+field existed decodes as null.
 
 ### 5.3 Events
 
@@ -504,13 +676,22 @@ be parsed out of the console's text (§10.5).
 gate saw, the stash message when a stash was actually made — kept even when the checkout after it failed — and
 git's own detail on failure. The App builds every console line of a branch switch from these fields (§10.3).
 
-`projectLogChunk` is the whole answer to `getProjectLog`: the project's log, read from the folder of the active run —
-or, when none is active, of the latest one — in chunks of at most 64 K characters (§5.1). Every chunk of one answer
-carries the request's `requestId`, its own sequence number, `isLast` and `throughLineNumber`, the last line number
-that had been persisted when the engine took the snapshot; that field describes the snapshot and not the chunk, so it
-is the same on all of them (§5.5). A project the engine holds no log for — no run has happened yet, or the project
-was skipped and so never wrote one — is not an error: the answer is one chunk, `isLast`, with empty text,
-`throughLineNumber` 0 and `notFound` true, an empty snapshot that the App stitches like any other. Like the three
+`projectLogChunk` is the whole answer to `getProjectLog`: the project's log, in chunks of at most 64 K characters
+(§5.1). The engine reads it from the folder of the active run or, when none is active, of the latest run it executed
+itself. An engine that has run nothing itself — one woken from sleep or restarted (§4.7) — reads the folder the
+request names (`runDirectory`, §5.2) instead, and accepts it only when it is fully qualified, a direct child of the
+engine's logs root and named like a run folder (§21.2). Every chunk of one answer carries the request's `requestId`,
+its own sequence number, `isLast` and `throughLineNumber`, the last line number that had been persisted when the
+engine took the snapshot; that field describes the snapshot and not the chunk, so it is the same on all of them
+(§5.5). A project the engine holds no log for — no run has happened that it knows of, the project was skipped and so
+never wrote one, the log is absent on disk (its file or its run folder missing, one pruned while it was being read
+included), or the request names no acceptable folder — is not an error: the answer is one chunk, `isLast`, with empty
+text, `throughLineNumber` 0 and `notFound` true, an empty snapshot that the App stitches like any other. A log that is
+there but cannot be read — a sharing violation, access denied (a folder where the log file should be, say), the file of
+a project the live run has registered vanishing, a malformed request — is answered the same way, but in the one place
+that decides it, the run coordinator, which also writes one `warning: project log could not be read (<project>):
+<message>` line to the engine's diagnostic channel (stderr). The App drains and discards that channel (§4.3), so the
+line serves harnesses and diagnostics only, and the engine keeps serving (§21.3). Like the three
 times a preview item carries (below), `notFound` has **no reader on the App side today**: the stitch does not look at
 it, and nothing on screen tells "no log" from "an empty log". It stays on the wire because the engine knows the
 difference and the decision surfaces may want it again; nothing downstream is allowed to grow a second meaning for it
@@ -661,13 +842,16 @@ waiting there is nothing to keep.
 on. The project's name would not do. Select P, then Q, then P again before the first answer arrives: that answer,
 stamped with an older line number, would match the newest request and be stitched onto a buffer that only began at
 the newest request, and the lines logged in between would be in neither half of the page — a hole in the middle that
-nothing reports. An answer to a request that a newer one has replaced is ignored. A project with no log is answered
-the same way (§5.3) and stitched the same way: the lines that arrived between the request and the answer reach the
-page, and a page with nothing to show gets its project's empty-state text (§13.5). The answer is no error, so the
-click writes no error line to the console.
+nothing reports. An answer to a request that a newer one has replaced is ignored, and a request replaced while it
+still waits for a sleeping engine to wake is not sent at all (§4.7). A project with no log is answered the same way
+(§5.3) and stitched the same way: the lines that arrived between the request and the answer reach the page, and a page
+with nothing to show gets its project's empty-state text (§13.5). The answer is no error, so the click writes no error
+line to the console.
 
-Scrolling to the top of a long log prepends the previous chunk with scroll compensation, so the viewport does not
-jump.
+The stitched log is the whole page. The chunks and the live lines above the snapshot's number are joined into the
+project's text, and the console opens that text as one document from its first line; a project that is still building
+adds its new lines after it, in order (§13.5). Nothing is paged in afterwards: the previous-slice paging, with scroll
+compensation so that the viewport does not jump, belongs to the run narrative alone (§13.5).
 
 ---
 
@@ -1390,8 +1574,9 @@ hidden:
 
 - The root failed-project names are propagated down the chain as `depIssues` (direct failures and inherited
   roots merged).
-- The project's log opens with a warning line naming the root, distinguishing a direct dependency failure from
-  an inherited one.
+- The project's log carries a warning line naming the root, distinguishing a direct dependency failure from an
+  inherited one. The log opens with the MSBuild command line — the restore's first, when one runs — and the warning
+  lines follow right after the command lines, before the build's own output.
 - The row carries an amber warning triangle in a **fixed 14 px slot** that exists on every row, so alignment
   never shifts. It is never red — red means the project itself failed — and the graph draws no triangle at all:
   the node's only warning proxy is the amber cube of a cycle member (§14.3).
@@ -1596,20 +1781,20 @@ file as well; an App that dies instead of exiting leaves the unflushed tail out.
 lives once it leaves memory (§13.5), and it is pruned with its folder like every other file there.
 
 Run logs are kept for three days, and the newest run's folder always stays however old it is, so the last run
-can always be read. The engine prunes them once, in the background, as soon as it has built its host: the sweep
-neither delays `engineReady` nor the first command, and the run that is starting is safe by construction — its
-folder carries the newest stamp not in the future, far inside the window. A folder is removed only when its name is
-exactly a run-folder name, its stamp (the local wall-clock time the run started) is older than the window and it
-is not the newest run folder — the newest of the runs that have started, so a folder stamped in the future (a
-clock set back, a name made by hand) neither goes nor shields an older run. Nothing else is ever touched: only
-folders directly under the logs root, never another folder, a file that happens to carry a run-folder name, or a
-link, and never anything outside the logs root; a link found inside a folder that goes is removed as the link it
-is, never followed, and so is a folder swapped for a link after the sweep chose it: only the link goes and its
-target is not entered. One sweep removes a bounded number of folders, oldest first, so a long backlog is worked off
-over several starts rather than stalling one; an I/O error (a log still open in an editor, say) leaves that
-folder for the next start. The narrative the App holds open is never in the way: it is always in the newest run's
-folder, because a new run closes it — its section opens — before the engine creates the next folder. A sweep that
-removed, or failed to remove, something writes one summary line to stderr — stdout stays NDJSON only.
+can always be read — by an engine woken from sleep too (§4.7). The engine prunes them once per start, in the
+background, as soon as it has built its host: the sweep neither delays `engineReady` nor the first command, and the
+run that is starting is safe by construction — its folder carries the newest stamp not in the future, far inside the
+window. A folder is removed only when its name is exactly a run-folder name, its stamp (the local wall-clock time the
+run started) is older than the window and it is not the newest run folder — the newest of the runs that have started,
+so a folder stamped in the future (a clock set back, a name made by hand) neither goes nor shields an older run.
+Nothing else is ever touched: only folders directly under the logs root, never another folder, a file that happens to
+carry a run-folder name, or a link, and never anything outside the logs root; a link found inside a folder that goes
+is removed as the link it is, never followed, and so is a folder swapped for a link after the sweep chose it: only the
+link goes and its target is not entered. One sweep removes a bounded number of folders, oldest first, so a long
+backlog is worked off over several starts rather than stalling one; an I/O error (a log still open in an editor, say)
+leaves that folder for the next start. The narrative the App holds open is never in the way: it is always in the
+newest run's folder, because a new run closes it — its section opens — before the engine creates the next folder. A
+sweep that removed, or failed to remove, something writes one summary line to stderr — stdout stays NDJSON only.
 
 ### 8.6 Planning pipeline
 
@@ -1670,9 +1855,11 @@ in-flight ledger closes that hole.
   marks every listed project as a failure without evidence (`LastResult = Failed`, the run timestamp set to now,
   the built signature kept, no failed signature written — §7.5); a listed project without a record gets one in
   that same shape, with no built signature, so its half-written output cannot enter time mode (§7.6) either. The
-  next `Build` compiles them, and their row reads grey `never built` rather than green: the App runs a Sync every
-  time the engine reports ready, after a restart too (§12.1), so the recovered decisions reach the screen. The count rides on `engineReady` (§5.3) and
-  the App prints `previous run was interrupted; N projects will rebuild`.
+  next `Build` compiles them, and their row reads grey `never built` rather than green: the App runs a Sync when the
+  engine reports ready at startup and after a restart (§12.1), and a woken engine that recovered interrupted projects
+  refreshes the rows with a silent Sync (§4.7, §10.2) — the selection and an open project page stay — so the
+  recovered decisions reach the screen. The count rides on `engineReady` (§5.3) and the App prints `previous run was
+  interrupted; N projects will rebuild`.
 - **Failure to recover never blocks the engine.** A file whose content cannot be parsed is not trusted — nobody
   knows who was in flight — so it is deleted and nothing is invented. A file that cannot be *read* (a lock, a
   permission) is a different case: a warning goes to stderr, the file stays, and the next engine start tries
@@ -2346,7 +2533,7 @@ rules of each kind live in one place (`SyncMode` / `SyncModeRules`); callers nev
 | Appended | application start and an engine restart, a successful pull, the hand-over after Clean/Optimize, Settings Save and a repository change | kept; transcript appended below the note or transcript that is already there | yes | yes |
 | BranchChange | a checkout from the branch chip, or a branch change seen by the HEAD watcher | cleared; the new section's first lines are the caller's (the stash and switch lines), then the transcript | no | yes |
 | ConfigurationChange | the Debug/Release segment | cleared at the click; the new section's first line is `Configuration → <new>` (followed by the Sync button's warning when git is mid-operation), then the transcript | no | yes |
-| Silent | a commit, a return to the window, any other HEAD movement on the same branch | untouched; the transcript is hidden, but `warn` and `error` lines are still written; one line in the event stream at the end | no | no |
+| Silent | a commit, a return to the window, any other HEAD movement on the same branch, a wake whose engine recovered interrupted projects (§4.7) | untouched; the transcript is hidden, but `warn` and `error` lines are still written; one line in the event stream at the end | no | no |
 
 *Visible as an operation* means the operation pill, the `Syncing` phase on the ribbon, the dropped selection
 and the clearing of the previous run's error text and overlay. A silent Sync does none of it: bad news on the
@@ -2771,7 +2958,8 @@ Optimize that was refused because a run held the slot did nothing and trims noth
 planning included, the collection is skipped, because a blocking collection would stall the run's pipes; the line is
 still written, and the run's own end collects. The trim is an optimization and never costs the work it follows: a
 collection that throws is swallowed after one `warning: memory trim failed: <message>` line on stderr, written before
-the memory line, which then describes an uncollected heap.
+the memory line, which then describes an uncollected heap. An engine that is asleep (§4.7) has no process, so it trims
+nothing and writes no line; its next start trims and reports at the end of its first operation like any other.
 
 ---
 
@@ -2827,17 +3015,20 @@ single-instance handles released (§12.5).
 The shell also enables the automatic Sync (§10.3) once: the HEAD watcher attaches to the repository root and
 follows it when the root changes, and window activation is wired to the same coordinator.
 
-Every time the engine reports ready — at startup and after **Restart engine** — the App takes the same ready
-path. It prints `Engine ready — v<version>` and records the engine's version and PID. The first time in a
-session only, if the pool folder that older versions kept at `%LOCALAPPDATA%\BuildOrchestrator\worktrees`
-still exists, it prints one line saying the pool is no longer used and can be deleted, followed by
-`git worktree prune` in the repository — the tool neither creates nor deletes that folder. Then, when a
-workspace is open and a Sync is allowed, it starts a Sync (Appended, §10.2): at startup that opens the first
-console section with a full transcript and a reveal; after a restart it refreshes the decisions a recovered
-engine may have changed. A restart releases everything the old engine left waiting before the ready path runs,
-so that Sync is the only operation in flight. Separately, whenever `engineReady` carries interrupted projects —
-at startup or after a restart, which is exactly when an engine died mid-run — the console says `previous run was
-interrupted; N projects will rebuild` (§8.7).
+When the engine reports ready at startup and after **Restart engine**, the App takes the same ready path. It
+prints `Engine ready — v<version>`, records the engine's version and PID, marks the engine Ready and stamps its
+activity, the moment from which the idle rule counts its five minutes (§4.7). The first time in a session only, if the
+pool folder that older versions kept at `%LOCALAPPDATA%\BuildOrchestrator\worktrees` still exists, it prints one line
+saying the pool is no longer used and can be deleted, followed by `git worktree prune` in the repository — the tool
+neither creates nor deletes that folder. Then, when a workspace is open and a Sync is allowed, it starts a Sync
+(Appended, §10.2): at startup that opens the first console section with a full transcript and a reveal; after a
+restart it refreshes the decisions a recovered engine may have changed. A restart releases everything the old engine
+left waiting before the ready path runs, so that Sync is the only operation in flight. A woken engine (§4.7) takes only
+the core of that path — the version, the PID, the ready state and the stamp of the engine's activity — with no line, no
+pool hint and no Sync of its own. Separately, whenever `engineReady` carries interrupted projects — at startup, after a
+restart or after a wake — the console says `previous run was interrupted; N projects will rebuild` (§8.7); after a
+wake the decisions are then refreshed by one silent Sync, once the requests that waited for the engine are with it
+(§4.7).
 
 ### 12.2 Window chrome
 
@@ -2887,22 +3078,25 @@ every close — so a value saved in Settings applies to the very next close.
 **A full exit waits for the work in flight.** The tray menu's *Exit* always asks for one, whatever the switch
 says; `X` asks for one when the switch is off, and both take the same shell path. With nothing in flight the
 application closes at once — from the tray, without showing the window first. Otherwise the exit lets the work
-finish. A run is stopped gracefully (§4.5) — or, still in its opening choreography with nothing sent, withdrawn
-(§14.5) — so its in-flight projects finish, post-build copy included. A Clean, Optimize, checkout or pull has no
-cancel and runs to its end, since cutting one off could leave the tree half-changed; a Sync has no cancel either,
-and a fetching one writes git refs, so it too is let finish. No Sync starts while the exit waits — neither the
-automatic one (§10.3) nor the one a Clean, Optimize, checkout or pull chains on completion: either would be new
-work started after the request, only to refresh a window that is closing, and the next start syncs anyway. The
-job's own end releases the exit. While the exit waits, the ribbon reads the Stopping line whatever the phase
-(§13.2) and the console records `exit requested — the app closes when the work in flight finishes` once. The
-window stays and comes forward — out of the tray, or restored if it was closed while minimized — because an exit
-waiting behind a hidden window would look like nothing happening; a later `X` neither hides it nor asks again,
-and a second request sends no second stop and writes no second line. The wait is not endless — if the engine
-falls silent (§4.6) or dies, the exit goes ahead, and the application's shutdown closes the engine and whatever it
-left through the outer job (§4.4); an engine that is only quiet — a long git write, a build step that prints
-nothing — is cut off the same way (§20). The view model decides only *when* (`RequestExit`, then `ExitReady`
-once); the shell does the closing, and from that moment every `Closing` really closes. A Windows session that
-ends closes the application at once, with neither the wait nor the tray — Windows does not wait either.
+finish. A run is stopped gracefully (§4.5) — or, still in its opening choreography or waiting for its engine to wake
+with nothing sent, withdrawn (§14.5) — so its in-flight projects finish, post-build copy included. A Clean,
+Optimize, checkout or pull has no cancel and runs to its end, since cutting one off could leave the tree half-changed;
+a Sync has no cancel either, and a fetching one writes git refs, so it too is let finish. No Sync starts once the exit
+has been asked for — neither the automatic one (§10.3), nor the one a Clean, Optimize, checkout or pull chains on
+completion, nor one that finds nothing in flight and so lets the exit close at once: each would be new work started
+after the request, only to refresh a window that is closing, and the next start syncs anyway. Requests waiting at the
+gate of a sleeping engine (§4.7) are withdrawn the same way: none is sent and no wake starts, and a waiting Sync that
+does not go is released by its own roll-back. A project-log load waiting there is not work the exit waits for. The
+job's own end releases the exit. While the exit waits, the ribbon reads the Stopping line whatever the phase (§13.2)
+and the console records `exit requested — the app closes when the work in flight finishes` once. The window stays and
+comes forward — out of the tray, or restored if it was closed while minimized — because an exit waiting behind a
+hidden window would look like nothing happening; a later `X` neither hides it nor asks again, and a second request
+sends no second stop and writes no second line. The wait is not endless — if the engine falls silent (§4.6) or dies,
+the exit goes ahead, and the application's shutdown closes the engine and whatever it left through the outer job
+(§4.4); an engine that is only quiet — a long git write, a build step that prints nothing — is cut off the same way
+(§20). The view model decides only *when* (`RequestExit`, then `ExitReady` once); the shell does the closing, and from
+that moment every `Closing` really closes. A Windows session that ends closes the application at once, with neither
+the wait nor the tray — Windows does not wait either.
 
 **A build that runs while the window is away is not invisible.** When the main window is hidden *and* a build is
 in flight (`Starting` / `Running` / `Stopping` — `Syncing` is deliberately out of scope), the product mark
@@ -2911,11 +3105,12 @@ and disappears the instant the window comes back. The surface is its own top-lev
 while the main window is hidden, so it cannot be a popup inside it.
 
 **A hidden window does no screen work.** No choreography plays on it: the opening wave is skipped, the run command
-goes out at once and the end finale never starts (§14.5). The signal behind that rule gates every other surface the
-run's events would otherwise redraw: the event stream's rows, the graph's status, phase and selection pushes and its
-filter refresh, the ribbon, the Build menu, the project rows and their list, the action bar's counter chips and the
-body of the 200 ms tick (live durations, the console header's line counter, following the frontier — only the
-engine-silence watchdog still runs, §4.6). The console document is left alone too: the narrative goes on filling the
+goes out at once — once the engine has woken, if it was asleep — and the end finale never starts (§14.5). The signal
+behind that rule gates every other surface the run's events would otherwise redraw: the event stream's rows, the
+graph's status, phase and selection pushes and its filter refresh, the ribbon, the Build menu, the project rows and
+their list, the action bar's counter chips and the body of the 200 ms tick (live durations, the console header's line
+counter, following the frontier — only the engine's two tick jobs still run, the silence watchdog and the idle rule,
+§4.6 and §4.7). The console document is left alone too: the narrative goes on filling the
 view model's store, and the document is built from the store's last slice, once and without the tilt, when the window
 comes back (§13.5). Infinite decorative animations run only while their element is visible (§14.5), so a hidden window runs
 none. Each surface only notes that it has fallen behind; when the window comes back each catches up with the model in
@@ -2962,15 +3157,15 @@ choosing the moment.
 A pure rule (`MemoryTrimRule`) says when a trim is due, and the window (`RequestTrimWhenDue`) gathers the signals, asks
 the rule each time one arrives and schedules the answer. At most one trim runs per operation. None runs while a run
 (planning included), a Sync, a Clean, an Optimize, a checkout or a pull is in flight — `IsOperationInFlight`, the one
-definition of "the application is busy", which the automatic Sync's gate reads too — or while a project-log reply is
-being waited for. In a visible window none runs while the end finale plays, so the collection never cuts the animation
-off. A hidden window has no finale, and a run that ended while the window was hidden waits for the tray indicator to
-finish its exit (and show the result balloon, when *Show notifications* is on). The indicator takes the run's identity
-when its exit starts and hands it over with the exit notice, so a run that begins during the pause before the balloon
-does not inherit the previous run's exit: its own trim waits for its own exit. Six signals reach the window and each
-asks the question again, so whichever comes last releases the trim: an operation ended
-(`RunViewModel.EndedOperationSerial`), the graph's end finale finished (`GraphView.EndFinaleFinished`), the tray
-indicator finished its exit, the window was hidden or shown, a log reply arrived or stopped being expected
+definition of "the application is busy", which the automatic Sync's gate and the engine's idle rule (§4.7) read too —
+or while a project-log reply is being waited for. In a visible window none runs while the end finale plays, so the
+collection never cuts the animation off. A hidden window has no finale, and a run that ended while the window was
+hidden waits for the tray indicator to finish its exit (and show the result balloon, when *Show notifications* is
+on). The indicator takes the run's identity when its exit starts and hands it over with the exit notice, so a run
+that begins during the pause before the balloon does not inherit the previous run's exit: its own trim waits for its
+own exit. Six signals reach the window and each asks the question again, so whichever comes last releases the trim: an
+operation ended (`RunViewModel.EndedOperationSerial`), the graph's end finale finished (`GraphView.EndFinaleFinished`),
+the tray indicator finished its exit, the window was hidden or shown, a log reply arrived or stopped being expected
 (`HasPendingLogLoad`), and the work in flight changed (`IsOperationInFlight`, so that a refused pull or checkout,
 which is no operation, still releases the trim it held back).
 
@@ -3131,7 +3326,9 @@ tag at all.
 
 **Installing.** Nothing is installed while the application runs: Windows does not let a running program's files be
 replaced. The last step of `App.OnExit` — after the build engine has been shut down and its process waited for
-(§4.4), and the single-instance handles released — asks `UpdateService` to install the ready offer. That starts
+(§4.4; a sleep or a wake still in flight is pre-empted instead of waited behind — one already inside its own kill
+finishes that kill, within the exit's budget — §4.7), and the single-instance handles
+released — asks `UpdateService` to install the ready offer. That starts
 `Update.exe` through `WaitExitThenApplyUpdates`, silent, so Velopack shows no window of its own; `Update.exe` waits
 for this process to exit, replaces `current\`, and starts the new version only if the user chose *Restart to
 update* (§13.3). An ordinary exit with the offer still pending — *Later*, or the pill never opened — installs
@@ -3243,20 +3440,24 @@ radius 0, coloured by phase. It runs indeterminate whenever the engine is workin
 denominator — during Sync, and during `starting`, where there is no plan yet and a determinate bar would sit
 frozen at zero while the line above it says work is under way.
 
-Five texts can pre-empt the phase line, in this order: an engine death (with the *Restart engine* action), an
-engine that has gone silent, an exit waiting for the work in flight (§12.3), a failed Sync, then a failed run.
-The three failures are red, carry the reason, and persist until the user starts something new — a Sync clears
-the run failure, a run start clears both. Their order is the order of how much is unknown: with no engine
-nothing can be retried, and with no Sync the project states themselves are stale. The silence line sits below
-the death and above the failures because it describes the *present*: the failures are facts about something
+Six texts can pre-empt the phase line, in this order: an engine death (with the *Restart engine* action), an
+engine that has gone silent, an exit waiting for the work in flight (§12.3), an engine that is starting, a failed
+Sync, then a failed run. The three failures are red, carry the reason, and persist until the user starts something
+new — a Sync clears the run failure, a run start clears both. Their order is the order of how much is unknown: with
+no engine nothing can be retried, and with no Sync the project states themselves are stale. The silence line sits
+below the death and above the failures because it describes the *present*: the failures are facts about something
 that already finished, and all of them assume a working engine. It is amber rather than red and carries no
 glyph — a drain that is merely slow is not a failure — and it clears itself the moment the engine speaks or the
 wait ends. The exit's line describes the present too, so it also sits above the failures, but under the death
 and the silence, because those two are what end the wait. It is the Stopping line in any phase — the in-flight
 count while a build drains, `▸ Stopping — wrapping up` otherwise — since a Sync, a Clean or a pull being waited
-for never moves the phase to `stopping`, and a close that left the ribbon unchanged would read as unheard. A
-rejected request is not a failure and does not take this path — declining a request leaves the `stopped` line
-standing, because that line is still true.
+for never moves the phase to `stopping`, and a close that left the ribbon unchanged would read as unheard. The
+starting line, `▸ Starting the engine…`, is a live wait as well: it shows while a sleeping engine wakes for a request
+(§4.7), in a phase line's style — the `▸`, the secondary text colour, no glyph, since it reports a wait and not a
+result. It sits above the failures for the same reason the others do, and under the death, the silence and the exit,
+which are larger than the wait or end it; the phase lines it covers are ones that assume a running engine. A screen
+reader hears it when it appears and when it goes (§15). A rejected request is not a failure and does not take this
+path — declining a request leaves the `stopped` line standing, because that line is still true.
 
 An `Esc` while a stop already drains is the hard stop (§4.5): it runs the same command as a press of the *Stop now*
 button, so the console gets one line for it and the button reads *Terminating…*; the phase line itself does not animate.
@@ -3829,7 +4030,7 @@ is gone, and a green status answers to nothing on disk; that is why the plan sur
 than waiting to be corrected. An Optimize chains the same Sync for a plainer reason: its click cleared the rows
 too, and the two maintenance buttons sit side by side in one box, so they answer a click with one flow. A failed
 job chains nothing: the reason is already in the console, and a second error line on top of it would only be
-noise. Nor does a job that ends while a full exit waits — no Sync starts during that wait (§12.3), so the gate
+noise. Nor does a job that ends once a full exit has been asked for — no Sync starts then (§12.3), so the gate
 simply opens.
 
 **The gate is handed over, never dropped.** It stays shut from the click until the chained Sync has claimed it,
@@ -3924,12 +4125,13 @@ transcript twice.
 The gate opens at the **click**, not at `syncStarted`, for the same reason the run lock does: sending takes
 milliseconds and the engine may not reach the command for seconds, and a button that re-enables in between
 invites exactly the second press it is there to prevent. Every control the gate closes hears it at that moment
-— the run commands, the maintenance box, the `N behind` chip and the branch chip as well as Sync — so none of them is left drawn
-live over a closed command while the engine has not answered yet. It closes again on every exit — the answer
-arrives, the send fails synchronously, the Sync fails, or the engine dies — so no path leaves a button
-permanently dark. Sync remains the way out of an empty topology; what it no longer is, is a way to interrupt
-itself. A Clean or an Optimize opens and closes the same gate under the same rules (see *The two workspace jobs
-share one gate* above).
+— the run commands, the maintenance box, the `N behind` chip and the branch chip as well as Sync — so none of them is
+left drawn live over a closed command while the engine has not answered yet. It closes again on every exit — the
+answer arrives, the send fails synchronously, the Sync fails, or the engine dies (a Sync that waited at the engine
+gate for a sleeping engine and was not yet handed to it is released by its own roll-back, not by the loss, §4.7) — so
+no path leaves a button permanently dark. Sync remains the way out of an empty topology; what it no longer is, is a
+way to interrupt itself. A Clean or an Optimize opens and closes the same gate under the same rules (see *The two
+workspace jobs share one gate* above).
 
 The lock — and the *Stop* button with it — begins at the **click**, not at `runStarted`. The phase moves to
 `starting` and a line goes into the run document before the command is even written, mirroring what a stop
@@ -3937,9 +4139,12 @@ request does. Anything less leaves a gap the width of a planning window,
 during which the user has pressed a button and the screen still describes the world as it was; on a 177-project
 workspace that gap is seconds long and the console has just been cleared, so nothing on screen contradicts "my
 click did nothing". The phase
-leaves `starting` by every exit that can happen: `runStarted` moves it on, a run-ending error or a send that
-fails synchronously puts it back, and an engine death drops it to the resting phase rather than to `stopped` —
-nothing was built, and a "stopped" line describing a run that never began would be a fiction.
+leaves `starting` by every exit that can happen: `runStarted` moves it on, a run-ending error, a send that
+fails synchronously or a request the engine gate turns down (§4.7) puts it back, and an engine death drops it to the
+resting phase rather than to `stopped` — nothing was built, and a "stopped" line describing a run that never began
+would be a fiction. A run that waited at the gate and has not yet been handed to the engine is the one case the death
+leaves alone: its own roll-back puts the phase back to what it was before the click, which is also how an engine lost
+while asleep or waking ends the opening, and a dead engine's second report touches nothing.
 
 ### 13.3 Popovers and dialogs
 
@@ -4064,24 +4269,35 @@ on the first input of that page: the repository root input, or the first switch.
 The rail exists because settings grow. A single column put every section under the previous one and each new
 setting squeezed it further; a section list keeps each page short and gives the next settings a place to land
 without widening the dialog. **General** is that place. Its rows come from one catalog
-(`GeneralSettingsCatalog`) in five groups — *Startup* (*Start with Windows*, *Start minimized to tray*, *Close
+(`GeneralSettingsCatalog`) in six groups — *Startup* (*Start with Windows*, *Start minimized to tray*, *Close
 to tray*), *Build* (*Pull before build*, *Resolve cycles at full priority*), *Branches* (*Stash and switch
-branches*, §10.3), *Console* (*Compact console*, §13.5) and *Notifications* (*Show notifications*) — and every row
-is drawn by one template (`Ds.Settings.ToggleRow`): the name over a single line of description on the left, a
-switch on the right, a hairline between rows but not above a group's first. Adding a setting is adding a catalog
-row; there is no layout work. A row that depends on another (*Start minimized to tray* on *Start with Windows*)
-fades to the switch's own disabled opacity and stops taking input while its parent is off, without moving anything.
-Every switch on the page drives behaviour. *Stash and switch branches* follows the pull switch's rules: saved with
-*Save*, carried to the engine on the next checkout, and a console note written only when its value actually
-changed. *Resolve cycles at full priority* follows the same rules and travels with every `startRun` (§11.1).
-*Compact console* is saved and noted the same way — `Compact console on — errors, the first warnings of each project
-and a warning count from the next run`, or `Compact console off — every MSBuild line is shown from the next run` — but
-it never reaches the engine: it is the App's own choice of how the console writes each project's output (§13.5). The
-mode in effect follows the switch whenever no work is in flight — no run, Sync, Clean, Optimize, checkout or pull;
-while work is in flight the mode it had when that work started holds, so a run's narrative is written in one mode and
-no project's count of warnings changes its rules halfway. A *Save* made while nothing is in flight therefore takes
-effect at once, and one made during a run or any other work the moment none is left, however that work ended — a pull
-the engine refused or a run that never started included. Text already on screen is never rewritten.
+branches*, §10.3), *Console* (*Compact console*, §13.5), *Engine* (*Stop the engine when idle*, §4.7) and
+*Notifications* (*Show notifications*) — and every row is drawn by one template (`Ds.Settings.ToggleRow`): the name
+over a single line of description on the left, a switch on the right, a hairline between rows but not above a group's
+first. Adding a setting is adding a catalog row; there is no layout work. The row is also the setting's one default:
+the view model's field, the window's seed from a `ui-state.json` that has no key for it and the shell switches' reader
+all ask the catalog (`DefaultOf`), the dialog's draft opens on the row and *Clear* returns to it, and for the five
+workflow preferences — the ones that are not shell switches — the row carries the approved value together with the
+reason for it, so that neither is written twice in the source. A row that depends on another (*Start minimized to
+tray* on *Start with Windows*) fades to the switch's own disabled opacity and stops taking input while its parent is
+off, without moving anything. Every switch on the page drives behaviour. *Stash and switch branches* follows the pull
+switch's rules: saved with *Save*, carried to the engine on the next checkout, and a console note written only when
+its value actually changed. *Resolve cycles at full priority* follows the same rules and travels with every `startRun`
+(§11.1). *Compact console* is saved and noted the same way — `Compact console on — errors, the first warnings of each
+project and a warning count from the next run`, or `Compact console off — every MSBuild line is shown from the next
+run` — but it never reaches the engine: it is the App's own choice of how the console writes each project's output
+(§13.5). The mode in effect follows the switch whenever no work is in flight — no run, Sync, Clean, Optimize, checkout
+or pull; while work is in flight the mode it had when that work started holds, so a run's narrative is written in one
+mode and no project's count of warnings changes its rules halfway. A *Save* made while nothing is in flight therefore
+takes effect at once, and one made during a run or any other work the moment none is left, however that work ended — a
+pull the engine refused or a run that never started included. Text already on screen is never rewritten.
+
+*Stop the engine when idle* is saved and noted the same way — `Stop the engine when idle on — the engine exits after
+five idle minutes`, or `Stop the engine when idle off — the engine is no longer stopped when idle` — and it never
+reaches the engine either: it decides when the App stops the process (§4.7). The word *five* is the rule's constant,
+`EngineIdleRule.IdleAfter`, written out, and a test fails if the two drift apart. Switching it off does not wake an
+engine that is already asleep, which is why the note says *no longer stopped* and not *stays running*: the engine
+stays asleep until its next piece of work, and if the Save sends a Sync that Sync is the work.
 
 *Start with Windows*, *Start minimized to tray*, *Close to tray* and *Show notifications* are **shell switches**:
 they drive the start, the window and the tray (§12.3), not how anything builds, so they never travel to the
@@ -4155,7 +4371,8 @@ then the pending repository root (which resets the project rows to hollow), then
 order is load-bearing, because the Sync command carries the layer patterns and the external list — sent before
 they were applied, it would carry stale ones: the grouping would be wrong for a whole Sync and the external rows
 would describe the previous list. The Sync itself is unconditional: Save does not compare old and new state to
-decide whether to run it.
+decide whether to run it. The five workflow preferences ride along as optional values: *Save* gives all five, and a
+caller that leaves one out leaves that setting as it was, without a note.
 
 The pull switch has a note of its own, and it is quieter still: it prints only when the value actually changed
 *and* external projects are defined — `Pull before build on — external working copies update first`, or
@@ -4199,19 +4416,18 @@ change deferred — …`. A root entered afterwards is a first setup again: sile
 
 **Export · Import · Clear.** The footer carries three icon buttons on its left. Export writes
 `build-orchestrator-settings.json` — `{ app, version, repositoryRoot, externalProjects[{ path }],
-pullExternalBeforeBuild, stashOnBranchSwitch, resolveAtFullPriority, compactConsole, startWithWindows,
-startMinimizedToTray, closeToTray, showNotifications, layers[{ name, pattern }] }`, the external array sitting between
-the root and the layers (the field order the file is written in, not just a key that happens to be present) and
-holding only cards with a non-blank path; import reads one back **into the form**; clear empties the root, every
-layer and every external card, and returns every General switch to its catalog default — *Pull before build*,
-*Resolve cycles at full priority*, *Compact console*, *Close to tray* and *Show notifications* on, the rest off.
-Every General switch travels in the file, so saving an imported file that has *Start with Windows* on turns it on for
-that machine — deliberately. All three touch the draft only: nothing is applied until *Save*, and there is no
-confirmation dialog. Clear's confirmation is the button itself — the
-first press turns the icon red and prints a warning, cancels itself after 2.4 s, and only a second press
-empties the form. Feedback for all three sits on the same footer line for 2.4 s, green or red. A malformed
-file is not an error but a result: the user picked the wrong file, and the line says `Invalid settings file`
-while the form stays untouched.
+pullExternalBeforeBuild, stashOnBranchSwitch, resolveAtFullPriority, compactConsole, stopEngineWhenIdle,
+startWithWindows, startMinimizedToTray, closeToTray, showNotifications, layers[{ name, pattern }] }`, the external
+array sitting between the root and the layers (the field order the file is written in, not just a key that happens to
+be present) and holding only cards with a non-blank path; import reads one back **into the form**; clear empties the
+root, every layer and every external card, and returns every General switch to its catalog default — *Pull before
+build*, *Resolve cycles at full priority*, *Compact console*, *Stop the engine when idle*, *Close to tray* and *Show
+notifications* on, the rest off. Every General switch travels in the file, so saving an imported file that has *Start
+with Windows* on turns it on for that machine — deliberately. All three touch the draft only: nothing is applied until
+*Save*, and there is no confirmation dialog. Clear's confirmation is the button itself — the first press turns the icon
+red and prints a warning, cancels itself after 2.4 s, and only a second press empties the form. Feedback for all three
+sits on the same footer line for 2.4 s, green or red. A malformed file is not an error but a result: the user picked the
+wrong file, and the line says `Invalid settings file` while the form stays untouched.
 
 **The import file picker comes after the dialog, centred over the window.** *Import settings…* on the first-run
 invitation opens the dialog first and raises the file picker only once the dialog has landed — its entrance
@@ -4234,9 +4450,9 @@ conditions that gate *Save* (`SaveBlockedReason`, with `CanSave` defined as "no 
 line cannot disagree.
 
 A file that omits a switch's key (`pullExternalBeforeBuild`, `stashOnBranchSwitch`, `resolveAtFullPriority`,
-`compactConsole`, `startWithWindows`, `startMinimizedToTray`, `closeToTray` or `showNotifications`) leaves that switch
-where it is, the same rule the external list already follows: a file cannot silently reset a setting it does not
-carry.
+`compactConsole`, `stopEngineWhenIdle`, `startWithWindows`, `startMinimizedToTray`, `closeToTray` or
+`showNotifications`) leaves that switch where it is, the same rule the external list already follows: a file cannot
+silently reset a setting it does not carry.
 
 Import is tolerant on the way in: an `externalProjects` entry can be the object above or a bare path string,
 the two forms the design package's own prototype accepts. Any other key on an entry is ignored — the `vcs` an
@@ -4276,9 +4492,10 @@ inset 14 px top, 18 px sides and 20 px bottom.
   itself reported and reads `not started` until it has. Under the rows a ghost *What's new in {version}* button
   closes About and asks the window to open What's new through the same path as the title-bar button, so the
   unread mark clears exactly as it does there.
-- **Environment** is two caps groups: **RUNTIME** — engine PID, .NET runtime, OS and the application's own memory
-  (**App private**, **GC committed** and **Managed heap**, in MB) — and **PATHS** — the resolved `MSBuild.exe`, the
-  repository root, the state file and the logs. The application and engine versions are not repeated here.
+- **Environment** is two caps groups: **RUNTIME** — engine PID (`asleep` while the engine sleeps, `—` when there is
+  none), .NET runtime, OS and the application's own memory (**App private**, **GC committed** and **Managed heap**,
+  in MB) — and **PATHS** — the resolved `MSBuild.exe`, the repository root, the state file and the logs. The
+  application and engine versions are not repeated here.
 - **Shortcuts** is three caps groups, **GLOBAL**, **BUILD** and **APPLICATION**; each row is the catalog's
   description and its key caps, and a global hotkey whose registration failed is marked `unavailable` — each
   one on its own row, since they register separately.
@@ -4370,12 +4587,12 @@ WPF provides neither smooth scrolling nor horizontal wheel input, so the scrolli
 
 | Piece | Role |
 |---|---|
-| `ScrollAnimator` | attached DP animating `VerticalOffset`; a wheel event cancels the animation |
-| `BottomAnchorBehavior` | bottom-stick with a 48 px release threshold and a jumping window; drives the `⌄ latest` pill |
-| `UserScrollSignal` | the raw "the user scrolled" input: wheel, scrollbar, navigation keys — wired at the root of all three scrolling panels |
+| `ScrollAnimator` | attached DP animating `VerticalOffset`; `CancelForUser` releases the animation where the panel stands and reports whether it stopped a flight |
+| `BottomAnchorBehavior` | bottom-stick with a 48 px release threshold and a jumping window — closed early when a user gesture stops the flight — and a host that may forbid following altogether (`followAllowed`); drives the `⌄ latest` pill and is the one definition of the live bottom (`AtLiveBottom`), which reads the announced pill value (`PillShown`) rather than the live distance |
+| `UserScrollSignal` | the raw "the user scrolled" input, wired at the root of all three scrolling panels, and the one path by which a user gesture cancels a running scroll animation. Vertical gestures — wheel, vertical scrollbar, vertical scroll keys — take the steering and stop a `⌄ latest` flight; sideways gestures — ←/→, Ctrl+←/→, horizontal wheel, horizontal scrollbar — do neither |
 | `FollowScrollController` | frontier following (550 ms cadence, 54 px dead-band) |
 | `ScrollArbiter` | the referee |
-| `HorizontalWheelScroll` | horizontal wheel / touchpad input, which WPF never delivers |
+| `HorizontalWheelScroll` | horizontal wheel / touchpad input, which WPF never delivers; it raises `Scrolled` from the panel after it has scrolled, which is how `UserScrollSignal` hears that gesture |
 
 **An animated scroll always starts from where the panel really is.** The animation carries no `From` and holds
 its end value, so a finished move keeps owning the property; if the panel is then moved by some other route — a
@@ -4387,34 +4604,52 @@ of the current offset *is* the visible position.
 
 **Cancelling a move releases it; it never rewinds it.** The same hold that keeps a finished move owning the
 property also means that dropping the animation hands the property back to a base value seeded at the point the
-move *started*. Released without care, a wheel touch after a completed jump would therefore scroll the panel
+move *started*. Released without care, a user gesture after a completed jump would therefore scroll the panel
 back to wherever it was before the jump — on the console, riding the wheel up after `⌄ latest` resumed from the
 pre-jump position instead of from the bottom. So the cancel writes the panel's current position into the base
-value first: base and effective agree, releasing the animation changes nothing, and the wheel carries on from
+value first: base and effective agree, releasing the animation changes nothing, and the gesture carries on from
 where the panel actually is.
 
 **Only the user stops the follow, and the signal comes from input, not from geometry.** A scroll event says
 nothing about who caused it: relayout, a viewport change and our own programmatic scrolls all raise one, and
 the offset they report can still be the pre-scroll value, so a distance measured then can cross the threshold
 on its own. Reading "the user scrolled" out of that geometry made the stream drop its follow with nobody
-touching it. `UserScrollSignal` supplies the real thing from three input channels — the scrollbar is its own
-channel because dragging the thumb produces no wheel event at all, and WPF's `ScrollBar.Scroll` fires for user
-interaction only, never for a programmatic offset change.
+touching it. `UserScrollSignal` supplies the real thing from the raw input — the wheel, the scrollbar, the keys, and
+the horizontal wheel that the application's own hook raises after it has scrolled. The scrollbar is its own channel
+because dragging the thumb produces no wheel event at all, and WPF's `ScrollBar.Scroll` fires for user interaction
+only, never for a programmatic offset change. The channels split by direction, and the rule is one sentence: a
+vertical gesture — the wheel, the vertical bar, the vertical scroll keys (PageUp/PageDown, ↑/↓, Home/End, whatever the
+modifier) — takes the wheel and stops a scroll animation in flight; a sideways one — ←/→, Ctrl+←/→, the horizontal
+wheel, the horizontal bar — does neither, because a reading position taken sideways is independent of the vertical
+follow and of a jump. The first act of a vertical gesture is `ScrollAnimator.CancelForUser`, the one cancel path of all
+three panels, and it says whether it stopped a flight: if it did, the anchor's jumping window closes at once and the
+place where the panel stands is judged as the reader's.
 
 Whether to pin right now is then answered in exactly one place, `ShouldFollow`: following is on, no jump is in
-flight, and the user does not have the wheel. Every panel reads that instead of interpreting the stuck flag
-itself. The console had been doing the latter — its append path pinned on the raw flag and therefore ignored
-the reader, which during a build made the panel impossible to scroll at all. That flag could also go stale
-there for a second reason: AvalonEdit raises an *offset* event, so content added while the reader is scrolled
-up moves nothing and raises nothing, and a hand-tracked extent delta computed at the next real event looked
-like content growth and skipped the decision entirely. The console reports offset events as such and lets the
-code that grows the document do the pinning.
+flight, the user does not have the wheel, and the host allows following at all (`followAllowed` — the console's
+project page never follows, §13.5). Every panel reads that instead of interpreting the stuck flag itself. The console
+had been doing the latter — its append path pinned on the raw flag and therefore ignored the reader, which during a
+build made the panel impossible to scroll at all. That flag could also go stale there for a second reason: AvalonEdit
+raises an *offset* event, so content added while the reader is scrolled up moves nothing and raises nothing, and a
+hand-tracked extent delta computed at the next real event looked like content growth and skipped the decision
+entirely. The console reports offset events as such and lets the code that grows the document do the pinning, and
+what it pins to is finite and vertical: the document's current end (`RequestBottom`), not AvalonEdit's scroll-to-end.
+The latter is an infinite offset, at which the editor builds only the last, empty line; the content width collapses with
+it, and so does the horizontal reading position, so a reader who had stepped sideways along a long line would be thrown
+back to the left edge by every batch. The mode switch's pin is the one place that still asks for it (§13.5).
 
-The five-second idle return is armed by the input signal too, never by scroll events. Arming it on events
-meant flowing content reset it continuously, so during a build the wait never once elapsed and a reader who
-scrolled up stayed there forever. The pill, by contrast, follows live distance rather than state transitions:
-it is a geometric affordance, and with the follow no longer changing on its own there would otherwise be
-nothing to refresh it.
+The five-second idle return is armed by vertical input, never by scroll events. Arming it on events meant flowing
+content reset it continuously, so during a build the wait never once elapsed and a reader who scrolled up stayed there
+forever. A sideways gesture re-arms it too, but only while the reader already holds the wheel: it takes none of its
+own, so a stream that is being followed is not interrupted, while a reader who has scrolled up and walks a long line
+sideways is not pulled to the bottom five seconds after the last vertical gesture. The pill, by contrast, follows live
+distance rather than state transitions: it is a geometric affordance, and with the follow no longer changing on its own
+there would otherwise be nothing to refresh it. Content that grows without moving the view re-reads the pill too: the
+text view raises a scroll event only when the offset changes, so after an append to a document that is not being
+followed — a project page, or a narrative while the reader has the wheel — the console asks for one measure and the
+anchor re-reads the pill (`RefreshPill`), which raises only if the pill flips and never scrolls or touches the follow.
+A followed document and a document swap are excluded, because between an append and the scroll that pins it the
+distance briefly crosses the threshold and the pill would flash.
 
 `ScrollArbiter` is a pure decision core. Rules: a user scroll suppresses **only** that panel; a panel receives
 at most one grant per frame and each grant bumps that panel's epoch so an in-flight animation from an earlier
@@ -4532,30 +4767,28 @@ lines.
   asks for every project line on the reader thread, the colorizer for every line it draws.
 - Appends are batched: IPC → channel → ~50 ms flush → exactly one `BeginUpdate → Insert → EndUpdate`. The
   window opens when a line arrives, not on a clock, so a console with nothing to print never wakes the pump.
-- The live document is capped at a render slice of 200 lines. That cap is a **window, not a limit**: scrolling
-  to the top pages the previous slice back in, in either mode, from the **backlog** behind the window
-  (`IConsoleBacklog`: a line count, a `Join(from, to)` that returns the lines newline-terminated, and whether it keeps
-  the live lines trimmed off the document's top); the document's first line is always an index into it. Only the
-  *source* differs. A project page's backlog is the console's own list of the page's lines (`ListBacklog`), seeded
-  from the log on disk (§5.5), and it grows as the window slides: lines trimmed off the top while the panel is
-  following are added to it, so nothing that scrolled past is unreachable. The narrative's backlog is the view
-  model's `NarrativeStore` itself — the console keeps no copy of the narrative at all, and a line trimmed off the top
-  of the document is simply a line the store already holds — in memory or in its file (below) — so the console does
-  not even read the trimmed text off the document for it. Leaving the narrative without a backlog was measured as the
-  console "losing" its history — a parallel build streams hundreds of lines a second, so the 200-line window turned
-  over in seconds and everything older became unreachable even though the text was still buffered.
-  A scroll to the top loads only after the view has been away from the top, and a document that is built anew takes
-  that state from where it settles: the narrative, pinned to its end, brings the previous slice on the first jump to
-  the top, while a project page, pinned to the top of its document, loads the lines before it only once the reader
-  has left the top and come back. Both documents are swapped in through one path (`SwapDocument`), and the swap's own
-  scroll events are not the reader's: assigning the new document clears the text view's scroll data to zero before the
-  pin reports where it lands, which the loader, still armed from the old document's position, would read as arriving at
-  the top — a narrative rebuilt over a document at its end, on `Back` or on the return from the tray, would prepend a
-  slice nobody asked for and trim it off again — and the bottom anchor, for a reader who had just scrolled, as a
-  distance of zero — a project page opened then would start following once the wait ran out, and its next live line
-  would trim its top and throw the reader to the bottom — so neither decides on them: when the swap ends the loader is
-  armed from where the document settled and the anchor follows from the end the document is pinned to (a narrative
-  follows, a project page does not), with only its pill read from the settled distance.
+- The narrative's live document is capped at a render slice of 200 lines. That cap is a **window, not a limit**:
+  scrolling to the top pages the previous slice back in from the **backlog** behind the window (`IConsoleBacklog`: a
+  line count and a `Join(from, to)` that returns the lines newline-terminated, whole or empty); the document's first
+  line is always an index into it. The narrative's backlog is the view model's `NarrativeStore` itself — the console
+  keeps no copy of the narrative at all, and a line trimmed off the top of the document is simply a line the store
+  already holds — in memory or in its file (below) — so the console never reads the trimmed text off the document.
+  Leaving the narrative without a backlog was measured as the console "losing" its history — a parallel build streams
+  hundreds of lines a second, so the 200-line window turned over in seconds and everything older became unreachable
+  even though the text was still buffered. A project page has no window: its document is the log itself, whole and
+  from its first line (`ReplaceProjectDocument`), so nothing stands behind it — its backlog is empty (`EmptyBacklog`,
+  which the view also holds until the narrative is bound) — nothing is ever trimmed off it, and a scroll to its top has
+  nothing to load. A scroll to the top of the narrative loads only after the view has been away from the top, and a
+  document that is built anew takes that state from where it settles: the narrative, pinned to its end, brings the
+  previous slice on the first jump to the top. Both documents are swapped in through one path (`SwapDocument`), and the
+  swap's own scroll events are not the reader's: assigning the new document clears the text view's scroll data to zero
+  before the pin reports where it lands, which the loader, still armed from the old document's position, would read as
+  arriving at the top — a narrative rebuilt over a document at its end, on `Back` or on the return from the tray,
+  would prepend a slice nobody asked for and trim it off again — and which the bottom anchor, for a reader who had just
+  scrolled, would read as a distance of zero, a reader at the bottom of a document not yet pinned anywhere — so neither
+  decides on them: when the swap ends the loader is armed from where the document settled and the anchor follows from
+  the end the document is pinned to (a narrative follows, a project page never does), with only its pill read from the
+  settled distance.
 - **The run's narrative has exactly one owner: the view model's `NarrativeStore`.** Every narrative line — the
   application's own and each project's output as the console writes it, every line of it or what the compact console
   keeps (below) — is appended to it under the view model's lock and before the batching pump gets it, so a line is in
@@ -4631,7 +4864,8 @@ lines.
   nothing: after a long visible run about half of the live managed heap was the whole narrative, retained behind
   a 200-line window. Every console document is created with its undo limit at zero (the console is read-only),
   so a trimmed line is freed the moment it leaves the window; the narrative's lasting copy is the store — its window in
-  memory, the rest in the run folder's `narrative.log` — a project page's the log on disk.
+  memory, the rest in the run folder's `narrative.log` — and a project page's is the log on disk. A project page is
+  never trimmed: its document holds the whole log, and it is let go of with the page.
 - **A line is only text.** There is no wall-clock column and no `▸` marker: every line starts at the same left
   edge as the caret and the line's kind is carried by colour alone. A real run streams hundreds of lines a
   second and a stamp on each of them carried no information; time lives in one place, the event stream and the
@@ -4645,29 +4879,53 @@ lines.
   line is unconditional — output empties its text, not the line — so the caret stays put and new lines pile up above
   it. The editor reserves one full line of bottom padding, measured from the text view's own line height, so the
   caret sits below the last line instead of on top of it; it hides while the reader is scrolled away from the
-  bottom, alongside the `⌄ latest` pill, since it is pinned to the panel rather than to the document. That prompt
-  caret is the console's **only** live caret. The editor is read-only but still takes keyboard focus when clicked,
-  and its own thin text caret would then blink beside the prompt's; it is painted with a transparent brush instead.
-  Only its visibility goes — the editor stays focusable, and text selection and Ctrl+C go through it as usual.
-- **While you are scrolling, the panel is yours.** A user gesture takes the wheel for five seconds — the same
+  bottom, alongside the `⌄ latest` pill, since it is pinned to the panel rather than to the document. It reads the same
+  announced value the pill does, so the two are never showing together, and it hides for the `⌄ latest` flight too: it
+  comes back when the jump window closes (560 ms after the click; at once under reduced motion, which has no flight). A
+  project page has no prompt and never shows it. That prompt caret is the console's **only** live caret. The editor is
+  read-only but still takes keyboard focus when clicked, and its own thin text caret would then blink beside the
+  prompt's; it is painted with a transparent brush instead. Only its visibility goes — the editor stays focusable, and
+  text selection and Ctrl+C go through it as usual.
+- **While you are scrolling, the panel is yours.** A vertical gesture takes the wheel for five seconds — the same
   idle window the list's frontier following uses, and the same constant — and during it arriving content
   never pulls the view down. The 48 px threshold alone was not enough: a small scroll stayed inside it, so
   the next line to arrive threw the reader back to the bottom, which during a build happens continuously.
-  When the five seconds pass with no gesture, the panel returns to the bottom and resumes following. The
-  console does not do this in project-log mode: there is no live stream to follow there and the reader is
-  looking at a log. This is a deliberate departure from §2.5, which says a reader's position is never touched
-  once they scroll away; without the return the panel simply stopped following and never came back.
+  When the five seconds pass with no gesture, the panel returns to the bottom and resumes following. A gesture that
+  stops the `⌄ latest` flight takes the panel at once, without waiting for the jump window. A sideways gesture takes
+  nothing: a followed stream stays followed, and a reading position taken sideways survives new lines, because the
+  follow's request is vertical and finite; a reader who already holds the panel and walks a long line sideways keeps
+  it, each sideways step restarting the five seconds. The return and the follow exist only in the narrative: a
+  project page never follows — there is no live stream to follow there and the reader is looking at a log — whether it
+  was just opened, its end was reached by hand or `⌄ latest` was pressed. The pill jumps to the end once and leaves
+  the page where it lands, and lines that arrive meanwhile are added after it without moving the view. This is a
+  deliberate departure from the design spec's §2.5, which says a reader's position is never touched once they scroll
+  away; without the return the panel simply stopped following and never came back.
 - **While the panel is yours, nothing is deleted from the top of it either.** The render slice trims the
   document from the beginning, and a trim moves the text out from under a reader whose scroll offset is an
   absolute pixel — the position holds still while the content races upward past it. Trimming therefore waits
   for following to resume, and then catches up in one step while the panel is already pinned to the bottom,
   where it is invisible. In the narrative that catch-up is made the moment following comes back — the bottom anchor
   announces it, whichever way it returns — and not with the next batch, so a run that has ended leaves a document at
-  its render slice instead of one swollen by what the reader scrolled through; a project page is not trimmed on that
-  signal, only by the next live line that arrives while it is followed, and is otherwise let go of with the page. The
+  its render slice instead of one swollen by what the reader scrolled through. The trim and the request for the new
+  bottom are one step, with no layout between them: when the reader had scrolled up by more than a viewport of
+  arrivals, the old vertical offset lies beyond the end of the trimmed document, and a layout run at that offset would
+  build only the last, empty line and collapse the content width — and the horizontal reading position with it. The
+  request is finite and made before any measure, and the next measure builds the lines at the bottom at their real
+  width. A project page is never trimmed at all: it never follows, and the trim is the follow's. The
   event stream has the same hazard with its 150-row buffer and solves it the other
   way: the rows do leave, and the offset is reduced by exactly the height that left, so the reader's content
   does not move. Both are the mirror of the chunk loader's prepend compensation.
+- **The keys scroll the view, not the hidden caret.** The editor's own navigation is relative to its caret, and the
+  console's caret is invisible and never moves — it sits on the first line — so every navigation key would have thrown
+  the view to the start of the document. In the console PageUp and PageDown therefore scroll one viewport, ↑ and ↓ one
+  line, ← and → and Ctrl+← and Ctrl+→ one step sideways, Home goes to the top and left edge and End to the bottom —
+  the follow's own finite request, so End keeps a sideways reading position and lands exactly at the end. None of them
+  moves the caret. They are one table (`NavigationScrolls`), answered at the editor's tunnelling preview before the
+  editor's own handler, on the narrative and on a project page alike. Shift steps still select, Alt+Shift still makes
+  a box selection and Ctrl+Home and Ctrl+End stay with the editor, so selection and Ctrl+C work as usual. A PageUp
+  that would cross the top of the narrative's slice loads the previous slice first, so the step stays a whole
+  viewport; on a project page, and at the start of the narrative, it stops at the top. Each is a gesture of the reader
+  as §13.4 defines it: the vertical keys take the wheel and stop a `⌄ latest` flight, the sideways ones do neither.
 - **Panel transitions are one piece, and the hinge is real.** Opening a project log and coming back with
   `Back` both settle the content **up from 14 px below**, hinged at its bottom edge, over 340 ms — a hinge,
   not a per-line cascade — so a three-line log and a two-hundred-line narrative open at the same rhythm. The
@@ -4727,17 +4985,20 @@ lines.
   estimate. The pin therefore repeats until the extent stops moving, and the transition re-settles the bottom
   once more when it lands — the later layout passes that position the caret and finish the visual lines arrive
   during those 340 ms. Left alone they parked the panel one line short of the end: a small gap underneath and,
-  because that is more than the 48 px threshold, an occasional `⌄ latest`.
+  because that is more than the 48 px threshold, an occasional `⌄ latest`. The pin's request for the bottom is the one
+  place the infinite offset is still asked for (`PinAfterModeSwitch`; a source guard keeps it the only one, §17.2), and
+  it deliberately starts the new document at its left edge: a mode switch is a new page, read from its left, whereas
+  the follow's own finite request keeps a reader's sideways position.
 
   **Reclaiming the follow happens after the pin, not before**, for the same reason and it is the whole of the other
   half of that pill. The pill's visibility reads distance-from-bottom alone, so announcing "we are stuck to the bottom
   again" while the editor still holds the *previous* document — at its top — measured a huge distance and showed the
   pill for exactly as long as the pin took to run. It appeared and vanished on every `Back`. Ordered after the pin,
   the geometry is already right and the distance is zero. The run narrative pins to the **bottom**: the interesting
-  thing is the latest line and the panel goes on following the stream. A project log pins to the **top** and opens
-  **not following**: what you are looking for in a build log is the first error, and following would have thrown you
-  to the bottom on the next live line. Scrolling down yourself hands following back, by the same rule as any other
-  user scroll. This is a deliberate departure from §5.1, which pins both directions to the bottom.
+  thing is the latest line and the panel goes on following the stream. A project log pins to the **top** — the log's
+  first line — and **never follows**: what you are looking for in a build log is the first error, and following would
+  have thrown you to the bottom on the next live line. Reaching its end by hand or with `⌄ latest` leaves the reader
+  there. This is a deliberate departure from the design spec's §5.1, which pins both directions to the bottom.
 - **A new section empties the narrative in place.** Not every operation opens one: a run, the Sync button,
   the click of Clean or Optimize, a branch change, a switch between Debug and Release and closing the workspace
   (an empty root saved in Settings) do (§10.2); a pull, the Sync a maintenance job chains and
@@ -5370,6 +5631,13 @@ button's tooltip all read from it, and a source guard forbids any production fil
 literal. The badges used to be hand-typed strings living next to a binding table that could change underneath
 them.
 
+The console's navigation keys are not shortcuts: they belong to the focused console, answer nothing outside it and
+appear in no catalog. In the console PageUp and PageDown scroll one viewport, ↑ and ↓ one line, ← and → and Ctrl+← and
+Ctrl+→ one step sideways, Home goes to the top and End to the bottom (the follow's own request, §13.4), and none of
+them moves the hidden caret. Shift steps select, Alt+Shift selects a box, and Ctrl+Home and Ctrl+End stay with the
+editor. A PageUp that would cross the top of the narrative's slice loads the previous slice first, so the page stays
+whole (§13.5).
+
 ---
 
 ## 14. Design system
@@ -5797,28 +6065,30 @@ synchronously instead of waiting for the sequencer's first tick: requesting a ru
 phase, which starts dimming every node, and the choreography only overrides that decision from its first step
 — one frame of nothing in between is one frame of the graph going out and coming back.
 
-**The run command goes out when the choreography ends**, not when the button is pressed. Overlapping the two
-was tried — send immediately, play the choreography over the engine's planning window (external update, scan,
-graph, topology, incremental) and let `runStarted` end it — and the cost was that the animation became
-conditional on how long planning took: warm repository, and `runStarted` arrived before the wave finished;
-cold, and it did not. The same click was sometimes animated and sometimes instant. A choreography
-either always plays or never does. The operation itself still begins on the first frame — the pill lights,
-the button becomes *Stop*, the console records the request — and only the command waits. The view-model owns
-the scope and awaits a gate; the shell owns the timing and closes it.
+**The run command goes out when the choreography ends** — and, if the engine was asleep, once its wake has
+finished too — not when the button is pressed. Overlapping the two was tried — send immediately, play the
+choreography over the engine's planning window (external update, scan, graph, topology, incremental) and let
+`runStarted` end it — and the cost was that the animation became conditional on how long planning took: warm
+repository, and `runStarted` arrived before the wave finished; cold, and it did not. The same click was sometimes
+animated and sometimes instant. A choreography either always plays or never does. The operation itself still begins
+on the first frame — the pill lights, the button becomes *Stop*, the console records the request — and only the
+command waits. A sleeping engine does not lengthen the wave: its wake starts at the click and runs beside it, so the
+command waits for whichever ends later (§4.7); that is not the overlap given up above, since a wake is not planning and
+never ends the wave. The view-model owns the scope and awaits a gate; the shell owns the timing and closes it.
 
 **Choreographies play only on a visible window.** On a hidden one — a build started from the tray with the global
 hotkey, or one that drops to the tray mid-run — the scope is marked in a single step and the command goes out at
-once: the very branch reduced motion takes, and the step holds between a sequence's operations are skipped the
-same way. Hiding the window cuts whatever is playing: the opening choreography releases the waiting command on
-the spot (the marks stay, so the run still takes over from them), and a running end finale stops and hands the
-filter back. While the window stays hidden nothing new starts, and a run that ends there skips its finale and
-returns the filter at once. The whole rule hangs on one signal, the inherited attached property
-`HiddenSurface.IsHidden`, which the window writes from its own visibility (`IsVisibleChanged`, and at start-up when
-it begins in the tray). It is deliberately a signal of its own rather than `IsVisible`: the window sets it
-explicitly, so a tree that was never shown — every headless test — is not mistaken for a hidden window. The
-measurement behind the rule: started from the tray with the hotkey, most of the wait before the engine began was
-an opening animation nobody could see. "Either always plays or never does" is a rule about a *visible* window —
-there it still holds.
+once, once the engine has woken if it was asleep: the very branch reduced motion takes, and the step holds between a
+sequence's operations are skipped the same way. Hiding the window cuts whatever is playing: the opening
+choreography releases the waiting command on the spot (the marks stay, so the run still takes over from them), and
+a running end finale stops and hands the filter back. While the window stays hidden nothing new starts, and a run
+that ends there skips its finale and returns the filter at once. The whole rule hangs on one signal, the inherited
+attached property `HiddenSurface.IsHidden`, which the window writes from its own visibility (`IsVisibleChanged`, and
+at start-up when it begins in the tray). It is deliberately a signal of its own rather than `IsVisible`: the window
+sets it explicitly, so a tree that was never shown — every headless test — is not mistaken for a hidden window. The
+measurement behind the rule: started from the tray with the hotkey, most of the wait before the engine began was an
+opening animation nobody could see. "Either always plays or never does" is a rule about a *visible* window — there it
+still holds.
 
 **The choreography's last frame holds until the run takes over.** When the sequence ends on its own the driver
 releases the gate but keeps its final step: the settled opacities — 0.13 on the scope, the very value the
@@ -5832,8 +6102,9 @@ opacities with no step left to take. The prototype starts the run in the same in
 a real engine, holding the frame is the equivalent. Letting the sequence fall back to full brightness and
 dimming again seconds later, when the run began, read as a double fade.
 
-Because nothing has been sent yet, **Stop during the choreography cancels the run rather than stopping it**:
-no `startRun`, no `stopRun`, and the console says `Cancelled — build not started`.
+Because nothing has been sent yet, **Stop during the choreography cancels the run rather than stopping it** — and so
+does Stop while the run still waits for a sleeping engine to wake (§4.7): no `startRun`, no `stopRun`, and the console
+says `Cancelled — build not started`.
 
 The wait is also why `queued` is derived from a run that is *live*, not from one that has merely been
 requested — one whose click has happened while the opening choreography is still playing. Were that request
@@ -5980,12 +6251,13 @@ opposite of that and are encouraged. Toasts and in-app popups do not exist.
 Rows are focusable with a tab index; Enter toggles selection; arrow keys navigate. The focus ring is 2 px amber
 at 50 % with a 1 px offset. Dialogs trap focus; popovers manage it explicitly. `AutomationProperties.Name` is
 set from one central name table so the same element cannot be named two ways. The live regions are the ribbon's
-phase text, assertive and announced when the phase changes; the discovery counter (§13.2), polite and announced
-once when the count changes — its automation name is written with the text, because a block built from two runs
-reports an empty `Text` once the runs are rewritten; and the update restart screen's step line (§13.3), polite
-and announced once per step rather than per frame. Each region decides when it speaks; how it speaks is one
-helper (`LiveRegion`), which finds or creates the element's automation peer and raises the live-region event, so
-no region raises it on its own. Contrast is asserted by test for every text token, including the dim ones.
+phase text, assertive and announced when the phase changes and when the engine-starting line (§13.2) appears or
+goes; the discovery counter (§13.2), polite and announced once when the count changes — its automation name is
+written with the text, because a block built from two runs reports an empty `Text` once the runs are rewritten; and
+the update restart screen's step line (§13.3), polite and announced once per step rather than per frame. Each region
+decides when it speaks; how it speaks is one helper (`LiveRegion`), which finds or creates the element's automation
+peer and raises the live-region event, so no region raises it on its own. Contrast is asserted by test for every text
+token, including the dim ones.
 
 Every `UserControl` of the app reports a real automation role — a project row is a list item, the panels are
 panes, the menus are menus, the marks are images — never WPF's default *custom* type (`UserControlRolePeer`, pinned
@@ -6016,7 +6288,7 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 | `source-hash-cache.json` | source content hashes keyed by path, size and modification time (§7.1) — this is what turns the content decision into one stat pass per run | falls back to empty (the next run re-reads and rebuilds it) |
 | `run-inflight.json` | the ids of the projects the engine has dispatched and not yet reported — written at dispatch, erased at the result, emptied at the end of every run; left non-empty only by an engine that died mid-run, and read once at the next engine start (§8.7). Absent while no run is in flight | an unparsable file is deleted and nothing is recovered; an unreadable one stays for the next start |
 | `msbuild\wpf-temporary-assembly.targets`, `msbuild\wpf-temporary-assembly-friend.cs` | the two files behind `-p:CustomBeforeMicrosoftCommonTargets` (§9.2). An engine writes them the first time it resolves `MSBuild.exe` — on its first run or its first Optimize — and only when the content on disk differs from its own; both files carry a fixed, old modification time however they were written (§9.2); the path carries no version, and a missing or edited file is repaired the next time a new engine resolves MSBuild | rewritten from the engine's own copy the next time a new engine resolves MSBuild; if they cannot be written or pinned, builds run without the argument |
-| `ui-state.json` | layout mode + three splits, repository root, configuration, perf mode, layer patterns, external roots (path) and whether to update them (§10.4), whether to stash before a branch switch (§10.3), whether *Resolve cycles* runs at full priority (§11.1) and whether the console is compact (§13.5) — both on when the field is absent —, hotkey, *Start with Windows* (`Autostart`) and *Start minimized to tray*, whether closing the window hides to the tray and whether tray notifications are shown (§12.3), tray-balloon-shown, last-seen release-notes version. The branch is not stored: it is whatever is checked out. Fields older versions wrote and this one no longer reads are ignored | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
+| `ui-state.json` | layout mode + three splits, repository root, configuration, perf mode, layer patterns, external roots (path) and whether to update them (§10.4), whether to stash before a branch switch (§10.3), whether *Resolve cycles* runs at full priority (§11.1), whether the console is compact (§13.5) and whether an idle engine is stopped (§4.7) — all three on when the field is absent —, the gestures of the two global hotkeys (show/hide and build, §12.3), *Start with Windows* (`Autostart`) and *Start minimized to tray*, whether closing the window hides to the tray and whether tray notifications are shown (§12.3), tray-balloon-shown, last-seen release-notes version. The branch is not stored: it is whatever is checked out. Fields older versions wrote and this one no longer reads are ignored | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
 
 *Start with Windows* additionally writes one `HKCU\...\Run` value, and turning it on removes Task Manager's
 disabled mark for that value under `HKCU\...\Explorer\StartupApproved\Run` when there is one (§12.3).
@@ -6092,30 +6364,78 @@ guards. It targets `net10.0-windows` with `UseWPF` because a meaningful portion 
 STA thread.
 
 Shared test infrastructure lives in one place per concern rather than being copied: resource realization
-(`DsResources`, `IconResources`), window and dialog hosts (`MainWindowHost` — with the MSBuild lines the console tests
-feed, `WarningLine`, `ErrorLine` and `CommandLine` —, `SettingsDialogHost`, `AboutDialogHost`, `SplitterHost`,
-`GraphTestView`), shared assertions (`FocusTrap`, the modal focus-trap proof both dialogs use), input synthesis
-(`MouseInput`, the one place a real mouse press or wheel is raised, both halves of the gesture or the tunnel alone),
-dispatcher pumping and animation hosting (`DispatcherPump`, `AnimationHost`, `MotionScope`), a manual STA thread for
-tests that must skip dynamically (`StaThread` — the STA runner does not recognise a skip), the console document
+(`DsResources`, `IconResources`), window and dialog hosts (`MainWindowHost` — which holds the one console batcher whose
+pump never ticks (`NeverTickingBatcher`) and the one a test drains (`DrainableBatcher`), the lookup and the press of a
+window key binding (`KeyBindingOf`, `PressKeyBinding`), the console-line counter (`Occurrences`), the engine host the
+fixture built (`EngineOf`) and `NeutralizeExitSeams`, which makes the shell's two exit seams no-ops so that a test
+asking for a full exit closes nothing —, `SettingsDialogHost` — with `GeneralSwitch` and `CatalogRow`, the lookups of
+a General switch and of its catalog row —, `AboutDialogHost`, which takes the clock that puts an engine to sleep under
+it, `SplitterHost`, `GraphTestView`), the MSBuild-shaped lines the console tests feed (`MsBuildLines`: `Warning`, a
+realistic warning as long as a real build line; `WarningLine`, `ErrorLine` and `CommandLine`, the inline lines of the
+compact console's tests; and `BudgetWarning`, the memory budget's fixed input), shared assertions (`FocusTrap`, the
+modal focus-trap proof both dialogs use), input synthesis (`MouseInput`, the shared place a real mouse press or wheel
+is raised — the only one for the wheel — both halves of the gesture or the tunnel alone, the horizontal wheel
+included; `KeyInput`, its keyboard twin and the one place a key event is built, which takes the presentation source
+from outside for a window that is not
+shown; `CommandPress`, whose `Click` is the one place a button's click event is raised; and `UserScrollGesture`, which
+drags the vertical or the horizontal bar of a scroll host), dispatcher pumping and animation hosting
+(`DispatcherPump`, `AnimationHost`, `MotionScope`; `ScrollAnimation`, which reads the scroll animation applied to a
+panel; and `ActiveClockInspector`, which lists the timing tree's root clocks with their owners, reads the clock
+applied to a property (`AppliedClock`) and positions a clock that plays once (`Seek`)), a manual STA thread for tests
+that must skip dynamically (`StaThread` — the STA runner does not recognise a skip), the console document
 (`ConsoleDocument` — a document read as lines, a laid-out bare view, the reader's scroll to the top), the console in a
-real window (`RealizedNarrative` — a rebuilt narrative pinned to its end, the reader's real keys, wheel and `⌄ latest`
-click, and the bottom anchor's timers captured rather than waited for), the narrative's spool (`SpoolDir`, a run
-folder whose disposal closes the spool before the folder goes, and `SpoolScope`, that same close for a folder the test
-does not own; `SpoolDir.NeverOnDisk` and `FailingSpoolStream.InstallOn`, the two failing-disk seams), the record of the
-commands a view model sent (`SentCommands`, thread-safe, because a real engine completes a send on another thread),
-fixtures (`GitTestRepo`, `LegacyFixture`, `SyntheticGraph`, `JobTestChildren`, `VmTopology`, `FakeMotionSignal`,
-`FakeMotionSettings`) and measurement (`PerfMeasure` — timings, and the bytes an action allocates on the test thread).
-Tests that cannot run concurrently declare it explicitly through serial collections — the CPU-saturating job tests,
-the console UI tests and the build-state store tests.
+real window (`RealizedNarrative` — a rebuilt narrative pinned to its end, project pages opened over it (`OpenPage`,
+`PageLines`), the reader's real keys, wheel, scrollbar drags and `⌄ latest` click, the reader's place in the content
+that a prepend does not move (`ContentTop`), and the bottom anchor's timers captured rather than waited for and elapsed
+on a virtual clock (`Elapse`)), the narrative as a snapshot (`NarrativeSnapshots`, whose `FromText` builds a store the
+way production does), the narrative's spool (`SpoolDir`, a run folder whose disposal closes the spool before the
+folder goes, and `SpoolScope`, that same close for a folder the test does not own; `SpoolDir.NeverOnDisk` and
+`FailingSpoolStream.InstallOn`, the two failing-disk seams), the record of the commands a view model sent
+(`SentCommands`, thread-safe, because a real engine completes a send on another thread), the General settings' chains
+(`GeneralSettingChains`, one table row per catalog row, walked by one theory class, `GeneralSettingChainTests`: a new
+setting is a catalog row and a table row, and a test fails until it has both), fixtures (`GitTestRepo`, `LegacyFixture`,
+`SyntheticGraph`, `JobTestChildren`, `VmTopology`, `FakeMotionSignal`, `FakeMotionSettings`) and measurement
+(`PerfMeasure` — timings, the bytes an action allocates on the test thread and the UI thread's CPU in cycles
+(`ThreadCycles`, `CyclesPerMs`), the one counter of the two measurement tests that read it). Tests that cannot run
+concurrently declare it explicitly through serial collections — the CPU-saturating job tests, the console UI tests and
+the build-state store tests.
 
-**Window tests write the console in full.** The production default is the compact console (§13.5), but the window
-fixture (`MainWindowHost.New`) turns it off unless a test passes `compactConsole: true`, and `null` leaves the window's
-own seed alone, for the tests that watch the start. The value is applied after the window has built itself, since
-the window seeds the switch from the saved state and would overwrite anything set before. Tests that read the
-narrative line by line — every project line in it, `N lines` counting them, the model equal to the document — assume
-the mode where every line passes; the compact console's own tests opt in, and one opens a window on its own seed to
-pin the production start with its `compact` tag.
+**The engine's sleep and wake are tested at two seams, and against a real host where the host is the subject.** The
+view model's `SleepEngine` and `WakeEngine` stand in for the host; `EngineSleepProbe` is the one fake for both. It
+counts the calls and hands back a finished, a held or a failing task, so a race is a held task rather than a sleep.
+The shell that can fall asleep (`ReadyShell`: the window with its topology streamed, the clock in the test's hand, the
+setting on and the ready path run), a bare view model on a real engine (`RealEngineVm`, for the seams' production
+defaults) and the idle window in milliseconds (`IdleAfterMs`, read from `EngineIdleRule.IdleAfter`) live there once.
+The host is tested against a real Supervisor: the job's birth notifications are awaited, never slept for (`JobBirths`),
+and a member is picked by its identity, because a completion port also reports the members already in the job — so
+`TestPaths`, which holds the Supervisor binary's path and the path of an absent one, also holds
+`IsSupervisorOtherThan`, which leaves out the engine that has just been put to sleep or killed, and the engine being
+born is caught at its birth (`StartAndCatchTheNewEngine`, local to `EngineHostTests`). `RunViewModel.WakeWork`
+is the surface on which a test observes the work a wake leaves behind. `EngineWakeTests` keeps its own helpers: one
+held wake (`HoldNextWake`), a request parked at the gate for each waking path (`WaitingAtTheGate`, which starts the
+path at its production entry without awaiting it — `Begin`), the held wake finished from the pool as production finishes
+it (`CompleteOffTheDispatcher`) and `WindowHolders`, the one list of the types that keep a window while they wait, which
+the loss theory, the drift test and a source scan (§17.2) all read.
+
+**Why the shell tests run on `[WpfFact]`.** `[StaFact]` installs no synchronization context: there a second awaiter's
+continuation lands on the thread pool, runs the view model off the UI thread and touches a bound command's
+`CanExecute`, which takes the test host down (measured, in the tests where two paths share one wake). `[WpfFact]` runs
+the test with the dispatcher's context and pump, as production does. Continuations then obey two rules, both measured
+in this harness and neither a .NET guarantee: of several awaits on one task only the first may continue inline, and
+under WPF a task completed inside the same dispatcher operation continues inline while one completed from another
+operation or from the pool is posted to the dispatcher and runs in queue order. A test of production's order therefore
+completes the held wake off the dispatcher, as production does, or makes the path under test the second waiter.
+
+**Window tests write the console in full and keep the engine awake.** The production default is the compact console
+(§13.5), but the window fixture (`MainWindowHost.New`) turns it off unless a test passes `compactConsole: true`, and
+`null` leaves the window's own seed alone, for the tests that watch the start. The value is applied after the window
+has built itself, since the window seeds the switch from the saved state and would overwrite anything set before. Tests
+that read the narrative line by line — every project line in it, `N lines` counting them, the model equal to the
+document — assume the mode where every line passes; the compact console's own tests opt in, and one opens a window on
+its own seed to pin the production start with its `compact` tag. The fixture opens with *Stop the engine when idle* off
+in the same way (`stopEngineWhenIdle: false`; `null` leaves the window's seed): a test that moves the fake clock past
+five minutes must not put the fixture's engine to sleep, and the sleep and wake tests switch the setting on once the
+fixture has returned.
 
 The release scripts are tested by running them under Windows PowerShell 5.1, the shell the release itself uses
 (`ReleaseScriptsTests`): the note cut checked against the App's own release-note parser, the release count read
@@ -6179,6 +6499,9 @@ A category of tests that assert properties of the *source*, not of a run:
 | Automation roles (`AutomationRoleTests`) | every `UserControl` of the app declares its automation role through an override in the app assembly — never WPF's default custom type, which the post-layout peer walk re-enumerates on every pass (§15) |
 | One trim definition (`MemoryTrimGuardTests`) | `GC.Collect` is written exactly once in the source, in `Core/Diagnostics/MemoryTrim.cs`; and every `RunCoordinator` the tests construct — an explicit `new`, or a target-typed one — passes a trim seam (`memoryTrim:`, not `null`), so none falls back to the real blocking collection; the rules are shown to catch each form of the call and to ignore prose |
 | One memory read (`MemoryReadGuardTests`) | the process's memory (`PrivateMemorySize64`, `GetGCMemoryInfo`, `GC.GetTotalMemory`) is read only in `Core/Diagnostics/MemoryLine.cs` (§11.4), and `GC.GetTotalMemory` only with the literal `false` — any other argument may be a hidden full collection, which the `GC.Collect` guard cannot see |
+| One engine gate (`EngineGateGuardTests`) | every request to the engine passes the gate of §4.7 and nothing walks around it: `SendWithFailureLineAsync(` is called only from the four methods that ask the gate first (`TrySendAsync`, `BeginRunAsync`, `SyncCoreAsync`, `LoadProjectLogAsync`); `SendToEngineAsync(` only from `SendWithFailureLineAsync`, and the host's `SendAsync(` — through any reference — only from `SendToEngineAsync`; a request is registered with the gate (`EngineGate.Enter`, whatever the receiver) only from `EnsureEngineAwakeAsync`, and every call of the gate holds its pass with `using`; the gate questions that `ReleaseAfterEngineLoss` asks are exactly the list of window-holding types the loss theory walks; and the branch inventory never asks the gate. The scans read code only — comments and string literals are skipped — and the call-form rules each have a proof test that catches their form of bypass. Two things stay for review: a send made inside an allowed method without asking the gate, and an allowed method bound to a delegate and called from elsewhere |
+| One infinite bottom request (`ConsoleBottomRequestGuardTests`) | the console asks for an infinite bottom (`ScrollToEnd(`) only in the mode switch's pin, `PinAfterModeSwitch`; the follow's and End's request is finite and vertical (§13.4). The scan reads code only, proves first that the pin still asks for it, and is shown to see a request outside the pin and to ignore a comment, a literal and a brace inside the pin |
+| No literal default (`GeneralSettingChainTests.No_workflow_setting_starts_from_a_literal_default`) | none of the five workflow preferences starts from a literal in the source: not the view model's field (written with `true` or `false`, or left unset), not the draft's or the apply call's parameter, not the window's seed from a key-less state (`?? true`); the catalog row is the one default (§13.3). The wire records of the contracts keep their own field defaults, which only say how a line without the field reads, and lie outside the rule. The rule is shown to catch each form, and to ignore a comment, a string and a field that reads the catalog |
 
 **Tests never run the real collection.** The operation-end trim (§11.4, §12.3) is a blocking, compacting collection of
 the whole process; paid at the end of every operation of every window and coordinator test, it would stall the suite
@@ -6246,18 +6569,24 @@ than failed: only a build the targets break turns the test red.
 A second group carries the `Measurement` category: probes and measurements that read numbers rather than
 assert rules — the tray overlay's own cost, rendered frames of its loop, the notification call, where the real
 file picker lands, UI latency and memory under each perf profile, the UI thread cost of a build's events while the
-window is hidden, the managed-memory budget of the run narrative, and the content-decision timings. The filter above
-does **not** exclude them (`!=` admits every other category value). The tray, file-picker, hidden-window, memory and
-perf probes open real windows and dialogs, show balloons, force full collections or saturate every core, so each is
-gated on an environment variable — `BO_PROBE_TRAY`, `BO_PROBE_FILE_DIALOG`, `BO_MEASURE_OVERLAY`, `BO_MEASURE_HIDDEN`,
-`BO_MEASURE_PERF`, `BO_MEASURE_MEMORY` — and reports itself as skipped unless it is set. The content-decision
-measurements are gated
-differently: they read a real repository whose root comes from `BO_MEASURE_ROOT`, `BO_MEASURE_COLD_ROOT` or
-`BO_CACHE_ROOT` with a local default, and skip only when that root is absent — on a machine where the default
-root exists they run with the normal suite. One probe lives in the application rather than the suite, because
-what it measures only exists there: with `BO_PROBE_FRAMES=<file>` the shell records the gap between every two
-frames it draws, one line per five-second window (frames drawn, longest gap, gaps over 33/50/100/250 ms), which
-is how an animation freeze under a real, full-priority run is measured; without the variable nothing is created.
+window is hidden, the managed-memory budget of the run narrative, the UI thread cost of landing at the end of a long
+project page, and the content-decision timings. The filter above does **not** exclude them (`!=` admits every other
+category value). The tray, file-picker, hidden-window, memory, perf and page-end probes open real windows and dialogs,
+show balloons, force full collections, press hundreds of keys or saturate every core, so each is gated on an
+environment variable — `BO_PROBE_TRAY`, `BO_PROBE_FILE_DIALOG`, `BO_MEASURE_OVERLAY`, `BO_MEASURE_HIDDEN`,
+`BO_MEASURE_PERF`, `BO_MEASURE_MEMORY`, `BO_MEASURE_CTRL_END` — and reports itself as skipped unless it is set. The
+page-end measurement (`ConsolePageEndMeasurementTests`) opens pages of a thousand to a hundred thousand lines of
+realistic, coloured MSBuild warnings in a real offscreen window and reads, for the editor's own Ctrl+End, the console's
+End and the follow's request itself, the wall time and the UI thread's CPU cycles of one landing and the collections
+it cost. It is a reading with no threshold; its decision rule is that Ctrl+Home and Ctrl+End join the console's key
+table (§13.5) only if, on a page of ten or twelve thousand lines, the editor's own landing costs more than 50 ms of UI
+thread CPU and far more than End does. The content-decision measurements are gated differently: they read a real
+repository whose root comes from `BO_MEASURE_ROOT`, `BO_MEASURE_COLD_ROOT` or `BO_CACHE_ROOT` with a local default, and
+skip only when that root is absent — on a machine where the default root exists they run with the normal suite. One
+probe lives in the application rather than the suite, because what it measures only exists there: with
+`BO_PROBE_FRAMES=<file>` the shell records the gap between every two frames it draws, one line per five-second window
+(frames drawn, longest gap, gaps over 33/50/100/250 ms), which is how an animation freeze under a real, full-priority
+run is measured; without the variable nothing is created.
 
 The memory budget (`NarrativeBudgetTests`) has two halves. The measurement drives a long synthetic run through the real
 shell and view model — a run that names its run folder, as the engine's do, so the narrative spools to disk (§13.5) —
@@ -6590,6 +6919,13 @@ do, and how the interface works around each — useful to know before attempting
   failed. The operation-end trim (§12.3) compacts that text but cannot release it. A spooled run still keeps one byte
   offset per line in memory until the next section. The console document holds only the render slice either way, and
   the older lines are read back from the store — from memory or from the file — when the reader scrolls up.
+- **A project page has no ceiling.** The narrative's document is a window of 200 lines, but a project page's document
+  is the project's whole log (§13.5), and the lines of a project that is still building are added to it: its memory
+  grows with the log until the page is left, and no render slice or spool applies to it.
+- **The first wide line can leave the view a scrollbar short.** The batch that first brings a line wider than the
+  panel makes the horizontal scrollbar appear after the follow's request for the bottom was made, so the view can end
+  up one scrollbar's height above the bottom until the next line arrives. That is inside the 48 px threshold, so no
+  pill shows; a second request that corrected it would risk the bar flickering in and out.
 - **The memory trim is a pause.** The collection is blocking and compacting, so it stops the UI thread for as long as
   the live heap takes to mark and compact — the longer, the more the application still holds, which is why it is
   longest right after a large run. The application only chooses its moment: once per operation, in a visible window
@@ -6672,6 +7008,17 @@ do, and how the interface works around each — useful to know before attempting
   engine from one that is busy without a word. A checkout or pull whose git write runs longer than that, or a
   build step that prints nothing for that long while a stop drains, is then cut off by the application's
   shutdown. An engine heartbeat inside those waits — the one a package restore already has — would close it.
+- **An engine that dies just as it is put to sleep counts as asleep.** The sleep and the death race for one claim on
+  the engine's generation (§4.6); when the sleep wins, the death is part of the stop, so no death is reported and the
+  next request that needs the engine wakes a fresh one. Nothing is lost — a sleep only begins when nothing is in
+  flight — but the death leaves no trace.
+- **A *Restart engine* that fails without the engine reporting a death leaves the state at Starting** (§4.7) — the old
+  process could not be killed, or the exit overtook the restart. The idle rule never puts a starting engine to sleep
+  and the gate neither wakes nor waits for it, so requests are sent as ever and fail with the usual *Engine is not
+  running.* line; if a death line is showing, *Restart engine* stays on offer.
+- **An unreadable project log looks like no log in the application.** The engine answers it as no log and writes one
+  warning on its diagnostic channel (§5.3); the App discards that channel (§4.3), so the page shows the empty-state
+  text and the line is seen only by whoever reads the engine's stderr.
 - **The global hotkeys have no settings UI** (§12.3).
 
 ---
@@ -6700,6 +7047,7 @@ execution; it only **contains** it (job object) and **throttles** it (CPU cap).
 | Layer regex | Settings editor | `Regex` constructor with a 100 ms match timeout | ReDoS closed |
 | Solution to open | row icon | `devenv "<sln>"` — hand-quoted | theoretical (below) |
 | External root path | Settings editor, or `ui-state.json` | resolved on every run (§10.4): the project files found under it become MSBuild arguments, escaped per MSVCRT rules; the working-copy root becomes the working directory of `git`/`tf` — never an argument | none |
+| Run folder of a project-log request | the engine's own `runStarted.logDirectory`, echoed back by the App on `getProjectLog` (§5.2) | a read-only path: the Supervisor reads the project's log file in it (the file name comes from a hash of the project id) only when the folder is fully qualified, directly under its logs root and named like a run folder — otherwise the answer is no log | none |
 | Update feed entry | this repository's GitHub Releases, or `BO_UPDATE_SOURCE` (§12.5) | the version is compared as SemVer; the notes go through the release-note reader and are drawn as plain text; the package is checked for size and SHA, then installed by `Update.exe` | none beyond whoever can publish a release (§21.5) |
 
 Shell injection is structurally absent: arguments are added individually to `ProcessSpec`/`ArgumentList` —
@@ -6738,6 +7086,8 @@ meaning. The one place a command line is assembled by hand (MSBuild) escapes acc
   field whose *type* changed between versions, so one stale token cannot wipe the whole file.
 - **Log line normalization:** embedded CR/LF inside one MSBuild line becomes a space, so one appended line is
   always one physical line.
+- **A project-log read never ends the engine's command loop:** the run coordinator turns every read failure into
+  no log and writes one stderr warning line, which the App discards (§5.3).
 - **Single-instance channel** is a session-scoped mutex plus a named pipe carrying the session id; a busy pipe
   backs off rather than spinning.
 - **`debugSpawnChildren` is rejected by default** and only executes when the Supervisor is started with
@@ -6762,11 +7112,15 @@ An honest list, kept because omitting it would make the guarantees above read wi
    Reaching it requires already being inside the user's account.
 5. **Supervisor arguments are not validated.** `--logs` and `--debug-hooks` are taken raw. The App passes
    neither; only tests do.
-6. **There is no field-level IPC schema validation** (§5.4). A missing field binds to `null` and surfaces at
-   the point of use as `planFailed`/`runFailed`.
+6. **There is no field-level IPC schema validation** (§5.4), apart from the project-log run folder (§21.2). A
+   missing field binds to `null` and surfaces at the point of use as `planFailed`/`runFailed`.
 7. **The cascade guarantee has two documented exceptions** (§4.2, §4.4): processes the App starts on the user's
    behalf are in no job by design, and a build step that delegates work to another parent through COM/WMI/task
    scheduler creates a process that never enters the job at all.
+8. **The project-log run folder check is lexical.** A junction or symbolic link named like a run folder inside the
+   logs root is followed when the log is read; the logs root is the user's own folder (§21.5). A path the system
+   cannot normalize — an embedded null, beyond the 32,767-character limit — is refused, never thrown: a throw would
+   count as a read failure and be warned about, while a refused folder is silent.
 
 ### 21.5 Explicitly out of the threat model
 
@@ -6817,7 +7171,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Single instance, tray icon, global hotkeys (table, show/hide decision), shutdown | `App/Shell/SingleInstance.cs`, `AppTrayIcon.cs`, `Hotkey.cs`, `App/Shell/AppShutdown.cs` |
 | Start with Windows — the `Run` value, Task Manager's disabled mark, the state the switch shows, the save-time write, the removal at uninstall (`RemoveForUninstall`) | `App/Services/AutostartService.cs` |
 | Window close decision — `X`, `Alt+F4`, system-menu *Close*: close, stay, hide to the tray or ask for a full exit — and whether a waiting exit brings the window forward | `App/Shell/WindowCloseRule.cs`; applied in `App/MainWindow.xaml.cs` (`OnClosing`) |
-| Safe full exit: the wait for work in flight, the graceful stop, the release on engine silence or death, `ExitReady` | `App/ViewModels/RunViewModel.Exit.cs`; no Sync while it waits: `RunViewModel.cs` (`SyncCoreAsync`) |
+| Safe full exit: the wait for work in flight, the graceful stop, the release on engine silence or death, `ExitReady` | `App/ViewModels/RunViewModel.Exit.cs`; no Sync once the exit is asked for, and nothing leaves the engine gate: `RunViewModel.cs` (`SyncCoreAsync`), `RunViewModel.Engine.cs` (`EnsureEngineAwakeAsync`) — both read the one flag, `_exitRequested` |
 | …its shell side: the one path tray *Exit* and `X` share, bringing the waiting window forward, the shutdown | `App/MainWindow.xaml.cs` (`RequestFullExit`, `ExitNow`) |
 | *Show notifications* on the four balloons (first close, run result, second instance, ignored Build hotkey) | `App/Shell/UiStateStore.cs` (`FirstCloseBalloonGate`), `App/Services/TrayBuildIndicatorController.cs`, `App/Shell/SecondInstanceGate.cs`, `App/MainWindow.xaml.cs` (`OnGlobalHotkey`) |
 | The ignored Build hotkey's balloon: shown only with the window hidden and *Show notifications* on; the reason is the run gate's own answer | `App/MainWindow.xaml.cs` (`OnGlobalHotkey`, `TrayNotifierForTest`), `App/ViewModels/RunViewModel.cs` (`WhyRunCannotStart`), `App/ViewModels/RunGateText.cs` (the reason sentences), `App/Shell/AppTrayIcon.cs` (`ShowBuildIgnored`, `BuildIgnoredBody`) |
@@ -6833,13 +7187,13 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | …the signals it reads on the view model — an operation ended (one writer, every end path), the run that ended, work in flight, a log reply awaited or given up on | `App/ViewModels/RunViewModel.cs` (`EndedOperationSerial`, `MarkOperationEnded`, `MarkRunEnded`, `EndedRunSerial`, `HasPendingLogLoad`, `StopAwaitingReply`), `RunViewModel.Workspace.cs` (`IsOperationInFlight`, `NotifyOperationInFlight`, `ReleaseCleanSurface`, `ReleaseOptimizeSurface`) |
 | …the finale signal | `App/Graph/GraphView.xaml.cs` (`EndFinaleFinished`) |
 | The one collection both processes use | `Core/Diagnostics/MemoryTrim.cs` |
-| A Sync's one end — release, phase decision, then the end signal, whichever of its three paths | `App/ViewModels/RunViewModel.Workspace.cs` (`EndSync`, `OnSyncCompleted`, `TryConsumeSyncFailure`, `ReleaseSyncPhase`), `RunViewModel.cs` (`ReleaseAfterEngineLoss`) |
-| The project-log load — the request id, the stitch and its one match rule, the live lines buffered for the awaited project only, the end of a load in one place, the load that is no longer awaited | `App/ViewModels/RunViewModel.cs` (`PendingLoad` — `IsFor`, `IsAnsweredBy` —, `_lastLogRequestId`, `LoadProjectLogAsync`, `OnProjectLog`, `OnProjectLogChunk`, `CompletePendingLoad`, `ClearConsoleForNewOperation`) |
+| A Sync's one end — release, phase decision, then the end signal, whichever of its three paths | `App/ViewModels/RunViewModel.Workspace.cs` (`EndSync`, `OnSyncCompleted`, `TryConsumeSyncFailure`, `ReleaseSyncPhase`), `RunViewModel.Engine.cs` (`ReleaseAfterEngineLoss`) |
+| The project-log load — the request id, the stitch and its one match rule, the live lines buffered for the awaited project only, the end of a load in one place, the load that is no longer awaited, and the one field that owns the last run's log folder, which every request carries (`runDirectory`) | `App/ViewModels/RunViewModel.cs` (`PendingLoad` — `IsFor`, `IsAnsweredBy` —, `_lastLogRequestId`, `_lastRunLogDirectory`, `LoadProjectLogAsync`, `OnProjectLog`, `OnProjectLogChunk`, `CompletePendingLoad`, `ClearConsoleForNewOperation`) |
 | View mode + splitter persistence | `App/Shell/LayoutState.cs`, `App/Shell/UiStateStore.cs`, `App/Controls/DsSplitter.cs` |
 | Keyboard semantics (key → intent, Esc chain) | `App/Shell/KeyboardShortcuts.cs` |
 | …Esc's run layer on the view model (the chain's input state, the can't-be-stopped line) | `App/ViewModels/RunViewModel.Esc.cs` |
 | Shortcut display text, descriptions and About groups (single source) | `App/Shell/ShortcutCatalog.cs` |
-| Product identity (name, version, copyright, tagline, About overview) and the grouped diagnostics model, the application's three memory rows included (read when the dialog opens and when the MSBuild resolution lands, `—` when the read fails) | `App/Services/AppIdentity.cs`, `DiagnosticsReport.cs`, `App/Views/AboutDialog.xaml.cs` (`RefreshDiagnostics`) |
+| Product identity (name, version, copyright, tagline, About overview) and the grouped diagnostics model, the application's three memory rows included (read when the dialog opens and when the MSBuild resolution lands, `—` when the read fails) and the engine PID row, which reads `asleep` while the engine sleeps (the view model's engine state rides in with the model's input) | `App/Services/AppIdentity.cs`, `DiagnosticsReport.cs`, `App/Views/AboutDialog.xaml.cs` (`RefreshDiagnostics`) |
 | Layer row placeholders (Settings, by row index) | `App/Shell/LayerPlaceholders.cs` |
 | Workspace label text (the repository root's folder name) | `App/ViewModels/TitleBarContext.cs` |
 | Release notes (What's new data, categories, fold rule) | `CHANGELOG.md` (content), `App/Services/ReleaseNotes.cs` (reader and rules) |
@@ -6861,9 +7215,15 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | The *stopped* failure reason (the user's own Stop) — single source the Supervisor writes and the App reads | `Contracts/Ipc/FailureReasons.cs` |
 | NDJSON framing, line limit, writer serialization | `Contracts/Ipc/NdjsonFraming.cs` |
 | Domain DTOs (`ProjectNode`, `BuildPlan`, `BuildState`, `LayerPattern`…) | `Contracts/Model/ProjectModels.cs` |
-| Spawning the engine, generation guard, engine-died signal; the kill and the wait for the killed process to end (`KillAndAwaitExit`) | `App/Services/EngineHost.cs` |
+| Spawning the engine, generation guard, engine-died signal; the kill and the wait for the killed process to end (`KillAndAwaitExit`); the one lifecycle gate for start, restart, sleep, wake and dispose; sleep and wake (`SleepAsync`, `WakeAsync`, `SleepExitWait`), with a wake that starts off the caller's context and a dispose that pre-empts an in-flight sleep or wake; the death–stop claim rule (`HasLiveReadyEngine`, `RetireGeneration`: a sleep claims the generation its check found alive, and a death reported first keeps the host awake) over the engine's own generation (`_engineGeneration`), the reader's filter that drops a retired generation's events, the writer taken at shutdown | `App/Services/EngineHost.cs` |
+| The idle rule and its one constant (`IdleAfter`, five minutes) | `App/Services/EngineIdleRule.cs` |
+| The view model's engine state — the one field the idle rule, the gate and the ribbon read | `App/Services/EngineState.cs`; the observable property in `App/ViewModels/RunViewModel.Engine.cs` |
+| Does a command wake a sleeping engine — one table, a row per command type | `App/Services/EngineWakeRule.cs` |
+| The requests waiting at the engine gate — their tickets, the types they hold, the draining signal and its invariant | `App/Services/EngineGate.cs` |
+| The engine's lifecycle in the view model — the idle sleep (`EvaluateEngineIdle`, `StartSleep`), the gate and its pass (`EnsureEngineAwakeAsync`, `GatePass`), the one wake (`StartWake`, `WakeEngineAsync`) and the silent refresh after a recovering wake (`RefreshAfterRecoveringWakeAsync`), the one ready transition (`EnterEngineReady`), engine loss (`ReportEngineDead`, `ReleaseAfterEngineLoss`), the ribbon's engine flags, the send, the silence watchdog, the engine's events and *Restart engine*; the main file keeps only the tick (`TickElapsed`) and the event entry (`OnEvent`) | `App/ViewModels/RunViewModel.Engine.cs` |
+| *Stop the engine when idle* — its catalog row, the draft, the apply and its console note, the settings-file key, the `ui-state.json` field, the window's seed and persistence | `App/ViewModels/GeneralSettings.cs`, `SettingsDraftViewModel.cs`, `RunViewModel.ActionBar.cs` (`ApplyStopEngineWhenIdle`), `SettingsFile.cs`, `App/Shell/UiStateStore.cs`, `App/MainWindow.xaml.cs` (`OnWorkflowPreferenceChanged`) |
 | Engine events onto the UI thread: one ordered queue, drained in time slices that yield to input and rendering | `App/Services/EngineEventPump.cs` |
-| Every command's one route to the engine: the observer is told, then the test seam or the engine takes the command — the sends that write their failure to the console and the project-log request both go through it | `App/ViewModels/RunViewModel.cs` (`SendToEngineAsync`, `TrySendAsync`, `LoadProjectLogAsync`) |
+| Every command's one route to the engine: every send asks the engine gate first (`EnsureEngineAwakeAsync`), holds its pass with `using` and gives it to the one send that is allowed (`SendWithFailureLineAsync`, whose pass is a required argument — `GatePass.None` says "nothing to hand over" openly), then the observer is told and the test seam or the engine takes the command (`SendToEngineAsync`) — the sends that write their failure to the console and the project-log request both go through it | `App/ViewModels/RunViewModel.Engine.cs` (`TrySendAsync`, `SendWithFailureLineAsync`, `SendToEngineAsync`), `RunViewModel.cs` (`BeginRunAsync`, `SyncCoreAsync`, `LoadProjectLogAsync`); the guard `EngineGateGuardTests` |
 | Supervisor entry, argument handling, stdout redirect, planner wiring, crash recovery before the host starts | `Supervisor/Program.cs` |
 | Command dispatch, per-command input gates; the `checkoutBranch` handler and its run-active rejection | `Supervisor/SupervisorHost.cs` |
 | Supervisor path resolution from assembly metadata | `App/Services/SupervisorLayout.cs` |
@@ -6928,11 +7288,12 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Bounded synchronous retry (used by state store and clipboard) | `Core/Scheduling/SyncRetry.cs` |
 | Worker loop, event pump, stop bookkeeping, perf lifecycle, cycle round loop (it applies the settled rule as it reports the members: a settled member's success is trusted, a settled carried member is reported up to date, an unsettled carried member of a group with a verdict is reported skipped with its record discarded (`ReportDiscardedCarry`), every other success is invalidated) and non-convergence memory; the build-slot budget and who holds it (a worker from dispatch to result, a cycle member from `projectStarted` to `cycleMemberHeld`); the interrupt flag and the one reporting gate that stops trusting results after it; the dependency-issue computation that precedes every compile and cannot throw (`DepIssuesForCompile`); in-flight ledger calls | `Supervisor/RunCoordinator.cs` |
 | Failure-evidence classification (compiler exit vs. timeout/stop/invoke error) — the one clause the evidence gate reads | `Core/State/FailureClassification.cs` |
-| Per-run and per-project logs, decision log; the name of the App's narrative file in the run folder | `Core/Logs/RunLogWriter.cs`, `RunLogPaths.cs` (`NarrativeFileName`), `ProjectLogNaming.cs` |
+| Per-run and per-project logs, decision log; the name of the App's narrative file in the run folder; a project's log read back — from the live writer (`SnapshotProjectLog`) or from disk (`ReadProjectLogFromDisk`, null only when the log is absent, every other read failure rising to the caller) | `Core/Logs/RunLogWriter.cs`, `RunLogPaths.cs` (`NarrativeFileName`), `ProjectLogNaming.cs` |
 | Run-log retention: the three-day window, the newest run kept, the bounded sweep and its one stderr line; the sweep started in the background at engine start | `Core/Logs/RunLogRetention.cs`, `Core/Logs/RunLogPaths.cs` (`TryParseRunDirName`), `Supervisor/Program.cs` |
-| The engine's operation-end trim and memory line: the single collection; the line format, the process read (`Read`, returning a `MemoryReading`, and the guarded `TryRead` the About dialog uses), the one MB rule (`Megabytes`) and the sink that swallows its own errors; after a run, a Sync, a Clean and an Optimize — whatever the outcome — the engine trims, then writes the line to stderr: the collection skipped while a run holds the slot, one warning line when it throws | `Core/Diagnostics/MemoryTrim.cs`, `MemoryLine.cs`, `Supervisor/RunCoordinator.cs` (`TrimAndReportMemory`, `IsRunActive`), `Supervisor/SupervisorHost.cs` (`SyncWorkspaceAsync`, `CleanWorkspaceAsync`, `OptimizeWorkspaceAsync` — each in its `finally`), the stderr channel in `Supervisor/Program.cs` |
+| The engine's operation-end trim and memory line: the single collection; the line format, the process read (`Read`, returning a `MemoryReading`, and the guarded `TryRead` the About dialog uses), the one MB rule (`Megabytes`) and the sink that swallows its own errors (written once, in `DiagnosticLine.Write`); after a run, a Sync, a Clean and an Optimize — whatever the outcome — the engine trims, then writes the line to stderr: the collection skipped while a run holds the slot, one warning line when it throws | `Core/Diagnostics/MemoryTrim.cs`, `MemoryLine.cs`, `Supervisor/RunCoordinator.cs` (`TrimAndReportMemory`, `IsRunActive`), `Supervisor/SupervisorHost.cs` (`SyncWorkspaceAsync`, `CleanWorkspaceAsync`, `OptimizeWorkspaceAsync` — each in its `finally`), the stderr channel in `Supervisor/Program.cs` |
 | Log chunking for the UI | `Core/Logs/LogChunker.cs` |
-| The project-log answer: the request's id echoed on every chunk, "no log" as one empty flagged chunk | `Supervisor/SupervisorHost.cs` (`SendProjectLogAsync`), `Supervisor/RunCoordinator.cs` (`TryGetProjectLogSnapshot`), `Contracts/Ipc/IpcMessages.cs` (`GetProjectLogCommand`, `ProjectLogChunkEvent`) |
+| The project-log answer: the request's id echoed on every chunk, "no log" as one empty flagged chunk; the three sources (the live run, the engine's latest run, the folder the request names — for an engine that has run nothing itself), the one place that turns a read failure into no log with its single warning line (`TryGetProjectLogSnapshot`, the line itself through `ReportDiagnostic`), and the folder rule | `Supervisor/SupervisorHost.cs` (`SendProjectLogAsync`), `Supervisor/RunCoordinator.cs` (`TryGetProjectLogSnapshot`, `ReportDiagnostic`; `logsRoot`, the one entry of the logs root), `Core/Logs/RunLogPaths.cs` (`TryGetRunDirectory`), `Contracts/Ipc/IpcMessages.cs` (`GetProjectLogCommand`, `ProjectLogChunkEvent`) |
+| Writing a diagnostic line and swallowing the write's own failure — the one place, shared by the engine's memory line and the coordinator's two warnings that ride a reply or a close (the unreadable project log, the failed trim) | `Core/Diagnostics/DiagnosticLine.cs` (`Write`), `MemoryLine.cs`, `Supervisor/RunCoordinator.cs` (`ReportDiagnostic`) |
 
 **Build execution**
 
@@ -7019,7 +7380,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Run state, rows, counters, commands | `App/ViewModels/RunViewModel*.cs` |
-| Ribbon phase lines and ETA display | `App/ViewModels/RibbonText.cs` |
+| Ribbon phase lines and ETA display, with the texts that pre-empt them in their order — the engine-starting line included | `App/ViewModels/RibbonText.cs` |
 | The Stop button's three stages and their labels, shared by the action bar, the tray item and the row icon | `App/ViewModels/StopText.cs` |
 | Event stream composition and wording | `App/ViewModels/StreamComposer.cs`, `StreamText.cs`, `StreamEventViewModel.cs` |
 | Filter rule, chip labels and active-chip colours (multi-select set) | `App/ViewModels/ProjectFilter.cs` |
@@ -7031,7 +7392,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Interaction copy (console notes, empty states, the discovery blocks' texts and counter line); the list-state decision (`ListInvite.Resolve`) | `App/ViewModels/InteractionText.cs` |
 | Discovery state while a Sync finds the project set — when it opens and closes, the cumulative counter, the breakdown snapshot | `App/ViewModels/RunViewModel.Discovery.cs`; opened in `RunViewModel.cs` (`SyncCoreAsync`), closed in `RunViewModel.Workspace.cs` (`OnWorkspaceTopology`, `EndSyncMode`) |
 | Settings draft state (layers, external roots + pending root, Save gate and its footer reason) | `App/ViewModels/SettingsDraftViewModel.cs` |
-| Settings General page catalog (groups, rows, defaults, dependencies — *Stash and switch branches* included) and its row state | `App/ViewModels/GeneralSettings.cs`, `App/Resources/Controls.xaml` (`Ds.Settings.ToggleRow`) |
+| Settings General page catalog (groups, rows, defaults, dependencies — *Stash and switch branches* and the Engine group included), the one default of every setting (`DefaultOf`) and its row state | `App/ViewModels/GeneralSettings.cs`, `App/Resources/Controls.xaml` (`Ds.Settings.ToggleRow`) |
 | General shell switches (*Start with Windows*, *Start minimized to tray*, *Close to tray*, *Show notifications*): how each is read from and written to `ui-state.json` and the settings file, its console note, the saved-or-default value every reader asks for, the Save that notes a change | `App/Shell/ShellSwitches.cs` |
 | Settings export/import file format | `App/ViewModels/SettingsFile.cs` |
 | Inventory publishing (one notification per publish, none when unchanged) | `App/ViewModels/SnapshotCollection.cs` |
@@ -7040,7 +7401,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 
 | Behaviour | File |
 |---|---|
-| Sticky ribbon: phase, building chips, failure cluster, progress | `App/Views/StickyRibbon.xaml(.cs)` |
+| Sticky ribbon: phase, building chips, failure cluster, progress; it listens to the engine state and announces the engine-starting line | `App/Views/StickyRibbon.xaml(.cs)` |
 | Project row: stripe, dot, decision label, hover icons, play/Stop wiring, breath, shake | `App/Views/ProjectRow.xaml(.cs)`, `ProjectRowActions.xaml(.cs)`; label wording `App/ViewModels/DecisionLabel.cs` |
 | Row menu (Build · Rebuild · Clean; ⋯ and right-click) | `App/Views/ProjectRowMenu.xaml(.cs)` |
 | Single-project run commands (build · rebuild · clean), run target and lock pushed to rows | `App/ViewModels/RunViewModel.cs` (`BuildProjectCommand`, `RunTargetId`) |
@@ -7090,8 +7451,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Ending choreography: neon timings and keyframes, the moment the filter returns (`FilterReturnAtMs`) | `App/Controls/EndFinale.cs` |
 | Choreography sequencer (one timer per choreography) | `App/Controls/StepPlayer.cs` |
 | Choreography driver (rows + graph) | `App/Services/OperationChoreographer.cs` |
-| Gate the run command waits on while the opening choreography plays | `App/ViewModels/RunViewModel.cs` (`OperationChoreography`), `MainWindow.xaml.cs` |
-| The run commands' one gate — closed while workspace work is in flight — and the reason it gives; the take-back of a run still in its opening choreography | `App/ViewModels/RunViewModel.cs` (`CanRequestRun`, `WhyRunCannotStart`, `CancelPendingRun`) |
+| Gates the run command waits on: the opening choreography, and — in the same step, from the click — the engine gate, so a sleeping engine wakes beside the wave | `App/ViewModels/RunViewModel.cs` (`OperationChoreography`, `BeginRunAsync`), `MainWindow.xaml.cs` |
+| The run commands' one gate — closed while workspace work is in flight — and the reason it gives; the take-back of a run still in its opening choreography or waiting for its engine to wake | `App/ViewModels/RunViewModel.cs` (`CanRequestRun`, `WhyRunCannotStart`, `CancelPendingRun`) |
 | An open Build menu closes when the run gate closes | `App/Views/ActionBar.xaml.cs` (`CloseBuildMenuWhenGateCloses`) |
 | Wave repaint of the graph (marking step + node colours in one push) | `MainWindow.xaml.cs` (`ApplyMarkingToGraph`) |
 | Colour transition onto a token brush (the wave's amber) | `App/Controls/MotionTokens.cs` (`TransitionTokenBrush`) |
@@ -7102,11 +7463,13 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 
 | Behaviour | File |
 |---|---|
-| AvalonEdit host, batching, active line, cascade, chunk paging (an unreadable slice keeps the index and is asked for again — `PrependPreviousChunk`, `ReplaceRunDocument`; the one document swap, whose scroll events reach neither the loader nor the follow decision (`OnScrollOffsetChanged`) and which, when it ends, arms the loader from where the document settles and sets the follow from the end it is pinned to — `SwapDocument`, `SettledOffset`), cursor + row hover band, the hidden native caret; the bind to the narrative store (`BindNarrative`) and the trim to the render slice, on a batch and when following comes back (`TrimToRenderSlice`, `TrimNarrativeWhenFollowing`) | `App/Console/ConsoleView.xaml(.cs)` |
+| AvalonEdit host, batching, active line, cascade, chunk paging (an unreadable slice keeps the index and is asked for again — `PrependPreviousChunk`, `ReplaceRunDocument`; the one document swap, whose scroll events reach neither the loader nor the follow decision (`OnScrollOffsetChanged`) and which, when it ends, arms the loader from where the document settles and sets the follow from the end it is pinned to — `SwapDocument`, `SettledOffset`), cursor + row hover band, the hidden native caret; the bind to the narrative store (`BindNarrative`) and the trim to the render slice, on a batch and when following comes back, with the request for the bottom in the same step (`TrimToRenderSlice`, `TrimNarrativeWhenFollowing`); a project page's document — the log whole, from its first line, never followed, never trimmed (`ReplaceProjectDocument`, `PlayCascade`) | `App/Console/ConsoleView.xaml(.cs)` |
+| The console's keys — one table from the editor's navigation command to a scroll of the view (`NavigationScrolls`), answered at the editor's preview before its own handler (`OnPreviewNavigationCommand`), and PageUp's slice-boundary step (`PageUpOneViewport`) | `App/Console/ConsoleView.xaml(.cs)` |
+| The follow's request for the bottom — finite and vertical (`RequestBottom`, aimed at `PendingBottomOffset`), the one pin that asks for an infinite one (`PinAfterModeSwitch`); the pill re-read when content grows without moving the view (`OnVisualLinesChanged`, `RefreshPill`); the prompt caret at the live bottom (`RefreshPrompt`, read from the announced pill — `PillShown`, `AtLiveBottom`); the follow forbidden on a project page (`followAllowed`) | `App/Console/ConsoleView.xaml(.cs)`, `App/Controls/BottomAnchorBehavior.cs`; the guard `ConsoleBottomRequestGuardTests` |
 | The run narrative's one owner: its lines, slices and count; the spool to the run folder — the memory window, the offset index, block eviction, slices read back from the file outside the lock, one warning per section; and a clear that closes the file and lets go of its array and index | `App/Console/NarrativeStore.cs` |
 | Opening the narrative's spool when `runStarted` names the run folder, taking its warning after the line that met the failure or on the visible tick, flushing it when an operation ends and when the window closes for good | `App/ViewModels/RunViewModel.cs` (`BeginNarrativeSpool`, `AppendSpoolWarningLocked`, `TickElapsed`, `MarkOperationEnded`), `App/MainWindow.xaml.cs` (`OnClosed`) |
-| The backlog behind the document — the contract (`IConsoleBacklog`), the project page's own list (`ListBacklog`) and the seed the document is built from, the store plus its count (`NarrativeSnapshot`) | `App/Console/IConsoleBacklog.cs`, `ListBacklog.cs`, `NarrativeSnapshot.cs` |
-| The console's one line rule — splitting text into document lines, joining lines newline-terminated; shared by the store, the page list, the trimmed tail and the shell's project page | `App/Console/ConsoleLines.cs`, `App/MainWindow.xaml.cs` (`ProjectDocumentLines`) |
+| The backlog behind the document — the contract (`IConsoleBacklog`), the empty backlog of a project page and of a view not yet bound to the narrative (`EmptyBacklog`), and the seed the document is built from, the store plus its count (`NarrativeSnapshot`) | `App/Console/IConsoleBacklog.cs`, `EmptyBacklog.cs`, `NarrativeSnapshot.cs` |
+| The console's one line rule — splitting text into document lines, joining lines newline-terminated, ending a page's text with a newline (`Terminated`); shared by the store, the view's project text and the shell's project page, which hands the log over whole and gives an empty log its status lines (`ProjectDocumentText`) | `App/Console/ConsoleLines.cs`, `App/MainWindow.xaml.cs` (`ProjectDocumentText`) |
 | Line colouring and the one classification behind it — the canonical diagnostic parse and its code (`Classify(span, out code)`), the application's warning prefix — its one definition, which the event stream's prefix drop also reads (`OwnWarningPrefix`, `IsOwnWarning`; `StreamText.RunStartWarning`) —, the compact summary recognised by the filter's own shape (`CompactConsoleFilter.IsSummary`) | `App/Console/ConsoleColorizer.cs`, `ConsolePalette.cs`, `ConsoleLine.cs` |
 | The compact console's filter — what of a project's output reaches the narrative: one header per project, errors, the first three distinct warnings, the engine's own notes; a warning's identity; the count by code; the summary (its count inflected by `StreamText.Counted`) and its recognition; the pending summaries of a lost run | `App/Console/CompactConsoleFilter.cs` |
 | The compact console in the view model — the filter, the mode in effect and the projects' names in one place (`CompactNarrative`); the mode captured when a section opens and following the setting whenever no work is in flight; the header and the filtered line on the reader thread, the open page's full line; a summary on every result and the drain before the run's flush; the Save note; the seed, the persistence and the header tag | `App/Console/CompactNarrative.cs`, `App/ViewModels/RunViewModel.cs` (`CompactConsoleInEffect`, `RecaptureCompactWhenIdle`, `MarkOperationEnded`, `MarkRunEnded`, `ClearConsoleForNewOperation`, `OnBuildPreview`, `OnProjectLog`, `AppendCompactSummary`, `AppendPendingCompactSummaries`), `RunViewModel.Workspace.cs` (`NotifyOperationInFlight`), `RunViewModel.ActionBar.cs` (`ApplyCompactConsole`), `App/MainWindow.xaml.cs` (`OnWorkflowPreferenceChanged`) |
@@ -7139,8 +7502,9 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Cumulative layout arithmetic (rows, headers, scroll targets) | `App/Controls/LayoutMetrics.cs` |
-| Smooth scrolling, bottom anchor, follow mode | `App/Controls/ScrollAnimator.cs`, `BottomAnchorBehavior.cs`, `BottomAnchorDecision.cs`, `UserScrollSignal.cs`, `FollowScrollController.cs`, `FollowScrollDecision.cs` |
-| Horizontal wheel / touchpad routing and step | `App/Controls/HorizontalWheelScroll.cs`, `App/Shell/Win32.cs` |
+| Smooth scrolling, bottom anchor, follow mode — the anchor's follow permission (`followAllowed`), the live bottom (`AtLiveBottom`) and the announced pill (`PillShown`, which the console's caret and the stream's pill both read), the pill re-read for content that grows without moving the view (`RefreshPill`), and the jump window closed early by a gesture that stopped the flight (`NotifyUserScroll`, `EndJumpForUser`) | `App/Controls/ScrollAnimator.cs`, `BottomAnchorBehavior.cs`, `BottomAnchorDecision.cs`, `UserScrollSignal.cs`, `FollowScrollController.cs`, `FollowScrollDecision.cs` |
+| The one path by which a user gesture cancels a running scroll animation, in all three panels, and the split between vertical and sideways gestures: `UserScrollSignal.Wire(host, target, notify, sideways)` cancels through `ScrollAnimator.CancelForUser`, which reports whether it stopped a flight (the flight's clock is held by the animator); a sideways gesture reaches only the anchor's `NotifySidewaysScroll`; each panel's one animation target (`ScrollAnimationTarget`: the console's editor, the stream's and the list's scroll viewer) is read by both the animation and the signal | `App/Controls/UserScrollSignal.cs`, `ScrollAnimator.cs`, `BottomAnchorBehavior.cs`; `App/Console/ConsoleView.xaml.cs`, `App/Views/EventStreamView.xaml.cs`, `App/Controls/StickyLayerList.xaml.cs` |
+| Horizontal wheel / touchpad routing and step; the routed `Scrolled` event it raises after scrolling, which is the signal's sideways channel | `App/Controls/HorizontalWheelScroll.cs` (`ScrolledEvent`), `App/Shell/Win32.cs` |
 | Cross-panel scroll arbitration | `App/Services/ScrollArbiter.cs` |
 | Reduced-motion signal and live zeroing | `App/Services/MotionSettings.cs`, `SystemParametersMotionSignal.cs`, `IMotionSettings.cs`, `IMotionSignal.cs` |
 | One-hero budget | `App/Services/MotionCoordinator.cs`, `App/Controls/MotionGate.cs` |

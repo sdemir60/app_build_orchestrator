@@ -276,25 +276,11 @@ public class ConsoleHoverBandTests
         Assert.Same(shownClock, AppliedColorClock(brush)); // yeni animasyon başlamadı
     }
 
-    /// <summary>Fırçanın <c>Color</c> özelliğine şu an uygulanmış animasyon saati (yoksa null) — WPF bunu public
-    /// API'de sunmaz; iç <c>AnimationStorage</c>'dan okunur (yalnız test ölçümü).</summary>
-    private static object? AppliedColorClock(SolidColorBrush brush)
-    {
-        var storageType = typeof(System.Windows.Media.Animation.AnimationClock).Assembly
-            .GetType("System.Windows.Media.Animation.AnimationStorage", throwOnError: true)!;
-        var getStorage = storageType.GetMethod("GetStorage",
-            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic,
-            [typeof(DependencyObject), typeof(DependencyProperty)])!;
-        var storage = getStorage.Invoke(null, [brush, SolidColorBrush.ColorProperty]);
-        if (storage is null) return null;
-        var clocksField = storageType.GetField("_animationClocks",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-        // _animationClocks bir FrugalObjectList<AnimationClock>'tur (IList değil) — ToArray ile okunur.
-        var list = clocksField.GetValue(storage);
-        if (list is null) return null;
-        var clocks = (System.Windows.Media.Animation.AnimationClock[])list.GetType().GetMethod("ToArray")!.Invoke(list, null)!;
-        return clocks.Length > 0 ? clocks[0] : null;
-    }
+    /// <summary>Fırçanın <c>Color</c> özelliğine şu an uygulanmış animasyon saati (yoksa null) — okuma tek yerde
+    /// (<see cref="ActiveClockInspector.AppliedClock"/>; [B2 fix 1] reflection eskiden burada satır satır yazılıydı, konsolun kaydırma
+    /// animasyonu testi de aynısına ihtiyaç duyunca ortak yardımcıya taşındı).</summary>
+    private static object? AppliedColorClock(SolidColorBrush brush) =>
+        ActiveClockInspector.AppliedClock(brush, SolidColorBrush.ColorProperty);
 
     /// <summary>
     /// [Review round 1 M-1] Yarım satır kadar kaydırılınca ilk görsel satır EKRANIN ÜSTÜNDE kısmen görünür kalır
@@ -483,12 +469,17 @@ public class ConsoleHoverBandTests
     /// kalktı. Yeni uyaran ScrollViewer'ın düzen içinde yaptığı çağrının kendisidir — <c>IScrollInfo.SetVerticalOffset</c> (TextArea →
     /// TextView): gerçek olay gerçek kablodan, görsel satırlar hâlâ eski bölgedeyken ateşlenir (ön-koşullar pinli). Kurulum tepeye iki kez
     /// kaydırır: ilki kırpılan satırları geri yükleyip ofseti telafi eder, ikincisi belgenin gerçek tepesine götürür.</para>
+    /// <para>[DEĞİŞEN KURULUM — dalga 3 · B2 fix 1 O2] Eski kurulum bağsız görünüme ham <c>AppendBatch</c>'le basıyordu; kırpılan 100 satır
+    /// görünümün yer tutucu listesine düşüyor, tepeye kaydırmada oradan geri geliyordu. Yer tutucu artık boş backlog'dur (hiçbir şey saklamaz):
+    /// kurulum üretim düzenini kurar — anlatı store'u bağlanır, satırlar önce store'a, sonra batch olarak görünüme. İddia aynı.</para>
     /// </summary>
     [StaFact]
     public void Real_scroll_event_before_relayout_hides_then_the_later_VisualLinesChanged_recovers_the_band()
     {
         var view = Realized(width: 200, height: 80);
-        view.AppendBatch(string.Concat(Enumerable.Range(0, 300).Select(i => $"line{i}\n")));
+        var store = new NarrativeStore();
+        view.BindNarrative(store);
+        NarrativeSnapshots.Deliver(store, view, [.. Enumerable.Range(0, 300).Select(i => $"line{i}")]);
         view.UpdateLayout();
         view.StickToBottom = false;
         view.Editor.ScrollToVerticalOffset(0);

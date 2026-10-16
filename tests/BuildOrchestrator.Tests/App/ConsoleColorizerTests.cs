@@ -172,8 +172,8 @@ public class ConsoleColorizerTests
         [
             "  Copying file from X to Y", "Build succeeded.", "    0 Hata", "", "   ",
             "msbuild Osys.sln /m:4", "git fetch origin main",
-            MainWindowHost.WarningLine(1), "warning NU1701: package restored",
-            "csc : warning CS1591: missing doc", MainWindowHost.ErrorLine(2),
+            MsBuildLines.WarningLine(1), "warning NU1701: package restored",
+            "csc : warning CS1591: missing doc", MsBuildLines.ErrorLine(2),
             "warning: R failed in this run", "[error] runFailed: x", "A: 7 more warnings — CS1591 ×7 — see the project log",
             @"C:\Program Files\Microsoft Visual Studio\18\Enterprise\MSBuild\Current\Bin\Roslyn\csc.exe /noconfig /nowarn:1701,1702 /fullpaths /errorreport:prompt",
             .. CanonicalMsBuildErrors.Select<object[], string>(row => (string)row[0]),

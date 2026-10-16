@@ -32,7 +32,7 @@ namespace BuildOrchestrator.Tests.App;
 public class ChoreographyTests
 {
     private static RunViewModel NewVm() =>
-        new(new EngineHost(TestPaths.SupervisorExe), new ConsoleBatcher(_ => Task.Delay(Timeout.Infinite)),
+        new(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(),
             () => "r1") { RootPath = @"D:\repo" };
 
     private static ProjectNode Node(string name, int order, bool inCycle = false) =>

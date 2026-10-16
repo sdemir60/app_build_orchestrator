@@ -10,7 +10,6 @@ using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Discovery;
 using BuildOrchestrator.Core.Incremental;
 using BuildOrchestrator.Core.Git;
-using BuildOrchestrator.Core.Logs;
 using BuildOrchestrator.Core.MsBuild;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Core.Processes;
@@ -111,7 +110,7 @@ public class OptimizeDispatchTests
 
         using var job = JobObject.CreateKillOnClose();
         using var coordinator = SupervisorHostHarness.NewIdleCoordinator(job, writer, _ => { },
-            logFactory: startedAt => new RunLogWriter(box.LogsRoot, startedAt));
+            logsRoot: box.LogsRoot);
 
         var host = new SupervisorHost(writer, new NdjsonReader(stdin), job, coordinator,
             ServicesWith(box, _ => Task.FromResult<IMsBuildInvoker>(invoker)));
@@ -151,7 +150,7 @@ public class OptimizeDispatchTests
         using var job = JobObject.CreateKillOnClose();
         using var coordinator = SupervisorHostHarness.NewIdleCoordinator(job, writer, _ => { },
             planner: (_, _) => { releasePlanner.Task.GetAwaiter().GetResult(); throw new InvalidOperationException("plan yok"); },
-            logFactory: startedAt => new RunLogWriter(box.LogsRoot, startedAt));
+            logsRoot: box.LogsRoot);
 
         var host = new SupervisorHost(writer, new NdjsonReader(stdin), job, coordinator,
             ServicesWith(box, _ => Task.FromResult<IMsBuildInvoker>(invoker)));
@@ -186,7 +185,7 @@ public class OptimizeDispatchTests
 
         using var job = JobObject.CreateKillOnClose();
         using var coordinator = SupervisorHostHarness.NewIdleCoordinator(job, writer, _ => { },
-            logFactory: startedAt => new RunLogWriter(box.LogsRoot, startedAt));
+            logsRoot: box.LogsRoot);
 
         // Toolset fabrikası MsBuildResolveException DEĞİL, tamamen beklenmeyen bir hata fırlatır — servisin
         // kendi K-6 kapısı bunu yutmaz, host'un catch-all'ı tanımlı bir event'e çevirmelidir.

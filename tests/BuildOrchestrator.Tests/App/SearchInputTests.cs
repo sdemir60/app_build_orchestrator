@@ -103,9 +103,7 @@ public class SearchInputTests
         DispatcherPump.PumpUntil(() => vm.ProjectQuery == "Alpha", TimeSpan.FromSeconds(2)); // yazı modele gecikmeyle ulaşır (B5)
         Assert.Single(vm.VisibleProjects); // ön-koşul: sorgu listeyi GERÇEKTEN daraltıyor
 
-        var esc = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(box)!, 0, Key.Escape)
-        { RoutedEvent = Keyboard.PreviewKeyDownEvent };
-        box.RaiseEvent(esc); // ShellRoot ctor'da box'a asılı GERÇEK OnFilterKeyDown handler'ı
+        var esc = KeyInput.PreviewKeyDown(box, Key.Escape); // ShellRoot ctor'da box'a asılı GERÇEK OnFilterKeyDown handler'ı
         DispatcherPump.PumpUntil(() => vm.ProjectQuery == "", TimeSpan.FromSeconds(2)); // temizleme de aynı gecikmeli yoldan gider (B5)
 
         Assert.Equal("", vm.ProjectQuery);

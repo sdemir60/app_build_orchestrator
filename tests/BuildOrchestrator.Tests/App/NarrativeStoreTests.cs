@@ -77,23 +77,9 @@ public class NarrativeStoreTests
         Assert.Equal(0, spooled.Capacity);
     }
 
-    [Fact]
-    public void Trimmed_lines_are_not_stored_twice()
-    {
-        var store = new NarrativeStore();
-        store.Append("a");
-        store.AcceptTrimmed(["a"]);
-        Assert.Equal(1, store.Count);
-    }
-
-    [Fact]
-    public void A_list_backlog_grows_with_trimmed_live_lines()
-    {
-        var list = new ListBacklog(["disk1", "disk2"]);
-        list.AcceptTrimmed(["live1"]);
-        Assert.Equal(3, list.Count);
-        Assert.Equal("disk2\nlive1\n", list.Join(1, 3));
-    }
+    // [B3 · O2 adım 2] Kırpılan satırları backlog'a veren üye (AcceptTrimmed) ve onları saklayan liste (ListBacklog) kalktı; iki test
+    // onlarla gitti. "Kırpılan satır store'da iki kez durmaz" iddiası davranışla ConsoleMemoryTests.The_narrative_view_keeps_no_copy_of_the_lines'ta
+    // durur (1000 satır gelip belge kırpıldıktan sonra store 1000 satırdır); listenin büyümesinin karşılığı yoktur — üretimde kullanıcısı yoktu.
 
     /// <summary>Okuyucu (UI thread'i) yazar (IPC thread'i) eklerken dilim ister. Store yalnız büyür: okunan sayıya kadarki dilim,
     /// yazar o sırada ne yaparsa yapsın, AYNI satırlardır — sırayla ve eksiksiz. Yırtık bir okuma (yarım liste, kayan indeks)

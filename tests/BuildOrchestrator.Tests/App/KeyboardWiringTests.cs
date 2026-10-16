@@ -22,10 +22,8 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // NewVm EngineHost/VM kurar — diğer WPF StaFact'larla seri (kaynak çekişmesi deseni)
 public class KeyboardWiringTests
 {
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
-
     private static RunViewModel NewVm() =>
-        new(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        new(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
 
     /// <summary>[kullanıcı kararı 2026-09-29] Global Build, pencere içindeki Build düğmesiyle AYNI komuttur
     /// (<c>ReferenceEquals</c>) — kapısı (topoloji, uçuşta koşu, workspace işi) ikinci kez yazılmaz. Getir/gizle bir VM

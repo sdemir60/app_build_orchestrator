@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Core.ProcessControl;
+using BuildOrchestrator.Tests.ProcessControl;
 using Xunit;
 
 namespace BuildOrchestrator.Tests.Supervisor;
@@ -34,14 +35,13 @@ public class CascadeKillTests
             await writer.WriteAsync(new DebugSpawnChildrenCommand(Count: 2, Breakaway: false));
             Assert.IsType<DebugChildrenSpawnedEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(10)));
 
-            // outer IOCP tüm ağacı görür (nested üyelik mirası): supervisor + 2×cmd + 2×powershell ≥ 5
-            while (livePids.Count < 5)
+            // outer IOCP tüm ağacı görür (nested üyelik mirası): supervisor + 2×cmd + 2×powershell ≥ 5. Çıkan üye
+            // sayımdan düşer — sayaç yalnız doğumla eşiğe varır.
+            JobBirths.Until(iocp, TimeSpan.FromSeconds(10), "IOCP doğumları eksik", pid =>
             {
-                var n = iocp.WaitNext(TimeSpan.FromSeconds(10)) ?? throw new TimeoutException("IOCP doğumları eksik");
-                if (n.MessageId == NativeMethods.JOB_OBJECT_MSG_NEW_PROCESS) livePids.Add(n.Pid);
-                if (n.MessageId is NativeMethods.JOB_OBJECT_MSG_EXIT_PROCESS
-                                or NativeMethods.JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS) livePids.Remove(n.Pid);
-            }
+                livePids.Add(pid);
+                return livePids.Count >= 5;
+            }, onExit: pid => livePids.Remove(pid));
             handles = livePids.Select(pid => { try { return Process.GetProcessById(pid); } catch (ArgumentException) { return null; } })
                               .Where(p => p is not null).Cast<Process>().ToList(); // handle'ları kill ÖNCESİ aç
             Assert.True(handles.Count >= 5, $"kill öncesi {handles.Count} açık handle — beklenen ≥5 (vakum-geçiş guard)"); // [it0-devir]

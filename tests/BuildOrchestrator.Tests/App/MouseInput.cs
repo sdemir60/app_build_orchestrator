@@ -1,5 +1,8 @@
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Interop;
+using BuildOrchestrator.App.Shell;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -16,7 +19,8 @@ namespace BuildOrchestrator.Tests.App;
 /// <c>GraphPanZoomTests</c> (sinema modunda zemin basışının seçimi KALDIRMADIĞI) tarafından kullanılır —
 /// kopya YASAK (CLAUDE.md). Tekerlek de öyle: iki fazlı jesti (<see cref="Wheel"/>) <c>AboutDialogTests</c> (Environment hücreleri)
 /// ve <c>RealizedNarrative</c> (konsol), yalnız tünel yarısını (<see cref="PreviewWheel"/>) listenin takip, animasyon iptali ve
-/// başlık bandı testleri kullanır.</para>
+/// başlık bandı testleri kullanır; yatay tekerleği (<see cref="HorizontalWheel"/>) yönlendiricinin kendi testleri
+/// (<c>HorizontalWheelScrollTests</c>) ve konsolun yana jest testleri (<c>RealizedNarrative</c>).</para>
 /// </summary>
 internal static class MouseInput
 {
@@ -67,7 +71,7 @@ internal static class MouseInput
 
     /// <summary>
     /// Tekerleğin bir hareketi (<paramref name="delta"/>: pozitif yukarı). HWND/SendMessage gerekmez — WPF düz dikey tekerleği zaten
-    /// routed event olarak dağıtır (yatay tekerlek ayrıdır, bkz. <c>HorizontalWheelScroll</c>).
+    /// routed event olarak dağıtır (yatay tekerlek ayrıdır: <see cref="HorizontalWheel"/>).
     ///
     /// <para><b>İKİ faz raise edilir, çünkü WPF'in <c>InputManager</c>'ı da öyle yapar:</b> önce tünel (<c>PreviewMouseWheel</c>),
     /// önizleme YUTMADIYSA baloncuk (<c>MouseWheel</c>). Baloncuk fazı ŞARTTIR: <c>ScrollViewer</c>'ın olayı işleyip yutan class
@@ -103,6 +107,29 @@ internal static class MouseInput
         target.RaiseEvent(preview);
         return preview;
     }
+
+    /// <summary>
+    /// Yatay tekerleğin bir hareketi (<paramref name="delta"/>: pozitif sağa) — GERÇEK bir pencere mesajı (<c>WM_MOUSEHWHEEL</c>): WPF onu
+    /// routed event'e çevirmez, uygulamanın kancası (<c>HorizontalWheelScroll</c>) pencerenin mesaj yolundan yakalar. HIWORD(wParam)=delta,
+    /// lParam=<paramref name="screenPoint"/> (EKRAN koordinatı, işaretli 16-bit yarımlar — test penceresi ekran dışında olduğundan ikisi de
+    /// NEGATİFtir, üretimdeki işaretli çözümlemeyi de sürer).
+    /// <para>Kaydırma bir Dispatcher turu SONRA istenir (üretim gerekçesi: <c>HorizontalWheelScroll</c> XML-doc'u) ve viewer onu bir layout
+    /// turunda uygular — ikisi de pompalanmadan gözlemlenemez. [son temizlik · madde 1] Eskiden <c>HorizontalWheelScrollTests</c>'in özel
+    /// yardımcısıydı; konsolun yana jest testleri de aynı mesajı gönderir.</para>
+    /// </summary>
+    public static void HorizontalWheel(Window window, int delta, Point screenPoint)
+    {
+        ArgumentNullException.ThrowIfNull(window);
+        nint hwnd = new WindowInteropHelper(window).Handle;
+        nint wParam = (nint)((delta & 0xFFFF) << 16);
+        nint lParam = (nint)((((int)screenPoint.Y & 0xFFFF) << 16) | ((int)screenPoint.X & 0xFFFF));
+        SendMessage(hwnd, Win32.WM_MOUSEHWHEEL, wParam, lParam);
+        DispatcherPump.PumpUntil(() => false, TimeSpan.FromMilliseconds(60));
+        window.UpdateLayout();
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern nint SendMessage(nint hWnd, int msg, nint wParam, nint lParam);
 
     /// <summary>Capture'ın DÜŞMESİ (Alt+Tab, popup, başka öğenin capture alması). Bu bir bırakma DEĞİL
     /// iptaldir — <c>GraphView</c> onu tuş bırakmadan ayrı bir yola bağlar.</summary>

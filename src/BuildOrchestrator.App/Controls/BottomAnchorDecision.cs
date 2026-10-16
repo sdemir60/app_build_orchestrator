@@ -3,7 +3,8 @@ namespace BuildOrchestrator.App.Controls;
 /// <summary>Bir "alta yapışık" scroll'un durumu — <see cref="BottomAnchorDecision"/>'ın SAF (WPF'siz) girdi/çıktısı.</summary>
 /// <param name="IsStuck">true = dipte (≤eşik) veya en son dibe programatik atlandı; içerik büyürse dibe yapışır.</param>
 /// <param name="IsJumping">true iken bir programatik "dibe git" animasyonu uçuşta — 560ms pencere boyunca hem
-/// içerik-büyümesi yakalaması HEM kullanıcı-scroll yeniden hesabı YOK SAYILIR (Ek A-15).</param>
+/// içerik-büyümesi yakalaması HEM kullanıcı-scroll yeniden hesabı YOK SAYILIR (Ek A-15). [B2 fix 3 · madde 4] Pencere erken de kapanabilir:
+/// uçuştaki atlamayı durduran bir kullanıcı jesti onu hemen kapatır (<c>BottomAnchorBehavior.NotifyUserScroll</c>).</param>
 public readonly record struct BottomAnchorState(bool IsStuck, bool IsJumping)
 {
     public static BottomAnchorState Initial => new(IsStuck: true, IsJumping: false);
@@ -14,7 +15,9 @@ public readonly record struct BottomAnchorState(bool IsStuck, bool IsJumping)
 /// 48px'ten fazla uzaklaşırsa serbest kalır; ≤48px iken içerik büyümesi dibe yapışık tutar; dip'e programatik bir
 /// atlama (pill tıklaması) sırasında 560ms'lik bir "jumping" penceresi hem yeniden-hesabı HEM içerik-büyümesi
 /// yakalamasını bastırır ki animasyon kendi scroll event'leriyle YARIŞMASIN (prototip: <c>BuildApp.jsx</c> satır
-/// 543-568/665-699 — <c>jumping</c> ref'i + <c>setTimeout(...,560)</c>).
+/// 543-568/665-699 — <c>jumping</c> ref'i + <c>setTimeout(...,560)</c>). [B2 fix 3 · madde 4] Pencere süresini doldurmadan da kapanır:
+/// uçuştaki atlamayı durduran kullanıcı jesti onu hemen kapatır ve durulan yer bir kullanıcı kaydırması olarak yargılanır
+/// (<c>BottomAnchorBehavior.NotifyUserScroll</c>).
 ///
 /// <para><b>Takibi YALNIZ kullanıcı bırakır.</b> Bir scroll olayı üç şeyden gelebilir: kullanıcının eli, akan
 /// içerik, ya da yerleşim (viewport değişimi, yeniden ölçüm, bizim kendi programatik kaydırmamız). Karar

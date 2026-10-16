@@ -2,6 +2,7 @@ using System.Globalization;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.ViewModels;
 using Xunit.Abstractions;
+using static BuildOrchestrator.Tests.App.MsBuildLines;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -11,8 +12,9 @@ namespace BuildOrchestrator.Tests.App;
 /// (<see cref="MainWindowHost.StartBuildWithLogDirectory"/>): VM anlatıyı oradaki dosyaya yayar.
 ///
 /// <para><b>Yapısal kilit (her koşuda):</b> anlatının TEK sahibi VM'in store'udur (<see cref="NarrativeStore"/>):
-/// her satır orada bir kez durur, görünüm kendi kopyasını tutmaz (kabuk konsolu açılışta store'a bağlar —
-/// <c>ConsoleView.BindNarrative</c>) ve canlı satır tamponu yükleme yokken boştur (<c>RunViewModel.LiveLineCount</c>). (c) Bellekte
+/// her satır orada bir kez durur, görünüm kendi kopyasını tutmaz (tutacak bir listesi yoktur; kabuk konsolu açılışta store'a bağlar —
+/// <c>ConsoleView.BindNarrative</c>, bağın kanıtı <c>ConsoleMemoryTests</c>'te) ve canlı satır tamponu yükleme yokken boştur
+/// (<c>RunViewModel.LiveLineCount</c>). (c) Bellekte
 /// yalnız store'un penceresi kalır (<see cref="NarrativeStore.CharCount"/> ≤ <see cref="NarrativeStore.MemoryWindowLines"/> × en
 /// uzun satır) ve koşu klasöründeki dosya anlatının TAM satır sayısını tutar — koşunun sonu tamponu diske indirmiştir. Yeni işlem
 /// her şeyi sıfırlar (spec §6.6 d): store, spool, canlı satır tamponu, koşu metni ve konsol belgesi. Bir regresyon kilididir: tek
@@ -28,9 +30,9 @@ namespace BuildOrchestrator.Tests.App;
 /// Ölçüm üretimin TUTTUĞUNU ölçer: varsayılan fixture'ın pompası hiç tick etmez ve her satırın kanal kaydını tutar — ölçüldü,
 /// metnin ~%15'i (dalga 1'de oran 1,318: bütçeyi bu artefakt aşardı); üretimde pompa kanalı ~50 ms'de bir boşaltır. Bu yüzden test
 /// pompayı kendisi sürer: <see cref="LinesPerTick"/> satırda bir tick; satırlar üretimdeki yoldan (pompa → Dispatcher →
-/// <c>AppendConsoleBatch</c>) belgeye gider ve görünüm render dilimine kırpar. Böylece görünümdeki bir kopya da sayıya girer:
-/// konsolun store bağı atlanınca görünüm kırpılan satırları kopyalar — ölçüldü (dalga 1), oran 2,301. Bütçe gevşetilmez; aşım
-/// raporlanır.</para>
+/// <c>AppendConsoleBatch</c>) belgeye gider ve görünüm render dilimine kırpar. Böylece görünümdeki bir kopya da sayıya girer: dalga 1'de
+/// konsolun store bağı atlanınca görünüm kırpılan satırları kopyalıyordu — ölçüldü, oran 2,301 (bağsız görünüm B2'den beri kopyalamaz; kopya
+/// tutabilecek görünüm listesi B3'te kalktı). Bütçe gevşetilmez; aşım raporlanır.</para>
 ///
 /// <para><b>[idle-memory · dalga 2 · spec §6.5] Kompakt konsol KAPALI koşar</b> (fixture'ın varsayılanı —
 /// <see cref="MainWindowHost.New"/>): ölçülen, her satırı anlatıya giren büyük bir koşudur. Kompakt kipte (üretim varsayılanı) aynı
@@ -64,13 +66,13 @@ public sealed class NarrativeBudgetTests(ITestOutputHelper output)
 
     private const double BytesPerMb = 1024 * 1024;
 
-    private static string Line(int i) =>
-        $"  D:\\repo\\Project{i % 200}\\File{i}.cs(12,5): warning CS1591: Missing XML comment for publicly visible type or member 'X{i}'";
-
     /// <summary>[final review "Tasks 9-10" hijyeni] Satır sayısı koşunun başlangıcından SONRAKİ taban üstüne sayılır: başlangıç bir
     /// anlatı satırı yazsa da iddia "her <c>projectLog</c> satırı store'da bir kez"dir.
     /// <para>[idle-memory · dalga 2 · spec §6.6 (c)] Koşu bir koşu klasörü bildirir: bellekte yalnız store'un penceresi kalır ve dosya
-    /// anlatının tam satır sayısını tutar. Pencere koşunun son satırlarıdır; sınır onların en uzunuyla hesaplanır.</para></summary>
+    /// anlatının tam satır sayısını tutar. Pencere koşunun son satırlarıdır; sınır onların en uzunuyla hesaplanır.</para>
+    /// <para>[DEĞİŞEN İDDİA — B3 · O2 adım 2] Bir iddia eskiden <c>Assert.False(ConsoleViewControl.BacklogOwnsCopy)</c> idi ("görünüm
+    /// anlatının kopyasını tutmaz"). Gerekçe: B2'nin O2 adım 1'inden beri hiçbir üretim backlog'u kopya tutmuyordu — iddia her koşulda yeşildi;
+    /// soru, görünümün kopya tutabileceği tek backlog'la (<c>ListBacklog</c>) birlikte kalktı. Bağın davranış kanıtı <c>ConsoleMemoryTests</c>'tedir.</para></summary>
     [StaFact]
     public void A_synthetic_run_leaves_one_copy_of_the_text_and_no_live_line_buffer()
     {
@@ -79,15 +81,14 @@ public sealed class NarrativeBudgetTests(ITestOutputHelper output)
         using var logs = new SpoolDir(vm.Narrative);
         MainWindowHost.StartBuildWithLogDirectory(vm, logs.Path, "A");
         int baseline = vm.Narrative.Count;
-        for (int i = 1; i <= Lines; i++) MainWindowHost.LogLine(vm, "A", i, Line(i));
+        for (int i = 1; i <= Lines; i++) MainWindowHost.LogLine(vm, "A", i, BudgetWarning(i));
         Assert.Equal(baseline + Lines, vm.Narrative.Count);            // her satır store'da bir kez
         MainWindowHost.FinishBuild(vm, "A");
         DispatcherPump.DrainToIdle();
 
         Assert.Equal(0, vm.LiveLineCount);                             // yükleme yok: canlı satır tamponu boş
-        Assert.False(window.Shell.ConsoleViewControl.BacklogOwnsCopy); // görünüm anlatının kopyasını tutmaz
         long windowBound = NarrativeStore.MemoryWindowLines * (long)Enumerable
-            .Range(Lines - NarrativeStore.MemoryWindowLines + 1, NarrativeStore.MemoryWindowLines).Max(i => Line(i).Length);
+            .Range(Lines - NarrativeStore.MemoryWindowLines + 1, NarrativeStore.MemoryWindowLines).Max(i => BudgetWarning(i).Length);
         Assert.True(vm.Narrative.CharCount <= windowBound,              // (c) bellekte yalnız pencere
             $"the store keeps {vm.Narrative.CharCount} characters in memory, the window holds at most {windowBound}");
         Assert.Equal(vm.Narrative.Count, logs.ReadText().AsSpan().Count('\n')); // (c) dosya tam satır sayısında
@@ -105,13 +106,14 @@ public sealed class NarrativeBudgetTests(ITestOutputHelper output)
         vm.CompactConsole = true;
         MainWindowHost.StartBuild(vm, "A");
         int baseline = vm.Narrative.Count;
-        for (int i = 1; i <= Lines; i++) MainWindowHost.LogLine(vm, "A", i, Line(i));
+        for (int i = 1; i <= Lines; i++) MainWindowHost.LogLine(vm, "A", i, BudgetWarning(i));
         MainWindowHost.FinishBuild(vm, "A");
 
         int hidden = Lines - CompactConsoleFilter.ShownWarningsPerProject;
         string summary = string.Create(CultureInfo.InvariantCulture,
             $"A: {hidden} more warnings — CS1591 ×{hidden} — see the project log");
-        Assert.Equal(["building A", Line(1), Line(2), Line(3), summary], vm.Narrative.Slice(baseline, vm.Narrative.Count));
+        Assert.Equal(["building A", BudgetWarning(1), BudgetWarning(2), BudgetWarning(3), summary],
+            vm.Narrative.Slice(baseline, vm.Narrative.Count));
         Assert.True(vm.Narrative.CharCount < 64 * 1024, $"the compact narrative keeps {vm.Narrative.CharCount} characters");
         GC.KeepAlive(window);
     }
@@ -212,7 +214,7 @@ public sealed class NarrativeBudgetTests(ITestOutputHelper output)
         MainWindowHost.StartBuildWithLogDirectory(vm, logDirectory, "A");
         for (int i = 1; i <= Lines; i++)
         {
-            string line = Line(i);
+            string line = BudgetWarning(i);
             text += line.Length * 2L;
             MainWindowHost.LogLine(vm, "A", i, line);
             if (i % LinesPerTick == 0) Deliver(tick, vm, console);

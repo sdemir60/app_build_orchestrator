@@ -47,13 +47,15 @@ public static class Program
         using var coordinator = new RunCoordinator(
             planner: BuildRunPlan,
             msbuildFactory: ct => ResolveMsBuildAsync(innerJob, cacheRoot, ct),
-            logFactory: startedAt => new RunLogWriter(logsRoot, startedAt),
             writer: writer,
             innerJob: innerJob,
             nowMs: () => Environment.TickCount64, // MONOTONİK — duvar saati geri atlayabilir, elapsed negatife düşerdi
             console: Console.Error.WriteLine,
             stateStore: stateStore, // [Task 19] projectSucceeded → BuildState persist
-            inFlight: inFlight); // [§5.5] dispatch → Add, sonuç → Remove, koşu çıkışı → Clear
+            inFlight: inFlight, // [§5.5] dispatch → Add, sonuç → Remove, koşu çıkışı → Clear
+            // [dalga 3 · karar 37 · B1 fix 1 · O-2] Log kökünün koordinatöre TEK girişi: koşu klasörleri onun altında açılır ve kendi koşusu olmayan
+            // motor isteğin klasörünü onunla doğrular — ayrı bir yazıcı fabrikası verilmez, bağlantı kopsa koşular da log yazamazdı.
+            logsRoot: logsRoot);
         var host = new SupervisorHost(writer, new NdjsonReader(stdin), innerJob, coordinator,
             // [A5/T69] sync/branch komutları · [optimize] restore invoker'ı koordinatörle AYNI memoize
             // edilmiş toolset çözümünden gelir (ikinci bir vswhere araması yok).
