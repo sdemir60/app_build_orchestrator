@@ -198,6 +198,18 @@ public sealed class BottomAnchorBehavior
     }
 
     /// <summary>
+    /// [son temizlik · madde 1] <b>Kullanıcı YANA kaydırdı</b> — host bunu ham girdinin yana kanalından bildirir (←/→, yatay tekerlek, yatay
+    /// kaydırma çubuğu — <see cref="UserScrollSignal"/>). Yana jest direksiyonu ALMAZ: izlenen akış izlenmeye devam eder ve uçuştaki atlama
+    /// sürer. Direksiyon ZATEN kullanıcıdaysa (bir dikey jest aldı ve bekleme dolmadı) bekleme dönüşünü baştan kurar
+    /// (<see cref="ArmIdleResume"/> — koşulu orada): yukarıda uzun bir satırı yana kaydırarak okuyan okuyucunun eli hâlâ paneldedir.
+    /// <para>[DEĞİŞEN KURAL] Eskiden yana jest beklemeyi hiç kurmuyordu: yukarıda okuyup uzun bir satırı yana kaydıran okuyucu, son DİKEY
+    /// jestinden beş saniye sonra dibe çekiliyordu. Daha önce yatay çubuk dikey jestlerle aynı kanaldaydı — beklemeyi kuruyor ama direksiyonu
+    /// da alıyordu (izlenen akışta takibi beş saniye durduruyordu). Kural ikisinin arasıdır: yana jest direksiyonu almaz, yalnız tutulan
+    /// direksiyonun beklemesini uzatır.</para>
+    /// </summary>
+    public void NotifySidewaysScroll() => ArmIdleResume();
+
+    /// <summary>
     /// [B2 fix 2 · madde 2b] <b>Kullanıcının jesti uçuştaki atlamayı durdurdu: atlama penceresi ŞİMDİ kapanır</b> ve panelin durduğu yer bir
     /// kullanıcı kaydırması olarak yargılanır — pill, takip ve (konsolda) prompt imleci jestten hemen sonra okuyucuya göredir; bekleyen
     /// pencere sonu artık hiçbir şey yapmaz (kuşak sayacı). Jestin kendi kaydırması ardından gelir ve her kullanıcı kaydırması gibi
@@ -219,9 +231,10 @@ public sealed class BottomAnchorBehavior
     }
 
     /// <summary>
-    /// "Kullanıcı elini çekti" saatini BAŞTAN kurar. Dolduğunda dibe dönülür ve akış yeniden izlenir.
+    /// "Kullanıcı elini çekti" saatini BAŞTAN kurar — yalnız direksiyon kullanıcıdayken. Dolduğunda dibe dönülür ve akış yeniden izlenir.
     ///
-    /// <para><b>Yalnız <see cref="NotifyUserScroll"/> çağırır.</b> Bir ara sürümde her scroll OLAYINDA
+    /// <para><b>Yalnız ham girdi çağırır:</b> dikey jest (<see cref="NotifyUserScroll"/> — direksiyonu alıp kurar) ve yana jest
+    /// (<see cref="NotifySidewaysScroll"/> — direksiyonu almaz; tutulan direksiyonun saatini baştan kurar). Bir ara sürümde her scroll OLAYINDA
     /// kuruluyordu; derleme sürerken o olayları üreten kullanıcı değil akan içerikti, yani sayaç her satırla
     /// sıfırlanıyor ve beş saniye HİÇ dolmuyordu — sahada "kaydırdım, bekliyorum, dibe dönmüyor" diye
     /// görülen buydu. Sayaç scroll olaylarını değil, kullanıcının elini ölçer.</para>

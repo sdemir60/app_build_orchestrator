@@ -1,8 +1,6 @@
-using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using BuildOrchestrator.App.Console;
@@ -27,26 +25,6 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class HorizontalWheelScrollTests
 {
-    private const int WM_MOUSEHWHEEL = 0x020E;
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern nint SendMessage(nint hWnd, int msg, nint wParam, nint lParam);
-
-    /// <summary>Gerçek bir yatay tekerlek mesajı: HIWORD(wParam)=delta, lParam=EKRAN koordinatı (işaretli 16-bit
-    /// yarımlar — test penceresi ekran dışında olduğundan ikisi de NEGATİFtir, üretimdeki işaretli çözümlemeyi
-    /// de sürer).</summary>
-    private static void SendHorizontalWheel(Window window, int delta, Point screenPoint)
-    {
-        nint hwnd = new WindowInteropHelper(window).Handle;
-        nint wParam = (nint)((delta & 0xFFFF) << 16);
-        nint lParam = (nint)((((int)screenPoint.Y & 0xFFFF) << 16) | ((int)screenPoint.X & 0xFFFF));
-        SendMessage(hwnd, WM_MOUSEHWHEEL, wParam, lParam);
-        // Kaydırma bir Dispatcher turu SONRA istenir (üretim gerekçesi: HorizontalWheelScroll XML-doc'u) ve
-        // viewer onu bir layout turunda uygular — ikisi de pompalanmadan gözlemlenemez.
-        DispatcherPump.PumpUntil(() => false, TimeSpan.FromMilliseconds(60));
-        window.UpdateLayout();
-    }
-
     /// <summary>Yatay taşması olan, <see cref="HorizontalWheelScroll.Enable"/> edilmiş bir panel — üretimdeki
     /// konsolun kablajının birebir aynısı, ama viewer'ı stok.</summary>
     private static (ScrollViewer viewer, Border panel) OverflowingPanel()
@@ -71,7 +49,7 @@ public class HorizontalWheelScrollTests
         Assert.True(viewer.ScrollableWidth > 0); // ön-koşul: gerçekten yatay taşma var
         Assert.Equal(0, viewer.HorizontalOffset);
 
-        SendHorizontalWheel(window, Mouse.MouseWheelDeltaForOneLine, // sağa (tilt right / iki parmakla yana)
+        MouseInput.HorizontalWheel(window, Mouse.MouseWheelDeltaForOneLine, // sağa (tilt right / iki parmakla yana)
             panel.PointToScreen(new Point(panel.ActualWidth / 2, panel.ActualHeight / 2)));
 
         Assert.True(viewer.HorizontalOffset > 0);
@@ -86,13 +64,13 @@ public class HorizontalWheelScrollTests
         window.UpdateLayout();
         var center = panel.PointToScreen(new Point(panel.ActualWidth / 2, panel.ActualHeight / 2));
 
-        SendHorizontalWheel(window, Mouse.MouseWheelDeltaForOneLine, center);
+        MouseInput.HorizontalWheel(window, Mouse.MouseWheelDeltaForOneLine, center);
         Assert.True(viewer.HorizontalOffset > 0); // ön-koşul
 
-        SendHorizontalWheel(window, -Mouse.MouseWheelDeltaForOneLine, center); // sola: aynı adım kadar geri
+        MouseInput.HorizontalWheel(window, -Mouse.MouseWheelDeltaForOneLine, center); // sola: aynı adım kadar geri
         Assert.Equal(0, viewer.HorizontalOffset);
 
-        SendHorizontalWheel(window, -Mouse.MouseWheelDeltaForOneLine, center); // sol kenarda ısrar: kelepçe
+        MouseInput.HorizontalWheel(window, -Mouse.MouseWheelDeltaForOneLine, center); // sol kenarda ısrar: kelepçe
         Assert.Equal(0, viewer.HorizontalOffset);
         GC.KeepAlive(window);
     }
@@ -112,7 +90,7 @@ public class HorizontalWheelScrollTests
         window.UpdateLayout();
         Assert.True(viewer.ScrollableWidth > 0); // ön-koşul
 
-        SendHorizontalWheel(window, Mouse.MouseWheelDeltaForOneLine,
+        MouseInput.HorizontalWheel(window, Mouse.MouseWheelDeltaForOneLine,
             grid.PointToScreen(new Point(grid.ActualWidth / 2, grid.ActualHeight * 0.9))); // alt yarı = panel DEĞİL
 
         Assert.Equal(0, viewer.HorizontalOffset);
@@ -132,7 +110,7 @@ public class HorizontalWheelScrollTests
 
         host.Children.Remove(panel); // panel ağaçtan çıktı → Unloaded
         window.UpdateLayout();
-        SendHorizontalWheel(window, Mouse.MouseWheelDeltaForOneLine, center);
+        MouseInput.HorizontalWheel(window, Mouse.MouseWheelDeltaForOneLine, center);
 
         Assert.Equal(0, viewer.HorizontalOffset);
         GC.KeepAlive(window);

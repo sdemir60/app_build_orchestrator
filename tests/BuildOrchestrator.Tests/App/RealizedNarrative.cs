@@ -17,16 +17,21 @@ namespace BuildOrchestrator.Tests.App;
 ///
 /// <para>Bottom-anchor'ın zamanlayıcısı (bekleme dönüşü, atlama penceresi) konsolun seam'inden yakalanır
 /// (<c>ConsoleView.AnchorScheduleOnce</c>): hiçbir şey duvar saatiyle kendiliğinden dolmaz, test <see cref="ElapseAnchorTimers"/>
-/// ile doldurur.</para>
+/// ile doldurur (gecikmeler yok sayılır) ya da — iddia zamana bağlıysa ("beş saniye dolmadan") — sanal saati <see cref="Elapse"/> ile
+/// ilerletir.</para>
 /// </summary>
 internal sealed class RealizedNarrative : IDisposable
 {
     private readonly Window _window;
-    private readonly List<Action> _anchorTimers = [];
+    private readonly List<(TimeSpan Due, Action Callback)> _anchorTimers = [];
+
+    /// <summary>Anchor zamanlayıcılarının sanal saati — yalnız <see cref="Elapse"/> ilerletir; zamanlayıcının vadesi kurulduğu andaki
+    /// saat artı gecikmesidir.</summary>
+    private TimeSpan _anchorClock;
 
     public RealizedNarrative(int lines)
     {
-        View = new ConsoleView { AnchorScheduleOnce = (_, callback) => _anchorTimers.Add(callback) };
+        View = new ConsoleView { AnchorScheduleOnce = (delay, callback) => _anchorTimers.Add((_anchorClock + delay, callback)) };
         _window = DsResources.Realize(DsResources.NewHost(), View, 800, 600);
         Store = new NarrativeStore();
         foreach (int i in Enumerable.Range(0, lines)) Store.Append($"line{i}");
@@ -137,6 +142,17 @@ internal sealed class RealizedNarrative : IDisposable
         DispatcherPump.DrainToIdle();
     }
 
+    /// <summary>[son temizlik · madde 1] Yatay tekerleğin bir çentiği sağa, konsolun ortasında — gerçek pencere mesajı
+    /// (<see cref="MouseInput.HorizontalWheel"/>), uygulamanın kancasından (<see cref="HorizontalWheelScroll"/>) geçen yana bir jest. Kanca
+    /// yalnız yatay taşma varken kaydırır; ön-koşul olarak sınanır — aksi hâlde jest hiçbir şey yapmadan geçerdi.</summary>
+    public void WheelSideways()
+    {
+        Assert.True(HorizontalWheelScroll.FindHorizontalTarget(View) is not null, "test kurgusu: yatay tekerleğin kaydıracağı yatay taşma yok");
+        MouseInput.HorizontalWheel(_window, Mouse.MouseWheelDeltaForOneLine,
+            View.PointToScreen(new Point(View.ActualWidth / 2, View.ActualHeight / 2)));
+        DispatcherPump.DrainToIdle();
+    }
+
     /// <summary>Okuyucu tekerlekle dipten ayrılır: eşiği (<see cref="BottomAnchorDecision.DefaultThresholdPx"/>) geçene dek çentik çentik
     /// yukarı. Çentiğin kaç piksel kaydırdığı sistem ayarına bağlıdır (Windows'un "satır sayısı"), bu yüzden çentik sayısı sabit değildir.</summary>
     public void WheelAwayFromTheBottom()
@@ -158,8 +174,34 @@ internal sealed class RealizedNarrative : IDisposable
     {
         var due = _anchorTimers.ToList();
         _anchorTimers.Clear();
-        foreach (var callback in due) callback();
+        foreach (var (_, callback) in due) callback();
         DispatcherPump.DrainToIdle();
+    }
+
+    /// <summary>[son temizlik · madde 1] Okuyucunun eli <paramref name="time"/> boyunca panelden uzak: sanal saat ilerler ve vadesi bu aralığa
+    /// düşen zamanlayıcılar vade sırasıyla (eşit vadede kuruluş sırasıyla) çalışır — bir geri çağırmanın kurduğu da, vadesi aralıktaysa.
+    /// Vadesi gelmeyen bekler (eskimiş bir bekleme dolduğunda kendi kuşak sayacıyla hiçbir şey yapmaz).</summary>
+    public void Elapse(TimeSpan time)
+    {
+        var until = _anchorClock + time;
+        while (NextDue(until) is int next)
+        {
+            var (due, callback) = _anchorTimers[next];
+            _anchorTimers.RemoveAt(next);
+            _anchorClock = due; // geri çağırmanın kurduğu zamanlayıcının vadesi bu andan sayılır
+            callback();
+            DispatcherPump.DrainToIdle();
+        }
+        _anchorClock = until;
+    }
+
+    /// <summary>Vadesi <paramref name="until"/>'e dek gelen ilk zamanlayıcının sırası — en erken vade, eşitlikte ilk kurulan; yoksa <c>null</c>.</summary>
+    private int? NextDue(TimeSpan until)
+    {
+        int? next = null;
+        for (int i = 0; i < _anchorTimers.Count; i++)
+            if (_anchorTimers[i].Due <= until && (next is null || _anchorTimers[i].Due < _anchorTimers[next.Value].Due)) next = i;
+        return next;
     }
 
     public void Dispose() => _window.Close();

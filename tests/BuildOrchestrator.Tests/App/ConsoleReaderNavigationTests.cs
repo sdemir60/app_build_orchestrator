@@ -826,55 +826,110 @@ public class ConsoleReaderNavigationTests
     }
 
     /// <summary>
-    /// [B2 fix 2 · madde 2 · B2 fix 3 · madde 2] Yana bir jest (→, yatay çubuk) <c>⌄ latest</c>'in animasyonunu DURDURMAZ: dikey bir kaydırma
-    /// jesti değildir — animasyon yalnız dikey konumu sürer, jest yalnız yataydır; direksiyonu da almaz
+    /// [B2 fix 2 · madde 2 · B2 fix 3 · madde 2] Yana bir jest (→, yatay çubuk, yatay tekerlek) <c>⌄ latest</c>'in animasyonunu DURDURMAZ: dikey
+    /// bir kaydırma jesti değildir — animasyon yalnız dikey konumu sürer, jest yalnız yataydır; direksiyonu da almaz
     /// (<see cref="A_sideways_gesture_in_a_following_narrative_does_not_take_the_steering"/>).
     /// <para>KIRMIZI (→, madde 2'den önce): konsolun tuş tablosu her adımda — ←/→ dahil — animasyonu durduruyordu; kural artık jestin tek
     /// tanımındadır (<c>UserScrollSignal</c>).</para>
     /// <para>KIRMIZI (yatay çubuk, B2 fix 3 · madde 2'den önce): sinyalin çubuk kanalı yönü ayırmıyordu — yatay çubuğu sürüklemek de dikey
     /// animasyonu durduruyordu.</para>
+    /// <para>[son temizlik · madde 1] Yatay tekerlek satırı eklendi (PİN — yatay tekerlek o güne dek sinyale hiç ulaşmıyordu; artık yana kanal
+    /// olarak ulaşır ve bu satır onun animasyonu durdurmamasını korur). Anlatıya uzun bir satır eklendi: tekerleğin kancası yalnız yatay taşma
+    /// varken kaydırır.</para>
     /// </summary>
     [StaTheory]
     [InlineData("→")]
     [InlineData("horizontal bar")]
+    [InlineData("horizontal wheel")]
     public void A_sideways_gesture_during_the_latest_pills_animation_does_not_stop_it(string gesture)
     {
         using var motion = MotionScope.Enable(new FakeMotionSettings { AnimationsEnabled = true });
         using var narrative = new RealizedNarrative(lines: 400);
+        // Yatay taşma; uzun satırın altında birkaç satır: okuyucu dipten ayrılınca da uzun satır görünür alanda kalır.
+        NarrativeSnapshots.Deliver(narrative.Store, narrative.View, [LongLine(400), .. Enumerable.Range(0, 5).Select(i => $"after{i}")]);
+        DispatcherPump.DrainToIdle();
         narrative.WheelAwayFromTheBottom();
         narrative.ClickLatest();
         HoldTheJumpMidway(narrative);
 
-        if (gesture == "→") narrative.Press(Key.Right);
-        else narrative.DragTheHorizontalBar();
+        SidewaysGesture(narrative, gesture);
 
         Assert.True(ScrollAnimation.IsAnimating(narrative.View.Editor));
     }
 
     /// <summary>
-    /// [B2 fix 3 · madde 2] Akışı izleyen anlatıda yana bir jest (→, yatay çubuk) direksiyonu ALMAZ: takip sürer — gelen satırlar görünümü
-    /// dibe götürür, pill çıkmaz. Kural tek cümledir (<c>UserScrollSignal</c>): dikey jestler (tekerlek, dikey çubuk, dikey kaydırma tuşları)
-    /// direksiyonu alır ve pill uçuşunu durdurur; yana jestler (←/→, Ctrl+←/→, yatay tekerlek, yatay çubuk) ikisini de yapmaz.
-    /// <para>PİN (→): madde 3'ten beri yeşil — ← / → sinyalin tuşları değildir.</para>
+    /// [B2 fix 3 · madde 2] Akışı izleyen anlatıda yana bir jest (→, yatay çubuk, yatay tekerlek) direksiyonu ALMAZ: takip sürer — gelen satırlar
+    /// görünümü dibe götürür, pill çıkmaz. Kural tek cümledir (<c>UserScrollSignal</c>): dikey jestler (tekerlek, dikey çubuk, dikey kaydırma
+    /// tuşları) direksiyonu alır ve pill uçuşunu durdurur; yana jestler (←/→, Ctrl+←/→, yatay tekerlek, yatay çubuk) ikisini de yapmaz — yalnız
+    /// direksiyon ZATEN okuyucudaysa bekleme dönüşünü erteler
+    /// (<see cref="A_sideways_gesture_of_a_reader_holding_the_console_postpones_the_return_to_the_bottom"/>).
+    /// <para>PİN (→): madde 3'ten beri yeşil — ← / → sinyalin dikey tuşları değildir.</para>
     /// <para>KIRMIZI (yatay çubuk, madde 2'den önce): sinyalin çubuk kanalı yönü ayırmıyordu — yatay çubuğu sürüklemek direksiyonu alıyor,
     /// takibi beş saniye durduruyordu.</para>
+    /// <para>[son temizlik · madde 1] Yatay tekerlek satırı eklendi (PİN): tekerlek artık sinyalin yana kanalına ulaşır; bu satır onun direksiyonu
+    /// almamasını korur.</para>
     /// </summary>
     [StaTheory]
     [InlineData("→")]
     [InlineData("horizontal bar")]
+    [InlineData("horizontal wheel")]
     public void A_sideways_gesture_in_a_following_narrative_does_not_take_the_steering(string gesture)
     {
         using var narrative = new RealizedNarrative(lines: 400);
         NarrativeSnapshots.Deliver(narrative.Store, narrative.View, [LongLine(400)]); // yatay taşma: yatay çubuk görünür
         DispatcherPump.DrainToIdle();
 
-        if (gesture == "→") narrative.Press(Key.Right);
-        else narrative.DragTheHorizontalBar();
+        SidewaysGesture(narrative, gesture);
         NarrativeSnapshots.Deliver(narrative.Store, narrative.View, ["live0", "live1", "live2", "live3"]);
         DispatcherPump.DrainToIdle();
 
         Assert.True(narrative.IsShown("live3"), "the follow did not bring the new lines into view");
         AssertFollowingAtTheBottom(narrative);
+    }
+
+    /// <summary>
+    /// [son temizlik · madde 1] Paneli tutan okuyucunun yana jesti (→, yatay çubuk, yatay tekerlek) dibe dönüşü ERTELER: okuyucu tekerlekle
+    /// yukarı çıkar (direksiyon onda) ve beş saniye dolmadan uzun bir satırı yana kaydırır — dönüş son DİKEY jestten beş saniye sonra gelmez,
+    /// yana jestten beş saniye sonra gelir. Yana jest direksiyonu almaz
+    /// (<see cref="A_sideways_gesture_in_a_following_narrative_does_not_take_the_steering"/>); yalnız okuyucunun elinin hâlâ panelde olduğunu söyler.
+    /// <para>KIRMIZI (değişiklikten önce): yana jest bekleme dönüşünü kurmuyordu (←/→ sinyalin tuşları değildi, yatay tekerlek sinyale hiç
+    /// ulaşmıyordu, yatay çubuk B2 fix 3'ten beri süzülüyordu) — konsol son dikey jestten beş saniye sonra, okuyucu uzun satırı okurken dibe
+    /// dönüyordu (sahip gözlemi). B2 fix 3'ten önce yatay çubuk beklemeyi kuruyordu, ama direksiyonu da alıyordu.</para>
+    /// </summary>
+    [StaTheory]
+    [InlineData("→")]
+    [InlineData("horizontal bar")]
+    [InlineData("horizontal wheel")]
+    public void A_sideways_gesture_of_a_reader_holding_the_console_postpones_the_return_to_the_bottom(string gesture)
+    {
+        using var narrative = new RealizedNarrative(lines: 400);
+        // Uzun satırın altında birkaç satır: okuyucu dipten ayrılınca uzun satır görünür alanda kalır (yatay taşma görünür satırlardan ölçülür).
+        NarrativeSnapshots.Deliver(narrative.Store, narrative.View, [LongLine(400), .. Enumerable.Range(0, 5).Select(i => $"after{i}")]);
+        DispatcherPump.DrainToIdle();
+        var idle = TimeSpan.FromMilliseconds(BottomAnchorDecision.IdleResumeMs);
+        var shortly = TimeSpan.FromMilliseconds(100);
+        narrative.WheelAwayFromTheBottom(); // direksiyon okuyucuda: dönüş beş saniye sonra
+        narrative.Elapse(idle - shortly);
+        AssertReleased(narrative); // ön-koşul: bekleme henüz dolmadı
+
+        SidewaysGesture(narrative, gesture);
+        narrative.Elapse(shortly); // son DİKEY jestten beş saniye sonra
+
+        AssertReleased(narrative); // dönüş yok: yana jest beklemeyi baştan kurdu
+        narrative.Elapse(idle - shortly); // yana jestten beş saniye sonra
+        AssertFollowingAtTheBottom(narrative);
+    }
+
+    /// <summary>Okuyucunun yana bir jesti — üç kanal: → (konsolun tuş tablosu), yatay çubuk ve yatay tekerlek (uygulamanın kancası).</summary>
+    private static void SidewaysGesture(RealizedNarrative narrative, string gesture)
+    {
+        switch (gesture)
+        {
+            case "→": narrative.Press(Key.Right); break;
+            case "horizontal bar": narrative.DragTheHorizontalBar(); break;
+            case "horizontal wheel": narrative.WheelSideways(); break;
+            default: throw new ArgumentOutOfRangeException(nameof(gesture), gesture, null);
+        }
     }
 
     /// <summary>

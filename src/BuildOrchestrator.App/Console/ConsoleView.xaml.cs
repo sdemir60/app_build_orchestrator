@@ -178,10 +178,11 @@ public partial class ConsoleView : UserControl
             // (ShouldFollow) durur: kırpma, dibe çekme ve bekleme dönüşü ondan okur.
             followAllowed: () => !_projectMode);
         _bottomAnchor.Changed += OnBottomAnchorChanged;
-        // "Kullanıcı kaydırdı" HAM GİRDİDEN bildirilir — tekerlek, kaydırma çubuğu ve gezinme tuşları
+        // "Kullanıcı kaydırdı" HAM GİRDİDEN bildirilir — tekerlek, dikey kaydırma çubuğu ve dikey gezinme tuşları
         // (gerekçe: UserScrollSignal / BottomAnchorBehavior.NotifyUserScroll). [T59 · B2 fix 2 madde 2] Aynı jest uçuştaki `⌄ latest`
-        // animasyonunu durdurur — kuralın tek tanımı sinyaldedir, bir uçuşu durdurduysa atlama penceresi de kapanır.
-        UserScrollSignal.Wire(this, ScrollAnimationTarget, _bottomAnchor.NotifyUserScroll);
+        // animasyonunu durdurur — kuralın tek tanımı sinyaldedir, bir uçuşu durdurduysa atlama penceresi de kapanır. [son temizlik · madde 1]
+        // Yana jest (←/→, yatay tekerlek, yatay çubuk) ikisini de yapmaz; direksiyon okuyucudaysa yalnız bekleme dönüşünü erteler.
+        UserScrollSignal.Wire(this, ScrollAnimationTarget, _bottomAnchor.NotifyUserScroll, sideways: _bottomAnchor.NotifySidewaysScroll);
         // [idle-memory · dalga 3 · karar 46 · B2 fix 1 F2] Klavye gezintisi görünümü kaydırır, gizli imleci değil (gerekçe:
         // OnPreviewNavigationCommand).
         CommandManager.AddPreviewExecutedHandler(EditorControl, OnPreviewNavigationCommand);
