@@ -112,6 +112,14 @@ public sealed class BottomAnchorBehavior
     /// </summary>
     public bool PillShown => _lastShowPill;
 
+    /// <summary>
+    /// [B2 fix 3 · madde 9] <b>Okuyucu CANLI dipte mi</b> — takip durumu dipte (<see cref="IsStuck"/>), pill duyurulmamış (<see cref="PillShown"/>)
+    /// ve uçuşta bir atlama yok (<see cref="IsJumping"/>). Dibe bağlı bir göstergenin (konsolun prompt imleci) TEK tanımı: pill görünürken okuyucu
+    /// canlı dipten uzaktadır; atlama sürerken görünüm henüz dipte değildir (durum iyimser biçimde "dipte"dir — <see cref="BottomAnchorDecision.BeginJump"/>).
+    /// Pill'le aynı duyurulan değeri okur, canlı uzaklığı değil (gerekçe: <see cref="PillShown"/>).
+    /// </summary>
+    public bool AtLiveBottom => IsStuck && !PillShown && !IsJumping;
+
     /// <summary>Elle üzerine yaz (ör. ConsoleView.StickToBottom setter'ı ile geriye dönük uyum) — dipten uzaklığı
     /// YENİDEN HESAPLAMADAN doğrudan durumu değiştirir.</summary>
     public void ForceStuck(bool stuck)

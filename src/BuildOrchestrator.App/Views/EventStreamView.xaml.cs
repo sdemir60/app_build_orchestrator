@@ -93,7 +93,7 @@ public partial class EventStreamView : UserControl
         // "Kullanıcı kaydırdı" HAM GİRDİDEN bildirilir — tekerlek, kaydırma çubuğu ve gezinme tuşları
         // (gerekçe: UserScrollSignal / BottomAnchorBehavior.NotifyUserScroll). [B2 fix 2 madde 2] Aynı jest uçuştaki `⌄ latest`
         // animasyonunu durdurur (konsolla aynı tek kablo); bir uçuşu durdurduysa atlama penceresi de kapanır.
-        UserScrollSignal.Wire(this, PART_Scroll, _bottomAnchor.NotifyUserScroll);
+        UserScrollSignal.Wire(this, ScrollAnimationTarget, _bottomAnchor.NotifyUserScroll);
         PART_Pill.Click += (_, _) => _bottomAnchor.JumpToBottom();
         // [A13/T5] Pill'in adı host'tan gelir (hangi akışın sonu — bkz. LatestPill.AccessibleName).
         PART_Pill.AccessibleName = AccessibilityNames.LatestEvents;
@@ -505,14 +505,20 @@ public partial class EventStreamView : UserControl
     /// (ConsoleView.OnBottomAnchorChanged deseni — YALNIZ stream paneli duraklar/döner). Arbiter null ise yalnız pill.</summary>
     private void OnBottomAnchorChanged(object? sender, EventArgs e)
     {
-        PART_Pill.Visibility = _bottomAnchor.ShowPill ? Visibility.Visible : Visibility.Collapsed;
+        // [B2 fix 3 · madde 9] Pill DUYURULAN değeri okur (konsolla aynı — gerekçe: BottomAnchorBehavior.PillShown); olay anında canlı
+        // ShowPill ile eşittir, okuma yeri tektir.
+        PART_Pill.Visibility = _bottomAnchor.PillShown ? Visibility.Visible : Visibility.Collapsed;
         if (Arbiter is null) return;
         if (_bottomAnchor.IsStuck) Arbiter.Resume(ScrollPanel.Stream);
         else Arbiter.NotifyUserScroll(ScrollPanel.Stream);
     }
 
     private bool AnimateToBottom(double target) =>
-        MotionTokens.AnimateSlowEaseInOut(this, PART_Scroll, PART_Scroll.VerticalOffset, target);
+        MotionTokens.AnimateSlowEaseInOut(this, ScrollAnimationTarget, PART_Scroll.VerticalOffset, target);
+
+    /// <summary>[B2 fix 3 · madde 8] Stream'in kaydırma animasyonunun TEK hedefi: <c>⌄ latest</c> atlaması onu canlandırır
+    /// (<see cref="AnimateToBottom"/>) ve okuyucunun jesti onu durdurur (<see cref="UserScrollSignal"/>) — iki yer aynı üyeyi okur.</summary>
+    private UIElement ScrollAnimationTarget => PART_Scroll;
 }
 
 /// <summary>

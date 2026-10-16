@@ -183,7 +183,7 @@ public partial class ConsoleView : UserControl
         // "Kullanıcı kaydırdı" HAM GİRDİDEN bildirilir — tekerlek, kaydırma çubuğu ve gezinme tuşları
         // (gerekçe: UserScrollSignal / BottomAnchorBehavior.NotifyUserScroll). [T59 · B2 fix 2 madde 2] Aynı jest uçuştaki `⌄ latest`
         // animasyonunu durdurur — kuralın tek tanımı sinyaldedir, bir uçuşu durdurduysa atlama penceresi de kapanır.
-        UserScrollSignal.Wire(this, EditorControl, _bottomAnchor.NotifyUserScroll);
+        UserScrollSignal.Wire(this, ScrollAnimationTarget, _bottomAnchor.NotifyUserScroll);
         // [idle-memory · dalga 3 · karar 46 · B2 fix 1 F2] Klavye gezintisi görünümü kaydırır, gizli imleci değil (gerekçe:
         // OnPreviewNavigationCommand).
         CommandManager.AddPreviewExecutedHandler(EditorControl, OnPreviewNavigationCommand);
@@ -517,23 +517,20 @@ public partial class ConsoleView : UserControl
     }
 
     /// <summary>
-    /// [B2 fix 2 · madde 3] <b>Takibin TEK dibe gitme isteği — yalnız DİKEY ve sonlu:</b> görünümü belgenin ŞU ANKİ sonuna ister (satır
-    /// yükseklik ağacının boyu — <c>DocumentHeight</c> — eksi görünür alan), yatay okuma konumuna dokunmaz. Takip (<see cref="AppendBatch"/>,
-    /// <see cref="TrimNarrativeWhenFollowing"/>) ve End (<see cref="NavigationScrolls"/> — "takibin kendi isteği") bunu kullanır.
-    /// <para><b>Neden sonlu ve neden yükseklik ağacından:</b> AvalonEdit görsel satırları istenen konumdan kurar; +∞ konumunda yalnız son (boş)
-    /// satır kurulur — yatay içerik genişliği o satıra çöker (ölçüldü: 2940,6 → 3,0 px), yatay çubuk kaybolur (görünür alan 555,2 → 565,2 px) ve
-    /// yerleşim ofseti kenetler: yatay 0'a, dikey 10 px kısa (3154,8; dip 3164,8). Sonlu hedefte dipteki satırlar kurulur, genişlik ve çubuk
-    /// yerinde kalır. Hedefin içerik yüksekliği eklemenin hemen ardından bilinmelidir: TextView'in kaydırma verisi (<see cref="ScrollGeometry"/>)
-    /// ancak sonraki ölçümde güncellenir, yükseklik ağacı belgeyle eşzamanlıdır (sarma yok, alt boşluk yok — içerik yüksekliğinin kendisi).
-    /// Dipten uzaklık ve pill yine yalnız <see cref="ScrollGeometry"/>'den okunur.</para>
+    /// [B2 fix 2 · madde 3] <b>Takibin ve End'in dibe isteği — yalnız DİKEY ve sonlu:</b> görünümü belgenin ŞU ANKİ sonuna ister
+    /// (<see cref="PendingBottomOffset"/>), yatay okuma konumuna dokunmaz. Takip (<see cref="AppendBatch"/>, <see cref="TrimNarrativeWhenFollowing"/>)
+    /// ve End (<see cref="NavigationScrolls"/> — "takibin kendi isteği") bunu kullanır. Mod geçişinin pini (<see cref="PinAfterModeSwitch"/>)
+    /// bilerek +∞'dur ve yatayı sıfırlar: yeni belge sol kenardan okunur.
+    /// <para><b>Neden sonlu:</b> AvalonEdit görsel satırları istenen konumdan kurar; +∞ konumunda yalnız son (boş) satır kurulur — yatay içerik
+    /// genişliği o satıra çöker (ölçüldü: 2940,6 → 3,0 px), yatay çubuk kaybolur (görünür alan 555,2 → 565,2 px) ve yerleşim ofseti kenetler:
+    /// yatay 0'a, dikey 10 px kısa (3154,8; dip 3164,8). Sonlu hedefte dipteki satırlar kurulur, genişlik ve çubuk yerinde kalır. Hedefin neden
+    /// ölçülmüş dip değil bekleyen dip olduğu <see cref="PendingBottomOffset"/>'tedir.</para>
     /// <para>[DEĞİŞEN KURAL] Eskiden istek <c>TextEditor.ScrollToEnd</c>'di ("dikeyde +∞, yatayda sol kenar"): izleyen anlatıda uzun bir satırı
     /// yana kaydırıp okuyan okuyucu her batch'te sol kenara atılıyor, geniş satırlarda dibin 10 px üstünde kalıyordu. Yatay adım (←/→, yatay
-    /// tekerlek) direksiyonu almaz, takip sürer; artık yatay konum da kalır. Mod geçişinin pini yatayı bilerek sıfırlar
-    /// (<see cref="PinAfterModeSwitch"/>: yeni belge sol kenardan okunur).</para>
+    /// tekerlek) direksiyonu almaz, takip sürer; artık yatay konum da kalır.</para>
     /// <para>internal: ölçüm testi isteğin kendisini tuşsuz çağırır (<c>ConsolePageEndMeasurementTests</c>) — paralel bir kopya yol değil.</para>
     /// </summary>
-    internal void RequestBottom() =>
-        EditorControl.ScrollToVerticalOffset(Math.Max(0, EditorControl.TextArea.TextView.DocumentHeight - ScrollGeometry.ViewportHeight));
+    internal void RequestBottom() => EditorControl.ScrollToVerticalOffset(PendingBottomOffset);
 
     // ---------------------------------------------------------------- colorizer
 
@@ -640,9 +637,10 @@ public partial class ConsoleView : UserControl
     /// kaydırıp geçmişe baktığında dipte asılı kalan bir imleç oradaki metnin üstüne binerdi. Dipten
     /// uzaklaşınca zaten <c>⌄ latest</c> pill'i çıkar; prompt onunla birlikte gider ve dibe dönünce geri gelir.</para>
     ///
-    /// <para><b>[B2 fix 2 · madde 1] "Canlı dip" üç şeydir:</b> takip durumu dipte (<see cref="BottomAnchorBehavior.IsStuck"/>), pill
-    /// gizli ve uçuşta bir <c>⌄ latest</c> atlaması yok. [DEĞİŞEN KURAL] Eskiden yalnız takip durumuna bakılıyordu ve iki yerde imleç
-    /// pill'le birlikte görünüyordu: eşiğin içinden kaydıran okuyucunun altına satırlar gelince (durum "dipte" kalır, uzaklık eşiği aşar —
+    /// <para><b>[B2 fix 2 · madde 1] "Canlı dip" üç şeydir</b> — tanımı anchor'dadır (<see cref="BottomAnchorBehavior.AtLiveBottom"/>, B2 fix 3 ·
+    /// madde 9): takip durumu dipte, pill gizli ve uçuşta bir <c>⌄ latest</c> atlaması yok. [DEĞİŞEN KURAL] Eskiden yalnız takip durumuna
+    /// bakılıyordu ve iki yerde imleç pill'le birlikte görünüyordu: eşiğin içinden kaydıran okuyucunun altına satırlar gelince (durum "dipte"
+    /// kalır, uzaklık eşiği aşar —
     /// pill çıkar) ve atlama sürerken (atlama durumu iyimser biçimde "dipte" yapar; son satır görünür alanda değilken imleç eski yerinde,
     /// metnin üstünde kalırdı). Pill koşulu DUYURULAN değeri okur (<see cref="BottomAnchorBehavior.PillShown"/>) — pill'in kendisiyle aynı
     /// değer; canlı uzaklık izlenen belgede bir an eşiği aşar ve imleç her batch'te yanıp sönerdi. Atlamadan sonra imleç pencere kapanınca
@@ -650,7 +648,7 @@ public partial class ConsoleView : UserControl
     /// </summary>
     private void RefreshPrompt()
     {
-        bool show = !_projectMode && _bottomAnchor.IsStuck && !_bottomAnchor.PillShown && !_bottomAnchor.IsJumping;
+        bool show = !_projectMode && _bottomAnchor.AtLiveBottom;
         ActiveLineOverlay.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
         if (!show) { StopBlink(); return; }
         ActiveCursor.Opacity = 1.0;
@@ -946,13 +944,23 @@ public partial class ConsoleView : UserControl
     /// metnin üstünde); ilk PageUp de öyle; tekerlek takibi eşiği aşan çentikten bir çentik sonra bırakıyordu; dibe dönüşün olayları pill'i
     /// dönüş öncesi ofsetle değerlendirip görünür bırakıyordu. İçerik yüksekliği de olayda geride kalır (prepend telafisinde ScrollViewer
     /// 3738,6, TextView 7458,6) — bu yüzden üç değer aynı yerden. Bir +∞ dibe isteği (mod geçişinin <c>ScrollToEnd</c>'i) uygulanırken
-    /// TextView'in ofseti tek bir
-    /// olayda +∞, bir atlamanın hedefi kenetlenmeden önce dibin ötesi olabilir: anchor için uzaklık o an 0 (dipte) sayılır; yükleyici
-    /// konumu dibe kenetli okur (<see cref="SettledOffset"/>).</para>
+    /// TextView'in ofseti tek bir olayda +∞, bir atlamanın hedefi kenetlenmeden önce dibin ötesi olabilir: anchor için uzaklık o an 0 (dipte)
+    /// sayılır; yükleyici konumu dibe kenetli okur (<see cref="SettledOffset"/>). Eklemenin ya da kırpmanın hemen ardından gidilecek dip ayrı bir
+    /// üyedir (<see cref="PendingBottomOffset"/>).</para>
     /// <para>Testler: <c>ConsoleViewTests.A_real_ctrl_home_in_a_rebuilt_narrative_loads_the_previous_slice</c>,
     /// <c>ConsoleReaderNavigationTests</c>.</para>
     /// </summary>
     private IScrollInfo ScrollGeometry => EditorControl.TextArea.TextView;
+
+    /// <summary>
+    /// [B2 fix 3 · madde 1] <b>Bekleyen dip</b> — belgenin ŞU ANKİ sonunun ofseti: takibin ve End'in dibe isteğinin hedefi
+    /// (<see cref="RequestBottom"/>). Kaydırma geometrisinin bir parçasıdır ama ölçülmüş değil, bekleyen değerdir: <see cref="ScrollGeometry"/>'nin
+    /// içerik yüksekliği (<c>ExtentHeight</c>) ancak sonraki ölçümde güncellenir — eklemenin ya da kırpmanın hemen ardından bayattır —, satır
+    /// yükseklik ağacının boyu (<c>DocumentHeight</c>) ise belgeyle eşzamanlıdır ve sonraki ölçümün oturacağı içerik yüksekliğinin ta kendisidir
+    /// (sarma yok, belgenin altında boşluk yok). Dipten uzaklık, pill ve yükleyici oturmuş dibi okur (<see cref="BottomAnchorBehavior.BottomOffset"/>);
+    /// bekleyen dip yalnız İSTEĞİN hedefidir.
+    /// </summary>
+    private double PendingBottomOffset => Math.Max(0, EditorControl.TextArea.TextView.DocumentHeight - ScrollGeometry.ViewportHeight);
 
     /// <summary>
     /// [idle-memory · dalga 2 · beşinci/altıncı inceleme — ölçüldü] Chunk yükleyicinin okuduğu konum — TEK kural, üç giriş: kaydırma
@@ -1181,7 +1189,12 @@ public partial class ConsoleView : UserControl
     // MotionTokens.AnimateSlowEaseInOut'a çıkarıldı (kopya YASAK, CLAUDE.md); ayrı host'lar (TextEditor/ScrollViewer)
     // ScrollAnimator'ın ortak UIElement/ScrollToVerticalOffset çekirdeğinden geçer.
     private bool AnimateToBottom(double target) =>
-        MotionTokens.AnimateSlowEaseInOut(this, EditorControl, ScrollGeometry.VerticalOffset, target);
+        MotionTokens.AnimateSlowEaseInOut(this, ScrollAnimationTarget, ScrollGeometry.VerticalOffset, target);
+
+    /// <summary>[B2 fix 3 · madde 8] Konsolun kaydırma animasyonunun TEK hedefi: <c>⌄ latest</c> atlaması onu canlandırır
+    /// (<see cref="AnimateToBottom"/>) ve okuyucunun jesti onu durdurur (<see cref="UserScrollSignal"/>). İki yer aynı üyeyi okur — iptal,
+    /// hareketin koştuğu elemandan sessizce kayamaz.</summary>
+    private UIElement ScrollAnimationTarget => EditorControl;
 
     /// <summary>[3b I-2] Chunk-scroll kararı. Offset dışarıdan verilir — üretimde <see cref="OnScrollOffsetChanged"/>
     /// dibe kenetli konumla (<see cref="SettledOffset"/>) çağırır; böylece GERÇEK yol (arm → tepeye-scroll → prepend → re-arm)

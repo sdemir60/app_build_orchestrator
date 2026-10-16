@@ -85,7 +85,7 @@ public partial class StickyLayerList : UserControl
         // (ScrollBar.ScrollEvent) Scroll'un şablonundan baloncuklanarak ulaşır. Yarım kablo YASAK: yalnız tekerleği
         // dinlemek, çubuğu sürükleyen kullanıcıyı takip eden listenin geri çekmesi demekti (bkz. UserScrollSignal
         // doc'u, FrontierFollowPauseChannelsTests). Jestin bir uçuşu durdurup durdurmadığı listeyi ilgilendirmez.
-        UserScrollSignal.Wire(this, Scroll, _ => OnUserScroll());
+        UserScrollSignal.Wire(this, ScrollAnimationTarget, _ => OnUserScroll());
         // [v1.17.0 §2.4] Overlay artık hit-test'e AÇIK (başlıklar tıklanabilir) — bu, imlecin yığılmış başlık
         // bandındayken tekerlek olayının Scroll'a hiç ULAŞMAMASI riskini doğurur (Overlay, ScrollViewer'ın
         // KARDEŞİDİR, ATASI DEĞİL — routed event orada durur, aşağı Scroll'a bubble ETMEZ). ForwardWheelToScroll
@@ -215,11 +215,11 @@ public partial class StickyLayerList : UserControl
     /// <summary>[T59] Koşarken + seçim yokken frontier satırının (çağıranın belirlediği — ör. ilk
     /// <c>State==Started</c> proje) görünür kalması için çağrılır. Throttle(550ms)/dead-band(54px)/kullanıcı-
     /// suppress kararı <see cref="FollowScrollController"/>'a aittir.</summary>
-    public void FollowRow(int rowIndex) => _follow?.FollowRow(rowIndex, ScrollAnimator.GetIsUserSuppressed(Scroll));
+    public void FollowRow(int rowIndex) => _follow?.FollowRow(rowIndex, ScrollAnimator.GetIsUserSuppressed(ScrollAnimationTarget));
 
     /// <summary>[T59] Kullanıcı tekerleği çevirerek follow'u en son iptal etti mi — çağıranın (ör. bir "geri frontier'e
     /// dön" affordance'ı) bunu gösterip göstermeyeceğine karar vermesi için.</summary>
-    public bool IsFollowSuppressedByUser => ScrollAnimator.GetIsUserSuppressed(Scroll);
+    public bool IsFollowSuppressedByUser => ScrollAnimator.GetIsUserSuppressed(ScrollAnimationTarget);
 
     /// <summary>[frontier resume] Boşta-geri-açılma penceresi: listeye bu kadar süre DOKUNULMAZSA takip
     /// kendiliğinden sürer. Follow throttle'ının (550 ms) birkaç katı — okumakta olan bir kullanıcıyı listenin
@@ -253,7 +253,7 @@ public partial class StickyLayerList : UserControl
     /// </summary>
     internal void ResumeFrontierIfIdle()
     {
-        if (!ScrollAnimator.GetIsUserSuppressed(Scroll)) return; // yalnız kullanıcı-duraklattıysa (edge) — ping-pong yok
+        if (!ScrollAnimator.GetIsUserSuppressed(ScrollAnimationTarget)) return; // yalnız kullanıcı-duraklattıysa (edge) — ping-pong yok
         if (!IsIdle()) return;
         ClearFrontierSuppression();
     }
@@ -265,7 +265,7 @@ public partial class StickyLayerList : UserControl
     /// ayrışmaları imkânsız kalsın diye her geri-açılma yolu buradan geçer.</summary>
     private void ClearFrontierSuppression()
     {
-        ScrollAnimator.ClearUserSuppressed(Scroll);
+        ScrollAnimator.ClearUserSuppressed(ScrollAnimationTarget);
         Arbiter?.Resume(ScrollPanel.Frontier);
     }
 
@@ -281,7 +281,13 @@ public partial class StickyLayerList : UserControl
     // XML yorumu ve task-5-report.md). [M-1] ConsoleView.AnimateToBottom ile AYNI desen — MotionTokens.
     // AnimateSlowEaseInOut'a çıkarıldı (kopya YASAK, CLAUDE.md).
     private bool AnimateScrollTo(double target) =>
-        MotionTokens.AnimateSlowEaseInOut(this, Scroll, Scroll.VerticalOffset, target);
+        MotionTokens.AnimateSlowEaseInOut(this, ScrollAnimationTarget, Scroll.VerticalOffset, target);
+
+    /// <summary>[B2 fix 3 · madde 8] Listenin kaydırma animasyonunun TEK hedefi: takip ve başlık atlaması onu canlandırır
+    /// (<see cref="AnimateScrollTo"/>), okuyucunun jesti onu durdurur (<see cref="UserScrollSignal"/>) ve kullanıcı-suppress bayrağı onun
+    /// üstünde durur (<see cref="ScrollAnimator"/> hedef başınadır). Hepsi aynı üyeyi okur — iptal ve bayrak hareketin koştuğu elemandan
+    /// sessizce kayamaz.</summary>
+    private UIElement ScrollAnimationTarget => Scroll;
 
     /// <summary>Verilen VerticalOffset'teki yapışık başlıkları overlay'e ver. ScrollChanged production'da bunu
     /// <c>Scroll.VerticalOffset</c> ile çağırır; testler deterministik olsun diye offset'i doğrudan enjekte eder
@@ -418,7 +424,7 @@ public partial class StickyLayerList : UserControl
         // Jump bir KULLANICI kaydırmasıdır — takip duraklar, tekerlekte olduğu gibi. Sıra zorunlu: AnimateTo
         // "yeni programatik hareket" diyerek suppress bayrağını temizler, bu yüzden bayrak hareket başladıktan
         // SONRA kurulur. CancelForUser DEĞİL: o, az önce başlayan jump'ın kendisini iptal ederdi.
-        ScrollAnimator.SuppressForUser(Scroll);
+        ScrollAnimator.SuppressForUser(ScrollAnimationTarget);
         MarkFollowPausedByUser();
     }
 
