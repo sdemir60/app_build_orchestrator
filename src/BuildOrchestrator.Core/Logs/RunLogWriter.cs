@@ -47,7 +47,8 @@ public sealed class RunLogWriter : IDisposable
     /// <list type="bullet">
     /// <item><b>Canlı dal:</b> proje BU writer'da kayıtlıysa (<see cref="OpenProjectLog"/>; <see cref="ProjectLogFile.Dispose"/> kaydı SİLMEZ)
     /// <see cref="ProjectLogFile.Snapshot"/> okunur — satır sayısı yazıcının sayacıdır.</item>
-    /// <item><b>Disk dalı:</b> kayıtlı değilse — koşuda henüz açılmamış bir proje ya da aynı koşu klasörü üzerinde açılmış TAZE bir writer — dosya
+    /// <item><b>Disk dalı:</b> kayıtlı değilse — koşuda henüz açılmamış bir proje, aynı koşu klasörü üzerinde açılmış TAZE bir writer ya da
+    /// [son temizlik · K-1] bu writer Dispose edildikten SONRA: Dispose kaydı temizler, kayıtlı olan proje de artık buradan okunur — dosya
     /// diskten okunur (<see cref="ReadProjectLogFromDisk"/>; satır sayısı '\n' sayılarak — <see cref="ProjectLogFile.AppendLine"/>'ın
     /// tek-satır-tek-çağrı garantisi sayesinde iki dal aynı sonucu üretir).</item>
     /// </list>

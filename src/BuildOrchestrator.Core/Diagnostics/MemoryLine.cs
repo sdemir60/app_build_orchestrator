@@ -23,8 +23,8 @@ public readonly record struct MemoryReading(long PrivateBytes, long CommittedByt
 /// <para>Katmanlar bilerek ayrıdır: <see cref="Read"/> süreci okuyan TEK yerdir; <see cref="TryRead()"/> onu hata YUTAN bir korumayla
 /// sarar (App'in tanı ekranı okuyamazsa "bilinmiyor" gösterir); <see cref="Megabytes"/> TEK MB biçimidir;
 /// <see cref="Format"/> SAFTIR (sayılar parametre, süreç okumaz — birim testi bayt verir, satırı görür); <see cref="Current"/>
-/// okumayı satıra çevirir; <see cref="Report"/> satırı bir kanala bağlar ve hata YUTAR — bir tanı satırı Sync'i ya da koşu
-/// kapanışını asla bozmamalıdır.</para>
+/// okumayı satıra çevirir; <see cref="Report"/> satırı bir kanala bağlar ve hata YUTAR (<see cref="DiagnosticLine.Write"/>) — bir tanı
+/// satırı Sync'i ya da koşu kapanışını asla bozmamalıdır.</para>
 ///
 /// <para>Sayılar MB'dir (1 MB = 1024 × 1024 bayt; en yakın tam sayıya yuvarlanır). <c>private</c> sürecin özel
 /// baytlarıdır — yönetilen heap, yerel bellek ve geri kalan her şey dahil. <c>committed</c> yönetilen heap'in
@@ -91,12 +91,8 @@ public static class MemoryLine
 
     /// <summary>
     /// <see cref="Current"/> satırını <paramref name="sink"/>'e yazar. Okuma ya da kanal yazımı patlarsa hata YUTULUR:
-    /// bu bir tanıdır, çağıran iş (Sync, koşu kapanışı) onun yüzünden düşmemeli.
+    /// bu bir tanıdır, çağıran iş (Sync, koşu kapanışı) onun yüzünden düşmemeli. Yutmanın tek yeri <see cref="DiagnosticLine.Write"/>'tır —
+    /// okuma satırın kurulumudur, onun hatası da yutulur.
     /// </summary>
-    public static void Report(Action<string> sink)
-    {
-        ArgumentNullException.ThrowIfNull(sink);
-        try { sink(Current()); }
-        catch (Exception) { /* tanı: okunamadı ya da yazılamadı — sessizce vazgeç, işi bozma */ }
-    }
+    public static void Report(Action<string> sink) => DiagnosticLine.Write(sink, Current);
 }

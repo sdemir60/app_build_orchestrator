@@ -395,17 +395,18 @@ public sealed class RunCoordinator(
 
     /// <summary>
     /// [idle-memory · dalga 3 · B1 fix 4] Bir cevabı ya da bir işin kapanışını taşıyan yoldan tanı kanalına TEK satır yazar; satır yazılamazsa
-    /// (ör. kapanmış stderr borusu) hata yutulur — iz, taşıdığı cevaptan ya da işten ağır bir hata üretemez. Yalnız iki yol kullanır: işlem sonu
-    /// bellek raporunun trim uyarısı (<see cref="TrimAndReportMemory"/> — Sync/Clean/Optimize ve koşu kapanışı bozulmamalı) ve okunamayan proje
-    /// logunun uyarısı (<see cref="TryGetProjectLogSnapshot"/> — "log yok" cevabı bozulmamalı). Öteki tanı satırları kanalı doğrudan yazar; kapsam
-    /// bilerek bu iki yolla sınırlıdır.
+    /// (ör. kapanmış stderr borusu) hata yutulur — iz, taşıdığı cevaptan ya da işten ağır bir hata üretemez. Yazıp yutmanın kendisi Core'un tek
+    /// yerindedir (<see cref="DiagnosticLine.Write"/> — motorun bellek satırı da onu kullanır). Yalnız iki yol kullanır: işlem sonu bellek raporunun
+    /// trim uyarısı (<see cref="TrimAndReportMemory"/> — Sync/Clean/Optimize ve koşu kapanışı bozulmamalı) ve okunamayan proje logunun uyarısı
+    /// (<see cref="TryGetProjectLogSnapshot"/> — "log yok" cevabı bozulmamalı).
+    /// <para>[son temizlik · K-6] <b>Öteki tanı satırları kanalı doğrudan yazar, çünkü bir cevabı taşımazlar:</b> koşunun kendi işinin uyarılarıdır
+    /// (planlama, karar logu, koşullu derleme ve yüzey kapısı, build-state, uçuş defteri, perf). Koşunun içinde yazılanların hatası koşunun
+    /// yakalamasına düşer — koşu <c>runFailed</c> ile kapanır, App beklemede kalmaz. Kapsam bilerek bu iki yolla sınırlıdır; ama korumasız
+    /// satırların hepsi koşunun içinde değildir: uçuş defterinin ve perf geri alımının uyarıları koşu çıkışının <c>finally</c>'sinde de yazılır,
+    /// Stop ve perf değişiminin uyarıları host'un komut yolunda — kanal orada fırlatırsa istisna yükselir.</para>
     /// </summary>
     /// <param name="line">Yazılacak satır (çağıran kurar; kimliksiz bir istekte proje alanı boş kalır, biçimleme fırlatmaz).</param>
-    private void ReportDiagnostic(string line)
-    {
-        try { console(line); }
-        catch (Exception) { /* tanı kanalı da yazılamıyor — vazgeç, cevabı ve işi bozma */ }
-    }
+    private void ReportDiagnostic(string line) => DiagnosticLine.Write(console, () => line);
 
     /// <summary>
     /// [I2-K1] Aktif run'ın Stop'unu sahiplenir. <c>true</c> → <c>runStopped</c>'ı (in-flight sonuçları
