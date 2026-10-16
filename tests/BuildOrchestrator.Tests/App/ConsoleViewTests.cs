@@ -335,15 +335,19 @@ public class ConsoleViewTests
     }
 
     /// <summary>
-    /// [idle-memory · dalga 2 · beşinci inceleme — ölçüldü] Görünüme sığan KISA bir belge, arkasında geçmiş dururken takipte gelen satırla
+    /// [idle-memory · dalga 2 · beşinci inceleme — ölçüldü] Görünüme sığan KISA bir belge, arkasında geçmiş dururken bir +∞ dibe isteğiyle
     /// önceki dilimi kendiliğinden yüklemez — kimse tepeye kaydırmadı. Böyle bir belge son dilimi okunamayan anlatıdır: boş kurulur, satırlar
-    /// sonradan gelir.
-    /// <para>KIRMIZI (ölçüldü): takip <c>ScrollToEnd</c> ister ve TextView o isteği tek bir olayda +∞ ofsetle bildirir — yükleyici "tepeden
-    /// uzaklaştı" diye silahlanıyordu (her takip batch'inde yeniden); hemen ardından kenetlenen konum (belge sığdığı için 0) "tepeye ulaştı"
-    /// sayılıyor ve önceki 200 satır isteyen olmadan ekleniyordu.</para>
+    /// sonradan gelir. +∞ isteği bugün yalnız mod geçişinin pinindedir (<c>PinAfterModeSwitch</c> — geçişin inişinde, anlatı izliyorsa yeniden
+    /// koşar); test o isteğin kendisini sürer.
+    /// <para>KIRMIZI (ölçüldü, dalga 2): TextView +∞ isteğini tek bir olayda +∞ ofsetle bildirir — yükleyici "tepeden uzaklaştı" diye
+    /// silahlanıyordu; hemen ardından kenetlenen konum (belge sığdığı için 0) "tepeye ulaştı" sayılıyor ve önceki 200 satır isteyen olmadan
+    /// ekleniyordu. Kural yükleyicinin okuduğu konumun dibe kenetlenmesindedir (<c>SettledOffset</c>; bozma: kenetleme kalkınca kırmızı).</para>
+    /// <para>[DEĞİŞEN KURULUM — B2 fix 3 · madde 10] Eski adı <c>…_while_following</c>; eski uyaran takipte gelen bir satırdı ("takip
+    /// <c>ScrollToEnd</c> ister"). B2 fix 2 · madde 3'ten beri takip sonlu ister (bekleyen dip — kısa belgede 0, ofset zaten 0: hiç olay doğmaz)
+    /// ve test dişsiz kalmıştı (kenetleme kaldırılınca da yeşildi — inceleme I-1). Uyaran kalan +∞ yoluna taşındı; iddia aynı.</para>
     /// </summary>
     [StaFact]
-    public void A_short_document_with_history_behind_it_does_not_load_it_unasked_while_following()
+    public void A_short_document_with_history_behind_it_does_not_load_it_unasked_on_an_infinite_bottom_request()
     {
         var view = LaidOutView();
         var all = Enumerable.Range(0, 1000).Select(i => $"history{i}").ToArray();
@@ -351,8 +355,10 @@ public class ConsoleViewTests
         view.ShowRunDocument(new NarrativeSnapshot(backlog, all.Length));
         backlog.ReadableFrom = 0; // dosya yeniden okunabiliyor
         Assert.True(view.FollowsBottom); // ön-koşul: anlatı dibi izliyor
+        view.AppendBatch("live\n");      // takipte bir satır (sonlu istek)
+        view.UpdateLayout();
 
-        view.AppendBatch("live\n"); // takipte bir satır: ScrollToEnd
+        view.Editor.ScrollToEnd();       // kalan +∞ dibe isteği (mod geçişinin pini)
         view.UpdateLayout();
 
         Assert.Null(view.LastPrepend);
