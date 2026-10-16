@@ -17,7 +17,9 @@ namespace BuildOrchestrator.Tests.App;
 ///
 /// <para><b>[round 2 · T21 OOS-1] Kapının geçişi unutulamaz:</b> kapı bir geçiş döner (<c>RunViewModel.GatePass</c>); kapıda beklemiş bir isteğin
 /// kaydı (<c>EngineGate</c> — kapının durumu, B1 fix 3) onunla yaşar ve motor kaybı kayıtlı isteğin penceresini bırakmaz. Her kapı çağrısı bir <c>using</c> bildiriminin başlatıcısıdır — bir
-/// çağıran geçişi tutmayı unutursa kayıt hiç silinmez ve sonraki her kayıp o türün penceresini atlar.</para>
+/// çağıran geçişi tutmayı unutursa kayıt hiç silinmez ve sonraki her kayıp o türün penceresini atlar. [B1 fix 4] Kaydın kendisi de yalnız kapıdan
+/// açılır (<c>EngineGate.Enter</c> yalnız <c>EnsureEngineAwakeAsync</c>'ten, alıcıdan bağımsız taranır): geçişe bağlanmayan bir kayıt hiç bırakılmaz,
+/// kurtaran uyanmanın tazelemesi de kapının boşalmasını sonsuza dek beklerdi.</para>
 ///
 /// <para><b>İzin listesi DAR ve GEREKÇELİ:</b> gönderimin varsayılan yolu (kapı + tek gönderim), komutunu kapıdan sonra kuran koşu, Sync ile
 /// ardındaki branch envanteri için kapıya BİR kez soran Sync ve yerini yenisi alabilen proje logu. Çağrı adedi PİNLENMEZ, çağıran yöntem listesi
@@ -46,6 +48,10 @@ public sealed class EngineGateGuardTests
 
     /// <summary>Motor kapısının çağrısı.</summary>
     private static readonly Regex GateCall = new(@"\bEnsureEngineAwakeAsync\s*\(", RegexOptions.Compiled);
+
+    /// <summary>[B1 fix 4] Kapıya kayıt — alıcıdan BAĞIMSIZ: <c>_engineGate.Enter(</c> ya da kapının durumuna giden başka bir referans. App'te
+    /// kapıyla ilgisiz bir üye erişimli <c>Enter(</c> doğarsa izin listesine gerekçesiyle girer.</summary>
+    private static readonly Regex GateEntry = new(@"\.\s*Enter\s*\(", RegexOptions.Compiled);
 
     /// <summary>Çağrının bulunduğu satırda, çağrıdan hemen önce: geçişi tutan <c>using</c> bildirimi (<c>using var x = await</c> ya da
     /// <c>using (var x = await</c>).</summary>
@@ -77,6 +83,10 @@ public sealed class EngineGateGuardTests
 
     /// <summary>[round 3] Motorun gönderiminin TEK çağıranı: gözlemciye bildiren, test dikişine ya da motora yönlendiren yol.</summary>
     private static readonly IReadOnlyCollection<string> HostSendCallers = ["SendToEngineAsync"];
+
+    /// <summary>[B1 fix 4] Kapıya kaydın TEK çağıranı: kaydı geçişe (<c>GatePass</c>) bağlayan kapının kendisi. Başka bir yerden açılan kayıt hiç
+    /// bırakılmaz — motor kaybı o türün penceresini bir daha bırakmaz, kurtaran uyanmanın tazelemesi kapının boşalmasını sonsuza dek bekler.</summary>
+    private static readonly IReadOnlyCollection<string> GateEntryCallers = ["EnsureEngineAwakeAsync"];
 
     /// <summary>Kaynaktaki bir çağrı: <c>dosya:satır</c>, içinde bulunduğu üye ve geçişi tutan bir <c>using</c>'in başlatıcısı olup olmadığı.</summary>
     private readonly record struct Call(string Where, string Member, bool Held);
@@ -118,6 +128,18 @@ public sealed class EngineGateGuardTests
         Assert.All(EngineRouteCallers, caller => Assert.Contains(caller, routeCallers));
         Assert.All(HostSendCallers, caller => Assert.Contains(caller, hostSendCallers));
     }
+
+    /// <summary>[B1 fix 4] Kapıya kayıt yalnız kapının kendisinden açılır: <c>EngineGate.Enter</c> — hangi referansla olursa olsun — yalnız
+    /// <c>EnsureEngineAwakeAsync</c>'ten çağrılır; orada kayıt geçişe bağlanır ve geçiş <c>using</c> ile tutulur
+    /// (<see cref="Every_gate_pass_is_held_with_using"/>), yani her kayıt teslimde ya da kapsamın sonunda biter.</summary>
+    [Fact]
+    public void Only_the_gate_enters_the_gate() =>
+        AssertCalledOnlyFrom(GateEntry, GateEntryCallers, "Geçişsiz kapı kaydı (EngineGate.Enter, EnsureEngineAwakeAsync dışında):");
+
+    /// <summary>[B1 fix 4] Vakum karşıtı: tarama kapıya kaydı tek çağıranında görür.</summary>
+    [Fact]
+    public void The_guard_sees_the_gate_entry() =>
+        Assert.All(GateEntryCallers, caller => Assert.Contains(caller, AppCalls(GateEntry).Select(c => c.Member)));
 
     /// <summary>[round 2 · T21 OOS-1] Kapının her çağrısı geçişi bir <c>using</c> ile tutar: kayıt, istek motora teslim edilince ya da kapsamın
     /// sonunda bırakılır — hiçbir yolda sızamaz.</summary>
@@ -201,6 +223,35 @@ public sealed class EngineGateGuardTests
         var stray = Assert.Single(calls, c => !HostSendCallers.Contains(c.Member));
         Assert.Equal("StrayAsync", stray.Member);
         Assert.Equal(@"ViewModels\RunViewModel.Fake.cs:8", stray.Where);
+    }
+
+    /// <summary>[B1 fix 4] Guard'ın kendi kanıtı: kapıya kayıt alıcıdan bağımsız görülür — kapının kendi kaydı izinlidir, başka bir referansla açılan
+    /// kayıt raporlanır; üye erişimi olmayan aynı adlı bir yöntem çağrısı (<c>Enter(…)</c>, ör. koreografinin kendi adımı) ve yorum raporlanmaz.</summary>
+    [Fact]
+    public void The_rule_recognises_a_gate_entry_through_any_reference()
+    {
+        var calls = CallsIn(@"ViewModels\RunViewModel.Fake.cs", """
+            public sealed partial class RunViewModel
+            {
+                private async Task<GatePass> EnsureEngineAwakeAsync(Type command)
+                {
+                    int ticket = _engineGate.Enter(command);
+                    return await Task.FromResult(default(GatePass));
+                }
+
+                /// <summary>Kural anlatılır: _engineGate.Enter(...) yalnız kapıdan.</summary>
+                private void Stray(EngineGate gate)
+                {
+                    gate.Enter(typeof(PingCommand));
+                    Enter(1);
+                }
+            }
+            """, GateEntry);
+
+        Assert.Equal(2, calls.Count);
+        var stray = Assert.Single(calls, c => !GateEntryCallers.Contains(c.Member));
+        Assert.Equal("Stray", stray.Member);
+        Assert.Equal(@"ViewModels\RunViewModel.Fake.cs:12", stray.Where);
     }
 
     /// <summary>[round 3] Guard'ın kendi kanıtı — çağrının sahibi: ifade gövdeli bir özellikteki ve bir alanın başlatıcısındaki çağrı o üyeye
