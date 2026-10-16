@@ -1426,6 +1426,54 @@ public class EngineWakeTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[B1 fix 4 · madde 5 · karar A] Pencere tutan komut türleri — motor kaybının geri alımı (<c>ReleaseAfterEngineLoss</c>) her biri için
+    /// kapıya sorar: kapıda bekleyen isteğin penceresini bırakmaz — ve her birini üretimde açan yol. TEK liste: kayıp teorisinin satırları
+    /// (<see cref="WindowHolderPaths"/>) ve sürüklenme testi (<see cref="Every_waking_command_type_is_classified_for_engine_loss"/>) buradan okur.</summary>
+    private static readonly IReadOnlyDictionary<Type, WakingPath> WindowHolders = new Dictionary<Type, WakingPath>
+    {
+        [typeof(StartRunCommand)] = WakingPath.Build,           // koşunun açılışı
+        [typeof(SyncWorkspaceCommand)] = WakingPath.SyncButton,
+        [typeof(CleanWorkspaceCommand)] = WakingPath.DeepClean, // bakım Clean'i
+        [typeof(OptimizeWorkspaceCommand)] = WakingPath.Optimize,
+        [typeof(CheckoutBranchCommand)] = WakingPath.Checkout,
+        [typeof(PullRepositoryCommand)] = WakingPath.Pull,
+    };
+
+    /// <summary>Kayıp teorisinin satırları — pencere tutan her türün yolu (<see cref="WindowHolders"/>).</summary>
+    public static TheoryData<WakingPath> WindowHolderPaths()
+    {
+        var paths = new TheoryData<WakingPath>();
+        foreach (var path in WindowHolders.Values) paths.Add(path);
+        return paths;
+    }
+
+    /// <summary>[B1 fix 4 · madde 5 · karar A] Uyuyan motoru uyandıran (<see cref="EngineWakeRule"/>) ama penceresi motor kaybında kapı sorusuyla
+    /// KORUNMAYAN türler — gerekçeleriyle.</summary>
+    private static readonly IReadOnlyDictionary<Type, string> WakingWithoutAGatedWindow = new Dictionary<Type, string>
+    {
+        [typeof(GetProjectLogCommand)] = "kapıya sorulur, ama cevap beklentisi kapıda beklerken de BİLEREK bırakılır (ReleaseAfterEngineLoss): "
+            + "kapıda kalmış eski bir yükleme, gönderilmiş yenisinin beklentisini tutmamalı",
+        [typeof(ListBranchesCommand)] = "kapıya hiç sorulmaz: Sync'in ikinci parçasıdır ve GatePass.None ile gider (kapının kararı ve kaydı Sync'in "
+            + "geçişindeydi) — kendi penceresi yoktur",
+    };
+
+    /// <summary>
+    /// [B1 fix 4 · madde 5 · karar A] Sürüklenme testi: uyuyan motoru uyandıran HER komut türü (<see cref="EngineWakeRule.Table"/>) motor kaybı için
+    /// sınıflandırılmıştır — ya pencere tutar ve kayıp onun için kapıya sorar (<see cref="WindowHolders"/>; davranışını kayıp teorisi sınar) ya da
+    /// gerekçeli bir istisnadır (<see cref="WakingWithoutAGatedWindow"/>). Tabloya yeni bir uyandıran tür eklenince bu test, türün motor kaybında ne
+    /// olacağına karar verilmeden geçmez; sınıflandırılmış ama artık uyandırmayan bir tür de bayat satır olarak düşer.
+    /// <para>Mutasyon (tabloda uyandırmayan bir türü uyandırır yapmak — pencere de istisna da yok) kırmızı.</para>
+    /// </summary>
+    [Fact]
+    public void Every_waking_command_type_is_classified_for_engine_loss()
+    {
+        var waking = EngineWakeRule.Table.Where(row => row.Value).Select(row => row.Key).ToHashSet();
+
+        Assert.Empty(WindowHolders.Keys.Intersect(WakingWithoutAGatedWindow.Keys));            // her tür tek sınıfta
+        Assert.Empty(waking.Except(WindowHolders.Keys).Except(WakingWithoutAGatedWindow.Keys)); // sınıflandırılmamış uyandıran tür yok
+        Assert.All(WindowHolders.Keys.Concat(WakingWithoutAGatedWindow.Keys), type => Assert.Contains(type, waking)); // bayat satır yok
+    }
+
     /// <summary>Yolun penceresi — isteğin açtığı ve motor kaybında bırakılan durum: koşunun açılışı (<see cref="StartRunCommand"/>), Sync, bakım
     /// Clean'i, Optimize, checkout ve pull kilitleri.</summary>
     private static bool WindowOf(WakingPath path, RunViewModel vm) => path switch
@@ -1446,15 +1494,10 @@ public class EngineWakeTests
     /// (testin devamı, kapının devamından önce sıradadır). Kayıp anında istek teslim edilmemiştir ve penceresi açıktır; kayıp onu bırakmaz. Ardından
     /// istek kapıdan "gönderme" alır, penceresini kendi geri alımı bırakır ve hiçbir şey gönderilmez.
     /// <para>PİN: bugünkü kod yeşil. Mutasyon (kayıp kapı sorusunu atlar — her pencereyi koşulsuz bırakır): altı satırın altısı da kırmızı; her satır
-    /// yalnız kendi penceresine bakar.</para>
+    /// yalnız kendi penceresine bakar. Satırlar pencere tutan türlerin TEK listesinden gelir (<see cref="WindowHolders"/>).</para>
     /// </summary>
     [WpfTheory]
-    [InlineData(WakingPath.Build)]      // StartRunCommand — koşunun açılışı
-    [InlineData(WakingPath.SyncButton)] // SyncWorkspaceCommand
-    [InlineData(WakingPath.DeepClean)]  // CleanWorkspaceCommand
-    [InlineData(WakingPath.Optimize)]   // OptimizeWorkspaceCommand
-    [InlineData(WakingPath.Checkout)]   // CheckoutBranchCommand
-    [InlineData(WakingPath.Pull)]       // PullRepositoryCommand
+    [MemberData(nameof(WindowHolderPaths))]
     public async Task A_loss_right_after_a_wake_keeps_the_window_of_a_request_still_held_at_the_gate(WakingPath path)
     {
         using var dir = new TempDir();
