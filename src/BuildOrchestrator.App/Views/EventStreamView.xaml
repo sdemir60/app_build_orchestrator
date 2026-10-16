@@ -53,7 +53,7 @@
         </StackPanel>
       </ScrollViewer>
 
-      <!-- `⌄ latest` pill — panel alt-ortası, görünürlük BottomAnchorBehavior.ShowPill'e bağlı (T59). -->
+      <!-- `⌄ latest` pill — panel alt-ortası, görünürlük BottomAnchorBehavior.PillShown'a (duyurulan değer) bağlı (T59). -->
       <controls:LatestPill x:Name="PART_Pill" Visibility="Collapsed" />
     </Grid>
   </DockPanel>

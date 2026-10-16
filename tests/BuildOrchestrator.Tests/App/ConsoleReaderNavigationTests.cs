@@ -691,11 +691,17 @@ public class ConsoleReaderNavigationTests
     /// çubuk boyu kadar (~10 px) kısa bırakabilir — eşiğin içinde, sonraki satırla kapanır (kabul edilen sınır, inceleme M-2). Anlatı render
     /// diliminin altından başlar: belge her batch'te büyür ve isteğin hedefi eklemenin ardından bilinmelidir (bekleyen dip —
     /// <c>ConsoleView.PendingBottomOffset</c>; bozma: oturmuş dibi hedeflerse dört satırlık batch görünümü ~74 px kısa bırakır, pill yanar).</para>
+    /// <para>[son temizlik · madde 2 · DEĞİŞEN KURULUM] ESKİ: tek satır, 100 satırlık anlatı (madde 12'den önce 400). 100 satır belgenin büyüdüğü
+    /// rejimdir — bekleyen dibin bozmasını yalnız o ısırır (400 satırda belge yüksekliği sabit kalır). GEREKÇE: 400 satır belgenin render
+    /// dilimi olduğu kararlı rejimdir — uzun bir derlemede okuyucunun asıl durduğu yer: her batch tepeden kırpar. Teori iki rejimi de koşar;
+    /// takibin isteği +∞ (eski <c>ScrollToEnd</c>) olunca iki satır da kırmızı.</para>
     /// </summary>
-    [StaFact]
-    public void A_sideways_step_in_a_following_narrative_survives_new_output()
+    [StaTheory]
+    [InlineData(100)] // render diliminin altında: belge her batch'te büyür
+    [InlineData(400)] // belge render dilimidir: her batch tepeden kırpar
+    public void A_sideways_step_in_a_following_narrative_survives_new_output(int lines)
     {
-        using var narrative = new RealizedNarrative(lines: 100);
+        using var narrative = new RealizedNarrative(lines);
         using var pill = VisibilityToggles.Of(narrative.View.Pill);
         NarrativeSnapshots.Deliver(narrative.Store, narrative.View, [LongLine(400)]);
         DispatcherPump.DrainToIdle();
@@ -720,9 +726,12 @@ public class ConsoleReaderNavigationTests
     /// canlı dipte). [B2 fix 3 · madde 11] Kırpma büyük de olabilir: okuyucu yukarıdayken bir görünür alandan fazla satır gelirse dönüş o kadar
     /// satırı kırpar ve eski ofset kırpılmış belgenin sonunun ötesinde kalır.
     /// <para>KIRMIZI (madde 3'ten önce): dönüşün kırpması <c>ScrollToEnd</c> istiyordu — yatay konum 0'a dönüyordu.</para>
-    /// <para>[B2 fix 3 · madde 11-12] Büyük kırpma satırı eklendi (inceleme M-1'in varsayımı: eski ofset belgenin ötesinde ölçülürse yalnız son
-    /// boş satır kurulur ve yatay konum 0'a kenetlenir — ölçüm: bkz. raporun Round 3'ü); dönüşün tam dibe inişi de iddia edildi (inceleme M-3).
-    /// Gelen satırlar geniştir: dipte de yatay taşma vardır, yatay konum korunabilir.</para>
+    /// <para>[B2 fix 3 · madde 11-12] Büyük kırpma satırı (60) eklendi — PİN, kod değişmeden yeşil: dönüşün dibe isteği eski ofset ölçülmeden
+    /// uygulanır. İnceleme M-1'in varsaydığı mekanizma gerçektir (ölçüldü): kırpma ile istek arasına bir yerleşim konursa eski dikey ofset
+    /// kırpılmış belgenin sonunun ötesinde ölçülür, editör yalnız son (boş) satırı kurar, yatay içerik genişliği çöker ve yatay konum 0'a
+    /// kenetlenir — yalnız 60 satırlık satır kırmızı (<c>Expected: 7,2 / Actual: 0</c>); dönüş +∞ isterse iki satır da kırmızı. Kural kırpmanın
+    /// kendisindedir (<c>ConsoleView.TrimNarrativeWhenFollowing</c>: kırpma ile istek arasında yerleşim koşmaz). Dönüşün tam dibe inişi de iddia
+    /// edildi (inceleme M-3). Gelen satırlar geniştir: dipte de yatay taşma vardır, yatay konum korunabilir.</para>
     /// </summary>
     [StaTheory]
     [InlineData(4)]
@@ -1242,7 +1251,7 @@ public class ConsoleReaderNavigationTests
     {
         var clock = ScrollAnimation.ClockOf(narrative.View.Editor);
         ActiveClockInspector.Seek(clock, progress: 0.5);
-        clock.Controller!.Pause();
+        clock.Controller.Pause();
         Assert.Equal(ClockState.Active, clock.CurrentState); // ön-koşul: atlama uçuşta
     }
 }

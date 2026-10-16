@@ -79,7 +79,7 @@ public partial class StickyLayerList : UserControl
         // aksine) + suppress bayrağı damgalanır + merkezi arbiter'a haber verilir (bölgesel suppress — yalnız bu
         // panel duraklar, konsol/stream akmaya devam. Arbiter null ise izole test, no-op) + boşta-geri-açılma
         // penceresi (FrontierIdleResumeMs) sıfırlanır.
-        // Sinyalin ÜÇ girdi kanalı (tekerlek · kaydırma çubuğu · gezinme tuşları) konsol ve event stream ile
+        // Sinyalin ÜÇ girdi kanalı (tekerlek · dikey kaydırma çubuğu · dikey gezinme tuşları) konsol ve event stream ile
         // AYNI kablodan gelir: UserScrollSignal — iptal de onun içindedir (kuralın tek tanımı). Kök (this) hem
         // Scroll'u hem Overlay'i kapsadığı için tünelleyen tekerlek ikisinde de burada yakalanır; çubuk olayı
         // (ScrollBar.ScrollEvent) Scroll'un şablonundan baloncuklanarak ulaşır. Yarım kablo YASAK: yalnız tekerleği
@@ -308,8 +308,8 @@ public partial class StickyLayerList : UserControl
     // ---------------------------------------------------------------- [v1.17.0 §2.4] katman başlığı = gezinme kontrolü
 
     /// <summary>
-    /// "Kullanıcı listeyi kaydırdı" olayının TEK tüketicisi — üç girdi kanalını da (tekerlek, kaydırma çubuğu,
-    /// gezinme tuşları) <see cref="UserScrollSignal"/> kökten buraya bağlar. Jestin üç işinden ilki sinyalin
+    /// "Kullanıcı listeyi kaydırdı" olayının TEK tüketicisi — üç girdi kanalını da (tekerlek, dikey kaydırma çubuğu,
+    /// dikey gezinme tuşları) <see cref="UserScrollSignal"/> kökten buraya bağlar. Jestin üç işinden ilki sinyalin
     /// kendisindedir: uçuştaki follow/seçim-scroll animasyonunu iptal eder + per-target suppress bayrağını kaldırır
     /// (<see cref="ScrollAnimator.CancelForUser"/> — "kullanıcının girdisi hareketi durdurur" kuralının konsol ve
     /// stream'le ortak tek tanımı, B2 fix 2 · madde 2). Burası geri kalanını yapar: boşta-geri-açılma damgasını

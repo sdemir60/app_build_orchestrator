@@ -179,7 +179,7 @@ public sealed class BottomAnchorBehavior
     }
 
     /// <summary>
-    /// <b>Kullanıcı GERÇEKTEN kaydırdı</b> — host bunu ham girdiden (tekerlek, kaydırma çubuğu, dikey kaydırma tuşları —
+    /// <b>Kullanıcı GERÇEKTEN kaydırdı</b> — host bunu ham girdiden (tekerlek, dikey kaydırma çubuğu, dikey kaydırma tuşları —
     /// <see cref="UserScrollSignal"/>) bildirir. O andan itibaren bekleme dolana kadar direksiyon kullanıcıdadır: akan içerik görünümü
     /// dibe çekmez.
     ///

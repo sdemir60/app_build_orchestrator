@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+
 namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
@@ -48,11 +50,11 @@ internal static class PerfMeasure
     public static double MedianOf(Func<double> measure, int warmups, int samples)
         => Median(Sample(measure, warmups, samples));
 
-    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    [DllImport("kernel32.dll")]
     private static extern nint GetCurrentThread();
 
-    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
-    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool QueryThreadCycleTime(nint thread, out ulong cycles);
 
     /// <summary>[B2 fix 3 · madde 14] Çağıran thread'in o ana dek harcadığı CPU döngüsü (<c>QueryThreadCycleTime</c>) — UI thread
@@ -61,7 +63,7 @@ internal static class PerfMeasure
     public static ulong ThreadCycles()
     {
         if (!QueryThreadCycleTime(GetCurrentThread(), out ulong cycles))
-            throw new System.ComponentModel.Win32Exception(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
         return cycles;
     }
 

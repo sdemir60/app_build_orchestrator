@@ -489,6 +489,13 @@ public partial class ConsoleView : UserControl
     /// kadarsa (tohum: son dilim + boş prompt satırı) dokunulmaz. Prepend sürerken belge değişmektedir, kırpılmaz. Proje logu
     /// sayfası kapsam dışıdır (spec §6.2): o sayfa hiç izlemez (dalga 3 · karar 45 — predicate orada hiç açılmaz) ve belgesi sayfayla
     /// birlikte bırakılır.</para>
+    ///
+    /// <para>[son temizlik · madde 4] <b>Kırpma ile dibe isteği arasında yerleşim KOŞMAZ</b> — ikisi aynı senkron adımdadır ve öyle kalmalıdır.
+    /// Okuyucu yukarıdayken bir görünür alandan fazla satır birikmişse kırpma belgeyi o kadar kısaltır ve eski dikey ofset kırpılmış belgenin
+    /// sonunun ÖTESİNDE kalır. Arada bir yerleşim koşsaydı editör o ofsetten ölçer: yalnız son (boş) satırı kurar, yatay içerik genişliği çöker
+    /// ve okuyucunun yatay okuma konumu 0'a kenetlenirdi (ölçüldü: <c>ConsoleReaderNavigationTests.A_sideways_step_survives_the_return_to_following</c>'in
+    /// 60 satırlık satırı — <c>Expected: 7,2 / Actual: 0</c>). Sonlu istek (<see cref="RequestBottom"/>) eski ofset ölçülmeden uygulanır; sonraki
+    /// ölçüm dipteki satırları gerçek genişlikleriyle kurar.</para>
     /// </summary>
     private void TrimNarrativeWhenFollowing()
     {

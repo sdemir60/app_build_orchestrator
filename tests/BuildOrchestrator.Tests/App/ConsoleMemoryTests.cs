@@ -316,8 +316,12 @@ public class ConsoleMemoryTests
     /// süreç geneli değildir.</para>
     /// <para>[DEĞİŞEN KURAL — B3 · O2 adım 2] Yolu eskiden bir okuma kapısı koruyordu (<c>TrimToRenderSlice</c>'taki
     /// <c>&amp;&amp; _backlog.KeepsTrimmedLines</c>): store'un gerisindeki bayat belgede kırpılanların hepsi "kaydedilmemiş kuyruk" sayılır,
-    /// kuyruk yalnız saklayan backlog'a (liste) okunurdu. Kuyruk hesabı, okuma ve kapı birlikte kalktı — kırpma kırpılan metni hiç okumaz;
-    /// pin okumanın geri gelmesini yakalar.</para>
+    /// kuyruk yalnız saklayan backlog'a (liste) okunurdu. Kuyruk hesabı, okuma ve kapı birlikte kalktı — kırpma kırpılan metni hiç okumaz.</para>
+    /// <para>[son temizlik · madde 17] <b>Bu pinin yakaladığı okuma KOŞULLUDUR:</b> bayat belgede okuyup dolu store'da okumayan bir yol (eski
+    /// kapının açtığı yol) — kıyas ikize karşıdır ve ikisinin AYNI yaptığı iş farka girmez. Her kırpmada koşan koşulsuz bir okuma ikizde de
+    /// koşar, fark sıfır kalır ve bu pin yeşil kalır; onu <see cref="A_large_narrative_batch_is_appended_and_trimmed_without_a_copy_of_it"/>
+    /// yakalar (görünümün işi belgenin kendi ekleme ve kırpmasına karşı). İki pin birlikte okumanın iki biçimini de korur — ölçüldü: kırpma
+    /// kırpılan metni koşulsuz okuyunca yalnız o test, yalnız store belgenin gerisindeyken okuyunca yalnız bu test kırmızı.</para>
     /// <para>Ölçülen kusur (kapı geçici kaldırıldı, 2026-10-14; 1000 uzun satırlık kırpma, kırpılan metin 757.202 bayt): bayat görünüm
     /// 2.315.848 bayt ayırdı, aynı kırpma dolu store'da 4.864 — fark ≈ 3 kopya (kapısız kod kuyruğu <c>GetText</c> + <c>Split</c> ile
     /// okur ve sonucunu store'a verir, store atar). Okuma yokken ikisi aynı işi yapar; eşik yarım kopyadır.</para>

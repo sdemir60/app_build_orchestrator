@@ -90,7 +90,7 @@ public partial class EventStreamView : UserControl
             autoResumeAllowed: () => true);
         _bottomAnchor.Changed += OnBottomAnchorChanged;
         PART_Scroll.ScrollChanged += (_, e) => _bottomAnchor.OnScrollChanged(e.ExtentHeightChange);
-        // "Kullanıcı kaydırdı" HAM GİRDİDEN bildirilir — tekerlek, kaydırma çubuğu ve gezinme tuşları
+        // "Kullanıcı kaydırdı" HAM GİRDİDEN bildirilir — tekerlek, dikey kaydırma çubuğu ve dikey gezinme tuşları
         // (gerekçe: UserScrollSignal / BottomAnchorBehavior.NotifyUserScroll). [B2 fix 2 madde 2] Aynı jest uçuştaki `⌄ latest`
         // animasyonunu durdurur (konsolla aynı tek kablo); bir uçuşu durdurduysa atlama penceresi de kapanır.
         UserScrollSignal.Wire(this, ScrollAnimationTarget, _bottomAnchor.NotifyUserScroll);

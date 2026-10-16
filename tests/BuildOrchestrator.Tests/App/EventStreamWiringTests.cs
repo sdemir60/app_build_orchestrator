@@ -186,5 +186,4 @@ public class EventStreamWiringTests
         Assert.False(ScrollAnimation.IsAnimating(view.Scroll));
         GC.KeepAlive(window);
     }
-
 }

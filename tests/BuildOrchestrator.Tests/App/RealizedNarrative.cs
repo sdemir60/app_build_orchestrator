@@ -206,8 +206,5 @@ internal sealed class RealizedNarrative : IDisposable
 
     public void Dispose() => _window.Close();
 
-    private bool RaiseKey(Key key, RoutedEvent routedEvent)
-    {
-        return KeyInput.Raise(View.Editor.TextArea, key, routedEvent).Handled;
-    }
+    private bool RaiseKey(Key key, RoutedEvent routedEvent) => KeyInput.Raise(View.Editor.TextArea, key, routedEvent).Handled;
 }

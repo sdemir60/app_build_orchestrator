@@ -21,7 +21,7 @@ namespace BuildOrchestrator.App.Controls;
 /// <see cref="CancelForUser"/> onu <c>BeginAnimation(prop, null)</c> ile iptal eder + <see cref="IsUserSuppressedProperty"/>
 /// bayrağını kaldırır (follow-mode'un T48 arbitration'ı bu bayrağı tüketir — burada yalnız primitif sağlanır, "ne zaman
 /// devam" politikası paket dışı). İptali kullanıcının kaydırma jestine bağlayan TEK kablo <see cref="UserScrollSignal"/>'dir
-/// (tekerlek, kaydırma çubuğu, dikey kaydırma tuşları — üç panelde).</para>
+/// (tekerlek, dikey kaydırma çubuğu, dikey kaydırma tuşları — üç panelde; yana jestler animasyonu durdurmaz).</para>
 ///
 /// <para><b>Motion sözleşmesi:</b> <paramref name="animationsEnabled"/>/<paramref name="effectiveDuration"/> ÇAĞIRAN
 /// tarafından, animasyonun BAŞLADIĞI ANDA <c>App.Motion</c>'dan TAZE okunmalıdır (bkz. <see cref="AnimateTo"/> XML
