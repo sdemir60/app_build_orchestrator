@@ -104,15 +104,21 @@ public class EngineWakeTests
         return (window, vm, probe, sent, sleeping);
     }
 
-    /// <summary>[T21 · fix dalgası] Uyuyan kabuk (<see cref="AsleepShell"/>) + bekletilen uyanma (TCS): uyanmayı ilk isteyen yol onu başlatır,
-    /// bitirmek dönen kaynağın işidir. Bekletilen uyanmanın TEK kurulumu.</summary>
+    /// <summary>[T21 · fix dalgası] Uyuyan kabuk (<see cref="AsleepShell"/>) + bekletilen uyanma (<see cref="HoldNextWake"/>): uyanmayı ilk isteyen
+    /// yol onu başlatır, bitirmek dönen kaynağın işidir.</summary>
     private static (MainWindow Window, RunViewModel Vm, EngineSleepProbe Probe, SentLog Sent, TaskCompletionSource<EngineReadyEvent> Waking)
         AsleepShellWithHeldWake(TempDir dir)
     {
         var (window, vm, probe, sent, _) = AsleepShell(dir);
+        return (window, vm, probe, sent, HoldNextWake(probe));
+    }
+
+    /// <summary>Bekletilen uyanmanın TEK kurulumu: sahtenin sonraki uyanması dönen kaynak bitirene dek sürer.</summary>
+    private static TaskCompletionSource<EngineReadyEvent> HoldNextWake(EngineSleepProbe probe)
+    {
         var waking = new TaskCompletionSource<EngineReadyEvent>();
         probe.NextWake = () => waking.Task;
-        return (window, vm, probe, sent, waking);
+        return waking;
     }
 
     /// <summary>[Go5] Uyanmayı bekleyen koşu: uyuyan kabuk, bekletilen uyanma (TCS) ve Build — koşunun komutu bekleyen-koşu penceresinde kapıda,
@@ -402,6 +408,55 @@ public class EngineWakeTests
         Assert.False(Assert.IsType<SyncWorkspaceCommand>(Assert.Single(ordered.Skip(1))).Fetch);
         Assert.All(sent.States, s => Assert.Equal(EngineState.Ready, s));
         GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [karar 42a · B1 fix 3 · PİN] Kapının boşalması HER uyanmada yeniden kurulur: ikinci kurtaran uyanmada da uyandıran istek sessiz Sync'ten ÖNCE
+    /// gider. İki döngü aynı biçimdedir — gerçek tıklama, tutulan uyanma, kesilmiş koşu kurtaran hazır olayı, uyanma dispatcher DIŞINDA biter; arada
+    /// istekler cevaplanır ve motor yeniden uyur (beş işsiz dakika + tik).
+    /// <para>PİN: bugünkü kod yeşildir. Mutasyon (boşalmanın yeniden kurulmaması — <c>EnterGate</c>'te <c>??=</c>, eski ve tamamlanmış boşalma
+    /// tutulur): ikinci döngüde Sync getProjectLog'dan önce gider (I-1 geri gelir) — kırmızı.</para>
+    /// </summary>
+    [WpfFact]
+    public async Task Every_recovering_wake_sends_the_waking_request_before_its_silent_sync()
+    {
+        using var dir = new TempDir();
+        var (window, vm, probe, sent, advance) = AsleepShell(dir);
+        string id = MainWindowHost.IdOf("A");
+
+        var first = await RecoveringWakeByClickAsync();
+        vm.OnEvent(ProjectLogIpc.Reply(first.OfType<GetProjectLogCommand>().Single().RequestId, id, "line-1\n", through: 1));
+        MainWindowHost.ReplySync(vm, ("A", null));
+        DispatcherPump.DrainToIdle();
+        advance(IdleAfterMs);
+        window.OnElapsedTick();
+        Assert.Equal(EngineState.Asleep, vm.EngineState); // ön-koşul: motor yeniden uyudu
+        vm.SelectProject(id); // seçimi kaldırır — ikinci tıklama yüklemeyi yeniden ister
+        DispatcherPump.DrainToIdle();
+        var second = await RecoveringWakeByClickAsync();
+
+        Assert.Equal(2, probe.WakeCalls);
+        Assert.All(new[] { first, second }, cycle =>
+        {
+            var ordered = cycle.Where(c => c is GetProjectLogCommand or SyncWorkspaceCommand).ToList();
+            Assert.IsType<GetProjectLogCommand>(ordered.First());
+            Assert.False(Assert.IsType<SyncWorkspaceCommand>(Assert.Single(ordered.Skip(1))).Fetch);
+        });
+        Assert.All(sent.States, s => Assert.Equal(EngineState.Ready, s));
+        GC.KeepAlive(window);
+
+        // Bir döngü: tutulan uyanma, gerçek tıklama, kurtaran hazır olayı dispatcher dışında — o döngünün giden komutları.
+        async Task<List<IpcCommand>> RecoveringWakeByClickAsync()
+        {
+            int before = sent.Commands.Count();
+            var waking = HoldNextWake(probe);
+            vm.SelectProject(id);
+            DispatcherPump.DrainToIdle();
+            Assert.Equal(EngineState.Waking, vm.EngineState); // ön-koşul: uyanma sürüyor, istek kapıda
+            await CompleteOffTheDispatcher(waking, RecoveringWake);
+            DispatcherPump.DrainToIdle();
+            return [.. sent.Commands.Skip(before)];
+        }
     }
 
     /// <summary>[karar 42a · B1 fix 2 · PİN] Proje logu tıklaması uyanmayı başlatır, Sync düğmesi ona katılır, uyanan motor kesilmiş bir koşu kurtarır:
