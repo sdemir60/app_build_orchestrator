@@ -19,14 +19,7 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class NotesDialogWiringTests
 {
-    /// <summary>Pencere-seviyesi bir tuş bağlamasını, üretimdeki yolun AYNISIYLA (InputBinding'in komutu)
-    /// tetikler — WPF olay yönlendirmesi gerçek bir HWND olmadan güvenilir değildir.</summary>
-    private static void Invoke(MainWindow window, Key key, ModifierKeys modifiers)
-    {
-        var binding = window.InputBindings.OfType<KeyBinding>()
-            .Single(k => k.Key == key && k.Modifiers == modifiers);
-        if (binding.Command.CanExecute(null)) binding.Command.Execute(null);
-    }
+    // Pencere-seviyesi tuş bağlamaları üretimdeki yolun AYNISIYLA (bağlamanın komutu) basılır: MainWindowHost.PressKeyBinding / PressEscape.
 
     // ---------------------------------------------------------------- title bar butonu
 
@@ -164,7 +157,7 @@ public class NotesDialogWiringTests
         CommandPress.Click(window.NotesButton);
         Assert.Equal(Visibility.Visible, window.NotesOverlay.Visibility);
 
-        Invoke(window, Key.Escape, ModifierKeys.None);
+        MainWindowHost.PressEscape(window);
         Assert.Equal(Visibility.Collapsed, window.NotesOverlay.Visibility);
         GC.KeepAlive(window);
     }
@@ -187,7 +180,7 @@ public class NotesDialogWiringTests
         MainWindowHost.Realize(window);
 
         CommandPress.Click(window.GearButton);
-        Invoke(window, Key.F1, ModifierKeys.None);
+        MainWindowHost.PressKeyBinding(window, Key.F1);
         window.AboutOverlay.UpdateLayout();
         CommandPress.Click(window.AboutOverlay.WhatsNewButton);
 
@@ -195,11 +188,11 @@ public class NotesDialogWiringTests
         Assert.Equal(Visibility.Collapsed, window.AboutOverlay.Visibility);
         Assert.Equal(Visibility.Visible, window.NotesOverlay.Visibility);
 
-        Invoke(window, Key.Escape, ModifierKeys.None);
+        MainWindowHost.PressEscape(window);
         Assert.Equal(Visibility.Collapsed, window.NotesOverlay.Visibility);
         Assert.Equal(Visibility.Visible, window.SettingsOverlay.Visibility); // ALT katman DURUYOR
 
-        Invoke(window, Key.Escape, ModifierKeys.None);
+        MainWindowHost.PressEscape(window);
         Assert.Equal(Visibility.Collapsed, window.SettingsOverlay.Visibility);
         GC.KeepAlive(window);
     }

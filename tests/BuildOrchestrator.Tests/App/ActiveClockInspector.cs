@@ -91,8 +91,12 @@ internal static class ActiveClockInspector
 
     /// <summary>[B2 fix 3 · madde 7] Bir saati zaman çizelgesinde konumlar — <paramref name="progress"/> doğal sürenin kesri (1 = son, dolum
     /// evresi). <c>SeekAlignedToLastTick</c> bir tik beklemeden konumlar ve canlandırılan değeri hemen yazar: headless'ta compositor saati
-    /// kendiliğinden ilerlemez, duvar saatiyle beklemek kararsızdır. Testlerin TEK saat konumlama yolu (kaydırma atlamasının inişi ve yolun
-    /// ortasında tutulması, uçuş raporu).</summary>
+    /// kendiliğinden ilerlemez, duvar saatiyle beklemek kararsızdır. Bir kez oynayan bir saati doğal süresinin kesriyle konumlayan testlerin
+    /// tek yolu (kaydırma atlamasının inişi ve yolun ortasında tutulması, uçuş raporu).
+    /// <para>[son temizlik · madde 6] Eski iddia "testlerin TEK saat konumlama yolu" idi; dar değildi. <c>GraphRenderTests</c> grafın sonsuz
+    /// tekrarlanan boncuk saatini (<c>RepeatBehavior.Forever</c>) ürünün tur sabitiyle (<c>GraphBeads.CycleMs</c>) MUTLAK bir ana konumlar —
+    /// yarım tur, sonra iki buçuk tur — ve <c>SeekAlignedToLastTick</c>'i doğrudan çağırır: bir kez oynayan saatin "1 = son, dolum" kesri
+    /// tekrarlanan bir saatte anlamını yitirir; o kullanım meşru olarak ayrıdır.</para></summary>
     public static void Seek(Clock clock, double progress)
     {
         ArgumentNullException.ThrowIfNull(clock);

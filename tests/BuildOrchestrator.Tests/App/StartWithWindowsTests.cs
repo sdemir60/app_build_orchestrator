@@ -31,8 +31,6 @@ public class StartWithWindowsTests
     private static readonly string OnNote = GeneralSettingChains.Of(GeneralSetting.StartWithWindows).Shell!.OnNote;
     private static readonly string OffNote = GeneralSettingChains.Of(GeneralSetting.StartWithWindows).Shell!.OffNote;
 
-    private static int Count(string text, string value) => Regex.Matches(text, Regex.Escape(value)).Count;
-
     /// <summary>Taslak — diyaloğun kurduğu gibi (<c>SettingsDialog.Open</c>).</summary>
     private static SettingsDraftViewModel NewDraft(UiState? saved = null, AutostartService? autostart = null) =>
         new(null, Root, saved: saved, autostart: autostart);
@@ -95,7 +93,7 @@ public class StartWithWindowsTests
 
         Assert.Equal(FakeAutostartRegistry.Command, bench.Registry.CommandFor(Entry));
         Assert.True(ShellSwitches.StartWithWindows(bench.Store.State));
-        Assert.Equal(1, Count(bench.ConsoleText, OnNote));
+        Assert.Equal(1, Occurrences(bench.ConsoleText,OnNote));
     }
 
     /// <summary>Anahtarı kapatıp Save → kayıt ANINDA silinir; tercih kapanır ve not düşer.</summary>
@@ -113,7 +111,7 @@ public class StartWithWindowsTests
 
         Assert.False(bench.Registry.Exists(Entry));
         Assert.False(ShellSwitches.StartWithWindows(bench.Store.State));
-        Assert.Equal(1, Count(bench.ConsoleText, OffNote));
+        Assert.Equal(1, Occurrences(bench.ConsoleText,OffNote));
     }
 
     /// <summary>Anahtara DOKUNULMADAN başka bir ayar için Save → Windows kaydına da tercihe de dokunulmaz, not
@@ -146,7 +144,7 @@ public class StartWithWindowsTests
 
         Assert.Null(await Record.ExceptionAsync(() => bench.SaveAsync(draft)));
 
-        Assert.Equal(1, Count(bench.ConsoleText, "Start with Windows not changed — Access is denied."));
+        Assert.Equal(1, Occurrences(bench.ConsoleText,"Start with Windows not changed — Access is denied."));
         Assert.DoesNotContain("Start with Windows on", bench.ConsoleText, StringComparison.Ordinal);
         Assert.False(ShellSwitches.StartWithWindows(bench.Store.State));
         Assert.False(bench.Registry.Exists(Entry));
@@ -221,7 +219,7 @@ public class StartWithWindowsTests
 
         Assert.Equal(AutostartState.On, bench.Registry.Service().State);
         Assert.True(ShellSwitches.StartWithWindows(bench.Store.State));
-        Assert.Equal(1, Count(bench.ConsoleText, OnNote));
+        Assert.Equal(1, Occurrences(bench.ConsoleText,OnNote));
     }
 
     /// <summary>Görev Yöneticisi'nin kararı SESSİZCE ezilmez: anahtara dokunulmayan bir Save (başka bir ayar için)

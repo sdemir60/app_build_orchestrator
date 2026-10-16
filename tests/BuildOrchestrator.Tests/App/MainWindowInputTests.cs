@@ -78,11 +78,10 @@ public class MainWindowInputTests
     {
         using var temp = new TempDir();
         var (window, vm) = NewMainWindow(temp);
-        var bindings = KeyBindingsOf(window);
 
-        Assert.Same(vm.BuildCommand, bindings.Single(b => b.Key == Key.F5 && b.Modifiers == ModifierKeys.None).Command);
-        Assert.Same(vm.RebuildCommand, bindings.Single(b => b.Key == Key.F6 && b.Modifiers == ModifierKeys.None).Command);
-        Assert.Same(vm.CleanAllCommand, bindings.Single(b => b.Key == Key.F7 && b.Modifiers == ModifierKeys.None).Command);
+        Assert.Same(vm.BuildCommand, MainWindowHost.KeyBindingOf(window, Key.F5).Command);
+        Assert.Same(vm.RebuildCommand, MainWindowHost.KeyBindingOf(window, Key.F6).Command);
+        Assert.Same(vm.CleanAllCommand, MainWindowHost.KeyBindingOf(window, Key.F7).Command);
         GC.KeepAlive(window);
     }
 
@@ -96,13 +95,13 @@ public class MainWindowInputTests
         // Topolojili pencere: topoloji yokken kapı koşudan BAĞIMSIZ kapalıdır (WhyRunCannotStart'ın son halkası).
         var (window, vm, _) = MainWindowHost.NewWithProjects(temp, MainWindowHost.ProjectNames(2));
         MainWindowHost.AcceptSends(vm);
-        var f5 = KeyBindingsOf(window).Single(b => b.Key == Key.F5 && b.Modifiers == ModifierKeys.None);
+        var f5 = MainWindowHost.KeyBindingOf(window, Key.F5);
         Assert.True(f5.Command.CanExecute(null)); // ön-koşul: koşu yokken F5 Build'i çalıştırır — kapıyı bundan sonra kapatan tek şey koşu
         MainWindowHost.StartBuild(vm);
         var phase = vm.Phase;
 
         Assert.False(f5.Command.CanExecute(null)); // WPF kapalı bir komutu tuşla ÇALIŞTIRMAZ
-        if (f5.Command.CanExecute(null)) f5.Command.Execute(null);
+        CommandPress.Press(f5.Command);
 
         Assert.Equal(phase, vm.Phase);
         Assert.NotEqual(AppPhase.Stopping, vm.Phase);
@@ -120,7 +119,7 @@ public class MainWindowInputTests
         // Topolojili pencere: topoloji yokken kapı Sync'ten BAĞIMSIZ kapalıdır (WhyRunCannotStart'ın son halkası).
         var (window, vm, _) = MainWindowHost.NewWithProjects(temp, MainWindowHost.ProjectNames(2));
         MainWindowHost.AcceptSends(vm);
-        var f5 = KeyBindingsOf(window).Single(b => b.Key == Key.F5 && b.Modifiers == ModifierKeys.None);
+        var f5 = MainWindowHost.KeyBindingOf(window, Key.F5);
         Assert.True(f5.Command.CanExecute(null)); // ön-koşul: Sync yokken F5 çalışır — kapıyı bundan sonra kapatan tek şey Sync
         vm.OnEvent(new SyncStartedEvent(vm.RootPath, "main")); // Sync sürüyor
         Assert.True(vm.SyncBusy); // ön-koşul: kapı kapalı olmalı
@@ -128,7 +127,7 @@ public class MainWindowInputTests
         var phase = vm.Phase;
 
         Assert.False(f5.Command.CanExecute(null)); // WPF kapalı bir komutu tuşla ÇALIŞTIRMAZ
-        if (f5.Command.CanExecute(null)) f5.Command.Execute(null);
+        CommandPress.Press(f5.Command);
 
         Assert.False(vm.IsStarting);
         Assert.Equal(phase, vm.Phase);
@@ -150,7 +149,7 @@ public class MainWindowInputTests
         vm.SelectProject(@"C:\p\a.csproj");
         Assert.Equal(@"C:\p\a.csproj", vm.SelectedProjectId); // ön-koşul
 
-        var escape = KeyBindingsOf(window).Single(b => b.Key == Key.Escape && b.Modifiers == ModifierKeys.None);
+        var escape = MainWindowHost.KeyBindingOf(window, Key.Escape);
         Assert.True(escape.Command.CanExecute(null));
         escape.Command.Execute(null);
 
@@ -174,9 +173,8 @@ public class MainWindowInputTests
         vm.SelectProject(@"C:\p\a.csproj");
         Assert.Equal(@"C:\p\a.csproj", vm.SelectedProjectId); // ön-koşul
 
-        var bindings = KeyBindingsOf(window);
-        var ctrlF = bindings.Single(b => b.Key == Key.F && b.Modifiers == ModifierKeys.Control);
-        var escape = bindings.Single(b => b.Key == Key.Escape && b.Modifiers == ModifierKeys.None);
+        var ctrlF = MainWindowHost.KeyBindingOf(window, Key.F, ModifierKeys.Control);
+        var escape = MainWindowHost.KeyBindingOf(window, Key.Escape);
         ctrlF.Command.Execute(null);
 
         Assert.Equal(@"C:\p\a.csproj", vm.SelectedProjectId); // Esc ile takas edilseydi temizlenirdi

@@ -21,6 +21,11 @@ namespace BuildOrchestrator.Tests.App;
 /// <para>T1 öncesinde bu blok iki dosyada (<c>MainWindowRealizeTests</c>, <c>MainWindowInputTests</c>) AYRI AYRI
 /// duruyordu ve T2 üçüncü/dördüncüsünü yazacaktı — tek yere toplandı (kopya YASAK, CLAUDE.md).</para>
 ///
+/// <para>[son temizlik · madde 20] Pencere kurmayan testlerin de ortak parçalarını taşır: konsol pompasının iki test biçimi — hiç tick
+/// etmeyen (<see cref="NeverTickingBatcher"/>) ve testin elinde boşaltılan (<see cref="DrainableBatcher"/>, <see cref="DrainPosted"/>) — VM'i ya
+/// da konsolu pencere olmadan kuran testlerin de tek batcher kaynağıdır; pencere kısayolları (<see cref="PressKeyBinding"/>) ve konsol satırı
+/// sayımı (<see cref="Occurrences"/>) da buradadır.</para>
+///
 /// <para><b>İki değişmez burada zorlanır:</b>
 /// (a) motor ASLA doğmaz — var olmayan bir supervisor yolu verilir ve pencere hiç <c>Show()</c> edilmez
 /// (<c>Loaded</c>/<c>OnSourceInitialized</c> tetiklenmez; bkz. <see cref="MainWindowRealizeTests"/> sınıf özeti);
@@ -264,18 +269,25 @@ internal static class MainWindowHost
     public static ProjectRowViewModel ProjectOf(RunViewModel vm, string name) =>
         vm.Projects.Single(p => p.Id == IdOf(name));
 
-    /// <summary>[design v1.23/v1.24 review C12] Pencerenin Esc'ine kullanıcı gibi basar: pencere düzeyindeki Esc
-    /// bağlamasının komutu, üretimdeki yolun AYNISIYLA sürülür (<see cref="CommandPress.Press"/> — kapı kapalıysa
-    /// hiçbir şey olmaz). WPF olay yönlendirmesi gerçek bir HWND olmadan güvenilir değildir, bu yüzden tuş olayı değil
-    /// bağlamanın kendisi sürülür. Esc zincirini süren testlerin TEK basış yeri — <c>EscStopTests</c> ve
-    /// <c>UpdateCardTests</c> bunu birebir aynı gövdeyle ayrı ayrı yazmıştı.</summary>
-    public static void PressEscape(MainWindow window)
+    /// <summary>[son temizlik · madde 15/19] Pencere düzeyindeki bir tuş bağlaması — tuş ve değiştirici TEK bağlamaya eşlenir. Bağlamayı
+    /// arayan testlerin tek arama yeri (<see cref="PressKeyBinding"/>, <c>MainWindowInputTests</c>).</summary>
+    public static KeyBinding KeyBindingOf(MainWindow window, Key key, ModifierKeys modifiers = ModifierKeys.None)
     {
         ArgumentNullException.ThrowIfNull(window);
-        var escape = window.InputBindings.OfType<KeyBinding>()
-            .Single(k => k.Key == Key.Escape && k.Modifiers == ModifierKeys.None);
-        CommandPress.Press(escape.Command);
+        return window.InputBindings.OfType<KeyBinding>().Single(k => k.Key == key && k.Modifiers == modifiers);
     }
+
+    /// <summary>[design v1.23/v1.24 review C12 · son temizlik · madde 15/19] Pencere düzeyindeki bir tuş bağlamasına kullanıcı gibi basar:
+    /// bağlamanın komutu üretimdeki yolun AYNISIYLA sürülür (<see cref="CommandPress.Press"/> — kapı kapalıysa hiçbir şey olmaz). WPF olay
+    /// yönlendirmesi gerçek bir HWND olmadan güvenilir değildir, bu yüzden tuş olayı değil bağlamanın kendisi sürülür. Pencere kısayollarına
+    /// basan testlerin TEK basış yeri — <c>AboutWiringTests</c> ve <c>NotesDialogWiringTests</c> bunu birebir aynı gövdeyle ayrı ayrı
+    /// yazmıştı (<c>Invoke</c>).</summary>
+    public static void PressKeyBinding(MainWindow window, Key key, ModifierKeys modifiers = ModifierKeys.None) =>
+        CommandPress.Press(KeyBindingOf(window, key, modifiers).Command);
+
+    /// <summary>[design v1.23/v1.24 review C12] Pencerenin Esc'ine kullanıcı gibi basar (<see cref="PressKeyBinding"/>). Esc zincirini süren
+    /// testlerin basış yeri — <c>EscStopTests</c> ve <c>UpdateCardTests</c> bunu birebir aynı gövdeyle ayrı ayrı yazmıştı.</summary>
+    public static void PressEscape(MainWindow window) => PressKeyBinding(window, Key.Escape);
 
     /// <summary>[task 3] Gönderimler motor yerine başarıyla "gider" (<see cref="RunViewModel.DebugSendOverride"/>) —
     /// motorun cevabını test <c>vm.OnEvent(...)</c> ile verir. Verilmezse gönderim her zaman düşer.</summary>
@@ -310,7 +322,9 @@ internal static class MainWindowHost
     }
 
     /// <summary>[perf Faz B · B3 takip] <paramref name="text"/>'in kaç SATIRI <paramref name="line"/>'ı içerir — konsol satırı
-    /// sayan testlerin TEK sayım yeri (<c>EscStopTests</c> ile <c>StopNowTests</c> aynı işi ayrı ayrı yazmıştı).</summary>
+    /// sayan testlerin TEK sayım yeri (<c>EscStopTests</c> ile <c>StopNowTests</c> aynı işi ayrı ayrı yazmıştı; [son temizlik · madde 15]
+    /// <c>SettingsDialogTests</c>'in <c>CountOccurrences</c>'ı ve <c>StartWithWindowsTests</c>'in <c>Count</c>'u da — ikisi de konsol satırı
+    /// sayıyordu).</summary>
     public static int Occurrences(string text, string line) =>
         text.Split('\n').Count(l => l.Contains(line, StringComparison.Ordinal));
 
@@ -414,21 +428,6 @@ internal static class MainWindowHost
         ArgumentNullException.ThrowIfNull(text);
         vm.OnEvent(new ProjectLogEvent("r1", IdOf(name), lineNumber, text));
     }
-
-    /// <summary>[idle-memory · dalga 2 · fix 1 · M5] MSBuild'in satır içi uyarı satırı (girintili, <c>&lt;dosya&gt;(&lt;satır&gt;,1): warning
-    /// &lt;KOD&gt;: &lt;metin&gt;</c>) — her satır numarası ayrı, TEKİL bir uyarıdır. Kompakt konsolun süzgeç ve VM testlerinin TEK satır
-    /// kurucusu.</summary>
-    public static string WarningLine(int line, string code = "CS1591", string text = "Missing XML comment") =>
-        $"  C:\\r\\A.cs({line},1): warning {code}: {text}";
-
-    /// <summary>[dalga 2 son inceleme · defter 9] MSBuild'in satır içi hata satırı (girintili, <c>&lt;dosya&gt;(&lt;satır&gt;,1): error
-    /// CS0103: …</c>) — <see cref="WarningLine"/>'ın eşi: her satır numarası ayrı bir hatadır. Kompakt konsolun süzgeç, VM ve sınıflandırıcı
-    /// testlerinin TEK satır kurucusu.</summary>
-    public static string ErrorLine(int line) => $"  C:\\r\\A.cs({line},1): error CS0103: The name 'x' does not exist";
-
-    /// <summary>[dalga 2 son inceleme O5] Bir proje logunun ilk satırı: motorun yazdığı MSBuild komut satırı (tırnakla başlar — bilgi
-    /// satırı, kompakt kipte gizlenir). Süzgeç ve VM testlerinin TEK komut satırı girdisi.</summary>
-    public const string CommandLine = "\"C:\\Program Files\\MSBuild.exe\" C:\\p\\A.csproj -t:Build -v:minimal";
 
     /// <summary>[perf A3/A4 fix] Bir derlemenin TÜM olay akışı: plan (<see cref="PreviewBuild"/>), başlangıç
     /// (<see cref="StartBuild"/>), her projenin derlenmesi ve bitiş (<see cref="FinishBuild"/>). Gizli-pencere testleri

@@ -684,7 +684,7 @@ public class SettingsDialogTests
         // GERÇEKTEN güncellenir (not-gating yalnız KONSOLU susturur, veriyi DONDURMAZ).
         await run.ApplySettingsAsync(patterns, @"D:\repo",
             [new ExternalProject(@"C:\c"), new ExternalProject(@"C:\d")]);
-        Assert.Equal(1, CountOccurrences(run.GetRunDocumentText(), "External projects → 2"));
+        Assert.Equal(1, MainWindowHost.Occurrences(run.GetRunDocumentText(), "External projects → 2"));
         Assert.Equal(@"C:\c", run.ExternalProjects[0].Path);
 
         // 2 → 0: sayı DEĞİŞTİ (0'a düştü) → "cleared" notu.
@@ -703,13 +703,6 @@ public class SettingsDialogTests
         await run.ApplySettingsAsync([new LayerPattern(0, "^A", "Alpha")], @"D:\repo", []);
 
         Assert.DoesNotContain("External projects", run.GetRunDocumentText());
-    }
-
-    private static int CountOccurrences(string haystack, string needle)
-    {
-        int count = 0, index = 0;
-        while ((index = haystack.IndexOf(needle, index, StringComparison.Ordinal)) >= 0) { count++; index += needle.Length; }
-        return count;
     }
 }
 

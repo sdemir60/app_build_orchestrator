@@ -172,9 +172,7 @@ public class PopoverTests
         bool closeRequested = false;
         AddCloseHandler(popover, () => closeRequested = true);
 
-        var esc = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(popover)!, 0, Key.Escape)
-        { RoutedEvent = Keyboard.KeyDownEvent };
-        popover.RaiseEvent(esc);
+        var esc = KeyInput.Raise(popover, Key.Escape, Keyboard.KeyDownEvent);
 
         Assert.True(closeRequested);
         Assert.True(esc.Handled);

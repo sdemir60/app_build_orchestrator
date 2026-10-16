@@ -62,12 +62,7 @@ public class ProjectRowInputTests
         Assert.True(row.Focus(), "kart klavye odağını ALAMADI — Focusable/IsTabStop regresyonu");
         Assert.True(row.IsKeyboardFocused);
 
-        var args = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(row)!, 0, key)
-        {
-            RoutedEvent = Keyboard.KeyDownEvent,
-        };
-        row.RaiseEvent(args);
-        return args;
+        return KeyInput.Raise(row, key, Keyboard.KeyDownEvent);
     }
 
     private static void RaiseMouse(ProjectRow row, RoutedEvent mouseEvent) =>

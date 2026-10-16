@@ -75,7 +75,7 @@ internal sealed class RealizedNarrative : IDisposable
         var textArea = View.Editor.TextArea;
         var binding = textArea.InputBindings.OfType<KeyBinding>()
             .Single(k => k.Key == key && k.Modifiers == modifiers);
-        RaiseKey(key, Keyboard.PreviewKeyDownEvent);
+        KeyInput.PreviewKeyDown(textArea, key);
         ((RoutedCommand)binding.Command).Execute(binding.CommandParameter, textArea);
         DispatcherPump.DrainToIdle();
     }
@@ -112,10 +112,11 @@ internal sealed class RealizedNarrative : IDisposable
         return int.Parse(end < 0 ? text : text[..end], CultureInfo.InvariantCulture);
     }
 
-    /// <summary>Değiştiricisiz bir tuş: önizleme, ardından gerçek KeyDown — editörün bağlamasını <c>CommandManager</c> eşleştirir.</summary>
+    /// <summary>Değiştiricisiz bir tuş: önizleme, ardından gerçek KeyDown (<see cref="KeyInput.Press"/>) — editörün bağlamasını
+    /// <c>CommandManager</c> eşleştirir.</summary>
     public void Press(Key key)
     {
-        if (!RaiseKey(key, Keyboard.PreviewKeyDownEvent)) RaiseKey(key, Keyboard.KeyDownEvent);
+        KeyInput.Press(View.Editor.TextArea, key);
         DispatcherPump.DrainToIdle();
     }
 
@@ -205,6 +206,4 @@ internal sealed class RealizedNarrative : IDisposable
     }
 
     public void Dispose() => _window.Close();
-
-    private bool RaiseKey(Key key, RoutedEvent routedEvent) => KeyInput.Raise(View.Editor.TextArea, key, routedEvent).Handled;
 }

@@ -14,14 +14,7 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class AboutWiringTests
 {
-    /// <summary>Pencere-seviyesi bir tuş bağlamasını, üretimdeki yolun AYNISIYLA (InputBinding'in komutu)
-    /// tetikler — WPF olay yönlendirmesi gerçek bir HWND olmadan güvenilir değildir.</summary>
-    private static void Invoke(MainWindow window, Key key, ModifierKeys modifiers)
-    {
-        var binding = window.InputBindings.OfType<KeyBinding>()
-            .Single(k => k.Key == key && k.Modifiers == modifiers);
-        if (binding.Command.CanExecute(null)) binding.Command.Execute(null);
-    }
+    // Pencere-seviyesi tuş bağlamaları üretimdeki yolun AYNISIYLA (bağlamanın komutu) basılır: MainWindowHost.PressKeyBinding / PressEscape.
 
     // ---------------------------------------------------------------- title bar butonu
 
@@ -167,7 +160,7 @@ public class AboutWiringTests
         var (window, _) = MainWindowHost.New(temp);
         MainWindowHost.Realize(window);
 
-        Invoke(window, Key.F1, ModifierKeys.None);
+        MainWindowHost.PressKeyBinding(window, Key.F1);
 
         Assert.Equal(Visibility.Visible, window.AboutOverlay.Visibility);
         GC.KeepAlive(window);
@@ -187,10 +180,10 @@ public class AboutWiringTests
         var (window, _) = MainWindowHost.New(temp);
         MainWindowHost.Realize(window);
 
-        Invoke(window, Key.F1, ModifierKeys.None);
+        MainWindowHost.PressKeyBinding(window, Key.F1);
         Assert.Equal(Visibility.Visible, window.AboutOverlay.Visibility);
 
-        Invoke(window, Key.F1, ModifierKeys.None);
+        MainWindowHost.PressKeyBinding(window, Key.F1);
         Assert.Equal(Visibility.Collapsed, window.AboutOverlay.Visibility);
         GC.KeepAlive(window);
     }
@@ -208,7 +201,7 @@ public class AboutWiringTests
         Assert.Equal(Visibility.Visible, window.SettingsOverlay.Visibility);
         var draft = window.SettingsOverlay.DataContext;
 
-        Invoke(window, Key.F1, ModifierKeys.None);
+        MainWindowHost.PressKeyBinding(window, Key.F1);
 
         Assert.Equal(Visibility.Visible, window.AboutOverlay.Visibility);   // About AÇILDI
         Assert.Equal(Visibility.Visible, window.SettingsOverlay.Visibility); // Settings DURUYOR
@@ -230,13 +223,13 @@ public class AboutWiringTests
         MainWindowHost.Realize(window);
 
         CommandPress.Click(window.GearButton);
-        Invoke(window, Key.F1, ModifierKeys.None);
+        MainWindowHost.PressKeyBinding(window, Key.F1);
 
-        Invoke(window, Key.Escape, ModifierKeys.None);
+        MainWindowHost.PressEscape(window);
         Assert.Equal(Visibility.Collapsed, window.AboutOverlay.Visibility);
         Assert.Equal(Visibility.Visible, window.SettingsOverlay.Visibility); // ALT katman DURUYOR
 
-        Invoke(window, Key.Escape, ModifierKeys.None);
+        MainWindowHost.PressEscape(window);
         Assert.Equal(Visibility.Collapsed, window.SettingsOverlay.Visibility);
         GC.KeepAlive(window);
     }
@@ -268,10 +261,10 @@ public class AboutWiringTests
         var (window, _) = MainWindowHost.New(temp);
         MainWindowHost.Realize(window);
 
-        Invoke(window, Key.F1, ModifierKeys.None);
+        MainWindowHost.PressKeyBinding(window, Key.F1);
         Assert.Equal(Visibility.Visible, window.AboutOverlay.Visibility);
 
-        Invoke(window, Key.Escape, ModifierKeys.None);
+        MainWindowHost.PressEscape(window);
         Assert.Equal(Visibility.Collapsed, window.AboutOverlay.Visibility);
         GC.KeepAlive(window);
     }
@@ -285,8 +278,8 @@ public class AboutWiringTests
         var (window, vm, _) = MainWindowHost.NewWithProjects(temp, ("A", null));
         vm.SelectProject(MainWindowHost.IdOf("A"));
 
-        Invoke(window, Key.F1, ModifierKeys.None);
-        Invoke(window, Key.Escape, ModifierKeys.None);
+        MainWindowHost.PressKeyBinding(window, Key.F1);
+        MainWindowHost.PressEscape(window);
 
         Assert.Equal(Visibility.Collapsed, window.AboutOverlay.Visibility);
         Assert.NotNull(vm.SelectedProjectId); // seçim DOKUNULMADAN duruyor
@@ -303,7 +296,7 @@ public class AboutWiringTests
         MainWindowHost.Realize(window);
 
         CommandPress.Click(window.GearButton);
-        Invoke(window, Key.Escape, ModifierKeys.None);
+        MainWindowHost.PressEscape(window);
 
         Assert.Equal(Visibility.Collapsed, window.SettingsOverlay.Visibility);
         GC.KeepAlive(window);

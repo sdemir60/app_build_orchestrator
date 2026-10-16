@@ -282,9 +282,7 @@ public class AccessibilityTests
         popover.CloseRequested += () => closeRequested = true;
 
         // Esc arama kutusundan bubble eder → popover kapanır (popover ayrı HWND; pencere Esc zinciri buraya gelmez).
-        var esc = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(popover.SearchBox)!, 0, Key.Escape)
-        { RoutedEvent = Keyboard.KeyDownEvent };
-        popover.SearchBox.RaiseEvent(esc);
+        var esc = KeyInput.Raise(popover.SearchBox, Key.Escape, Keyboard.KeyDownEvent);
 
         Assert.True(closeRequested);
         Assert.True(esc.Handled);
@@ -313,9 +311,7 @@ public class AccessibilityTests
         box.Text = "core";
         DispatcherPump.PumpUntil(() => box.IsKeyboardFocused, TimeSpan.FromSeconds(2));
 
-        var esc = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(box)!, 0, Key.Escape)
-        { RoutedEvent = Keyboard.PreviewKeyDownEvent };
-        box.RaiseEvent(esc); // ShellRoot ctor'da bağlanan GERÇEK OnFilterKeyDown handler'ı (box'a asılı, reparent'te kalır)
+        var esc = KeyInput.PreviewKeyDown(box, Key.Escape); // ShellRoot ctor'da bağlanan GERÇEK OnFilterKeyDown handler'ı (box'a asılı, reparent'te kalır)
 
         Assert.True(esc.Handled);            // stopPropagation — global Esc zincirine sızmaz
         Assert.Equal("", box.Text);          // sorgu temizlendi

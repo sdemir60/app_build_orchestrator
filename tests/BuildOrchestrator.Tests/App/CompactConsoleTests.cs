@@ -7,6 +7,7 @@ using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Tests.Supervisor;
 using static BuildOrchestrator.Tests.App.MainWindowHost;
+using static BuildOrchestrator.Tests.App.MsBuildLines;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -31,7 +32,7 @@ public class CompactConsoleTests
 {
     private const string Succeeded = "Build succeeded.";
 
-    // Komut, uyarı ve hata satırları ortak kurucudan (MainWindowHost.CommandLine / WarningLine / ErrorLine): her satır numarası ayrı,
+    // Komut, uyarı ve hata satırları ortak kurucudan (MsBuildLines.CommandLine / WarningLine / ErrorLine): her satır numarası ayrı,
     // tekil bir tanıdır.
 
     /// <summary>Bir projenin tipik logu: komut satırı, on tekil uyarı, bir hata, bitiş satırı.</summary>
