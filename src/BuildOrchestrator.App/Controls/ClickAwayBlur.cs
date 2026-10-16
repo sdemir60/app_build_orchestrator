@@ -2,7 +2,6 @@ using System.Windows;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Media.Media3D;
 
 namespace BuildOrchestrator.App.Controls;
 
@@ -52,11 +51,12 @@ public static class ClickAwayBlur
     }
 
     /// <summary>Görsel ağaçta yukarı. <c>Run</c> gibi görsel OLMAYAN içerik öğelerinden (tıklamanın özgün
-    /// kaynağı olabilirler) mantıksal ebeveyn üzerinden görsel ağaca çıkılır.</summary>
+    /// kaynağı olabilirler) mantıksal ebeveyn üzerinden görsel ağaca çıkılır. App'te 3B görsel yoktur
+    /// (<c>NoViewport3DGuardTests</c>), yürüyüş yalnız <see cref="Visual"/>'ı tanır.</summary>
     private static IEnumerable<DependencyObject> SelfAndAncestors(DependencyObject node)
     {
         for (DependencyObject? n = node; n is not null;
-             n = n is Visual or Visual3D ? VisualTreeHelper.GetParent(n) : LogicalTreeHelper.GetParent(n))
+             n = n is Visual ? VisualTreeHelper.GetParent(n) : LogicalTreeHelper.GetParent(n))
             yield return n;
     }
 }

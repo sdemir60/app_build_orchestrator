@@ -4926,23 +4926,22 @@ lines.
   that would cross the top of the narrative's slice loads the previous slice first, so the step stays a whole
   viewport; on a project page, and at the start of the narrative, it stops at the top. Each is a gesture of the reader
   as §13.4 defines it: the vertical keys take the wheel and stop a `⌄ latest` flight, the sideways ones do neither.
-- **Panel transitions are one piece, and the hinge is real.** Opening a project log and coming back with
-  `Back` both settle the content **up from 14 px below**, hinged at its bottom edge, over 340 ms — a hinge,
-  not a per-line cascade — so a three-line log and a two-hundred-line narrative open at the same rhythm. The
-  prototype's `perspective(900px) rotateX(7deg)` is a genuine perspective projection: the receding top edge
-  narrows, the advancing bottom edge widens. WPF's 2-D transforms are affine and cannot produce that
-  trapezoid, so §2.4's second option is taken — the block is a textured plane in a `Viewport3D` with a
-  `PerspectiveCamera` 900 px away, rotated 7° → 0 about an axis through its bottom edge. A scale-and-translate
-  approximation was tried first and read as a slide rather than a hinge; the missing cue is the horizontal
-  one. **The return is the mirror of the opening**: opening rises from 14 px below hinged at its bottom edge,
-  going back settles from 14 px above hinged at its top edge — same duration, same curve, same angle, only the
-  direction and the hinged edge change, so the two read as one gesture and its reverse rather than as the same
-  thing twice. The plane's texture is a still of the block taken as the transition starts — a live visual brush
-  cannot work, since hiding the real block would hide it in the brush too. The camera's field of view is
-  derived so that the plane at zero rotation covers the viewport exactly, which is what makes the hand-off
-  back to the real editor invisible. Only the log block moves: the prompt line stays out of it by design
-  (§1.3, §4) — what settles is the content, and the caret is the panel's fixed point. The `⌄ latest` pill stays
-  out too, being an affordance rather than content.
+- **Panel transitions are one piece, and they are flat.** Opening a project log and coming back with `Back`
+  both settle the content **up from 14 px below**, fading in, over 340 ms — one movement, not a per-line
+  cascade — so a three-line log and a two-hundred-line narrative open at the same rhythm. The movement is a
+  `TranslateTransform` and an opacity animation on the block's own container, so the real editor is what
+  slides; nothing is captured and nothing stands in for it. The prototype's `perspective(900px) rotateX(7deg)`
+  — the receding top edge narrowing as the block settles — is deliberately not reproduced: WPF's 2-D transforms
+  are affine and cannot produce that trapezoid, and the one way to get it, a textured plane in a `Viewport3D`,
+  was measured to bind about 830 MB of graphics memory to the process on a 4K full-screen window the first time
+  it drew, and to keep it after the transition had ended — the first click on a project took the app from
+  about 300 MB to 1.1 GB and left it there (§20). The hinge cue was given up for that. **The return is the
+  mirror of the opening**: opening rises from 14 px below, going back settles from 14 px above — same
+  duration, same curve, only the direction changes, so the two read as one gesture and its reverse rather than
+  as the same thing twice. Only the log block moves: the prompt line stays out of it by design (§1.3, §4) —
+  what settles is the content, and the caret is the panel's fixed point; since the container's transform does
+  not move its children relative to each other, the caret's position inside the block is unaffected by the
+  transition. The `⌄ latest` pill stays out too, being an affordance rather than content.
 - **Every project has a page, and a page with no log still says something.** Clicking a card always switches
   the console to that project, including when the engine answers that there is no log — which is not the
   exceptional case but the common one, since a skipped project never writes a log file at all and its reason
@@ -5971,9 +5970,8 @@ them, and it can dump any size as ASCII so the judgement can be re-made against 
 
 Durations 80 / 120 / 180 / 280 ms; three easings — ease-out for entrances, ease-standard for state changes,
 ease-in-out for displacement. All three CSS curves are reproduced exactly as `KeySpline`s. No bounce, no
-overshoot. What animates is what a frame can redraw without a layout pass — opacity, colour, transforms (the
-console's tilt is a 3D one), a stroke's dash offset and a clip — plus the finite exceptions below that do touch
-layout.
+overshoot. What animates is what a frame can redraw without a layout pass — opacity, colour, transforms, a
+stroke's dash offset and a clip — plus the finite exceptions below that do touch layout.
 
 Five contract rules, each enforced by a test:
 
@@ -6852,10 +6850,10 @@ do, and how the interface works around each — useful to know before attempting
 3. **No compositor.** Animations tick on the UI thread, so "the interface keeps animating while it is busy"
    cannot be guaranteed. The countermeasures are the process split (§4.1) and a hard rule against synchronous
    work on the UI thread.
-4. **2-D transforms are affine, so a perspective trapezoid is impossible.** The console's panel transition
-   needs one — the prototype's `perspective(900px) rotateX(7deg)` narrows the receding top edge and widens
-   the advancing bottom one. It is played through a real `Viewport3D` instead (§13.5); a scale-and-translate
-   approximation reads as a slide, not as a hinge.
+4. **2-D transforms are affine, so a perspective trapezoid is impossible.** The prototype's console
+   transition has one — `perspective(900px) rotateX(7deg)` narrows the receding top edge and widens the
+   advancing bottom one. The only WPF route to it, a `Viewport3D`, is too expensive to keep (§13.5, §20), so
+   the transition is a flat slide and fade without the hinge cue.
 5. **Frozen resources cannot be animated.** Shared brushes and effects must be copied per instance before being
    driven (§13.8, §14.5).
 6. **No native smooth scrolling.** It is built from an attached property, an animator and an arbiter (§13.4).
@@ -6926,6 +6924,12 @@ do, and how the interface works around each — useful to know before attempting
   panel makes the horizontal scrollbar appear after the follow's request for the bottom was made, so the view can end
   up one scrollbar's height above the bottom until the next line arrives. That is inside the 48 px threshold, so no
   pill shows; a second request that corrected it would risk the bar flickering in and out.
+- **No 3-D in the window.** A `Viewport3D` binds graphics memory in proportion to the window the first time it draws,
+  and WPF does not give it back when the element is hidden or emptied: measured on a 4K full-screen window, the
+  console's former 3-D panel transition took the process from about 300 MB to 1.1 GB on the first click on a project
+  and left it there, while the same binary with that one transition off stayed at about 330 MB. The transition is
+  flat now (§13.5) and a source guard (`NoViewport3DGuardTests`) keeps `Viewport3D` and `Media3D` out of the App,
+  so the perspective cue the prototype draws is not available to any panel.
 - **The memory trim is a pause.** The collection is blocking and compacting, so it stops the UI thread for as long as
   the live heap takes to mark and compact — the longer, the more the application still holds, which is why it is
   longest right after a large run. The application only chooses its moment: once per operation, in a visible window
@@ -7465,6 +7469,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 |---|---|
 | AvalonEdit host, batching, active line, cascade, chunk paging (an unreadable slice keeps the index and is asked for again — `PrependPreviousChunk`, `ReplaceRunDocument`; the one document swap, whose scroll events reach neither the loader nor the follow decision (`OnScrollOffsetChanged`) and which, when it ends, arms the loader from where the document settles and sets the follow from the end it is pinned to — `SwapDocument`, `SettledOffset`), cursor + row hover band, the hidden native caret; the bind to the narrative store (`BindNarrative`) and the trim to the render slice, on a batch and when following comes back, with the request for the bottom in the same step (`TrimToRenderSlice`, `TrimNarrativeWhenFollowing`); a project page's document — the log whole, from its first line, never followed, never trimmed (`ReplaceProjectDocument`, `PlayCascade`) | `App/Console/ConsoleView.xaml(.cs)` |
 | The console's keys — one table from the editor's navigation command to a scroll of the view (`NavigationScrolls`), answered at the editor's preview before its own handler (`OnPreviewNavigationCommand`), and PageUp's slice-boundary step (`PageUpOneViewport`) | `App/Console/ConsoleView.xaml(.cs)` |
+| The panel transition — a flat slide and fade of the block's container, mirrored on the way back, with no 3-D layer and no captured texture (`PlayTiltIn`, `IsTransitioning`; §13.5, §20) | `App/Console/ConsoleView.xaml(.cs)`; the guard `NoViewport3DGuardTests` |
 | The follow's request for the bottom — finite and vertical (`RequestBottom`, aimed at `PendingBottomOffset`), the one pin that asks for an infinite one (`PinAfterModeSwitch`); the pill re-read when content grows without moving the view (`OnVisualLinesChanged`, `RefreshPill`); the prompt caret at the live bottom (`RefreshPrompt`, read from the announced pill — `PillShown`, `AtLiveBottom`); the follow forbidden on a project page (`followAllowed`) | `App/Console/ConsoleView.xaml(.cs)`, `App/Controls/BottomAnchorBehavior.cs`; the guard `ConsoleBottomRequestGuardTests` |
 | The run narrative's one owner: its lines, slices and count; the spool to the run folder — the memory window, the offset index, block eviction, slices read back from the file outside the lock, one warning per section; and a clear that closes the file and lets go of its array and index | `App/Console/NarrativeStore.cs` |
 | Opening the narrative's spool when `runStarted` names the run folder, taking its warning after the line that met the failure or on the visible tick, flushing it when an operation ends and when the window closes for good | `App/ViewModels/RunViewModel.cs` (`BeginNarrativeSpool`, `AppendSpoolWarningLocked`, `TickElapsed`, `MarkOperationEnded`), `App/MainWindow.xaml.cs` (`OnClosed`) |
