@@ -2,6 +2,29 @@
 
 Release notes for Build Orchestrator, newest version first. The What's new window in the app reads this file.
 
+## [1.10.0] - 2026-10-16
+
+### Added
+
+- Stop the engine when idle, a new switch in Settings, General, on by default: after five minutes without work the engine process exits, and the next build, Sync, Clean, Optimize, branch switch, pull or project log starts it again in a moment while the ribbon reads Starting the engine. About shows the engine as asleep meanwhile.
+- Compact console, a new switch in Settings, General, on by default: the console shows each project's errors in full, its first warnings and a count of the rest, and every line stays in the project's log.
+
+### Changed
+
+- A project's log opens at its first line with the whole log on the page, and it never follows the output; the latest pill takes you to the end once.
+- In the console PageUp and PageDown move one screen and the arrow keys, Home and End scroll the view. Reading sideways keeps its place while new lines arrive, and scrolling with the wheel, the scrollbar or the keys stops a slide to the latest line.
+- Without layer definitions the graph is one band like the project list instead of a narrow funnel, using the full width of the panel.
+
+### Fixed
+
+- Clicking between projects quickly no longer opens the wrong project's log or loses lines that arrive while a log loads.
+- In the console, Ctrl+Home brings back the earlier lines of a long run, and scrolling up with Ctrl+Home, PageUp or the wheel always lets go of the live output and shows the latest pill.
+- A git, vswhere or MSBuild step that had just finished could rarely be reported as an error; its result is now read only once the process has ended.
+
+### Performance
+
+- The app uses much less memory while it sits idle after a build: it gives memory back after every run, Sync, Clean and Optimize, keeps a run's console text on disk with only the latest lines in memory, and stops an idle engine.
+
 ## [1.9.0] - 2026-10-13
 
 ### Added
