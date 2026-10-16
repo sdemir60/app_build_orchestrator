@@ -27,6 +27,23 @@ public class EngineHostTests
     /// ölçebilir. Alt sınır iddiası bu payı düşer — ölçüm hatasıdır, eşik gevşetmesi değil (anında öldüren bir uyku ms'lerde biter).</summary>
     private static readonly TimeSpan ClockTick = TimeSpan.FromMilliseconds(16);
 
+    /// <summary>[B1 fix 3] Yeni bir motor doğuran işi (<paramref name="start"/>: uyanma ya da yeniden başlatma) başlatır ve o motorun sürecini doğduğu
+    /// anda yakalar — iki testin TEK kurulumu: outer job'un IOCP'si işten ÖNCE bağlanır; port bağlandığında job'da kalmış üyeler de doğum olarak
+    /// bildirilir (eski motorun conhost'u, henüz çıkmamış eski motor), bu yüzden yeni motor imajıyla ve eski motorun PID'i dışarıda bırakılarak
+    /// seçilir (<see cref="TestPaths.IsSupervisorOtherThan"/>) ve tutamacı doğumda alınır (<see cref="JobBirths.WaitForProcess"/>). Port, seçimden
+    /// sonra kapanır. Dönen: işin görevi ve yeni motorun süreci (çağıran dispose eder).</summary>
+    /// <param name="host">Motorun konağı.</param>
+    /// <param name="oldPid">Uyutulan ya da öldürülen eski motorun PID'i.</param>
+    /// <param name="start">Yeni motoru doğuran iş.</param>
+    /// <param name="what">Doğum hiç gelmezse zaman aşımının metni.</param>
+    private static (Task<EngineReadyEvent> Start, Process Engine) StartAndCatchTheNewEngine(EngineHost host, int oldPid,
+        Func<Task<EngineReadyEvent>> start, string what)
+    {
+        using var births = host.OuterJob.AttachCompletionPort();
+        var started = start();
+        return (started, JobBirths.WaitForProcess(births, WideStartupTimeout, what, TestPaths.IsSupervisorOtherThan(oldPid)));
+    }
+
     [Fact]
     public async Task Start_receives_engineReady_and_ping_pong_works()
     {
@@ -542,7 +559,8 @@ public class EngineHostTests
     /// o PID sonradan açılıyordu. Ön koşul yanlıştı: port bağlandığında job'da kalmış üyeler de doğum olarak bildirilir (uyutulan motorun conhost'u,
     /// çıkmakta olan eski motor) ve bildirilen PID açılmadan gidebilir — bir kez ölçüldü: <c>Process with an Id of 27996 is not running</c>.
     /// Uyanan motor artık imajıyla seçilir ve tutamacı doğumda alınır (<see cref="JobBirths.WaitForProcess"/>); [B1 fix 2 · 4c] uyutulan motorun
-    /// PID'i dışarıda bırakılır — henüz çıkmadıysa o da bildirilir ve imajı aynıdır. İddia değişmedi.</para></summary>
+    /// PID'i dışarıda bırakılır — henüz çıkmadıysa o da bildirilir ve imajı aynıdır (kurulum tek yerde: <see cref="StartAndCatchTheNewEngine"/>).
+    /// İddia değişmedi.</para></summary>
     [Fact]
     public async Task Dispose_preempts_a_wake_that_waits_for_a_frozen_engine()
     {
@@ -553,10 +571,8 @@ public class EngineHostTests
         {
             var first = await host.StartAsync(); // uyutulacak motorun hazır olayı
             await host.SleepAsync();
-            using var births = host.OuterJob.AttachCompletionPort(); // job'da kalmış üyeler de bildirilir — motor imajıyla seçilir
-            var wake = host.WakeAsync();
-            frozen = JobBirths.WaitForProcess(births, WideStartupTimeout, "the woken engine was never born into the outer job",
-                TestPaths.IsSupervisorOtherThan(first.Pid)); // uyutulan motor henüz çıkmadıysa o da bildirilir
+            (var wake, frozen) = StartAndCatchTheNewEngine(host, first.Pid, () => host.WakeAsync(),
+                "the woken engine was never born into the outer job");
             Assert.Equal(0, NtSuspendProcess(frozen.SafeHandle)); // yeni motor hazır olmadan kilitlendi
             const string ReadyBeforeFrozen = "the woken engine was ready before it was frozen — the precondition was not set up";
             Assert.False(wake.IsCompleted, ReadyBeforeFrozen);
@@ -795,7 +811,7 @@ public class EngineHostTests
     /// sayılıyordu (<c>_ =&gt; true</c>). Port bağlandığında job'da kalmış üyeler de bildirildiği için ilk bildirim eski motorun conhost'u olabilir
     /// ve bekçi yeni nesil doğmadan bırakılırdı (kurgu sessizce zayıflardı). Yeni motor artık imajıyla seçilir
     /// (<see cref="JobBirths.WaitForProcess"/>); [B1 fix 2 · 4c] öldürülen motorun PID'i dışarıda bırakılır — henüz çıkmadıysa o da bildirilir ve
-    /// imajı aynıdır. İddia değişmedi.</para></summary>
+    /// imajı aynıdır (kurulum tek yerde: <see cref="StartAndCatchTheNewEngine"/>). İddia değişmedi.</para></summary>
     [Fact]
     public async Task A_stale_exit_watcher_never_fails_a_newer_start()
     {
@@ -812,11 +828,11 @@ public class EngineHostTests
         {
             using (var engine = Process.GetProcessById(first.Pid)) engine.Kill(); // kendiliğinden ölüm
             await staleWatcher.Reached(); // eski bekçi nesli güncel buldu
-            using var births = host.OuterJob.AttachCompletionPort(); // job'da kalmış üyeler de bildirilir — yeni motor imajıyla seçilir
 
-            restart = host.RestartAsync();
-            using var restarted = JobBirths.WaitForProcess(births, WideStartupTimeout, "the restarted engine was never born into the outer job",
-                TestPaths.IsSupervisorOtherThan(first.Pid)); // öldürülen motor henüz çıkmadıysa o da bildirilir
+            var caught = StartAndCatchTheNewEngine(host, first.Pid, () => host.RestartAsync(),
+                "the restarted engine was never born into the outer job");
+            restart = caught.Start;
+            caught.Engine.Dispose(); // yalnız doğum anı gerekir: yeni neslin hazır görevi o an vardır, motor henüz hazır olamaz
         }
         finally { staleWatcher.Release(); } // yeni neslin hazır görevi bekliyor — eski bekçi şimdi bırakılır
 
