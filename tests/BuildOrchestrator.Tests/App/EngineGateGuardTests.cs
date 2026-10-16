@@ -16,7 +16,7 @@ namespace BuildOrchestrator.Tests.App;
 /// referansla motora giden gönderim de görülür; App'te motorla ilgisiz bir <c>SendAsync</c> doğarsa izin listesine gerekçesiyle girer.</para>
 ///
 /// <para><b>[round 2 · T21 OOS-1] Kapının geçişi unutulamaz:</b> kapı bir geçiş döner (<c>RunViewModel.GatePass</c>); kapıda beklemiş bir isteğin
-/// kaydı onunla yaşar ve motor kaybı kayıtlı isteğin penceresini bırakmaz. Her kapı çağrısı bir <c>using</c> bildiriminin başlatıcısıdır — bir
+/// kaydı (<c>EngineGate</c> — kapının durumu, B1 fix 3) onunla yaşar ve motor kaybı kayıtlı isteğin penceresini bırakmaz. Her kapı çağrısı bir <c>using</c> bildiriminin başlatıcısıdır — bir
 /// çağıran geçişi tutmayı unutursa kayıt hiç silinmez ve sonraki her kayıp o türün penceresini atlar.</para>
 ///
 /// <para><b>İzin listesi DAR ve GEREKÇELİ:</b> gönderimin varsayılan yolu (kapı + tek gönderim), komutunu kapıdan sonra kuran koşu, Sync ile

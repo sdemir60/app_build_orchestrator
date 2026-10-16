@@ -414,7 +414,7 @@ public class EngineWakeTests
     /// [karar 42a · B1 fix 3 · PİN] Kapının boşalması HER uyanmada yeniden kurulur: ikinci kurtaran uyanmada da uyandıran istek sessiz Sync'ten ÖNCE
     /// gider. İki döngü aynı biçimdedir — gerçek tıklama, tutulan uyanma, kesilmiş koşu kurtaran hazır olayı, uyanma dispatcher DIŞINDA biter; arada
     /// istekler cevaplanır ve motor yeniden uyur (beş işsiz dakika + tik).
-    /// <para>PİN: bugünkü kod yeşildir. Mutasyon (boşalmanın yeniden kurulmaması — <c>EnterGate</c>'te <c>??=</c>, eski ve tamamlanmış boşalma
+    /// <para>PİN: bugünkü kod yeşildir. Mutasyon (boşalmanın yeniden kurulmaması — <c>EngineGate.Enter</c>'de <c>??=</c>, eski ve tamamlanmış boşalma
     /// tutulur): ikinci döngüde Sync getProjectLog'dan önce gider (I-1 geri gelir) — kırmızı.</para>
     /// </summary>
     [WpfFact]

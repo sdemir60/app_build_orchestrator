@@ -213,7 +213,7 @@ public sealed partial class RunViewModel
     /// Bekleyiş bitince durum yeniden okunur: hazır ya da başlıyorsa gönder.</item>
     /// <item><b>Bekleyen reddedilir, satırsız:</b> beklediği geçiş motoru kaybettiyse (düşen uyku, uyanamayan motor, ölüm ya da erişilemezlik) istek
     /// gitmez — o geçişin TEK sinyali kendi yolundadır (karar 19, 34: <see cref="OnEngineUnavailable"/> ya da <see cref="ReportEngineDead"/>). Kapıda
-    /// bekleyen yeniden denemez (C23). Bekleyen istek kayıtlıdır (<see cref="_waitingAtGate"/>) ve kayıt kapının geçişiyle çağırana gider
+    /// bekleyen yeniden denemez (C23). Bekleyen istek kayıtlıdır (<see cref="_engineGate"/>) ve kayıt kapının geçişiyle çağırana gider
     /// (<see cref="GatePass"/>): istek motora teslim edilene ya da geçiş bırakılana dek motor kaybı onun penceresini bırakmaz — uyanma başarılı olup
     /// motor hemen öldüyse, isteğin devamı henüz koşmadıysa ya da kapının kararıyla teslim arasındaki dispatcher sıçrayışında da; geri alımı tek
     /// yerde, kendisinindir (karar 34, T21 OOS-1).</item>
@@ -246,7 +246,7 @@ public sealed partial class RunViewModel
             return GatePass.Refused;
         }
         if (!EngineWakeRule.Wakes(command)) return GatePass.Refused;
-        int ticket = EnterGate(command);
+        int ticket = _engineGate.Enter(command);
         bool handedToCaller = false;
         try
         {
@@ -276,11 +276,11 @@ public sealed partial class RunViewModel
                 if (!InSleepCycle(state)) break;
             }
             handedToCaller = true; // kayıt geçişle çağırana gider; teslim ya da geçişin bırakılması siler
-            return GatePass.Held(send, this, ticket);
+            return GatePass.Held(send, _engineGate, ticket);
         }
         finally
         {
-            if (!handedToCaller) LeaveGate(ticket); // savunma: geçiş çağırana hiç ulaşmazsa kayıt burada biter
+            if (!handedToCaller) _engineGate.Leave(ticket); // savunma: geçiş çağırana hiç ulaşmazsa kayıt burada biter
         }
     }
 
@@ -290,7 +290,7 @@ public sealed partial class RunViewModel
 
     /// <summary>
     /// [T21 OOS-1 · round 2] Motor kapısının geçişi: kapının kararı (<see cref="Send"/>) ve kapıda BEKLEMİŞ bir isteğin kaydı
-    /// (<see cref="_waitingAtGate"/>). Kayıt, istek motora teslim edilene (<see cref="SendWithFailureLineAsync"/> teslimden hemen önce bırakır) ya da
+    /// (<see cref="_engineGate"/>). Kayıt, istek motora teslim edilene (<see cref="SendWithFailureLineAsync"/> teslimden hemen önce bırakır) ya da
     /// geçiş dispose edilene dek yaşar; çağıran geçişi <c>using</c> ile tutar — kayıt hiçbir yolda sızamaz. Böylece kapının "gönder" kararıyla teslim
     /// arasındaki dispatcher sıçrayışında (her <c>await</c> devamını post eder) gelen bir motor kaybı isteği bitmiş saymaz: istek teslim edilmedi,
     /// ölü motora gönderimi bugünkü satırıyla düşer ve geri alımı kendisinindir. Kayıt teslimde biter, gönderimin sonunda DEĞİL: teslimden sonra gelen
@@ -300,13 +300,13 @@ public sealed partial class RunViewModel
     /// </summary>
     private readonly struct GatePass : IDisposable
     {
-        private readonly RunViewModel? _owner;
+        private readonly EngineGate? _gate;
         private readonly int _ticket;
 
-        private GatePass(bool send, RunViewModel? owner, int ticket)
+        private GatePass(bool send, EngineGate? gate, int ticket)
         {
             Send = send;
-            _owner = owner;
+            _gate = gate;
             _ticket = ticket;
         }
 
@@ -322,58 +322,20 @@ public sealed partial class RunViewModel
         public static GatePass None => default;
 
         /// <summary>Kapıda beklemiş isteğin geçişi — kararı ve kaydı.</summary>
-        public static GatePass Held(bool send, RunViewModel owner, int ticket) => new(send, owner, ticket);
+        public static GatePass Held(bool send, EngineGate gate, int ticket) => new(send, gate, ticket);
 
         /// <summary>Kapının kararı: gönder (<c>true</c>) ya da gönderme.</summary>
         public bool Send { get; }
 
         /// <summary>Kaydı bırakır — kayıt yoksa ya da zaten bırakıldıysa hiçbir şey yapmaz.</summary>
-        public void Dispose() => _owner?.LeaveGate(_ticket);
+        public void Dispose() => _gate?.Leave(_ticket);
     }
 
-    /// <summary>[T21 OOS-1 · karar 34 · round 2] Kapıda beklemiş, motora henüz teslim edilmemiş isteklerin kayıtları (bilet, komut türü): kapı beklemeye
-    /// başlarken yazar (<see cref="EnterGate"/>), geçiş teslimde ya da dispose'ta siler (<see cref="LeaveGate"/>). Motor kaybı kayıtlı isteklerin
-    /// pencerelerini bırakmaz (<see cref="ReleaseAfterEngineLoss"/>). Bir türün penceresi aynı anda tek isteğindir — kapılar ikincisini açmaz —; kayıt
-    /// yine de biletle tutulur, böylece her geçiş yalnız kendi kaydını bırakır.</summary>
-    private readonly List<(int Ticket, Type Command)> _waitingAtGate = [];
-
-    /// <summary>Son verilen bilet (<see cref="_waitingAtGate"/>).</summary>
-    private int _lastGateTicket;
-
-    /// <summary>[B1 fix 2 · I-1] Kapının boşalması (<see cref="GateDrained"/>): kapıda bekleyen ilk istek kaydolurken açılır, son kayıt silinince
-    /// tamamlanır. Devamları asenkron koşar (<see cref="TaskCreationOptions.RunContinuationsAsynchronously"/>): son kaydı silen teslimin gönderimi
-    /// — <see cref="SendWithFailureLineAsync"/>'te kaydın bırakılmasıyla aynı senkron adımda — bekleyenden ÖNCE gider. <c>null</c>: kapıya hiç
-    /// istek kaydolmadı.</summary>
-    private TaskCompletionSource? _gateDrained;
-
-    /// <summary>[B1 fix 2 · I-1] Kapıda bekleyen her istek motora teslim edildiğinde ya da geçişini bıraktığında (<see cref="_waitingAtGate"/>
-    /// boşaldığında) tamamlanır; kapı boşken tamamlanmıştır. Bekleyeni kesilmiş koşu kurtaran uyanmanın tazelemesidir (<see cref="WakeEngineAsync"/>).
-    /// Sıra durumdan okunur, dispatcher kuyruğunun sırasından değil: WPF'te her dispatcher işlemi kendi bağlam örneğini taşır ve tamamlanmamış göreve
-    /// yapılan her <c>await</c>'in devamı post edilir — bekleyen bir isteğin teslimi uyanmanın bitişinden sonra iki sıçrayış (kapının devamı, sonra
-    /// çağıranın devamı) uzaktadır.</summary>
-    private Task GateDrained => _gateDrained?.Task ?? Task.CompletedTask;
-
-    /// <summary>Kapıda beklemeye başlayan isteği kaydeder; biletini döner. Kapı boşken gelen ilk kayıt boşalmayı yeniden açar.</summary>
-    private int EnterGate(Type command)
-    {
-        if (_waitingAtGate.Count == 0) _gateDrained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        int ticket = ++_lastGateTicket;
-        _waitingAtGate.Add((ticket, command));
-        return ticket;
-    }
-
-    /// <summary>Bileti kayıttan siler — yoksa hiçbir şey yapmaz (teslim ve dispose ikisi de çağırır). Son kaydı silen kapının boşalmasını
-    /// tamamlar (<see cref="GateDrained"/>).</summary>
-    private void LeaveGate(int ticket)
-    {
-        int index = _waitingAtGate.FindIndex(entry => entry.Ticket == ticket);
-        if (index < 0) return;
-        _waitingAtGate.RemoveAt(index);
-        if (_waitingAtGate.Count == 0) _gateDrained?.TrySetResult();
-    }
-
-    /// <summary>Bu türde bir istek kapıdan geçişini tutuyor mu — beklemiş ve motora henüz teslim edilmemiş (<see cref="_waitingAtGate"/>).</summary>
-    private bool WaitsAtTheGate(Type command) => _waitingAtGate.Exists(entry => entry.Command == command);
+    /// <summary>[T21 OOS-1 · karar 34 · round 2 · B1 fix 3] Kapıda beklemiş, motora henüz teslim edilmemiş isteklerin kaydı ve boşalması — kapının
+    /// durumu, değişmeziyle tek yerde (<see cref="EngineGate"/>). Kapı beklemeye başlarken kaydeder (<see cref="EnsureEngineAwakeAsync"/>), geçiş
+    /// teslimde ya da dispose'ta siler (<see cref="GatePass"/>). Motor kaybı kayıtlı isteklerin pencerelerini bırakmaz
+    /// (<see cref="ReleaseAfterEngineLoss"/>); kesilmiş koşu kurtaran uyanmanın tazelemesi boşalmayı bekler (<see cref="WakeEngineAsync"/>).</summary>
+    private readonly EngineGate _engineGate = new();
 
     /// <summary>
     /// [Task 21 · karar 19/20/32 · C5] Uyuyan motoru uyandırır — TEK uçuş, sırası bilerek: önce tutamak (<see cref="_wakeInFlight"/>), sonra durum
@@ -399,7 +361,7 @@ public sealed partial class RunViewModel
     /// <list type="bullet">
     /// <item><b>Uyandı</b> → <see cref="OnEngineResumed"/>: kimlik ve hazır durumu; konsol satırı yok, açılış Sync'i yok. Uyanan motor yarım kalmış bir
     /// koşu kurtardıysa (hazır olayı <c>InterruptedProjects</c> &gt; 0) uyanmayı bekleyen her istek motora teslim edildikten SONRA
-    /// (<see cref="GateDrained"/>) bir sessiz Sync başlar (karar 42, 42a — gerekçe metodun sonunda).</item>
+    /// (<see cref="EngineGate.Drained"/>) bir sessiz Sync başlar (karar 42, 42a — gerekçe metodun sonunda).</item>
     /// <item><b>Motor bulunamadı</b> (<see cref="EngineUnavailableException"/>, <see cref="Services.EngineUnavailableReason.NotFound"/>: exe yok —
     /// kurulum) → bugünkü erişilemezlik yolu (<see cref="OnEngineUnavailable"/>: TEK konsol satırı, kalıcı şerit, komutlar kapalı).</item>
     /// <item><b>Motor başlatılamadı</b> (<see cref="Services.EngineUnavailableReason.CannotStart"/>: exe var, süreç doğmadı) → [karar 41 · M-1] yeniden
@@ -456,7 +418,7 @@ public sealed partial class RunViewModel
         // kararlarında kalırdı — ekran SESSİZ Sync'le tazelenir: pencereye dönüşün kullandığı giriş (SyncSilentlyAsync) DOĞRUDAN çağrılır, kendiliğinden
         // Sync koordinatöründen geçmez; kapısı aynıdır (workspace var ve uçuşta iş yok). Sessizdir çünkü uyanmayı bir tıklama istedi: görünür bir Sync
         // seçimi düşürür, tıklanan proje sayfası açılmazdı; satırlar yerinde tazelenir, seçim, açık sayfa ve konsol kalır, fetch ve pill yoktur. Sync,
-        // uyanmayı bekleyen HER istek motora teslim edildikten SONRA başlar (kapının boşalması — GateDrained): bekleyenin teslimi uyanmanın bitişinden
+        // uyanmayı bekleyen HER istek motora teslim edildikten SONRA başlar (kapının boşalması — EngineGate.Drained): bekleyenin teslimi uyanmanın bitişinden
         // iki dispatcher sıçrayışı uzaktadır, sıra bu yüzden kuyruğa değil duruma bağlanır. Boşalma beklenirken motor hazır olmaktan çıktıysa (öldü,
         // erişilemez oldu) tazeleme yoktur. Uyanmayı isteyen yol kendisi uçuşta bir işse (Sync, koşu, Clean, checkout…) kapı kapalıdır: Sync başlamaz ve
         // yeniden denenmez — o iş ekranı zaten tazeler. Kurtarma yoksa Sync yok (karar 20). Tazeleme ateşle-unut bir işin kuyruğudur: beklenmedik bir
@@ -464,7 +426,7 @@ public sealed partial class RunViewModel
         if (resumed is not { InterruptedProjects: > 0 }) return;
         try
         {
-            await GateDrained;
+            await _engineGate.Drained;
             if (EngineState != EngineState.Ready) return;
             await SyncSilentlyAsync(SilentSyncReason.Refresh);
         }
@@ -480,7 +442,7 @@ public sealed partial class RunViewModel
     /// motorun değil — ekran uyku boyunca değişmedi. Tek istisna motorun kendi bilgisidir (C21): uyanan motor açılışta yarım kalmış bir koşu
     /// bulduysa hazır olayı <c>InterruptedProjects</c> taşır ve satırı olay akışından bugünkü gibi düşer (<see cref="OnEngineRecovered"/>).
     /// <para>[karar 42 · 42a · M-4] O zaman ekran DEĞİŞTİ ve uyanma bir sessiz Sync başlatır — burada değil, uyanmayı bekleyen her istek motora
-    /// teslim edildikten SONRA (<see cref="WakeEngineAsync"/>, <see cref="GateDrained"/>): uyandıran istek Sync'ten önce gitmelidir.</para></summary>
+    /// teslim edildikten SONRA (<see cref="WakeEngineAsync"/>, <see cref="EngineGate.Drained"/>): uyandıran istek Sync'ten önce gitmelidir.</para></summary>
     private void OnEngineResumed(string engineVersion, int pid) => EnterEngineReady(engineVersion, pid);
 
     /// <summary>[idle-memory · dalga 3] Motor öldü — kullanıcıya bildirmenin TEK yolu: kendiliğinden ölüm (<see cref="OnEngineExited"/>), uykusu
@@ -750,7 +712,7 @@ public sealed partial class RunViewModel
     /// serbest bırakılır: o motorun asla göndermeyeceği event'leri bekleyen hiçbir durum kalmamalıdır. [Task 21 · karar 34] Uyku döngüsündeki
     /// bir kayıpta ve ölü motorun ikinci bildiriminde çağrılmaz (gerekçe <see cref="ReportEngineDead"/>'de).
     ///
-    /// <para><b>[T21 OOS-1 · karar 34 · round 2] Kapıdan geçişini tutan isteklerin pencerelerine dokunmaz</b> (<see cref="_waitingAtGate"/>,
+    /// <para><b>[T21 OOS-1 · karar 34 · round 2] Kapıdan geçişini tutan isteklerin pencerelerine dokunmaz</b> (<see cref="_engineGate"/>,
     /// <see cref="GatePass"/>) — koşu, Sync, Clean, Optimize, checkout, pull: istek kapıda bekledi ve motora henüz teslim edilmedi; kendi "gönderim
     /// düştü" geri alımını çalıştırır (ya da ölü motora gönderimi bugünkü satırıyla düşer). Bırakılsaydı hiç başlamamış bir işlem bitmiş sayılırdı
     /// (Sync'in <c>EndSync</c>'i, Clean/Optimize'ın işlem sonu) ya da koşunun açılışı kendi geri alımından önce sıfırlanırdı. Bu kayıp uyku döngüsünün
@@ -774,7 +736,7 @@ public sealed partial class RunViewModel
     private void ReleaseAfterEngineLoss()
     {
         // [T21 OOS-1 · karar 34 · round 2] Kapıdan geçişini tutan (teslim edilmemiş) isteğin penceresi BIRAKILMAZ — geri alımı kendisinindir (gerekçe özette).
-        if (!WaitsAtTheGate(typeof(StartRunCommand)))
+        if (!_engineGate.Holds(typeof(StartRunCommand)))
         {
             // [E2/F3 fold] Terminal Phase kararı: engine run ORTASINDA (Phase=Running) ölürse Phase Running'de asılı
             // kalıp IsRunning=false ile çelişik bir resting state bırakıyordu. Şerit kalıcı-hata modu EngineDiedMessage
@@ -798,19 +760,19 @@ public sealed partial class RunViewModel
         // Syncing'de asılı kalır ve _syncInFlight sızardı. RunEndingErrorCodes deseniyle simetrik olarak burada
         // da uçuştaki Sync serbest bırakılır. [EndedOperationSerial] Bu yol boştaki motorda da koşar (Restart): bitişi
         // yalnız uçuşta bir Sync varsa bildirilir (EndSync), yoksa yalnız bırakılır — bayraklar silinmeden ÖNCE okunur.
-        if (!WaitsAtTheGate(typeof(SyncWorkspaceCommand)))
+        if (!_engineGate.Holds(typeof(SyncWorkspaceCommand)))
         {
             if (SyncBusy) EndSync();
             else ReleaseSyncPhase();
         }
         // [clean] Aynı gerekçe: motor Clean ORTASINDA ölürse hiçbir cleanCompleted/clean-hatası gelmez ve
         // bayrak sızarsa yeniden başlatılan motorda da düğmeler kilitli kalırdı.
-        if (!WaitsAtTheGate(typeof(CleanWorkspaceCommand))) ReleaseCleanSurface();
-        if (!WaitsAtTheGate(typeof(OptimizeWorkspaceCommand))) ReleaseOptimizeSurface();
+        if (!_engineGate.Holds(typeof(CleanWorkspaceCommand))) ReleaseCleanSurface();
+        if (!_engineGate.Holds(typeof(OptimizeWorkspaceCommand))) ReleaseOptimizeSurface();
         // [§6.3] motor checkout ortasında öldüyse cevap gelmez — chip kilidi sızmaz
-        if (!WaitsAtTheGate(typeof(CheckoutBranchCommand))) SetCheckoutBusy(false);
+        if (!_engineGate.Holds(typeof(CheckoutBranchCommand))) SetCheckoutBusy(false);
         // [§6.1] motor pull ortasında öldüyse pullCompleted gelmez — kapı sızmaz
-        if (!WaitsAtTheGate(typeof(PullRepositoryCommand))) SetPullBusy(false);
+        if (!_engineGate.Holds(typeof(PullRepositoryCommand))) SetPullBusy(false);
         if (_pendingLoad is { } pendingLoad) StopAwaitingReply(pendingLoad); // [idle-memory] log isteğinin cevabı gelmez — gerekçe özette
         // Beklenen geçiş kalmadı → sessizlik uyarısının konusu da kalmadı. (Tick zaten aynı sonuca varırdı;
         // burada YAZILMASININ sebebi, kullanıcının Restart'a bastığı KAREde amber satırın kalkmasıdır.)
