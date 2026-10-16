@@ -788,7 +788,7 @@ public sealed partial class RunViewModel
 
     /// <summary>
     /// [spec 2026-09-18 §6.2] <b>Kendiliğinden Sync'in TEK girişi</b> — commit, pencereye dönüş, HEAD'in branch
-    /// değişimi dışındaki hareketi ve [idle-memory · dalga 3 · karar 42a] kesilmiş bir koşu kurtaran uyanma (<see cref="WakeEngineAsync"/>)
+    /// değişimi dışındaki hareketi ve [idle-memory · dalga 3 · karar 42a] kesilmiş bir koşu kurtaran uyanma (<see cref="RefreshAfterRecoveringWakeAsync"/>)
     /// buradan Sync'ler (<see cref="SyncMode.Silent"/>): konsol ve akış temizlenmez,
     /// fetch yapılmaz, kalıcı işlem pill'i yazılmaz, seçim korunur; transkript gizlenir ama warn/error satırları
     /// yazılır; bitişte akışa tek satır (<paramref name="reason"/>'a göre, metinler <see cref="StreamText"/>'te).

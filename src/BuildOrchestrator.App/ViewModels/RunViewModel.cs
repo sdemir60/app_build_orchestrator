@@ -1279,7 +1279,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// <see cref="SyncMode.Appended"/>; checkout <see cref="SyncMode.BranchChange"/>; Debug/Release geçişi
     /// <see cref="SyncMode.ConfigurationChange"/> (<see cref="SetConfiguration"/>); kendiliğinden Sync
     /// <see cref="SyncMode.Silent"/> (<see cref="SyncSilentlyAsync"/>) — [idle-memory · dalga 3 · karar 42a] kesilmiş bir koşu kurtaran
-    /// uyanmanın tazelemesi de sessizdir (<see cref="WakeEngineAsync"/>). Kiplerin tablosu <see cref="SyncMode"/>'un özetindedir
+    /// uyanmanın tazelemesi de sessizdir (<see cref="RefreshAfterRecoveringWakeAsync"/>). Kiplerin tablosu <see cref="SyncMode"/>'un özetindedir
     /// (spec 2026-09-18 §6.2).
     ///
     /// <para><b>Temizlik:</b> Manual ve BranchChange konsolu + event stream'i temizler — [design v1.13.2 §9]
