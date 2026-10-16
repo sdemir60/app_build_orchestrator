@@ -687,11 +687,16 @@ public class ConsoleReaderNavigationTests
     /// <para>KIRMIZI (madde 3'ten önce, ölçüldü): takibin isteği <c>ScrollToEnd</c>'di ("dikeyde +∞, yatayda sol kenar") — editör +∞ konumunda
     /// yalnız son boş satırı kurar, yatay genişlik 2940,6'dan 3,0 px'e çöker ve yerleşim yatay konumu 0'a kenetler (7,2 → 0). Yalnız dikey bir
     /// +∞ isteği de aynısını yapıyordu (ilk deneme — yine kırmızı): hedef sonlu olmalı.</para>
+    /// <para>[B2 fix 3 · madde 12] Geniş satırı getiren batch'ten itibaren pill hiç yanmaz (inceleme M-3): ilk geniş satır görünümü bir yatay
+    /// çubuk boyu kadar (~10 px) kısa bırakabilir — eşiğin içinde, sonraki satırla kapanır (kabul edilen sınır, inceleme M-2). Anlatı render
+    /// diliminin altından başlar: belge her batch'te büyür ve isteğin hedefi eklemenin ardından bilinmelidir (bekleyen dip —
+    /// <c>ConsoleView.PendingBottomOffset</c>; bozma: oturmuş dibi hedeflerse dört satırlık batch görünümü ~74 px kısa bırakır, pill yanar).</para>
     /// </summary>
     [StaFact]
     public void A_sideways_step_in_a_following_narrative_survives_new_output()
     {
-        using var narrative = new RealizedNarrative(lines: 400);
+        using var narrative = new RealizedNarrative(lines: 100);
+        using var pill = VisibilityToggles.Of(narrative.View.Pill);
         NarrativeSnapshots.Deliver(narrative.Store, narrative.View, [LongLine(400)]);
         DispatcherPump.DrainToIdle();
         narrative.Press(Key.Right);
@@ -706,22 +711,30 @@ public class ConsoleReaderNavigationTests
         Assert.Equal(sideways, editor.HorizontalOffset, precision: 1);
         Assert.True(narrative.IsShown("live3"), "the follow did not bring the new lines into view");
         AssertFollowingAtTheBottom(narrative);
+        Assert.Equal(0, pill.Value);
     }
 
     /// <summary>
     /// [B2 fix 2 · madde 3] Yana kaydırıp okuyan okuyucu takip geri gelince de (bekleme dönüşü) yatay konumunu korur: dönüşte belge render
-    /// dilimine kırpılır ve dibe istenir — istek yine takibin tek isteğidir, yalnız dikey.
+    /// dilimine kırpılır ve dibe istenir — istek yine takibin isteğidir, yalnız dikey; dönüş TAM dibe iner (uzaklık 0, pill gizli, imleç
+    /// canlı dipte). [B2 fix 3 · madde 11] Kırpma büyük de olabilir: okuyucu yukarıdayken bir görünür alandan fazla satır gelirse dönüş o kadar
+    /// satırı kırpar ve eski ofset kırpılmış belgenin sonunun ötesinde kalır.
     /// <para>KIRMIZI (madde 3'ten önce): dönüşün kırpması <c>ScrollToEnd</c> istiyordu — yatay konum 0'a dönüyordu.</para>
+    /// <para>[B2 fix 3 · madde 11-12] Büyük kırpma satırı eklendi (inceleme M-1'in varsayımı: eski ofset belgenin ötesinde ölçülürse yalnız son
+    /// boş satır kurulur ve yatay konum 0'a kenetlenir — ölçüm: bkz. raporun Round 3'ü); dönüşün tam dibe inişi de iddia edildi (inceleme M-3).
+    /// Gelen satırlar geniştir: dipte de yatay taşma vardır, yatay konum korunabilir.</para>
     /// </summary>
-    [StaFact]
-    public void A_sideways_step_survives_the_return_to_following()
+    [StaTheory]
+    [InlineData(4)]
+    [InlineData(60)] // bir görünür alandan (~30 satır) fazlası
+    public void A_sideways_step_survives_the_return_to_following(int arriving)
     {
         using var narrative = new RealizedNarrative(lines: 400);
         // Uzun satırın altında birkaç satır: okuyucu dipten ayrılınca uzun satır görünür alanda kalır (yatay kaydırma görünür satırlardan ölçülür).
         NarrativeSnapshots.Deliver(narrative.Store, narrative.View, [LongLine(400), .. Enumerable.Range(0, 5).Select(i => $"after{i}")]);
         DispatcherPump.DrainToIdle();
         narrative.WheelAwayFromTheBottom();
-        NarrativeSnapshots.Deliver(narrative.Store, narrative.View, ["live0", "live1", "live2", "live3"]); // takip yokken: kırpılmaz
+        NarrativeSnapshots.Deliver(narrative.Store, narrative.View, [.. Enumerable.Range(0, arriving).Select(i => LongLine(401 + i))]); // takip yokken: kırpılmaz
         DispatcherPump.DrainToIdle();
         Assert.True(narrative.View.Document.LineCount > ConsoleView.SeededDocumentLines, "test kurgusu: dönüşte kırpılacak satır olmalıydı");
         narrative.Press(Key.Right);
@@ -732,8 +745,8 @@ public class ConsoleReaderNavigationTests
         narrative.ElapseAnchorTimers(); // okuyucu elini çekti: dibe dönüş, takip, kırpma
 
         Assert.Equal(ConsoleView.RenderSliceLines, narrative.View.Document.LineCount); // dönüşün kırpması koştu
-        Assert.True(narrative.View.FollowsBottom);
         Assert.Equal(sideways, editor.HorizontalOffset, precision: 1);
+        AssertFollowingAtTheBottom(narrative);
     }
 
     /// <summary>
