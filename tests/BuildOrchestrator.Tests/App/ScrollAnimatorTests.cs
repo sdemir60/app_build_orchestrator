@@ -269,6 +269,23 @@ public class ScrollAnimatorTests
     }
 
     /// <summary>
+    /// [B2 fix 3 · madde 5 · inceleme M5] Saati kurulmuş ama ilk tikini henüz atmamış bir hareket de UÇUŞTUR: kullanıcının jesti onu
+    /// başlattığı karede yakalasa da <see cref="ScrollAnimator.CancelForUser"/> "durdurdum" der (dolum evresinde olmayan her saat uçuştadır).
+    /// <para>PİN — bozma: yalnız etkin evre uçuş sayılırsa (<c>CurrentState: Active</c>) kırmızı.</para>
+    /// </summary>
+    [StaFact]
+    public void CancelForUser_counts_a_motion_whose_clock_has_not_ticked_yet_as_a_flight()
+    {
+        var sv = NewLiveScrollViewer();
+        ScrollAnimator.AnimateTo(sv, 0, 500, true, TimeSpan.FromSeconds(30), new KeySpline(0.65, 0, 0.35, 1));
+        var clock = ScrollAnimation.ClockOf(sv);
+        Assert.NotEqual(ClockState.Active, clock.CurrentState); // ön-koşul: saat ilk tikini bekliyor
+        Assert.NotEqual(ClockState.Filling, clock.CurrentState);
+
+        Assert.True(ScrollAnimator.CancelForUser(sv));
+    }
+
+    /// <summary>
     /// [B2 fix 2 · madde 2b] <see cref="ScrollAnimator.CancelForUser"/> bir UÇUŞU durdurup durdurmadığını söyler: yoldaki hareket "evet"; hiç
     /// başlamamış ve inmiş (<c>HoldEnd</c> ile hedefte duran) hareket "hayır". Konsol ve stream'in atlama penceresi yalnız gerçekten durdurulan
     /// bir uçuşta kapanır (<c>BottomAnchorBehavior.NotifyUserScroll</c>). İniş belirlenimlidir: saat sonuna konumlanır

@@ -248,4 +248,39 @@ public class BottomAnchorIdleResumeTests
 
         Assert.Null(f.PendingSchedule);
     }
+
+    /// <summary>
+    /// [B2 fix 3 · madde 5 · inceleme M4] Uçuştaki atlamayı DURDURAN jestten sonra da beş saniyelik dönüş işler, ve durdurulan atlamanın
+    /// bayat 560 ms pencere sonu hiçbir şey yapmaz (duyurmaz, kaydırmaz, durumu değiştirmez). Sıra üretimdeki gibidir: okuyucu kaydırdı,
+    /// <c>⌄ latest</c>'e bastı, atlama yolun ortasında jestle durdu, okuyucu elini çekti.
+    /// <para>PİN — bozma: kuşak sayacı artmazsa bayat pencere sonu duyurur; jestten sonra bekleme kurulmazsa dönüş gelmez.</para>
+    /// </summary>
+    [Fact]
+    public void After_a_gesture_stops_the_jump_the_idle_return_still_works_and_the_stale_window_end_is_inert()
+    {
+        var f = new Fake();
+        var behavior = f.ScrolledAway();
+        behavior.JumpToBottom();
+        var windowEnd = f.PendingSchedule!;
+        Assert.Equal(TimeSpan.FromMilliseconds(BottomAnchorDecision.JumpingWindowMs), f.PendingDelay); // ön-koşul: atlama uçuşta
+        f.Offset = 400; // atlama yolun ortasında durdu: dipten 400 px
+        behavior.NotifyUserScroll(stoppedJump: true);
+        Assert.Equal(TimeSpan.FromMilliseconds(BottomAnchorDecision.IdleResumeMs), f.PendingDelay); // jest beklemeyi kurdu
+        var idle = f.PendingSchedule!;
+        Assert.False(behavior.IsStuck); // ön-koşul: durulan yer okuyucunun
+        int changed = 0;
+        behavior.Changed += (_, _) => changed++;
+        f.SmoothTarget = null;
+
+        windowEnd(); // bayat pencere sonu
+        Assert.Equal(0, changed);
+        Assert.False(behavior.IsStuck);
+        Assert.False(behavior.IsJumping);
+        Assert.Null(f.SmoothTarget);
+
+        idle(); // okuyucu elini çekti
+
+        Assert.Equal(f.Extent - f.Viewport, f.SmoothTarget); // dibe dönüş başladı
+        Assert.True(behavior.IsStuck);
+    }
 }

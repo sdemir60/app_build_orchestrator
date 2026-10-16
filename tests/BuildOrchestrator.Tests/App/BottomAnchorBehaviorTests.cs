@@ -206,6 +206,34 @@ public class BottomAnchorBehaviorTests
     }
 
     /// <summary>
+    /// [B2 fix 3 · madde 5 · inceleme M3] Duyurulan pill (<see cref="BottomAnchorBehavior.PillShown"/>) canlı pill'den
+    /// (<see cref="BottomAnchorBehavior.ShowPill"/>) AYRIDIR: içerik bir duyuru olmadan büyüyünce canlı değer döner, duyurulan yerinde kalır —
+    /// ve canlı dibe bağlı gösterge (<see cref="BottomAnchorBehavior.AtLiveBottom"/>) de duyurulanı okur; ancak bir duyuru
+    /// (<see cref="BottomAnchorBehavior.RefreshPill"/>) ikisini birden ilerletir.
+    /// <para>PİN — bozma: <c>PillShown =&gt; ShowPill</c> ya da <c>AtLiveBottom</c> canlı değeri okursa kırmızı.</para>
+    /// </summary>
+    [Fact]
+    public void The_announced_pill_stays_put_while_the_live_one_flips_until_the_anchor_announces()
+    {
+        var f = new Fake { Extent = 1000, Offset = 800, Viewport = 200 }; // dipte
+        var behavior = f.New();
+        behavior.ForceStuck(true); // duyuru: pill yok
+        Assert.False(behavior.PillShown);
+        Assert.True(behavior.AtLiveBottom);
+
+        f.Extent = 1100; // içerik büyüdü — kaydırma olayı yok, duyuru yok
+
+        Assert.True(behavior.ShowPill);      // canlı: dipten 100 px
+        Assert.False(behavior.PillShown);    // duyurulan: yerinde
+        Assert.True(behavior.AtLiveBottom);  // canlı dip duyurulanı okur
+
+        behavior.RefreshPill(); // duyuru
+
+        Assert.True(behavior.PillShown);
+        Assert.False(behavior.AtLiveBottom);
+    }
+
+    /// <summary>
     /// [B2 fix 2 · madde 2b] Uçuştaki atlamayı DURDURAN kullanıcı jesti atlama penceresini hemen kapatır ve panelin durduğu yeri bir
     /// kullanıcı kaydırması olarak yargılar: dipten uzakta durduysa takip bırakılır, pill görünür ve bu duyurulur; bekleyen pencere sonu
     /// artık hiçbir şey yapmaz (yeniden duyurmaz).

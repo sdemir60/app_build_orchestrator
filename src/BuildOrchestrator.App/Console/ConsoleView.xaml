@@ -71,7 +71,7 @@
                  TextWrapping="NoWrap" Foreground="{DynamicResource Brush.TextPrimary}" />
     </StackPanel>
     <!-- [T59] Alta yapışık scroll + `⌄ latest` pill (design-v1 §2.5, konsol+stream ORTAK kural). Görünürlük
-         BottomAnchorBehavior.ShowPill'den (48px eşik + 560ms jumping penceresi); tıkla → yumuşak dibe. -->
+         BottomAnchorBehavior.PillShown'dan — duyurulan değer (48px eşik + 560ms jumping penceresi; B2 fix 3 · madde 4); tıkla → yumuşak dibe. -->
     <controls:LatestPill x:Name="Pill" Click="OnPillClick" />
   </Grid>
 </UserControl>

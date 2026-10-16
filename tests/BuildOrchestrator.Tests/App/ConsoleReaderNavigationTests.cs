@@ -24,7 +24,7 @@ public class ConsoleReaderNavigationTests
     {
         Assert.False(narrative.View.StickToBottom);
         Assert.Equal(Visibility.Visible, narrative.View.Pill.Visibility);
-        AssertCaretFollowsPill(narrative);
+        Assert.Equal(Visibility.Collapsed, narrative.View.ActiveLineOverlay.Visibility);
     }
 
     /// <summary>[B2 fix 2 · madde 1] Prompt imleci pill'i izler (bir atlama uçuşta değilken): ikisinden TAM OLARAK biri görünür. Pill
@@ -907,16 +907,18 @@ public class ConsoleReaderNavigationTests
 
     /// <summary>
     /// [B2 fix 1 · M7 · karar 44-45] Hareket açıkken proje sayfasında <c>⌄ latest</c> sayfanın GERÇEK sonuna canlandırılmış bir atlama
-    /// başlatır ve takibi hiçbir anda açmaz: atlama sürerken gelen canlı satır görünümü çekmez ve belgeyi kırpmaz, atlama penceresi
-    /// (yakalanan zamanlayıcı) dolunca da takip gelmez.
-    /// <para>PİN — karar 45'ten beri yeşil (bozma: anchor'ın takip izni kaldırılınca pencere sonunda takip açılır). Atlamanın İNİŞİ
-    /// sınanmaz: kaydırma animasyonu WPF'in animasyon saatinde koşar (<c>BeginAnimation</c>; ileri sarılabilen bir saat tutamağı yoktur),
-    /// inişi görmek gerçek zaman pompalamak (<c>PumpUntil</c>) demektir — paylaşılan CI runner'ında kararsız bulunan desen
-    /// (<c>ConsoleTiltInTests</c>'in <c>LocalOnly</c> testleri). Belirlenimli kısım: animasyonun hedefi (saatin zaman çizelgesi) ve anchor'ın
-    /// pencere boyunca ve sonundaki kararı.</para>
+    /// başlatır, oraya İNER ve takibi hiçbir anda açmaz: atlama sürerken gelen canlı satır görünümü çekmez ve belgeyi kırpmaz; atlama logun
+    /// son satırına iner (atlama başladığında sayfanın sonu olan yer — sonradan gelen satırlar onun altındadır); atlama penceresi (yakalanan
+    /// zamanlayıcı) dolunca da takip gelmez.
+    /// <para>PİN — karar 45'ten beri yeşil (bozma: anchor'ın takip izni kaldırılınca pencere sonunda takip açılır; animasyon paneli
+    /// kaydırmazsa iniş iddiası kırmızı). İniş belirlenimlidir: saat sonuna konumlanır (<see cref="LandTheJump"/> —
+    /// <c>SeekAlignedToLastTick</c> bir tik beklemeden yazar), duvar saati beklenmez.</para>
+    /// <para>[DEĞİŞEN KURULUM — B2 fix 3 · madde 3] Eski doc'un iddiası: "atlamanın inişi sınanmaz — ileri sarılabilen bir saat tutamağı
+    /// yoktur, inişi görmek gerçek zaman pompalamak demektir". Yanlıştı: uygulanan saat okunabilir (<c>ActiveClockInspector.AppliedClock</c>) ve
+    /// denetleyicisi saati bir tik beklemeden konumlar; iniş iddiası eklendi.</para>
     /// </summary>
     [StaFact]
-    public void An_animated_latest_pill_jump_on_a_project_page_aims_at_its_end_and_never_turns_following_on()
+    public void An_animated_latest_pill_jump_on_a_project_page_aims_at_its_end_lands_there_and_never_turns_following_on()
     {
         using var motion = MotionScope.Enable(new FakeMotionSettings { AnimationsEnabled = true });
         using var narrative = new RealizedNarrative(lines: 400);
@@ -935,6 +937,10 @@ public class ConsoleReaderNavigationTests
         DispatcherPump.DrainToIdle();
         Assert.False(narrative.View.FollowsBottom);
         Assert.Equal(1000 + 4 + 1, narrative.View.Document.LineCount); // kırpılmadı
+
+        LandTheJump(narrative);
+        Assert.Equal(end, editor.VerticalOffset, precision: 1);
+        Assert.True(narrative.IsShown("page999"), "the jump did not land on the log's last line");
 
         narrative.ElapseAnchorTimers(); // atlama penceresi doldu
         Assert.False(narrative.View.FollowsBottom);
@@ -1015,8 +1021,8 @@ public class ConsoleReaderNavigationTests
 
     /// <summary>
     /// [B2 fix 1 · F1] Akışı izleyen anlatı satır aldıkça <c>⌄ latest</c> HİÇ kımıldamaz — belge render dilimine dek büyürken de, sonra
-    /// kırpılırken de: yeniden okuma yalnız izlenmeyen belgede yapılır; izleyen belgede ekleme ile <c>ScrollToEnd</c>'in uygulanması
-    /// arasındaki uzaklık bir an eşiği aşar ve pill yanıp sönerdi. [B2 fix 2 · madde 1] Prompt imleci de hiç kımıldamaz: imleç pill'in
+    /// kırpılırken de: yeniden okuma yalnız izlenmeyen belgede yapılır; izleyen belgede ekleme ile takibin dibe isteğinin
+    /// (<c>ConsoleView.RequestBottom</c>) uygulanması arasındaki uzaklık bir an eşiği aşar ve pill yanıp sönerdi. [B2 fix 2 · madde 1] Prompt imleci de hiç kımıldamaz: imleç pill'in
     /// DUYURULAN görünürlüğünü okur (<c>BottomAnchorBehavior.PillShown</c>), o anki uzaklığı değil.
     /// <para>PİN — düzeltmeden önce de yeşildi; düzeltmenin sınırını korur (bozma: takip koruması kaldırılınca pill, imleç canlı
     /// <c>ShowPill</c>'i okuyunca imleç kırmızı). Anlatı render diliminin altından başlar: dilimdeki belge kırpmayla aynı boyda kalır,
@@ -1117,13 +1123,16 @@ public class ConsoleReaderNavigationTests
 
     /// <summary>
     /// [B2 fix 2 · madde 1] <c>⌄ latest</c>'in canlandırılmış atlaması sürerken prompt imleci gizlidir — görünüm henüz canlı dipte değildir
-    /// ve imleç (son satır görünür alanda değilken eski yerinde kalır) metnin üstünde "sanki sondaymış gibi" dururdu; atlama inip pencere
-    /// kapanınca imleç dipte yeniden görünür. İniş belirlenimlidir: saat sonuna konumlanır (<see cref="LandTheJump"/>), duvar saati beklenmez.
+    /// ve imleç (son satır görünür alanda değilken eski yerinde kalır) metnin üstünde "sanki sondaymış gibi" dururdu; imleç atlama PENCERESİ
+    /// kapanınca dipte yeniden görünür — inişte değil: atlama indikten sonra pencere açıkken (hareket açıkken ~280 ms) imleç hâlâ gizlidir,
+    /// ikinci bir zamanlayıcı kurulmaz (kabul edilen gecikme). İniş belirlenimlidir: saat sonuna konumlanır (<see cref="LandTheJump"/>).
     /// <para>KIRMIZI (madde 1'den önce): atlama başlarken anchor durumu iyimser biçimde "dipte" yapar (<c>BeginJump</c>) ve imleç yalnız
     /// ona bakıyordu — uçuş boyunca görünürdü.</para>
+    /// <para>[B2 fix 3 · madde 6] Eski adı <c>…_returns_after_landing</c>; iddia ettiği şey pencerenin kapanışıydı (inceleme C-3) — ad ve
+    /// iniş sonrası, pencere açıkken gizli kalma iddiası bunu söylüyor.</para>
     /// </summary>
     [StaFact]
-    public void The_prompt_caret_hides_during_the_latest_pills_flight_and_returns_after_landing()
+    public void The_prompt_caret_hides_during_the_latest_pills_flight_and_returns_when_the_jump_window_closes()
     {
         using var motion = MotionScope.Enable(new FakeMotionSettings { AnimationsEnabled = true });
         using var narrative = new RealizedNarrative(lines: 400);
@@ -1134,6 +1143,7 @@ public class ConsoleReaderNavigationTests
         Assert.Equal(Visibility.Collapsed, narrative.View.ActiveLineOverlay.Visibility); // uçuşta
 
         LandTheJump(narrative);
+        Assert.Equal(Visibility.Collapsed, narrative.View.ActiveLineOverlay.Visibility); // indi, pencere açık
         narrative.ElapseAnchorTimers(); // atlama penceresi kapandı
 
         AssertFollowingAtTheBottom(narrative);

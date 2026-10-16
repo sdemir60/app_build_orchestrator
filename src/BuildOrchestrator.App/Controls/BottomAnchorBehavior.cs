@@ -107,8 +107,9 @@ public sealed class BottomAnchorBehavior
     /// [B2 fix 2 · madde 1] <b>Son DUYURULAN pill görünürlüğü</b> (<see cref="Changed"/> anında kaydedilen <see cref="ShowPill"/>) — host'un
     /// pill'i ve pill'e bağlı her şey (konsolun prompt imleci) bunu okur, canlı <see cref="ShowPill"/>'i değil. Canlı değer o anki uzaklıktır:
     /// izlenen belgede ekleme ile dibe kaydırmanın uygulanması arasında bir an eşiği aşar ve onu okuyan her şey yanıp sönerdi (pill'in kendi
-    /// kuralı da bu yüzden kaydırma olaylarından okunur — <see cref="RefreshPill"/>). Duyurulan değer yalnız <see cref="Notify"/>'ın gördüğü
-    /// değişimlerle ilerler.
+    /// kuralı da bu yüzden kaydırma olaylarından okunur — <see cref="RefreshPill"/>). Duyurulan değer her duyuruda ilerler
+    /// (<see cref="RaiseChanged"/>): <see cref="Notify"/>'ın gördüğü değişimler, zorlama (<see cref="ForceStuck"/>), atlamanın başı ve sonu,
+    /// bekleme dönüşü — içerik iki duyuru arasında büyüse de değişmez.
     /// </summary>
     public bool PillShown => _lastShowPill;
 
@@ -203,7 +204,9 @@ public sealed class BottomAnchorBehavior
     /// yargılanır (<see cref="OnScrollChanged"/>).
     /// <para>[DEĞİŞEN KURAL] Eskiden pencere jestten bağımsız olarak 560 ms açık kalıyordu: anchor jestin kaydırmasını yok sayıyor, durum
     /// atlamanın iyimser "dipte"sinde kalıyor, pill pencere dolana dek gizli kalıyordu. Kural dardır — yalnız GERÇEKTEN uçuşan bir hareketi
-    /// durduran jest pencereyi kapatır; atlama inmiş, pencere hâlâ açıkken gelen jest bugünkü gibi pencere sonunda yargılanır.</para>
+    /// durduran jest pencereyi kapatır. Atlama inmiş, pencere hâlâ açıkken gelen jestin kaydırması YARGILANMAZ: pencere sonunda yalnız pill
+    /// yeniden okunur (<see cref="BottomAnchorDecision.EndJump"/> durumu iyimser "dipte"de bırakır). Okuyucu yine güvendedir: direksiyon
+    /// takibi tutar (akan içerik görünümü çekmez) ve beş saniyelik dönüş görünümü dibe indirir (<see cref="ArmIdleResume"/>).</para>
     /// </summary>
     private void EndJumpForUser()
     {
