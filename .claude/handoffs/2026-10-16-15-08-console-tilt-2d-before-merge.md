@@ -15,5 +15,7 @@
 - **Sürüm ÇIKARILMAYACAK:** sahip bir sonraki çalışmasıyla birlikte 1.10.1'i kendisi başlatacak. CHANGELOG'a ve Version'a dokunulmadı;
   sürüm notu o zaman yazılır (Fixed: proje logu açılınca bellek sıçraması — 4K'da 1,1 GB; geçiş artık düz kayma + solma).
 - Merge mesajı taslağı: `merge: konsolun panel gecisi 2B - 3B duzlem 4K'da ~830 MB grafik bellegi bagliyordu, projeye tiklama 1,1 GB -> ~300 MB; App'te 3B yok guard'i; ARCHITECTURE (fix/console-tilt-2d)`.
+- Bilgisayar kapandıktan sonra (15:36) ek doğrulama: 6 farklı proje + tepsi → 376 MB (GPU 251 MB'ta sabit). `develop`'ta bu
+  branch'in merge commit'i varsa bu aşama tamamdır.
 
 Buradan devam edilecek.
