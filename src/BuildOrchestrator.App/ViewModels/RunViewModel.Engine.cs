@@ -292,7 +292,8 @@ public sealed partial class RunViewModel
     /// [T21 OOS-1 · round 2] Motor kapısının geçişi: kapının kararı (<see cref="Send"/>) ve kapıda BEKLEMİŞ bir isteğin kaydı
     /// (<see cref="_engineGate"/>). Kayıt, istek motora teslim edilene (<see cref="SendWithFailureLineAsync"/> teslimden hemen önce bırakır) ya da
     /// geçiş dispose edilene dek yaşar; çağıran geçişi <c>using</c> ile tutar — kayıt hiçbir yolda sızamaz. Böylece kapının "gönder" kararıyla teslim
-    /// arasındaki dispatcher sıçrayışında (her <c>await</c> devamını post eder) gelen bir motor kaybı isteği bitmiş saymaz: istek teslim edilmedi,
+    /// arasındaki dispatcher sıçrayışında (üretimde kapının devamı ile çağıranınki ayrı dispatcher işlemlerinde koşar: çağıranın devamı post edilir)
+    /// gelen bir motor kaybı isteği bitmiş saymaz: istek teslim edilmedi,
     /// ölü motora gönderimi bugünkü satırıyla düşer ve geri alımı kendisinindir. Kayıt teslimde biter, gönderimin sonunda DEĞİL: teslimden sonra gelen
     /// kayıp isteği gönderilmiş sayar (dalga öncesi anlam) — aksi hâlde yazımı başarıyla biten ama motoru ölmüş bir isteğin penceresini kimse
     /// bırakmazdı. Beklemeyen isteğin (motor uyku döngüsünde değildi) geçişi kayıt taşımaz, Dispose'u no-op'tur. Kopyalar aynı kaydı gösterir;
@@ -424,14 +425,15 @@ public sealed partial class RunViewModel
     /// geçmez; kapısı aynıdır (workspace var ve uçuşta iş yok). Sessizdir çünkü uyanmayı bir tıklama istedi: görünür bir Sync seçimi düşürür, tıklanan
     /// proje sayfası açılmazdı; satırlar yerinde tazelenir, seçim, açık sayfa ve konsol kalır, fetch ve pill yoktur.
     /// <list type="bullet">
-    /// <item>Sync, uyanmayı bekleyen HER istek motora teslim edildikten SONRA başlar (kapının boşalması — <see cref="EngineGate.Drained"/>): bekleyenin
-    /// teslimi uyanmanın bitişinden iki dispatcher sıçrayışı uzaktadır, sıra bu yüzden kuyruğa değil duruma bağlanır.</item>
+    /// <item>Sync, uyanmayı bekleyen HER istek motora teslim edildikten SONRA başlar (kapının boşalması — <see cref="EngineGate.Drained"/>): üretimde
+    /// uyanma havuzda biter ve bekleyenin teslimi uyanmanın bitişinden iki dispatcher sıçrayışı (kapının devamı, sonra çağıranınki) uzaktadır; sıra bu
+    /// yüzden kuyruğa değil duruma bağlanır.</item>
     /// <item>Boşalma beklenirken motor hazır olmaktan çıktıysa (öldü, erişilemez oldu) tazeleme yoktur.</item>
     /// <item>Uyanmayı isteyen yol kendisi uçuşta bir işse (Sync, koşu, Clean, checkout…) kapı kapalıdır: Sync başlamaz ve yeniden denenmez — o iş
     /// ekranı zaten tazeler.</item>
     /// <item>Tazeleme ateşle-unut bir işin kuyruğudur: beklenmedik bir hata yakalanır ve düşmüş bir görev bırakmaz; konsola satır yazılmaz. İzi yalnız
-    /// hata ayıklama çıktısıdır (<c>Debug.WriteLine</c>, yığınıyla) ve Release derlemesinde derlenip çıkar — uygulamanın bugünkü deseni
-    /// (açılışın <c>StartEngineAsync</c>'i, konsol pompası, tepsi balonu).</item>
+    /// hata ayıklama çıktısıdır (<c>Debug.WriteLine</c> — Release derlemesinde derlenip çıkar, açılışın <c>StartEngineAsync</c>'iyle aynı) ve hatanın
+    /// yığınını taşır (<c>{ex}</c> — konsol pompası ve tepsi balonunun deseni; <c>StartEngineAsync</c> yalnız iletiyi yazar).</item>
     /// </list>
     /// </summary>
     private async Task RefreshAfterRecoveringWakeAsync()

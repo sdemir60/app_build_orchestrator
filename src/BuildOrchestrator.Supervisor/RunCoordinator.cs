@@ -272,13 +272,12 @@ public sealed class RunCoordinator(
     /// klasörüne hiç bakmaz.</para>
     ///
     /// <para>[idle-memory · dalga 3 · B1 fix 3] <b>Okumanın her hatasını "log yok"a çeviren TEK yer burasıdır</b> — disk okuması (paylaşım ihlali,
-    /// erişim reddi), canlı yazıcının anlık görüntüsü, bozuk bir istek (kimliksiz), klasör kuralı: hata hiçbir yolda çağırana (host'un komut
-    /// döngüsüne) yükselmez ve tanı kanalına TEK <c>warning: project log could not be read (&lt;proje&gt;): &lt;ileti&gt;</c> satırı düşer. Kanal
-    /// motorun stderr'idir; App onu boşaltır ve ATAR — satır harness'ler ve tanı içindir, kullanıcıya ulaşmaz. Satırın biçimi kimliksiz istekte de
-    /// fırlatmaz (proje alanı boş kalır); satırı yazmak patlarsa o hata da yutulur (<see cref="ReportDiagnostic"/>): iz, cevaptan ağır bir hata
-    /// üretemez. YOK olan log (Core'un
-    /// <c>null</c>'ı, <see cref="RunLogWriter.ReadProjectLogFromDisk"/>) ve kuralın reddettiği klasör ise birer karardır, hata değil: sessiz
-    /// "log yok", satır yok.</para>
+    /// erişim reddi), canlı yazıcının anlık görüntüsü (kayıtlı projenin dosyası gitti), bozuk bir istek (kimliksiz): hata hiçbir yolda çağırana
+    /// (host'un komut döngüsüne) yükselmez ve tanı kanalına TEK <c>warning: project log could not be read (&lt;proje&gt;): &lt;ileti&gt;</c> satırı
+    /// düşer. Kanal motorun stderr'idir; App onu boşaltır ve ATAR — satır harness'ler ve tanı içindir, kullanıcıya ulaşmaz. Satırın biçimi kimliksiz
+    /// istekte de fırlatmaz (proje alanı boş kalır); satırı yazmak patlarsa o hata da yutulur (<see cref="ReportDiagnostic"/>): iz, cevaptan ağır bir
+    /// hata üretemez. YOK olan log (Core'un <c>null</c>'ı, <see cref="RunLogWriter.ReadProjectLogFromDisk"/>) ve klasör kuralının reddettiği klasör
+    /// (<see cref="RunLogPaths.TryGetRunDirectory"/> fırlatmaz, reddeder) ise birer karardır, hata değil: sessiz "log yok", satır yok.</para>
     ///
     /// <para>[Task 18] Gerçek disk okuması (<c>File.ReadAllText</c> / <c>ProjectLogFile.Snapshot</c>'ın
     /// FileStream'i) kilit DIŞINDA yapılır: kilit altında yalnız "hangi kaynaktan okunacağı" (canlı writer

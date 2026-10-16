@@ -27,20 +27,20 @@ public class EngineHostTests
     /// ölçebilir. Alt sınır iddiası bu payı düşer — ölçüm hatasıdır, eşik gevşetmesi değil (anında öldüren bir uyku ms'lerde biter).</summary>
     private static readonly TimeSpan ClockTick = TimeSpan.FromMilliseconds(16);
 
-    /// <summary>[B1 fix 3] Yeni bir motor doğuran işi (<paramref name="start"/>: uyanma ya da yeniden başlatma) başlatır ve o motorun sürecini doğduğu
+    /// <summary>[B1 fix 3] Yeni bir motor doğuran işi (<paramref name="startEngine"/>: uyanma ya da yeniden başlatma) başlatır ve o motorun sürecini doğduğu
     /// anda yakalar — iki testin TEK kurulumu: outer job'un IOCP'si işten ÖNCE bağlanır; port bağlandığında job'da kalmış üyeler de doğum olarak
     /// bildirilir (eski motorun conhost'u, henüz çıkmamış eski motor), bu yüzden yeni motor imajıyla ve eski motorun PID'i dışarıda bırakılarak
     /// seçilir (<see cref="TestPaths.IsSupervisorOtherThan"/>) ve tutamacı doğumda alınır (<see cref="JobBirths.WaitForProcess"/>). Port, seçimden
     /// sonra kapanır. Dönen: işin görevi ve yeni motorun süreci (çağıran dispose eder).</summary>
     /// <param name="host">Motorun konağı.</param>
     /// <param name="oldPid">Uyutulan ya da öldürülen eski motorun PID'i.</param>
-    /// <param name="start">Yeni motoru doğuran iş.</param>
+    /// <param name="startEngine">Yeni motoru doğuran iş.</param>
     /// <param name="what">Doğum hiç gelmezse zaman aşımının metni.</param>
     private static (Task<EngineReadyEvent> Start, Process Engine) StartAndCatchTheNewEngine(EngineHost host, int oldPid,
-        Func<Task<EngineReadyEvent>> start, string what)
+        Func<Task<EngineReadyEvent>> startEngine, string what)
     {
         using var births = host.OuterJob.AttachCompletionPort();
-        var started = start();
+        var started = startEngine();
         return (started, JobBirths.WaitForProcess(births, WideStartupTimeout, what, TestPaths.IsSupervisorOtherThan(oldPid)));
     }
 

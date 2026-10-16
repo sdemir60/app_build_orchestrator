@@ -416,10 +416,11 @@ public class ProjectLogStreamTests
     }
 
     /// <summary>
-    /// [karar 37 · B1 fix 1 · m-5] Okunamayan bir proje logu (başka bir süreç dosyayı paylaşımsız tutuyor; ya da klasör okunurken silindi — uyanan
-    /// motorun açılıştaki saklama süpürmesi) motoru düşürmez: cevap bugünkü "log yok" chunk'ıdır ve motor komut almaya devam eder (ping → pong).
-    /// [B1 fix 3] Silinen klasör YOK olan logdur (Core'un <c>null</c>'ı); kilitli dosyayı "log yok"a çeviren tek yer koordinatördür
-    /// (<see cref="RunCoordinator.TryGetProjectLogSnapshot"/>).
+    /// [karar 37 · B1 fix 1 · m-5] Okunamayan bir proje logu — burada başka bir süreç dosyayı paylaşımsız tutuyor — motoru düşürmez: cevap bugünkü
+    /// "log yok" chunk'ıdır ve motor komut almaya devam eder (ping → pong). Kilitli dosyayı "log yok"a çeviren tek yer koordinatördür
+    /// (<see cref="RunCoordinator.TryGetProjectLogSnapshot"/>). [B1 fix 3 · B1 fix 4] Bu test yalnız kilidi sınar; okunurken silinen klasör (uyanan
+    /// motorun açılıştaki saklama süpürmesi) YOK olan logdur — Core'un <c>null</c>'ı, <c>RunLogWriterTests.An_absent_project_log_reads_as_no_log</c>
+    /// sınar.
     /// <para>KIRMIZI: okuma hatası komut döngüsünden yükseliyor, host çıkıyordu — cevap hiç gelmiyordu (okuma zaman aşımı). Mutasyon (B1 fix 3:
     /// koordinatörün yakalaması kaldırılır) yine kırmızı.</para>
     /// </summary>

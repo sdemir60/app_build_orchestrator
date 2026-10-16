@@ -396,9 +396,9 @@ public class EngineWakeTests
 
     /// <summary>
     /// [karar 42a · B1 fix 2 · I-1] Gerçek (tutulan) bir uyanmada da uyandıran istek sessiz Sync'ten ÖNCE gider. Uyanma üretimdeki gibi dispatcher
-    /// DIŞINDA biter; WPF'te her dispatcher işlemi kendi bağlam örneğini taşıdığı için tamamlanmamış göreve yapılan her <c>await</c> post eder —
-    /// kapının devamı ve ardından tıklamanın devamı kuyruğun SONUNA eklenir. Sessiz Sync, uyanmayı bekleyen her istek motora teslim edilene dek bekler
-    /// (kapının boşalması); getProjectLog önce, sonra TEK Sync (fetch'siz), hepsi motor hazırken.
+    /// DIŞINDA biter; her devamı tamamlayan kod başka bir işlemde (ya da havuzda) koştuğu için (sınıf özetindeki kural 2) uyanmanın devamı, kapının
+    /// devamı ve ardından tıklamanın devamı birer sıçrayışla kuyruğun SONUNA eklenir. Sessiz Sync, uyanmayı bekleyen her istek motora teslim edilene
+    /// dek bekler (kapının boşalması); getProjectLog önce, sonra TEK Sync (fetch'siz), hepsi motor hazırken.
     /// <para>KIRMIZI (d630c769 — <c>Task.Yield</c> sırası): ilk giden <c>SyncWorkspaceCommand</c>'dı, getProjectLog ondan sonra — Yield'in devamı
     /// kapının devamının arkasına girdi ama tıklamanın devamının ÖNÜNE; motor komutları sırayla işlediği için sayfa bütün Sync'i bekliyordu.</para>
     /// </summary>
@@ -1478,8 +1478,8 @@ public class EngineWakeTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>[T21 OOS-1 · round 2] Kapının "gönder" kararı ile isteğin motora teslimi arasında bir dispatcher sıçrayışı vardır: her <c>await</c>
-    /// devamını post eder. Ölüm tam bu sıçrayışta gelirse — uyanma başarılı, kapıda bekleyen Sync "gönder" kararını aldı ama çağıranı
+    /// <summary>[T21 OOS-1 · round 2] Kapının "gönder" kararı ile isteğin motora teslimi arasında bir dispatcher sıçrayışı vardır: kapının devamı ile
+    /// çağıranınki ayrı dispatcher işlemlerinde koşar ve çağıranın devamı post edilir (sınıf özetindeki kural 2). Ölüm tam bu sıçrayışta gelirse — uyanma başarılı, kapıda bekleyen Sync "gönder" kararını aldı ama çağıranı
     /// (<c>SyncCoreAsync</c>) henüz devam etmedi — motor kaybı o Sync'i bitmiş SAYMAZ: istek kapıdan geçişini hâlâ tutuyor, motora teslim edilmedi.
     /// Çağıranı devam eder, ölü motora gönderim bugünkü satırlarıyla düşer (Sync ve ardındaki envanter, birer kez) ve Sync'in kendi geri alımı
     /// TEK kez çalışır; sahte işlem sonu yoktur.
