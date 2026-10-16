@@ -893,7 +893,9 @@ public partial class ConsoleView : UserControl
     /// ekliyor, takip kırpması fazlayı atıyordu — UI thread'i boşuna bir dilim okuyup ekleyip kırpıyordu
     /// (<c>ConsoleViewTests.Rebuilding_the_narrative_over_a_…</c>). Anchor da o sıfırda uzaklığı 0 okuyordu: okuyucu kaydırdıktan hemen
     /// sonra (direksiyon ondayken) açılan proje sayfası İZLER hâle geliyor, bekleme dolunca derlenen projenin canlı satırı tepeyi kırpıp
-    /// okuyucuyu dibe atıyordu (<c>ConsoleReaderNavigationTests.A_project_page_opened_right_after_a_scroll_…</c>).</para>
+    /// okuyucuyu dibe atıyordu (<c>ConsoleReaderNavigationTests.A_project_page_opened_right_after_a_scroll_…</c>). Bu ikinci yol dalga 3 ·
+    /// karar 45'ten beri kapalıdır — proje sayfası hiç izlemez (<c>followAllowed</c>); takasın olaylarını yok saymanın gerekçesi yükleyici için
+    /// geçerli kalır.</para>
     /// <para><b>[SIRA ÖNEMLİ] Takip kararı pin'den SONRA verilir.</b> <see cref="BottomAnchorBehavior.ForceStuck"/> bir bildirim yayınlar ve
     /// pill'in görünürlüğü yalnız DİPTEN UZAKLIĞA bakar (<see cref="BottomAnchorDecision.ShouldShowPill"/>). Pin'den ÖNCE verildiğinde editör
     /// hâlâ ÖNCEKİ belgeyi (proje logu, tepede) tutuyor, uzaklık kocaman çıkıyor ve <c>⌄ latest</c> tam o karede beliriyor, pin bitince
