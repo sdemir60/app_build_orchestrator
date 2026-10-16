@@ -808,6 +808,17 @@ public class RunCoordinatorTests
         lock (h.ConsoleLines) return [.. h.ConsoleLines.Where(l => l.StartsWith(UnreadableWarning, StringComparison.Ordinal))];
     }
 
+    /// <summary>Okunamayan bir logun cevabı: "log yok" (boş metin, satır 0) ve tanı kanalında TEK uyarı — okumanın kendi iletisiyle
+    /// (<paramref name="readFailure"/>: testin aynı dosyayı okurken aldığı hata).</summary>
+    private static void AssertNoLogWithOneWarning(Harness h, string projectId, Exception readFailure)
+    {
+        bool found = h.Sut.TryGetProjectLogSnapshot(projectId, out string text, out int throughLineNumber);
+
+        Assert.False(found);
+        Assert.Equal(("", 0), (text, throughLineNumber));
+        Assert.Equal($"{UnreadableWarning}{projectId}): {readFailure.Message}", Assert.Single(UnreadableWarnings(h)));
+    }
+
     /// <summary>
     /// [B1 fix 3] Okunamayan bir proje logu (başka bir süreç dosyayı paylaşımsız tutuyor) "log yok"tur ve tanı kanalına TEK satır düşer:
     /// <c>warning: project log could not be read (&lt;proje&gt;): &lt;ileti&gt;</c>. Okumanın her hatasını "log yok"a çeviren TEK yer koordinatördür
@@ -822,11 +833,22 @@ public class RunCoordinatorTests
         using var held = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None); // başka bir sürecin kilidi
         var refused = Assert.ThrowsAny<IOException>(() => File.ReadAllText(path)); // okumanın hatası — satır onun iletisini taşır
 
-        bool found = h.Sut.TryGetProjectLogSnapshot(Id("A"), out string text, out int throughLineNumber);
+        AssertNoLogWithOneWarning(h, Id("A"), refused);
+    }
 
-        Assert.False(found);
-        Assert.Equal(("", 0), (text, throughLineNumber));
-        Assert.Equal($"{UnreadableWarning}{Id("A")}): {refused.Message}", Assert.Single(UnreadableWarnings(h)));
+    /// <summary>[B1 fix 4 · PİN] Erişimi reddedilen log da "log yok"tur ve tek uyarı satırı bırakır — kilitli dosyayla aynı yol: Core fırlatır,
+    /// koordinatör çevirir. Logun yerinde, adını taşıyan bir klasör var (okuma <see cref="UnauthorizedAccessException"/> atar); B koşuda yoktu, yeri
+    /// boştu.
+    /// <para>PİN: bugünkü kod yeşil. Mutasyon (Core'un yokluk süzgecine <c>or UnauthorizedAccessException</c> eklemek) kırmızı: satır yazılmaz.</para></summary>
+    [Fact]
+    public async Task A_project_log_whose_access_is_denied_is_no_log_with_one_warning_line()
+    {
+        using var h = await CompletedRunOfAAsync();
+        string path = h.LogWriters[^1].ProjectLogPath(Id("B"));
+        Directory.CreateDirectory(path); // logun yerinde, adını taşıyan bir klasör
+        var denied = Assert.ThrowsAny<UnauthorizedAccessException>(() => File.ReadAllText(path)); // okumanın hatası — satır onun iletisini taşır
+
+        AssertNoLogWithOneWarning(h, Id("B"), denied);
     }
 
     /// <summary>

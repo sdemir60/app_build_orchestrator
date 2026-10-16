@@ -93,6 +93,20 @@ public class RunLogWriterTests : IDisposable
         Assert.Null(RunLogWriter.ReadProjectLogFromDisk(runDirectory, @"C:\repo\A\A.csproj"));
     }
 
+    /// <summary>[B1 fix 4 · PİN] Erişimi reddedilen log da FIRLATIR — "yok" değildir: logun yerinde, onun adını taşıyan bir klasör var (okuma
+    /// <see cref="UnauthorizedAccessException"/> atar). Okumanın hatasını "log yok"a çeviren tek yer koordinatördür.
+    /// <para>PİN: bugünkü kod fırlatır. Mutasyon (Core'un yokluk süzgecine <c>or UnauthorizedAccessException</c> eklemek — erişim reddi yine sessizce
+    /// <c>null</c> olur) kırmızı.</para></summary>
+    [Fact]
+    public void A_project_log_whose_access_is_denied_throws()
+    {
+        using var w = new RunLogWriter(_root, Ts);
+        string id = @"C:\repo\A\A.csproj";
+        Directory.CreateDirectory(w.ProjectLogPath(id)); // logun yerinde, adını taşıyan bir klasör
+
+        Assert.Throws<UnauthorizedAccessException>(() => RunLogWriter.ReadProjectLogFromDisk(w.RunDirectory, id));
+    }
+
     [Fact] // decision log çok worker'dan yazılır: satır kaybı/karışması YOK
     public void Decision_log_is_thread_safe()
     {
