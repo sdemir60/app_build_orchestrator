@@ -56,7 +56,7 @@ public class ScrollFollowWiringTests
     {
         var vm = new RunViewModel(
             new EngineHost(TestPaths.SupervisorExe),
-            new ConsoleBatcher(_ => Task.Delay(Timeout.Infinite)),
+            MainWindowHost.NeverTickingBatcher(),
             () => "r1") { RootPath = @"D:\repo" };
         var view = new EventStreamView { AnimationsEnabledProvider = () => false, DataContext = vm };
         var window = DsResources.Realize(DsResources.NewHost(), view);

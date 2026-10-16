@@ -29,10 +29,8 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")]
 public class BranchInventoryTests
 {
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
-
     private static RunViewModel NewVm() =>
-        new(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        new(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
 
     private static IReadOnlyList<BranchRef> Inventory() =>
     [

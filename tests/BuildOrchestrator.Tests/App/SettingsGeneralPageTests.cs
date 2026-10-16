@@ -45,9 +45,6 @@ public class SettingsGeneralPageTests
 
     private static CheckBox SwitchOf(Border row) => DsResources.Descendants(row).OfType<CheckBox>().Single();
 
-    private static CheckBox SwitchNamed(SettingsDialog dialog, string name) =>
-        Rows(dialog).Select(SwitchOf).Single(s => AutomationProperties.GetName(s) == name);
-
     private static Border RowNamed(SettingsDialog dialog, string label) =>
         Rows(dialog).Single(r => DsResources.Descendants(r).OfType<TextBlock>().Any(t => t.Text == label));
 
@@ -298,7 +295,7 @@ public class SettingsGeneralPageTests
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
         using var _scope = scope;
 
-        var parent = SwitchNamed(dialog, "Start with Windows");
+        var parent = SettingsDialogHost.GeneralSwitch(dialog, "Start with Windows");
         var row = RowNamed(dialog, "Start minimized to tray");
         var toggle = SwitchOf(row);
         var textColumn = (FrameworkElement)VisualTreeHelper.GetParent(
@@ -335,7 +332,7 @@ public class SettingsGeneralPageTests
         var (dialog, run, store, scope) = SettingsDialogHost.OpenRealized();
         using var _scope = scope;
         foreach (var name in new[] { "Start with Windows", "Start minimized to tray", "Close to tray", "Show notifications" })
-            SwitchNamed(dialog, name).IsChecked = !SwitchNamed(dialog, name).IsChecked;
+            SettingsDialogHost.GeneralSwitch(dialog, name).IsChecked = !SettingsDialogHost.GeneralSwitch(dialog, name).IsChecked;
 
         CommandPress.Click(dialog.Save); // commit'in persist yarısı ilk await'ten ÖNCE, senkron yazılır
         Assert.Equal(Visibility.Collapsed, dialog.Visibility);
@@ -355,7 +352,7 @@ public class SettingsGeneralPageTests
         var (dialog, run, store, scope) = SettingsDialogHost.OpenRealized();
         using var _scope = scope;
         foreach (var name in new[] { "Close to tray", "Show notifications" })
-            SwitchNamed(dialog, name).IsChecked = false;
+            SettingsDialogHost.GeneralSwitch(dialog, name).IsChecked = false;
 
         CommandPress.Click(dialog.Save);
         Assert.Equal(Visibility.Collapsed, dialog.Visibility);
@@ -365,8 +362,8 @@ public class SettingsGeneralPageTests
         dialog.Open(run, store, () => null);
         dialog.UpdateLayout();
 
-        Assert.False(SwitchNamed(dialog, "Close to tray").IsChecked);
-        Assert.False(SwitchNamed(dialog, "Show notifications").IsChecked);
+        Assert.False(SettingsDialogHost.GeneralSwitch(dialog, "Close to tray").IsChecked);
+        Assert.False(SettingsDialogHost.GeneralSwitch(dialog, "Show notifications").IsChecked);
     }
 
     /// <summary>[Task 1] Diyalog kayıtlı KAPALI değerle açılır — Close to tray ve Show notifications switch'leri
@@ -377,8 +374,8 @@ public class SettingsGeneralPageTests
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(saved: new UiState { CloseToTray = false, ShowNotifications = false });
         using var _scope = scope;
 
-        Assert.False(SwitchNamed(dialog, "Close to tray").IsChecked);
-        Assert.False(SwitchNamed(dialog, "Show notifications").IsChecked);
+        Assert.False(SettingsDialogHost.GeneralSwitch(dialog, "Close to tray").IsChecked);
+        Assert.False(SettingsDialogHost.GeneralSwitch(dialog, "Show notifications").IsChecked);
     }
 
     /// <summary>[P4] İki başlangıç anahtarı Save'de UiState'e yazılır ve diyalog yeniden açılınca kayıtlı değerle
@@ -391,8 +388,8 @@ public class SettingsGeneralPageTests
     {
         var (dialog, run, store, scope) = SettingsDialogHost.OpenRealized();
         using var _scope = scope;
-        SwitchNamed(dialog, "Start with Windows").IsChecked = true;
-        SwitchNamed(dialog, "Start minimized to tray").IsChecked = true;
+        SettingsDialogHost.GeneralSwitch(dialog, "Start with Windows").IsChecked = true;
+        SettingsDialogHost.GeneralSwitch(dialog, "Start minimized to tray").IsChecked = true;
 
         CommandPress.Click(dialog.Save);
         Assert.Equal(Visibility.Collapsed, dialog.Visibility);
@@ -411,7 +408,7 @@ public class SettingsGeneralPageTests
         var registry = new FakeAutostartRegistry();
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(autostart: registry.Service());
         using var _scope = scope;
-        SwitchNamed(dialog, "Start with Windows").IsChecked = true;
+        SettingsDialogHost.GeneralSwitch(dialog, "Start with Windows").IsChecked = true;
 
         CommandPress.Click(dialog.Save);
 

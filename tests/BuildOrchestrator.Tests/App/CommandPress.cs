@@ -30,7 +30,9 @@ internal static class CommandPress
 
     /// <summary>Bir düğmenin <c>Click</c> olayını SENKRON yükseltir — yalnız <c>Click</c> handler'ları koşar (bağlı bir
     /// komut ve bir <c>ToggleButton</c>'ın kendi işaret değişimi koşmaz). Pencere gösterilmeyen kabuk testleri içindir;
-    /// orada <see cref="Invoke"/>'un dispatcher'a bıraktığı basış, bir popup'ı da gerçekten açtırırdı.</summary>
+    /// orada <see cref="Invoke"/>'un dispatcher'a bıraktığı basış, bir popup'ı da gerçekten açtırırdı. Testlerde
+    /// <c>ButtonBase.ClickEvent</c>'i yükselten TEK yer (kopya YASAK — B3 · karar 47b: dosya başına <c>Click</c> kopyaları ve satır
+    /// içi basışlar buraya toplandı).</summary>
     public static void Click(System.Windows.Controls.Primitives.ButtonBase button)
     {
         ArgumentNullException.ThrowIfNull(button);

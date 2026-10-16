@@ -1,5 +1,4 @@
 using System.Windows;
-using System.Windows.Controls.Primitives;
 using BuildOrchestrator.App;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.App.Views;
@@ -17,9 +16,6 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class SettingsPortabilityTests
 {
-    private static void Click(ButtonBase button) =>
-        button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
-
     // ---------------------------------------------------------------- dosya biçimi (saf)
 
     /// <summary>[§2.9] Dosya <c>{ app, version, repositoryRoot, layers[{name, pattern}] }</c> taşır ve
@@ -259,7 +255,7 @@ public class SettingsPortabilityTests
         dialog.Draft!.Externals[0].Path = @"C:\a";
         dialog.Draft!.AddExternal(); // boş kalan ikinci kart — Export'un güvenlik ağı bunu düşürür
 
-        Click(dialog.Export);
+        CommandPress.Click(dialog.Export);
 
         Assert.NotNull(written);
         var parsed = SettingsFile.TryParse(written!)!;
@@ -279,7 +275,7 @@ public class SettingsPortabilityTests
         dialog.PickImportPath = () => @"D:\in\settings.json";
         dialog.ReadFile = _ => SettingsFile.From(@"D:\imported", [], [new ExternalProject(@"C:\a")]).ToJson();
 
-        Click(dialog.Import);
+        CommandPress.Click(dialog.Import);
 
         var row = Assert.Single(dialog.Draft!.Externals);
         Assert.Equal(@"C:\a", row.Path);
@@ -298,7 +294,7 @@ public class SettingsPortabilityTests
         dialog.PickExportPath = () => @"D:\out\build-orchestrator-settings.json";
         dialog.WriteFile = (_, content) => written = content;
 
-        Click(dialog.Export);
+        CommandPress.Click(dialog.Export);
 
         Assert.NotNull(written);
         Assert.Equal("Alpha", SettingsFile.TryParse(written!)!.Layers.Single().Name);
@@ -318,7 +314,7 @@ public class SettingsPortabilityTests
         dialog.PickImportPath = () => @"D:\in\settings.json";
         dialog.ReadFile = _ => SettingsFile.From(@"D:\imported", [new LayerPattern(0, "^X", "Xeno")]).ToJson();
 
-        Click(dialog.Import);
+        CommandPress.Click(dialog.Import);
 
         Assert.Equal(@"D:\imported", dialog.Draft!.RepositoryRoot);
         Assert.Equal(["Xeno"], dialog.Draft!.Layers.Select(l => l.Name));
@@ -336,7 +332,7 @@ public class SettingsPortabilityTests
         dialog.PickImportPath = () => @"D:\in\whatever.json";
         dialog.ReadFile = _ => "definitely not json";
 
-        Click(dialog.Import);
+        CommandPress.Click(dialog.Import);
 
         Assert.Equal("Invalid settings file", dialog.Feedback.Text);
         Assert.Equal(["Alpha"], dialog.Draft!.Layers.Select(l => l.Name)); // form DOKUNULMADI
@@ -363,7 +359,7 @@ public class SettingsPortabilityTests
         using var _scope = scope;
         object? baseTooltip = dialog.Clear.ToolTip; // armed/disarmed karşılaştırması için ÖNCEDEN oku
 
-        Click(dialog.Clear);
+        CommandPress.Click(dialog.Clear);
 
         Assert.True(dialog.IsClearArmed);
         Assert.Equal("Click again to clear", dialog.Feedback.Text);
@@ -372,7 +368,7 @@ public class SettingsPortabilityTests
         Assert.Equal([@"C:\a"], dialog.Draft!.Externals.Select(e => e.Path)); // harici liste de HENÜZ boşalmadı
         Assert.Same(dialog.FindResource("Brush.StatusFailText"), dialog.ClearIcon.Stroke);
 
-        Click(dialog.Clear);
+        CommandPress.Click(dialog.Clear);
 
         Assert.False(dialog.IsClearArmed);
         Assert.Empty(dialog.Draft!.Layers);
@@ -394,7 +390,7 @@ public class SettingsPortabilityTests
         using var _scope = scope;
         object? baseTooltip = dialog.Clear.ToolTip;
 
-        Click(dialog.Clear);
+        CommandPress.Click(dialog.Clear);
         Assert.True(dialog.IsClearArmed);
 
         DispatcherPump.PumpUntil(() => !dialog.IsClearArmed,
@@ -416,10 +412,10 @@ public class SettingsPortabilityTests
             r => r.LayerPatterns = [new LayerPattern(0, "^A", "Alpha")]);
         using var _scope = scope;
         dialog.PickExportPath = () => null;
-        Click(dialog.Clear);
+        CommandPress.Click(dialog.Clear);
         Assert.True(dialog.IsClearArmed);
 
-        Click(dialog.Export);
+        CommandPress.Click(dialog.Export);
 
         Assert.False(dialog.IsClearArmed);
         Assert.Equal(["Alpha"], dialog.Draft!.Layers.Select(l => l.Name)); // Clear UYGULANMADI

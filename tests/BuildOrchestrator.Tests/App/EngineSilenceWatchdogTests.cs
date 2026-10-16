@@ -37,8 +37,6 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 public sealed class EngineSilenceWatchdogTests
 {
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
-
     private sealed class FakeClock
     {
         private long _now = 1_000; // 0 DEĞİL: "hiç sinyal alınmadı" ile "t=0'da sinyal" karışmasın
@@ -55,7 +53,7 @@ public sealed class EngineSilenceWatchdogTests
     private static (RunViewModel Vm, FakeClock Clock) NewVm(EngineHost engine)
     {
         var clock = new FakeClock();
-        return (new RunViewModel(engine, NeverTickingBatcher(), () => "r1", () => clock.Now)
+        return (new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1", () => clock.Now)
                 { RootPath = @"D:\repo", LegacyWorktreePoolRoot = TestPaths.MissingLegacyPoolRoot, StopEngineWhenIdle = false },
                 clock);
     }

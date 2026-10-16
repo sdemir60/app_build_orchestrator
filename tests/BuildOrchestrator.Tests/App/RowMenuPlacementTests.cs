@@ -31,7 +31,7 @@ namespace BuildOrchestrator.Tests.App;
 public class RowMenuPlacementTests
 {
     private static RunViewModel NewVm() =>
-        new(new EngineHost(TestPaths.SupervisorExe), new ConsoleBatcher(_ => Task.Delay(Timeout.Infinite)),
+        new(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(),
             () => "r1") { RootPath = @"D:\repo" };
 
     [StaFact]

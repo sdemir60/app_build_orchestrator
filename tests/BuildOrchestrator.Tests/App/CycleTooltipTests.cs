@@ -28,7 +28,7 @@ public class CycleTooltipTests
     private static RunViewModel NewVm()
     {
         var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe),
-            new ConsoleBatcher(_ => Task.Delay(Timeout.Infinite)), () => "r1") { RootPath = @"D:\repo" };
+            MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         vm.OnEvent(new WorkspaceTopologyEvent(
             [Node(A, "Domain.Parts"), Node(B, "Parts.Inventory"), Node(C, "Parts.Api")],
             [[A, B, C]], [], []));
@@ -58,7 +58,7 @@ public class CycleTooltipTests
     public void A_row_outside_any_cycle_has_no_path()
     {
         var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe),
-            new ConsoleBatcher(_ => Task.Delay(Timeout.Infinite)), () => "r1") { RootPath = @"D:\repo" };
+            MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         vm.OnEvent(new WorkspaceTopologyEvent([Node(A, "Domain.Parts") with { InCycle = false }], [], [], []));
 
         Assert.Equal("", Assert.Single(vm.Projects).CyclePath);

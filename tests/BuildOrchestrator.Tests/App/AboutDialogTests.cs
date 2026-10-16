@@ -1,6 +1,5 @@
 ﻿using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using BuildOrchestrator.App.Controls;
@@ -433,7 +432,7 @@ public class AboutDialogTests
 
             int requests = 0;
             dialog.WhatsNewRequested += () => requests++;
-            button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            CommandPress.Click(button);
 
             Assert.Equal(1, requests);
             Assert.Equal(Visibility.Collapsed, dialog.Visibility);

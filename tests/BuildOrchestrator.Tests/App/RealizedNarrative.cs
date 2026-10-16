@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Windows;
-using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
@@ -148,7 +147,7 @@ internal sealed class RealizedNarrative : IDisposable
     /// <summary><c>⌄ latest</c> tıklaması — pill'in kendi düğmesinden.</summary>
     public void ClickLatest()
     {
-        View.Pill.PillButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+        CommandPress.Click(View.Pill.PillButton);
         DispatcherPump.DrainToIdle();
     }
 

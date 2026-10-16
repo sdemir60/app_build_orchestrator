@@ -21,8 +21,6 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class PopoverTests
 {
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
-
     /// <summary>
     /// Popover gövdesi kabuğunun İÇ ALANINA sığar — genişliği iki yerde birden tanımlanmaz.
     ///
@@ -59,7 +57,7 @@ public class PopoverTests
     }
 
     private static RunViewModel NewVm() =>
-        new(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        new(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
 
     [StaFact]
     public void Branch_popover_filters_case_insensitively_and_resets_its_query_on_close()

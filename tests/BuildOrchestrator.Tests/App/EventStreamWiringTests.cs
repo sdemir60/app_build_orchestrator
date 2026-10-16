@@ -27,10 +27,8 @@ public class EventStreamWiringTests
 {
     private const string ProjectId = @"C:\p\a.csproj";
 
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
-
     private static RunViewModel NewVm() =>
-        new(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        new(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
 
     /// <summary>
     /// [fix-1 · I-B] ÜRETİM SIRASI: kabuk BOŞ VM ile realize edilir, olaylar SONRA akar.
@@ -177,7 +175,7 @@ public class EventStreamWiringTests
         DispatcherPump.DrainToIdle();
         Assert.Equal(Visibility.Visible, view.Pill.Visibility); // ön-koşul: dipten uzakta
 
-        view.Pill.PillButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent)); // ⌄ latest
+        CommandPress.Click(view.Pill.PillButton); // ⌄ latest
         DispatcherPump.DrainToIdle();
         Assert.True(ScrollAnimation.IsAnimating(view.Scroll), "test kurgusu: pill bir kaydırma animasyonu başlatmalıydı");
 

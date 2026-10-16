@@ -21,7 +21,7 @@ namespace BuildOrchestrator.Tests.App;
 public class EventStreamIdlePromptTests
 {
     private static RunViewModel NewVm() =>
-        new(new EngineHost(TestPaths.SupervisorExe), new ConsoleBatcher(_ => Task.Delay(Timeout.Infinite)), () => "r1")
+        new(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1")
         { RootPath = @"D:\repo" };
 
     /// <summary>

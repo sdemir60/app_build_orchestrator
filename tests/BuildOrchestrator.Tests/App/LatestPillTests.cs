@@ -1,5 +1,4 @@
 using System.Windows;
-using System.Windows.Controls.Primitives;
 using BuildOrchestrator.App.Controls;
 
 namespace BuildOrchestrator.Tests.App;
@@ -51,7 +50,7 @@ public class LatestPillTests
             Pill.Click += (_, _) => Anchor.JumpToBottom();
         }
 
-        public void Click() => Pill.PillButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+        public void Click() => CommandPress.Click(Pill.PillButton);
     }
 
     [StaFact]

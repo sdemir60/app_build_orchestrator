@@ -426,8 +426,6 @@ public class SuccessFlourishTests
     /// [A13/T1 fix-1 · S1] Sözlük merge'i artık GraphTestView'da (TEK yer) — altı kopyanın biriydi.</summary>
     private static GraphView NewGraphView(out Window window) => GraphTestView.Shown(new Size(600, 400), out window, () => true);
 
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
-
     private static RunViewModel NewVm() =>
-        new(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        new(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
 }

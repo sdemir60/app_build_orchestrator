@@ -479,7 +479,7 @@ public class NotesDialogTests
         var (dialog, scope) = NotesDialogHost.OpenRealized(configure: d => d.Releases = NotesDialogHost.SyntheticReleases(6));
         using (scope)
         {
-            dialog.EarlierVersions.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent)); // uzun liste — gövde gerçekten kayar
+            CommandPress.Click(dialog.EarlierVersions); // uzun liste — gövde gerçekten kayar
             dialog.UpdateLayout();
             Assert.Equal(6, dialog.WhatsNewBlocks.Count);
 

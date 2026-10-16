@@ -16,8 +16,6 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 public class ConsoleForwardWiringTests
 {
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(System.Threading.Timeout.Infinite));
-
     // ---------------------------------------------------------------- [§1] AppendConsoleBatch routing (SAF karar)
 
     [Theory]
@@ -58,7 +56,7 @@ public class ConsoleForwardWiringTests
     public async Task NextConsoleSelection_returns_ShowRun_when_nothing_is_selected()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1");
 
         Assert.Equal(ConsoleSelection.ShowRun, vm.NextConsoleSelection(out var id));
         Assert.Null(id);
@@ -68,7 +66,7 @@ public class ConsoleForwardWiringTests
     public async Task NextConsoleSelection_returns_LoadProjectLog_with_the_selected_id()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1");
         const string a = @"C:\p\a.csproj";
         vm.SelectProject(a);
 
@@ -80,7 +78,7 @@ public class ConsoleForwardWiringTests
     public async Task ShouldShowLoadedProject_is_true_when_load_set_project_mode_and_selection_still_matches()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1");
         const string a = @"C:\p\a.csproj";
         vm.SelectProject(a);
         var (load, request) = ProjectLogIpc.Request(vm, a);
@@ -95,7 +93,7 @@ public class ConsoleForwardWiringTests
     public async Task ShouldShowLoadedProject_is_false_when_selection_changed_after_the_load()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1");
         const string a = @"C:\p\a.csproj";
         vm.SelectProject(a);
         var (load, request) = ProjectLogIpc.Request(vm, a);
@@ -127,7 +125,7 @@ public class ConsoleForwardWiringTests
     public async Task A_load_that_found_no_log_still_opens_the_project_page()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1");
         const string a = @"C:\p\skipped.csproj";
         vm.OnEvent(new ProjectSkippedEvent("r1", a, "cycle"));
         vm.SelectProject(a);
@@ -148,7 +146,7 @@ public class ConsoleForwardWiringTests
     public async Task A_load_that_found_no_log_does_not_open_the_page_if_the_card_was_released()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1");
         const string a = @"C:\p\skipped.csproj";
         vm.OnEvent(new ProjectSkippedEvent("r1", a, "cycle"));
         vm.SelectProject(a);

@@ -1,7 +1,6 @@
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
@@ -26,8 +25,6 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 public class SettingsDialogTests
 {
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
-
     /// <summary>[fix-1 · C13] Bellek-içi UiStateStore tek yerde: <see cref="SettingsDialogHost.FakeStore"/>.</summary>
     private static SettingsDialogHost.FakeStore NewStore() => new();
 
@@ -95,7 +92,7 @@ public class SettingsDialogTests
     public async Task A_fresh_draft_has_no_layers()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var run = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1");
         Assert.Null(run.LayerPatterns); // kayıtlı katman yok
 
         var draft = new SettingsDraftViewModel(run.LayerPatterns, null);
@@ -226,7 +223,7 @@ public class SettingsDialogTests
     public async Task A_draft_built_from_saved_layers_never_shows_the_defaults()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var run = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1");
         run.LayerPatterns = [new LayerPattern(0, "^A", "Alpha")];
 
         var draft = new SettingsDraftViewModel(run.LayerPatterns, null);
@@ -240,7 +237,7 @@ public class SettingsDialogTests
     public async Task Cancel_discards_the_draft()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var run = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         var store = NewStore();
         IReadOnlyList<LayerPattern> live = [new LayerPattern(0, "^A", "Alpha")];
         run.LayerPatterns = live;
@@ -282,7 +279,7 @@ public class SettingsDialogTests
     public async Task Saving_layers_writes_the_exact_console_note_and_persists_the_patterns()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var run = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1");
         var store = NewStore();
 
         var editor = new SettingsDraftViewModel(null, null);
@@ -321,7 +318,7 @@ public class SettingsDialogTests
     public async Task Saving_the_current_repository_root_in_another_case_keeps_the_root_and_the_rows()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var run = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         run.OnEvent(new ProjectStartedEvent("r1", @"D:\repo\a.csproj", "A")); // aktif bir satır (Started)
         Assert.Equal(ProjectRowState.Started, Assert.Single(run.Projects).State);
 
@@ -340,7 +337,7 @@ public class SettingsDialogTests
     public async Task Applying_settings_sends_one_sync_that_carries_the_new_layer_patterns()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var run = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         var sent = new List<IpcCommand>();
         run.DebugOnCommandSent = sent.Add;
 
@@ -358,7 +355,7 @@ public class SettingsDialogTests
     public async Task Applying_settings_with_a_new_root_resets_rows_and_syncs_at_the_new_root()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"C:\old" };
+        var run = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"C:\old" };
         run.OnEvent(new ProjectStartedEvent("r1", @"C:\old\a.csproj", "A"));
         Assert.Equal(ProjectRowState.Started, Assert.Single(run.Projects).State);
 
@@ -379,7 +376,7 @@ public class SettingsDialogTests
     public async Task Saving_a_new_root_empties_the_list_so_the_next_topology_reveals()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"C:\old" };
+        var run = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"C:\old" };
         var node = new ProjectNode(@"C:\p\a.csproj", "A", @"C:\p\a.csproj", ["Osys"], [], 0, null, null, false, null);
         run.OnEvent(new WorkspaceTopologyEvent([node], [], [], []));
         Assert.Single(run.Projects); // ön-koşul
@@ -400,7 +397,7 @@ public class SettingsDialogTests
     public async Task Applying_settings_without_a_repository_root_keeps_the_layers_but_sends_no_sync()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var run = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1");
         var sent = new List<IpcCommand>();
         run.DebugOnCommandSent = sent.Add;
 
@@ -422,7 +419,7 @@ public class SettingsDialogTests
     public async Task Saving_the_first_repository_root_applies_it_and_syncs_at_that_root()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1"); // kök HİÇ seçilmemiş
+        var run = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1"); // kök HİÇ seçilmemiş
         Assert.Equal("", run.RootPath);
         Assert.Equal(AppPhase.Empty, run.Phase);
         var sent = new List<IpcCommand>();
@@ -449,7 +446,7 @@ public class SettingsDialogTests
     public async Task Applying_settings_mid_run_defers_the_repository_change_and_sends_no_sync()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1")
+        var run = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1")
             { RootPath = @"D:\repo", IsStarting = true };
         Assert.True(run.IsMidRunLocked);
         var sent = new List<IpcCommand>();
@@ -475,7 +472,7 @@ public class SettingsDialogTests
         await using var engine = sandbox.IsolatedEngineHost(TestPaths.WideStartupTimeout);
         await engine.StartAsync();
         using var root = new TempDir();
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = root.Path };
+        var run = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = root.Path };
         run.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 0, 0, Behind: 2));
         await run.PullRepositoryCommand.ExecuteAsync(null);
         Assert.True(run.PullBusy); // ön-koşul: pull uçuşta
@@ -496,7 +493,7 @@ public class SettingsDialogTests
     public async Task Applying_settings_while_a_sync_is_in_flight_defers_the_repository_change_and_sends_no_sync()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var run = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         run.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
         Assert.True(run.SyncBusy); // ön-koşul
         var sent = new List<IpcCommand>();
@@ -516,7 +513,7 @@ public class SettingsDialogTests
     public async Task Applying_settings_mid_run_says_nothing_when_no_repository_change_is_pending()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1")
+        var run = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1")
             { RootPath = @"D:\repo", IsStarting = true };
         var sent = new List<IpcCommand>();
         run.DebugOnCommandSent = sent.Add;
@@ -538,7 +535,7 @@ public class SettingsDialogTests
     public async Task Applying_settings_while_the_engine_is_unavailable_keeps_the_layers_but_sends_no_sync()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var run = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         run.OnEngineUnavailable(@"C:\nowhere\supervisor.exe");
         Assert.True(run.IsEngineUnavailable);
         var sent = new List<IpcCommand>();
@@ -557,7 +554,7 @@ public class SettingsDialogTests
     public async Task Picking_a_folder_only_updates_the_draft()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var run = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         run.OnEvent(new ProjectStartedEvent("r1", @"D:\repo\a.csproj", "A"));
         var sent = new List<IpcCommand>();
         run.DebugOnCommandSent = sent.Add;
@@ -574,7 +571,7 @@ public class SettingsDialogTests
     public async Task Saving_applies_the_pending_repository_root_and_syncs_once()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var run = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         run.OnEvent(new ProjectStartedEvent("r1", @"D:\repo\a.csproj", "A"));
         var store = NewStore();
         var sent = new List<IpcCommand>();
@@ -651,7 +648,7 @@ public class SettingsDialogTests
     public async Task Saving_externals_persists_them_alongside_layers_in_the_same_commit()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var run = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1");
         var store = NewStore();
 
         var editor = new SettingsDraftViewModel(null, @"D:\repo");
@@ -674,7 +671,7 @@ public class SettingsDialogTests
     public async Task Applying_settings_writes_the_external_note_only_when_the_count_changes()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var run = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         IReadOnlyList<LayerPattern> patterns = [new LayerPattern(0, "^A", "Alpha")]; // sabit — bu testin konusu DEĞİL
 
         // 0 → 2: sayı DEĞİŞTİ → not YAZILIR (N ≥ 1 deseni).
@@ -701,7 +698,7 @@ public class SettingsDialogTests
     public async Task Applying_settings_with_no_external_projects_and_none_before_writes_no_note()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var run = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
 
         await run.ApplySettingsAsync([new LayerPattern(0, "^A", "Alpha")], @"D:\repo", []);
 
@@ -797,7 +794,7 @@ public class SettingsDialogViewTests
         var browse = DsResources.RealizedObjects(dialog).OfType<Button>()
             .Single(b => b.Content is StackPanel panel
                          && panel.Children.OfType<TextBlock>().Any(t => t.Text == "Browse…"));
-        browse.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+        CommandPress.Click(browse);
         dialog.UpdateLayout();
 
         Assert.Equal(@"D:\picked\repo", dialog.RootInput.Text);  // input YENİ yolu gösterir
@@ -916,7 +913,7 @@ public class SettingsDialogViewTests
 
         var addButton = DsResources.RealizedObjects(dialog).OfType<Button>()
             .Single(b => Equals(b.Content, "Add external project"));
-        addButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+        CommandPress.Click(addButton);
         dialog.UpdateLayout();
 
         var draft = (SettingsDraftViewModel)dialog.DataContext;

@@ -104,7 +104,7 @@ public class ConsoleModesTests
         bool raised = false;
         header.BackRequested += (_, _) => raised = true;
 
-        header.BackButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+        CommandPress.Click(header.BackButton);
 
         Assert.True(raised);
     }

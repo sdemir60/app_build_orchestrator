@@ -17,8 +17,6 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 public class OptimizeCommandTests
 {
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
-
     private static ProjectNode Node(string id, string name, int buildOrder, bool inCycle = false) =>
         new(id, name, id, ["Osys"], [], buildOrder, null, null, inCycle, null);
 
@@ -35,7 +33,7 @@ public class OptimizeCommandTests
     public async Task Optimize_sends_optimizeWorkspace_with_the_workspace_root()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         IpcCommand? sent = null;
         vm.DebugOnCommandSent = c => sent = c;
 
@@ -49,7 +47,7 @@ public class OptimizeCommandTests
     public async Task Optimize_clears_the_console_and_writes_the_requested_line()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         vm.OnEvent(new SyncProgressEvent("eski bir transkript satırı", "info"));
         Assert.Contains("eski bir transkript", vm.GetRunDocumentText(), StringComparison.Ordinal);
 
@@ -64,7 +62,7 @@ public class OptimizeCommandTests
     public async Task Optimize_progress_lines_flow_into_the_run_document()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
 
         vm.OnEvent(new OptimizeStartedEvent(@"D:\repo"));
         vm.OnEvent(new OptimizeProgressEvent("checking NuGet packages — 10 projects, 2 need restore", "info"));
@@ -76,7 +74,7 @@ public class OptimizeCommandTests
     public async Task Optimize_completion_pushes_one_stream_summary_line()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
 
         vm.OnEvent(new OptimizeStartedEvent(@"D:\repo"));
         vm.OnEvent(Done(restored: 2, unresolved: 5, prunedState: 3, prunedCache: 4, prunedSourceHash: 5));
@@ -99,7 +97,7 @@ public class OptimizeCommandTests
     public async Task The_stream_line_names_failures_and_says_nothing_to_fix_when_there_was_nothing()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
 
         vm.OnEvent(new OptimizeStartedEvent(@"D:\repo"));
         vm.OnEvent(new OptimizeCompletedEvent(ProjectCount: 10));
@@ -122,7 +120,7 @@ public class OptimizeCommandTests
     public async Task Optimize_is_disabled_without_a_workspace()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1");
 
         Assert.False(vm.OptimizeCommand.CanExecute(null));
 
@@ -134,7 +132,7 @@ public class OptimizeCommandTests
     public async Task Optimize_is_disabled_while_a_run_is_starting_or_running()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
 
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         Assert.False(vm.OptimizeCommand.CanExecute(null));
@@ -147,7 +145,7 @@ public class OptimizeCommandTests
     public async Task Optimize_is_disabled_while_a_sync_is_in_flight()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
 
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
         Assert.False(vm.OptimizeCommand.CanExecute(null));
@@ -166,7 +164,7 @@ public class OptimizeCommandTests
     public async Task Optimize_is_disabled_only_when_the_engine_cannot_be_restarted()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
 
         vm.OnEngineExited(1);
         Assert.True(vm.OptimizeCommand.CanExecute(null)); // restartable → kapı açık (Sync'in kuralı)
@@ -189,7 +187,7 @@ public class OptimizeCommandTests
     public async Task Sync_build_rebuild_and_cycles_are_disabled_while_an_optimize_is_in_flight_and_reopen_on_completion()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         vm.OnEvent(new WorkspaceTopologyEvent(
             [Node(@"C:\p\a.csproj", "A", 0, inCycle: true), Node(@"C:\p\b.csproj", "B", 1, inCycle: true)],
             [[@"C:\p\a.csproj", @"C:\p\b.csproj"]], [], []));
@@ -237,7 +235,7 @@ public class OptimizeCommandTests
     public async Task A_failed_send_reopens_the_optimize_gate()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe); // hiç başlatılmadı → gönderim düşer
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         bool? requestedAtSendTime = null;
         vm.DebugOnCommandSent = c => { if (c is OptimizeWorkspaceCommand) requestedAtSendTime = vm.OptimizeRequested; };
 
@@ -254,7 +252,7 @@ public class OptimizeCommandTests
     public async Task An_optimizeFailed_or_optimizeRejected_error_releases_the_optimize_surface(string code)
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         vm.OnEvent(new OptimizeStartedEvent(@"D:\repo"));
         Assert.False(vm.OptimizeCommand.CanExecute(null));
 
@@ -271,7 +269,7 @@ public class OptimizeCommandTests
     public async Task An_optimizeRejected_during_a_live_run_leaves_the_run_state_untouched()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         Assert.True(vm.IsRunning);
 
@@ -285,7 +283,7 @@ public class OptimizeCommandTests
     public async Task Engine_death_mid_optimize_releases_the_optimize_surface()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         vm.OnEvent(new OptimizeStartedEvent(@"D:\repo"));
         Assert.False(vm.OptimizeCommand.CanExecute(null));
 
@@ -301,7 +299,7 @@ public class OptimizeCommandTests
     public async Task Optimize_clears_the_stream_left_over_from_the_previous_operation()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         vm.OnEvent(new SyncCompletedEvent("main", "sha", false, ProjectCount: 10, CycleCount: 0,
             ToBuildCount: 3, UpToDateCount: 7));
         Assert.NotEmpty(vm.StreamEvents);
@@ -315,7 +313,7 @@ public class OptimizeCommandTests
     public async Task Optimize_writes_the_operation_pill_at_click_time()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
 
         await vm.OptimizeCommand.ExecuteAsync(null);
 
@@ -331,7 +329,7 @@ public class OptimizeCommandTests
     public async Task Clean_is_disabled_while_an_optimize_is_in_flight_and_reopens_on_completion()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         Assert.True(vm.CleanCommand.CanExecute(null));
 
         // İSTEK penceresi: motor henüz optimizeStarted ile cevap vermedi ama Clean çoktan kapalı.
@@ -359,7 +357,7 @@ public class OptimizeCommandTests
     public async Task Optimize_is_disabled_while_a_clean_is_in_flight_and_reopens_on_completion()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         Assert.True(vm.OptimizeCommand.CanExecute(null));
 
         vm.OnEvent(new CleanStartedEvent(@"D:\repo"));
@@ -373,7 +371,7 @@ public class OptimizeCommandTests
     public async Task The_pull_chip_is_disabled_while_an_optimize_is_in_flight()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo", Behind = 3 };
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo", Behind = 3 };
         Assert.True(vm.PullRepositoryCommand.CanExecute(null));
 
         vm.OnEvent(new OptimizeStartedEvent(@"D:\repo"));
@@ -397,7 +395,7 @@ public class OptimizeCommandTests
     public async Task Optimize_empties_the_project_list_and_the_graph_at_click()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         vm.OnEvent(new WorkspaceTopologyEvent([Node(@"C:\p\a.csproj", "A", 0)], [], [], []));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
         Assert.Single(vm.Projects);   // ön-koşul: ekranda bir proje ve kararı var
@@ -421,7 +419,7 @@ public class OptimizeCommandTests
     public async Task Optimize_completion_runs_an_automatic_sync_and_keeps_the_console()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         var sent = new List<IpcCommand>();
         vm.DebugOnCommandSent = sent.Add;
         vm.OnEvent(new OptimizeStartedEvent(@"D:\repo"));
@@ -441,7 +439,7 @@ public class OptimizeCommandTests
     {
         long now = 0;
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", () => now) { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1", () => now) { RootPath = @"D:\repo" };
         var log = new List<string>();
         vm.OperationHold = ms => { log.Add($"hold {ms} busy={vm.OptimizeBusy}"); return Task.CompletedTask; };
         vm.DebugOnCommandSent = c =>
@@ -476,7 +474,7 @@ public class OptimizeCommandTests
     {
         long now = 0;
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", () => now) { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1", () => now) { RootPath = @"D:\repo" };
         vm.OnEvent(new WorkspaceTopologyEvent([Node(@"C:\p\a.csproj", "A", 0)], [], [], []));
         var gates = new List<string>();
         vm.OperationHold = ms =>
@@ -504,7 +502,7 @@ public class OptimizeCommandTests
     {
         long now = 0;
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", () => now) { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1", () => now) { RootPath = @"D:\repo" };
         var holds = new List<double>();
         vm.OperationHold = ms => { holds.Add(ms); return Task.CompletedTask; };
 
@@ -523,7 +521,7 @@ public class OptimizeCommandTests
     public async Task A_failed_optimize_does_not_chain_a_sync(string code)
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         vm.OnEvent(new OptimizeStartedEvent(@"D:\repo"));
         var sent = new List<IpcCommand>();
         vm.DebugOnCommandSent = sent.Add;

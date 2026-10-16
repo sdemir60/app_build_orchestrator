@@ -37,10 +37,8 @@ public class ProjectRowInputTests
 {
     private const string RowId = @"C:\p\a.csproj";
 
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
-
     private static RunViewModel NewRunVm() =>
-        new(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        new(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
 
     private static ProjectRow Realize(RunViewModel runVm, ProjectRowViewModel rowVm, out Window window)
     {

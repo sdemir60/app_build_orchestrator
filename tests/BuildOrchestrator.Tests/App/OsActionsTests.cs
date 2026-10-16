@@ -148,8 +148,6 @@ public class OsActionsTests
     }
 
     // ============================================================ RunViewModel: aday çözümü + birebir notlar
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
-
     private sealed class FakeOsActions : IOsActions
     {
         public string? RevealedPath;
@@ -171,7 +169,7 @@ public class OsActionsTests
         // [T32] Kart yalnız İLK sln adını (SolutionName) saklar; Open-in-VS ise projenin TÜM SolutionNames'ini
         // topolojiden çözüp eşleşen Solutions girdilerini döndürür.
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1");
         var solutions = new[]
         {
             new SolutionRef("Osys.sln", @"C:\src\Osys.sln"),
@@ -192,7 +190,7 @@ public class OsActionsTests
     public async Task Solution_candidates_are_empty_for_an_unknown_project()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1");
 
         Assert.Empty(vm.SolutionCandidatesFor(@"C:\nope\x.csproj"));
     }
@@ -202,7 +200,7 @@ public class OsActionsTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var os = new FakeOsActions();
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", osActions: os);
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1", osActions: os);
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "Foo"));
 
         vm.RevealProjectInExplorer(@"C:\p\a.csproj");
@@ -217,7 +215,7 @@ public class OsActionsTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var sln = new SolutionRef("Osys.sln", @"C:\src\Osys.sln");
         var os = new FakeOsActions { NextOpenResult = OpenInVsResult.Opened(sln) };
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", osActions: os);
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1", osActions: os);
         vm.OnEvent(new WorkspaceTopologyEvent([Node(@"C:\p\a.csproj", "Foo", "Osys.sln")], [], [sln], []));
 
         var chooser = await vm.OpenProjectInVisualStudioAsync(@"C:\p\a.csproj");
@@ -234,7 +232,7 @@ public class OsActionsTests
         var a = new SolutionRef("A.sln", @"C:\src\A.sln");
         var b = new SolutionRef("B.sln", @"C:\src\B.sln");
         var os = new FakeOsActions { NextOpenResult = OpenInVsResult.Choose([a, b]) };
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", osActions: os);
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1", osActions: os);
         vm.OnEvent(new WorkspaceTopologyEvent([Node(@"C:\p\a.csproj", "Foo", "A.sln", "B.sln")], [], [a, b], []));
 
         var chooser = await vm.OpenProjectInVisualStudioAsync(@"C:\p\a.csproj");
@@ -251,7 +249,7 @@ public class OsActionsTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var chosen = new SolutionRef("A.sln", @"C:\src\A.sln");
         var os = new FakeOsActions { NextOpenResult = OpenInVsResult.Opened(chosen) };
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", osActions: os);
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1", osActions: os);
         vm.OnEvent(new WorkspaceTopologyEvent(
             [Node(@"C:\p\a.csproj", "Foo", "A.sln", "B.sln")], [],
             [chosen, new SolutionRef("B.sln", @"C:\src\B.sln")], []));
@@ -267,7 +265,7 @@ public class OsActionsTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var os = new FakeOsActions { NextOpenResult = OpenInVsResult.NoSolution };
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", osActions: os);
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1", osActions: os);
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "Foo"));
 
         var chooser = await vm.OpenProjectInVisualStudioAsync(@"C:\p\a.csproj");

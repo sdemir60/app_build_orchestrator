@@ -38,7 +38,7 @@ public class EventStreamTypingTests
     private long _clock = 100_000;
 
     private RunViewModel NewVm() =>
-        new(new EngineHost(TestPaths.SupervisorExe), new ConsoleBatcher(_ => Task.Delay(Timeout.Infinite)),
+        new(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(),
             () => "r1", nowMs: () => _clock)
         { RootPath = @"D:\repo" };
 

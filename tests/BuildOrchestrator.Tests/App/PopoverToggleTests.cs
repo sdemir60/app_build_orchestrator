@@ -36,7 +36,7 @@ public class PopoverToggleTests
     private const string RowId = @"C:\p\a.csproj";
 
     private static RunViewModel NewVm() =>
-        new(new EngineHost(TestPaths.SupervisorExe), new ConsoleBatcher(_ => Task.Delay(Timeout.Infinite)),
+        new(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(),
             () => "r1") { RootPath = @"D:\repo" };
 
     private static (ActionBar bar, Window window) RealizeBar(RunViewModel vm)

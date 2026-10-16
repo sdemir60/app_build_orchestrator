@@ -31,7 +31,8 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 internal static class MainWindowHost
 {
-    /// <summary>Konsol pompası test boyunca hiç tick etmesin — batcher sonsuza dek bekler.</summary>
+    /// <summary>Konsol pompası test boyunca hiç tick etmesin — batcher sonsuza dek bekler. VM'i ya da konsolu pompası tick etmeden kuran
+    /// HER testin TEK batcher'ı (kopya YASAK — B3 · karar 47b: dosya başına özel kopyalar ve satır içi kurulumlar buraya toplandı).</summary>
     public static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
 
     /// <summary>[idle-memory · dalga 2 · fix 1 · M5] Pompası testin elinde olan konsol: tick beklemez, kanal <see cref="DrainPosted"/> ile
