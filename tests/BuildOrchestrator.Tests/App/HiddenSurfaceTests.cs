@@ -680,11 +680,11 @@ public class HiddenSurfaceTests
 
         Assert.Null(vm.SelectedProjectId);                                  // ön-koşul: seçim gerçekten düştü
         Assert.Equal(replacedBefore, console.RunDocumentReplacedCount);     // KIRMIZI: bugün ShowRunDocument gizliyken kurar
-        Assert.Equal(Visibility.Collapsed, console.Tilt3D.Visibility);      // tilt başlamadı
+        Assert.False(console.IsTransitioning);                              // tilt başlamadı
         window.SetSurfaceHidden(false);
         window.ResyncAfterShow();
         Assert.Equal(replacedBefore + 1, console.RunDocumentReplacedCount); // dönüşte TAM bir kurulum
-        Assert.Equal(Visibility.Collapsed, console.Tilt3D.Visibility);      // dönüş de tilt'siz
+        Assert.False(console.IsTransitioning);                              // dönüş de tilt'siz
         GC.KeepAlive(window);
     }
 
@@ -706,7 +706,7 @@ public class HiddenSurfaceTests
 
         Assert.Null(vm.SelectedProjectId);
         Assert.True(console.RunDocumentReplacedCount > replacedBefore);    // belge hemen kuruldu
-        Assert.Equal(Visibility.Visible, console.Tilt3D.Visibility);       // tilt oynuyor
+        Assert.True(console.IsTransitioning);                              // tilt oynuyor
         GC.KeepAlive(window);
     }
 

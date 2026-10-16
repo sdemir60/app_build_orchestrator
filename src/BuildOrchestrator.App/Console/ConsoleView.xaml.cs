@@ -7,7 +7,6 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
-using System.Windows.Media.Media3D;
 using System.Windows.Threading;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
@@ -84,14 +83,12 @@ public partial class ConsoleView : UserControl
     private readonly SolidColorBrush _hoverBandBrush;
 
     // Kaskat durumu (yalnız UI thread'inde).
-    // [design v1.7.0 §2.5] Panel geçişinin tek parça "tilt in" ölçüleri (prototip: 14px + 340ms + rotateX 7°).
+    // [design v1.7.0 §2.5] Panel geçişinin tek parça "tilt in" ölçüleri (prototip: 14px + 340ms). Prototipin perspektif
+    // açısı (rotateX 7°) BİLEREK uygulanmaz — gerekçe PlayTiltIn'de.
     private const double TiltInMs = 340.0;
     private const double TiltInOffsetPx = 14.0;
-    // Prototip birebir (animasyon spec §2.2): perspective(900px) + rotateX(7deg). Değerler spec'tendir,
-    // "iyileştirilmez".
-    private const double TiltInAngleDeg = 7.0;
-    private const double TiltInPerspectivePx = 900.0;
     private int _tiltGeneration; // uçuştaki bir geçişi yeni bir geçiş geçersiz kılar
+    private readonly TranslateTransform _tiltSlide = new(); // geçişin tek dönüşümü: PART_TiltHost'un dikey kayması
 
     // Render dilimi / chunk loader durumu.
     // [tail-trim tek kural] Ayrı bir "kırp/kırpma" bayrağı YOKTUR: yetki BottomAnchorBehavior.ShouldFollow'dadır
@@ -142,6 +139,7 @@ public partial class ConsoleView : UserControl
         _motion = new MotionGate(this);
         _motion.Changed += OnMotionChanged;
         InitializeComponent();
+        PART_TiltHost.RenderTransform = _tiltSlide; // panel geçişinin tek dönüşümü (PlayTiltIn) — kab, içindekileri birlikte kaydırır
         EditorControl.Document = NewDocument(""); // açılış belgesi de geri-alma geçmişi tutmaz (gerekçe fabrikada)
         // Gömülü Geist Mono Console CompositeFont'u (It-0 asset'i) — pack URI burada TEKRARLANMAZ [T64].
         EditorControl.FontFamily = AppFonts.MonoConsole;
@@ -393,8 +391,8 @@ public partial class ConsoleView : UserControl
     /// <para><b>Neden bir de SONRA:</b> <c>ScrollToEnd</c> bir İSTEKTİR, bir hareket değil —
     /// <c>ScrollViewer</c> onu ancak bir sonraki ölçüm turunda <c>TextView</c>'e iletir. İkinci tur olmadan
     /// metot döndüğünde <c>VerticalOffset</c> hâlâ ESKİ değerdedir (ölçüldü: dip 3573 iken 0) ve istek,
-    /// geçişin ORTASINDA oturur. Bedeli görünürdü: geçişin dokusu (<see cref="BuildTiltScene"/>) o kareden
-    /// alındığı için 340ms boyunca metnin BAŞI gösteriliyor, sonra panel tek karede dibe atlıyordu — sahada
+    /// geçişin ORTASINDA oturur. Bedeli görünürdü: geçiş (<see cref="PlayTiltIn"/>) o kareyle başladığı için
+    /// 340ms boyunca metnin BAŞI gösteriliyor, sonra panel tek karede dibe atlıyordu — sahada
     /// "animasyonla birlikte pat diye alta gitme" diye görülen buydu. İmleç de aynı kareye bağlıdır:
     /// <see cref="PositionPrompt"/> belgenin son satırı görünür pencerede değilken erken döner ve imleci ESKİ
     /// yerinde bırakır, yani metnin üstünde "sanki sondaymış gibi" durur.</para>
@@ -962,26 +960,28 @@ public partial class ConsoleView : UserControl
     private double SettledOffset => Math.Min(ScrollGeometry.VerticalOffset, _bottomAnchor.BottomOffset);
 
     /// <summary>
-    /// [design v1.7.0 §2.5 · animasyon spec §2] Panel geçişinin TEK hareketi. Log bloğu, <b>alt kenarı sabit
-    /// kalacak şekilde</b> izleyiciye doğru düzleşir: 14px aşağıdan, hafif kısaltılmış ve saydam başlar,
-    /// 340ms ease-out ile tam düz ve tam opak olur. Kâğıdın masaya oturması gibi — alt kenar hiç oynamaz.
+    /// [design v1.7.0 §2.5 · animasyon spec §2] Panel geçişinin TEK hareketi. Log bloğu 14px aşağıdan ve saydam
+    /// başlar, 340ms ease-out ile yerine oturur ve tam opak olur; dönüş aynasıdır (14px yukarıdan). Hareket, gerçek
+    /// editörün kabına (<see cref="PART_TiltHost"/>) uygulanan bir <see cref="TranslateTransform"/> + opaklık
+    /// animasyonudur — kabın içindekiler birbirine göre kımıldamaz, bu yüzden imleç konumu ve hover bandı geçişten
+    /// etkilenmez (<see cref="PositionPrompt"/>).
     ///
-    /// <para><b>Gerçek perspektif</b> (animasyon spec §2.4'ün "birebir gerekiyorsa" yolu): blok bir 3B
-    /// düzlemdir, <c>PerspectiveCamera</c> 900px uzaklıktadır ve X ekseni etrafında 7° → 0 döner. Böylece üst
-    /// kenar geriye giderken DARALIR, alt kenar öne gelirken GENİŞLER — trapez. Bir ara sürüm bunu 2B
-    /// ölçek+kaydırma ile yaklaşıklıyordu; WPF'in 2D dönüşümleri afin olduğundan trapez üretilemiyor ve jest
-    /// "kâğıdın masaya oturması" değil salt "aşağıdan kayma" gibi okunuyordu.</para>
-    ///
-    /// <para>Düzlemin dokusu, geçişin başında log bloğundan alınan bir görüntüdür. Canlı bir görsel fırçası
-    /// (VisualBrush) kullanılamaz: fırça kaynağını olduğu gibi çizer, yani gerçek bloğu gizlemek onu fırçada
-    /// da gizlerdi. Doku 340ms sürer; sonrasında gerçek editör geri gelir ve metin yeniden keskindir.</para>
+    /// <para><b>[DEĞİŞEN KURAL — 2026-10-16, ölçüldü] Geçiş 2B'dir; prototipin perspektif açısı uygulanmaz.</b> Eski kural
+    /// (2026-08-15'ten beri): blok, geçişin başında alınan bir görüntüyle (<c>RenderTargetBitmap</c>) dokulanmış bir 3B düzlemdi
+    /// (<c>Viewport3D</c> + 900px <c>PerspectiveCamera</c>, X ekseni etrafında 7° → 0) — animasyon spec §2.4'ün "trapez birebir
+    /// gerekiyorsa" yolu; WPF'in 2B dönüşümleri afin olduğu için trapez başka türlü üretilemez. Ölçülen bedel: 4K tam ekranda
+    /// <c>Viewport3D</c>'nin ilk çizimi WPF'in 3B çizim hattına ~830 MB grafik belleği bağlıyor ve geçiş bitince (katman
+    /// gizlenip sahne boşaltılsa da) bırakmıyordu — proje sayfasına ilk tıklamada uygulama 300 MB'den 1,1 GB'ye çıkıyor ve orada
+    /// kalıyordu; aynı binary'de yalnız 3B geçiş kapalıyken 333 MB. Kullanıcı kararı: trapez ipucundan vazgeçilir, kayma + solma
+    /// kalır. Geçişin maliyeti artık sıradan bir 2B çizimdir ve geriye hiçbir yüzey bırakmaz.</para>
     ///
     /// <para>Hareket TEK PARÇADIR: satır sayısından bağımsız olarak her zaman aynı sürede biter. Panelin
-    /// yüksekliği/yerleşimi geçiş boyunca DEĞİŞMEZ (spec §2.4) — 3B katman yerleşimden bağımsız çizilir.</para>
+    /// yüksekliği/yerleşimi geçiş boyunca DEĞİŞMEZ (spec §2.4) — <c>RenderTransform</c> yerleşime girmez.</para>
     ///
     /// <para>Yalnız log bloğu REMOUNT edildiğinde oynar (proje logu açma / <c>← Back</c> / proje değişimi /
     /// boş-durum) — canlı satır eklenirken, kaydırırken ya da yeniden boyutlanırken ASLA (spec §2.1/§3).
-    /// Reduced-motion iken hiç oynatılmaz (motion sözleşmesi).</para>
+    /// Reduced-motion iken hiç oynatılmaz (motion sözleşmesi). Ölçülmemiş panelde (headless, ilk kare) de oynamaz —
+    /// içerik doğrudan son hâlinde görünür, asla boş kalmaz.</para>
     /// </summary>
     private void PlayTiltIn(bool fromAbove)
     {
@@ -989,93 +989,32 @@ public partial class ConsoleView : UserControl
         void Land()
         {
             if (generation != _tiltGeneration) return; // yeni bir geçiş devraldı
-            PART_Tilt3D.Visibility = Visibility.Collapsed;
-            PART_Tilt3D.Children.Clear(); // dokuyu ve sahneyi bırak (geçiş başına bir görüntü tutulmaz)
+            _tiltSlide.BeginAnimation(TranslateTransform.YProperty, null); // saatleri bırak (geçiş başına bir saat tutulmaz)
+            PART_TiltHost.BeginAnimation(OpacityProperty, null);
+            _tiltSlide.Y = 0.0;
             PART_TiltHost.Opacity = 1.0;
+            _transitioning = false;
             SettleAtBottomIfFollowing();
         }
 
-        // [A13/T1] motion sinyalinin TEK kapısı (MotionGate seam'i). Doku alınamıyorsa (panel henüz
-        // ölçülmemiş) animasyon da yoktur — içerik doğrudan son hâlinde görünür, asla boş kalmaz.
-        if (!_motion.Enabled || BuildTiltScene(fromAbove) is not { } scene) { Land(); return; }
+        // [A13/T1] motion sinyalinin TEK kapısı (MotionGate seam'i).
+        if (!_motion.Enabled || PART_TiltHost.ActualWidth <= 0 || PART_TiltHost.ActualHeight <= 0) { Land(); return; }
 
         var duration = TimeSpan.FromMilliseconds(TiltInMs);
         var ease = MotionTokens.ResolveKeySpline(this, "KeySpline.EaseOut", new KeySpline(0.22, 1, 0.36, 1));
 
-        PART_TiltHost.Opacity = 0.0;              // gerçek blok geçiş boyunca 3B katmanın yerini bırakır
-        PART_Tilt3D.Opacity = 0.0;
-        PART_Tilt3D.Visibility = Visibility.Visible;
-
-        // Üst kenar GERİYE gider: WPF'te +X ekseni etrafında pozitif dönüş üstü izleyiciye DOĞRU getirir,
-        // bu yüzden işaret negatiftir (prototip: rotateX(7deg) üstü geriye yatırır).
-        scene.Rotation.BeginAnimation(AxisAngleRotation3D.AngleProperty, MotionTokens.SplineTo(0.0, duration, ease));
-        // CSS'te +Y aşağıdır, WPF'te yukarı: translateY(14px) = -14 birim.
-        scene.Translate.BeginAnimation(TranslateTransform3D.OffsetYProperty, MotionTokens.SplineTo(0.0, duration, ease));
+        // [tam ayna] Açılış 14px AŞAĞIDAN (CSS translateY(14px); WPF'te +Y aşağıdır), dönüş 14px YUKARIDAN. Süre/eğri AYNI.
+        _transitioning = true;
+        _tiltSlide.Y = fromAbove ? -TiltInOffsetPx : TiltInOffsetPx;
+        PART_TiltHost.Opacity = 0.0;
+        _tiltSlide.BeginAnimation(TranslateTransform.YProperty, MotionTokens.SplineTo(0.0, duration, ease));
 
         var fade = MotionTokens.SplineTo(1.0, duration, ease);
         fade.Completed += (_, _) => Land();
-        PART_Tilt3D.BeginAnimation(OpacityProperty, fade);
+        PART_TiltHost.BeginAnimation(OpacityProperty, fade);
     }
 
-    /// <summary>
-    /// Log bloğunun görüntüsünü 900px perspektifli bir kameranın önündeki düzleme yerleştirir ve sahneyi
-    /// <see cref="PART_Tilt3D"/>'ye kurar; menteşe düzlemin ALT kenarındadır.
-    ///
-    /// <para>Kamera düzlemden <see cref="TiltInPerspectivePx"/> uzaktadır ve görüş açısı, dönüş sıfırken
-    /// düzlemin viewport'u TAM olarak doldurmasına göre seçilir — CSS <c>perspective</c>'in tanımı budur ve
-    /// geçişin sonunda 2B içerikle birebir örtüşmeyi (pop olmamasını) o sağlar.</para>
-    ///
-    /// <para>Panel ölçülmemişse (genişlik/yükseklik 0 — headless ya da ilk kare) <c>null</c> döner.</para>
-    /// </summary>
-    private TiltScene? BuildTiltScene(bool fromAbove)
-    {
-        double w = PART_TiltHost.ActualWidth, h = PART_TiltHost.ActualHeight;
-        if (w <= 0 || h <= 0) return null;
-
-        var dpi = VisualTreeHelper.GetDpi(this);
-        var texture = new RenderTargetBitmap(
-            (int)Math.Ceiling(w * dpi.DpiScaleX), (int)Math.Ceiling(h * dpi.DpiScaleY),
-            96 * dpi.DpiScaleX, 96 * dpi.DpiScaleY, PixelFormats.Pbgra32);
-        texture.Render(PART_TiltHost);
-        texture.Freeze();
-
-        double halfW = w / 2, halfH = h / 2;
-        var mesh = new MeshGeometry3D
-        {
-            Positions = [new(-halfW, halfH, 0), new(halfW, halfH, 0), new(halfW, -halfH, 0), new(-halfW, -halfH, 0)],
-            TextureCoordinates = [new(0, 0), new(1, 0), new(1, 1), new(0, 1)],
-            TriangleIndices = [0, 3, 2, 0, 2, 1],
-        };
-
-        // [tam ayna] Açılış: 14px AŞAĞIDAN, menteşe ALT kenarda, ÜST kenar geride (açı negatif).
-        // Dönüş:  14px YUKARIDAN, menteşe ÜST kenarda, ALT kenar geride (açı pozitif). Süre/eğri/açı AYNI.
-        double sign = fromAbove ? 1 : -1;
-        var rotation = new AxisAngleRotation3D(new Vector3D(1, 0, 0), sign * TiltInAngleDeg);
-        var translate = new TranslateTransform3D(0, sign * TiltInOffsetPx, 0);
-        var model = new GeometryModel3D(mesh, new DiffuseMaterial(new ImageBrush(texture)))
-        {
-            // Sıra CSS'in okunuşuyla aynı: önce translateY, sonra rotateX (menteşe alt kenarda).
-            Transform = new Transform3DGroup { Children = { translate, new RotateTransform3D(rotation, 0, sign * halfH, 0) } },
-        };
-
-        var scene = new Model3DGroup();
-        // Varsayılan ambient ışık beyazdır: doku tam parlaklıkta ve gölgelenmesiz çizilir. Emissive bir
-        // materyal ışık gerektirmezdi ama toplamalı çizerdi — log bloğunun zemini saydam olduğu için
-        // (zemin dış Grid'e aittir, geçişe katılmaz) renkler panelin üstünde yanlış çıkardı.
-        scene.Children.Add(new AmbientLight());
-        scene.Children.Add(model);
-
-        PART_Tilt3D.Children.Clear();
-        PART_Tilt3D.Children.Add(new ModelVisual3D { Content = scene });
-        PART_Tilt3D.Camera = new PerspectiveCamera(
-            new Point3D(0, 0, TiltInPerspectivePx), new Vector3D(0, 0, -1), new Vector3D(0, 1, 0),
-            fieldOfView: 2 * Math.Atan(halfW / TiltInPerspectivePx) * 180 / Math.PI);
-
-        return new TiltScene(rotation, translate);
-    }
-
-    /// <summary>Geçişin sürülen iki 3B parçası — açı (menteşe) ve dikey kayma.</summary>
-    private readonly record struct TiltScene(AxisAngleRotation3D Rotation, TranslateTransform3D Translate);
+    private bool _transitioning; // PlayTiltIn ile Land arasında true
 
     // ---------------------------------------------------------------- chunk loader (scroll-telafili prepend)
 
@@ -1217,8 +1156,8 @@ public partial class ConsoleView : UserControl
     /// <summary>[Test] Panel geçişinin (tilt in) uygulandığı log bloğu — prompt satırı bunun DIŞINDADIR.</summary>
     internal FrameworkElement TiltHost => PART_TiltHost;
 
-    /// <summary>[Test] Geçiş boyunca log bloğunun yerini alan 3B katman.</summary>
-    internal Viewport3D Tilt3D => PART_Tilt3D;
+    /// <summary>[Test] Panel geçişi (tilt in) şu an oynuyor mu — <see cref="PlayTiltIn"/>'in başlangıcı ile inişi arasında.</summary>
+    internal bool IsTransitioning => _transitioning;
 
     /// <summary>[Test] Dibe çekme yetkisi (<see cref="BottomAnchorBehavior.ShouldFollow"/>) — kullanıcı
     /// kaydırdığında kapanır, bekleme dolunca geri açılır.</summary>
