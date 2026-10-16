@@ -107,6 +107,21 @@ public class RunLogWriterTests : IDisposable
         Assert.Throws<UnauthorizedAccessException>(() => RunLogWriter.ReadProjectLogFromDisk(w.RunDirectory, id));
     }
 
+    /// <summary>[B1 fix 4 · PİN] Canlı dalın sözleşmesi (<see cref="RunLogWriter.SnapshotProjectLog"/>): kayıtlı bir projenin dosyası diskten gittiyse
+    /// (yazıcısı kapandıktan sonra silindi) anlık görüntü <see cref="FileNotFoundException"/> fırlatır — disk dalının yokluk <c>null</c>'ı canlı dala
+    /// uzanmaz; "log yok"a çeviren tek yer koordinatördür.
+    /// <para>PİN: bugünkü kod fırlatır. Mutasyon (canlı dalda yokluğu yutmak) kırmızı.</para></summary>
+    [Fact]
+    public void A_registered_project_log_that_vanished_throws()
+    {
+        using var w = new RunLogWriter(_root, Ts);
+        string id = @"C:\repo\A\A.csproj";
+        using (var log = w.OpenProjectLog(id)) log.AppendLine("first");
+        File.Delete(w.ProjectLogPath(id)); // kayıt durur, dosya gitti
+
+        Assert.Throws<FileNotFoundException>(() => w.SnapshotProjectLog(id));
+    }
+
     [Fact] // decision log çok worker'dan yazılır: satır kaybı/karışması YOK
     public void Decision_log_is_thread_safe()
     {

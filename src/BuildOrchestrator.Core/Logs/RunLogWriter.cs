@@ -43,14 +43,25 @@ public sealed class RunLogWriter : IDisposable
     }
 
     /// <summary>
-    /// Log metni + o ana kadar diske yazılmış satır sayısı — ATOMİK (yazıcı ile aynı kilit). [T28 dikişi]
-    /// Proje hâlâ BU writer'da kayıtlıysa canlı <see cref="ProjectLogFile.Snapshot"/> kullanılır.
-    /// Kayıtlı değilse diskten doğrudan okunur (satır sayısı '\n' sayılarak — bkz. <see cref="ProjectLogFile.AppendLine"/>'ın
-    /// tek-satır-tek-çağrı garantisi, bu yüzden iki dal aynı sonucu üretir). <see cref="ProjectLogFile.Dispose"/>
-    /// bu sözlükten kayıt SİLMEZ; disk dalı yalnızca run bitip bu <see cref="RunLogWriter"/> Dispose edildikten
-    /// sonra, AYNI run dizini üzerinde açılan TAZE bir <see cref="RunLogWriter"/> örneğinden erişilince devreye
-    /// girer (kullanıcı run bittikten sonra bir proje kartına tıklayıp logunu ister).
+    /// Log metni + o ana kadar diske yazılmış satır sayısı — ATOMİK (yazıcı ile aynı kilit). [T28 dikişi] İki dal:
+    /// <list type="bullet">
+    /// <item><b>Canlı dal:</b> proje BU writer'da kayıtlıysa (<see cref="OpenProjectLog"/>; <see cref="ProjectLogFile.Dispose"/> kaydı SİLMEZ)
+    /// <see cref="ProjectLogFile.Snapshot"/> okunur — satır sayısı yazıcının sayacıdır.</item>
+    /// <item><b>Disk dalı:</b> kayıtlı değilse — koşuda henüz açılmamış bir proje ya da aynı koşu klasörü üzerinde açılmış TAZE bir writer — dosya
+    /// diskten okunur (<see cref="ReadProjectLogFromDisk"/>; satır sayısı '\n' sayılarak — <see cref="ProjectLogFile.AppendLine"/>'ın
+    /// tek-satır-tek-çağrı garantisi sayesinde iki dal aynı sonucu üretir).</item>
+    /// </list>
+    /// <para>[idle-memory · dalga 3 · B1 fix 4] <b>Sözleşme:</b> <c>null</c> yalnız log YOKSA döner (disk dalı: dosya yok ya da okunurken gitti).
+    /// Başka her okuma hatası çağırana YÜKSELİR — disk dalının okuma hatası (paylaşım ihlali, erişim reddi…) ve canlı dalda kayıtlı projenin dosyası
+    /// gitmişse <see cref="FileNotFoundException"/> (koşu klasörü gittiyse <see cref="DirectoryNotFoundException"/>). Bunları "log yok"a çeviren TEK
+    /// yer çağırandır — motorda <c>RunCoordinator.TryGetProjectLogSnapshot</c>.</para>
     /// </summary>
+    /// <param name="projectId">Projenin kimliği.</param>
+    /// <returns>Logun metni ve satır sayısı; log yoksa <c>null</c>.</returns>
+    /// <exception cref="FileNotFoundException">Canlı dal: kayıtlı projenin dosyası diskten gitti.</exception>
+    /// <exception cref="DirectoryNotFoundException">Canlı dal: koşu klasörü diskten gitti.</exception>
+    /// <exception cref="IOException">Log okunamadı (ör. başka bir süreç dosyayı paylaşımsız tutuyor).</exception>
+    /// <exception cref="UnauthorizedAccessException">Erişim reddedildi (ör. logun yerinde, adını taşıyan bir klasör).</exception>
     public (string Text, int ThroughLineNumber)? SnapshotProjectLog(string projectId)
     {
         ProjectLogFile? file;
@@ -59,8 +70,9 @@ public sealed class RunLogWriter : IDisposable
     }
 
     /// <summary>
-    /// [T28] Writer'sız, PATH-tabanlı okuma: run tamamen bitip bu <see cref="RunLogWriter"/> Dispose edildikten
-    /// SONRA (kullanıcı bir proje kartına tıklayınca) çağrılır. Yeni bir <see cref="RunLogWriter"/> AÇMAZ — o,
+    /// [T28] Writer'sız, PATH-tabanlı okuma: koşu bitip yazıcısı Dispose edildikten SONRA (motorun son koşusu ya da — karar 37 — isteğin adını verdiği
+    /// önceki bir koşunun klasörü; kullanıcı bir proje kartına tıklayınca) ve canlı yazıcının henüz kaydetmediği bir proje için
+    /// (<see cref="SnapshotProjectLog"/>'un disk dalı) çağrılır. Yeni bir <see cref="RunLogWriter"/> AÇMAZ — o,
     /// decision.log'u append-mode'da yeniden açardı; yalnız aynı adlandırma kuralıyla (<see cref="ProjectLogNaming"/>)
     /// dosyayı okur. Satır sayısı '\n' sayılarak elde edilir — <see cref="ProjectLogFile.AppendLine"/>'ın
     /// tek-satır-tek-çağrı garantisi sayesinde canlı sayaçla AYNI sonucu verir. <see cref="SnapshotProjectLog"/>'un
@@ -71,6 +83,11 @@ public sealed class RunLogWriter : IDisposable
     /// hatası (paylaşım ihlali, erişim reddi…) çağırana YÜKSELİR: "okunamadı" "yok" değildir — motorda onu "log yok"a çeviren ve iz bırakan TEK yer
     /// koordinatördür (<c>RunCoordinator.TryGetProjectLogSnapshot</c>).</para>
     /// </summary>
+    /// <param name="runDirectory">Koşu klasörü.</param>
+    /// <param name="projectId">Projenin kimliği.</param>
+    /// <returns>Logun metni ve satır sayısı; log yoksa <c>null</c>.</returns>
+    /// <exception cref="IOException">Log okunamadı (ör. başka bir süreç dosyayı paylaşımsız tutuyor) — yokluk hariç.</exception>
+    /// <exception cref="UnauthorizedAccessException">Erişim reddedildi (ör. logun yerinde, adını taşıyan bir klasör).</exception>
     public static (string Text, int ThroughLineNumber)? ReadProjectLogFromDisk(string runDirectory, string projectId)
     {
         string path = Path.Combine(runDirectory, ProjectLogNaming.FileNameFor(projectId));
@@ -149,6 +166,9 @@ public sealed class ProjectLogFile : IDisposable
         }
     }
 
+    /// <summary>Canlı anlık görüntü: önce yazıcıyı boşaltır, sonra dosyayı okur — metin ve yazıcının sayacı aynı kilit altında.</summary>
+    /// <exception cref="FileNotFoundException">Dosya diskten gitti (yazıcısı kapandıktan sonra silindi).</exception>
+    /// <exception cref="DirectoryNotFoundException">Koşu klasörü diskten gitti.</exception>
     internal (string Text, int ThroughLineNumber) Snapshot()
     {
         lock (_gate)
