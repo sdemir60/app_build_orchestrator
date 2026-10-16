@@ -22,7 +22,7 @@ namespace BuildOrchestrator.Tests.App;
 /// boşta bellek analizi §3): 83 k satırlık bir koşudan sonra görünümün listesi tek başına 59 MB tutuyordu, VM tamponu ayrıca
 /// 55 MB. Artık anlatının bellekteki TEK sahibi VM'in store'udur (<see cref="NarrativeStore"/>): görünüm geçmiş dilimini ondan
 /// ister. [dalga 3 · karar 44] Proje logu sayfası logun tamamını belgesinde taşır, arkasında satır listesi tutmaz (eskiden logun
-/// kopyası görünümün <see cref="ListBacklog"/>'undaydı, belge son 200 satırdı).</para>
+/// kopyası görünümün listesindeydi — <c>ListBacklog</c>, B3'te kalktı —, belge son 200 satırdı).</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class ConsoleMemoryTests
@@ -76,8 +76,14 @@ public class ConsoleMemoryTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>[idle-memory · dalga 1 · spec §6.2] Canlı anlatı aktıkça görünüm kendi satır listesini BÜYÜTMEZ: belge render
-    /// dilimine kırpılır, kırpılan satırlar zaten store'dadır ve tepeye kaydırınca geçmiş oradan gelir.</summary>
+    /// <summary>[idle-memory · dalga 1 · spec §6.2] Canlı anlatı aktıkça görünüm satırların kopyasını tutmaz: belge render dilimine
+    /// kırpılır, kırpılan satırlar zaten store'dadır — store'a İKİNCİ kez girmezler (1000 satır, 1000 giriş) — ve tepeye kaydırınca geçmiş
+    /// oradan, bitişik gelir.
+    /// <para><b>[DEĞİŞEN İDDİA — B3 · O2 adım 2]</b> İlk iddia eskiden <c>Assert.False(view.BacklogOwnsCopy)</c> idi (dalga 1'de kırmızısı
+    /// derleme hatasıydı: görünüm anlatıda da HER ZAMAN kendi listesini — <c>_backlogLines</c> — tutuyor, kırpılan canlı satırları ona
+    /// ekliyordu). Gerekçe: görünümün kopya tutabileceği tek backlog (<c>ListBacklog</c>) ve soru (<c>BacklogOwnsCopy</c>) kalktı — kopya
+    /// yapısal olarak yoktur. "Kırpılan satır store'a iki kez girmez" iddiası (eski <c>NarrativeStoreTests.Trimmed_lines_are_not_stored_twice</c>,
+    /// kalkan <c>AcceptTrimmed</c>'i sınıyordu) burada davranışla durur: store sayısı.</para></summary>
     [StaFact]
     public void The_narrative_view_keeps_no_copy_of_the_lines()
     {
@@ -85,9 +91,6 @@ public class ConsoleMemoryTests
 
         for (int batch = 0; batch < 20; batch++) NarrativeSnapshots.Deliver(store, view, Lines(50, batch));
 
-        // Eski kodda bu iddia DERLENMEZDİ (kırmızısı derleme hatasıydı, başarısız bir assert değil): yüzey yoktu, çünkü görünüm
-        // anlatıda da HER ZAMAN kendi listesini (_backlogLines) tutuyordu ve kırpılan canlı satırlar ona eklenirdi.
-        Assert.False(view.BacklogOwnsCopy);
         Assert.Equal(1000, store.Count);
         Assert.True(view.Document.LineCount <= ConsoleView.SeededDocumentLines);
         view.PrependPreviousChunk();                                  // geçmiş store'dan gelir
@@ -115,38 +118,54 @@ public class ConsoleMemoryTests
     }
 
     /// <summary>
-    /// [idle-memory · dalga 1] Kabuk konsolu KURULUMDA VM'in anlatı store'una bağlar — belgeyi yeniden kurmadan. Bağ olmasaydı
-    /// görünüm ilk tohumlamaya (mod geçişi, işlem temizliği, tepsiden dönüş) kadar kendi boş listesinde kalır ve o arada canlı
-    /// akıştan kırpılan her satırı KOPYALARDI. Bağ bir yeniden kurulum sayılmaz: tepsiden dönüş ve temizlik testleri kurulum
-    /// sayısını mutlak sayar (<c>RunDocumentReplacedCount</c>).
+    /// [idle-memory · dalga 1] Kabuk konsolu KURULUMDA VM'in anlatı store'una bağlar — belgeyi yeniden kurmadan. Bağın kanıtı tepeye
+    /// kaydırmadır: canlı akıştan kırpılan satırlar store'dan, bitişik geri gelir. Bağlanmamış bir görünüm (yer tutucusu boş backlog —
+    /// <see cref="EmptyBacklog"/>) kırpılan hiçbir satırı tutmaz: aynı akıştan sonra tepeye kaydırma ona hiçbir şey getirmez. Bağ bir yeniden
+    /// kurulum sayılmaz: tepsiden dönüş ve temizlik testleri kurulum sayısını mutlak sayar (<c>RunDocumentReplacedCount</c>).
+    /// <para><b>[DEĞİŞEN İDDİA — B3 · O2 adım 2]</b> Eski özet: "Bağ olmasaydı görünüm ilk tohumlamaya (mod geçişi, işlem temizliği, tepsiden
+    /// dönüş) kadar kendi boş listesinde kalır ve o arada canlı akıştan kırpılan her satırı KOPYALARDI"; iki iddia <c>BacklogOwnsCopy</c>
+    /// false'tu (bağdan hemen sonra ve akıştan sonra). Gerekçe: B2'nin O2 adım 1'inden beri bağdan önceki yer tutucu boş backlog'dur ve
+    /// kopyalamaz — özet bayattı, iki iddia her koşulda yeşildi (vakum); adım 2'de görünümün kendi listesi ve soru (<c>BacklogOwnsCopy</c>)
+    /// kalktı. Bugünkü kural davranışla pinlenir: bağlı kabuğun tepeye kaydırması geçmişi store'dan getirir, bağsız görünümünki hiçbir şey
+    /// getirmez. B2'nin <c>The_two_placeholders_keep_nothing_behind_the_document</c> testi (iki <c>BacklogOwnsCopy</c> iddiası) buraya
+    /// katlandı: bağsız görünüm yarısı burada; proje sayfası yarısı <c>ConsoleViewTests.A_project_page_holds_its_whole_log_and_a_scroll_to_the_top_loads_nothing</c>
+    /// ve <c>Live_lines_on_a_project_page_are_never_trimmed_whatever_the_anchor_says</c>'tedir (sayfa hiç kırpılmaz, tepeye kaydırma bir şey
+    /// getirmez).</para>
+    /// <para>KIRMIZI (geçici bozmalar, her biri tek başına): kabuğun <c>BindNarrative</c>'i kaldırıldı → kabuğun tepeye kaydırması store'dan
+    /// hiçbir şey getirmedi (<c>StartsWith</c>); yer tutucu O2 adım 1'den önceki hâline (boş görünüm listesi, <c>new ListBacklog([])</c>)
+    /// döndürüldü → bağsız görünüm kırpılan satırları geri getirdi.</para>
     /// </summary>
     [StaFact]
-    public void The_shell_binds_the_console_to_the_narrative_store_without_rebuilding_the_document()
+    public void The_shell_binds_the_console_to_the_store_without_a_rebuild_and_an_unbound_view_keeps_no_trimmed_line()
     {
         using var dir = new TempDir();
         var (window, vm) = MainWindowHost.NewRealized(dir);
         var console = window.Shell.ConsoleViewControl;
+        var unbound = new ConsoleView { AnimationsEnabledProvider = () => false }; // bağlanmamış: yer tutucusu boş backlog
+        var unboundHost = DsResources.Realize(DsResources.NewHost(), unbound);
         Assert.Equal(0, vm.Narrative.Count); // ön-koşul: pompaya teslim edilmemiş açılış satırı yok (pompa bu fixture'da tick etmez)
-
-        // [DEĞİŞEN KURULUM — B2 fix 1 O2] Bu satır eskiden "KIRMIZI bağ yokken: görünüm kendi (kopya sahibi) listesinde" diyordu. Bağdan
-        // önceki yer tutucu artık boş backlog'dur (kopya tutmaz): bağ yokken de false — ayırt etmez. Bağın kanıtı aşağıdaki prepend'dir: bağ
-        // yokken tepeye kaydırma boş backlog'dan hiçbir şey getirmez (StartsWith kırmızı).
-        Assert.False(console.BacklogOwnsCopy);
         Assert.Equal(0, console.RunDocumentReplacedCount); // bağ belgeyi kurmadı
 
-        // Canlı akış, üretim sırasıyla: satır önce modele (store), sonra pompanın batch'i belgeye (batch'i test verir).
+        // Canlı akış, üretim sırasıyla: satır önce modele (store), sonra pompanın batch'i belgeye (batch'i test verir). Bağsız görünüm aynı
+        // batch'leri alır.
         for (int i = 0; i < 300; i++)
         {
             MainWindowHost.LogLine(vm, "A", i + 1, $"line {i}");
             window.AppendConsoleBatch($"line {i}\n", window.ConsoleReseedGen);
+            unbound.AppendNarrativeBatch($"line {i}\n");
         }
-        Assert.DoesNotContain("line 0\n", console.Document.Text);  // ön-koşul: belge render dilimine kırpıldı
+        Assert.DoesNotContain("line 0\n", console.Document.Text); // ön-koşul: iki belge de render dilimine kırpıldı
+        Assert.DoesNotContain("line 0\n", unbound.Document.Text);
+        string unboundBefore = unbound.Document.Text;
 
         console.PrependPreviousChunk();
+        unbound.PrependPreviousChunk();
 
-        Assert.StartsWith("line 0\n", console.Document.Text);      // geçmiş store'dan, bitişik
-        Assert.False(console.BacklogOwnsCopy);                     // kırpılan satırlar görünüme kopyalanmadı
+        Assert.StartsWith("line 0\n", console.Document.Text);   // bağın kanıtı: geçmiş store'dan, bitişik
+        Assert.Equal(unboundBefore, unbound.Document.Text);      // bağsız görünüm kırpılanı tutmadı: getirecek bir şey yok
+        Assert.Null(unbound.LastPrepend);
         GC.KeepAlive(window);
+        GC.KeepAlive(unboundHost);
     }
 
     /// <summary>
@@ -163,35 +182,22 @@ public class ConsoleMemoryTests
         Assert.Throws<InvalidOperationException>(() => view.BindNarrative(new NarrativeStore())); // KIRMIZI: bugün sessizce bağlar
     }
 
-    /// <summary>
-    /// [B2 fix 1 · O2] Belgenin arkasında hiçbir şey olmayan iki yer tutucu AÇIK boş backlog'dur — kopya tutmaz, kırpılan satırı saklamaz:
-    /// anlatı bağlanmadan önceki görünüm ve proje sayfası (logun tamamı belgededir, sayfa hiç kırpılmaz).
-    /// <para>KIRMIZI (O2'den önce): ikisi de boş bir görünüm listesiydi (<c>new ListBacklog([])</c>) — kırpılan satırları saklayan bir liste
-    /// gibi davranıyordu (<c>BacklogOwnsCopy</c> true).</para>
-    /// </summary>
-    [StaFact]
-    public void The_two_placeholders_keep_nothing_behind_the_document()
-    {
-        var unbound = new ConsoleView();
-        var page = new ConsoleView();
-        page.PlayCascade("page line\n");
+    // [B3 · O2 adım 2] B2'nin The_two_placeholders_keep_nothing_behind_the_document testi katlandı: iki iddiası (BacklogOwnsCopy false —
+    // bağsız görünüm ve proje sayfası) soruyla birlikte kalktı; kural davranışla pinlenir — bağsız görünüm yukarıdaki bağ testinde, proje
+    // sayfası ConsoleViewTests'te (eşleme bağ testinin özetinde).
 
-        Assert.False(unbound.BacklogOwnsCopy); // anlatı bağlanmadan önce
-        Assert.False(page.BacklogOwnsCopy);    // proje sayfası
-    }
-
-    /// <summary>[B2 fix 1 · O2] Boş backlog'un sözleşmesi: satırı yok, her aralık <c>""</c>, kırpılan satırları saklamaz ve verilenleri tutmaz.
-    /// <para>KIRMIZI: tür yoktu (derleme hatası).</para></summary>
+    /// <summary>[B2 fix 1 · O2] Boş backlog'un sözleşmesi: satırı yok, her aralık <c>""</c>.
+    /// <para>KIRMIZI: tür yoktu (derleme hatası).</para>
+    /// <para><b>[DEĞİŞEN İDDİA — B3 · O2 adım 2]</b> Eski ad ve iddia (<c>The_empty_backlog_has_no_lines_and_keeps_none</c>): kendisine verilen
+    /// kırpılmış satırları tutmaz (<c>AcceptTrimmed</c>) ve "saklıyor musun" sorusuna hayır der (<c>KeepsTrimmedLines</c>). Gerekçe: iki üye
+    /// sözleşmeden kalktı — backlog'a kırpılan satır artık hiç verilmez (<c>ConsoleView.TrimToRenderSlice</c>).</para></summary>
     [Fact]
-    public void The_empty_backlog_has_no_lines_and_keeps_none()
+    public void The_empty_backlog_has_no_lines()
     {
         var empty = EmptyBacklog.Instance;
 
-        empty.AcceptTrimmed(["trimmed"]);
-
         Assert.Equal(0, empty.Count);
         Assert.Equal("", empty.Join(0, 10));
-        Assert.False(empty.KeepsTrimmedLines);
     }
 
     /// <summary>[idle-memory · final review 92] Proje logu açıkken anlatı bağı kurulmaz: belge o sayfanındır (logun tamamı). Anlatıya
@@ -239,8 +245,10 @@ public class ConsoleMemoryTests
     /// "kaydedilmemiş kuyruğu" <c>excess − (Count − _loadedFrom)</c> ile hesaplıyordu; <c>Count &lt; _loadedFrom</c> iken kuyruğun
     /// başlangıç satırı sıfır ya da negatif çıkar ve <c>GetLineByNumber</c> <c>ArgumentOutOfRangeException</c> atar. Dispatcher'da
     /// <c>DispatcherUnhandledException</c> işleyicisi yoktur: süreç düşer.
-    /// <para>Kural: backlog belgenin gerisinde kalabilir (bayat belge); kırpılan satırların hiçbiri backlog'da sayılmaz ve eski
-    /// <c>LastLines</c> anlamı geçerlidir — hepsi kuyruktur (store bunu yok sayar). Belge render dilimine döner, hiçbir şey fırlamaz.</para>
+    /// <para>Kural: backlog belgenin gerisinde kalabilir (bayat belge); kırpma belgeyi render dilimine döndürür, hiçbir şey fırlamaz.</para>
+    /// <para>[DEĞİŞEN KURAL — B3 · O2 adım 2] Kural eskiden "kırpılan satırların hiçbiri backlog'da sayılmaz, hepsi kuyruktur (store bunu
+    /// yok sayar)" diyordu: kırpma kuyruğu hesaplıyordu ve alt sınır o hesabın korumasıydı. Kuyruk hesabı (yalnız saklayan liste backlog'u
+    /// içindi) kalktı; kırpma yalnız belgeyi kısaltır ve index'i ilerletir. Pin, çökme yolunun geri gelmesini yakalamak için kalır.</para>
     /// </summary>
     [StaFact]
     public void Trimming_a_narrative_document_whose_store_was_cleared_behind_the_view_does_not_throw()
@@ -264,7 +272,8 @@ public class ConsoleMemoryTests
     /// [idle-memory · final review m2 + 91] <b>Büyük bir anlatı batch'inin görünümde kopyası üretilmez.</b> Batch belgeye eklenip
     /// render dilimine kırpılırken görünümün ayırdığı bellek, belgenin AYNI ekleme ve kırpma için kendi ayırdığını yarım kopyadan
     /// fazla aşmaz: ekleme metni ipe (rope) bir kez yazar, kırpma kesilen metni okumaz — anlatıda backlog store'dur, kırpılan satır
-    /// zaten oradadır (yalnız liste backlog'unun hiç kaydetmediği canlı satırlar okunur).
+    /// zaten oradadır. [B3 · O2 adım 2] Eskiden burada "yalnız liste backlog'unun hiç kaydetmediği canlı satırlar okunur" yazıyordu; liste
+    /// backlog'u ve o okuma kalktı.
     /// <para>Ölçülen kusur (2026-10-14; 2.000 satır × 560 karakter, batch 2,24 MB UTF-16): görünüm 14,1 MB ayırıyordu (batch'in 6,3
     /// katı), belgenin kendi işi 5,5 MB'tı (2,5 katı). Fark ≈ 3,8 kopya: daktilo kaldırılırken ölü kalan iki kopya
     /// (<c>AppendNarrativeBatch</c>'in hiç kullanılmayan <c>body</c>/<c>prefix</c>'i) ve kırpılan metnin tamamı (store'un hiç
@@ -298,18 +307,20 @@ public class ConsoleMemoryTests
     /// [idle-memory · dalga 1 · docs review M1] <b>Bayat anlatı belgesinin kırpılması atılacak metni ÜRETMEZ.</b> Gizli pencerede yeni
     /// bir işlem anlatı store'unu boşaltır (<c>ConsoleCleared</c> belgeye dokunmaz); bottom-anchor zamanlayıcıları gizliyken de
     /// ateşlendiği için kırpma yine bu bayat belgede koşar. Store belgenin gerisindedir (<c>Count</c> 0, görünüm hâlâ eski
-    /// <c>_loadedFrom</c>'unda): kırpılan satırların hiçbiri backlog'da sayılmaz, hepsi "kaydedilmemiş kuyruk" olur — ama store kuyruğu
-    /// yok sayar (<see cref="IConsoleBacklog.KeepsTrimmedLines"/> false). Kuyruğu belgeden <c>GetText</c> + <c>Split</c> ile okumak
-    /// atılacak bir metni boşuna iki kez kopyalamak olurdu; belge dönüşte zaten modelden yeniden kurulur.
-    /// <para>Okuma kapısı (<c>TrimToRenderSlice</c>'taki <c>&amp;&amp; _backlog.KeepsTrimmedLines</c>) bu yolu tek başına korur: kapı
-    /// kalkınca bu sınıfın diğer testleri yeşil kalıyordu, çünkü store kuyruğu yok sayar ve kırpmanın sonucu, belge ve fırlatma
-    /// davranışı AYNI kalır — fark yalnız ayrılan bellektir. Bu yüzden pin tahsisi sayar.</para>
-    /// <para>Kâhin ikiz görünümdür: aynı satırlar, aynı kırpma, ama store'u DOLU — backlog kırpılanları zaten sayar, kuyruk boştur,
-    /// okuma kapısına hiç girilmez. Bayat görünümün tahsisi ikizinkinden kırpılan metnin bir kopyasının yarısından fazla büyük
-    /// olamaz. Sayım <c>GC.GetAllocatedBytesForCurrentThread</c> iledir — test thread'inin ayırdığı bayt, süreç geneli değildir.</para>
+    /// <c>_loadedFrom</c>'unda). Kırpılan metni belgeden <c>GetText</c> + <c>Split</c> ile okumak atılacak bir metni boşuna iki kez
+    /// kopyalamak olurdu; belge dönüşte zaten modelden yeniden kurulur.
+    /// <para>Fark yalnız ayrılan bellektedir: bayat belgede kırpılan metni okuyan bir yol bu sınıfın diğer testlerini yeşil bırakır, çünkü
+    /// kırpmanın sonucu, belge ve fırlatma davranışı AYNI kalır. Bu yüzden pin tahsisi sayar.</para>
+    /// <para>Kâhin ikiz görünümdür: aynı satırlar, aynı kırpma, ama store'u DOLU. Bayat görünümün tahsisi ikizinkinden kırpılan metnin bir
+    /// kopyasının yarısından fazla büyük olamaz. Sayım <c>GC.GetAllocatedBytesForCurrentThread</c> iledir — test thread'inin ayırdığı bayt,
+    /// süreç geneli değildir.</para>
+    /// <para>[DEĞİŞEN KURAL — B3 · O2 adım 2] Yolu eskiden bir okuma kapısı koruyordu (<c>TrimToRenderSlice</c>'taki
+    /// <c>&amp;&amp; _backlog.KeepsTrimmedLines</c>): store'un gerisindeki bayat belgede kırpılanların hepsi "kaydedilmemiş kuyruk" sayılır,
+    /// kuyruk yalnız saklayan backlog'a (liste) okunurdu. Kuyruk hesabı, okuma ve kapı birlikte kalktı — kırpma kırpılan metni hiç okumaz;
+    /// pin okumanın geri gelmesini yakalar.</para>
     /// <para>Ölçülen kusur (kapı geçici kaldırıldı, 2026-10-14; 1000 uzun satırlık kırpma, kırpılan metin 757.202 bayt): bayat görünüm
     /// 2.315.848 bayt ayırdı, aynı kırpma dolu store'da 4.864 — fark ≈ 3 kopya (kapısız kod kuyruğu <c>GetText</c> + <c>Split</c> ile
-    /// okur ve sonucunu store'a verir, store atar). Kapı yerindeyken ikisi aynı işi yapar; eşik yarım kopyadır.</para>
+    /// okur ve sonucunu store'a verir, store atar). Okuma yokken ikisi aynı işi yapar; eşik yarım kopyadır.</para>
     /// </summary>
     [StaFact]
     public void Trimming_a_stale_narrative_document_does_not_read_the_trimmed_text()
@@ -320,8 +331,8 @@ public class ConsoleMemoryTests
         int textBefore = stale.Document.TextLength;
         staleStore.Clear(); // gizliyken yeni işlem: VM anlatıyı boşalttı, görünüm yeniden bağlanmadı (kabuk yalnız bayat bayrağını kaldırdı)
 
-        long twinCost = PerfMeasure.AllocatedBy(() => twin.StickToBottom = true);   // takip geri geldi → kırpma sorulur; kuyruk boş, okuma yok
-        long staleCost = PerfMeasure.AllocatedBy(() => stale.StickToBottom = true); // aynı kırpma; kuyruk kırpılanların TAMAMI, okuma kapısı kapalı
+        long twinCost = PerfMeasure.AllocatedBy(() => twin.StickToBottom = true);   // takip geri geldi → kırpma sorulur
+        long staleCost = PerfMeasure.AllocatedBy(() => stale.StickToBottom = true); // aynı kırpma, store'un gerisindeki bayat belgede
 
         Assert.True(stale.Document.LineCount <= ConsoleView.SeededDocumentLines, "ön-koşul: bayat belge render dilimine kırpılmadı (vakum)");
         Assert.Equal(twin.Document.TextLength, stale.Document.TextLength); // ikisi de aynı kırpmayı yaptı

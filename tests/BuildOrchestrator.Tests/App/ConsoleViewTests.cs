@@ -535,18 +535,14 @@ public class ConsoleViewTests
 
     /// <summary>[idle-memory · dalga 2 · inceleme M1] Bir kısmı okunamayan backlog — anlatı store'unun dosyası okunamadığında olduğu
     /// gibi: <see cref="ReadableFrom"/>'un altına uzanan her aralık <c>""</c> döner (asla kısmi metin — <see cref="IConsoleBacklog.Join"/>
-    /// sözleşmesi); sınır inince aynı aralık tam gelir. Store gibi kırpılan satırları saklamaz.</summary>
+    /// sözleşmesi); sınır inince aynı aralık tam gelir.</summary>
     private sealed class PartlyUnreadableBacklog(IReadOnlyList<string> lines) : IConsoleBacklog
     {
         public int ReadableFrom { get; set; }
 
         public int Count => lines.Count;
 
-        public bool KeepsTrimmedLines => false;
-
         public string Join(int from, int to) => from < ReadableFrom ? "" : ConsoleLines.Join(lines, from, to);
-
-        public void AcceptTrimmed(IReadOnlyList<string> trimmed) { }
     }
 
     /// <summary>
@@ -558,6 +554,10 @@ public class ConsoleViewTests
     /// tamponunun ikinci kopyasıydı — 83 k satırlık bir koşuda 59 MB. Artık her anlatı satırı önce VM'in store'una yazılır,
     /// sonra pompayla belgeye gelir; kırpılan satır zaten store'dadır ve geri oradan gelir, görünüm kopya tutmaz. Test bu
     /// yüzden üretim düzenini kurar: satır önce store'a, sonra batch olarak görünüme.</para>
+    /// <para><b>[DEĞİŞEN İDDİA — B3 · O2 adım 2]</b> Son iddia eskiden <c>Assert.False(view.BacklogOwnsCopy)</c> idi ("kırpılan satırlar
+    /// görünüme kopyalanmadı"). Gerekçe: B2'nin O2 adım 1'inden beri hiçbir üretim backlog'u kırpılanı saklamıyordu — iddia her koşulda
+    /// yeşildi (vakum); adım 2'de görünümün kopya tutabileceği tek backlog (<c>ListBacklog</c>) ve soru (<c>BacklogOwnsCopy</c>) kalktı,
+    /// kopya artık yapısal olarak yoktur. Geçmişin store'dan geldiği yukarıdaki iki iddiadadır.</para>
     /// </summary>
     [StaFact]
     public void Lines_trimmed_from_the_live_run_document_stay_reachable_by_scrolling_up()
@@ -573,7 +573,6 @@ public class ConsoleViewTests
 
         Assert.Contains("live0\n", view.Document.Text);          // store'dan DELİKSİZ geri geldi
         Assert.Contains("live59\nlive60\n", view.Document.Text); // dikiş yerinde boşluk yok
-        Assert.False(view.BacklogOwnsCopy);                      // kırpılan satırlar görünüme kopyalanmadı
     }
 
     // ---------------------------------------------------------------- [3b C-1] follow-trim + scroll-to-top: delik yok

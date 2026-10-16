@@ -118,10 +118,9 @@ public partial class ConsoleView : UserControl
     /// VM'in tam metni bölünür, kırpılan canlı satırlar listeye eklenirdi — VM tamponunun ikinci kopyası, 83 k satırlık bir
     /// koşudan sonra tek başına 59 MB.</para>
     ///
-    /// <para><b>Liste backlog'u canlı büyür</b> (<see cref="ListBacklog"/>: liste tabanlı bir anlatı snapshot'ı — üretimde yoktur, testler
-    /// kurar): kırpma belgenin başından satır siler; bu satırlar listenin ucunu aşıyorsa (yani daha önce hiç kaydedilmemiş CANLI satırlarsa)
-    /// listeye EKLENİR. Eski kod bunu yapmadığı için bir delik vardı: canlı gelen satırlar kırpılınca <see cref="_loadedFrom"/> bir clamp'e
-    /// takılıyor ("index'i yok") ve o satırlara bir daha ulaşılamıyordu.</para>
+    /// <para><b>Belgeden kırpılan satır backlog'a verilmez</b>: anlatıda zaten store'dadır, yer tutucuların arkasında bir şey yoktur
+    /// (<see cref="TrimToRenderSlice"/>). [DEĞİŞEN KURAL — B3 · O2 adım 2] Liste tabanlı backlog (<c>ListBacklog</c>) kırpılan CANLI satırları
+    /// sonuna ekleyerek büyürdü; üretimde kullanıcısı kalmayınca kırpılan kuyruğun okunmasıyla birlikte kalktı.</para>
     ///
     /// <para><b>[idle-memory · dalga 3 · karar 44 · B2 fix 1 O2] Belgenin arkasında bir şey olmayan iki yer tutucu AÇIK boş backlog'dur</b>
     /// (<see cref="EmptyBacklog"/>): anlatı bağlanmadan önceki görünüm (kabuk açılışta bağlar) ve proje sayfası — belge logun tamamıdır, sayfa
@@ -131,8 +130,7 @@ public partial class ConsoleView : UserControl
     private IConsoleBacklog _backlog = EmptyBacklog.Instance;
 
     /// <summary>Belgenin ilk satırının <see cref="_backlog"/>'daki index'i — yani "backlog'un kaçıncı satırına kadarı
-    /// belgeye yüklendi". <c>[0.._loadedFrom)</c> belgede DEĞİLDİR (geçmiş). Liste backlog'unda bu index listenin sonuna
-    /// eşitse belgedeki her satır listenin ötesindeki canlı satırlardır; anlatıda store belgeden ileridedir (önce store,
+    /// belgeye yüklendi". <c>[0.._loadedFrom)</c> belgede DEĞİLDİR (geçmiş). Anlatıda store belgeden ileridedir (önce store,
     /// sonra pompa) ve index doğrudan store indeksidir. Proje sayfasında 0'dır: logun tamamı belgededir. Tek istisna gizliyken boşalan
     /// anlatıdır: store <c>Count</c>'u bu index'in gerisine düşer ve belge dönüşteki yeniden kuruluma dek bayattır
     /// (<see cref="TrimToRenderSlice"/>).</summary>
@@ -454,40 +452,26 @@ public partial class ConsoleView : UserControl
     /// belge güncellemesini (<c>BeginUpdate</c>/<c>EndUpdate</c>) ve takip kararını tutar: <see cref="AppendBatch"/> ve
     /// <see cref="TrimNarrativeWhenFollowing"/>.
     ///
-    /// <para>Kırpılan satırların backlog'da ZATEN olan kısmı oradan belgeye yüklenmişti; geri kalanı hiç kaydedilmemiş CANLI
-    /// satırlardır ve backlog'a verilir (<see cref="IConsoleBacklog.AcceptTrimmed"/>) — liste onları SONUNA ekler. Anlatının store'u
-    /// belgeden ileridedir (her satır önce store'a, sonra pompaya): kırpılan her satır zaten oradadır, o kuyruk boştur. Tek istisna
-    /// store'u görünümün arkasından boşalan anlatıdır — gizli pencerede yeni işlem (<c>ConsoleCleared</c> belgeye dokunmaz, yalnız
-    /// bayat bayrağını kaldırır) — ve bottom-anchor zamanlayıcıları pencere gizliyken de ateşlenir: store belgenin gerisinde kalır
-    /// (<c>Count &lt; _loadedFrom</c>), kırpılanların hiçbiri backlog'da sayılmaz ve hepsi kuyruk olur — ama store onu yok sayacağı için
-    /// kuyruk belgeden OKUNMAZ (<see cref="IConsoleBacklog.KeepsTrimmedLines"/>): bayat belgenin atılacak metnini <c>GetText</c> +
-    /// <c>Split</c> ile üretmek boşuna bir kopya olurdu; belge dönüşte zaten modelden yeniden kurulur. Eski kod canlı satırları hiç
-    /// kaydetmiyor, index'i backlog'un uzunluğuna clamp'liyordu — o clamp tam da deliğin kendisiydi: canlı kırpılan satır ne belgede
-    /// ne backlog'da kalıyordu.</para>
+    /// <para><b>Kırpılan metin okunmaz ve hiçbir yere verilmez.</b> Anlatıda kırpılan her satır zaten store'dadır (her satır önce store'a,
+    /// sonra pompaya) ve tepeye kaydırınca oradan bitişik geri gelir; proje sayfası hiç kırpılmaz. Store görünümün arkasından boşalmış
+    /// olabilir — gizli pencerede yeni işlem (<c>ConsoleCleared</c> belgeye dokunmaz, yalnız bayat bayrağını kaldırır) ve bottom-anchor
+    /// zamanlayıcıları pencere gizliyken de ateşlenir: store belgenin gerisinde kalır (<c>Count &lt; _loadedFrom</c>). Kırpma o zaman da
+    /// yalnız belgeyi kısaltır ve index'i ilerletir; bayat belge dönüşte modelden yeniden kurulur.</para>
     ///
-    /// <para><b>Kırpılan metinden yalnız backlog'un ihtiyacı olan kuyruk okunur</b> — <c>Remove</c>'dan ÖNCE, belgenin satır
-    /// sınırlarından. [idle-memory · final review 91] Eskiden kırpılan metnin TAMAMI okunuyordu (<c>GetText</c>): anlatıda hiç
-    /// kullanılmadığı hâlde her büyük batch'te batch boyunda bir LOH çöpüydü (ölçüm: <c>ConsoleMemoryTests</c>).</para>
+    /// <para>[DEĞİŞEN KURAL — B3 · O2 adım 2] Kırpılanların backlog'un ucunu aşan kısmı (hiç kaydedilmemiş canlı kuyruk) eskiden
+    /// <c>Remove</c>'dan önce belgeden okunur (<c>GetText</c> + <c>Split</c>) ve onu saklayan backlog'a verilirdi (<c>AcceptTrimmed</c>,
+    /// kapısı <c>KeepsTrimmedLines</c>); saklayan tek backlog görünümün kendi listesiydi (<c>ListBacklog</c>) ve B2'nin O2 adım 1'inden
+    /// beri üretimde kullanıcısı yoktu — kuyruk hesabı, okuma ve liste birlikte kalktı. Kuyruğun hesabı, backlog belgenin gerisindeyken
+    /// alt sınırsız kalırsa <c>GetLineByNumber</c>'ı fırlatıyordu; hesap yok, o yol da yok. Daha önce (final review 91) kırpılan metnin
+    /// TAMAMI okunuyordu: anlatıda hiç kullanılmadığı hâlde her büyük batch'te batch boyunda bir LOH çöpüydü (ölçüm:
+    /// <c>ConsoleMemoryTests</c>).</para>
     /// </summary>
     private void TrimToRenderSlice(TextDocument document)
     {
         int excess = document.LineCount - RenderSliceLines;
         if (excess <= 0) return;
         var lastRemoved = document.GetLineByNumber(excess); // 1..excess satırları (ayraçlarıyla) silinir
-        int length = lastRemoved.Offset + lastRemoved.TotalLength;
-        // Kırpılanların backlog'da ZATEN olan kısmı: belgenin ilk satırından backlog'un ucuna kalan satırlar. Alt sınır 0 şarttır:
-        // backlog belgenin GERİSİNDE olabilir (Count < _loadedFrom) — gizliyken temizlenen anlatının bayat belgesi — ve o zaman
-        // kırpılanların hiçbiri kayıtlı değildir, hepsi kuyruktur. Sınırsız hesap kuyruğun başlangıç satırını sıfıra ya da altına
-        // düşürür ve GetLineByNumber fırlatırdı (zamanlayıcıdan gelen kırpma sürecin dispatcher'ında yakalanmaz).
-        int recorded = Math.Clamp(_backlog.Count - _loadedFrom, 0, excess);
-        int unrecorded = excess - recorded; // backlog'un ucunu aşan, hiç kaydedilmemiş satırlar
-        // Kuyruk yalnız SAKLAYAN backlog için okunur: store yok sayar (bayat anlatı belgesinde de) ve okumak atılacak bir metni üretirdi.
-        if (unrecorded > 0 && _backlog.KeepsTrimmedLines)
-        {
-            int tailStart = document.GetLineByNumber(recorded + 1).Offset;
-            _backlog.AcceptTrimmed(ConsoleLines.Split(document.GetText(tailStart, length - tailStart)));
-        }
-        document.Remove(0, length);
+        document.Remove(0, lastRemoved.Offset + lastRemoved.TotalLength);
         _loadedFrom += excess;
     }
 
@@ -752,12 +736,6 @@ public partial class ConsoleView : UserControl
     /// seferde kurulduğunu (gizliyken hiç kurulmadığını) sayıyla sınar. Üretimde zararsız bir sayaçtır.</summary>
     internal int RunDocumentReplacedCount { get; private set; }
 
-    /// <summary>[test yüzeyi] Backlog görünümün KENDİ satır listesi mi (<see cref="ListBacklog"/>) — kırpılan satırları saklayan backlog'un
-    /// (<see cref="IConsoleBacklog.KeepsTrimmedLines"/>) aynı sorusudur, cevap TEK yerde durur. Üretimde hiçbir backlog öyle değildir: anlatıda
-    /// backlog VM'in store'udur (görünüm anlatının kopyasını tutmaz), proje sayfasında ve bağdan önce boş backlog (<see cref="EmptyBacklog"/>).
-    /// [DEĞİŞEN KURAL — dalga 3 · B2 fix 1 O2] Doc eskiden "proje logunda öyledir" diyordu: sayfanın backlog'u görünümün listesiydi.</summary>
-    internal bool BacklogOwnsCopy => _backlog.KeepsTrimmedLines;
-
     /// <summary>
     /// [idle-memory · dalga 1] Anlatı backlog'unu belgeyi YENİDEN KURMADAN bağlar: kabuk açılışta, belge henüz boşken VM'in
     /// anlatı store'unu verir. Belgenin ilk satırı store'un 0. satırıdır — store'daki her satır pompadan SIRAYLA gelecektir
@@ -862,7 +840,7 @@ public partial class ConsoleView : UserControl
     /// <see cref="EmptyBacklog"/>, <see cref="_loadedFrom"/> 0): chunk yükleyici tepede yükleyecek bir şey bulmaz, takip kırpması da hiç koşmaz
     /// (sayfa izlemez). Derlenen projenin canlı satırları belgenin sonuna eklenir (<see cref="AppendBatch"/>) — sırayla, hiçbiri kırpılmadan.
     /// Render dilimi ve yükleyici anlatıya özgüdür. [DEĞİŞEN KURAL] Eskiden belge logun son <see cref="RenderSliceLines"/> satırıydı ve o
-    /// dilimin TEPESİNE sabitleniyordu, öncesi görünümün kendi listesindeydi (<see cref="ListBacklog"/>, logun kopyası): 1000 satırlık bir log
+    /// dilimin TEPESİNE sabitleniyordu, öncesi görünümün kendi listesindeydi (<c>ListBacklog</c>, logun kopyası): 1000 satırlık bir log
     /// 800. satırından açılıyordu, baş ancak tepeye kaydırınca dilim dilim geliyordu — "baştan okunur" sözü yalnız ≤ 200 satırlık loglarda
     /// doğruydu.</para>
     ///
