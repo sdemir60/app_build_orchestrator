@@ -35,13 +35,17 @@ namespace BuildOrchestrator.Tests.App;
 /// komutlar gönderildikleri andaki motor durumuyla toplanır. Ölü ya da erişilemez motor, fixture'ın hiç başlamamış konağıyla modellenir
 /// (gönderim kabulü kaldırılır: yazım konakta düşer). Dikişin üretim varsayılanını (konağın uyanması) bir test gerçek motorla sınar.</para>
 ///
-/// <para><b>Neden <c>[WpfFact]</c>:</b> kabuk testleri üretimin UI bağlamında koşar (<see cref="System.Windows.Threading.DispatcherSynchronizationContext"/>
-/// + pompa). WPF'te her dispatcher işlemi kendi bağlam örneğini taşır; tamamlanmamış bir göreve yapılan <c>await</c>'in devamı, görevi
-/// tamamlayan işlem başka bir örnekte koştuğu için satır içi koşmaz — UI bağlamına post edilir ve UI thread'inde, kuyruğun sırasıyla koşar
-/// (ölçüldü: <see cref="A_held_wake_that_recovered_interrupted_projects_sends_the_waking_request_before_the_silent_sync"/>'in kırmızısı).
-/// <c>[StaFact]</c> bağlam kurmaz — orada uyanmaya katılan yolun devamı thread havuzuna
-/// gider, VM'i havuzda koşturur ve bağlı bir düğmenin <c>CanExecute</c>'una dokunduğu an test host'unu düşürür (ölçüldü: iki yolun tek uyanmayı
-/// paylaştığı testler). Uyanmayı üretimdeki gibi dispatcher DIŞINDA bitiren testler <see cref="CompleteOffTheDispatcher"/> kullanır.</para>
+/// <para><b>Neden <c>[WpfFact]</c> ve devamların sırası:</b> kabuk testleri üretimin UI bağlamında koşar
+/// (<see cref="System.Windows.Threading.DispatcherSynchronizationContext"/> + pompa). Bir göreve yapılan <c>await</c>'in devamı iki kurala uyar:
+/// (1) .NET aynı göreve yapılmış birden çok <c>await</c>'ten yalnız İLKİNİN devamını satır içi koşturabilir, ötekileri zorla asenkron kuyruğa
+/// koyar; (2) WPF'te her dispatcher işlemi kendi bağlam örneğini taşır ve devam ancak görevi tamamlayan kod AYNI işlemde (aynı örnekte) koşuyorsa
+/// satır içi koşar — başka bir işlemden ya da havuzdan tamamlanan görevin devamı UI bağlamına post edilir ve kuyruğun sırasıyla koşar. Üretimde
+/// uyanma havuzda biter: uyanmanın devamı, kapıdakilerin devamı ve çağıranlarınki birer sıçrayışla post edilir (ölçüldü:
+/// <see cref="A_held_wake_that_recovered_interrupted_projects_sends_the_waking_request_before_the_silent_sync"/>'in kırmızısı). Uyanmayı testin
+/// kendi işleminden bitiren bir test kapıdaki TEK isteği aynı çağrıda satır içi teslim ettirebilir — üretimin sırasını sınayan testler uyanmayı
+/// <see cref="CompleteOffTheDispatcher"/> ile bitirir ya da sınanan yolu ikinci bekleyen yapar. <c>[StaFact]</c> bağlam kurmaz — orada uyanmaya
+/// katılan yolun zorla asenkron devamı thread havuzuna gider, VM'i havuzda koşturur ve bağlı bir düğmenin <c>CanExecute</c>'una dokunduğu an test
+/// host'unu düşürür (ölçüldü: iki yolun tek uyanmayı paylaştığı testler).</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF STA kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class EngineWakeTests
@@ -150,35 +154,45 @@ public class EngineWakeTests
         SyncButton, WindowReturn, AfterCommit, BranchChange, Configuration, SettingsSave, Checkout, Pull, ProjectLog,
     }
 
-    /// <summary>Yolu üretimdeki girişinden tetikler: komutlar (Build, Rebuild, Resolve cycles, Build menüsünün Clean'i, bakım Clean'i, Optimize,
-    /// Sync, pull), tepsi Build kısayolu (pencere tepside), pencereye dönüş ve commit sonrası (kendiliğinden Sync koordinatörü — bu kabukta HEAD
-    /// okunamaz: koordinatör güvenli yönde sessiz yeniler), dışarıdan branch değişimi (koordinatörün VM girişi), Debug/Release, Settings Save
-    /// ("Stop the engine when idle" KAPATILARAK — karar 30: kapatmanın kendi uyandırması yoktur, Save'in Sync'i tek uyandırmadır), branch chip'i
-    /// ve proje logu tıklaması.</summary>
-    private static async Task Trigger(WakingPath path, MainWindow window, RunViewModel vm)
+    /// <summary>Yolu üretimdeki girişinden BAŞLATIR ve işini döner — beklemez: uyanmayı bekleyen bir yol kapıda uçuştadır. Girişler: komutlar
+    /// (Build, Rebuild, Resolve cycles, Build menüsünün Clean'i, bakım Clean'i, Optimize, Sync, pull), tepsi Build kısayolu (pencere tepside),
+    /// pencereye dönüş ve commit sonrası (kendiliğinden Sync koordinatörü — bu kabukta HEAD okunamaz: koordinatör güvenli yönde sessiz yeniler),
+    /// dışarıdan branch değişimi (koordinatörün VM girişi), Debug/Release, Settings Save ("Stop the engine when idle" KAPATILARAK — karar 30:
+    /// kapatmanın kendi uyandırması yoktur, Save'in Sync'i tek uyandırmadır), branch chip'i ve proje logu tıklaması. Senkron girişlerin (tepsi
+    /// kısayolu, pencereye dönüş, Debug/Release) işi tamamlanmış görevdir; proje logunun işi yüklemenin kendisidir.</summary>
+    private static Task Begin(WakingPath path, MainWindow window, RunViewModel vm)
     {
         switch (path)
         {
-            case WakingPath.Build: await vm.BuildCommand.ExecuteAsync(null); break;
-            case WakingPath.Rebuild: await vm.RebuildCommand.ExecuteAsync(null); break;
-            case WakingPath.ResolveCycles: await vm.BuildCyclesCommand.ExecuteAsync(null); break;
-            case WakingPath.MenuClean: await vm.CleanAllCommand.ExecuteAsync(null); break;
+            case WakingPath.Build: return vm.BuildCommand.ExecuteAsync(null);
+            case WakingPath.Rebuild: return vm.RebuildCommand.ExecuteAsync(null);
+            case WakingPath.ResolveCycles: return vm.BuildCyclesCommand.ExecuteAsync(null);
+            case WakingPath.MenuClean: return vm.CleanAllCommand.ExecuteAsync(null);
             case WakingPath.TrayHotkey:
                 window.SetSurfaceHidden(true);
                 window.OnGlobalHotkey(GlobalHotkeyAction.Build);
-                break;
-            case WakingPath.DeepClean: await vm.CleanCommand.ExecuteAsync(null); break;
-            case WakingPath.Optimize: await vm.OptimizeCommand.ExecuteAsync(null); break;
-            case WakingPath.SyncButton: await vm.SyncCommand.ExecuteAsync(null); break;
-            case WakingPath.WindowReturn: vm.OnWindowActivated(); break;
-            case WakingPath.AfterCommit: await vm.AutoSync!.HeadTriggerAsync(HeadMove.Commit); break;
-            case WakingPath.BranchChange: await vm.SyncAfterExternalBranchChangeAsync("Switched to feature"); break;
-            case WakingPath.Configuration: vm.SetConfiguration(vm.Configuration == "Release" ? "Debug" : "Release"); break;
-            case WakingPath.SettingsSave: await vm.ApplySettingsAsync([], vm.RootPath, [], stopEngineWhenIdle: false); break;
-            case WakingPath.Checkout: await vm.SelectBranch(new BranchRef("feature/x", "bbbbbbbbbbbb", IsActive: false, IsRemoteTracking: false)); break;
-            case WakingPath.Pull: await vm.PullRepositoryCommand.ExecuteAsync(null); break;
-            case WakingPath.ProjectLog: _ = vm.LoadProjectLogAsync(MainWindowHost.IdOf("A")); break;
+                return Task.CompletedTask;
+            case WakingPath.DeepClean: return vm.CleanCommand.ExecuteAsync(null);
+            case WakingPath.Optimize: return vm.OptimizeCommand.ExecuteAsync(null);
+            case WakingPath.SyncButton: return vm.SyncCommand.ExecuteAsync(null);
+            case WakingPath.WindowReturn: vm.OnWindowActivated(); return Task.CompletedTask;
+            case WakingPath.AfterCommit: return vm.AutoSync!.HeadTriggerAsync(HeadMove.Commit);
+            case WakingPath.BranchChange: return vm.SyncAfterExternalBranchChangeAsync("Switched to feature");
+            case WakingPath.Configuration: vm.SetConfiguration(vm.Configuration == "Release" ? "Debug" : "Release"); return Task.CompletedTask;
+            case WakingPath.SettingsSave: return vm.ApplySettingsAsync([], vm.RootPath, [], stopEngineWhenIdle: false);
+            case WakingPath.Checkout: return vm.SelectBranch(new BranchRef("feature/x", "bbbbbbbbbbbb", IsActive: false, IsRemoteTracking: false));
+            case WakingPath.Pull: return vm.PullRepositoryCommand.ExecuteAsync(null);
+            case WakingPath.ProjectLog: return vm.LoadProjectLogAsync(MainWindowHost.IdOf("A"));
+            default: throw new ArgumentOutOfRangeException(nameof(path), path, null);
         }
+    }
+
+    /// <summary>Yolu üretimdeki girişinden tetikler (<see cref="Begin"/>), işini bekler ve pompayı boşaltır. Proje logunun yüklemesi beklenmez:
+    /// cevabı bu testlerde gelmez.</summary>
+    private static async Task Trigger(WakingPath path, MainWindow window, RunViewModel vm)
+    {
+        var work = Begin(path, window, vm);
+        if (path != WakingPath.ProjectLog) await work;
         DispatcherPump.DrainToIdle();
     }
 
@@ -1409,6 +1423,58 @@ public class EngineWakeTests
         Assert.True(sync.IsCompleted);
         Assert.DoesNotContain(sent.Commands, c => c is SyncWorkspaceCommand or ListBranchesCommand); // Sync gönderilmedi
         Assert.Equal(1, probe.WakeCalls);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Yolun penceresi — isteğin açtığı ve motor kaybında bırakılan durum: koşunun açılışı (<see cref="StartRunCommand"/>), Sync, bakım
+    /// Clean'i, Optimize, checkout ve pull kilitleri.</summary>
+    private static bool WindowOf(WakingPath path, RunViewModel vm) => path switch
+    {
+        WakingPath.Build => vm.IsStarting,
+        WakingPath.SyncButton => vm.SyncBusy,
+        WakingPath.DeepClean => vm.CleanBusy,
+        WakingPath.Optimize => vm.OptimizeBusy,
+        WakingPath.Checkout => vm.CheckoutBusy,
+        WakingPath.Pull => vm.PullBusy,
+        _ => throw new ArgumentOutOfRangeException(nameof(path), path, null),
+    };
+
+    /// <summary>
+    /// [T21 OOS-1 · karar 34 · B1 fix 4 · PİN] Kapıdan geçişini hâlâ tutan isteğin penceresini motor kaybı BIRAKMAZ — pencere tutan HER komut türü
+    /// için (kaybın geri alımında komut türü başına bir kapı sorusu, <c>ReleaseAfterEngineLoss</c>). Kurgu üretimin sırasıdır: istek kapıda bekler,
+    /// uyanma havuzda biter (<see cref="CompleteOffTheDispatcher"/>), uyanmanın devamı koşar ve kapıdaki devamı kuyruğa ekler; motor tam o arada ölür
+    /// (testin devamı, kapının devamından önce sıradadır). Kayıp anında istek teslim edilmemiştir ve penceresi açıktır; kayıp onu bırakmaz. Ardından
+    /// istek kapıdan "gönderme" alır, penceresini kendi geri alımı bırakır ve hiçbir şey gönderilmez.
+    /// <para>PİN: bugünkü kod yeşil. Mutasyon (kayıp kapı sorusunu atlar — her pencereyi koşulsuz bırakır): altı satırın altısı da kırmızı; her satır
+    /// yalnız kendi penceresine bakar.</para>
+    /// </summary>
+    [WpfTheory]
+    [InlineData(WakingPath.Build)]      // StartRunCommand — koşunun açılışı
+    [InlineData(WakingPath.SyncButton)] // SyncWorkspaceCommand
+    [InlineData(WakingPath.DeepClean)]  // CleanWorkspaceCommand
+    [InlineData(WakingPath.Optimize)]   // OptimizeWorkspaceCommand
+    [InlineData(WakingPath.Checkout)]   // CheckoutBranchCommand
+    [InlineData(WakingPath.Pull)]       // PullRepositoryCommand
+    public async Task A_loss_right_after_a_wake_keeps_the_window_of_a_request_still_held_at_the_gate(WakingPath path)
+    {
+        using var dir = new TempDir();
+        var (window, vm, _, sent, waking) = AsleepShellWithHeldWake(dir);
+        var work = Begin(path, window, vm);
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(EngineState.Waking, vm.EngineState); // ön-koşul: istek kapıda, uyanma sürüyor
+
+        await CompleteOffTheDispatcher(waking, Woken());
+        Assert.Equal(EngineState.Ready, vm.EngineState); // ön-koşul: uyanma bitti...
+        Assert.Empty(sent.Commands);                     // ...istek henüz teslim edilmedi...
+        Assert.True(WindowOf(path, vm));                 // ...ve penceresi açık
+
+        vm.OnEngineExited(-1);
+
+        Assert.True(WindowOf(path, vm)); // kayıp kapıdaki isteğin penceresini bırakmadı
+        DispatcherPump.DrainToIdle();
+        Assert.True(work.IsCompleted);    // istek kapıdan "gönderme" aldı...
+        Assert.False(WindowOf(path, vm)); // ...ve penceresini kendi geri alımı bıraktı
+        Assert.Empty(sent.Commands);      // hiçbir şey gönderilmedi
         GC.KeepAlive(window);
     }
 
