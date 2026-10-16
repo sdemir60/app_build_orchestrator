@@ -2,6 +2,12 @@
 
 Release notes for Build Orchestrator, newest version first. The What's new window in the app reads this file.
 
+## [1.10.1] - 2026-10-16
+
+### Fixed
+
+- Opening a project's log no longer raises the app's memory use above 1 GB on large screens. The console now switches between a project's log and the run with a flat slide and fade instead of a 3D tilt.
+
 ## [1.10.0] - 2026-10-16
 
 ### Added
