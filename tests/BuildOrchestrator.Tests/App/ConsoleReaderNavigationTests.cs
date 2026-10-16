@@ -772,11 +772,11 @@ public class ConsoleReaderNavigationTests
         using var narrative = new RealizedNarrative(lines: 400);
         narrative.WheelAwayFromTheBottom();
         narrative.ClickLatest();
-        Assert.True(IsAnimating(narrative), "test kurgusu: pill bir kaydırma animasyonu başlatmalıydı");
+        Assert.True(ScrollAnimation.IsAnimating(narrative.View.Editor), "test kurgusu: pill bir kaydırma animasyonu başlatmalıydı");
 
         narrative.Press(Key.PageUp);
 
-        Assert.False(IsAnimating(narrative));
+        Assert.False(ScrollAnimation.IsAnimating(narrative.View.Editor));
         Assert.True(narrative.DistanceFromBottom > narrative.View.Editor.ViewportHeight / 2, "the key's scroll did not stand");
     }
 
@@ -799,7 +799,7 @@ public class ConsoleReaderNavigationTests
         using var narrative = new RealizedNarrative(lines: 400);
         narrative.WheelAwayFromTheBottom();
         narrative.ClickLatest();
-        Assert.True(IsAnimating(narrative), "test kurgusu: pill bir kaydırma animasyonu başlatmalıydı");
+        Assert.True(ScrollAnimation.IsAnimating(narrative.View.Editor), "test kurgusu: pill bir kaydırma animasyonu başlatmalıydı");
 
         switch (gesture)
         {
@@ -809,7 +809,7 @@ public class ConsoleReaderNavigationTests
             default: narrative.PressWithModifiers(Key.PageDown, ModifierKeys.Shift); break;
         }
 
-        Assert.False(IsAnimating(narrative));
+        Assert.False(ScrollAnimation.IsAnimating(narrative.View.Editor));
     }
 
     /// <summary>
@@ -829,7 +829,7 @@ public class ConsoleReaderNavigationTests
 
         narrative.Press(Key.Right);
 
-        Assert.True(IsAnimating(narrative));
+        Assert.True(ScrollAnimation.IsAnimating(narrative.View.Editor));
     }
 
     /// <summary>
@@ -881,8 +881,7 @@ public class ConsoleReaderNavigationTests
 
         narrative.ClickLatest();
 
-        var clock = ActiveClockInspector.AppliedClock(editor, ScrollAnimator.VerticalOffsetProperty);
-        Assert.NotNull(clock); // atlama canlandırıldı
+        var clock = ScrollAnimation.ClockOf(editor); // atlama canlandırıldı (saat yoksa fırlatır)
         Assert.Equal(end, ((DoubleAnimationUsingKeyFrames)clock.Timeline).KeyFrames[0].Value, precision: 1);
         Assert.Equal(Visibility.Collapsed, narrative.View.Pill.Visibility); // atlama penceresi
         Assert.False(narrative.View.FollowsBottom);
@@ -1085,7 +1084,7 @@ public class ConsoleReaderNavigationTests
         using var narrative = new RealizedNarrative(lines: 400);
         narrative.WheelAwayFromTheBottom();
         narrative.ClickLatest();
-        Assert.True(IsAnimating(narrative), "test kurgusu: pill bir kaydırma animasyonu başlatmalıydı");
+        Assert.True(ScrollAnimation.IsAnimating(narrative.View.Editor), "test kurgusu: pill bir kaydırma animasyonu başlatmalıydı");
 
         Assert.Equal(Visibility.Collapsed, narrative.View.ActiveLineOverlay.Visibility); // uçuşta
 
@@ -1119,12 +1118,11 @@ public class ConsoleReaderNavigationTests
     }
 
     /// <summary>Uçuştaki kaydırma animasyonunu (<c>⌄ latest</c> atlaması) sonuna konumlar ve yerleşimi oturtur: saat bir tik beklemeden
-    /// hedefi DP'ye yazar (<c>SeekAlignedToLastTick</c> — <c>GraphRenderTests</c> deseni), görünüm hedefe iner. Atlama penceresi kapanmaz —
-    /// o anchor'ın zamanlayıcısıdır (<see cref="RealizedNarrative.ElapseAnchorTimers"/>).</summary>
+    /// hedefi DP'ye yazar (<see cref="ActiveClockInspector.Seek"/>), görünüm hedefe iner. Atlama penceresi kapanmaz — o anchor'ın
+    /// zamanlayıcısıdır (<see cref="RealizedNarrative.ElapseAnchorTimers"/>).</summary>
     private static void LandTheJump(RealizedNarrative narrative)
     {
-        var clock = JumpClock(narrative);
-        clock.Controller!.SeekAlignedToLastTick(clock.NaturalDuration.TimeSpan, TimeSeekOrigin.BeginTime);
+        ActiveClockInspector.Seek(ScrollAnimation.ClockOf(narrative.View.Editor), progress: 1);
         DispatcherPump.DrainToIdle();
     }
 
@@ -1132,18 +1130,9 @@ public class ConsoleReaderNavigationTests
     /// sonraki jest, testi koşan makinenin hızından bağımsız olarak gerçekten uçuşan bir hareketle karşılaşır (yolun ortası, etkin evre).</summary>
     private static void HoldTheJumpMidway(RealizedNarrative narrative)
     {
-        var clock = JumpClock(narrative);
-        clock.Controller!.SeekAlignedToLastTick(clock.NaturalDuration.TimeSpan / 2, TimeSeekOrigin.BeginTime);
-        clock.Controller.Pause();
+        var clock = ScrollAnimation.ClockOf(narrative.View.Editor);
+        ActiveClockInspector.Seek(clock, progress: 0.5);
+        clock.Controller!.Pause();
         Assert.Equal(ClockState.Active, clock.CurrentState); // ön-koşul: atlama uçuşta
     }
-
-    /// <summary>Konsolun kaydırma animasyonunun saati (<c>⌄ latest</c> atlaması).</summary>
-    private static AnimationClock JumpClock(RealizedNarrative narrative) =>
-        ActiveClockInspector.AppliedClock(narrative.View.Editor, ScrollAnimator.VerticalOffsetProperty)
-        ?? throw new InvalidOperationException("no scroll animation is in flight");
-
-    /// <summary>Konsolun kaydırma animasyonu (<c>ScrollAnimator.VerticalOffset</c>) şu an editöre bağlı mı.</summary>
-    private static bool IsAnimating(RealizedNarrative narrative) =>
-        DependencyPropertyHelper.GetValueSource(narrative.View.Editor, ScrollAnimator.VerticalOffsetProperty).IsAnimated;
 }

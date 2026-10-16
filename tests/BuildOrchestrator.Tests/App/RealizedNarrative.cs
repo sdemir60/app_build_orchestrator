@@ -159,9 +159,6 @@ internal sealed class RealizedNarrative : IDisposable
 
     private bool RaiseKey(Key key, RoutedEvent routedEvent)
     {
-        var textArea = View.Editor.TextArea;
-        var args = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(textArea)!, 0, key) { RoutedEvent = routedEvent };
-        textArea.RaiseEvent(args);
-        return args.Handled;
+        return KeyInput.Raise(View.Editor.TextArea, key, routedEvent).Handled;
     }
 }

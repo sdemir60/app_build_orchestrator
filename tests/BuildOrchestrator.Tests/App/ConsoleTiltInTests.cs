@@ -231,7 +231,7 @@ public class ConsoleTiltInTests
         double landedAt = view.Editor.VerticalOffset;
 
         Assert.False(
-            DependencyPropertyHelper.GetValueSource(view.Editor, ScrollAnimator.VerticalOffsetProperty).IsAnimated,
+            ScrollAnimation.IsAnimating(view.Editor),
             "dönüşte kaydırma animasyonu kuruldu — geçiş tek hareket olmalı");
 
         DispatcherPump.PumpUntil(() => view.Tilt3D.Visibility == Visibility.Collapsed, TimeSpan.FromSeconds(3));

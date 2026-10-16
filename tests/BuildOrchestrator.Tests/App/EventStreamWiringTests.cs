@@ -172,24 +172,21 @@ public class EventStreamWiringTests
         for (int i = 0; i < 60; i++)
             vm.OnEvent(new ProjectSkippedEvent("r1", $@"C:\p\proj{i}.csproj", SkipReasons.UpToDate));
         DispatcherPump.DrainToIdle();
-        UserScrollGesture.Raise(view);         // okuyucu çubuğu tuttu...
+        UserScrollGesture.DragVerticalBarOf(view.Scroll); // okuyucu çubuğu tuttu...
         view.Scroll.ScrollToVerticalOffset(0); // ...ve tepeye çıktı
         DispatcherPump.DrainToIdle();
         Assert.Equal(Visibility.Visible, view.Pill.Visibility); // ön-koşul: dipten uzakta
 
         view.Pill.PillButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent)); // ⌄ latest
         DispatcherPump.DrainToIdle();
-        Assert.True(IsAnimating(view.Scroll), "test kurgusu: pill bir kaydırma animasyonu başlatmalıydı");
+        Assert.True(ScrollAnimation.IsAnimating(view.Scroll), "test kurgusu: pill bir kaydırma animasyonu başlatmalıydı");
 
         if (gesture == "wheel") MouseInput.Wheel(view.Scroll, System.Windows.Input.Mouse.MouseWheelDeltaForOneLine);
         else UserScrollGesture.DragVerticalBarOf(view.Scroll);
         DispatcherPump.DrainToIdle();
 
-        Assert.False(IsAnimating(view.Scroll));
+        Assert.False(ScrollAnimation.IsAnimating(view.Scroll));
         GC.KeepAlive(window);
     }
 
-    /// <summary>Stream'in kaydırma animasyonu (<c>ScrollAnimator.VerticalOffset</c>) şu an ScrollViewer'a bağlı mı.</summary>
-    private static bool IsAnimating(UIElement scroll) =>
-        DependencyPropertyHelper.GetValueSource(scroll, ScrollAnimator.VerticalOffsetProperty).IsAnimated;
 }

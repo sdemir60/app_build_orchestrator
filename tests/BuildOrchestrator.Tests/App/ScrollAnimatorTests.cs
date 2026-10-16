@@ -54,7 +54,7 @@ public class ScrollAnimatorTests
 
         Assert.False(animated);
         Assert.Equal(500, ScrollAnimator.GetVerticalOffset(sv));
-        Assert.False(DependencyPropertyHelper.GetValueSource(sv, ScrollAnimator.VerticalOffsetProperty).IsAnimated);
+        Assert.False(ScrollAnimation.IsAnimating(sv));
     }
 
     [StaFact]
@@ -85,7 +85,7 @@ public class ScrollAnimatorTests
         DispatcherPump.PumpUntil(() => ScrollAnimator.GetVerticalOffset(sv) >= 499.5, TimeSpan.FromSeconds(3));
 
         Assert.InRange(ScrollAnimator.GetVerticalOffset(sv), 499.5, 500.5);
-        Assert.True(DependencyPropertyHelper.GetValueSource(sv, ScrollAnimator.VerticalOffsetProperty).IsAnimated);
+        Assert.True(ScrollAnimation.IsAnimating(sv));
     }
 
     /// <summary>
@@ -131,13 +131,13 @@ public class ScrollAnimatorTests
         ScrollAnimator.AnimateTo(sv, 0, 500, animationsEnabled: true, TimeSpan.FromMilliseconds(500), new KeySpline(0.65, 0, 0.35, 1));
         // Clock'un property sistemine "yaşıyor" olarak yansıması bir compositor tick'i ister (doğrulandı) —
         // gerçek koşuda bu kaç frame içinde olur; testte kısa bir pompayla bekleriz (sleep-tahmini DEĞİL, koşul-tabanlı).
-        DispatcherPump.PumpUntil(() => DependencyPropertyHelper.GetValueSource(sv, ScrollAnimator.VerticalOffsetProperty).IsAnimated, TimeSpan.FromSeconds(2));
-        Assert.True(DependencyPropertyHelper.GetValueSource(sv, ScrollAnimator.VerticalOffsetProperty).IsAnimated);
+        DispatcherPump.PumpUntil(() => ScrollAnimation.IsAnimating(sv), TimeSpan.FromSeconds(2));
+        Assert.True(ScrollAnimation.IsAnimating(sv));
         Assert.False(ScrollAnimator.GetIsUserSuppressed(sv));
 
         ScrollAnimator.CancelForUser(sv);
 
-        Assert.False(DependencyPropertyHelper.GetValueSource(sv, ScrollAnimator.VerticalOffsetProperty).IsAnimated);
+        Assert.False(ScrollAnimation.IsAnimating(sv));
         Assert.True(ScrollAnimator.GetIsUserSuppressed(sv));
     }
 
@@ -225,20 +225,19 @@ public class ScrollAnimatorTests
         UserScrollSignal.Wire(sv, sv, stopped.Add);
         // Uzun bir uçuş: jest, testi koşan makinenin hızından bağımsız olarak hareketi yolda yakalar.
         ScrollAnimator.AnimateTo(sv, 0, 500, true, TimeSpan.FromSeconds(30), new KeySpline(0.65, 0, 0.35, 1));
-        DispatcherPump.PumpUntil(() => DependencyPropertyHelper.GetValueSource(sv, ScrollAnimator.VerticalOffsetProperty).IsAnimated, TimeSpan.FromSeconds(2));
-        Assert.True(DependencyPropertyHelper.GetValueSource(sv, ScrollAnimator.VerticalOffsetProperty).IsAnimated); // ön-koşul
+        DispatcherPump.PumpUntil(() => ScrollAnimation.IsAnimating(sv), TimeSpan.FromSeconds(2));
+        Assert.True(ScrollAnimation.IsAnimating(sv)); // ön-koşul
 
         switch (channel)
         {
             case "wheel": MouseInput.PreviewWheel(sv, System.Windows.Input.Mouse.MouseWheelDeltaForOneLine); break;
             case "scrollbar": UserScrollGesture.DragVerticalBarOf(sv); break;
             default:
-                sv.RaiseEvent(new System.Windows.Input.KeyEventArgs(System.Windows.Input.Keyboard.PrimaryDevice, PresentationSource.FromVisual(sv)!, 0,
-                    System.Windows.Input.Key.PageDown) { RoutedEvent = System.Windows.Input.Keyboard.PreviewKeyDownEvent });
+                KeyInput.PreviewKeyDown(sv, System.Windows.Input.Key.PageDown);
                 break;
         }
 
-        Assert.False(DependencyPropertyHelper.GetValueSource(sv, ScrollAnimator.VerticalOffsetProperty).IsAnimated);
+        Assert.False(ScrollAnimation.IsAnimating(sv));
         Assert.True(ScrollAnimator.GetIsUserSuppressed(sv));
         Assert.Equal([true], stopped);
     }
@@ -257,13 +256,13 @@ public class ScrollAnimatorTests
         Assert.False(ScrollAnimator.CancelForUser(sv)); // hareket yok
 
         ScrollAnimator.AnimateTo(sv, 0, 500, true, TimeSpan.FromSeconds(30), spline);
-        DispatcherPump.PumpUntil(() => DependencyPropertyHelper.GetValueSource(sv, ScrollAnimator.VerticalOffsetProperty).IsAnimated, TimeSpan.FromSeconds(2));
+        DispatcherPump.PumpUntil(() => ScrollAnimation.IsAnimating(sv), TimeSpan.FromSeconds(2));
         Assert.True(ScrollAnimator.CancelForUser(sv)); // yolda
 
         ScrollAnimator.AnimateTo(sv, sv.VerticalOffset, 500, true, TimeSpan.FromSeconds(30), spline);
-        DispatcherPump.PumpUntil(() => DependencyPropertyHelper.GetValueSource(sv, ScrollAnimator.VerticalOffsetProperty).IsAnimated, TimeSpan.FromSeconds(2));
-        var clock = ActiveClockInspector.AppliedClock(sv, ScrollAnimator.VerticalOffsetProperty)!;
-        clock.Controller!.SeekAlignedToLastTick(clock.NaturalDuration.TimeSpan, TimeSeekOrigin.BeginTime);
+        DispatcherPump.PumpUntil(() => ScrollAnimation.IsAnimating(sv), TimeSpan.FromSeconds(2));
+        var clock = ScrollAnimation.ClockOf(sv);
+        ActiveClockInspector.Seek(clock, progress: 1);
         Assert.Equal(ClockState.Filling, clock.CurrentState); // ön-koşul: hareket indi
         Assert.False(ScrollAnimator.CancelForUser(sv)); // inmiş
     }

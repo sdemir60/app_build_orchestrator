@@ -38,21 +38,12 @@ public class FrontierFollowPauseChannelsTests(ITestOutputHelper output)
         new("L2", [new Proj("i"), new Proj("j"), new Proj("k"), new Proj("l"), new Proj("m"), new Proj("n")]),
     ];
 
-    /// <summary>Listenin dikey kaydırma çubuğu — ScrollViewer'ın şablonundan (gerçek kablaj yolu).</summary>
-    private static ScrollBar VerticalBarOf(StickyLayerList list) =>
-        DsResources.Descendants(list.Scroll).OfType<ScrollBar>().Single(b => b.Orientation == Orientation.Vertical);
-
-    /// <summary>Çubuğun başlığını sürüklemek: <see cref="ScrollBar.ScrollEvent"/> YALNIZ kullanıcı
-    /// etkileşiminde doğar (programatik <c>ScrollToVerticalOffset</c> onu yaymaz) — aradığımız ayrım budur.</summary>
-    private static void DragScrollBar(StickyLayerList list) =>
-        VerticalBarOf(list).RaiseEvent(new ScrollEventArgs(ScrollEventType.ThumbTrack, 0)
-        { RoutedEvent = ScrollBar.ScrollEvent });
+    /// <summary>Listenin dikey çubuğunu sürüklemek — ortak yardımcı (<see cref="UserScrollGesture.DragVerticalBarOf"/>).</summary>
+    private static void DragScrollBar(StickyLayerList list) => UserScrollGesture.DragVerticalBarOf(list.Scroll);
 
     /// <summary>Gezinme tuşu — olay <see cref="StickyLayerList.Scroll"/>'dan TÜNELLENİR (üretimde odak satırdadır,
-    /// sinyali kökteki kablo yakalamalıdır).</summary>
-    private static void PressScrollKey(StickyLayerList list, Key key) =>
-        list.Scroll.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(list)!, 0, key)
-        { RoutedEvent = Keyboard.PreviewKeyDownEvent });
+    /// sinyali kökteki kablo yakalamalıdır); ortak yardımcı (<see cref="KeyInput"/>).</summary>
+    private static void PressScrollKey(StickyLayerList list, Key key) => KeyInput.PreviewKeyDown(list.Scroll, key);
 
     // ---------------------------------------------------------------- 1) sinyal doğuyor mu (izole)
 

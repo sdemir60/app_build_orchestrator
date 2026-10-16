@@ -89,6 +89,17 @@ internal static class ActiveClockInspector
         return clocks.Length > 0 ? clocks[0] : null;
     }
 
+    /// <summary>[B2 fix 3 · madde 7] Bir saati zaman çizelgesinde konumlar — <paramref name="progress"/> doğal sürenin kesri (1 = son, dolum
+    /// evresi). <c>SeekAlignedToLastTick</c> bir tik beklemeden konumlar ve canlandırılan değeri hemen yazar: headless'ta compositor saati
+    /// kendiliğinden ilerlemez, duvar saatiyle beklemek kararsızdır. Testlerin TEK saat konumlama yolu (kaydırma atlamasının inişi ve yolun
+    /// ortasında tutulması, uçuş raporu).</summary>
+    public static void Seek(Clock clock, double progress)
+    {
+        ArgumentNullException.ThrowIfNull(clock);
+        var controller = clock.Controller ?? throw new InvalidOperationException("the clock is not a controllable root clock");
+        controller.SeekAlignedToLastTick(clock.NaturalDuration.TimeSpan * progress, TimeSeekOrigin.BeginTime);
+    }
+
     /// <summary>Yalnız ŞU AN dönen kök saatler — render döngüsünü uyanık tutanlar.</summary>
     public static IReadOnlyList<ClockInfo> ActiveRootClocks(Dispatcher dispatcher) =>
         [.. RootClocks(dispatcher).Where(c => c.State == ClockState.Active)];

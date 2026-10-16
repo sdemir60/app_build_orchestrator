@@ -116,10 +116,10 @@ public class ConsoleViewTests
         view.PlayCascade(Text(page));
         if (anchor == "scrolled up")
         {
-            UserScrollGesture.Raise(view);                                   // okuyucu çubuğu tuttu, sayfanın sonuna indi...
+            UserScrollGesture.DragVerticalBarOf(view.Editor);                // okuyucu çubuğu tuttu, sayfanın sonuna indi...
             view.Editor.ScrollToVerticalOffset(view.Editor.ExtentHeight);
             view.UpdateLayout();
-            UserScrollGesture.Raise(view);                                   // ...ve biraz yukarı çıktı
+            UserScrollGesture.DragVerticalBarOf(view.Editor);                // ...ve biraz yukarı çıktı
             view.Editor.ScrollToVerticalOffset(view.Editor.VerticalOffset - 200);
             view.UpdateLayout();
             Assert.False(view.StickToBottom); // ön-koşul: anchor jesti gördü — okuyucu dipten uzakta
