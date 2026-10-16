@@ -18,20 +18,14 @@ public static class TestPaths
     /// istisnanın taşıdığı TEK değer. Var olması gerekmez: konak sahtedir ya da hiç başlamaz.</summary>
     public const string AbsentSupervisorExe = @"C:\app\supervisor\BuildOrchestrator.Supervisor.exe";
 
-    /// <summary>[idle-memory · dalga 3 · B1 fix 1 · I-3] Bir süreç gerçek Supervisor mı — imaj adından (<see cref="SupervisorExe"/>'in adı). Job'a
-    /// doğan süreçlerden motoru seçen testler bunu kullanır (<c>JobBirths.WaitForProcess</c>): job'da başka üyeler de vardır — motorun conhost'u,
-    /// çıkmakta olan eski motor (imajı aynıdır: yeni motoru bekleyen test onu PID'iyle de dışarıda bırakır — <see cref="IsSupervisorOtherThan"/>).
-    /// Okunamayan ad (süreç çıktı) <see cref="InvalidOperationException"/> atar; yardımcı onu "uymuyor" sayar.</summary>
-    public static bool IsSupervisor(Process process)
-    {
-        ArgumentNullException.ThrowIfNull(process);
-        return string.Equals(process.ProcessName, Path.GetFileNameWithoutExtension(SupervisorExe), StringComparison.OrdinalIgnoreCase);
-    }
-
-    /// <summary>[B1 fix 2 · 4c] YENİ doğan motorun süzgeci: <paramref name="oldPid"/> dışındaki bir Supervisor (<see cref="IsSupervisor"/>). Uyutulan
-    /// ya da öldürülen eski motor henüz çıkmadıysa port bağlandığında o da doğum olarak bildirilir ve imajı aynıdır — yeni motoru bekleyen test eski
-    /// motorun PID'ini dışarıda bırakır.</summary>
-    public static Func<Process, bool> IsSupervisorOtherThan(int oldPid) => process => process.Id != oldPid && IsSupervisor(process);
+    /// <summary>[idle-memory · dalga 3 · B1 fix 1 · I-3 · B1 fix 2 · 4c] YENİ doğan motorun süzgeci: gerçek bir Supervisor (imaj adı
+    /// <see cref="SupervisorExe"/>'inki) ve <paramref name="oldPid"/> değil. Job'a doğan süreçlerden motoru seçen testler bunu kullanır
+    /// (<c>JobBirths.WaitForProcess</c>): job'da başka üyeler de vardır — motorun conhost'u ve, henüz çıkmadıysa, uyutulan ya da öldürülen eski motor
+    /// (imajı aynıdır; port bağlandığında o da doğum olarak bildirilir). Okunamayan ad (süreç çıktı) <see cref="InvalidOperationException"/> atar;
+    /// yardımcı onu "uymuyor" sayar.</summary>
+    public static Func<Process, bool> IsSupervisorOtherThan(int oldPid) => process =>
+        process.Id != oldPid
+        && string.Equals(process.ProcessName, Path.GetFileNameWithoutExtension(SupervisorExe), StringComparison.OrdinalIgnoreCase);
 
     /// <summary>[B1/F1 · fix-1] GERÇEK bir Supervisor process'i başlatan her testin <see cref="SupervisorExe"/>
     /// ile birlikte <c>EngineHost</c>'a ENJEKTE ETTİĞİ startup timeout. Üretim varsayılanı (5 sn,

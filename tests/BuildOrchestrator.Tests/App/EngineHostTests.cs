@@ -551,12 +551,12 @@ public class EngineHostTests
         Process? frozen = null;
         try
         {
-            var asleep = await host.StartAsync();
+            var first = await host.StartAsync(); // uyutulacak motorun hazır olayı
             await host.SleepAsync();
             using var births = host.OuterJob.AttachCompletionPort(); // job'da kalmış üyeler de bildirilir — motor imajıyla seçilir
             var wake = host.WakeAsync();
             frozen = JobBirths.WaitForProcess(births, WideStartupTimeout, "the woken engine was never born into the outer job",
-                TestPaths.IsSupervisorOtherThan(asleep.Pid)); // uyutulan motor henüz çıkmadıysa o da bildirilir
+                TestPaths.IsSupervisorOtherThan(first.Pid)); // uyutulan motor henüz çıkmadıysa o da bildirilir
             Assert.Equal(0, NtSuspendProcess(frozen.SafeHandle)); // yeni motor hazır olmadan kilitlendi
             const string ReadyBeforeFrozen = "the woken engine was ready before it was frozen — the precondition was not set up";
             Assert.False(wake.IsCompleted, ReadyBeforeFrozen);

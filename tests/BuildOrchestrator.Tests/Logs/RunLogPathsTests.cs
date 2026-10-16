@@ -108,11 +108,12 @@ public sealed class RunLogPathsTests
     [InlineData(@"\\.\C:\bo\logs\run-20261015-101010-123")]     // [m-2 · PİN] DOS aygıt yolu: aynı
     public void Any_other_folder_is_refused(string? path) => AssertRefusedWithoutThrowing(path);
 
-    /// <summary>[B1 fix 2 · 4b] Sistemin normalleştiremeyeceği kadar uzun bir yol (Windows'un 32 767 karakterlik sınırının ötesi) de FIRLATMAZ,
-    /// reddedilir: kural motorun komut döngüsünde koşar (proje log isteği) — oradan yükselen bir IO hatası motoru düşürürdü. Ön-koşul yolun gerçekten
-    /// normalleştirilemediğidir (IO hatası ailesi): kural yakalamasına bu yoldan ulaşılır.
-    /// <para>PİN: bugünkü yakalama <see cref="PathTooLongException"/>'ı zaten kapsıyordu; yakalama artık IO hatası ailesinin tamamıdır ve bu test
-    /// onun daralmasını yakalar.</para></summary>
+    /// <summary>[B1 fix 2 · 4b · B1 fix 3] Sistemin normalleştiremeyeceği kadar uzun bir yol (Windows'un 32 767 karakterlik sınırının ötesi) de
+    /// FIRLATMAZ, reddedilir: kural bir karardır — fırlatsaydı koordinatör onu okuma hatası sayar ve reddedilen bir klasör için uyarı satırı yazardı
+    /// (reddedilen klasör sessizdir). Ön-koşul yolun gerçekten normalleştirilemediğidir: kural yakalamasına bu yoldan ulaşılır.
+    /// <para>PİN — YALNIZ <see cref="PathTooLongException"/> üyesini pinler. Yakalama bugün IO hatası ailesinin tamamıdır, ama ailenin başka bir üyesini
+    /// (düz <see cref="IOException"/>) üreten bir girdi kurulamadı: yakalamanın <c>PathTooLongException</c>'a geri daralması bu testte yeşil kalır.
+    /// Mutasyon (yakalamadan IO ailesi tamamen çıkar) kırmızı.</para></summary>
     [Fact]
     public void A_path_too_long_to_normalize_is_refused()
     {

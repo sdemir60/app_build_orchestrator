@@ -357,7 +357,7 @@ public sealed partial class RunViewModel
     /// <summary>
     /// Uyanmanın işi (<see cref="StartWake"/> başlatır); tutamağın sonucu uyanan motorun hazır olup olmadığıdır ve bitiş durumu yazıldıktan SONRA
     /// verilir. Uyanma sürerken başka bir sinyal durumu değiştirdiyse (uyanan motor öldü) o kazanır: bitişte dokunulmaz, "hazır değil". Değiştirmediyse
-    /// bitiş dört yoldan biridir:
+    /// bitiş beş yoldan biridir:
     /// <list type="bullet">
     /// <item><b>Uyandı</b> → <see cref="OnEngineResumed"/>: kimlik ve hazır durumu; konsol satırı yok, açılış Sync'i yok. Uyanan motor yarım kalmış bir
     /// koşu kurtardıysa (hazır olayı <c>InterruptedProjects</c> &gt; 0) uyanmayı bekleyen her istek motora teslim edildikten SONRA bir sessiz Sync
@@ -429,8 +429,9 @@ public sealed partial class RunViewModel
     /// <item>Boşalma beklenirken motor hazır olmaktan çıktıysa (öldü, erişilemez oldu) tazeleme yoktur.</item>
     /// <item>Uyanmayı isteyen yol kendisi uçuşta bir işse (Sync, koşu, Clean, checkout…) kapı kapalıdır: Sync başlamaz ve yeniden denenmez — o iş
     /// ekranı zaten tazeler.</item>
-    /// <item>Tazeleme ateşle-unut bir işin kuyruğudur: beklenmedik bir hata yalnız tanı izine düşer (konsola satır yok — açılışın StartEngineAsync
-    /// deseni) ve düşmüş bir görev bırakmaz.</item>
+    /// <item>Tazeleme ateşle-unut bir işin kuyruğudur: beklenmedik bir hata yakalanır ve düşmüş bir görev bırakmaz; konsola satır yazılmaz. İzi yalnız
+    /// hata ayıklama çıktısıdır (<c>Debug.WriteLine</c>, yığınıyla) ve Release derlemesinde derlenip çıkar — uygulamanın bugünkü deseni
+    /// (açılışın <c>StartEngineAsync</c>'i, konsol pompası, tepsi balonu).</item>
     /// </list>
     /// </summary>
     private async Task RefreshAfterRecoveringWakeAsync()
@@ -443,7 +444,8 @@ public sealed partial class RunViewModel
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[engine] refresh after the wake failed — {ex.Message}");
+            // Yalnız hata ayıklama çıktısı — Release derlemesinde derlenip çıkar; kullanıcıya ulaşan iz yoktur (gerekçe özette).
+            System.Diagnostics.Debug.WriteLine($"[engine] refresh after the wake failed — {ex}");
         }
     }
 
