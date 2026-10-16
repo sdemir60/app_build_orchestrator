@@ -49,7 +49,7 @@ public class HeadSourceTests
     /// thread'idir ve bir process'in başlatılması bile onu bekletir. Kusurlu hâlde ilk git process'i çağıranın thread'inde
     /// başlıyordu (ölçülen: başlatma başına birkaç ms, okuma başına iki process).</summary>
     [Fact]
-    public void A_reftable_read_starts_git_off_the_calling_thread()
+    public async Task A_reftable_read_starts_git_off_the_calling_thread()
     {
         using var repo = GitTestRepo.Reftable();
         repo.WriteFile("a.txt", "hello");
@@ -61,7 +61,7 @@ public class HeadSourceTests
         caller.Start();
         caller.Join();
 
-        Assert.NotNull(read!.GetAwaiter().GetResult());
+        Assert.NotNull(await read!); // [xUnit1031] bloklayan GetResult yerine await
         Assert.NotEmpty(runner.StartedOnPool);
         Assert.All(runner.StartedOnPool, Assert.True);
     }

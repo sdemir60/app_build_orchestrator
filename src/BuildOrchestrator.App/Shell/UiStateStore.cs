@@ -94,40 +94,55 @@ public sealed class UiState
 
     /// <summary>[design v1.14.0 §9] Build, harici çalışma kopyalarını derlemeden ÖNCE kendi klonundan
     /// güncellesin mi (ff-only).
-    /// <para><b>Alan NULLABLE ve varsayılanı "güncelle"dir.</b> <c>bool</c> olsaydı diskteki açık bir
-    /// <c>null</c> token'ı (elle düzenleme, yarım yazım) <see cref="JsonUiStateStore.Load"/>'u düşürür ve TÜM
+    /// <para><b>Alan NULLABLE; yok ⇒ kataloğun varsayılanı</b> (<see cref="ViewModels.GeneralSettingsCatalog.DefaultOf"/> — değer ve
+    /// gerekçesi kataloğun satırında; MainWindow seed'i). <c>bool</c> olsaydı diskteki
+    /// açık bir <c>null</c> token'ı (elle düzenleme, yarım yazım) <see cref="JsonUiStateStore.Load"/>'u düşürür ve TÜM
     /// yerleşimi sıfırlardı — <see cref="LegacyTolerantStringConverter"/> ile aynı gerekçe. Ayrıca "hiç
     /// yazılmamış" ile "false yazılmış" ayrımı burada taşınmak zorundadır: bayrak öncesi kaydedilmiş bir
-    /// dosya, özelliğin bugünkü davranışını (güncelle) korumalıdır.</para></summary>
+    /// dosya kataloğun varsayılanıyla açılmalıdır, <c>false</c>'la değil.</para></summary>
     public bool? UpdateExternals { get; set; }
 
     /// <summary>[spec 2026-09-18 §6.3] Branch chip'inden checkout'ta kirli ağaç stash'lenip geçilsin mi.
     /// <see cref="UpdateExternals"/> ile AYNI gerekçeyle NULLABLE (bayat bir <c>null</c> token'ı yerleşimi
-    /// sıfırlamasın); yok ⇒ kapalı (MainWindow seed'i).</summary>
+    /// sıfırlamasın); yok ⇒ kataloğun varsayılanı (<see cref="ViewModels.GeneralSettingsCatalog.DefaultOf"/>; MainWindow seed'i).</summary>
     public bool? StashOnBranchSwitch { get; set; }
 
     /// <summary>[RESOLVE Faz 4 / karar 11] Settings → General → <c>Resolve cycles at full priority</c>.
-    /// <see cref="UpdateExternals"/> ile AYNI gerekçeyle NULLABLE; yok ⇒ AÇIK (MainWindow seed'i) — anahtarı taşımayan
-    /// eski bir dosya onaylanmış varsayılanı alır.</summary>
+    /// <see cref="UpdateExternals"/> ile AYNI gerekçeyle NULLABLE; yok ⇒ kataloğun varsayılanı
+    /// (<see cref="ViewModels.GeneralSettingsCatalog.DefaultOf"/>; MainWindow seed'i) — anahtarı taşımayan eski bir dosya onaylanmış
+    /// varsayılanı alır.</summary>
     public bool? ResolveAtFullPriority { get; set; }
+
+    /// <summary>[idle-memory · dalga 2 / spec §6.5] Settings → General → CONSOLE → <c>Compact console</c>: konsol anlatısı
+    /// proje çıktısını kompakt mı göstersin. <see cref="UpdateExternals"/> ile AYNI gerekçeyle NULLABLE; yok ⇒ kataloğun varsayılanı
+    /// (<see cref="ViewModels.GeneralSettingsCatalog.DefaultOf"/>; MainWindow seed'i) — anahtarı taşımayan eski bir dosya varsayılanı alır.</summary>
+    public bool? CompactConsole { get; set; }
+
+    /// <summary>[idle-memory · dalga 3 / spec §6.4] Settings → General → ENGINE → <c>Stop the engine when idle</c>:
+    /// <see cref="Services.EngineIdleRule.IdleAfter"/> kadar işsiz kalan motor süreci çıksın mı. <see cref="UpdateExternals"/> ile AYNI
+    /// gerekçeyle NULLABLE; yok ⇒ kataloğun varsayılanı (<see cref="ViewModels.GeneralSettingsCatalog.DefaultOf"/>; MainWindow seed'i) —
+    /// anahtarı taşımayan eski bir dosya varsayılanı alır.</summary>
+    public bool? StopEngineWhenIdle { get; set; }
 
     /// <summary>[P4] Settings → General → STARTUP → <c>Start with Windows</c>: uygulamanın tercihi — Windows oturumu
     /// açılınca başlasın mı. Her açılış bu tercihi Windows'un başlangıç kaydıyla hizalar
     /// (<see cref="Services.AutostartService.Apply"/>); Save kaydı anında yazar. <see cref="UpdateExternals"/> ile AYNI
-    /// gerekçeyle NULLABLE (bayat bir <c>null</c> token'ı yerleşimi sıfırlamasın); yok ⇒ katalog varsayılanı (kapalı).
+    /// gerekçeyle NULLABLE (bayat bir <c>null</c> token'ı yerleşimi sıfırlamasın); yok ⇒ katalog varsayılanı
+    /// (<see cref="ViewModels.GeneralSettingsCatalog.DefaultOf"/>).
     /// Okuma yalnız <see cref="ShellSwitches.StartWithWindows"/> üzerindendir — bu alan doğrudan okunmaz.
     /// <para><b>Şema göçü:</b> alan eskiden <c>bool</c>'du; diskteki <c>true</c>/<c>false</c> aynen okunur.</para></summary>
     public bool? Autostart { get; set; }
 
     /// <summary>[P4] Settings → General → STARTUP → <c>Start minimized to tray</c>: Windows ile açılışta pencere
     /// gösterilmeden tepside mi başlansın. <see cref="Autostart"/> ile AYNI gerekçeyle NULLABLE; yok ⇒ katalog
-    /// varsayılanı (kapalı: pencere açılır). Okuma yalnız <see cref="ShellSwitches.StartMinimizedToTray"/>
+    /// varsayılanı (<see cref="ViewModels.GeneralSettingsCatalog.DefaultOf"/>). Okuma yalnız <see cref="ShellSwitches.StartMinimizedToTray"/>
     /// üzerindendir.</summary>
     public bool? StartMinimizedToTray { get; set; }
 
     /// <summary>[P3] Settings → General → STARTUP → <c>Close to tray</c>: pencere kapatılınca uygulama tepsiye küçülüp
     /// arka planda mı kalsın (açık) yoksa tamamen mi kapansın (kapalı). <see cref="Autostart"/> ile AYNI gerekçeyle
-    /// NULLABLE; yok ⇒ katalog varsayılanı (açık). Okuma yalnız <see cref="ShellSwitches.CloseToTray"/> üzerindendir —
+    /// NULLABLE; yok ⇒ katalog varsayılanı (<see cref="ViewModels.GeneralSettingsCatalog.DefaultOf"/>). Okuma yalnız
+    /// <see cref="ShellSwitches.CloseToTray"/> üzerindendir —
     /// bu alan doğrudan okunmaz. Davranışı (pencere kapanışının kendisi) <c>MainWindow.OnClosing</c> bağlar
     /// (<see cref="WindowCloseRule"/>).</summary>
     public bool? CloseToTray { get; set; }
@@ -135,8 +150,8 @@ public sealed class UiState
     /// <summary>[P3] Settings → General → NOTIFICATIONS → <c>Show notifications</c>: tepsinin OS balonları gösterilsin
     /// mi — koşu bitişi, ilk-× bilgilendirmesi, ikinci-instance uyarısı ve yok sayılan Build kısayolunun notu;
     /// kapalıyken hiçbiri gösterilmez.
-    /// <see cref="Autostart"/> ile AYNI gerekçeyle NULLABLE; yok ⇒ katalog varsayılanı (açık). Okuma yalnız
-    /// <see cref="ShellSwitches.ShowNotifications"/> üzerindendir; kararı dört balon yolu verir.</summary>
+    /// <see cref="Autostart"/> ile AYNI gerekçeyle NULLABLE; yok ⇒ katalog varsayılanı (<see cref="ViewModels.GeneralSettingsCatalog.DefaultOf"/>).
+    /// Okuma yalnız <see cref="ShellSwitches.ShowNotifications"/> üzerindendir; kararı dört balon yolu verir.</summary>
     public bool? ShowNotifications { get; set; }
 }
 

@@ -1,5 +1,6 @@
 using System.Linq;
 using System.Windows;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using BuildOrchestrator.App.Console;
@@ -275,25 +276,11 @@ public class ConsoleHoverBandTests
         Assert.Same(shownClock, AppliedColorClock(brush)); // yeni animasyon başlamadı
     }
 
-    /// <summary>Fırçanın <c>Color</c> özelliğine şu an uygulanmış animasyon saati (yoksa null) — WPF bunu public
-    /// API'de sunmaz; iç <c>AnimationStorage</c>'dan okunur (yalnız test ölçümü).</summary>
-    private static object? AppliedColorClock(SolidColorBrush brush)
-    {
-        var storageType = typeof(System.Windows.Media.Animation.AnimationClock).Assembly
-            .GetType("System.Windows.Media.Animation.AnimationStorage", throwOnError: true)!;
-        var getStorage = storageType.GetMethod("GetStorage",
-            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic,
-            [typeof(DependencyObject), typeof(DependencyProperty)])!;
-        var storage = getStorage.Invoke(null, [brush, SolidColorBrush.ColorProperty]);
-        if (storage is null) return null;
-        var clocksField = storageType.GetField("_animationClocks",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-        // _animationClocks bir FrugalObjectList<AnimationClock>'tur (IList değil) — ToArray ile okunur.
-        var list = clocksField.GetValue(storage);
-        if (list is null) return null;
-        var clocks = (System.Windows.Media.Animation.AnimationClock[])list.GetType().GetMethod("ToArray")!.Invoke(list, null)!;
-        return clocks.Length > 0 ? clocks[0] : null;
-    }
+    /// <summary>Fırçanın <c>Color</c> özelliğine şu an uygulanmış animasyon saati (yoksa null) — okuma tek yerde
+    /// (<see cref="ActiveClockInspector.AppliedClock"/>; [B2 fix 1] reflection eskiden burada satır satır yazılıydı, konsolun kaydırma
+    /// animasyonu testi de aynısına ihtiyaç duyunca ortak yardımcıya taşındı).</summary>
+    private static object? AppliedColorClock(SolidColorBrush brush) =>
+        ActiveClockInspector.AppliedClock(brush, SolidColorBrush.ColorProperty);
 
     /// <summary>
     /// [Review round 1 M-1] Yarım satır kadar kaydırılınca ilk görsel satır EKRANIN ÜSTÜNDE kısmen görünür kalır
@@ -436,7 +423,7 @@ public class ConsoleHoverBandTests
     }
 
     /// <summary>
-    /// [Review round 2 M-2, senaryo b] Aynı scroll offsette (mod değişimi/`ClearRunDocument` sözleşmesi) çok
+    /// [Review round 2 M-2, senaryo b] Aynı scroll offsette (mod değişimi/boş anlatıya yeniden kurulum sözleşmesi) çok
     /// daha KISA bir belgeye geçilirse, eski bantlı satır artık YOK — `_forceHoverRefresh` bayrağı işaretlenmeden
     /// bırakılsaydı belge-Y hâlâ eski (yanlış) aralıkta sayılabilir ve bant, hiçbir satırın olmadığı bir yerde asılı kalırdı.
     /// </summary>
@@ -457,7 +444,7 @@ public class ConsoleHoverBandTests
         Assert.True(((SolidColorBrush)view.HoverBand.Fill).Color.A > 0, "test kurgusu: 5. satır bantlanmalıydı");
 
         // Aynı offsette (0), çok daha KISA bir belgeye geç (mod değişimi sözleşmesi) — eski 5. satır artık YOK.
-        view.ClearRunDocument();
+        view.ReplaceRunDocument(NarrativeSnapshots.FromText(""));
         view.UpdateLayout(); // VisualLinesChanged GERÇEK kablosu burada ateşlenir (RefreshHoverBand'ı tetikler)
 
         // Y hâlâ eski 5. satırın olduğu ekran konumunda ama belge artık tek boş satırdan ibaret — o konum
@@ -473,16 +460,34 @@ public class ConsoleHoverBandTests
     /// yansıtır. Doğru davranış: o anda GEÇİCİ olarak gizlenmek (eşleşme yok, GERÇEKTEN) ama imleç konumunu
     /// SAKLAMAK — biraz sonra gelecek gerçek <c>VisualLinesChanged</c> (yeniden ölçüm bitince) bandı doğru
     /// satırda GERİ GETİRMELİDİR.
+    /// <para>[DEĞİŞEN KURULUM — dalga 2 üçüncü inceleme] İddia aynı; uyaran ve kurulum değişti. Eski hâli
+    /// <c>Editor.ScrollToVerticalOffset(far)</c> ardından <see cref="ConsoleView.OnScrollOffsetChanged"/>'i doğrudan çağırıyordu. Ölçüldü:
+    /// ScrollViewer kaydırma komutunu düzen geçişine erteler — o çağrıdan sonra iki ofset de yerinde kalıyor, olay doğmuyordu; uzak atlama
+    /// hiç gerçekleşmiyordu. Test yine de yeşildi, çünkü doğrudan çağrı chunk yükleyicisini ateşliyordu: takipte kırpılan 100 satır tepeye
+    /// eklenince görsel satırlar geçersizleşti (bant bu yüzden gizlendi), düzen de telafi ofsetinde oturdu (bant bu yüzden geri geldi).
+    /// Kaydırma işleyicisi TextView'in kendi ofsetini okumaya başlayınca yükleyici kurulumun kendi tepeye kaydırmasında çalıştı ve o tesadüf
+    /// kalktı. Yeni uyaran ScrollViewer'ın düzen içinde yaptığı çağrının kendisidir — <c>IScrollInfo.SetVerticalOffset</c> (TextArea →
+    /// TextView): gerçek olay gerçek kablodan, görsel satırlar hâlâ eski bölgedeyken ateşlenir (ön-koşullar pinli). Kurulum tepeye iki kez
+    /// kaydırır: ilki kırpılan satırları geri yükleyip ofseti telafi eder, ikincisi belgenin gerçek tepesine götürür.</para>
+    /// <para>[DEĞİŞEN KURULUM — dalga 3 · B2 fix 1 O2] Eski kurulum bağsız görünüme ham <c>AppendBatch</c>'le basıyordu; kırpılan 100 satır
+    /// görünümün yer tutucu listesine düşüyor, tepeye kaydırmada oradan geri geliyordu. Yer tutucu artık boş backlog'dur (hiçbir şey saklamaz):
+    /// kurulum üretim düzenini kurar — anlatı store'u bağlanır, satırlar önce store'a, sonra batch olarak görünüme. İddia aynı.</para>
     /// </summary>
     [StaFact]
     public void Real_scroll_event_before_relayout_hides_then_the_later_VisualLinesChanged_recovers_the_band()
     {
         var view = Realized(width: 200, height: 80);
-        view.AppendBatch(string.Concat(Enumerable.Range(0, 300).Select(i => $"line{i}\n")));
+        var store = new NarrativeStore();
+        view.BindNarrative(store);
+        NarrativeSnapshots.Deliver(store, view, [.. Enumerable.Range(0, 300).Select(i => $"line{i}")]);
         view.UpdateLayout();
         view.StickToBottom = false;
         view.Editor.ScrollToVerticalOffset(0);
-        view.UpdateLayout();
+        view.UpdateLayout();                    // tepe: kırpılan 100 satır geri yüklenir, ofset telafi edilir
+        view.Editor.ScrollToVerticalOffset(0);
+        view.UpdateLayout();                    // belgenin gerçek tepesi: yüklenecek eski satır kalmadı
+        Assert.StartsWith("line0\n", view.Document.Text);           // ön-koşul: belge tam
+        Assert.Equal(0, view.Editor.TextArea.TextView.ScrollOffset.Y); // ön-koşul: tepede
 
         const double fixedScreenY = 5;
         view.UpdateHoverBand(fixedScreenY);
@@ -491,10 +496,12 @@ public class ConsoleHoverBandTests
         var textView = view.Editor.TextArea.TextView;
         double farOffset = textView.DefaultLineHeight * 250; // eski viewport'un ÇOK ötesinde bir atlama
 
-        // ÜRETİM SIRASI: scroll offset'i değiştir ve GERÇEK ScrollOffsetChanged kablosunun çağırdığı metodu
-        // hemen çağır — UpdateLayout BİLEREK burada henüz çağrılmaz (VisualLines hâlâ ESKİ viewport'u yansıtır).
-        view.Editor.ScrollToVerticalOffset(farOffset);
-        view.OnScrollOffsetChanged();
+        // ÜRETİM SIRASI: ScrollViewer'ın düzen içinde yaptığı çağrı — TextView ofseti değiştirir ve GERÇEK
+        // ScrollOffsetChanged'i (üretim kablosu → OnScrollOffsetChanged) yeniden ölçümden ÖNCE ateşler.
+        // UpdateLayout BİLEREK burada henüz çağrılmaz (VisualLines hâlâ ESKİ viewport'u yansıtır).
+        ((IScrollInfo)view.Editor.TextArea).SetVerticalOffset(farOffset);
+        Assert.Equal(farOffset, textView.ScrollOffset.Y, precision: 1);         // ön-koşul: olay yeni ofsetle doğdu
+        Assert.Equal(1, textView.VisualLines[0].FirstDocumentLine.LineNumber); // ön-koşul: görsel satırlar hâlâ eski bölgede
 
         Assert.Equal(0, ((SolidColorBrush)view.HoverBand.Fill).Color.A); // eski VisualLines'ta karşılık yok → gizlenir
 

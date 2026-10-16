@@ -7,6 +7,7 @@ using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Tests.Supervisor;
+using static BuildOrchestrator.Tests.App.MainWindowHost;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -19,8 +20,6 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 public class RunViewModelTests
 {
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
-
     // [B1/F1 · fix-1] Bu dosyada GERÇEK Supervisor process'i BAŞLATAN (StartAsync çağıran) sekiz test var ve
     // hepsi aynı köke bağlı: üretim varsayılanı (5s, EngineHost.StartupTimeout) yük altında yetmiyor. fix-1
     // öncesi bunlardan yalnız ÜÇÜ (ilk ölçülenler) yamalıydı; yük altındaki koşumda yamasız kalanlardan ikisi
@@ -588,24 +587,34 @@ public class RunViewModelTests
 
     // ---------------------------------------------------------------- 3) log yükleme dikişi
 
+    /// <summary>
+    /// Dikiş tamponun yalnız <c>ThroughLineNumber</c>'ın ötesindeki satırlarını ekler: tekrar yok, kayıp yok.
+    /// <para>[DEĞİŞEN KURULUM — idle-memory spec §6.2] <b>Eski kurulum:</b> dört satırın hepsi istekten ÖNCE loglanıyor ve
+    /// tamponda bekleniyordu; snapshot (Through 2) App'in istekten önce gördüğü 3. ve 4. satırı içermiyordu. Üretimde bu durum
+    /// yoktur: motor her satırı olayını yaymadan önce diske yazar ve flush eder (<c>RunCoordinator.Emit</c>), yani istekten önce
+    /// gelen satır snapshot'tadır — ve tampon artık yalnız bekleyen yüklemenin projesi için, istekten sonra gelen satırları tutar.
+    /// Üretim sırası: line1 istekten önce (yalnız diskte); line2 istekten sonra ama motorun snapshot'ından önce (hem tamponda hem
+    /// snapshot'ta — eşik ayıklar: tekrar yok); line3-4 snapshot'tan sonra (yalnız tamponda — eklenir: kayıp yok). İddia aynı.</para>
+    /// </summary>
     [Fact]
     public async Task LoadProjectLogAsync_stitches_only_buffered_lines_after_ThroughLineNumber_no_duplicates()
     {
-        // Engine hiç başlatılmadı: LoadProjectLogAsync'in SendAsync'i senkron fırlar ve VM içinde yutulur —
-        // dikiş TAMAMEN yerel state'ten (buffered projectLog + chunk) üretilir, gerçek IPC gerekmez.
+        // Engine hiç başlatılmadı: LoadProjectLogAsync'in SendAsync'i senkron fırlar ve VM içinde yutulur — yükleme silahlı
+        // kalır, dikiş yerel state'ten (istekten sonra tamponlanan projectLog + chunk) üretilir, gerçek IPC gerekmez.
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         const string projectId = @"C:\p\a.csproj";
         vm.OnEvent(new ProjectStartedEvent("r1", projectId, "A"));
-        for (int i = 1; i <= 4; i++)
-            vm.OnEvent(new ProjectLogEvent("r1", projectId, i, $"line{i}"));
+        vm.OnEvent(new ProjectLogEvent("r1", projectId, 1, "line1"));   // istekten önce: diskte, tamponlanmaz
 
         // [D4 review §2] Üretimde kart seçimi (SelectedProjectId) LoadProjectLogAsync'ten ÖNCE kurulur
         // (OnSelectedProjectChangedAsync onu SelectedProjectId değişimiyle tetikler); proje modu ancak seçim hâlâ
         // o projedeyse kurulur. Testler bu koşulu birebir modellemeli.
         vm.SelectProject(projectId);
-        var load = vm.LoadProjectLogAsync(projectId); // pending state SENKRON kurulur (ilk await'e kadar)
-        vm.OnEvent(new ProjectLogChunkEvent(projectId, Sequence: 0, "line1\nline2\n", IsLast: true, ThroughLineNumber: 2));
+        var (load, request) = ProjectLogIpc.Request(vm, projectId); // pending state SENKRON kurulur (ilk await'e kadar)
+        for (int i = 2; i <= 4; i++)                  // istekten sonra: line2 snapshot'ta da var, line3-4 yalnız tamponda
+            vm.OnEvent(new ProjectLogEvent("r1", projectId, i, $"line{i}"));
+        vm.OnEvent(ProjectLogIpc.Reply(request, projectId, "line1\nline2\n", through: 2));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Equal("line1\nline2\nline3\nline4\n", vm.GetProjectDocumentText(projectId));
@@ -622,23 +631,27 @@ public class RunViewModelTests
         // TAM O aralığın (artık fix ile var OLMAYAN) sınırında senkron (tek thread, sleep/poll YOK — D8) bir
         // canlı satır enjekte ederek bunu kanıtlar: fix'ten ÖNCE bu satır kaybolur, fix'ten SONRA (atama artık
         // kilit içinde olduğundan kanca zaten güncellenmiş ActiveProjectId'yi görür) satır projeye düşer.
+        // [DEĞİŞEN KURULUM — idle-memory spec §6.2] Eskiden line1-2 istekten ÖNCE loglanıyor ve tampondan dikiliyordu. Tampon
+        // artık yalnız bekleyen yüklemenin projesi için, istekten sonra gelen satırları tutar — istekten önceki satır snapshot'tadır
+        // (motor satırı olayını yaymadan önce diske yazar, RunCoordinator.Emit). Üretim sırası: istek, motor boş bir snapshot alır
+        // (Through 0), line1-2 ondan sonra gelir. İddia aynı.
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         const string projectId = @"C:\p\a.csproj";
         vm.OnEvent(new ProjectStartedEvent("r1", projectId, "A"));
-        vm.OnEvent(new ProjectLogEvent("r1", projectId, 1, "line1"));
-        vm.OnEvent(new ProjectLogEvent("r1", projectId, 2, "line2"));
 
         vm.DebugAfterStitchLockExited = () => vm.OnEvent(new ProjectLogEvent("r1", projectId, 3, "race-line3"));
 
         // [D4 review §2] Seçim üretimde load'dan önce kurulur; proje modu (ActiveProjectId) ancak seçim hâlâ
         // o projedeyken kurulur — bu test tam da o modun kurulduğunu (race-line3'ün projeye düşmesi) doğrular.
         vm.SelectProject(projectId);
-        // ThroughLineNumber=0: disk chunk boş, dikiş TÜMÜYLE tamponlanmış canlı satırlardan (line1, line2 —
+        // ThroughLineNumber=0: disk chunk boş, dikiş TÜMÜYLE istekten sonra tamponlanan canlı satırlardan (line1, line2 —
         // kilit çalıştığı ANDA _liveLines'ta zaten var) üretilir; race-line3 kanca ile kilit KAPANDIKTAN SONRA
         // enjekte edilir — snapshot'ın parçası DEĞİLDİR, yalnız (fix ile) güncel ActiveProjectId sayesinde canlı eklenir.
-        var load = vm.LoadProjectLogAsync(projectId);
-        vm.OnEvent(new ProjectLogChunkEvent(projectId, Sequence: 0, "", IsLast: true, ThroughLineNumber: 0));
+        var (load, request) = ProjectLogIpc.Request(vm, projectId);
+        vm.OnEvent(new ProjectLogEvent("r1", projectId, 1, "line1"));   // istekten sonra, snapshot'ın ötesinde
+        vm.OnEvent(new ProjectLogEvent("r1", projectId, 2, "line2"));
+        vm.OnEvent(ProjectLogIpc.Reply(request, projectId, "", through: 0));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Equal("line1\nline2\nrace-line3\n", vm.GetProjectDocumentText(projectId));
@@ -648,27 +661,37 @@ public class RunViewModelTests
            // eski run'ın _liveLines/_projectText'te kalan tortusu yeni dikişe SIZMAMALI.
     public async Task Second_Rebuild_clears_stitch_buffers_so_old_run_lines_do_not_leak_into_new_stitch()
     {
+        // [DEĞİŞEN KURULUM — idle-memory spec §6.2] Eskiden ilk run'ın satırları yüklemesiz tamponlanıyordu (koşunun her satırı
+        // tutulurdu) ve ikinci run'ın iki satırı da istekten ÖNCE loglanıp tampondan dikiliyordu. Tampon artık yalnız bekleyen
+        // yüklemenin projesi için, istekten sonra gelen satırları tutar — istekten önceki satır snapshot'tadır (motor satırı olayını
+        // yaymadan önce diske yazar, RunCoordinator.Emit). Eski run'ın tortusu tampona ancak cevabı gelmemiş, silahlı kalmış bir
+        // yükleme üzerinden kalır: ilk run'da P'nin logu istenir (gönderim düşer, yükleme silahlı kalır) ve satırlar istekten sonra
+        // gelir. İkinci run'da new-line1 istekten önce (snapshot'ta), new-line2 sonra (kuyruk). İddia aynı: eski satır sızmaz —
+        // yeni işlem tamponu temizler ve cevabı artık beklenmeyen silahlı eski yüklemeyi bitirir (aşağıdaki 0; final review 86).
         await using var engine = new EngineHost(TestPaths.SupervisorExe); // hiç başlatılmadı — startRun senkron atılır, VM içinde yutulur
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         const string projectId = @"C:\p\a.csproj";
 
-        // --- ilk run: P için 1..4 satır, run tamamlanır ---
+        // --- ilk run: P'nin logu istenir (yanıt gelmez, yükleme silahlı kalır), 1..4 satır istekten sonra gelir, run tamamlanır ---
         await vm.RebuildCommand.ExecuteAsync(null);
         vm.OnEvent(new ProjectStartedEvent("r1", projectId, "A"));
+        await vm.LoadProjectLogAsync(projectId);
         for (int i = 1; i <= 4; i++)
             vm.OnEvent(new ProjectLogEvent("r1", projectId, i, $"old-line{i}"));
         vm.OnEvent(new ProjectSucceededEvent("r1", projectId, 100));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 100));
+        Assert.Equal(4, vm.LiveLineCount); // ön-koşul: eski run'ın kuyruğu tamponda — sızma tehdidi gerçek
 
         // --- ikinci Rebuild: proje log dosyası sıfırdan yazılıyor, satır no'ları yeniden 1'den başlıyor ---
         await vm.RebuildCommand.ExecuteAsync(null); // buffer'lar burada temizlenmeli (fix ÖNCESİ: temizlenmez)
+        Assert.Equal(0, vm.LiveLineCount);
         vm.OnEvent(new ProjectStartedEvent("r1", projectId, "A"));
-        for (int i = 1; i <= 2; i++)
-            vm.OnEvent(new ProjectLogEvent("r1", projectId, i, $"new-line{i}"));
+        vm.OnEvent(new ProjectLogEvent("r1", projectId, 1, "new-line1")); // istekten önce: diskte, snapshot'ta
 
         // Karta tıklama: disk snapshot ikinci run'ın 1. satırını kapatıyor (ThroughLineNumber=1)
-        var load = vm.LoadProjectLogAsync(projectId);
-        vm.OnEvent(new ProjectLogChunkEvent(projectId, 0, "new-line1\n", IsLast: true, ThroughLineNumber: 1));
+        var (load, request) = ProjectLogIpc.Request(vm, projectId);
+        vm.OnEvent(new ProjectLogEvent("r1", projectId, 2, "new-line2")); // istekten sonra: dikişin kuyruğu
+        vm.OnEvent(ProjectLogIpc.Reply(request, projectId, "new-line1\n", through: 1));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
 
         var text = vm.GetProjectDocumentText(projectId);
@@ -676,21 +699,60 @@ public class RunViewModelTests
         Assert.DoesNotContain("old-line", text);
     }
 
-    [Fact] // [Fix wave 1(It-3), Finding 2] Skipped proje (cycle üyesi) hiç log dosyası taşımaz — Supervisor
-           // error(logNotFound) döner; pending Completion tamamlanmazsa await SONSUZA DEK asılı kalır.
-    public async Task LoadProjectLogAsync_completes_on_logNotFound_instead_of_hanging_forever()
+    /// <summary>[Fix wave 1(It-3), Finding 2] Skipped proje (cycle üyesi) hiç log dosyası taşımaz — motor "log yok" der; pending
+    /// Completion tamamlanmazsa await SONSUZA DEK asılı kalır.
+    /// <para>[DEĞİŞEN KURULUM — idle-memory I1] <b>Eski kurulum</b> (<c>..._completes_on_logNotFound_...</c>): motorun cevabı
+    /// <c>error(logNotFound)</c>'du. "Log yok" artık isteğin kimliğini yankılayan tek, boş, bayraklı bir chunk'tır (motor tarafı:
+    /// <c>ProjectLogStreamTests</c>) ve her cevap gibi dikilir. İddia aynı: yükleme biter, asılı kalmaz.</para>
+    /// <para>[idle-memory · final review (group A)] <b>Eskiden boşta yeşildi:</b> motor yoktu ve gönderim kabul edilmiyordu — istek
+    /// senkron düşer, awaiter cevaptan ÖNCE serbest kalırdı ve <c>WaitAsync</c> hiçbir cevap olmadan da geçerdi. Şimdi gönderim
+    /// kabul edilir (<c>AcceptSends</c>) ve cevap gelmeden yükleme gerçekten bekliyor olmalı (<c>HasPendingLogLoad</c>, tamamlanmamış
+    /// awaiter): görevi bitiren "log yok" cevabıdır.</para></summary>
+    [Fact]
+    public async Task LoadProjectLogAsync_completes_on_a_no_log_answer_instead_of_hanging_forever()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        MainWindowHost.AcceptSends(vm);                                  // istek motora gider: cevabı beklenir
         const string projectId = @"C:\p\skipped.csproj";
         vm.OnEvent(new ProjectSkippedEvent("r1", projectId, "bağımlılık döngüsünde"));
 
-        var load = vm.LoadProjectLogAsync(projectId);
-        vm.OnEvent(new ErrorEvent("logNotFound", projectId));
+        var (load, request) = ProjectLogIpc.Request(vm, projectId);
+        Assert.True(vm.HasPendingLogLoad);                               // ön-koşul: cevap bekleniyor
+        Assert.False(load.IsCompleted);                                  // ve awaiter cevaptan ÖNCE serbest kalmadı
+        vm.OnEvent(ProjectLogIpc.NotFound(request, projectId));
 
         // Sınırlı bekleme [D8]: fix ÖNCESİ hiçbir şey Completion'ı tamamlamaz → WaitAsync timeout ile FAIL.
         await load.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Null(vm.ActiveProjectId); // dikiş hiç kurulmadı — proje moduna geçilmedi, VM tutarlı kaldı
+        Assert.False(vm.HasPendingLogLoad);                              // "log yok" yüklemeyi bitirdi
+        // Kart SEÇİLMEDİ (SelectProject yok): "log yok" da bir dikiş olarak yüklemeyi bitirir ama proje moduna geçişi seçim sürer
+        // (guard2, EnterProjectMode) — ActiveProjectId kurulmaz, VM anlatıda tutarlı kalır.
+        Assert.Null(vm.ActiveProjectId);
+    }
+
+    /// <summary>
+    /// [idle-memory · final review (group A)] <b>"Log yok" cevabı anlatıya hata satırı yazmaz.</b> Eskiden motorun cevabı
+    /// <c>error(logNotFound)</c>'du ve <c>OnError</c> her hatayı anlatıya <c>[error] code: message</c> diye yazardı: bir kartı
+    /// logsuz bir projeye tıklamak konsolun altına kırmızı bir satır düşürürdü. Artık cevap bir chunk'tır (hata olayı değil) ve
+    /// anlatıya hiçbir şey eklemez.
+    /// </summary>
+    [Fact]
+    public async Task A_card_without_a_log_writes_no_error_line_to_the_narrative()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        MainWindowHost.AcceptSends(vm);
+        const string p = @"C:\p\skipped.csproj";
+        vm.OnEvent(new ProjectSkippedEvent("r1", p, "cycle"));
+
+        vm.SelectProject(p);
+        var (load, request) = ProjectLogIpc.Request(vm, p);
+        Assert.True(vm.HasPendingLogLoad);                               // ön-koşul: cevap bekleniyor
+        vm.OnEvent(ProjectLogIpc.NotFound(request, p));
+        await load.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(p, vm.ActiveProjectId);                             // sayfa açıldı (kart seçili): cevap gerçekten işlendi
+        Assert.DoesNotContain("[error]", vm.GetRunDocumentText(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -700,28 +762,185 @@ public class RunViewModelTests
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         const string projectId = @"C:\p\a.csproj";
 
-        var load = vm.LoadProjectLogAsync(projectId);
-        vm.OnEvent(new ProjectLogChunkEvent(projectId, 0, "line1\n", IsLast: false, ThroughLineNumber: 2));
-        vm.OnEvent(new ProjectLogChunkEvent(projectId, 1, "line2\n", IsLast: true, ThroughLineNumber: 2));
+        var (load, request) = ProjectLogIpc.Request(vm, projectId);
+        vm.OnEvent(ProjectLogIpc.Reply(request, projectId, "line1\n", through: 2, sequence: 0, isLast: false));
+        vm.OnEvent(ProjectLogIpc.Reply(request, projectId, "line2\n", through: 2, sequence: 1, isLast: true));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Equal("line1\nline2\n", vm.GetProjectDocumentText(projectId));
     }
 
+    /// <summary>[idle-memory · kopya YASAK] Proje log isteği de motora her komutun yolundan gider: komut gözlemcisi
+    /// (<c>DebugOnCommandSent</c>) onu da görür ve gönderimi aynı dikiş (<c>DebugSendOverride</c>) üstlenir. Yönlendirme iki yerde
+    /// ayrı yazılmıştı ve çoktan ayrışmıştı: istek gözlemciyi atlıyordu.
+    /// <para>[DEĞİŞEN KURULUM — idle-memory I1] Gözlenen komut eskiden <c>new GetProjectLogCommand(projectId)</c>'ye EŞİTTİ; istek
+    /// artık kendi kimliğini taşır (her yükleme yeni bir kimlik), bu yüzden proje karşılaştırılır ve cevap o kimliği yankılar —
+    /// gözlenen isteğin gerçekten giden istek olduğunu cevabın yüklemeyi bitirmesi gösterir. İddia aynı.</para></summary>
+    [Fact]
+    public async Task LoadProjectLogAsync_sends_its_request_on_the_route_of_every_command()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string projectId = @"C:\p\a.csproj";
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+        MainWindowHost.AcceptSends(vm);
+
+        var load = vm.LoadProjectLogAsync(projectId);
+
+        var request = Assert.IsType<GetProjectLogCommand>(Assert.Single(sent));   // KIRMIZI: istek gözlemciyi atlıyordu
+        Assert.Equal(projectId, request.ProjectId);
+        Assert.True(vm.HasPendingLogLoad);                                         // gönderim dikişten geçti: cevap bekleniyor
+        vm.OnEvent(ProjectLogIpc.NotFound(request.RequestId, projectId));
+        await load.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    /// <summary>
+    /// [idle-memory · I1] <b>Yerini yenisine bırakmış bir isteğin gecikmiş cevabı yeni yüklemeye dikilmez: cevap isteğiyle
+    /// kimliğinden eşleşir.</b> Kart hızla P → Q → P seçilir ve ilk isteğin cevabı (snapshot 1. satıra kadar) üçüncü istek beklerken
+    /// gelir. Canlı satır tamponu yalnız bekleyen yüklemenin projesi için, istekten sonra tutulur — üçüncü isteğin tamponu p4'le
+    /// başlar. Eskiden chunk yalnız projesinden eşleşiyordu: ilk cevap P'nin YENİ yüklemesine dikiliyor, arada loglanan p2 ve p3
+    /// ne snapshot'ta ne tamponda olduğu için sayfada sessiz bir delik kalıyordu; üçüncü isteğin doğru cevabı da (yükleme bitmişti)
+    /// yok sayılıyordu.
+    /// </summary>
+    [Fact]
+    public async Task A_late_reply_to_a_superseded_request_is_not_stitched_into_the_newer_load()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        MainWindowHost.AcceptSends(vm);                                  // istekler motora gider: cevapları beklenir
+        const string p = @"C:\p\p.csproj", q = @"C:\p\q.csproj";
+        vm.OnEvent(new ProjectStartedEvent("r1", p, "P"));
+        vm.OnEvent(new ProjectLogEvent("r1", p, 1, "p1"));
+
+        vm.SelectProject(p);
+        var (_, first) = ProjectLogIpc.Request(vm, p);                   // P — istek 1
+        vm.OnEvent(new ProjectLogEvent("r1", p, 2, "p2"));
+        vm.SelectProject(q);
+        var (_, second) = ProjectLogIpc.Request(vm, q);                  // Q — istek 2, P'nin yüklemesi biter
+        vm.OnEvent(new ProjectLogEvent("r1", p, 3, "p3"));
+        vm.SelectProject(p);
+        var (load, third) = ProjectLogIpc.Request(vm, p);                // yine P — istek 3
+        vm.OnEvent(new ProjectLogEvent("r1", p, 4, "p4"));
+
+        // Motor cevapları istek sırasıyla yazar: istek 1'in snapshot'ı 1. satıra, istek 3'ünkü 3. satıra kadar.
+        vm.OnEvent(ProjectLogIpc.Reply(first, p, "p1\n", through: 1));
+        vm.OnEvent(ProjectLogIpc.Reply(second, q, "", through: 0));
+        vm.OnEvent(ProjectLogIpc.Reply(third, p, "p1\np2\np3\n", through: 3));
+        await load.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal("p1\np2\np3\np4\n", vm.GetProjectDocumentText(p));   // KIRMIZI: "p1\np4\n" — p2 ve p3 delikte
+        Assert.Equal(p, vm.ActiveProjectId);
+    }
+
+    /// <summary>
+    /// [idle-memory · I1] <b>Başka bir isteğin gecikmiş "log yok" cevabı bekleyen yüklemeyi bitirmez.</b> P'nin logu istenir (henüz
+    /// logu yok), cevap gelmeden Q seçilir; P'nin "log yok" cevabı Q beklerken gelir. Cevap isteğinin kimliğini taşır ve yok sayılır:
+    /// Q'nun yüklemesi kendi cevabını bekler ve onu diker.
+    /// <para>KIRMIZI (bugünkü telde gösterildi): "log yok" <c>error(logNotFound)</c> olarak geliyordu — ne istek ne proje taşıyordu
+    /// ve bekleyen HER yüklemeyi bitiriyordu: Q'nun yüklemesi P'nin cevabıyla bitti (Q'nun boş sayfası açıldı), Q'nun gerçek
+    /// chunk'ları yok sayıldı. Cevap artık isteğinin kimliğini taşıyan bir chunk'tır.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_late_no_log_answer_to_another_request_does_not_end_the_pending_load()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        MainWindowHost.AcceptSends(vm);
+        const string p = @"C:\p\p.csproj", q = @"C:\p\q.csproj";
+        vm.OnEvent(new ProjectStartedEvent("r1", q, "Q"));
+
+        vm.SelectProject(p);
+        var (_, first) = ProjectLogIpc.Request(vm, p);                   // P: henüz logu yok
+        vm.SelectProject(q);
+        var (load, second) = ProjectLogIpc.Request(vm, q);
+
+        vm.OnEvent(ProjectLogIpc.NotFound(first, p));                    // P'nin gecikmiş "log yok" cevabı
+        Assert.True(vm.HasPendingLogLoad);                               // Q'nun yüklemesi hâlâ kendi cevabını bekliyor
+        vm.OnEvent(ProjectLogIpc.Reply(second, q, "q1\n", through: 1));
+        await load.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal("q1\n", vm.GetProjectDocumentText(q));
+        Assert.Equal(q, vm.ActiveProjectId);
+    }
+
+    /// <summary>
+    /// [idle-memory · final review (group A)] <b>Aynı projenin önceki isteğinin gecikmiş "log yok" cevabı da bekleyen yüklemeyi
+    /// bitirmez.</b> Önceki test başka bir projenin cevabını sınar (proje eşleşmesi tek başına bunu da yakalardı); burada AYNI proje:
+    /// P seçilir ve logu istenir, cevap gelmeden kart bırakılıp P yeniden seçilir, ikinci istek bekler. İlk isteğin "log yok" cevabı
+    /// ikinci istek beklerken gelir — proje AYNI olduğu için yalnız isteğin kimliği onu ayırt eder. Yok sayılmazsa ikinci yükleme
+    /// boş sayfayla biter, P'nin gerçek logu (ikinci isteğin cevabı, bu sırada artık dosyası var) yok sayılırdı.
+    /// </summary>
+    [Fact]
+    public async Task A_late_no_log_answer_to_an_earlier_request_for_the_same_project_does_not_end_the_pending_load()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        MainWindowHost.AcceptSends(vm);
+        const string p = @"C:\p\p.csproj";
+        vm.OnEvent(new ProjectStartedEvent("r1", p, "P"));
+
+        vm.SelectProject(p);
+        var (_, first) = ProjectLogIpc.Request(vm, p);                   // P — istek 1: henüz logu yok
+        vm.SelectProject(null);                                          // kart bırakıldı…
+        vm.SelectProject(p);                                             // …ve P yeniden seçildi
+        var (load, second) = ProjectLogIpc.Request(vm, p);               // P — istek 2
+
+        vm.OnEvent(ProjectLogIpc.NotFound(first, p));                    // istek 1'in gecikmiş "log yok" cevabı
+        Assert.True(vm.HasPendingLogLoad);                               // istek 2 hâlâ kendi cevabını bekliyor
+        Assert.False(load.IsCompleted);
+        vm.OnEvent(ProjectLogIpc.Reply(second, p, "p1\n", through: 1));  // motorun gerçek cevabı (log artık var)
+        await load.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal("p1\n", vm.GetProjectDocumentText(p));              // KIRMIZI proje-yalnız eşleşmede: "" (boş sayfa)
+        Assert.Equal(p, vm.ActiveProjectId);
+    }
+
+    /// <summary>
+    /// [idle-memory · I1 · 104] <b>İstek ile "log yok" cevabı arasında gelen satırlar sayfadadır:</b> "log yok" boş bir snapshot'tır
+    /// (<c>Through 0</c>) ve her cevap gibi dikilir. Proje tam motorun cevabından sonra başladı: ilk satırı arka plan thread'inde
+    /// (marshal'sız) işlenir, cevap ise UI thread'ine sıralanır — App satırı cevaptan ÖNCE görür ve bekleyen yüklemenin tamponuna
+    /// alır. Eskiden "log yok" (<c>error(logNotFound)</c>) yüklemeyi dikmeden bitiriyor ve tamponu bırakıyordu: satır ne sayfada ne
+    /// tamponda kalıyordu (KIRMIZI bugünkü telde gösterildi: sayfa "").
+    /// </summary>
+    [Fact]
+    public async Task Lines_logged_between_the_request_and_a_no_log_answer_are_on_the_page()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        MainWindowHost.AcceptSends(vm);
+        const string p = @"C:\p\p.csproj";
+
+        vm.SelectProject(p);
+        var (load, request) = ProjectLogIpc.Request(vm, p);              // motor bu proje için henüz log görmedi
+        vm.OnEvent(new ProjectStartedEvent("r1", p, "P"));
+        vm.OnEvent(new ProjectLogEvent("r1", p, 1, "p1"));               // proje cevaptan hemen sonra başladı
+        vm.OnEvent(ProjectLogIpc.NotFound(request, p));                  // motorun cevabı: "log yok"
+        await load.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal("p1\n", vm.GetProjectDocumentText(p));              // KIRMIZI: "" — satır sayfada değildi
+        Assert.Equal(p, vm.ActiveProjectId);
+        Assert.Equal(0, vm.LiveLineCount);
+    }
+
     // ---------------------------------------------------------------- 4) run dokümanı proje modunda bile birikir
 
+    /// <summary>Proje modundayken başka bir projenin satırı da anlatıya düşer (ekranda görünmese de) ve açık sayfaya sızmaz.
+    /// <para>[DEĞİŞEN KURULUM — idle-memory dalga 2 · spec §6.5] VM kompakt konsolu açıkça KAPALI kurar: eskiden her proje satırı
+    /// anlatıya aynen girerdi; üretim varsayılanı artık kompakt kiptir ve "b-line" bilgi satırını gizler. İddia aynı, tam kipte —
+    /// kompakt kipte anlatının proje modunda da (süzülmüş) biriktiği <see cref="CompactConsoleTests"/>'tedir.</para></summary>
     [Fact]
     public async Task ProjectLog_always_accumulates_into_the_run_document_even_in_project_mode()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { CompactConsole = false };
         const string a = @"C:\p\a.csproj";
         const string b = @"C:\p\b.csproj";
         vm.OnEvent(new ProjectStartedEvent("r1", a, "A"));
         vm.OnEvent(new ProjectStartedEvent("r1", b, "B"));
 
-        var load = vm.LoadProjectLogAsync(a);
-        vm.OnEvent(new ProjectLogChunkEvent(a, 0, "", IsLast: true, ThroughLineNumber: 0));
+        var (load, request) = ProjectLogIpc.Request(vm, a);
+        vm.OnEvent(ProjectLogIpc.Reply(request, a, "", through: 0));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
 
         // Artık proje modundayız (ActiveProjectId == a); B için gelen canlı satır YİNE run dokümanına düşmeli.
@@ -738,8 +957,8 @@ public class RunViewModelTests
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         const string a = @"C:\p\a.csproj";
         vm.SelectProject(a); // [D4 review §2] proje modu ancak seçim o projedeyken kurulur
-        var load = vm.LoadProjectLogAsync(a);
-        vm.OnEvent(new ProjectLogChunkEvent(a, 0, "", IsLast: true, ThroughLineNumber: 0));
+        var (load, request) = ProjectLogIpc.Request(vm, a);
+        vm.OnEvent(ProjectLogIpc.Reply(request, a, "", through: 0));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(a, vm.ActiveProjectId);
 
@@ -769,7 +988,7 @@ public class RunViewModelTests
         // (1) kart A seç → yükleme uçuşta (engine ölü → SendAsync senkron fırlar; pending yine de kurulur ve
         //     SendAsync-throws yolu onu BİLEREK null'LAMAZ — gecikmiş bir chunk hâlâ eşleşip dikişi tamamlayabilsin).
         vm.SelectProject(a);
-        var load = vm.LoadProjectLogAsync(a);
+        var (load, request) = ProjectLogIpc.Request(vm, a);
         await load.WaitAsync(TimeSpan.FromSeconds(5));
 
         // (2) IPC dönmeden kullanıcı A'yı bırakır.
@@ -777,7 +996,7 @@ public class RunViewModelTests
         Assert.Null(vm.SelectedProjectId);
 
         // (3) A'nın gecikmiş IsLast chunk'ı gelir — dikiş HER ZAMAN yapılır AMA seçim artık A değil → mod KURULMAZ.
-        vm.OnEvent(new ProjectLogChunkEvent(a, 0, "disk\n", IsLast: true, ThroughLineNumber: 0));
+        vm.OnEvent(ProjectLogIpc.Reply(request, a, "disk\n", through: 0));
         Assert.Null(vm.ActiveProjectId);                            // TAKILI DEĞİL (fix'siz kod burada "a" bırakır)
         Assert.Equal("disk\n", vm.GetProjectDocumentText(a));       // dikiş yine de hazır (re-select için)
 
@@ -1324,6 +1543,10 @@ public class RunViewModelTests
         await using var engine = sandbox.IsolatedEngineHost(WideStartupTimeout); // [B1/F1] gerçek engine BAŞLATILIYOR — bkz. sınıf başındaki sabit
         await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = root };
+        // [idle-memory · dalga 2] Motor runStarted'la sandbox'taki koşu klasörünü bildirir ve VM anlatıyı oraya yayar: spool, test nasıl
+        // biterse bitsin (düşen bir iddia, zaman aşımı, Skip) sandbox silinmeden önce kapanır — açık dosya klasörün silinmesini
+        // engellerdi (sandbox o hatayı yutar, klasör sızardı). Kapsam sandbox'tan SONRA tanımlıdır: önce kapanır.
+        using var spool = new SpoolScope(vm.Narrative);
         var final = new TaskCompletionSource<IpcEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
         // [teşhis — tam süitte tek seferlik zaman aşımı, 2026-10-08] Hangi olaya kadar gelindiği: bekçi düşerse mesaj söyler.
         var seen = new System.Collections.Concurrent.ConcurrentQueue<string>();
@@ -2714,8 +2937,7 @@ public class RunViewModelTests
         vm.SelectProject(A);
         int streamBefore = vm.StreamEvents.Count;
         Assert.True(streamBefore > 0, "ön-koşul: akışta önceki Sync'in satırı yok — vakum");
-        var sent = new List<IpcCommand>();
-        vm.DebugOnCommandSent = sent.Add;
+        var sent = SentCommands.RecordOn(vm);
 
         Assert.True(await vm.SyncSilentlyAsync(SilentSyncReason.Commit));
 
@@ -2844,8 +3066,7 @@ public class RunViewModelTests
         using var sandbox = new SupervisorSandbox();
         await using var engine = await StartedEngineAsync(sandbox);
         var vm = SyncedTwoRowVm(engine);
-        var sent = new List<IpcCommand>();
-        vm.DebugOnCommandSent = sent.Add;
+        var sent = SentCommands.RecordOn(vm);
         string line = Core.Planning.PlanProgressLines.SwitchedBranch("main", "feature", "2222222");
 
         Assert.True(await vm.SyncAfterExternalBranchChangeAsync(line));
@@ -2867,8 +3088,7 @@ public class RunViewModelTests
         var posted = new Queue<Action>();
         vm.EnableAutoSync(posted.Enqueue, _ => new Core.Git.HeadState("main", CommittedSha), () => new FakeHeadWatcher());
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
-        var sent = new List<IpcCommand>();
-        vm.DebugOnCommandSent = sent.Add;
+        var sent = SentCommands.RecordOn(vm);
 
         await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.Commit);
         Assert.Empty(sent);
@@ -2892,8 +3112,7 @@ public class RunViewModelTests
         var vm = SyncedTwoRowVm(engine);
         var posted = new Queue<Action>();
         vm.EnableAutoSync(posted.Enqueue, _ => new Core.Git.HeadState("main", CommittedSha), () => new FakeHeadWatcher());
-        var sent = new List<IpcCommand>();
-        vm.DebugOnCommandSent = sent.Add;
+        var sent = SentCommands.RecordOn(vm);
 
         await vm.PullRepositoryCommand.ExecuteAsync(null);
         await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.Other); // pull'un reflog satırı
@@ -2958,15 +3177,19 @@ public class RunViewModelTests
 
     // ---------------------------------------------------------------- [T8 · spec §6.1 · §6.2 · karar 10] koşu sırasında branch
 
-    private const string RunLogDirectory = @"D:\logs\2026-09-19_10-00-00";
-
     /// <summary>Sync'lenmiş iki satırlı workspace'te B'yi derleyen bir koşu uçuşta; HEAD sahte ve <paramref name="head"/>
-    /// değişkeninden okunur, UI kuyruğu <paramref name="posted"/>'tır.</summary>
-    private static RunViewModel MidRunVm(EngineHost engine, Queue<Action> posted, Func<Core.Git.HeadState> head)
+    /// değişkeninden okunur, UI kuyruğu <paramref name="posted"/>'tır.
+    /// <para>[idle-memory · dalga 2] <paramref name="logDirectory"/> koşunun bildirdiği koşu klasörüdür; özet satırı onu yazar
+    /// ("logs: …") ve VM anlatıyı oraya yayar. Eskiden var olmayan sabit bir klasördü (<c>D:\logs\2026-09-19_10-00-00</c>): spool'la o
+    /// yol her koşuda konsola bir "could not be written" uyarısı düşürür, klasör bir makinede varsa oraya dosya yazardı. Özeti
+    /// sınamayan testler klasör vermez (<c>null</c> — spool yok); özeti sınayanlar geçici bir klasör verir ve testin açtığı yeni bölüm
+    /// spool'u kapatır.</para></summary>
+    private static RunViewModel MidRunVm(EngineHost engine, Queue<Action> posted, Func<Core.Git.HeadState> head,
+        string? logDirectory = null)
     {
         var vm = SyncedTwoRowVm(engine);
         vm.EnableAutoSync(posted.Enqueue, _ => head(), () => new FakeHeadWatcher());
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug", LogDirectory: RunLogDirectory));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug", LogDirectory: logDirectory));
         vm.OnEvent(new BuildPreviewEvent([ // motor runStarted'ın hemen ardından önizlemeyi yayınlar: kapsam = B
             new BuildPreviewItem(A, "A", false, Reason: WillBuildReason.UpToDate),
             new BuildPreviewItem(B, "B", true, Reason: WillBuildReason.SignatureChanged, OwnFilesChanged: true),
@@ -2985,8 +3208,7 @@ public class RunViewModelTests
         await using var engine = await StartedEngineAsync(sandbox);
         var posted = new Queue<Action>();
         var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("feature", CommittedSha));
-        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
-        vm.DebugOnCommandSent = sent.Enqueue;
+        var sent = SentCommands.RecordOn(vm);
 
         await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
         await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
@@ -3007,10 +3229,11 @@ public class RunViewModelTests
     {
         using var sandbox = new SupervisorSandbox();
         await using var engine = await StartedEngineAsync(sandbox);
+        using var logs = new TempDir(); // koşu klasörü — spool'u testin açtığı yeni bölüm, düşen bir testte kapsam kapatır
         var posted = new Queue<Action>();
-        var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("feature", CommittedSha));
-        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
-        vm.DebugOnCommandSent = sent.Enqueue;
+        var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("feature", CommittedSha), logs.Path);
+        using var spool = new SpoolScope(vm.Narrative); // klasörden SONRA tanımlı: önce kapanır
+        var sent = SentCommands.RecordOn(vm);
         await vm.StopCommand.ExecuteAsync(null);
         vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
         Drain(posted);
@@ -3026,7 +3249,7 @@ public class RunViewModelTests
 
         Assert.Single(sent.OfType<SyncWorkspaceCommand>());
         string text = vm.GetRunDocumentText().ReplaceLineEndings("\n");
-        Assert.DoesNotContain(Core.Planning.PlanProgressLines.RunInterruptedByBranchChange(0, 1, RunLogDirectory), text, StringComparison.Ordinal);
+        Assert.DoesNotContain(Core.Planning.PlanProgressLines.RunInterruptedByBranchChange(0, 1, logs.Path), text, StringComparison.Ordinal);
         Assert.StartsWith(Core.Planning.PlanProgressLines.SwitchedBranch("main", "feature", "2222222"), text, StringComparison.Ordinal);
         vm.DisableAutoSync();
     }
@@ -3039,8 +3262,7 @@ public class RunViewModelTests
         await using var engine = await StartedEngineAsync(sandbox);
         var posted = new Queue<Action>();
         var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("main", CommittedSha));
-        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
-        vm.DebugOnCommandSent = sent.Enqueue;
+        var sent = SentCommands.RecordOn(vm);
 
         await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.Commit);
         Drain(posted);
@@ -3058,10 +3280,11 @@ public class RunViewModelTests
     {
         using var sandbox = new SupervisorSandbox();
         await using var engine = await StartedEngineAsync(sandbox);
+        using var logs = new TempDir(); // koşu klasörü — özet onu yazar; spool'u yeni bölüm, düşen bir testte kapsam kapatır
         var posted = new Queue<Action>();
-        var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("feature", CommittedSha));
-        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
-        vm.DebugOnCommandSent = sent.Enqueue;
+        var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("feature", CommittedSha), logs.Path);
+        using var spool = new SpoolScope(vm.Narrative); // klasörden SONRA tanımlı: önce kapanır
+        var sent = SentCommands.RecordOn(vm);
 
         await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
         vm.OnEvent(new ProjectSucceededEvent("r1", B, 300, Trusted: false));
@@ -3070,7 +3293,8 @@ public class RunViewModelTests
         Drain(posted);
 
         Assert.False(Assert.Single(sent.OfType<SyncWorkspaceCommand>()).Fetch);
-        string summary = Core.Planning.PlanProgressLines.RunInterruptedByBranchChange(0, 1, RunLogDirectory);
+        Assert.False(vm.Narrative.IsSpooling); // yeni bölüm koşunun spool'unu kapattı
+        string summary = Core.Planning.PlanProgressLines.RunInterruptedByBranchChange(0, 1, logs.Path);
         string switched = Core.Planning.PlanProgressLines.SwitchedBranch("main", "feature", "2222222");
         Assert.StartsWith(summary + "\n" + switched, vm.GetRunDocumentText().ReplaceLineEndings("\n"), StringComparison.Ordinal);
         vm.DisableAutoSync();
@@ -3095,8 +3319,7 @@ public class RunViewModelTests
         await using var engine = await StartedEngineAsync(sandbox);
         var posted = new Queue<Action>();
         var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("feature", CommittedSha));
-        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
-        vm.DebugOnCommandSent = sent.Enqueue;
+        var sent = SentCommands.RecordOn(vm);
         int answered = 0;
 
         await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
@@ -3154,8 +3377,7 @@ public class RunViewModelTests
         ]));
         vm.OnEvent(new ProjectStartedEvent("r1", A, "A"));
         vm.OnEvent(new ProjectSucceededEvent("r1", A, 300));
-        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
-        vm.DebugOnCommandSent = sent.Enqueue;
+        var sent = SentCommands.RecordOn(vm);
 
         await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
         vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
@@ -3179,8 +3401,7 @@ public class RunViewModelTests
         vm.EnableAutoSync(posted.Enqueue, _ => new Core.Git.HeadState("feature", CommittedSha), () => new FakeHeadWatcher());
         var choreography = new TaskCompletionSource();
         vm.OperationChoreography = _ => choreography.Task;
-        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
-        vm.DebugOnCommandSent = sent.Enqueue;
+        var sent = SentCommands.RecordOn(vm);
 
         var build = vm.BuildCommand.ExecuteAsync(null);
         await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
@@ -3196,6 +3417,40 @@ public class RunViewModelTests
         vm.DisableAutoSync();
     }
 
+    /// <summary>[idle-memory · dalga 3 · karar 37 · PİN] Açılış koreografisinde geri alınan Build'in özeti — önceki bir koşunun klasörü
+    /// bilinirken de — log klasörü ANMAZ: geri alınan koşu hiç başlamadı, klasörü yoktur. Önceki koşunun klasörü yine de silinmez: App'in son
+    /// koşu klasörünün TEK sahibi alanı onu bir sonraki koşu başlayana dek tutar (proje log isteği taşır); özetin "klasörsüz" bilgisi kesme
+    /// kaydındadır.
+    /// <para>PİN: davranış değişmedi (eski kod özetin klasörünü bu kesmede siliyordu); bu test klasörün tek sahibe taşınmasında özete
+    /// sızmasını yakalar.</para></summary>
+    [Fact]
+    public async Task An_interrupt_during_the_opening_choreography_names_no_folder_even_after_an_earlier_run()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
+        using var logs = new TempDir(); // önceki koşunun klasörü — spool'unu Build'in yeni bölümü kapatır, düşen bir testte kapsam kapatır
+        var posted = new Queue<Action>();
+        var vm = SyncedTwoRowVm(engine);
+        using var spool = new SpoolScope(vm.Narrative); // klasörden SONRA tanımlı: önce kapanır
+        vm.OnEvent(new RunStartedEvent("r0", RunMode.Build, 2, 1, "Debug", LogDirectory: logs.Path));
+        vm.OnEvent(new RunCompletedEvent("r0", RunOutcome.Completed, 0, 0, 0, 2, 100));
+        vm.EnableAutoSync(posted.Enqueue, _ => new Core.Git.HeadState("feature", CommittedSha), () => new FakeHeadWatcher());
+        var choreography = new TaskCompletionSource();
+        vm.OperationChoreography = _ => choreography.Task;
+        var sent = SentCommands.RecordOn(vm);
+
+        var build = vm.BuildCommand.ExecuteAsync(null);
+        await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
+        choreography.SetResult();
+        await build;
+        Drain(posted);
+
+        Assert.Empty(sent.OfType<StartRunCommand>());
+        string first = vm.GetRunDocumentText().ReplaceLineEndings("\n").Split('\n')[0];
+        Assert.Equal(Core.Planning.PlanProgressLines.RunInterruptedByBranchChange(0, 2, null), first);
+        vm.DisableAutoSync();
+    }
+
     /// <summary>Güvenlik ağı: izleyici HEAD değişimini kaçırdıysa koşu bitince yakalanır — aynı branch'te yeni commit
     /// sessiz Sync'tir; kesme yoktu, özet yok.</summary>
     [Fact]
@@ -3205,8 +3460,7 @@ public class RunViewModelTests
         await using var engine = await StartedEngineAsync(sandbox);
         var posted = new Queue<Action>();
         var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("main", CommittedSha));
-        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
-        vm.DebugOnCommandSent = sent.Enqueue;
+        var sent = SentCommands.RecordOn(vm);
 
         vm.OnEvent(new ProjectSucceededEvent("r1", B, 300));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
@@ -3225,8 +3479,7 @@ public class RunViewModelTests
         await using var engine = await StartedEngineAsync(sandbox);
         var posted = new Queue<Action>();
         var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("main", "1111111111111111111111111111111111111111"));
-        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
-        vm.DebugOnCommandSent = sent.Enqueue;
+        var sent = SentCommands.RecordOn(vm);
 
         vm.OnEvent(new ProjectSucceededEvent("r1", B, 300));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
@@ -3413,8 +3666,7 @@ public class RunViewModelTests
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1")
             { RootPath = root.Path, LegacyWorktreePoolRoot = TestPaths.MissingLegacyPoolRoot };
         vm.OnEngineExited(3);
-        var sent = new List<IpcCommand>();
-        vm.DebugOnCommandSent = sent.Add;
+        var sent = SentCommands.RecordOn(vm);
 
         await vm.RestartEngineCommand.ExecuteAsync(null);
 
@@ -3517,8 +3769,7 @@ public class RunViewModelTests
         var posted = new Queue<Action>();
         var vm = GitGatedVm(engine, () => Merge, new FakePollTimer());
         vm.EnableAutoSync(posted.Enqueue, _ => new Core.Git.HeadState("main", CommittedSha), () => new FakeHeadWatcher());
-        var sent = new List<IpcCommand>();
-        vm.DebugOnCommandSent = sent.Add;
+        var sent = SentCommands.RecordOn(vm);
 
         await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.Commit);
         await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.Other);
@@ -3541,8 +3792,7 @@ public class RunViewModelTests
         var timer = new FakePollTimer();
         var vm = GitGatedVm(engine, () => op, timer);
         vm.EnableAutoSync(posted.Enqueue, _ => new Core.Git.HeadState("main", CommittedSha), () => new FakeHeadWatcher());
-        var sent = new List<IpcCommand>();
-        vm.DebugOnCommandSent = sent.Add;
+        var sent = SentCommands.RecordOn(vm);
         await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.Commit);
         timer.Tick(); // işaret hâlâ duruyor
         Drain(posted);

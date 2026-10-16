@@ -1,14 +1,16 @@
-﻿using BuildOrchestrator.App.Controls;
+﻿using System.Windows;
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Externals;
 
 namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
 /// [T50/D5] <see cref="GraphBinder"/> — topoloji + satır VM'lerini graf besleme modeline (<see cref="GraphNode"/>/
-/// <see cref="GraphEdge"/>) çeviren SAF çekirdek. Kenar yönü, katman (LayerIndex ?? topolojik derinlik), statü
-/// eşlemesi (TEK otorite <see cref="ProjectRowViewModel.Status"/>), katman-içi build-order sırası ve veri-türevli
+/// <see cref="GraphEdge"/>) çeviren SAF çekirdek. Kenar yönü, bant (listenin grubunun eşleniği), statü
+/// eşlemesi (TEK otorite <see cref="ProjectRowViewModel.Status"/>), bant-içi build-order sırası ve veri-türevli
 /// kısa-ad öneki burada pinlenir. WPF'siz.
 /// </summary>
 public class GraphBinderTests
@@ -16,9 +18,10 @@ public class GraphBinderTests
     private static string Id(string name) => $@"C:\repo\{name}.csproj";
 
     private static ProjectNode Node(string name, string[] deps, int? layerIndex = null, bool inCycle = false,
-        int buildOrder = 0, bool? willBuild = null) =>
+        int buildOrder = 0, bool? willBuild = null, string? layerName = null, bool isExternal = false) =>
         new(Id(name), name, Id(name), SolutionNames: [], Dependencies: [.. deps.Select(Id)],
-            BuildOrder: buildOrder, LayerIndex: layerIndex, LayerName: null, InCycle: inCycle, WillBuild: willBuild);
+            BuildOrder: buildOrder, LayerIndex: layerIndex, LayerName: layerName, InCycle: inCycle, WillBuild: willBuild,
+            IsExternal: isExternal);
 
     private static IReadOnlyDictionary<string, ProjectRowViewModel> RowsFor(IReadOnlyList<ProjectNode> topology)
     {
@@ -28,30 +31,67 @@ public class GraphBinderTests
         return dict;
     }
 
+    /// <summary>Grafın bantları ÜSTTEN ALTA (yerleşimin sırası: bant değeri küçükten büyüğe), her bant üyelerinin
+    /// adlarıyla — bant içi sıra besleme sırasıdır.</summary>
+    private static string[][] GraphBands(IReadOnlyList<GraphNode> nodes) =>
+        [.. nodes.GroupBy(n => n.Layer).OrderBy(g => g.Key).Select(g => g.Select(n => n.Name).ToArray())];
+
+    /// <summary>Listenin grupları ÜSTTEN ALTA, her grup satırlarının adlarıyla — listenin kendi gruplaması
+    /// (<see cref="LayerGrouping.Build"/>), satırlar build-order'da (<see cref="RunViewModel.Projects"/> gibi).</summary>
+    private static string[][] ListGroups(
+        IReadOnlyList<ProjectNode> topology, IReadOnlyDictionary<string, ProjectRowViewModel> rows) =>
+        [.. LayerGrouping.Build([.. topology.Select(n => rows[n.Id])], topology)
+            .Select(g => g.Rows.Select(r => r.Name).ToArray())];
+
+    /// <summary>Kullanıcının ekran görüntüsünden ölçülen profil (2026-10-12, gerçek OSYS, katman tanımı yok): grafın
+    /// üstten alta her bandındaki düğüm sayısı — 28 bant, toplam 177. O sürümde bant topolojik derinlikti.</summary>
+    private static readonly int[] MeasuredDepthProfile =
+        [17, 12, 14, 10, 6, 3, 3, 3, 3, 13, 9, 17, 19, 8, 4, 5, 4, 5, 2, 1, 5, 1, 1, 4, 4, 2, 1, 1];
+
+    /// <summary>Aynı ekran görüntüsündeki graf zemininin ölçüsü: genişlik başlıktaki sayacın sağ kenarından, yükseklik
+    /// seçilen pitch'ten (bu profille 12,5 px yalnız 658–681 px yükseklikte seçilir).</summary>
+    private static readonly Size MeasuredPanel = new(1274, 670);
+
+    /// <summary>Profili veren katmansız topoloji: k. derinlikteki her düğüm (k−1). derinliğin ilk düğümüne bağlıdır,
+    /// yani derinliği tam k'dir; build-order derinlik sırasıdır.</summary>
+    private static ProjectNode[] DeepChainWithoutLayers()
+    {
+        var nodes = new List<ProjectNode>();
+        for (int depth = 0; depth < MeasuredDepthProfile.Length; depth++)
+            for (int i = 0; i < MeasuredDepthProfile[depth]; i++)
+                nodes.Add(Node($"D{depth:D2}.P{i:D2}", depth == 0 ? [] : [$"D{depth - 1:D2}.P00"], buildOrder: nodes.Count));
+        return [.. nodes];
+    }
+
     /// <summary>
-    /// [perf Faz B · B5] Topolojik derinlik topoloji REFERANSI başına bir kez hesaplanır. Graf her statü değişiminde
+    /// [perf Faz B · B5] Bantlar topoloji REFERANSI başına bir kez hesaplanır. Graf her statü değişiminde
     /// <see cref="GraphBinder.Nodes"/>'u yeniden çağırır; topoloji ise yalnız Sync'te değişir (VM yeni bir liste atar,
-    /// eskisini değiştirmez) — derinlik her çağrıda baştan hesaplanıyordu. <see cref="GraphBinder.TopologicalDepths"/>'i
-    /// DIŞARIDAN çağıran da aynı önbellekten geçer; aynı içerikli AMA yeni bir referans yeniden hesaplanır (içerik değil
-    /// referans anahtardır: topolojiyi yerinde değiştiren biri olmadığı için ucuz ve güvenli).
+    /// eskisini değiştirmez). <see cref="GraphBinder.Bands"/>'ı DIŞARIDAN çağıran da aynı önbellekten geçer; aynı
+    /// içerikli AMA yeni bir referans yeniden hesaplanır (içerik değil referans anahtardır: topolojiyi yerinde
+    /// değiştiren biri olmadığı için ucuz ve güvenli).
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eski ad/iddia: <c>The_topological_depths_are_computed_once_per_topology_reference</c> —
+    /// önbellekte topolojik derinlik tutuluyordu (her statü itişinde baştan hesaplanan DFS, ölçüm: 25 sn'lik koşuda
+    /// 175 ms). Değişme gerekçesi: bant artık derinlik değil listenin grubudur
+    /// (<see cref="Without_layers_the_graph_is_one_band_like_the_flat_list"/>); önbellek aynı gerekçeyle bantları tutar.</para>
     /// </summary>
     [Fact]
-    public void The_topological_depths_are_computed_once_per_topology_reference()
+    public void The_bands_are_computed_once_per_topology_reference()
     {
         var topology = new[] { Node("Base", []), Node("Data.Core", ["Base"]) };
         var rows = RowsFor(topology);
-        int before = GraphBinder.DepthComputations;
+        int before = GraphBinder.BandComputations;
 
         GraphBinder.Nodes(topology, rows);
         GraphBinder.Nodes(topology, rows);
-        GraphBinder.TopologicalDepths(topology);
+        GraphBinder.Bands(topology);
 
-        Assert.Equal(before + 1, GraphBinder.DepthComputations); // iki Nodes + bir doğrudan TopologicalDepths çağrısı tek hesaplamayı paylaşır
+        Assert.Equal(before + 1, GraphBinder.BandComputations); // iki Nodes + bir doğrudan Bands çağrısı tek hesaplamayı paylaşır
 
         var sameContentNewReference = new[] { Node("Base", []), Node("Data.Core", ["Base"]) };
         GraphBinder.Nodes(sameContentNewReference, RowsFor(sameContentNewReference));
 
-        Assert.Equal(before + 2, GraphBinder.DepthComputations); // yeni referans → yeniden hesaplanır
+        Assert.Equal(before + 2, GraphBinder.BandComputations); // yeni referans → yeniden hesaplanır
     }
 
     private static int IndexOf(IReadOnlyList<GraphNode> nodes, string name)
@@ -81,10 +121,22 @@ public class GraphBinderTests
         Assert.Equal(2, edges.Count);
     }
 
+    /// <summary>
+    /// <b>Katman tanımı yoksa graf TEK banttır — liste gibi.</b> Liste katman adı yokken tek, başlıksız, düz
+    /// build-order listesidir (<see cref="LayerGrouping"/>); graf onun eşleniğidir: bütün düğümler aynı bantta,
+    /// build-order'da (soldan sağa, yukarıdan aşağı okumak build sırasını okumaktır).
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eski ad/iddia: <c>Layer_falls_back_to_topological_depth_when_no_layer_patterns_are_configured</c>
+    /// — <c>LayerIndex</c> yoksa düğüm topolojik derinliğine düşer (Base 0, Data.Core 1, Api/Portal 2), yani her
+    /// derinlik ayrı bir bant olur. Değişme gerekçesi (ölçüm, kullanıcının ekran görüntüsü 2026-10-12): gerçek OSYS'te
+    /// bağımlılık zinciri 28 halka → 177 düğüm 28 banda bölündü; panele sığdırma kuralı pitch'i 12,5 px'e, düğümü
+    /// 8 px tabanına indirdi (4 px köşe yarıçapıyla daire, küp ikonu nokta), sütun sayısı en kalabalık bantla (19)
+    /// sınırlı kaldığı için blok panel genişliğinin ~%20'sini kullandı. Liste aynı anda tek düz liste gösteriyordu —
+    /// iki yüzey ayrışmıştı.</para>
+    /// </summary>
     [Fact]
-    public void Layer_falls_back_to_topological_depth_when_no_layer_patterns_are_configured()
+    public void Without_layers_the_graph_is_one_band_like_the_flat_list()
     {
-        // LayerIndex hepsi null (katman patterni yok) → derinlik: Base 0, Data 1, Api/Portal 2.
         var topology = new[]
         {
             Node("Base", []),
@@ -92,52 +144,119 @@ public class GraphBinderTests
             Node("Server.Api", ["Data.Core"]),
             Node("Web.Portal", ["Data.Core"]),
         };
+        var rows = RowsFor(topology);
 
-        var depth = GraphBinder.TopologicalDepths(topology);
-        Assert.Equal(0, depth[Id("Base")]);
-        Assert.Equal(1, depth[Id("Data.Core")]);
-        Assert.Equal(2, depth[Id("Server.Api")]);
-        Assert.Equal(2, depth[Id("Web.Portal")]);
+        var bands = GraphBands(GraphBinder.Nodes(topology, rows));
 
-        // LayerOf: LayerIndex yoksa derinliğe düşer...
-        Assert.Equal(2, GraphBinder.LayerOf(topology[2], depth));
-        // ...ama LayerIndex VARSA o kazanır (fallback değil).
-        Assert.Equal(5, GraphBinder.LayerOf(Node("Pinned", ["Base"], layerIndex: 5), depth));
-
-        // Uçtan uca aynı katmanlar Nodes() çıktısında.
-        var nodes = GraphBinder.Nodes(topology, RowsFor(topology));
-        Assert.Equal(0, nodes.Single(n => n.Name == "Base").Layer);
-        Assert.Equal(1, nodes.Single(n => n.Name == "Data.Core").Layer);
-        Assert.Equal(2, nodes.Single(n => n.Name == "Web.Portal").Layer);
+        Assert.Equal(new[] { new[] { "Base", "Data.Core", "Server.Api", "Web.Portal" } }, bands); // tek bant, build-order
+        Assert.Equal(ListGroups(topology, rows), bands);
     }
 
+    /// <summary>
+    /// Pattern yokken de harici projeler listede kendi <c>External</c> grubundadır (Core onları ayrılmış katmana koyar);
+    /// graf da öyle: hariciler en üstte KENDİ bantlarında, ana repo projeleri altında TEK bantta.
+    /// </summary>
     [Fact]
-    public void Cycle_members_get_finite_back_edge_trimmed_depths_not_a_shared_component_depth()
+    public void Without_layers_external_projects_keep_their_own_band_on_top_like_their_list_group()
     {
-        // [D5 fix wave/Fix 4] TopologicalDepths döküman notu (brief satır 18) cycle üyelerinin "paylaşımlı
-        // component derinliği" taşıdığını söyler; GERÇEK davranış farklıdır — SCC-paylaşımlı DEĞİL, geri-kenar
-        // (0 katkı) ile KIRPILMIŞ sonlu derinliktir (bkz. GraphBinder.TopologicalDepths dokümantasyonu). Bu KABUL
-        // EDİLEN davranış (D5 kapsamı: sonlu derinlik katman-yerleşimi için yeterli — SCC-paylaşımlı derinlik
-        // Minor/görsel bir konu, yalnız katman patterni yokken devreye girer; cycle STATÜSÜ StatusOf'tan ayrı ve
-        // doğru — bkz. Cycle_members_are_reported_as_cycle_status). Bu test brief'in ifadesinden BİLİNÇLİ sapmayı
-        // AÇIK ve KİLİTLİ hale getirir: A→B→C→A 3-düğümlü cycle'da üç üye ÜÇ FARKLI derinlik alır (paylaşımlı
-        // TEK derinlik DEĞİL) — değerler gerçek koddan okunmuştur (A=3, B=2, C=1; TEMP probe ile doğrulanmıştır),
-        // varsayılmamıştır.
+        const int ext = ExternalProjectsConventions.LayerIndex;
+        const string external = ExternalProjectsConventions.LayerName;
+        var topology = new[]
+        {
+            Node("Ext.Logo", [], layerIndex: ext, layerName: external, isExternal: true),
+            Node("Ext.Integration", ["Ext.Logo"], layerIndex: ext, layerName: external, isExternal: true),
+            Node("Base", ["Ext.Logo"]),
+            Node("Data.Core", ["Base"]),
+            Node("Server.Api", ["Data.Core", "Ext.Integration"]),
+        };
+        var rows = RowsFor(topology);
+
+        var bands = GraphBands(GraphBinder.Nodes(topology, rows));
+
+        Assert.Equal(new[] { new[] { "Ext.Logo", "Ext.Integration" }, new[] { "Base", "Data.Core", "Server.Api" } }, bands);
+        Assert.Equal(ListGroups(topology, rows), bands);
+    }
+
+    /// <summary>
+    /// Graf bantları listenin gruplarının BİREBİR eşleniğidir — aynı üyeler, aynı sıra. Ayırt edici durum: iki katman
+    /// AYNI adı taşıyabilir (Settings yalnız boş adı reddeder). Liste grupları ADA göre kurar ve ikisini tek grupta
+    /// birleştirir; bant katman İNDEKSİNE göre kurulsaydı graf aynı projeleri iki ayrı banda bölerdi.
+    /// </summary>
+    [Fact]
+    public void Graph_bands_mirror_the_list_groups_even_when_two_layers_share_a_name()
+    {
+        // Core'un katman atamasının çıktısı biçiminde: (LayerIndex, build-order)'a göre sıralı, "Other" en sonda.
+        var topology = new[]
+        {
+            Node("Types.Core", [], layerIndex: 0, layerName: "Core"),
+            Node("Ui.Shell", ["Types.Core"], layerIndex: 1, layerName: "UI"),
+            Node("Types.Extra", ["Types.Core"], layerIndex: 2, layerName: "Core"),
+            Node("Tools", [], layerIndex: 3, layerName: "Other"),
+        };
+        var rows = RowsFor(topology);
+
+        var bands = GraphBands(GraphBinder.Nodes(topology, rows));
+
+        Assert.Equal(new[] { new[] { "Types.Core", "Types.Extra" }, new[] { "Ui.Shell" }, new[] { "Tools" } }, bands);
+        Assert.Equal(ListGroups(topology, rows), bands);
+    }
+
+    /// <summary>
+    /// Kullanıcının gördüğü kusur (2026-10-12): katman yokken 177 projelik OSYS grafı panelin ortasında dar bir huni,
+    /// düğümler 8 px'lik minicik daireler. Aynı bant profili ve aynı panel ölçüsüyle düğüm TAVAN boyda olmalı — tek bant
+    /// 177 düğümü panele yayar ve pitch tavanda kalır.
+    /// </summary>
+    [Fact]
+    public void A_deep_dependency_chain_without_layers_still_gets_full_size_nodes()
+    {
+        var topology = DeepChainWithoutLayers();
+
+        var layout = QuietGraphLayout.Compute(GraphBinder.Nodes(topology, RowsFor(topology)), MeasuredPanel);
+
+        Assert.Equal(QuietGraphLayout.MaxNodeSize, layout.NodeSize); // ölçülen: 8 px (taban), pitch 12,5
+    }
+
+    /// <summary>
+    /// Aynı kusurun genişlik yüzü: sütun sayısı en kalabalık bandı aşamadığı için blok 19 sütunda kalıyordu
+    /// (19 × 12,5 ≈ 238 px; 1202 px'lik içerik genişliğinin ~%20'si). Doğrusu: sütunlar paneli doldurur — seçilen
+    /// pitch'te genişliğe sığan sütun sayısının tamamı kullanılır.
+    /// </summary>
+    [Fact]
+    public void A_deep_dependency_chain_without_layers_spreads_across_the_panel_width()
+    {
+        var topology = DeepChainWithoutLayers();
+
+        var layout = QuietGraphLayout.Compute(GraphBinder.Nodes(topology, RowsFor(topology)), MeasuredPanel);
+
+        int fitting = (int)Math.Floor(QuietGraphLayout.ContentSize(MeasuredPanel).Width / layout.Pitch);
+        Assert.True(layout.Columns == fitting,
+            $"{layout.Columns} sütun × {layout.Pitch} px — genişliğe {fitting} sütun sığıyor");
+    }
+
+    /// <summary>
+    /// Döngü üyeleri kendi liste gruplarının bandındadır — döngü ayrı bant AÇMAZ; üyeler bant içinde build-order'da.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eski ad/iddia: <c>Cycle_members_get_finite_back_edge_trimmed_depths_not_a_shared_component_depth</c>
+    /// — katman yokken bant topolojik derinlikti ve A→B→C→A döngüsünde üç üye geri-kenar kırpmasıyla ÜÇ FARKLI derinlik
+    /// (A=3, B=2, C=1), yani üç ayrı bant alıyordu. Değişme gerekçesi: bant artık derinlik değil listenin grubudur
+    /// (ölçüm: <see cref="Without_layers_the_graph_is_one_band_like_the_flat_list"/>); derinlik hesabı kalktı.</para>
+    /// </summary>
+    [Fact]
+    public void Cycle_members_sit_in_their_list_groups_band()
+    {
         var topology = new[]
         {
             Node("A", ["B"], inCycle: true), // A, B'ye bağımlı
             Node("B", ["C"], inCycle: true), // B, C'ye bağımlı
-            Node("C", ["A"], inCycle: true), // C, A'ya bağımlı → geri kenar (cycle'ı kapatır)
+            Node("C", ["A"], inCycle: true), // C, A'ya bağımlı → döngüyü kapatır
+            Node("D", ["A"]),
         };
+        var rows = RowsFor(topology);
 
-        var depth = GraphBinder.TopologicalDepths(topology);
+        var bands = GraphBands(GraphBinder.Nodes(topology, rows));
 
-        Assert.Equal(3, depth[Id("A")]);
-        Assert.Equal(2, depth[Id("B")]);
-        Assert.Equal(1, depth[Id("C")]);
-        // Üç farklı değer → SCC-paylaşımlı derinlik DEĞİL (brief'ten bilinçli sapma, yukarıda belgelenmiştir).
-        Assert.NotEqual(depth[Id("A")], depth[Id("B")]);
-        Assert.NotEqual(depth[Id("B")], depth[Id("C")]);
+        Assert.Equal(new[] { new[] { "A", "B", "C", "D" } }, bands);
+        Assert.Equal(ListGroups(topology, rows), bands);
     }
 
     [Fact]
@@ -220,7 +339,7 @@ public class GraphBinderTests
     [Fact]
     public void Node_order_within_a_layer_follows_build_order()
     {
-        // [D5 fix wave/Fix 2] Zeta ve Alpha AYNI katmanda (ikisi de Root'a bağlı → derinlik 1); topoloji
+        // [D5 fix wave/Fix 2] Zeta ve Alpha AYNI bantta (katman tanımı yok → tek bant); topoloji
         // build-order'ı BİLEREK alfabetiğin TERSİ (Zeta önce, Alpha sonra) — böylece bu test "aynı katmanda
         // Name'e göre sırala" regresyonunu YAKALAYABİLİR (eski Alpha/Beta örneği alfabetik==build-order olduğu
         // için bunu ayırt edemiyordu).

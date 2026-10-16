@@ -113,7 +113,7 @@ public class ConsoleBatcherTests
     [Fact]
     public void Post_never_blocks_even_without_a_reader()
     {
-        var batcher = new ConsoleBatcher(_ => Task.Delay(Timeout.Infinite));
+        var batcher = MainWindowHost.NeverTickingBatcher();
         for (int i = 0; i < 1000; i++) batcher.Post($"line{i}"); // TryWrite üzerinde: hiçbir okuyucu koşmasa bile senkron döner
     }
 
@@ -294,9 +294,9 @@ public class ConsoleBatcherTests
     [Fact]
     public async Task Pump_stamps_each_batch_with_the_reseed_generation_and_PostReseedDrop_advances_it()
     {
-        // [§1] Nesil monoton artar (reseed ÖNCESİ 0) ve pump her flush'ı okunduğu nesille damgalar. Bu damga,
-        // Solution B'nin senkron reseed'inin ardından koşan BAYAT bir flush'ı MainWindow.AppendConsoleBatch'te
-        // ayırt etmeye yarar (batchGen < CurrentReseedGen → at).
+        // [§1] Nesil monoton artar (reseed ÖNCESİ 0) ve pump her flush'ı batch'ten önce tükettiği son sentinel'in nesliyle
+        // damgalar (sentinel yoksa 0). Bu damga, Solution B'nin senkron reseed'inin ardından koşan BAYAT bir flush'ı
+        // MainWindow.AppendConsoleBatch'te ayırt etmeye yarar (batchGen < CurrentReseedGen → at).
         long capturedGen = -1;
         ConsoleBatcher? batcher = null;
         Task Tick(CancellationToken ct) { batcher!.Complete(); return Task.CompletedTask; }
@@ -315,8 +315,8 @@ public class ConsoleBatcherTests
     public async Task Lines_read_after_a_reseed_sentinel_carry_the_new_generation()
     {
         // [§1] Bir tick içinde: pre-sentinel satır (atılır) + sentinel (gen ilerler) + post-sentinel satır. Flush
-        // edilen batch (post-sentinel) YENİ nesli taşımalı — bump sentinel'den önce olduğundan pump sentinel'i
-        // okurken _reseedGen zaten yeni değerdedir.
+        // edilen batch (post-sentinel) YENİ nesli taşımalı — sentinel ilerlettiği nesli taşır ve pompa damgayı ondan alır
+        // [final review 95: eskiden sentinel'de güncel nesil yeniden okunuyordu; iddia aynı].
         long flushedGen = -1;
         ConsoleBatcher? batcher = null;
         int callCount = 0;
@@ -339,5 +339,47 @@ public class ConsoleBatcherTests
 
         Assert.Equal("fresh\n", flushed.ToString()); // stale atıldı
         Assert.Equal(1, flushedGen);                  // post-sentinel batch YENİ nesli taşır
+    }
+
+    /// <summary>
+    /// [idle-memory · final review 95] <b>Nesil ilerletilip sentinel henüz yazılmamışken boşaltan pompa, sentinel'den önceki
+    /// satırları YENİ nesille damgalamaz.</b> Reseed (mod geçişi, işlem temizliği) önce nesli ilerletir, sonra sentinel'i kanala
+    /// yazar; ikisinin arasında pompa boşaltırsa okuduğu satırlar sentinel'den ÖNCEdir — tohumdadır (ya da temizlikte silinmiştir).
+    /// Eski pompa batch'i boşaltmanın BAŞINDAKİ güncel nesille damgalıyordu: bu satırlar yeni nesli taşır, kabukta atılmaz ve taze
+    /// belgeye İKİNCİ kez basılırdı (temizlikten sonra ise önceki işlemin satırı yeni işlemin konsoluna). Yarış test kancasıyla
+    /// deterministik kurulur: kanca tam o aralıkta pompaya bir tick verir ve flush'ını bekler.
+    /// </summary>
+    [Fact]
+    public async Task A_drain_between_the_generation_bump_and_the_sentinel_stamps_its_lines_stale()
+    {
+        var tick = new SemaphoreSlim(0); // pompanın tick'i testin elinde: her Release bir tick
+        var batcher = new ConsoleBatcher(ct => tick.WaitAsync(ct));
+        var flushes = new System.Collections.Concurrent.BlockingCollection<(string Text, long Gen)>();
+        using var cts = new CancellationTokenSource();
+        var pump = batcher.PumpAsync((text, gen) => flushes.Add((text, gen)), cts.Token);
+        batcher.Post("in the snapshot"); // sentinel'den ÖNCE: tohuma dahil
+
+        (string Text, long Gen) raced = default;
+        batcher.AfterReseedGenerationBump = () =>
+        {
+            tick.Release();                                                    // pompa TAM bu aralıkta boşaltır
+            Assert.True(flushes.TryTake(out raced, TimeSpan.FromSeconds(5))); // ve flush eder (tavan: asılı kalmayı önler)
+        };
+        batcher.PostReseedDrop();
+        batcher.AfterReseedGenerationBump = null;
+
+        Assert.Equal("in the snapshot\n", raced.Text); // ön-koşul: yarış gerçekten kuruldu
+        Assert.Equal(ConsoleBatchRouter.Route.Drop,    // KIRMIZI: bugün yeni nesille damgalanır → taze belgeye ikinci kez
+            ConsoleBatchRouter.Decide(raced.Gen, batcher.CurrentReseedGen, activeProjectId: null));
+
+        batcher.Post("after the sentinel"); // sentinel'den SONRA: yeni belgeye akar
+        tick.Release();
+        Assert.True(flushes.TryTake(out var fresh, TimeSpan.FromSeconds(5)));
+        Assert.Equal("after the sentinel\n", fresh.Text);
+        Assert.Equal(ConsoleBatchRouter.Route.Narrative,
+            ConsoleBatchRouter.Decide(fresh.Gen, batcher.CurrentReseedGen, activeProjectId: null));
+
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pump.WaitAsync(TimeSpan.FromSeconds(5)));
     }
 }

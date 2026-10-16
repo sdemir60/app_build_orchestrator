@@ -6,69 +6,9 @@ using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Core.Processes;
 using BuildOrchestrator.Supervisor;
 using BuildOrchestrator.Tests.Git;
+using BuildOrchestrator.Tests.ProcessControl;
 
 namespace BuildOrchestrator.Tests.Supervisor;
-
-public static class TestPaths
-{
-    public static string SupervisorExe => Path.Combine(AppContext.BaseDirectory, "BuildOrchestrator.Supervisor.exe");
-
-    /// <summary>[B1/F1 · fix-1] GERÇEK bir Supervisor process'i başlatan her testin <see cref="SupervisorExe"/>
-    /// ile birlikte <c>EngineHost</c>'a ENJEKTE ETTİĞİ startup timeout. Üretim varsayılanı (5 sn,
-    /// <c>EngineHost.StartupTimeout</c>) yük altında yetmiyor: taze bir process doğup <c>engineReady</c>
-    /// yazana kadar 5 sn'yi aşabiliyor ve test SEBEPSİZ kırmızı veriyor (ölçüm: task-B1-report.md İŞ 4,
-    /// yük altındaki koşum). <b>Üretim varsayılanı DEĞİŞMEZ</b> — donmuş bir supervisor'da uygulamanın
-    /// vazgeçmesi şart; genişleyen yalnız TEST beklemesidir.
-    /// <para>Tek yer: aksi halde aynı sabit <c>EngineHostTests</c>/<c>RunViewModelTests</c>/
-    /// <c>AppShutdownTests</c>'te üç ayrı kopya olarak yaşardı ve bir sonraki start-eden test yine
-    /// yamasız kalırdı (fix-1 öncesi tam olarak bu oldu — 8 start noktasının yalnız 3'ü yamalıydı).</para></summary>
-    public static readonly TimeSpan WideStartupTimeout = TimeSpan.FromSeconds(60);
-
-    /// <summary>[cycle rounds] GERÇEK bir run'ın TAMAMLANMASINI bekleyen e2e testlerinin hang-guard'ı — bir
-    /// PERF BÜTÇESİ DEĞİL, sonsuz beklemeyi test hatasına çeviren üst sınır (iddiaların hiçbiri süreye
-    /// bakmaz). Tek kullanıcısı <c>RunViewModelTests.Rebuild_wires_through_the_real_engine_and_populates_rows</c>.
-    /// <b>Bu testte <c>MSBuild.exe</c> child'ları GERÇEKTEN doğar:</b> Rebuild döngü gruplarını da turlarla derler
-    /// (<c>CycleCompilation</c>), testin X↔Y cycle fixture'ındaki iki üye 2 tur × 2 invoke koşar (testin kendi yorumu
-    /// aynı gerekçeyi taşır). Guard bu yüzden geniş tutulur: test GERÇEK bir
-    /// Supervisor process'ini uçtan uca çalıştırır (spawn + <c>engineReady</c> el sıkışması + IPC + MSBuild
-    /// toolset çözümü) ve TÜM süit paralel koşarken bu adımların kendisi yavaşlayabilir. Aynı iş yükünü
-    /// bekleyen kardeş e2e testi (<c>RunCoordinatorTests</c>) zaten 30 sn'lik bir guard kullanıyor ve yük
-    /// altında geçiyor; buradaki pay <see cref="WideStartupTimeout"/> ile aynı tutuldu — bu test AYRICA gerçek
-    /// bir EngineHost başlatır.</summary>
-    public static readonly TimeSpan WideRunTimeout = TimeSpan.FromSeconds(60);
-
-    /// <summary>[§3/D8 kabul] "App ölür → ≤2s, orphan yok": tetikten (outer Job'un kapanışı ya da uygulamanın çıkışı)
-    /// sonra process ağacının TAMAMEN ölmesi için tanınan bütçe. Yukarıdaki iki geniş sınırın aksine bir hang-guard
-    /// DEĞİL, kabul ölçütünün kendisidir — gevşetilmez. Tek sahibi burası; ölçümü
-    /// <see cref="ProcessTree.AssertNoOrphansAsync"/> yapar. <c>AppShutdown.DisposalTimeout</c>'tan AYRIDIR: o,
-    /// OnExit'in disposal'ı bekleme tavanıdır; bu, o bekleyiş döndükten sonra ağacın ölme süresi.</summary>
-    public static readonly TimeSpan OrphanBudget = TimeSpan.FromSeconds(2);
-
-    /// <summary>[final review M8] Eski worktree havuzunun TEST kökü: diskte OLMAYAN, süreç başına tek bir geçici yol.
-    /// Motorun hazır oluşunu (<c>RunViewModel.OnEngineReady</c>) yaşayan her VM testi <c>LegacyWorktreePoolRoot</c>'u
-    /// buna bağlar — aksi hâlde ipucu kararı kullanıcının GERÇEK <c>%LOCALAPPDATA%</c> klasörüne bakar ve test
-    /// makineye göre değişirdi.</summary>
-    public static string MissingLegacyPoolRoot { get; } =
-        Path.Combine(Path.GetTempPath(), "bo-no-legacy-pool-" + Guid.NewGuid().ToString("N"));
-
-    /// <summary>Gerçek Supervisor process'ini stdio yönlendirmeli başlatır (RunCoordinatorTests da kullanır).
-    /// <paramref name="logsDir"/> ZORUNLUDUR: argümansız bir Supervisor kullanıcının gerçek önbelleğini
-    /// (<c>%LOCALAPPDATA%</c>) kullanır ve açılışta onun <c>run-inflight.json</c>'ını kurtarırdı (spec 2026-09-18
-    /// §5.5). Kendi klasörü olmayan testler <see cref="SupervisorSandbox"/> kullanır.</summary>
-    /// <param name="debugHooks">[A13/B4] <c>debugSpawnChildren</c> kancasını açar. Varsayılan <c>false</c> =
-    /// ÜRETİM yolu: kanca kapalıdır ve komut <c>error(debugHooksDisabled)</c> ile reddedilir.</param>
-    public static ProcessStartInfo Psi(string logsDir, bool debugHooks = false)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(logsDir);
-        var psi = new ProcessStartInfo(SupervisorExe)
-        { RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        psi.ArgumentList.Add("--logs");
-        psi.ArgumentList.Add(logsDir);
-        if (debugHooks) psi.ArgumentList.Add(SupervisorHost.DebugHooksArg);
-        return psi;
-    }
-
-}
 
 public class SupervisorIpcTests
 {
@@ -98,9 +38,12 @@ public class SupervisorIpcTests
     // [T28] getProjectLog artık AKTİF run'ın dizininden okur (bkz. RunCoordinator.TryGetProjectLogSnapshot) —
     // gerçek run/chunk/dikiş davranışı ProjectLogStreamTests.cs'te (in-process, sahte invoker, gerçek writer)
     // test edilir. Burada yalnız gerçek Supervisor process'i üzerinden "hiç run koşmadıysa bilinmeyen proje
-    // logNotFound döner + stdout NDJSON kalır" wiring'i doğrulanır (D4).
+    // 'log yok' cevabı alır + stdout NDJSON kalır" wiring'i doğrulanır (D4).
+    // [idle-memory · I1 · DEĞİŞEN KURAL] Eski iddia (..._errors_and_stdout_stays_ndjson): cevap error(logNotFound). "Log yok"
+    // artık isteğin kimliğini yankılayan tek, boş, bayraklı bir chunk'tır — gerekçe ProjectLogStreamTests'in
+    // Unknown_project_log_is_answered_with_one_empty_not_found_chunk testinde.
     [Fact]
-    public async Task GetProjectLog_of_unknown_project_before_any_run_errors_and_stdout_stays_ndjson()
+    public async Task GetProjectLog_of_unknown_project_before_any_run_answers_not_found_and_stdout_stays_ndjson()
     {
         using var sandbox = new SupervisorSandbox();
         using var p = Process.Start(sandbox.Psi())!;
@@ -111,14 +54,55 @@ public class SupervisorIpcTests
         // KENDİ enjekte edilebilir timeout'unu kullanır) — burada yalnız test beklemesi genişletiliyor.
         Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(30)));
 
-        await writer.WriteAsync(new GetProjectLogCommand(@"d:\yok\yok.csproj"));
-        var err = Assert.IsType<ErrorEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
-        Assert.Equal("logNotFound", err.Code);
+        await writer.WriteAsync(new GetProjectLogCommand(@"d:\yok\yok.csproj", RequestId: 3));
+        var reply = Assert.IsType<ProjectLogChunkEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.True(reply.NotFound);
+        Assert.Equal(3, reply.RequestId);
 
         await writer.WriteAsync(new ShutdownCommand());
         string rest = await p.StandardOutput.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(5));
         foreach (var line in rest.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             Assert.NotNull(System.Text.Json.JsonSerializer.Deserialize<IpcEvent>(line, IpcJson.Options)); // D4: kalan satırlar da NDJSON
+        await p.WaitForExitAsync(new CancellationTokenSource(2000).Token);
+    }
+
+    /// <summary>
+    /// [idle-memory · dalga 3 · karar 37 · B1 fix 1 · I-2] GERÇEK Supervisor süreci — kendi koşusu yok (uyanmış ya da yeniden başlatılmış motorun
+    /// durumu) — önceki bir motorun bıraktığı koşu klasöründeki proje logunu, isteğin adını verdiği klasörden okur. Kabul kuralı motorun kendi log
+    /// kökünü ister; kök süreç içinde <c>--logs</c>'tan (ya da varsayılan yoldan) koordinatöre ulaşır — bu test o bağlantının kendisidir: kopsa
+    /// in-process testler yeşil kalırdı (onlar kökü kendileri verir) ama her uyanmış motor yine "No log yet" derdi.
+    /// <para>KIRMIZI (mutasyon: <c>Program</c> kökü koordinatöre vermiyordu): <c>NotFound</c> true, metin boş.</para>
+    /// </summary>
+    [Fact]
+    public async Task GetProjectLog_of_an_earlier_engines_run_is_read_from_the_folder_the_request_names()
+    {
+        using var sandbox = new SupervisorSandbox();
+        const string projectId = @"d:\repo\A\A.csproj";
+        string runDirectory;
+        using (var earlier = new BuildOrchestrator.Core.Logs.RunLogWriter(sandbox.LogsDir, DateTimeOffset.Now)) // önceki motorun koşusu
+        {
+            using (var log = earlier.OpenProjectLog(projectId))
+            {
+                log.AppendLine("line-1");
+                log.AppendLine("line-2");
+            }
+            runDirectory = earlier.RunDirectory;
+        }
+        using var p = Process.Start(sandbox.Psi())!;
+        var writer = new NdjsonWriter(p.StandardInput.BaseStream);
+        var reader = new NdjsonReader(p.StandardOutput.BaseStream);
+        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TestPaths.WideStartupTimeout));
+
+        await writer.WriteAsync(new GetProjectLogCommand(projectId, RequestId: 4, RunDirectory: runDirectory));
+        var reply = Assert.IsType<ProjectLogChunkEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(10)));
+
+        Assert.False(reply.NotFound);
+        Assert.Equal(4, reply.RequestId);
+        Assert.Equal(2, reply.ThroughLineNumber);
+        Assert.Equal("line-1" + Environment.NewLine + "line-2" + Environment.NewLine, reply.Text);
+
+        await writer.WriteAsync(new ShutdownCommand());
+        await p.StandardOutput.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(5));
         await p.WaitForExitAsync(new CancellationTokenSource(2000).Token);
     }
 
@@ -249,14 +233,12 @@ public class SupervisorIpcTests
         using var marker = LaunchIsolatedSupervisorIn(outer, markerSandbox);
 
         var births = new List<(int Pid, string Name)>();
-        while (true)
+        JobBirths.Until(iocp, TestPaths.WideStartupTimeout, "IOCP: marker dogum bildirimi gelmedi", pid =>
         {
-            var n = iocp.WaitNext(TestPaths.WideStartupTimeout)
-                ?? throw new TimeoutException("IOCP: marker dogum bildirimi gelmedi");
-            if (n.MessageId != NativeMethods.JOB_OBJECT_MSG_NEW_PROCESS) continue;
-            if (n.Pid == marker.Pid) break;
-            births.Add((n.Pid, ProcessTree.NameOfProcess(n.Pid))); // doğum ANINDA — hiçbir şey öldürülmediği için okunabilir
-        }
+            if (pid == marker.Pid) return true;
+            births.Add((pid, ProcessTree.NameOfProcess(pid))); // doğum ANINDA — hiçbir şey öldürülmediği için okunabilir
+            return false;
+        });
 
         // VAKUM KARŞITI: port GERÇEKTEN doğum taşıyor — Supervisor'ın kendi doğumu listede. Bu kontrol
         // olmasaydı, IOCP hiç bildirim taşımadığında da aşağıdaki iddia yeşil kalırdı.

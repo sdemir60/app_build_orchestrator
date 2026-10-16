@@ -27,8 +27,6 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class SettingsDialogFocusTests
 {
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
-
     // [A13/T3 fix-1 · C13] FakeStore ARTIK tek yerde: SettingsDialogHost.FakeStore (iki dosyada ikizdi).
     private static SettingsDialogHost.FakeStore NewStore() => new();
 
@@ -63,7 +61,7 @@ public class SettingsDialogFocusTests
         root.Children.Add(background);
 
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var run = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         var dialog = new SettingsDialog();
         root.Children.Add(dialog);
 

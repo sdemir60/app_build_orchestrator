@@ -5,6 +5,7 @@ using System.Windows.Markup;
 using System.Windows.Media;
 using ICSharpCode.AvalonEdit;
 using BuildOrchestrator.App.Console;
+using static BuildOrchestrator.Tests.App.ConsoleDocument;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -80,32 +81,63 @@ public class ConsoleViewTests
         for (int i = 0; i < 250; i++) view.AppendBatch($"line{i}\n");
 
         // Belge son ~200 satıra kırpıldı (baştakiler düştü) — hacim/performans (Ek A #16).
-        Assert.True(view.Document.LineCount <= ConsoleView.RenderSliceLines + 1,
+        Assert.True(view.Document.LineCount <= ConsoleView.SeededDocumentLines,
             $"belge satır sayısı ({view.Document.LineCount}) render dilimini aşmamalı");
         Assert.Contains("line249", view.Document.Text); // en yeni korunur
         Assert.DoesNotContain("line0\n", view.Document.Text); // en eski kırpıldı
     }
 
-    /// <summary>[tail-trim tek kural] Kırpma yetkisi TEK yerdedir: <c>BottomAnchorBehavior.ShouldFollow</c>.
-    /// Proje-log modu takip KAPALI açılır (log baştan okunur), dolayısıyla canlı append o modda BELGEYİ
-    /// KIRPMAZ — eski <c>_trimTail</c> alanının taşıdığı "run modunda daima kırp, proje modunda yalnız
-    /// dipteyken kırp" ayrımı bu tek predicate'in içinde zaten yaşıyor. Alan silinirken davranışın
-    /// kaybolmadığını bu test kanıtlar.
-    ///
-    /// <para>Kırpmanın takibe bağlı olmasının kendi gerekçesi ayrıdır ve önemlidir: kırpma belgenin BAŞINDAN
-    /// satır siler, yani kullanıcı yukarıda okurken metni ayağının altından yukarı kaydırırdı.</para></summary>
-    [StaFact]
-    public void Project_mode_does_not_trim_appended_lines_while_follow_is_off()
+    /// <summary>
+    /// [tail-trim tek kural · dalga 3 · karar 44-45] <b>Proje sayfasında canlı satırlar hiç kırpılmaz</b> — anchor ne derse desin: sayfa açıldığı
+    /// gibi (takip yok), okuyucu sayfada gerçekten kaydırmış (direksiyon onda, dipten uzakta) ya da anchor elle dibe zorlanmış
+    /// (<c>StickToBottom = true</c>). [B2 fix 2 · madde 5] "scrolled up" satırı gerçek bir okuyucu jestidir — kaydırma çubuğunu tutup sayfanın
+    /// sonuna inmek ve biraz yukarı çıkmak (<see cref="UserScrollGesture"/>: <c>UserScrollSignal</c>'in kanalı); eskiden <c>StickToBottom =
+    /// false</c> ile durum elle yazılıyordu ve o hâl "opened" satırıyla aynıydı (sayfa tepede açılır, dipte sayılmaz) — jest direksiyonu da
+    /// okuyucuya verir, satır artık ayrı bir anchor durumunu sınar. Kırpma
+    /// yetkisi TEK yerdedir (<c>BottomAnchorBehavior.ShouldFollow</c>) ve proje sayfasında hiç açılmaz (anchor'ın takip izni): chatty bir
+    /// derlemenin her satırı sayfada, sırayla kalır; görünüm yerinden oynamaz; arkada bir şey olmadığından tepeye kaydırma bir şey getirmez.
+    /// <para>Kırpmanın takibe bağlı olmasının kendi gerekçesi ayrıdır ve önemlidir: kırpma belgenin BAŞINDAN satır siler, yani kullanıcı
+    /// yukarıda okurken metni ayağının altından yukarı kaydırırdı.</para>
+    /// <para>[B2 fix 1 · O3] Dört test buraya katlandı, her iddiasıyla: <c>Project_mode_does_not_trim_appended_lines_while_follow_is_off</c>
+    /// (açılış: takip kapalı, kırpma yok — eski <c>_trimTail</c> alanının "run modunda daima kırp, proje modunda yalnız dipteyken kırp" ayrımı
+    /// tek predicate'te yaşar; karar 45'ten beri "dipteyken" kolu da yok), <c>Project_mode_scrolled_up_document_is_not_trimmed</c> (okuyucu
+    /// yukarıda), <c>A_project_page_is_never_capped_at_the_render_slice_and_does_not_move</c> ve
+    /// <c>Live_lines_on_a_project_page_are_never_trimmed_even_when_it_is_forced_to_the_bottom</c> (dibe zorlanmış). Son ikisinin eski iddiaları
+    /// (karar 44-45'ten önce): izleyen proje logu render dilimine kırpılır, kırpılanlar görünümün listesinden tepeye kaydırınca geri gelir.</para>
+    /// </summary>
+    [StaTheory]
+    [InlineData("opened")]
+    [InlineData("scrolled up")]
+    [InlineData("forced to the bottom")]
+    public void Live_lines_on_a_project_page_are_never_trimmed_whatever_the_anchor_says(string anchor)
     {
-        var view = new ConsoleView();
-        view.PlayCascade(["seed"]);   // proje-log modu: ForceStuck(false) → takip KAPALI
-        Assert.False(view.FollowsBottom); // ön-koşul
+        var view = LaidOutView();
+        string[] page = [.. Enumerable.Range(0, 250).Select(i => $"line{i}")];
+        view.PlayCascade(Text(page));
+        if (anchor == "scrolled up")
+        {
+            UserScrollGesture.DragVerticalBarOf(view.Editor);                // okuyucu çubuğu tuttu, sayfanın sonuna indi...
+            view.Editor.ScrollToVerticalOffset(view.Editor.ExtentHeight);
+            view.UpdateLayout();
+            UserScrollGesture.DragVerticalBarOf(view.Editor);                // ...ve biraz yukarı çıktı
+            view.Editor.ScrollToVerticalOffset(view.Editor.VerticalOffset - 200);
+            view.UpdateLayout();
+            Assert.False(view.StickToBottom); // ön-koşul: anchor jesti gördü — okuyucu dipten uzakta
+            Assert.True(view.Editor.VerticalOffset > 0, "test kurgusu: okuyucu sayfanın içinde olmalıydı");
+        }
+        if (anchor == "forced to the bottom") view.StickToBottom = true;
+        double offset = view.Editor.VerticalOffset;
 
-        for (int i = 0; i < ConsoleView.RenderSliceLines + 50; i++) view.AppendBatch($"live{i}\n");
+        for (int i = 0; i < 400; i++) view.AppendBatch($"live{i}\n"); // render diliminin iki katı
+        view.UpdateLayout();
 
-        Assert.True(view.Document.LineCount > ConsoleView.RenderSliceLines + 1,
-            $"takip kapalıyken kırpma OLMAMALI (satır sayısı {view.Document.LineCount})");
-        Assert.Contains("live0\n", view.Document.Text); // en eski canlı satır DURUYOR
+        string everything = Text(page) + string.Concat(Enumerable.Range(0, 400).Select(i => $"live{i}\n"));
+        Assert.False(view.FollowsBottom);
+        Assert.Equal(everything, view.Document.Text); // hiçbiri kırpılmadı, sırayla
+        Assert.Equal(offset, view.Editor.VerticalOffset);
+        ScrollUpToTheTop(view);
+        Assert.Null(view.LastPrepend);                // arkada bir şey yok
+        Assert.Equal(everything, view.Document.Text);
     }
 
     // ---------------------------------------------------------------- [3b] kaskat (reduced-motion instant yolu)
@@ -116,9 +148,26 @@ public class ConsoleViewTests
         // Headless testte App.Motion null → animationsEnabled=false → kaskat INSTANT (tüm satırlar, fade yok).
         var view = new ConsoleView();
 
-        view.PlayCascade(new[] { "a", "b", "c" });
+        view.PlayCascade("a\nb\nc\n");
 
         Assert.Equal("a\nb\nc\n", view.Document.Text);
+    }
+
+    /// <summary>
+    /// [B2 fix 1 · O1] Sayfa metni '\n' ile bitmese de sonradan gelen canlı satır YENİ satırda başlar (<see cref="ConsoleLines.Terminated"/>):
+    /// append sözleşmesi metnin '\n' ile bittiğini varsayar.
+    /// <para>PİN — O1'den önce de yeşildi (görünüm satır listesini birleştirirken '\n' zaten ekleniyordu); metin olduğu gibi alınınca garanti
+    /// görünümde tek yerde durur (bozma: garanti kaldırılınca canlı satır son satıra yapışır).</para>
+    /// </summary>
+    [StaFact]
+    public void A_project_page_text_without_a_final_newline_still_takes_live_lines_on_their_own_line()
+    {
+        var view = new ConsoleView();
+
+        view.PlayCascade("first\nlast");
+        view.AppendBatch("live\n");
+
+        Assert.Equal("first\nlast\nlive\n", view.Document.Text);
     }
 
     // ---------------------------------------------------------------- proje-log sayfasının sonu
@@ -144,7 +193,7 @@ public class ConsoleViewTests
         var view = new ConsoleView();
         var window = DsResources.Realize(DsResources.NewHost(), view);
 
-        view.PlayCascade(new[] { "log line" });
+        view.PlayCascade("log line\n");
         view.UpdateLayout();
 
         Assert.DoesNotContain(Descendants(view).OfType<TextBlock>(),
@@ -164,24 +213,31 @@ public class ConsoleViewTests
 
     // ---------------------------------------------------------------- [3b I-2] chunk loader GERÇEK yolu
 
+    /// <summary>
+    /// Chunk yükleyicinin GERÇEK yolu: arm (tepeden uzaklaş) → tepeye kaydırma → <c>PrependPreviousChunk</c> bitişik eski dilimi ekler ve
+    /// <c>VerticalOffset</c>'i telafi eder; yüklenecek dilim kalmayınca ikinci tepeye kaydırma bir şey yapmaz. Run anlatısının geçmişi de
+    /// böyle geri gelir (aşağıdaki bölümün ölçülen kusuru): ← Back belgesi son 200 satırdır, öncesi tepeye kaydırınca anlatı store'undan,
+    /// bitişik ve TAM — tekrar yok, kayıp yok.
+    /// <para>[DEĞİŞEN KURULUM — dalga 3 · karar 44] Eskiden proje sayfasıyla kuruluyordu (<c>PlayCascade</c>, 250 satır: belge son 200,
+    /// <c>line50</c>'den başlar). Proje sayfası artık logun tamamını taşır ve arkasında dilim yoktur; yükleyici yalnız anlatıda iş görür.
+    /// Aynı iddia anlatı üzerinde (← Back akışı: son 200 belgede, öncesi store'da) sınanır.</para>
+    /// <para>[B2 fix 1 · O3] <c>Run_narrative_scroll_to_top_prepends_older_history</c> buraya katlandı: aynı kurulum (← Back, 250 satır) ve
+    /// aynı iddialar (son dilim belgede, öncesi değil; tepeye kaydırınca bitişik ve tam); bu test telafiyi ve ikinci kaydırmayı da sınar.</para>
+    /// </summary>
     [StaFact]
     public void Chunk_scroll_to_top_prepends_previous_slice_contiguously_and_compensates_offset()
     {
-        // GERÇEK yol: PlayCascade render dilimini (son 200) kurar; arm (tepeden uzaklaş) → scroll-to-top →
-        // ConsoleView.PrependPreviousChunk contiguous eski dilimi prepend eder + VerticalOffset'i telafi eder.
-        var view = new ConsoleView();
         // Layout: TextView.DefaultLineHeight/VerticalOffset gerçek değer alsın (offset telafisi ölçülebilsin).
-        view.Measure(new Size(800, 600));
-        view.Arrange(new Rect(0, 0, 800, 600));
-        view.UpdateLayout();
+        var view = LaidOutView();
 
         var all = Enumerable.Range(0, 250).Select(i => $"line{i}").ToArray();
-        view.PlayCascade(all); // instant → son 200 (line50..line249)
+        var store = new NarrativeStore();
+        foreach (var line in all) store.Append(line);
+        view.ShowRunDocument(NarrativeSnapshots.Of(store)); // instant → son 200 (line50..line249), öncesi store'da
         Assert.StartsWith("line50\n", view.Document.Text);
         Assert.DoesNotContain("line49\n", view.Document.Text); // ilk 50 henüz chunk loader'da
 
-        view.EvaluateChunkScroll(100.0); // arm: kullanıcı tepeden uzaklaştı (aşağı kaydırdı)
-        view.EvaluateChunkScroll(0.0);   // scroll-to-top → önceki chunk prepend edilir
+        ScrollUpToTheTop(view); // scroll-to-top → önceki chunk prepend edilir
 
         // Dikiş: line0..line249 bitişik ve TAM — tekrar YOK, kayıp YOK.
         var expected = string.Concat(all.Select(l => l + "\n"));
@@ -194,8 +250,7 @@ public class ConsoleViewTests
         Assert.Equal(before + delta, applied, 3); // ChunkStitch.CompensatedOffset wiring
 
         // Re-arm + tekrar tepe: yüklenecek daha eski satır yok → idempotent (tekrar yükleme/dup YOK).
-        view.EvaluateChunkScroll(100.0);
-        view.EvaluateChunkScroll(0.0);
+        ScrollUpToTheTop(view);
         Assert.Equal(expected, view.Document.Text);
     }
 
@@ -207,105 +262,317 @@ public class ConsoleViewTests
     // loader YALNIZ proje modunda çalışıyordu, yani run anlatısında 200 satırdan öncesine hiçbir jestle
     // erişilemiyordu. Paralel bir build saniyede yüzlerce satır aktığı için o pencere anında doluyor.
     //
-    // Backlog artık moddan bağımsızdır: anlatı da baştan tohumlanır ve KIRPILAN CANLI satırlar backlog'a
-    // taşınır — böylece hem run modunda geçmişe dönülebilir, hem de proje modunda canlı kırpılan satırların
-    // eskiden düştüğü delik (eski kodun "index'i yok" diyen clamp'i) kapanır.
+    // Anlatıda render diliminden öncesi tepeye kaydırınca VM'in anlatı store'undan geri gelir (görünüm kopya tutmaz — [DEĞİŞEN KURAL],
+    // bkz. Lines_trimmed_from_the_live_run_document_stay_reachable_by_scrolling_up); temel dikiş iddiası Chunk_scroll_to_top_…'tadır
+    // (B2 fix 1 · O3: Run_narrative_scroll_to_top_prepends_older_history oraya katlandı). [DEĞİŞEN KURAL — dalga 3 · karar 44] Bu not
+    // eskiden "backlog moddan bağımsızdır … proje logunda görünümün kendi listesi; orada belgeden kırpılan canlı satırlar listeye eklenir"
+    // diyordu: proje sayfası artık logun tamamını taşır, dilimi ve backlog'u yoktur.
 
+    /// <summary>
+    /// [idle-memory · dalga 2 · spec §6.3] <b>2.000 satırın üstündeki anlatıda tepeye kaydırma doğru dilimleri DİSKTEN getirir.</b>
+    /// Store anlatıyı koşu klasörüne yayar ve bellekte yalnız son <see cref="NarrativeStore.MemoryWindowLines"/> satırı tutar; görünüm
+    /// tepeye kaydıkça önceki dilimleri yine store'dan ister — en eskileri dosyadan, biri tahliye sınırını keserek (baş diskten, kuyruk
+    /// bellekten). Sonuç bitişik ve TAMDIR: tekrar yok, delik yok — kaydırılan hiçbir satır erişilmez olmaz.
+    /// </summary>
     [StaFact]
-    public void Run_narrative_scroll_to_top_prepends_older_history()
+    public void Scrolling_up_a_spooled_narrative_brings_the_older_slices_back_from_disk()
     {
-        var view = new ConsoleView();
-        view.Measure(new Size(800, 600));
-        view.Arrange(new Rect(0, 0, 800, 600));
-        view.UpdateLayout();
+        var store = new NarrativeStore();
+        using var logs = new SpoolDir(store);
+        Assert.True(store.BeginSpool(logs.FilePath));
+        var all = Enumerable.Range(0, NarrativeStore.MemoryWindowLines + 1000).Select(i => $"spooled{i}").ToArray();
+        foreach (var line in all) store.Append(line);
+        Assert.True(store.Count - store.LinesInMemory > ConsoleView.RenderSliceLines, "ön-koşul: en eski dilimler yalnız diskte");
+        var view = LaidOutView();
 
-        var all = Enumerable.Range(0, 250).Select(i => $"narrative{i}").ToArray();
-        var expected = string.Concat(all.Select(l => l + "\n"));
+        view.ShowRunDocument(NarrativeSnapshots.Of(store)); // son 200 belgeye; öncesi store'da, en eskisi diskte
+        ScrollUpToTheTop(view, attempts: all.Length / ConsoleView.RenderSliceLines + 1);
 
-        view.ShowRunDocument(expected); // ← Back akışı: son 200 belgeye, öncesi backlog'a
-        Assert.StartsWith("narrative50\n", view.Document.Text);
-        Assert.DoesNotContain("narrative49\n", view.Document.Text); // ön-koşul: ilk 50 belgede DEĞİL
-
-        view.EvaluateChunkScroll(100.0); // arm: kullanıcı tepeden uzaklaştı
-        view.EvaluateChunkScroll(0.0);   // scroll-to-top → önceki dilim geri gelir
-
-        Assert.Equal(expected, view.Document.Text); // bitişik ve TAM — tekrar YOK, kayıp YOK
+        Assert.Equal(string.Concat(all.Select(l => l + "\n")), view.Document.Text); // bitişik ve TAM
     }
 
+    /// <summary>
+    /// [idle-memory · dalga 2 · inceleme M1] <b>Okunamayan bir geçmiş dilimi delik bırakmaz.</b> Backlog'un içindeki bir aralık ya tam
+    /// gelir ya <c>""</c> (<see cref="IConsoleBacklog.Join"/>) — store'un dosyası okunamazsa ikincisi. Görünüm boş dilimde yerini
+    /// KORUR: o satırları atlamaz, sonraki tepeye kaydırma aynı dilimi yeniden ister. Eskiden indeks dilimin başına iniyordu; o 200
+    /// satır o belgede bir daha hiç gelmiyordu — dosya yeniden okunabilse de.
+    /// </summary>
+    [StaFact]
+    public void An_unreadable_history_slice_leaves_no_hole_and_the_next_scroll_to_the_top_asks_again()
+    {
+        var view = LaidOutView();
+        var all = Enumerable.Range(0, 1000).Select(i => $"history{i}").ToArray();
+        var backlog = new PartlyUnreadableBacklog(all) { ReadableFrom = 500 }; // 500'ün altı okunamıyor
+        view.ShowRunDocument(new NarrativeSnapshot(backlog, all.Length));       // son 200 belgede: history800..999
+        ScrollUpToTheTop(view, attempts: 6);
+        Assert.StartsWith("history600\n", view.Document.Text); // ön-koşul: okunabilen dilim geldi, okunamayanda durdu
+
+        backlog.ReadableFrom = 0; // dosya yeniden okunabiliyor
+        ScrollUpToTheTop(view, attempts: 6);
+
+        Assert.Equal(string.Concat(all.Select(l => l + "\n")), view.Document.Text); // KIRMIZI: 400..599 atlanmıştı — delik
+    }
+
+    /// <summary>
+    /// [idle-memory · dalga 2 · inceleme M1] <b>Son dilimi okunamayan bir anlatı belgesi anlatının SONUNDAN başlar.</b> Belge boş kurulur
+    /// ve ilk satırı anlatının sonudur: indeks gösterilmeyen 200 satırı belgede sanmaz, tepeye kaydırma o dilimi yeniden ister. Eskiden
+    /// indeks dilimin başında kalıyordu — ilk kaydırma bir ÖNCEKİ dilimi getirir, son 200 satır hiç gelmezdi; canlı satırlar da 200
+    /// satır geride sayılırdı.
+    /// </summary>
+    [StaFact]
+    public void A_run_document_whose_last_slice_cannot_be_read_starts_at_the_end_and_asks_for_it_again()
+    {
+        var view = LaidOutView();
+        var all = Enumerable.Range(0, 1000).Select(i => $"history{i}").ToArray();
+        var backlog = new PartlyUnreadableBacklog(all) { ReadableFrom = all.Length }; // hiçbir dilim okunamıyor
+        view.ShowRunDocument(new NarrativeSnapshot(backlog, all.Length));
+        Assert.Equal("", view.Document.Text); // ön-koşul: dilim okunamadı, belge boş
+
+        backlog.ReadableFrom = 0; // dosya yeniden okunabiliyor
+        ScrollUpToTheTop(view, attempts: 6);
+
+        Assert.Equal(string.Concat(all.Select(l => l + "\n")), view.Document.Text); // KIRMIZI: son 200 satır hiç gelmezdi
+    }
+
+    /// <summary>
+    /// [idle-memory · dalga 2 · beşinci inceleme — ölçüldü] Görünüme sığan KISA bir belge, arkasında geçmiş dururken bir +∞ dibe isteğiyle
+    /// önceki dilimi kendiliğinden yüklemez — kimse tepeye kaydırmadı. Böyle bir belge son dilimi okunamayan anlatıdır: boş kurulur, satırlar
+    /// sonradan gelir. +∞ isteği bugün yalnız mod geçişinin pinindedir (<c>PinAfterModeSwitch</c> — geçişin inişinde, anlatı izliyorsa yeniden
+    /// koşar); test o isteğin kendisini sürer.
+    /// <para>KIRMIZI (ölçüldü, dalga 2): TextView +∞ isteğini tek bir olayda +∞ ofsetle bildirir — yükleyici "tepeden uzaklaştı" diye
+    /// silahlanıyordu; hemen ardından kenetlenen konum (belge sığdığı için 0) "tepeye ulaştı" sayılıyor ve önceki 200 satır isteyen olmadan
+    /// ekleniyordu. Kural yükleyicinin okuduğu konumun dibe kenetlenmesindedir (<c>SettledOffset</c>; bozma: kenetleme kalkınca kırmızı).</para>
+    /// <para>[DEĞİŞEN KURULUM — B2 fix 3 · madde 10] Eski adı <c>…_while_following</c>; eski uyaran takipte gelen bir satırdı ("takip
+    /// <c>ScrollToEnd</c> ister"). B2 fix 2 · madde 3'ten beri takip sonlu ister (bekleyen dip — kısa belgede 0, ofset zaten 0: hiç olay doğmaz)
+    /// ve test dişsiz kalmıştı (kenetleme kaldırılınca da yeşildi — inceleme I-1). Uyaran kalan +∞ yoluna taşındı; iddia aynı.</para>
+    /// </summary>
+    [StaFact]
+    public void A_short_document_with_history_behind_it_does_not_load_it_unasked_on_an_infinite_bottom_request()
+    {
+        var view = LaidOutView();
+        var all = Enumerable.Range(0, 1000).Select(i => $"history{i}").ToArray();
+        var backlog = new PartlyUnreadableBacklog(all) { ReadableFrom = all.Length }; // son dilim okunamadı: belge boş, geçmiş arkada
+        view.ShowRunDocument(new NarrativeSnapshot(backlog, all.Length));
+        backlog.ReadableFrom = 0; // dosya yeniden okunabiliyor
+        Assert.True(view.FollowsBottom); // ön-koşul: anlatı dibi izliyor
+        view.AppendBatch("live\n");      // takipte bir satır (sonlu istek)
+        view.UpdateLayout();
+
+        view.Editor.ScrollToEnd();       // kalan +∞ dibe isteği (mod geçişinin pini)
+        view.UpdateLayout();
+
+        Assert.Null(view.LastPrepend);
+        Assert.Equal("live\n", view.Document.Text);
+    }
+
+    /// <summary>
+    /// [idle-memory · dalga 2 son inceleme · defter 2] <b>Boş dilim kuralının istisnası: store belgenin GERİSİNDEyse yüklenecek bir şey
+    /// yoktur ve indeks iner.</b> Pencere gizliyken yeni bir işlem anlatıyı temizler; belge dönüşe dek kurulmaz (bayat belge — kabuk onu
+    /// dönüşte modelden bir kez kurar). Bu sırada gelen bir tepeye kaydırma boş dilim alır: "aynı dilimi yeniden iste" kuralı burada
+    /// indeksi yerinde tutsaydı, yeni bölümün satırları gelince aynı indeks onların ortasını bayat belgenin tepesine dikerdi. İndeks
+    /// iner, belge bayat kalır ve dönüşte yeniden kurulur.
+    /// <para>KIRMIZI (<c>ConsoleView.PrependPreviousChunk</c>'ın "backlog belgenin gerisinde" dalı geçici olarak silindi): indeks eski
+    /// bölümün yerinde kalıyordu — yeni bölümün <c>new0..new299</c> satırları eski bölümün belgesine dikiliyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void A_document_left_over_a_narrative_cleared_while_hidden_takes_nothing_of_the_new_section_until_it_is_rebuilt()
+    {
+        var view = LaidOutView();
+        var store = new NarrativeStore();
+        foreach (int i in Enumerable.Range(0, 500)) store.Append($"old{i}");
+        view.ShowRunDocument(NarrativeSnapshots.Of(store)); // son 200 belgede: old300..old499
+        string stale = view.Document.Text;
+
+        store.Clear();                         // gizliyken yeni işlem: anlatı temizlendi, belge kurulmadı
+        ScrollUpToTheTop(view, attempts: 3);   // store belgenin gerisinde: yüklenecek yok, indeks iner
+        foreach (int i in Enumerable.Range(0, 400)) store.Append($"new{i}"); // yeni bölümün satırları (pencere hâlâ gizli)
+        ScrollUpToTheTop(view, attempts: 3);
+
+        Assert.Equal(stale, view.Document.Text); // KIRMIZI: new0..new299 bayat belgenin tepesine dikiliyordu
+
+        view.ReplaceRunDocument(NarrativeSnapshots.Of(store)); // dönüş: belge modelden bir kez kurulur (ResyncAfterShow)
+        Assert.Equal(string.Concat(Enumerable.Range(200, 200).Select(i => $"new{i}\n")), view.Document.Text); // yeni bölümün son dilimi
+    }
+
+    /// <summary>
+    /// [idle-memory · dalga 2 · takip — ölçüldü] <b>Belge takası bir okuyucu jesti değildir.</b> Anlatı belgesi yeniden kurulurken (← Back,
+    /// tepsiden dönüş) görünüm yalnız store'un son dilimini yükler — taze bir görünümün kurduğu belgenin aynısı; önceki dilim okuyucunun
+    /// ilk tepeye kaydırmasıyla gelir. Önceki belge dipte olsa da (anlatı canlı akışı izliyordu, proje sayfası sonuna kaydırılmıştı).
+    /// <para>KIRMIZI: takasın kendi kaydırma olayları chunk yükleyiciye gidiyordu — eski belgenin ofsetini taşıyan ilk olay yükleyiciyi
+    /// "tepeden uzaklaştı" diye yeniden silahlandırıyor (kurulumun başındaki silahsızlandırma boşa gidiyordu), yeni belgenin ilk yerleşimi
+    /// ofseti sıfıra çekince "tepeye ulaştı" sayılıp önceki 200 satır kendiliğinden ekleniyor, ardından takip kırpması fazlayı atıyordu:
+    /// belge son 199 satırdı (<c>line201..</c>), UI thread'inde boşuna bir dilim okuması, ekleme ve kırpma. Satır kaybı yoktu (indeks
+    /// kırpmayla ilerliyor, tepeye kaydırma geri getiriyordu) ve "N lines" store'u sayar.</para>
+    /// </summary>
+    [StaTheory]
+    [InlineData("narrative")]
+    [InlineData("project page")]
+    public void Rebuilding_the_narrative_over_a_document_at_its_end_loads_only_the_last_slice(string previous)
+    {
+        var view = LaidOutView();
+        if (previous == "narrative")
+        {
+            var earlier = new NarrativeStore();
+            foreach (int i in Enumerable.Range(0, 500)) earlier.Append($"old{i}");
+            view.ShowRunDocument(NarrativeSnapshots.Of(earlier)); // dipte, canlı akışı izleyen anlatı
+        }
+        else
+        {
+            view.PlayCascade(Text([.. Enumerable.Range(0, 300).Select(i => $"page{i}")]));
+            view.Editor.ScrollToEnd(); // okuyucu sayfanın sonuna indi
+            view.Editor.UpdateLayout();
+        }
+        var store = new NarrativeStore();
+        foreach (int i in Enumerable.Range(0, 400)) store.Append($"line{i}");
+
+        view.ReplaceRunDocument(NarrativeSnapshots.Of(store)); // ← Back / tepsiden dönüş: belge yeniden kurulur
+
+        Assert.Null(view.LastPrepend); // KIRMIZI: takas önceki dilimi kendiliğinden ekliyordu
+        Assert.Equal(string.Concat(Enumerable.Range(200, 200).Select(i => $"line{i}\n")), view.Document.Text);
+        ScrollUpToTheTop(view);        // okuyucunun ilk tepeye kaydırması önceki dilimi getirir
+        Assert.Equal(string.Concat(Enumerable.Range(0, 400).Select(i => $"line{i}\n")), view.Document.Text);
+    }
+
+    /// <summary>
+    /// [idle-memory · dalga 2 · ikinci inceleme — C4 gerilemesi] Yeniden kurulan anlatı dibe sabitlenir ve chunk yükleyici o konumdan
+    /// silahlı durur: okuyucunun TEK tepeye sıçraması (Ctrl+Home, kaydırma çubuğunun tek hamlesi — önce aşağı inmeden) önceki dilimi
+    /// getirir; daha eskisi de böyle, diskten (spec §10.3). Takasın kendi geçici olayları yine yok sayılır — takas dilimi kendiliğinden
+    /// eklemez (<see cref="Rebuilding_the_narrative_over_a_document_at_its_end_loads_only_the_last_slice"/>).
+    /// <para>KIRMIZI: takas yükleyiciyi koşulsuz silahsız bırakıyordu ve takasın olayları (sabitlemenin dibe kaydırması dahil) yok
+    /// sayıldığından yükleyiciyi hiçbir şey silahlandırmıyordu: ← Back ya da tepsiden dönüşten sonraki tek sıçrama dilimin tepesinde
+    /// kalıyor, eski satırlar hiç gelmiyordu — okuyucu önce aşağı inip yeniden çıkmadıkça.</para>
+    /// <para>Sıçrama üretimin karar yolundan, tepedeki ofsetle sürülür (<see cref="ConsoleView.EvaluateChunkScroll"/>): böylece yalnız takasın
+    /// bıraktığı durum sınanır. Kullanıcının gerçek tuş yolu — gerçek pencere, editörün kendi Ctrl+Home bağlaması, boşa kadar pompalanan
+    /// dispatcher — <see cref="A_real_ctrl_home_in_a_rebuilt_narrative_loads_the_previous_slice"/>'tadır.</para>
+    /// </summary>
+    [StaFact]
+    public void A_rebuilt_narrative_brings_the_previous_slice_on_a_single_jump_to_the_top()
+    {
+        var view = LaidOutView();
+        var store = new NarrativeStore();
+        foreach (int i in Enumerable.Range(0, 400)) store.Append($"line{i}");
+        view.ReplaceRunDocument(NarrativeSnapshots.Of(store)); // ← Back / tepsiden dönüş: dibe sabitlenmiş son dilim
+
+        view.EvaluateChunkScroll(0.0); // TEK sıçrama (Ctrl+Home) — öncesinde silahlandıran bir jest yok
+
+        Assert.Equal(string.Concat(Enumerable.Range(0, 400).Select(i => $"line{i}\n")), view.Document.Text);
+    }
+
+    /// <summary>
+    /// [idle-memory · dalga 2 · üçüncü inceleme — ölçüldü] <b>Gerçek bir Ctrl+Home yükleyiciye ulaşır.</b> Gerçek (ekran dışı) pencerede
+    /// yeniden kurulan, dibe sabitlenmiş 400 satırlık anlatı; okuyucunun tuşu — <c>UserScrollSignal</c>'in gördüğü jest ve editörün KENDİ
+    /// Ctrl+Home bağlaması (<c>MoveToDocumentStart</c>: imleç belgenin başına, görünüm tepeye) — ve dispatcher boşa kadar pompalanır.
+    /// Önceki dilim yüklenir: spec §10.3 "tepeye kaydırınca tüm geçmiş gelir".
+    /// <para>KIRMIZI (ölçüldü): tuş TEK bir kaydırma olayı üretir ve o olayda ScrollViewer'ın ofseti henüz eskidir (3173,4) — TextView'in kendi
+    /// ofseti 0'dır. İşleyici ScrollViewer'ı okuyordu: "tepeden uzakta" deyip hiçbir şey yüklemiyordu; ScrollViewer sonraki yerleşimde 0'a
+    /// iner ama yeni olay gelmez — okuyucu dilimin tepesinde kalıyordu, en tepede tekerlek de olay üretmez.</para>
+    /// <para>Kurulum ve tuş <see cref="RealizedNarrative"/>'tedir (konsolun gerçek gezinme testleri de onu kullanır); jest kanalı
+    /// kaydırma çubuğu yerine tuşun kendi önizlemesidir — ikisi de aynı <c>NotifyUserScroll</c>'a bağlı.</para>
+    /// <para>[I-1 · B2 fix 1 O3] <c>Real_OnScrollOffsetChanged_path_prepends_on_jump_to_top_and_releases_stuck_without_data_loss</c> buraya
+    /// katlandı. İddiası: bottom-anchor'ın takip kararı ile yükleyicinin prepend'i AYNI gerçek kaydırma olayında çakıştığında (a) prepend
+    /// delik bırakmaz ve ofseti TAM telafi eder (<c>ChunkStitch.CompensatedOffset</c> otoritedir — telafinin üzerine yanlışlıkla "dibe git"
+    /// yazılmaz), (b) okuyucu artık dipte sayılmaz (<c>StickToBottom</c> false: prepend'in kendi büyümesi bayat bir "dipte" kararını
+    /// tutmaz; tutsaydı sonraki içerik büyümesi okuyucuyu yeniden dibe fırlatırdı). O test aynı olayı ham jest + programatik tepeye kaydırma
+    /// ile kuruyordu (geçmişi: dalga 2 dördüncü incelemede fazladan doğrudan çağrıları kaldırılmış, dalga 3'te proje sayfasından anlatıya
+    /// taşınmıştı); gerçek tuş aynı yolu sürer — telafi iddiası başka hiçbir yerde gerçek olay yolunda sınanmıyordu, takip iddiası
+    /// <c>ConsoleReaderNavigationTests.A_real_ctrl_home_releases_the_console_from_the_bottom</c>'dadır ve burada da tutulur.</para>
+    /// </summary>
+    [StaFact]
+    public void A_real_ctrl_home_in_a_rebuilt_narrative_loads_the_previous_slice()
+    {
+        using var narrative = new RealizedNarrative(lines: 400); // ← Back / tepsiden dönüş
+
+        narrative.PressCtrlHome();
+
+        Assert.NotNull(narrative.View.LastPrepend);
+        var (before, delta, applied) = narrative.View.LastPrepend!.Value;
+        Assert.True(delta > 0, $"prepend edilen dilimin piksel yüksekliği > 0 olmalı (delta={delta})");
+        Assert.Equal(before + delta, applied, 3); // (a) telafi — ChunkStitch.CompensatedOffset otorite
+        Assert.False(narrative.View.StickToBottom); // (b) prepend'in büyümesi okuyucuyu dipte saydırmaz
+
+        Assert.Equal(string.Concat(Enumerable.Range(0, 400).Select(i => $"line{i}\n")), narrative.View.Document.Text);
+    }
+
+    /// <summary>
+    /// [idle-memory · dalga 2 · altıncı inceleme] İki ardışık GERÇEK Ctrl+Home iki önceki dilimi getirir: ilk prepend'in telafi olayı
+    /// yükleyiciyi yeniden kurar, ikinci sıçrama bir önceki dilimi yükler — tek dilimle kalmaz.
+    /// <para>PİN — yeşil doğar.</para>
+    /// </summary>
+    [StaFact]
+    public void Two_real_ctrl_home_presses_load_two_previous_slices()
+    {
+        using var narrative = new RealizedNarrative(lines: 600);
+
+        narrative.PressCtrlHome();
+        Assert.StartsWith("line200\n", narrative.View.Document.Text); // ilk dilim geldi
+        narrative.PressCtrlHome();
+
+        Assert.Equal(string.Concat(Enumerable.Range(0, 600).Select(i => $"line{i}\n")), narrative.View.Document.Text);
+    }
+
+    /// <summary>
+    /// [dalga 3 · karar 44] Proje sayfası logun TAMAMINI taşır ve arkasında yüklenecek dilim yoktur: tepedeki bir olay da (yerleşim,
+    /// programın kendi kaydırması), okuyucunun aşağı inip yeniden tepeye çıkması da hiçbir şey eklemez.
+    /// <para>[DEĞİŞEN KURAL] Eski iddia (dalga 2 üçüncü inceleme): sayfa son 200 satırla (<c>page100</c>'den) açılır ve chunk yükleyici
+    /// silahsızdır — tepede duran okuyucuya gelen ilk olay önceki dilimi kendiliğinden eklemez, önceki dilim okuyucu aşağı inip tepeye
+    /// döndüğünde gelir (kırmızısı: takasın sonunda yükleyici koşulsuz silahlıyken ilk olay ekliyordu). Değişme gerekçesi (sahip kararı 44):
+    /// proje sayfası logun ilk satırından açılır ve logun tamamı belgededir (ölçüm: 10 000 satırlık log ~21 ms'de açılır, sayfa açıkken
+    /// yığında ~1,8 MB fazla, kapanınca bırakılır) — yüklenecek bir şey olmadığından "silahsız açılış" sorusu kalmadı.</para>
+    /// </summary>
+    [StaFact]
+    public void A_project_page_holds_its_whole_log_and_a_scroll_to_the_top_loads_nothing()
+    {
+        var view = LaidOutView();
+        string[] page = [.. Enumerable.Range(0, 300).Select(i => $"page{i}")];
+        view.PlayCascade(Text(page)); // sayfa tepede
+
+        view.EvaluateChunkScroll(0.0); // tepede bir olay — okuyucu kaydırmadı
+        ScrollUpToTheTop(view);        // okuyucu aşağı inip tepeye döner
+
+        Assert.Null(view.LastPrepend);
+        Assert.Equal(string.Concat(page.Select(line => line + "\n")), view.Document.Text);
+    }
+
+    /// <summary>[idle-memory · dalga 2 · inceleme M1] Bir kısmı okunamayan backlog — anlatı store'unun dosyası okunamadığında olduğu
+    /// gibi: <see cref="ReadableFrom"/>'un altına uzanan her aralık <c>""</c> döner (asla kısmi metin — <see cref="IConsoleBacklog.Join"/>
+    /// sözleşmesi); sınır inince aynı aralık tam gelir.</summary>
+    private sealed class PartlyUnreadableBacklog(IReadOnlyList<string> lines) : IConsoleBacklog
+    {
+        public int ReadableFrom { get; set; }
+
+        public int Count => lines.Count;
+
+        public string Join(int from, int to) => from < ReadableFrom ? "" : ConsoleLines.Join(lines, from, to);
+    }
+
+    /// <summary>
+    /// Canlı anlatıda belgeden kırpılan satırlar tepeye kaydırınca DELİKSİZ geri gelir.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — idle-memory dalga 1]</b> Eski iddia: kırpılan canlı satırlar görünümün backlog'una
+    /// TAŞINIR — görünüm anlatının kendi kopyasını tutar (test boş metinle tohumlayıp satırları doğrudan belgeye basıyordu;
+    /// geri gelen satırlar görünümün listesindendi). Değişme gerekçesi (ölçüldü, boşta bellek analizi §3): o liste VM
+    /// tamponunun ikinci kopyasıydı — 83 k satırlık bir koşuda 59 MB. Artık her anlatı satırı önce VM'in store'una yazılır,
+    /// sonra pompayla belgeye gelir; kırpılan satır zaten store'dadır ve geri oradan gelir, görünüm kopya tutmaz. Test bu
+    /// yüzden üretim düzenini kurar: satır önce store'a, sonra batch olarak görünüme.</para>
+    /// <para><b>[DEĞİŞEN İDDİA — B3 · O2 adım 2]</b> Son iddia eskiden <c>Assert.False(view.BacklogOwnsCopy)</c> idi ("kırpılan satırlar
+    /// görünüme kopyalanmadı"). Gerekçe: B2'nin O2 adım 1'inden beri hiçbir üretim backlog'u kırpılanı saklamıyordu — iddia her koşulda
+    /// yeşildi (vakum); adım 2'de görünümün kopya tutabileceği tek backlog (<c>ListBacklog</c>) ve soru (<c>BacklogOwnsCopy</c>) kalktı,
+    /// kopya artık yapısal olarak yoktur. Geçmişin store'dan geldiği yukarıdaki iki iddiadadır.</para>
+    /// </summary>
     [StaFact]
     public void Lines_trimmed_from_the_live_run_document_stay_reachable_by_scrolling_up()
     {
-        var view = new ConsoleView();
-        view.Measure(new Size(800, 600));
-        view.Arrange(new Rect(0, 0, 800, 600));
-        view.UpdateLayout();
-        view.ShowRunDocument(""); // anlatı modu, takip AÇIK (canlı build gibi)
+        var view = LaidOutView();
+        var store = new NarrativeStore();
+        view.ShowRunDocument(NarrativeSnapshots.Of(store)); // anlatı modu, takip AÇIK (canlı build gibi)
 
-        for (int i = 0; i < 260; i++) view.AppendBatch($"live{i}\n");
+        for (int i = 0; i < 260; i++) NarrativeSnapshots.Deliver(store, view, [$"live{i}"]);
         Assert.DoesNotContain("live0\n", view.Document.Text); // ön-koşul: kırpıldı (belge 200 ile sınırlı)
 
-        view.EvaluateChunkScroll(100.0);
-        view.EvaluateChunkScroll(0.0);
+        ScrollUpToTheTop(view);
 
-        Assert.Contains("live0\n", view.Document.Text);      // backlog'dan DELİKSİZ geri geldi
+        Assert.Contains("live0\n", view.Document.Text);          // store'dan DELİKSİZ geri geldi
         Assert.Contains("live59\nlive60\n", view.Document.Text); // dikiş yerinde boşluk yok
-    }
-
-    [StaFact]
-    public void Live_lines_trimmed_in_project_mode_are_reachable_again_too()
-    {
-        // Eski kodda backlog yalnız diskten gelen log satırlarıydı: canlı gelen satırlar kırpılınca
-        // _loadedFrom clamp'e takılıyor ("index'i yok") ve o satırlara bir daha ULAŞILAMIYORDU.
-        var view = new ConsoleView();
-        view.Measure(new Size(800, 600));
-        view.Arrange(new Rect(0, 0, 800, 600));
-        view.UpdateLayout();
-
-        view.PlayCascade([.. Enumerable.Range(0, 250).Select(i => $"line{i}")]);
-        view.StickToBottom = true; // kullanıcı dibe indi → takip geri geldi (canlı satırlar kırpılır)
-        for (int i = 0; i < 250; i++) view.AppendBatch($"live{i}\n");
-        Assert.DoesNotContain("live0\n", view.Document.Text); // ön-koşul: canlı satır kırpıldı
-
-        view.EvaluateChunkScroll(100.0);
-        view.EvaluateChunkScroll(0.0);
-
-        Assert.Contains("live0\n", view.Document.Text);          // artık geri gelir (eskiden KAYIPTI)
-        Assert.Contains("live49\nlive50\n", view.Document.Text); // dikiş bitişik
-    }
-
-    // ---------------------------------------------------------------- [3b M-2] proje modu follow tail-trim
-
-    [StaFact]
-    public void Project_mode_following_document_stays_capped_at_the_render_slice()
-    {
-        // Alta-yapışık (follow) proje logu chatty bir build'de akarken belge render dilimini AŞMAZ.
-        // [DEĞİŞEN ÖN-KOŞUL] Proje logu artık BAŞTAN açılır ve takip KAPALI başlar (kullanıcı kararı: bir
-        // derleme logunda aranan ilk hatadır). Follow'u kullanıcı dibe inerek açar — senaryo onu kurar.
-        var view = new ConsoleView();
-        view.PlayCascade(new[] { "seed" });
-        view.StickToBottom = true; // kullanıcı dibe indi → takip geri geldi
-
-        for (int i = 0; i < 400; i++) view.AppendBatch($"live{i}\n");
-
-        Assert.True(view.Document.LineCount <= ConsoleView.RenderSliceLines + 1,
-            $"follow'da belge satır sayısı ({view.Document.LineCount}) render dilimini aşmamalı");
-        Assert.Contains("live399", view.Document.Text);   // en yeni korunur
-        Assert.DoesNotContain("live0\n", view.Document.Text); // en eski düştü
-    }
-
-    [StaFact]
-    public void Project_mode_scrolled_up_document_is_not_trimmed()
-    {
-        // Kullanıcı yukarı kaydırıp chunk gezerken (StickToBottom=false) tail-trim YOK — prepend'le çakışmaz.
-        var view = new ConsoleView();
-        view.PlayCascade(new[] { "seed" });
-        view.StickToBottom = false;
-
-        for (int i = 0; i < 400; i++) view.AppendBatch($"live{i}\n");
-
-        Assert.True(view.Document.LineCount > ConsoleView.RenderSliceLines,
-            "scroll-up (browse) durumunda belge kırpılmamalı");
-        Assert.Contains("live0\n", view.Document.Text); // eski satırlar korunur (chunk gezme bozulmaz)
     }
 
     // ---------------------------------------------------------------- [3b C-1] follow-trim + scroll-to-top: delik yok
@@ -325,31 +592,35 @@ public class ConsoleViewTests
     /// <para>Backlog artık canlı büyüdüğü için kural sadeleşti: <b>belgeden düşen HİÇBİR satır kaybolmaz</b>.
     /// Bu yüzden iddia da sadeleşti — ara dilimin sınırını (hangi <c>orig</c>'den başladığı) pinlemek yerine
     /// asıl sözleşme pinlenir: geçmiş, kronolojik sırada ve EKSİKSİZ geri gelir.</para>
+    ///
+    /// <para>[DEĞİŞEN KURULUM — dalga 3 · karar 44-45] Eskiden proje sayfasıyla kuruluyordu: 300 satırlık kaskat (son 200 belgede,
+    /// backlog görünümün listesi), "kullanıcı dibe indi → takip açık" (<c>StickToBottom = true</c>) ve ham <c>AppendBatch</c>'ler. Proje
+    /// sayfası artık logun tamamını taşır ve hiç izlemez — orada kırpma da indeks de yoktur (yeni kuralın pini:
+    /// <see cref="Live_lines_on_a_project_page_are_never_trimmed_whatever_the_anchor_says"/>). C-1 iddiası takip kırpmasının
+    /// yaşadığı yerde, anlatıda sınanır: dibe sabitlenmiş, izleyen ← Back belgesi (son 200 belgede, öncesi store'da) ve üretim düzeniyle
+    /// gelen canlı satırlar (önce store, sonra batch). Dikiş, telafi ve eksiksizlik iddiaları aynı.</para>
     /// </summary>
     [StaFact]
-    public void Project_mode_follow_trim_then_scroll_to_top_recovers_backlog_without_a_hole()
+    public void Follow_trim_then_scroll_to_top_recovers_the_backlog_without_a_hole()
     {
-        var view = new ConsoleView();
-        view.Measure(new Size(800, 600));
-        view.Arrange(new Rect(0, 0, 800, 600));
-        view.UpdateLayout();
+        var view = LaidOutView();
 
-        // 300 satır kaskat → render dilimi son 200 (orig100..orig299), _loadedFrom=100 (backlog: orig0..orig99).
+        // 300 satırlık anlatı → render dilimi son 200 (orig100..orig299), _loadedFrom=100 (öncesi store'da).
         var all = Enumerable.Range(0, 300).Select(i => $"orig{i}").ToArray();
-        view.PlayCascade(all); // instant (headless), _projectMode
-        view.StickToBottom = true;                    // [DEĞİŞEN ÖN-KOŞUL] kullanıcı dibe indi → follow açık
+        var store = new NarrativeStore();
+        foreach (var line in all) store.Append(line);
+        view.ShowRunDocument(NarrativeSnapshots.Of(store)); // ← Back: dibe sabitlenmiş, akışı izliyor
         Assert.StartsWith("orig100\n", view.Document.Text);
-        Assert.DoesNotContain("orig99\n", view.Document.Text); // ilk 100 chunk loader backlog'unda
+        Assert.DoesNotContain("orig99\n", view.Document.Text); // ilk 100 store'da
 
-        // Chatty canlı build: follow aktifken 250 satır append → tail-trim TÜM orijinal satırları belgeden atar.
-        for (int i = 0; i < 250; i++) view.AppendBatch($"live{i}\n");
+        // Chatty canlı build: takipteyken 250 satır → tail-trim TÜM orijinal satırları belgeden atar.
+        for (int i = 0; i < 250; i++) NarrativeSnapshots.Deliver(store, view, [$"live{i}"]);
         string liveTail = view.Document.Text;              // belgede kalan salt-live kuyruk (orijinaller kırpıldı)
         Assert.Contains("live249\n", liveTail);            // en yeni korunur
-        Assert.DoesNotContain("orig", liveTail);           // tüm orijinaller belgeden kırpıldı (backlog'a düştü)
+        Assert.DoesNotContain("orig", liveTail);           // tüm orijinaller belgeden kırpıldı (store'da duruyor)
 
         // Kullanıcı yukarı kaydırır: arm → scroll-to-top → önceki chunk prepend edilir.
-        view.EvaluateChunkScroll(100.0); // arm (tepeden uzaklaş)
-        view.EvaluateChunkScroll(0.0);   // scroll-to-top → önceki chunk
+        ScrollUpToTheTop(view); // scroll-to-top → önceki chunk
 
         // (a) DELİK YOK: prepend, mevcut live kuyruğun ÖNÜNE kırpılan backlog'un SONUNU dikmeli — kuyruk
         // aynen korunur, araya kayıp/tekrar girmez. STALE index bug'ında _loadedFrom ilerlemez, eski dilim
@@ -368,81 +639,10 @@ public class ConsoleViewTests
         // Tekrar tepeye kaydır: kalan en eski dilim de geri gelir → HİÇBİR satır kalıcı kayıp değildir.
         // Belge artık koşunun TAMAMIdır: orig0..orig299 ve ardından live0..live249, bitişik (contiguous).
         // Canlı kırpılan live0..live50 de buradadır — eski kuralda onlar kalıcı olarak kaybolmuştu.
-        view.EvaluateChunkScroll(100.0);
-        view.EvaluateChunkScroll(0.0);
+        ScrollUpToTheTop(view);
         string everything = string.Concat(Enumerable.Range(0, 300).Select(i => $"orig{i}\n"))
                           + string.Concat(Enumerable.Range(0, 250).Select(i => $"live{i}\n"));
         Assert.Equal(everything, view.Document.Text);
-    }
-
-    // ---------------------------------------------------------------- [I-1] gerçek OnScrollOffsetChanged yolu
-
-    [StaFact]
-    public void Real_OnScrollOffsetChanged_path_prepends_on_jump_to_top_and_releases_stuck_without_data_loss()
-    {
-        // [I-1] EvaluateChunkScroll(offset) çağıran testlerin AKSİNE (yukarıdakiler), bu test AvalonEdit'in
-        // gerçek ScrollOffsetChanged'ine kablı OLAN, üretimin ta kendisi ConsoleView.OnScrollOffsetChanged'i
-        // ÇAĞIRIR (paralel bir kopya yol DEĞİL — internal, EvaluateChunkScroll'daki AYNI gerekçeyle: canlı bir
-        // scroll event'i beklemeden GERÇEK metodu tetikleyebilmek). Amaç: bottom-anchor'ın IsStuck yeniden-hesabı
-        // ile chunk-loader'ın prepend'i AYNI olayda (kullanıcı dipteyken tek hamlede tepeye/Ctrl+Home) çakıştığında
-        // (a) prepend'in delik BIRAKMADIĞINI (backlog bitişik) VE (b) kullanıcının artık dipte OLMADIĞININ doğru
-        // yansıtıldığını (StickToBottom=false — CompensatedOffset'in üzerine YANLIŞLIKLA "dibe git" yazılmadığının
-        // dolaylı kanıtı: bkz. BottomAnchorBehaviorTests.Growth_arriving_after_IsStuck_was_freshly_released_...)
-        // doğrular.
-        //
-        // [Önemli — dürüstlük notu] Deneysel olarak doğrulandı: AvalonEdit'in ExtentHeight/VerticalOffset'i BU
-        // headless/offscreen host'ta document.Insert/ScrollToVerticalOffset'ten SONRA, araya GERÇEK bir layout
-        // pass girmeden senkron YANSIMAZ (bu yüzden aşağıda kaydırmanın ardından UpdateLayout çağrılır) — I-1'in
-        // tarif ettiği "aynı senkron çağrı içinde post-prepend extent'in stale-true IsStuck'a sızması" tam olarak
-        // BU testte yeniden üretilemiyor. Gerçek mekanizma yalnız AvalonEdit'in KENDİ iç re-entrant event'i
-        // üzerinden tetiklenebilir, ki bu headless bir StaFact'te DETERMİNİSTİK olarak zorlanamıyor. Bu yüzden bu
-        // test — GERÇEK yolu TAMAMEN test DIŞI bırakmamak için — sözleşmeyi (delik yok + doğru un-stick) doğrular;
-        // I-1'in SIRA-bağımlı koruması ayrıca BottomAnchorBehaviorTests'teki odaklı guard-logic testiyle kanıtlanır.
-        //
-        // [DEĞİŞEN ÖN-KOŞUL] Test eskiden panelin geçişten sonra TESADÜFEN tepede (offset≈19) kalmasına
-        // dayanıyordu — ölçüldü. O bir kusurdu: design §2.5 mod geçişinde dibe pinlenmeyi ister ve pin artık
-        // deterministik (ConsoleView.PinToBottomAfterModeSwitch). Senaryo bu yüzden tepeye zıplamayı GERÇEKTEN
-        // yapar: kullanıcının ham jesti + gerçek kaydırma.
-        var view = new ConsoleView();
-        view.Measure(new Size(800, 600));
-        view.Arrange(new Rect(0, 0, 800, 600));
-        view.UpdateLayout();
-
-        // 300 satır kaskat → render dilimi son 200 (orig100..orig299), _loadedFrom=100 (backlog: orig0..orig99).
-        var all = Enumerable.Range(0, 300).Select(i => $"orig{i}").ToArray();
-        view.PlayCascade(all); // _projectMode, StickToBottom=true (varsayılan/forced)
-        view.UpdateLayout();
-
-        // [DEĞİŞEN ÖN-KOŞUL] Proje logu BAŞTAN açılır (kullanıcı kararı) — chunk latch'i ancak kullanıcı
-        // tepeden uzaklaşınca kurulur. Senaryo bu yüzden önce aşağı iner, sonra tepeye döner.
-        Assert.Equal(0.0, view.Editor.VerticalOffset);
-        UserScrollGesture.Raise(view);
-        view.Editor.ScrollToVerticalOffset(view.Editor.ExtentHeight);
-        view.UpdateLayout(); // bu host'ta kaydırma ancak bir yerleşim geçişinden SONRA offset'e yansır (ölçüldü)
-        view.OnScrollOffsetChanged(); // arm (tepeden uzaklaşıldı)
-
-        // TEK hamlede tepeye (Ctrl+Home): kullanıcının HAM jesti — üretimin dinlediği kanal — VE gerçek
-        // kaydırma; ardından üretimin scroll handler'ı senkron tetiklenir. Jest olmadan takip BIRAKILMAZ:
-        // takibi yalnız kullanıcı bırakır (bkz. BottomAnchorDecision.OnScrollChanged `userDriven`).
-        UserScrollGesture.Raise(view);
-        view.Editor.ScrollToVerticalOffset(0);
-        view.UpdateLayout();
-        view.OnScrollOffsetChanged();
-
-        // (a) Delik yok: prepend gerçekleşti, backlog (orig0..orig99) render dilimine (orig100..orig299) bitişik
-        // dikildi — tekrar/kayıp yok.
-        var expected = string.Concat(all.Select(l => l + "\n"));
-        Assert.Equal(expected, view.Document.Text);
-        Assert.NotNull(view.LastPrepend);
-        var (before, delta, applied) = view.LastPrepend!.Value;
-        Assert.True(delta > 0, $"prepend edilen dilimin piksel yüksekliği > 0 olmalı (delta={delta})");
-        Assert.Equal(before + delta, applied, 3); // ChunkStitch.CompensatedOffset wiring — CompensatedOffset OTORİTE
-
-        // (b) Kullanıcı artık dipte SAYILMIYOR (StickToBottom=false) — I-1'in ana iddiası: prepend'in kendi
-        // büyümesi stale-true bir IsStuck'ı YANLIŞLIKLA "dipte kal" olarak yorumlayıp CompensatedOffset'i ezip
-        // dibe YANKLAMAMALI. StickToBottom hâlâ true kalsaydı bu, kullanıcının az önce tepeye kaydırdığı GERÇEĞİYLE
-        // ÇELİŞirdi (ve bir sonraki içerik büyümesinde konsol onu TEKRAR dibe fırlatırdı).
-        Assert.False(view.StickToBottom);
     }
 
     // ---------------------------------------------------------------- [D4] anlatı batch'i + idle "ready"

@@ -689,7 +689,8 @@ public partial class ProjectRow : UserControl
     // ---------------------------------------------------------------- [E3/T42] liste mount reveal (bo-reveal)
 
     /// <summary>[T42] Liste satırı reveal gecikmesi — 10ms/satır, 380ms'de tavan (BuildApp.jsx:367). Saf/pinli;
-    /// graf katman stagger'ı (<see cref="Graph.GraphView.RevealDelayMs"/>, 55ms/330ms) ile AYNI aile, FARKLI formül.</summary>
+    /// graf düğüm stagger'ı (<see cref="Graph.GraphView.RevealDelayMs"/>: build-order × 9ms, dalganın tamamı en çok
+    /// 520ms) ile AYNI aile, FARKLI formül.</summary>
     internal static double RevealDelayMs(int index) => Math.Min(Math.Max(index, 0) * RowStaggerMs, RowStaggerCapMs);
 
     /// <summary>[T42/bo-reveal] Satırı KADEMELİ belirt: opacity 0→1 + translateY(-5→0), 300ms ease-out, gecikme =

@@ -10,6 +10,7 @@ using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Tests.Git;
 using BuildOrchestrator.Tests.MsBuild;
+using BuildOrchestrator.Tests.ProcessControl;
 using BuildOrchestrator.Tests.Supervisor;
 using Microsoft.Win32.SafeHandles;
 
@@ -93,6 +94,10 @@ public sealed class SafeExitProcessTests
             LegacyWorktreePoolRoot = TestPaths.MissingLegacyPoolRoot, // [final review M8]
         };
 
+        // [idle-memory · dalga 2] Motor runStarted'la sandbox'taki koşu klasörünü bildirir ve VM anlatıyı oraya yayar. Üretimde süreç
+        // çıkışta biter ve tutamacı sistem kapatır; test sürecinde VM yaşar — spool, test nasıl biterse bitsin (düşen bir iddia, Skip)
+        // sandbox silinmeden önce kapanır: kapsam bu metot dönerken kapanır, sandbox'ı çağıran ondan sonra siler.
+        using var spool = new SpoolScope(vm.Narrative);
         // Motorun olayları MainWindow'daki gibi VM'in thread'ine, dispatcher kuyruğuyla taşınır; sıra korunur. Yol
         // InvokeAsync DEĞİL BeginInvoke'tur [Task 5 fix round 1 · M3]: InvokeAsync, VM'den (ya da ExitReady
         // handler'ından) kaçan bir istisnayı kendi görevinde sessizce tutar ve test bir zaman aşımına düşerdi;
@@ -116,11 +121,11 @@ public sealed class SafeExitProcessTests
         engine.EngineExited += code => dispatcher.BeginInvoke(() => vm.OnEngineExited(code));
 
         // (1)'in ölçüsü: stopRun giderken ExitReady kaç kez atılmıştı. (2)'ninki: ExitReady ANINDAKİ durum.
-        var sent = new List<IpcCommand>();
+        var sent = new SentCommands(); // gerçek motor: gönderim devamı thread havuzunda koşabilir
         int readyCount = 0, readyAtStop = -1;
         vm.DebugOnCommandSent = cmd =>
         {
-            sent.Add(cmd);
+            sent.Record(cmd);
             if (cmd is StopRunCommand) readyAtStop = readyCount;
         };
         ExitMoment? atReady = null;
@@ -266,15 +271,19 @@ public sealed class SafeExitProcessTests
 
         private void Watch()
         {
-            while (true)
+            // Süresiz bekleyiş: zaman aşımı hiç gelmez, döngü yalnız port kapanınca biter. Pin kendi beklenen hatalarını
+            // yutar; Win32/ObjectDisposed ancak kapanan porttan gelir.
+            try
             {
-                JobNotification? n;
-                try { n = _port.WaitNext(Timeout.InfiniteTimeSpan); }
-                catch (Exception ex) when (_closing && ex is (Win32Exception or ObjectDisposedException))
+                JobBirths.Until(_port, Timeout.InfiniteTimeSpan, "unreachable: the wait has no timeout", pid =>
                 {
-                    return; // port kapandı (Dispose): bloklu bekleyiş ERROR_ABANDONED_WAIT_0 ile döner — izleme biter
-                }
-                if (n is { MessageId: NativeMethods.JOB_OBJECT_MSG_NEW_PROCESS } born) Pin(born.Pid);
+                    Pin(pid);
+                    return false;
+                });
+            }
+            catch (Exception ex) when (_closing && ex is (Win32Exception or ObjectDisposedException))
+            {
+                // port kapandı (Dispose): bloklu bekleyiş ERROR_ABANDONED_WAIT_0 ile döner — izleme biter
             }
         }
 

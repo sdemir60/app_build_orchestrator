@@ -1,3 +1,5 @@
+using System.Windows.Automation;
+using System.Windows.Controls;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
@@ -70,6 +72,21 @@ internal static class SettingsDialogHost
 
         return (dialog, run, store, new Scope(engine, window));
     }
+
+    /// <summary>[idle-memory · dalga 3 · defter 8] Realize edilmiş General sayfasındaki ayar anahtarı: UIA adı <paramref name="label"/> olan TEK
+    /// <see cref="CheckBox"/> (satırın <c>ToggleRow</c> şablonu). Ayar sınıflarının ortak yardımcısı — her sınıf aynı sorguyu kendi adıyla
+    /// (EngineSwitch, CompactSwitch, ResolveSwitch, StashSwitch, PullSwitch) yazıyordu. Save'e basış ortak <see cref="CommandPress.Click"/>'tir.</summary>
+    public static CheckBox GeneralSwitch(SettingsDialog dialog, string label)
+    {
+        ArgumentNullException.ThrowIfNull(dialog);
+        return Assert.Single(DsResources.RealizedObjects(dialog.Page(SettingsSection.General)).OfType<CheckBox>(),
+            c => AutomationProperties.GetName(c) == label);
+    }
+
+    /// <summary>[idle-memory · dalga 3 · defter 8] Kataloğun <paramref name="label"/> etiketli satırı — etiketin katalogda TEK satırda geçtiğinin de
+    /// pini. Ayar sınıflarının ortak <c>Row()</c>'u (üç sınıf aynı satırı ayrı ayrı yazıyordu).</summary>
+    public static GeneralSettingDefinition CatalogRow(string label) =>
+        Assert.Single(GeneralSettingsCatalog.Groups.SelectMany(g => g.Rows), r => r.Label == label);
 
     private sealed class Scope(EngineHost engine, System.Windows.Window window) : IDisposable
     {

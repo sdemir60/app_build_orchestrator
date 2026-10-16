@@ -78,11 +78,10 @@ public class MainWindowInputTests
     {
         using var temp = new TempDir();
         var (window, vm) = NewMainWindow(temp);
-        var bindings = KeyBindingsOf(window);
 
-        Assert.Same(vm.BuildCommand, bindings.Single(b => b.Key == Key.F5 && b.Modifiers == ModifierKeys.None).Command);
-        Assert.Same(vm.RebuildCommand, bindings.Single(b => b.Key == Key.F6 && b.Modifiers == ModifierKeys.None).Command);
-        Assert.Same(vm.CleanAllCommand, bindings.Single(b => b.Key == Key.F7 && b.Modifiers == ModifierKeys.None).Command);
+        Assert.Same(vm.BuildCommand, MainWindowHost.KeyBindingOf(window, Key.F5).Command);
+        Assert.Same(vm.RebuildCommand, MainWindowHost.KeyBindingOf(window, Key.F6).Command);
+        Assert.Same(vm.CleanAllCommand, MainWindowHost.KeyBindingOf(window, Key.F7).Command);
         GC.KeepAlive(window);
     }
 
@@ -96,13 +95,13 @@ public class MainWindowInputTests
         // Topolojili pencere: topoloji yokken kapı koşudan BAĞIMSIZ kapalıdır (WhyRunCannotStart'ın son halkası).
         var (window, vm, _) = MainWindowHost.NewWithProjects(temp, MainWindowHost.ProjectNames(2));
         MainWindowHost.AcceptSends(vm);
-        var f5 = KeyBindingsOf(window).Single(b => b.Key == Key.F5 && b.Modifiers == ModifierKeys.None);
+        var f5 = MainWindowHost.KeyBindingOf(window, Key.F5);
         Assert.True(f5.Command.CanExecute(null)); // ön-koşul: koşu yokken F5 Build'i çalıştırır — kapıyı bundan sonra kapatan tek şey koşu
         MainWindowHost.StartBuild(vm);
         var phase = vm.Phase;
 
         Assert.False(f5.Command.CanExecute(null)); // WPF kapalı bir komutu tuşla ÇALIŞTIRMAZ
-        if (f5.Command.CanExecute(null)) f5.Command.Execute(null);
+        CommandPress.Press(f5.Command);
 
         Assert.Equal(phase, vm.Phase);
         Assert.NotEqual(AppPhase.Stopping, vm.Phase);
@@ -120,7 +119,7 @@ public class MainWindowInputTests
         // Topolojili pencere: topoloji yokken kapı Sync'ten BAĞIMSIZ kapalıdır (WhyRunCannotStart'ın son halkası).
         var (window, vm, _) = MainWindowHost.NewWithProjects(temp, MainWindowHost.ProjectNames(2));
         MainWindowHost.AcceptSends(vm);
-        var f5 = KeyBindingsOf(window).Single(b => b.Key == Key.F5 && b.Modifiers == ModifierKeys.None);
+        var f5 = MainWindowHost.KeyBindingOf(window, Key.F5);
         Assert.True(f5.Command.CanExecute(null)); // ön-koşul: Sync yokken F5 çalışır — kapıyı bundan sonra kapatan tek şey Sync
         vm.OnEvent(new SyncStartedEvent(vm.RootPath, "main")); // Sync sürüyor
         Assert.True(vm.SyncBusy); // ön-koşul: kapı kapalı olmalı
@@ -128,7 +127,7 @@ public class MainWindowInputTests
         var phase = vm.Phase;
 
         Assert.False(f5.Command.CanExecute(null)); // WPF kapalı bir komutu tuşla ÇALIŞTIRMAZ
-        if (f5.Command.CanExecute(null)) f5.Command.Execute(null);
+        CommandPress.Press(f5.Command);
 
         Assert.False(vm.IsStarting);
         Assert.Equal(phase, vm.Phase);
@@ -150,7 +149,7 @@ public class MainWindowInputTests
         vm.SelectProject(@"C:\p\a.csproj");
         Assert.Equal(@"C:\p\a.csproj", vm.SelectedProjectId); // ön-koşul
 
-        var escape = KeyBindingsOf(window).Single(b => b.Key == Key.Escape && b.Modifiers == ModifierKeys.None);
+        var escape = MainWindowHost.KeyBindingOf(window, Key.Escape);
         Assert.True(escape.Command.CanExecute(null));
         escape.Command.Execute(null);
 
@@ -174,9 +173,8 @@ public class MainWindowInputTests
         vm.SelectProject(@"C:\p\a.csproj");
         Assert.Equal(@"C:\p\a.csproj", vm.SelectedProjectId); // ön-koşul
 
-        var bindings = KeyBindingsOf(window);
-        var ctrlF = bindings.Single(b => b.Key == Key.F && b.Modifiers == ModifierKeys.Control);
-        var escape = bindings.Single(b => b.Key == Key.Escape && b.Modifiers == ModifierKeys.None);
+        var ctrlF = MainWindowHost.KeyBindingOf(window, Key.F, ModifierKeys.Control);
+        var escape = MainWindowHost.KeyBindingOf(window, Key.Escape);
         ctrlF.Command.Execute(null);
 
         Assert.Equal(@"C:\p\a.csproj", vm.SelectedProjectId); // Esc ile takas edilseydi temizlenirdi
@@ -186,9 +184,8 @@ public class MainWindowInputTests
 
     // ---------------------------------------------------------------- 1.6 title-bar layout ikonları
 
-    /// <summary>Gerçek <see cref="ButtonBase.ClickEvent"/> — XAML'deki <c>Click="OnLayoutList"</c> kablosu
-    /// koparsa (ya da yanlış moda bağlanırsa) burası kırar.</summary>
-    private static void Click(ButtonBase button) => button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+    // Basış ortak CommandPress.Click: gerçek ButtonBase.ClickEvent — XAML'deki Click="OnLayoutList" kablosu koparsa (ya da yanlış moda
+    // bağlanırsa) aşağıdaki testler kırar.
 
     [StaFact]
     public void Clicking_the_list_layout_icon_hides_the_graph_and_applies_the_list_preset()
@@ -197,7 +194,7 @@ public class MainWindowInputTests
         var (window, _) = NewMainWindow(temp);
         window.Shell.ApplyLayout(new LayoutState(LayoutMode.Quad, 60, 74, 76)); // bilinen başlangıç (persist'ten bağımsız)
 
-        Click(window.LayListButton);
+        CommandPress.Click(window.LayListButton);
 
         Assert.Equal(LayoutMode.List, window.Shell.Layout.Mode);
         Assert.Equal(Visibility.Collapsed, window.Shell.GraphHost.Visibility);
@@ -214,7 +211,7 @@ public class MainWindowInputTests
         var (window, _) = NewMainWindow(temp);
         window.Shell.ApplyLayout(new LayoutState(LayoutMode.Quad, 60, 74, 50));
 
-        Click(window.LayFocusButton);
+        CommandPress.Click(window.LayFocusButton);
 
         Assert.Equal(LayoutMode.Focus, window.Shell.Layout.Mode);
         Assert.Equal(Visibility.Collapsed, window.Shell.GraphHost.Visibility);
@@ -230,7 +227,7 @@ public class MainWindowInputTests
         window.Shell.ApplyLayout(new LayoutState(LayoutMode.Focus, 60, 74, 76));
         Assert.Equal(Visibility.Collapsed, window.Shell.GraphHost.Visibility); // ön-koşul: graf gizli
 
-        Click(window.LayQuadButton);
+        CommandPress.Click(window.LayQuadButton);
 
         Assert.Equal(LayoutMode.Quad, window.Shell.Layout.Mode);
         Assert.Equal(Visibility.Visible, window.Shell.GraphHost.Visibility);
@@ -251,17 +248,23 @@ public class MainWindowInputTests
     /// persist zinciri pencerenin <c>Show()</c> edilmesine bağlı olmadığı için, testler kullanıcının
     /// gerçek tercih dosyasını sessizce yeniden yazıyordu. Elle "koşumdan önce/sonra karşılaştır" kontrolü
     /// bir dahaki sefere unutulur; bu assert unutmaz. Dosya yoksa "hâlâ yok" da geçerli bir sonuçtur
-    /// (CI/temiz makine).</para></summary>
+    /// (CI/temiz makine).</para>
+    /// <para>[DEĞİŞEN KURULUM — idle-memory dalga 2 · spec §6.5] Fixture'ın kompakt konsol ataması kapatılır
+    /// (<c>compactConsole: null</c>): atama pencere kurulduktan sonra VM'e yazar, kalıcılık zinciri de enjekte edilen store'u layout
+    /// tıklamasından ÖNCE yazardı — (b)'nin ön-koşulu ("henüz yazılmadı") tam olarak bu zinciri ölçer. İddialar aynı.</para>
+    /// <para>[DEĞİŞEN KURULUM — idle-memory dalga 3 · spec §6.4] Aynı gerekçeyle fixture'ın motor uykusu ataması da kapatılır
+    /// (<c>stopEngineWhenIdle: null</c>): fixture ayarı varsayılan KAPALI açar (üretimde açık) ve o atama da kalıcılık zinciriyle
+    /// store'u layout tıklamasından önce yazardı. İddialar aynı.</para></summary>
     [StaFact]
     public void A_layout_click_persists_through_the_injected_store_and_never_touches_the_users_real_file()
     {
         using var temp = new TempDir();
         string path = MainWindowHost.UiStatePath(temp);
         var before = Fingerprint(JsonUiStateStore.DefaultPath);
-        var (window, _) = NewMainWindow(temp);
+        var (window, _) = MainWindowHost.New(temp, compactConsole: null, stopEngineWhenIdle: null);
         Assert.False(File.Exists(path)); // ön-koşul: enjekte edilen store henüz yazılmadı
 
-        Click(window.LayFocusButton);
+        CommandPress.Click(window.LayFocusButton);
 
         Assert.True(File.Exists(path), "layout tıklaması enjekte edilen store'a YAZMADI");
         Assert.Equal(LayoutMode.Focus, new JsonUiStateStore(path).Load().LayoutMode);

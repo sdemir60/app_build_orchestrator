@@ -27,10 +27,8 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public partial class ActionBarTests
 {
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
-
     private static RunViewModel NewVm() =>
-        new(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        new(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
 
     private static ProjectNode Node(string id, string name, int buildOrder) =>
         new(id, name, id, ["Osys"], [], buildOrder, null, null, false, null);
@@ -262,7 +260,7 @@ public partial class ActionBarTests
         var sent = new List<IpcCommand>();
         vm.DebugOnCommandSent = sent.Add;
 
-        Click(bar.BehindChip);
+        CommandPress.Click(bar.BehindChip);
 
         var cmd = Assert.Single(sent.OfType<PullRepositoryCommand>());
         Assert.Equal(@"D:\repo", cmd.RootPath); // NewVm() fixture'ının workspace kökü
@@ -284,7 +282,7 @@ public partial class ActionBarTests
         // [fırtına dışı] nowMs enjekte edilir — iki push arasında >340ms olmazsa StreamComposer'ın kendi
         // fırtına kuralı Instant'ı true'ya çevirir ve Warn'ın "Fail gibi anında DEĞİL" kuralı ölçülemez.
         long t = 0;
-        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1", () => t)
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1", () => t)
             { RootPath = @"D:\repo" };
         // İlk satır daktilo ETMEZ (prototip prevNewest==null) — reddi ikinci satır yapıp ShouldType'ı ölçülebilir kılar.
         vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\a.csproj", SkipReasons.UpToDate));
@@ -455,7 +453,7 @@ public partial class ActionBarTests
     public void A_click_on_build_that_brings_the_window_back_finds_the_button_already_closed_and_starts_nothing()
     {
         long now = 1_000;
-        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1", () => now)
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1", () => now)
             { RootPath = @"D:\repo" };
         vm.DebugSendOverride = _ => Task.CompletedTask; // motor canlı: Sync gerçekten sürer
         VmTopology.Seed(vm);
@@ -501,9 +499,6 @@ public partial class ActionBarTests
         var menu = new BuildMenu { DataContext = vm };
         return (menu, DsResources.Realize(host, menu));
     }
-
-    private static void Click(ButtonBase button) =>
-        button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
 
     /// <summary>[A13/T3c · c4] design-v1 BuildApp.jsx:1544-1545: <c>background: var(--surface)</c>,
     /// <c>borderTop: 1px solid var(--border)</c>. Yükseklik zaten pinliydi (DesignTokenScaleTests); zemin/üst
@@ -940,26 +935,26 @@ public partial class ActionBarTests
         var (bar, window) = Realize(vm);
 
         Assert.Empty(vm.ActiveFilters);
-        Click(bar.FailedChip);
+        CommandPress.Click(bar.FailedChip);
         Assert.Equal([ProjectFilter.Failed], vm.ActiveFilters.Order());
-        Click(bar.FailedChip);                                  // aynı chip'e ikinci tık → kümeden çıkar
+        CommandPress.Click(bar.FailedChip);                     // aynı chip'e ikinci tık → kümeden çıkar
         Assert.Empty(vm.ActiveFilters);
 
-        Click(bar.CurrentChip);
-        Click(bar.FailedChip);                                  // farklı chip → EKLENİR (devralmaz)
+        CommandPress.Click(bar.CurrentChip);
+        CommandPress.Click(bar.FailedChip);                     // farklı chip → EKLENİR (devralmaz)
         Assert.Equal([ProjectFilter.Current, ProjectFilter.Failed], vm.ActiveFilters.Order());
-        Click(bar.FailedChip);
-        Click(bar.BuildingChip);
+        CommandPress.Click(bar.FailedChip);
+        CommandPress.Click(bar.BuildingChip);
         Assert.Equal([ProjectFilter.Building, ProjectFilter.Current], vm.ActiveFilters.Order());
 
-        Click(bar.SigmaChip);                                   // Σ HER ZAMAN hepsini temizler
+        CommandPress.Click(bar.SigmaChip);                      // Σ HER ZAMAN hepsini temizler
         Assert.Empty(vm.ActiveFilters);
         Assert.False(bar.SigmaChip.IsChecked);                  // Σ hiç aktif olmaz
 
         // Chip'i OLMAYAN bir filtre kümede kalsa bile Σ onu da düşürür — kullanıcı asla kapatılamayan bir
         // filtreye kilitlenmez (○ chip'i kalktıktan sonra bunun tek yolu Σ'dır).
         vm.ActiveFilters = new HashSet<string>(StringComparer.Ordinal) { ProjectFilter.Stale };
-        Click(bar.SigmaChip);
+        CommandPress.Click(bar.SigmaChip);
         Assert.Empty(vm.ActiveFilters);
         GC.KeepAlive(window);
     }
@@ -977,7 +972,7 @@ public partial class ActionBarTests
 
         Assert.Empty(vm.ActiveFilters);     // hiçbir filtre aktif değilken başla
         bar.SigmaChip.IsChecked = true;     // native toggle-on-click'i simüle et
-        Click(bar.SigmaChip);
+        CommandPress.Click(bar.SigmaChip);
 
         Assert.Empty(vm.ActiveFilters);     // ToggleFilter(null) no-op kalır
         Assert.False(bar.SigmaChip.IsChecked); // Σ HER ZAMAN unchecked bitmeli — amber'da takılı kalmamalı
@@ -1185,7 +1180,7 @@ public partial class ActionBarTests
     // Parallelism güncellemesi, chip'in momentary kalması) burada pinlenir — gönderim/IPC yarısı VM
     // testlerindedir (RunViewModelStateTests), bu yüzden burada pump/bekleme GEREKMEZ.
     //
-    // [Fix round 2 — YENİ 2] `Click` yardımcısı ClickEvent'i DOĞRUDAN raise eder ve WPF'in native
+    // [Fix round 2 — YENİ 2] `CommandPress.Click` ClickEvent'i DOĞRUDAN raise eder ve WPF'in native
     // ToggleButton.OnClick→OnToggle yolunu BYPASS eder; bu yüzden IsChecked tıktan önce de sonra da false
     // olurdu ve "momentary" iddiası VACUOUS kalırdı (handler'daki `IsChecked = false` silinse test yeşil
     // kalırdı). Native toggle bu yüzden ELLE simüle edilir — SigmaChip testinin (:148-155) deseni.
@@ -1199,13 +1194,13 @@ public partial class ActionBarTests
         Assert.Equal(PerfProfile.For(PerfMode.Balanced).Parallelism, vm.Parallelism);
 
         bar.PerfChip.IsChecked = true; // native toggle (ClickEvent'i elle raise etmek bunu yapmaz)
-        Click(bar.PerfChip);
+        CommandPress.Click(bar.PerfChip);
         Assert.Equal("Light", vm.PerfMode);
         Assert.Equal(PerfProfile.For(PerfMode.Light).Parallelism, vm.Parallelism);
         Assert.False(bar.PerfChip.IsChecked); // momentary: chip basılı KALMAZ
 
         bar.PerfChip.IsChecked = true;
-        Click(bar.PerfChip);
+        CommandPress.Click(bar.PerfChip);
         Assert.Equal("Full", vm.PerfMode);
         Assert.Equal(PerfProfile.For(PerfMode.Full).Parallelism, vm.Parallelism);
         Assert.False(bar.PerfChip.IsChecked);

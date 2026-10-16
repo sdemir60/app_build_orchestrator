@@ -35,8 +35,8 @@ public class ConsoleTiltInTests
     }
 
     /// <summary>Viewport'u kesin aşan bir anlatı (render dilimi son 200 satırla sınırlar).</summary>
-    private static string LongNarrative() =>
-        string.Concat(Enumerable.Range(0, 300).Select(i => $"line{i}\n"));
+    private static NarrativeSnapshot LongNarrative() =>
+        NarrativeSnapshots.FromText(string.Concat(Enumerable.Range(0, 300).Select(i => $"line{i}\n")));
 
     private static (AxisAngleRotation3D Rotation, TranslateTransform3D Translate) SceneOf(ConsoleView view)
     {
@@ -61,7 +61,7 @@ public class ConsoleTiltInTests
         const double height = 100;
         var view = Realized(height: height);
 
-        view.ShowRunDocument("first\n");
+        view.ShowRunDocument(NarrativeSnapshots.FromText("first\n"));
 
         var (rotation, translate) = SceneOf(view);
         Assert.Equal(new Vector3D(1, 0, 0), rotation.Axis);    // menteşe yine X ekseni
@@ -84,7 +84,7 @@ public class ConsoleTiltInTests
     {
         var view = Realized();
 
-        view.PlayCascade(["first line"]);
+        view.PlayCascade("first line\n");
 
         Assert.Equal(-view.TiltHost.ActualHeight / 2, HingeCentreY(view), precision: 3); // menteşe ALT kenarda
 
@@ -123,7 +123,7 @@ public class ConsoleTiltInTests
     public void The_transition_hands_the_panel_back_to_the_real_editor()
     {
         var view = Realized();
-        view.PlayCascade(["first line"]);
+        view.PlayCascade("first line\n");
         Assert.Equal(0.0, view.TiltHost.Opacity); // ön-koşul: geçiş sürerken gerçek blok saklı
 
         DispatcherPump.PumpUntil(() => view.Tilt3D.Visibility == Visibility.Collapsed, TimeSpan.FromSeconds(3));
@@ -136,13 +136,21 @@ public class ConsoleTiltInTests
     /// <summary>
     /// [animasyon spec §2.1/§3] Geçiş YALNIZ log bloğu remount edildiğinde oynar. Canlı bir satır eklemek onu
     /// YENİDEN TETİKLEMEZ — konsolun canlı satırları animasyonsuzdur.
+    /// <para><b><c>LocalOnly</c>:</b> ön koşulu, açılış geçişinin GERÇEK animasyonla bitmesidir (<c>PumpUntil</c>, 3 sn) —
+    /// <see cref="The_transition_hands_the_panel_back_to_the_real_editor"/> ile aynı bekleyiş. CI'da (main <c>cc49ff58</c>,
+    /// 2026-10-12) "Collapsed beklenirken Visible" ile düştü: <c>PumpUntil</c> süre dolunca sessizce döner, geçiş paylaşılan
+    /// runner'da 3 sn'de bitmemişse canlı satır geçişi yeniden oynatmış gibi görünür. Lokalde normal ve tek çekirdekte 8/8 geçti;
+    /// gerçek bir yeniden oynatma her koşuda düşerdi. Ön koşul artık ayrı iddia edilir (bir daha düşerse mesaj sebebi söyler).
+    /// Eşik GEVŞETİLMEZ: yalnız bu metot CI filtresinden çıkar, lokal tam süit onu koşturmaya devam eder.</para>
     /// </summary>
     [StaFact]
+    [Trait("Category", "LocalOnly")]
     public void Live_output_never_replays_the_transition()
     {
         var view = Realized();
-        view.ShowRunDocument("first\n");
+        view.ShowRunDocument(NarrativeSnapshots.FromText("first\n"));
         DispatcherPump.PumpUntil(() => view.Tilt3D.Visibility == Visibility.Collapsed, TimeSpan.FromSeconds(3));
+        Assert.True(view.Tilt3D.Visibility == Visibility.Collapsed, "ön koşul: açılış geçişi 3 sn içinde bitmedi");
 
         view.AppendBatch("second\n");
         view.AppendNarrativeBatch("third\n");
@@ -191,6 +199,25 @@ public class ConsoleTiltInTests
     }
 
     /// <summary>
+    /// [dalga 3 · karar 44] <b>Uzun bir proje logu, geçişini logun İLK satırı çizilmiş olarak başlatır.</b> Açılış dönüşün aynasıdır:
+    /// dokunun alındığı karede belgenin ilk satırı — logun ilk satırı — görünür satırların başındadır ve geçiş oynar.
+    /// <para>KIRMIZI (karardan önce): sayfa logun son 200 satırıyla kuruluyordu — 1000 satırlık logun geçişi <c>page800</c>'le başlıyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void A_long_project_log_starts_its_transition_with_its_first_line_already_drawn()
+    {
+        var view = Realized(width: 800, height: 400);
+
+        view.PlayCascade(ConsoleDocument.Text([.. Enumerable.Range(0, 1000).Select(i => $"page{i}")]));
+
+        Assert.Equal(0, view.Editor.VerticalOffset);
+        var textView = view.Editor.TextArea.TextView;
+        Assert.True(textView.VisualLinesValid, "görsel satırlar geçiş anında kurulmamış — doku boş/bayat bir kare taşır");
+        Assert.Equal("page0", view.Document.GetText(textView.VisualLines[0].FirstDocumentLine));
+        Assert.Equal(Visibility.Visible, view.Tilt3D.Visibility); // geçiş oynuyor
+    }
+
+    /// <summary>
     /// <b>Dönüşte kaydırma animasyonu YOKTUR.</b> Panel geçişten önce zaten son satırdadır; hareket eden tek
     /// şey menteşedir. İki animasyonu üst üste bindirmek (geçiş + kaydırma) kullanıcı kararıyla reddedildi:
     /// dönüş bir yer değiştirme değil, bir mod değişimidir.
@@ -204,7 +231,7 @@ public class ConsoleTiltInTests
         double landedAt = view.Editor.VerticalOffset;
 
         Assert.False(
-            DependencyPropertyHelper.GetValueSource(view.Editor, ScrollAnimator.VerticalOffsetProperty).IsAnimated,
+            ScrollAnimation.IsAnimating(view.Editor),
             "dönüşte kaydırma animasyonu kuruldu — geçiş tek hareket olmalı");
 
         DispatcherPump.PumpUntil(() => view.Tilt3D.Visibility == Visibility.Collapsed, TimeSpan.FromSeconds(3));
@@ -223,7 +250,7 @@ public class ConsoleTiltInTests
         view.Arrange(new Rect(0, 0, 200, 100));
         view.UpdateLayout();
 
-        view.PlayCascade(["first line"]);
+        view.PlayCascade("first line\n");
 
         Assert.Equal(Visibility.Collapsed, view.Tilt3D.Visibility);
         Assert.Equal(1.0, view.TiltHost.Opacity);

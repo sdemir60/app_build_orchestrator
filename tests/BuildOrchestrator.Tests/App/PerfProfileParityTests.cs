@@ -23,7 +23,7 @@ public class PerfProfileParityTests
 {
     // Başlatılmaz — VM harness'ı (RunViewModelStateTests deseni).
     private static RunViewModel NewVm(EngineHost engine) =>
-        new(engine, new ConsoleBatcher(_ => Task.Delay(Timeout.Infinite)), () => "r1");
+        new(engine, MainWindowHost.NeverTickingBatcher(), () => "r1");
 
     // [D6 persistence] Seed yolu: UiState'ten okunan her profil adı Core tablosunun O satırını uygular.
     [Theory]

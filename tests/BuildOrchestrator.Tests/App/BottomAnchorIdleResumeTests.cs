@@ -23,6 +23,7 @@ public class BottomAnchorIdleResumeTests
         public Action? PendingSchedule;
         public TimeSpan? PendingDelay;
         public bool AutoResumeAllowed = true;
+        public bool FollowAllowed = true;
 
         public BottomAnchorBehavior New() => new(
             getOffset: () => Offset,
@@ -31,7 +32,8 @@ public class BottomAnchorIdleResumeTests
             scrollInstant: v => Offset = v,
             scrollSmooth: target => { SmoothTarget = target; return true; },
             scheduleOnce: (delay, cb) => { PendingDelay = delay; PendingSchedule = cb; },
-            autoResumeAllowed: () => AutoResumeAllowed);
+            autoResumeAllowed: () => AutoResumeAllowed,
+            followAllowed: () => FollowAllowed);
 
         /// <summary>
         /// Kullanıcı yukarı kaydırdı: host HAM GİRDİYİ bildirir (tekerlek) ve ardından scroll olayı gelir.
@@ -60,7 +62,9 @@ public class BottomAnchorIdleResumeTests
         Assert.Equal(f.Extent - f.Viewport, f.SmoothTarget); // dibe dönüldü
     }
 
-    /// <summary>Host izin vermiyorsa (konsolun proje-log modu) dönüş HİÇ kurulmaz.</summary>
+    /// <summary>Host dönüşe izin vermiyorsa dönüş HİÇ kurulmaz.
+    /// <para>[dalga 3 · karar 45] Örnek eskiden konsolun proje-log moduydu; konsol artık orada takibi yasaklar (<c>followAllowed</c>) ve
+    /// dönüş onunla birlikte kapanır — <see cref="A_host_that_forbids_following_never_returns_on_its_own_either"/>.</para></summary>
     [Fact]
     public void A_panel_that_forbids_it_never_returns_on_its_own()
     {
@@ -73,6 +77,55 @@ public class BottomAnchorIdleResumeTests
 
         Assert.Null(f.PendingSchedule);
         Assert.Null(f.SmoothTarget);
+    }
+
+    /// <summary>
+    /// [dalga 3 · karar 45] Takibe izin vermeyen host (konsolun proje sayfası) kendiliğinden dibe de dönmez — dönüş takibe dönüştür; dönüşe
+    /// izin verse bile (<c>autoResumeAllowed</c>) bekleme kurulmaz.
+    /// </summary>
+    [Fact]
+    public void A_host_that_forbids_following_never_returns_on_its_own_either()
+    {
+        var f = new Fake { FollowAllowed = false };
+        var behavior = f.New();
+        f.Offset = 100;
+
+        behavior.NotifyUserScroll();
+        behavior.OnScrollChanged(0);
+
+        Assert.Null(f.PendingSchedule);
+        Assert.Null(f.SmoothTarget);
+    }
+
+    /// <summary>
+    /// [dalga 3 · karar 45] Takibe izin vermeyen host hiçbir yoldan izlemez: dibe zorlansa da (<see cref="BottomAnchorBehavior.ForceStuck"/>)
+    /// içerik büyümesi görünümü çekmez; dibe atlama (pill) görünümü dibe BİR KEZ götürür, atlama penceresi bitince de takip açılmaz.
+    /// Durum her zamanki gibi işler (yapışık, pill gizli) — yalnız akan içerik görünümü çekmez.
+    /// </summary>
+    [Fact]
+    public void A_host_that_forbids_following_is_never_pulled_down_not_after_a_forced_stick_nor_after_a_jump()
+    {
+        var f = new Fake { FollowAllowed = false };
+        var behavior = f.New();
+        f.Offset = f.Extent - f.Viewport; // dipte
+        behavior.ForceStuck(true);
+        Assert.True(behavior.IsStuck);    // ön-koşul: durum yapışık
+        Assert.False(behavior.ShouldFollow);
+
+        f.Extent += 40;                   // yeni satır geldi
+        behavior.OnScrollChanged(40);
+        Assert.Equal(f.Extent - 40 - f.Viewport, f.Offset); // görünüm çekilmedi
+
+        behavior.JumpToBottom();          // `⌄ latest`
+        Assert.Equal(f.Extent - f.Viewport, f.SmoothTarget); // dibe bir kez
+        f.Offset = f.SmoothTarget!.Value; // atlama dipte oturdu
+        f.PendingSchedule!();             // atlama penceresi bitti
+        Assert.False(behavior.ShouldFollow);
+        Assert.False(behavior.ShowPill);
+
+        f.Extent += 40;                   // sıradaki satır
+        behavior.OnScrollChanged(40);
+        Assert.Equal(f.Extent - 40 - f.Viewport, f.Offset); // atlamadan sonra da görünüm çekilmedi
     }
 
     /// <summary>
@@ -116,7 +169,10 @@ public class BottomAnchorIdleResumeTests
         Assert.Equal(afterScroll, f.Offset); // okuyucu yerinde kaldı
     }
 
-    /// <summary>Bekleme dolunca takip geri alınır — dipteyken de akış yeniden izlenmeye başlar.</summary>
+    /// <summary>Bekleme dolunca takip geri alınır — dipteyken de akış yeniden izlenmeye başlar.
+    /// <para>[DEĞİŞEN KURAL — dalga 2 altıncı inceleme] Eski iddia: yakalamanın hedefi içerik yüksekliğiydi (<c>f.Extent</c> — dibi aşan
+    /// istek, host kenetliyordu). Dibe her gidiş artık dibin tek tanımını hedefler (<see cref="BottomAnchorBehavior.BottomOffset"/>);
+    /// host'ta oturulan konum aynı — gerçek pencereli bekleme dönüşü testi yeşil kaldı.</para></summary>
     [Fact]
     public void When_the_wait_expires_following_resumes_even_from_inside_the_threshold()
     {
@@ -130,7 +186,7 @@ public class BottomAnchorIdleResumeTests
 
         f.Extent += 40;
         behavior.OnScrollChanged(40);
-        Assert.Equal(f.Extent, f.Offset); // içerik büyümesi yakalaması yeniden devrede
+        Assert.Equal(f.Extent - f.Viewport, f.Offset); // içerik büyümesi yakalaması yeniden devrede — yeni dipte
     }
 
     /// <summary>
@@ -155,6 +211,31 @@ public class BottomAnchorIdleResumeTests
         Assert.Equal(f.Extent - f.Viewport, f.SmoothTarget); // bekleme doldu ve dibe dönüldü
     }
 
+    /// <summary>
+    /// [idle-memory · final review m1] Bekleme panel HÂLÂ dipteyken dolarsa (kullanıcı kendi eliyle dibe indi) takip geri gelir ve
+    /// host bunu DUYAR (<see cref="BottomAnchorBehavior.Changed"/>). Takibe bağlı işler (konsolun belgeyi render dilimine kırpması)
+    /// <see cref="BottomAnchorBehavior.ShouldFollow"/>'u bu bildirimde okur; takip sessizce geri gelseydi o iş ancak bir sonraki
+    /// içerikle yapılırdı — koşu bittiyse hiç.
+    /// </summary>
+    [Fact]
+    public void When_the_wait_expires_at_the_bottom_the_host_hears_that_following_resumed()
+    {
+        var f = new Fake();
+        var behavior = f.New();
+        f.Offset = f.Extent - f.Viewport - 10; // dipten 10px: eşiğin İÇİNDE — kullanıcı kendi eliyle dibe indi
+        behavior.NotifyUserScroll();
+        behavior.OnScrollChanged(0);
+        Assert.True(behavior.IsStuck);         // ön-koşul: dipte
+        Assert.False(behavior.ShouldFollow);   // ön-koşul: ama direksiyon kullanıcıda
+        int changed = 0;
+        behavior.Changed += (_, _) => changed++;
+
+        f.PendingSchedule!(); // kullanıcı elini çekti
+
+        Assert.True(behavior.ShouldFollow);
+        Assert.Equal(1, changed); // KIRMIZI: bugün takip haber vermeden geri gelir
+    }
+
     /// <summary>Dipte otururken ve HİÇ kaydırılmamışken bekleme kurulmaz — dönülecek bir yer yok.</summary>
     [Fact]
     public void Content_growth_alone_arms_nothing()
@@ -166,5 +247,40 @@ public class BottomAnchorIdleResumeTests
         behavior.OnScrollChanged(40); // yalnız içerik büyüdü, kullanıcı dokunmadı
 
         Assert.Null(f.PendingSchedule);
+    }
+
+    /// <summary>
+    /// [B2 fix 3 · madde 5 · inceleme M4] Uçuştaki atlamayı DURDURAN jestten sonra da beş saniyelik dönüş işler, ve durdurulan atlamanın
+    /// bayat 560 ms pencere sonu hiçbir şey yapmaz (duyurmaz, kaydırmaz, durumu değiştirmez). Sıra üretimdeki gibidir: okuyucu kaydırdı,
+    /// <c>⌄ latest</c>'e bastı, atlama yolun ortasında jestle durdu, okuyucu elini çekti.
+    /// <para>PİN — bozma: kuşak sayacı artmazsa bayat pencere sonu duyurur; jestten sonra bekleme kurulmazsa dönüş gelmez.</para>
+    /// </summary>
+    [Fact]
+    public void After_a_gesture_stops_the_jump_the_idle_return_still_works_and_the_stale_window_end_is_inert()
+    {
+        var f = new Fake();
+        var behavior = f.ScrolledAway();
+        behavior.JumpToBottom();
+        var windowEnd = f.PendingSchedule!;
+        Assert.Equal(TimeSpan.FromMilliseconds(BottomAnchorDecision.JumpingWindowMs), f.PendingDelay); // ön-koşul: atlama uçuşta
+        f.Offset = 400; // atlama yolun ortasında durdu: dipten 400 px
+        behavior.NotifyUserScroll(stoppedJump: true);
+        Assert.Equal(TimeSpan.FromMilliseconds(BottomAnchorDecision.IdleResumeMs), f.PendingDelay); // jest beklemeyi kurdu
+        var idle = f.PendingSchedule!;
+        Assert.False(behavior.IsStuck); // ön-koşul: durulan yer okuyucunun
+        int changed = 0;
+        behavior.Changed += (_, _) => changed++;
+        f.SmoothTarget = null;
+
+        windowEnd(); // bayat pencere sonu
+        Assert.Equal(0, changed);
+        Assert.False(behavior.IsStuck);
+        Assert.False(behavior.IsJumping);
+        Assert.Null(f.SmoothTarget);
+
+        idle(); // okuyucu elini çekti
+
+        Assert.Equal(f.Extent - f.Viewport, f.SmoothTarget); // dibe dönüş başladı
+        Assert.True(behavior.IsStuck);
     }
 }

@@ -1,28 +1,26 @@
-<# [yayin hatti] Tag <-> Directory.Build.props Version <-> CHANGELOG en ust surum esitligi. release.ps1 push'tan
-   once, release.yml ilk adim olarak calistirir. Cikis 0 = tutarli, 1 = uyumsuz (mesaj sebebi yazar).
-   -RequireOnMain (yalniz release.yml): HEAD - CI'da tag'in commit'i - origin/main'in atasi olmali; elle itilen ve
-   main'e hic girmemis bir commit'e duran tag yayin cikarmaz - develop'a girmis ama main'e girmemis olan da (main yalniz
-   surumleri tasir; release.ps1 tag'i main'deki merge commit'ine koyar). Checkout tam tarihce ister: fetch-depth 0.
-   release.ps1 bu anahtari vermez: orada guard release commit'inden once kosar. #>
+<# [yayin hatti] Surum tutarliligi: tag <-> Directory.Build.props Version <-> CHANGELOG en ust surum. Iki kip:
+   -Tag vX.Y.Z (release.ps1, release commit'inden once): tag == "v" + Version == CHANGELOG en ust (Get-VersionProblems).
+     origin'e sorulmaz.
+   -OnMain (release.yml'in guard job'i): yayin kontrolu (Get-MainRelease, release-common.ps1 - release-tag.ps1 ayni kontrolu
+     tag'den once yeniden yapar): tag Version'dan, Version == CHANGELOG, HEAD origin'in main ucu, tag yok ya da bu commit'te.
+     Gecerse tag'i GITHUB_OUTPUT'a yazar ("tag=vX.Y.Z") - publish job'i onu kullanir.
+   Cikis 0 = tutarli, 1 = uyumsuz (mesaj sebebi yazar). #>
 param(
-    [Parameter(Mandatory = $true)][string]$Tag,
-    [switch]$RequireOnMain
+    [Parameter(Mandatory = $true, ParameterSetName = 'Local')][string]$Tag,
+    [Parameter(Mandatory = $true, ParameterSetName = 'OnMain')][switch]$OnMain
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'release-common.ps1')
+Set-Location $RepoRoot
 
-$version = Get-BuildProp 'Version'
-$headings = (Read-Changelog).Headings
-$topVersion = if ($headings.Count -gt 0) { $headings[0].Version } else { '' }
-$problems = @()
-if ($Tag -ne "v$version") { $problems += "tag '$Tag' does not match Directory.Build.props Version '$version' (expected 'v$version')" }
-if ($topVersion -ne $version) { $problems += "CHANGELOG.md top section is '$topVersion', Directory.Build.props Version is '$version'" }
-if ($RequireOnMain) {
-    # Ata sorulamazsa (origin/main yok, sig checkout) da durur: dogrulanamayan yayin cikmaz (uc durum Test-GitAncestor'da).
-    try { if (-not (Test-GitAncestor HEAD origin/main)) { $problems += "the tagged commit is not on origin/main (release tags sit only on main)" } }
-    catch { $problems += "cannot check the tagged commit against origin/main ($($_.Exception.Message); is the history fetched?)" }
-}
+if ($OnMain) { $release = Get-MainRelease; $Tag = $release.Tag; $problems = $release.Problems }
+else { $problems = @(Get-VersionProblems $Tag) }
 if ($problems.Count -gt 0) { $problems | ForEach-Object { Write-Host "release guard: $_" }; exit 1 }
-$onMain = if ($RequireOnMain) { ', on origin/main' } else { '' }
-Write-Host "release guard: $Tag == Version == CHANGELOG top ($version)$onMain"
+$version = Get-BuildProp 'Version'
+if ($OnMain) {
+    # GitHub'in adim ciktisi; BOM'suz UTF-8 (PS 5.1'in Out-File -Encoding utf8'i BOM yazar ve ilk anahtar bozulurdu).
+    if ($env:GITHUB_OUTPUT) { [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "tag=$Tag`n") }
+    Write-Host "release guard: $Tag == Version == CHANGELOG top ($version), the head of origin's main"
+}
+else { Write-Host "release guard: $Tag == Version == CHANGELOG top ($version)" }
 exit 0

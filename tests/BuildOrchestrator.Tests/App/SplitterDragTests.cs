@@ -92,9 +92,7 @@ public class SplitterDragTests
         };
 
         s.Splitter.Focus();
-        var key = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(s.Splitter)!, 0, Key.Left)
-        { RoutedEvent = Keyboard.KeyDownEvent };
-        s.Splitter.RaiseEvent(key);
+        var key = KeyInput.Raise(s.Splitter, Key.Left, Keyboard.KeyDownEvent);
 
         Assert.True(key.Handled);   // taban GridSplitter ok-tuşuyla resize etti
         Assert.True(committed);     // ...ve DsSplitter persist'i DragCompleted ile tetikledi

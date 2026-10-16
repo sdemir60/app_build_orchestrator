@@ -1,4 +1,5 @@
 using BuildOrchestrator.App.Services;
+using BuildOrchestrator.Core.Diagnostics;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -15,14 +16,18 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 public class DiagnosticsReportTests
 {
+    private const long Mb = 1024 * 1024;
+
     private static DiagnosticsInput Full() => new(
         Product: "Build Orchestrator",
         Version: "1.0.0+it5",
         Copyright: "© 2026 Delta Yazılım",
         EngineVersion: "1.0.0+engine",
         EnginePid: 4242,
+        EngineState: EngineState.Ready,
         Runtime: ".NET 10.0.0",
         Os: "Microsoft Windows 10.0.26200",
+        Memory: new MemoryReading(PrivateBytes: 309 * Mb, CommittedBytes: 250 * Mb, HeapBytes: 8 * Mb),
         MsBuild: @"C:\VS\MSBuild.exe (v17.9.8)",
         RepositoryRoot: @"D:\repo",
         StateFile: @"C:\state\ui-state.json",
@@ -30,6 +35,10 @@ public class DiagnosticsReportTests
 
     private static IEnumerable<DiagnosticsLine> AllLines(DiagnosticsSnapshot s) =>
         s.Identity.Concat(s.Runtime).Concat(s.Paths);
+
+    /// <summary>[dalga 3 · B1 fix 1 · m-3] Motor PID satırının değeri — satır üretimin etiket sabitiyle bulunur (etiketin literal pini yalnız
+    /// RUNTIME grubunun etiket sırası testindedir).</summary>
+    private static string PidValue(DiagnosticsSnapshot s) => s.Runtime.Single(l => l.Label == DiagnosticsReport.EnginePidLabel).Value;
 
     [Fact]
     public void The_identity_group_is_version_engine_and_copyright_in_that_order()
@@ -40,13 +49,39 @@ public class DiagnosticsReportTests
         Assert.Equal(["1.0.0+it5", "1.0.0+engine", "© 2026 Delta Yazılım"], s.Identity.Select(l => l.Value));
     }
 
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — idle-memory spec §6.6]</b> RUNTIME grubu: Engine PID · .NET runtime · OS · App private · GC committed ·
+    /// Managed heap — bellek değerleri MB.
+    /// <para><b>Eski iddia</b> (<c>The_runtime_group_is_engine_pid_dotnet_runtime_and_os</c>): grup yalnız üç satırdı (Engine PID ·
+    /// .NET runtime · OS). <b>Değişme gerekçesi (boşta bellek ölçüm raporu, 2026-10-13):</b> motorun bellek satırı vardı, App'in
+    /// yoktu — App'in koşu sonrası 798 MB özel belleği ancak dış araçlarla (sayaçlar, yığın dökümü) görüldü; destek talebine
+    /// yapıştırılan tanı metni App'in belleğini hiç taşımıyordu. Üç satır motorun bellek satırının
+    /// (<c>memory: private=… committed=… heap=…</c>) App'teki eşidir: aynı okuma, aynı MB kuralı (<see cref="MemoryLine"/>).</para>
+    /// </summary>
     [Fact]
-    public void The_runtime_group_is_engine_pid_dotnet_runtime_and_os()
+    public void The_runtime_group_is_engine_pid_dotnet_runtime_os_and_the_app_memory()
     {
         var s = DiagnosticsReport.Compose(Full());
 
-        Assert.Equal(["Engine PID", ".NET runtime", "OS"], s.Runtime.Select(l => l.Label));
-        Assert.Equal(["4242", ".NET 10.0.0", "Microsoft Windows 10.0.26200"], s.Runtime.Select(l => l.Value));
+        Assert.Equal(["Engine PID", ".NET runtime", "OS", "App private", "GC committed", "Managed heap"],
+            s.Runtime.Select(l => l.Label));
+        Assert.Equal(["4242", ".NET 10.0.0", "Microsoft Windows 10.0.26200", "309 MB", "250 MB", "8 MB"],
+            s.Runtime.Select(l => l.Value));
+    }
+
+    /// <summary>[idle-memory · spec §6.6] Bellek satırlarının sayısı motorun bellek satırıyla AYNI kuraldan gelir
+    /// (<see cref="MemoryLine.Megabytes"/>): yarım MB sıfırdan uzağa yuvarlanır (2,5 MB → 3; tam sayı bölmesi ya da bankacı
+    /// yuvarlaması 2 verirdi) ve büyük değer binlik ayırıcı almaz — App kendi yuvarlamasını yazmaz.</summary>
+    [Fact]
+    public void The_memory_rows_round_like_the_engine_memory_line()
+    {
+        var s = DiagnosticsReport.Compose(Full() with
+        {
+            Memory = new MemoryReading(PrivateBytes: 5L * 1024 * Mb, CommittedBytes: 5 * Mb / 2, HeapBytes: Mb / 2 - 1),
+        });
+
+        Assert.Equal(["5120 MB", "3 MB", "0 MB"],
+            s.Runtime.Where(l => l.Label is "App private" or "GC committed" or "Managed heap").Select(l => l.Value));
     }
 
     /// <summary>
@@ -93,7 +128,63 @@ public class DiagnosticsReportTests
         var s = DiagnosticsReport.Compose(Full() with { EngineVersion = null, EnginePid = null });
 
         Assert.Equal(DiagnosticsReport.NotStarted, s.Engine.Value);
-        Assert.Equal(DiagnosticsReport.Unknown, s.Runtime.Single(l => l.Label == "Engine PID").Value);
+        Assert.Equal(DiagnosticsReport.Unknown, PidValue(s));
+    }
+
+    /// <summary>[idle-memory · dalga 3 · karar 39] Motor boşta uyurken (VM durumu <see cref="EngineState.Asleep"/>) PID satırı <c>asleep</c>
+    /// okur — Environment sekmesinde ve panoya kopyalanan metinde: süreç yok, ama "bilinmiyor" (<c>—</c>) da değil; sonraki iş motoru yeniden
+    /// başlatır. VM uyuyan motorun PID'ini tutmaz (null). Sürüm satırı değişmez (uyanan motor aynı ikilidir). Sabitin metni bir kez pinlenir.
+    /// <para>KIRMIZI: PID satırı uykuda "—" okuyordu (durum rapora hiç girmiyordu).</para></summary>
+    [Fact]
+    public void An_asleep_engine_reads_asleep_on_the_pid_row_and_in_the_copied_text()
+    {
+        Assert.Equal("asleep", DiagnosticsReport.Asleep); // metnin TEK literal pini
+
+        var s = DiagnosticsReport.Compose(Full() with { EnginePid = null, EngineState = EngineState.Asleep });
+
+        Assert.Equal(DiagnosticsReport.Asleep, PidValue(s));
+        Assert.Equal(Full().EngineVersion, s.Engine.Value);
+        Assert.Contains(DiagnosticsReport.ToText(s).Split(Environment.NewLine),
+            row => row.StartsWith(DiagnosticsReport.EnginePidLabel, StringComparison.Ordinal) && row.EndsWith(DiagnosticsReport.Asleep, StringComparison.Ordinal));
+    }
+
+    /// <summary>Uykudan başka her motor durumu — sözleşmeden okunur: yarın eklenen bir durum da kendiliğinden sınanır.</summary>
+    public static TheoryData<EngineState> StatesOtherThanAsleep()
+    {
+        var states = new TheoryData<EngineState>();
+        foreach (var state in Enum.GetValues<EngineState>())
+            if (state != EngineState.Asleep) states.Add(state);
+        return states;
+    }
+
+    /// <summary>[karar 39 · PİN] Uykudan başka her durumda PID satırı bugünkü gibidir: motorun PID'i varsa o, yoksa <c>—</c> — uyku sürerken
+    /// (süreç henüz duruyor), uyanırken (yeni süreç henüz hazır değil), ölü ya da erişilemez motorda da. PİN: durumu okumayan bugünkü rapor da
+    /// yeşildir; bu test "asleep"in başka bir duruma sızmasını yakalar.</summary>
+    [Theory]
+    [MemberData(nameof(StatesOtherThanAsleep))]
+    public void Every_other_engine_state_shows_the_pid_as_today(EngineState state)
+    {
+        Assert.Equal(Full().EnginePid!.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            PidValue(DiagnosticsReport.Compose(Full() with { EngineState = state })));
+        Assert.Equal(DiagnosticsReport.Unknown, PidValue(DiagnosticsReport.Compose(Full() with { EngineState = state, EnginePid = null })));
+    }
+
+    /// <summary>
+    /// [idle-memory · final review (Tasks 9-10)] Bellek okunamazsa (<c>MemoryLine.TryRead</c> <c>null</c> döner) tanı ekranı yine
+    /// kurulur ve üç bellek satırı <see cref="DiagnosticsReport.Unknown"/> gösterir, satırlar KAYBOLMAZ — motor doğmamışken PID
+    /// satırının <c>—</c> olması gibi. Bir tanı, tanı ekranını bozamaz: eskiden okuma korumasızdı ve süreç sorgusu patlarsa About
+    /// hiç açılmazdı (motorun bellek satırı için <c>MemoryLine.Report</c> aynı güvenceyi baştan veriyordu).
+    /// </summary>
+    [Fact]
+    public void An_unreadable_memory_reads_as_unknown_on_its_three_rows_instead_of_breaking_the_report()
+    {
+        var s = DiagnosticsReport.Compose(Full() with { Memory = null });
+
+        Assert.All(new[] { "App private", "GC committed", "Managed heap" },
+            label => Assert.Equal(DiagnosticsReport.Unknown, s.Runtime.Single(l => l.Label == label).Value));
+        Assert.Equal("4242", PidValue(s)); // öbür satırlar etkilenmez
+        Assert.Contains(DiagnosticsReport.ToText(s).Split(Environment.NewLine),
+            row => row.StartsWith("App private", StringComparison.Ordinal) && row.EndsWith(DiagnosticsReport.Unknown, StringComparison.Ordinal));
     }
 
     [Fact]

@@ -26,11 +26,9 @@ public class BranchCheckoutTests
     private const string FullSha = "b7e91d4a0c1f2e3d4c5b6a7980716253443526a1";
     private const string StashMessage = "build-orchestrator: leaving main for feature/x";
 
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
-
     private static RunViewModel NewVm()
     {
-        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         vm.OnEvent(new BranchListEvent([
             new BranchRef("main", "aaaaaaaaaaaa", IsActive: true, IsRemoteTracking: false),
             new BranchRef("feature/x", "bbbbbbbbbbbb", IsActive: false, IsRemoteTracking: false),
@@ -236,7 +234,7 @@ public class BranchCheckoutTests
         // [fırtına dışı] nowMs enjekte edilir: iki push arasında >340ms olmazsa StreamComposer'ın kendi fırtına
         // kuralı (Instant=true) devreye girer ve Warn'ın "Fail gibi anında DEĞİL" kuralını ÖLÇÜLEMEZ kılar.
         long t = 0;
-        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1", () => t)
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1", () => t)
             { RootPath = @"D:\repo" };
         // İlk satır daktilo ETMEZ (prevNewest==null) — reddi ikinci satır yapıp ShouldType'ı ölçülebilir kılar.
         vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\a.csproj", SkipReasons.UpToDate));

@@ -27,7 +27,7 @@ public class ScrollFollowWiringTests
         view.Arrange(new Rect(0, 0, 800, 400));
         view.UpdateLayout();
         // Viewport'u gerçekten aşan bir anlatı — aksi halde "kaydırma" diye bir şey olmaz ve test vacuous olur.
-        view.ShowRunDocument(string.Concat(Enumerable.Range(0, 300).Select(i => $"line{i}\n")));
+        view.ShowRunDocument(NarrativeSnapshots.FromText(string.Concat(Enumerable.Range(0, 300).Select(i => $"line{i}\n"))));
         view.UpdateLayout();
         return view;
     }
@@ -39,7 +39,7 @@ public class ScrollFollowWiringTests
         Assert.True(view.FollowsBottom);                                  // ön-koşul: geçiş dibe pinledi
         Assert.True(view.Editor.ExtentHeight > view.Editor.ViewportHeight, "senaryo kurulamadı: içerik kaydırılabilir değil");
 
-        UserScrollGesture.Raise(view);          // kullanıcı kaydırma çubuğunu tuttu
+        UserScrollGesture.DragVerticalBarOf(view.Editor); // kullanıcı kaydırma çubuğunu tuttu
         view.Editor.ScrollToVerticalOffset(0);  // ...ve yukarı çıktı
         view.UpdateLayout();
         Assert.False(view.FollowsBottom);
@@ -56,7 +56,7 @@ public class ScrollFollowWiringTests
     {
         var vm = new RunViewModel(
             new EngineHost(TestPaths.SupervisorExe),
-            new ConsoleBatcher(_ => Task.Delay(Timeout.Infinite)),
+            MainWindowHost.NeverTickingBatcher(),
             () => "r1") { RootPath = @"D:\repo" };
         var view = new EventStreamView { AnimationsEnabledProvider = () => false, DataContext = vm };
         var window = DsResources.Realize(DsResources.NewHost(), view);
@@ -67,7 +67,7 @@ public class ScrollFollowWiringTests
         Assert.True(view.Scroll.ScrollableHeight > 0, "senaryo kurulamadı: stream içeriği kaydırılabilir değil");
         Assert.True(view.FollowsBottom); // ön-koşul
 
-        UserScrollGesture.Raise(view);
+        UserScrollGesture.DragVerticalBarOf(view.Scroll);
         view.Scroll.ScrollToVerticalOffset(0);
         view.UpdateLayout();
         Assert.False(view.FollowsBottom);

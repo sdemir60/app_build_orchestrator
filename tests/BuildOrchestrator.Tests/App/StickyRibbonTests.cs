@@ -21,10 +21,8 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class StickyRibbonTests
 {
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
-
     private static RunViewModel NewVm() =>
-        new(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        new(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
 
     private static (StickyRibbon ribbon, Window window) Realize(RunViewModel vm, bool forceAnimations = false)
     {
@@ -156,7 +154,7 @@ public class StickyRibbonTests
         Assert.Empty(ribbon.FailureCluster.Children.OfType<BuildOrchestrator.App.Controls.StatusGlyph>());
 
         Assert.Empty(vm.ActiveFilters);
-        ribbon.FailureMoreChip!.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+        CommandPress.Click(ribbon.FailureMoreChip!);
         Assert.Equal([ProjectFilter.Failed], vm.ActiveFilters.Order()); // "+N more" → Failed filtresi
         GC.KeepAlive(window);
     }
@@ -179,7 +177,7 @@ public class StickyRibbonTests
         }
         var (ribbon, window) = Realize(vm);
 
-        ribbon.FailureMoreChip!.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+        CommandPress.Click(ribbon.FailureMoreChip!);
 
         Assert.Equal([ProjectFilter.Failed], vm.ActiveFilters.Order());
         Assert.Equal(5, vm.Counters.Failed);                                   // koşu tablosu: hepsi
@@ -199,7 +197,7 @@ public class StickyRibbonTests
 
         var (ribbon, window) = Realize(vm);
 
-        ribbon.BuildingChips[0].RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+        CommandPress.Click(ribbon.BuildingChips[0]);
         Assert.Equal(@"C:\p\a.csproj", vm.SelectedProjectId);
         Assert.False(ribbon.BuildingChips[0].IsChecked); // momentary — aktif amber yapışmaz
         GC.KeepAlive(window);

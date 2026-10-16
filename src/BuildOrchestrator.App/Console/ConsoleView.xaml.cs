@@ -2,6 +2,7 @@
 using System.Windows.Automation.Peers;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
@@ -12,21 +13,23 @@ using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 using ICSharpCode.AvalonEdit;
 using ICSharpCode.AvalonEdit.Document;
+using EditingCommands = System.Windows.Documents.EditingCommands;
 
 namespace BuildOrchestrator.App.Console;
 
 /// <summary>
 /// [T56/A13.2 + 3a + 3b] AvalonEdit tabanlı, salt-okunur, batch-append canlı konsol. Iskelet (A13.2):
-/// <see cref="AppendBatch"/> TAM OLARAK <c>BeginUpdate → tek Insert → EndUpdate</c> + ScrollToEnd.
+/// <see cref="AppendBatch"/> TAM OLARAK <c>BeginUpdate → tek Insert → EndUpdate</c> + dibe istek (takipte — <see cref="RequestBottom"/>).
 /// <list type="bullet">
 /// <item><b>Colorizer</b> (<see cref="ConsoleColorizer"/>): satır-offset bazlı renk; belge DÜZ metin kalır.</item>
 /// <item><b>Prompt satırı</b>: overlay'de yanıp sönen blok imleç (+ boşta "ready"); daktilo YOKTUR
 /// imleç 7×13px Rectangle (1.1s blink); yazımdan ~420ms sonra <b>fade-out</b> ile söner (3b Minor 3 — hard cut değil).</item>
 /// <item><b>Tilt-in</b> (<see cref="PlayCascade"/> / <see cref="ShowRunDocument"/>): panel geçişinde içerik
 /// TEK PARÇA olarak aşağı serilir (340ms) — satır sayısından bağımsız, iki yönde de aynı.</item>
-/// <item><b>Chunk loader</b>: proje logu render dilimi (son 200) gösterilir; tepeye kaydırınca önceki chunk
-/// scroll-telafili prepend edilir (<see cref="ChunkStitch"/>).</item>
-/// <item><b>Render dilimi</b>: canlı append'te belge son <see cref="RenderSliceLines"/> satırla sınırlıdır (Ek A #16).</item>
+/// <item><b>Chunk loader</b>: anlatının render dilimi (son 200) gösterilir; tepeye kaydırınca önceki chunk
+/// scroll-telafili prepend edilir (<see cref="ChunkStitch"/>). Proje sayfası logun tamamını taşır, arkasında chunk yoktur
+/// (<see cref="ReplaceProjectDocument"/>).</item>
+/// <item><b>Render dilimi</b>: anlatıda canlı append'te belge son <see cref="RenderSliceLines"/> satırla sınırlıdır (Ek A #16).</item>
 /// </list>
 /// </summary>
 public partial class ConsoleView : UserControl
@@ -36,9 +39,16 @@ public partial class ConsoleView : UserControl
 
     // [3b Minor 1/2] Off-palette hex YOK: base foreground + FontSize XAML token/resource'ından gelir.
 
-    /// <summary>[3b/Ek A #16] Canlı append'te belgede tutulan azami satır (render dilimi). "N lines" sayacı bundan
-    /// ETKİLENMEZ — tam mantıksal sayacı VM taşır (render dilimi DEĞİL, Ek A #23).</summary>
+    /// <summary>[3b/Ek A #16] Anlatıda canlı append'te belgede tutulan azami satır (render dilimi; proje sayfası logun tamamını taşır —
+    /// dalga 3 · karar 44). "N lines" sayacı bundan ETKİLENMEZ — tam mantıksal sayacı VM taşır (render dilimi DEĞİL, Ek A #23).</summary>
     public const int RenderSliceLines = ConsoleRenderSlice.DefaultMaxLines; // 200
+
+    /// <summary>[idle-memory · group B re-review] Render diliminden KURULAN belgenin satır sayısı: dilim + sondaki boş satır. Anlatı
+    /// metni '\n' SONEKLİdir (<see cref="ConsoleBatcher"/>, <see cref="NarrativeStore.Join"/>), yani belgenin son satırı boş prompt
+    /// satırıdır (<see cref="PositionPrompt"/>). Belge bundan fazla satır taşıyorsa kırpılacak bir şey vardır
+    /// (<see cref="TrimNarrativeWhenFollowing"/>); "belge render diliminde" iddiası (testler dahil) bu sınırla ifade edilir.</summary>
+    public const int SeededDocumentLines = RenderSliceLines + 1;
+
     // Kullanıcı tepeye ne kadar yaklaşınca önceki chunk yüklenir (px) — bottom-stick eşiğiyle uyumlu (48px).
     private const double ChunkTopThresholdPx = 48.0;
 
@@ -86,10 +96,11 @@ public partial class ConsoleView : UserControl
     // Render dilimi / chunk loader durumu.
     // [tail-trim tek kural] Ayrı bir "kırp/kırpma" bayrağı YOKTUR: yetki BottomAnchorBehavior.ShouldFollow'dadır
     // (takip açıkken kırpılır). Eski _trimTail alanının taşıdığı ayrım o predicate'in içinde zaten yaşıyordu —
-    // proje modu takip KAPALI açıldığı için orada kırpma olmaz.
-    private bool _projectMode;                            // proje-log modu (kaynak: disk logu; anlatıda kaynak VM tamponudur)
+    // proje sayfası hiç izlemediği için (dalga 3 · karar 45: anchor'ın takip izni) orada kırpma olmaz.
+    private bool _projectMode;                            // proje-log modu (kaynak: disk logu; anlatıda kaynak VM'in anlatı store'u)
     private bool _prepending;                             // re-entrancy guard (prepend VerticalOffset'i değiştirir)
     private bool _armedForChunk;                          // kullanıcı tepeden UZAKLAŞTI mı — ilk layout spurious prepend'ini önler
+    private bool _swappingDocument;                       // belge takası sürüyor: takasın kaydırma olayları jest değildir (SwapDocument)
 
     /// <summary>Belgenin ARKASINDAKİ satırlar — render diliminin (200) dışında kalan geçmiş. Chunk loader
     /// tepeye kaydırıldığında buradan geri yükler.
@@ -97,18 +108,32 @@ public partial class ConsoleView : UserControl
     /// <para><b>Moddan bağımsızdır.</b> Eskiden yalnız proje logunun disk satırlarıydı ve anlatı modunda BOŞ
     /// kalıyordu; sonucu şuydu: run konsolunda 200 satırdan öncesine hiçbir jestle erişilemiyordu. Paralel bir
     /// build saniyede yüzlerce satır aktığı için o pencere anında dolar ve ekran "bir sürü şey aktı, azıcık
-    /// kaldı" hâline gelirdi. Veri hiç kaybolmuyordu (anlatının tamamı VM'in tamponunda, her projenin logu
-    /// kendi tamponunda) — kaybolan yalnız görünürlüktü.</para>
+    /// kaldı" hâline gelirdi. Veri hiç kaybolmuyordu (anlatının tamamı VM'de, her projenin logu kendi
+    /// tamponunda) — kaybolan yalnız görünürlüktü.</para>
     ///
-    /// <para><b>Canlı büyür.</b> Kırpma belgenin başından satır siler; bu satırlar backlog'un ucunu aşıyorsa
-    /// (yani daha önce hiç kaydedilmemiş CANLI satırlarsa) buraya EKLENİR. Eski kod bunu yapmadığı için
-    /// proje modunda da bir delik vardı: canlı gelen satırlar kırpılınca <see cref="_loadedFrom"/> bir
-    /// clamp'e takılıyor ("index'i yok") ve o satırlara bir daha ulaşılamıyordu.</para></summary>
-    private List<string> _backlogLines = [];
+    /// <para><b>Anlatıda kopya YOKTUR</b> (<see cref="NarrativeStore"/>): backlog VM'in anlatı store'unun KENDİSİDİR —
+    /// açılışta bağlanır (<see cref="BindNarrative"/>), her anlatı kurulumu yeniden bağlar (<see cref="ReplaceRunDocument"/>).
+    /// Belgedeki her anlatı satırı önce store'a yazılmıştır; belgeden kırpılan satır zaten oradadır ve görünüm onu
+    /// kopyalamaz. <b>[DEĞİŞEN KURAL — ölçüldü]</b> Eskiden anlatıda da görünümün kendi satır listesiydi: tohumlamada
+    /// VM'in tam metni bölünür, kırpılan canlı satırlar listeye eklenirdi — VM tamponunun ikinci kopyası, 83 k satırlık bir
+    /// koşudan sonra tek başına 59 MB.</para>
+    ///
+    /// <para><b>Belgeden kırpılan satır backlog'a verilmez</b>: anlatıda zaten store'dadır, yer tutucuların arkasında bir şey yoktur
+    /// (<see cref="TrimToRenderSlice"/>). [DEĞİŞEN KURAL — B3 · O2 adım 2] Liste tabanlı backlog (<c>ListBacklog</c>) kırpılan CANLI satırları
+    /// sonuna ekleyerek büyürdü; üretimde kullanıcısı kalmayınca kırpılan kuyruğun okunmasıyla birlikte kalktı.</para>
+    ///
+    /// <para><b>[idle-memory · dalga 3 · karar 44 · B2 fix 1 O2] Belgenin arkasında bir şey olmayan iki yer tutucu AÇIK boş backlog'dur</b>
+    /// (<see cref="EmptyBacklog"/>): anlatı bağlanmadan önceki görünüm (kabuk açılışta bağlar) ve proje sayfası — belge logun tamamıdır, sayfa
+    /// hiç izlemediği için kırpılmaz (<see cref="ReplaceProjectDocument"/>). [DEĞİŞEN KURAL] Eskiden proje sayfasının backlog'u logun
+    /// kopyasıydı (belge son 200 satır) ve izlerken kırpılan canlı satırlarla büyüyordu; dalga 3'ün ilk turunda iki yer tutucu boş bir görünüm
+    /// listesiydi (<c>new ListBacklog([])</c>) — kırpılan satırı saklayan bir liste gibi davranıyordu.</para></summary>
+    private IConsoleBacklog _backlog = EmptyBacklog.Instance;
 
-    /// <summary>Belgenin ilk satırının <see cref="_backlogLines"/>'daki index'i — yani "backlog'un kaçıncı
-    /// satırına kadarı belgeye yüklendi". <c>_backlogLines[0.._loadedFrom)</c> belgede DEĞİLDİR (geçmiş);
-    /// bu index backlog'un sonuna eşitse belgedeki her satır backlog'un ötesindeki canlı satırlardır.</summary>
+    /// <summary>Belgenin ilk satırının <see cref="_backlog"/>'daki index'i — yani "backlog'un kaçıncı satırına kadarı
+    /// belgeye yüklendi". <c>[0.._loadedFrom)</c> belgede DEĞİLDİR (geçmiş). Anlatıda store belgeden ileridedir (önce store,
+    /// sonra pompa) ve index doğrudan store indeksidir. Proje sayfasında 0'dır: logun tamamı belgededir. Tek istisna gizliyken boşalan
+    /// anlatıdır: store <c>Count</c>'u bu index'in gerisine düşer ve belge dönüşteki yeniden kuruluma dek bayattır
+    /// (<see cref="TrimToRenderSlice"/>).</summary>
     private int _loadedFrom;
 
     public ConsoleView()
@@ -131,25 +156,36 @@ public partial class ConsoleView : UserControl
         // (yeni satır, punto, yeniden boyutlanma) prompt yeniden konumlanır.
         // [M-2 review round 1] AYNI olay hover bandını da tazeler — imleç kımıldamadan içerik kayarsa (scroll,
         // ekleme, chunk-dikiş, mod değişimi) bant ESKİ satırda asılı kalmasın diye (bkz. RefreshHoverBand doc'u).
-        EditorControl.TextArea.TextView.VisualLinesChanged += (_, _) => { RefreshPrompt(); RefreshHoverBand(); };
-        // [T59] Kullanıcı tekerleği çevirdiği anda uçuştaki pill-jump animasyonu iptal olur + suppress bayrağı kalkar.
-        ScrollAnimator.EnableUserCancellation(EditorControl);
+        // [B2 fix 1 · F1] ve izlenmeyen belgede pill'i yeniden okur (OnVisualLinesChanged).
+        EditorControl.TextArea.TextView.VisualLinesChanged += (_, _) => OnVisualLinesChanged();
         // Yatay tekerlek/touchpad: WPF WM_MOUSEHWHEEL'i HİÇ dağıtmaz, bu yüzden yatay kaydırma uygulamanın kendi
         // kancasından geçer. Konsol bunu Enable eden TEK panel: yatay taşması olan tek yüzey odur (WordWrap=False).
         HorizontalWheelScroll.Enable(this);
         _bottomAnchor = new BottomAnchorBehavior(
-            getOffset: () => EditorControl.VerticalOffset,
-            getExtent: () => EditorControl.ExtentHeight,
-            getViewport: () => EditorControl.ViewportHeight,
+            // Geometri TextView'in kendisinden (ScrollGeometry): karar TextView'in kaydırma olayında verilir ve ScrollViewer'ın
+            // aynası o an henüz eskidir. Kaydırma komutları ScrollViewer'dan geçer — onu güncel tutan yol odur.
+            getOffset: () => ScrollGeometry.VerticalOffset,
+            getExtent: () => ScrollGeometry.ExtentHeight,
+            getViewport: () => ScrollGeometry.ViewportHeight,
             scrollInstant: v => EditorControl.ScrollToVerticalOffset(v),
             scrollSmooth: AnimateToBottom,
-            // Anlatı modunda kullanıcı elini çekince akış yeniden izlenir. PROJE-LOG modunda dönülmez:
-            // orada izlenecek canlı bir akış (ve prompt imleci) yoktur, kullanıcı bir logu okuyordur.
-            autoResumeAllowed: () => !_projectMode);
+            scheduleOnce: (delay, callback) => AnchorScheduleOnce(delay, callback),
+            // Kullanıcı elini çekince akış yeniden izlenir — izlenecek bir akış varsa (aşağıdaki izin; dönüş takibe dönüştür).
+            autoResumeAllowed: () => true,
+            // [idle-memory · dalga 3 · karar 45] PROJE SAYFASI HİÇ İZLEMEZ: açılırken, okuyucu sonuna inince ya da `⌄ latest`'ten
+            // sonra (pill sona BİR KEZ atlar). Orada izlenecek canlı bir akış (ve prompt imleci) yoktur — okuyucu bir logu okuyordur
+            // ve derlenen projenin yeni satırı görünümü yerinden oynatmaz. Anlatı izler. Kural anchor'ın TEK takip yetkisinde
+            // (ShouldFollow) durur: kırpma, dibe çekme ve bekleme dönüşü ondan okur.
+            followAllowed: () => !_projectMode);
         _bottomAnchor.Changed += OnBottomAnchorChanged;
-        // "Kullanıcı kaydırdı" HAM GİRDİDEN bildirilir — tekerlek, kaydırma çubuğu ve gezinme tuşları
-        // (gerekçe: UserScrollSignal / BottomAnchorBehavior.NotifyUserScroll).
-        UserScrollSignal.Wire(this, _bottomAnchor.NotifyUserScroll);
+        // "Kullanıcı kaydırdı" HAM GİRDİDEN bildirilir — tekerlek, dikey kaydırma çubuğu ve dikey gezinme tuşları
+        // (gerekçe: UserScrollSignal / BottomAnchorBehavior.NotifyUserScroll). [T59 · B2 fix 2 madde 2] Aynı jest uçuştaki `⌄ latest`
+        // animasyonunu durdurur — kuralın tek tanımı sinyaldedir, bir uçuşu durdurduysa atlama penceresi de kapanır. [son temizlik · madde 1]
+        // Yana jest (←/→, yatay tekerlek, yatay çubuk) ikisini de yapmaz; direksiyon okuyucudaysa yalnız bekleme dönüşünü erteler.
+        UserScrollSignal.Wire(this, ScrollAnimationTarget, _bottomAnchor.NotifyUserScroll, sideways: _bottomAnchor.NotifySidewaysScroll);
+        // [idle-memory · dalga 3 · karar 46 · B2 fix 1 F2] Klavye gezintisi görünümü kaydırır, gizli imleci değil (gerekçe:
+        // OnPreviewNavigationCommand).
+        CommandManager.AddPreviewExecutedHandler(EditorControl, OnPreviewNavigationCommand);
         // [A13/T5] Pill'in adı host'tan gelir (hangi akışın sonu — bkz. LatestPill.AccessibleName).
         Pill.AccessibleName = AccessibilityNames.LatestConsole;
         // [Task 6/design v1.17.0 §9] Konsol gövdesi standart OK imleci ister — AvalonEdit'in TextArea'sı kendi
@@ -208,14 +244,35 @@ public partial class ConsoleView : UserControl
     /// <summary>[E4/T48] Konsolun bottom-anchor'ının merkezi arbiter'a bölgesel suppress bildirimi + pill görünürlüğü.
     /// Dibe yapışıksa arbiter'da bu panel yeniden devrede (<see cref="ScrollArbiter.Resume"/>); kullanıcı dipten
     /// uzaklaşınca duraklı (<see cref="ScrollArbiter.NotifyUserScroll"/>) — YALNIZ konsol paneli (stream/frontier
-    /// akmaya devam). <see cref="Arbiter"/> null ise (izole test) yalnız pill güncellenir.</summary>
+    /// akmaya devam). <see cref="Arbiter"/> null ise (izole test) yalnız pill güncellenir. Takip geri geldiyse anlatı belgesi
+    /// render dilimine döner (<see cref="TrimNarrativeWhenFollowing"/>).</summary>
     private void OnBottomAnchorChanged(object? sender, EventArgs e)
     {
-        Pill.Visibility = _bottomAnchor.ShowPill ? Visibility.Visible : Visibility.Collapsed;
-        RefreshPrompt(); // dipten uzaklaşınca prompt da gider (gerekçe: RefreshPrompt doc'u)
+        // Pill ve prompt imleci AYNI duyurulan değeri okur (PillShown) — biri görünürken öbürü gizlidir (gerekçe: RefreshPrompt doc'u).
+        Pill.Visibility = _bottomAnchor.PillShown ? Visibility.Visible : Visibility.Collapsed;
+        RefreshPrompt();
+        TrimNarrativeWhenFollowing();
         if (Arbiter is null) return;
         if (_bottomAnchor.IsStuck) Arbiter.Resume(ScrollPanel.Console);
         else Arbiter.NotifyUserScroll(ScrollPanel.Console);
+    }
+
+    /// <summary>
+    /// TextView görsel satırları her kurduğunda (her ölçüm turu: yeni satır, kaydırma, punto, boyut) prompt satırı ve hover bandı tazelenir;
+    /// [B2 fix 1 · F1] izlenmeyen belgede <c>⌄ latest</c> da yeniden okunur (<see cref="BottomAnchorBehavior.RefreshPill"/>): içerik
+    /// kaydırmasız büyüyünce (proje sayfası hiç izlemez; anlatıda direksiyon okuyucudayken) TextView kaydırma olayı yaymaz ve pill'in kuralı —
+    /// canlı dipten uzaklık — başka hiçbir yerden okunmazdı. Bu olay ölçümün sonunda, TextView'in kaydırma verisi güncellendikten sonra gelir;
+    /// uzaklık oradan okunur. Ölçümü gelmeyecek bir ekleme onu kendisi ister (<see cref="AppendBatch"/>).
+    /// <para>İki istisna: belge takası (<see cref="_swappingDocument"/>) — takasın geometrisi okuyucunun değildir, pill takasın sonunda
+    /// oturmuş uzaklıktan okunur (<see cref="SwapDocument"/>) — ve takip (<see cref="BottomAnchorBehavior.ShouldFollow"/>): izleyen belgede
+    /// ekleme ile dibe isteğin (<see cref="RequestBottom"/>) uygulanması arasında uzaklık bir an eşiği aşar ve pill yanıp sönerdi (← Back'teki parlamanın
+    /// akrabası); orada pill kaydırma olaylarından okunur.</para>
+    /// </summary>
+    private void OnVisualLinesChanged()
+    {
+        RefreshPrompt();
+        RefreshHoverBand();
+        if (!_swappingDocument && !_bottomAnchor.ShouldFollow) _bottomAnchor.RefreshPill();
     }
 
     /// <summary>[E4/T48] Üç panelin auto-scroll'unu hakem eden merkezi arbiter; null ise izole (bildirimler no-op).
@@ -239,6 +296,11 @@ public partial class ConsoleView : UserControl
         set => _motion.MotionSettings = value;
     }
 
+    /// <summary>[test seam · D8] Bottom-anchor'ın zamanlayıcısı — bekleme dönüşü (<see cref="BottomAnchorDecision.IdleResumeMs"/>) ve
+    /// atlama penceresi. Üretimde <see cref="BottomAnchorBehavior.DefaultScheduleOnce"/>; test gerçek pencere ve tuşlarla sürerken onu
+    /// yakalayıp duvar saati beklemeden doldurur. Anchor her zamanlamada buradan okur, kurulduktan sonra değiştirmek yeterlidir.</summary>
+    internal Action<TimeSpan, Action> AnchorScheduleOnce { get; set; } = BottomAnchorBehavior.DefaultScheduleOnce;
+
     /// <summary>Test/host erişimi için altındaki AvalonEdit kontrolü.</summary>
     public TextEditor Editor => EditorControl;
 
@@ -250,16 +312,20 @@ public partial class ConsoleView : UserControl
     }
 
     /// <summary>
-    /// true iken her <see cref="AppendBatch"/> sonrası en alta kaydırılır (varsayılan true).
+    /// true iken her <see cref="AppendBatch"/> sonrası en alta kaydırılır (varsayılan true) — anlatıda. [dalga 3 · karar 45] Proje sayfasında
+    /// true olsa da (pill sona attı, okuyucu sona indi ya da elle zorlandı) kaydırılmaz: o sayfa hiç izlemez, dibe çekme yetkisi
+    /// (<see cref="BottomAnchorBehavior.ShouldFollow"/>) orada hiç açılmaz.
     ///
     /// <para><b>[T59] Reconciliation:</b> ARTIK <see cref="BottomAnchorBehavior.IsStuck"/>'ın ince bir geçişidir —
     /// TEK bottom-anchor mekanizması <see cref="_bottomAnchor"/>'dır (görev talimatı: "çift iş yok"). Public API
     /// AYNI kaldı (3b testleri elle <c>StickToBottom = false</c> atar, bu hâlâ çalışır — <see cref="BottomAnchorBehavior.ForceStuck"/>
-    /// bir doğrudan override'dır). YENİ olan: gerçek uygulamada artık <see cref="OnScrollOffsetChanged"/> her scroll
-    /// olayında 48px eşiğine göre bunu OTOMATİK de günceller — önceden (Task 3b'de) hiçbir mekanizma bunu yapmıyordu
-    /// (MainWindow hiçbir yerde StickToBottom atamıyordu, konsol pratikte kalıcı yapışıktı). Headless testlerde
-    /// gerçek layout/scroll geometrisi oluşmadığından (bkz. ScrollOffsetChanged'in AvalonEdit'te layout gerektirmesi)
-    /// bu otomatik yol tetiklenmez — mevcut 3b testleri ETKİLENMEZ.</para>
+    /// bir doğrudan override'dır). YENİ olan: gerçek uygulamada <see cref="OnScrollOffsetChanged"/> bunu, direksiyon kullanıcıdayken
+    /// (ham girdi — <c>UserScrollSignal</c> — ile başlar, bekleme dolana dek sürer) her kaydırma olayında — belge takasınınkiler hariç:
+    /// takasta karar sonunda, sabitlenen uçtan verilir (<see cref="SwapDocument"/>) — 48px eşiğine göre OTOMATİK de günceller,
+    /// geometriyi TextView'in kendisinden okuyarak (<see cref="ScrollGeometry"/>) — önceden (Task 3b'de) hiçbir mekanizma bunu yapmıyordu
+    /// (MainWindow hiçbir yerde StickToBottom atamıyordu, konsol pratikte kalıcı yapışıktı). Yerleşim koşmayan testlerde
+    /// (ölçülmemiş çıplak görünüm) kaydırma olayı doğmadığından bu otomatik yol tetiklenmez; yerleşimi koşan testlerde gerçek
+    /// olayla tetiklenir (<c>ConsoleReaderNavigationTests</c>).</para>
     /// </summary>
     public bool StickToBottom
     {
@@ -271,9 +337,10 @@ public partial class ConsoleView : UserControl
     /// UI thread'inde çağrılır. TEK batch ekler — asla satır satır bölmez, asla <c>Dispatcher.Invoke</c>
     /// çağırmaz (çağıranın/Task 12'nin sorumluluğu). [A13.2 ZORUNLU sıra]. [3b] Belge son
     /// <see cref="RenderSliceLines"/> satırla sınırlanır (baştan kırpma) — ama YALNIZ takip açıkken; gerekçe
-    /// gövdededir. Kırpılan her satır için proje modunda <see cref="_loadedFrom"/> ilerletilir ki chunk loader
-    /// index'i belgenin gerçek ilk satırıyla TUTARLI kalsın [C-1]; kırpılan satırlar
-    /// <see cref="_projectAllLines"/>'ta durur → tepeye kaydırınca prepend onları DELİKSİZ geri yükler.
+    /// gövdededir. Kırpılan her satır için <see cref="_loadedFrom"/> ilerletilir ki chunk loader index'i belgenin
+    /// gerçek ilk satırıyla TUTARLI kalsın [C-1]; kırpılan satırlar backlog'da durur (<see cref="_backlog"/>: anlatıda
+    /// store) → tepeye kaydırınca prepend onları DELİKSİZ geri yükler. Proje sayfası hiç izlemez (dalga 3 · karar 45): orada batch
+    /// yalnız sona eklenir, kırpılmaz ve görünüm yerinden oynamaz.
     /// </summary>
     public void AppendBatch(string text)
     {
@@ -288,27 +355,10 @@ public partial class ConsoleView : UserControl
             // AMA YALNIZ TAKİP AÇIKKEN. Kırpma belgenin BAŞINDAN satır siler; kullanıcı yukarıda okurken bu,
             // kaydırma konumu sabit kalsa bile metni onun altından yukarı kaydırır. Sahada görülen "scroll
             // duruyor ama yazılar akmaya devam ediyor" tam olarak buydu: panel kullanıcıya bırakılmıştı ama
-            // okuduğu satırlar ayağının altından siliniyordu. Kullanıcı elini çekince (bekleme dolar, takip
-            // geri gelir) kırpma tek hamlede yetişir ve o an panel zaten dipte olduğu için görünmez.
-            if (_bottomAnchor.ShouldFollow)
-            {
-                var (trimmed, removed) = TrimToRenderSlice(document);
-                // [C-1] Tepeden K satır kırpıldıysa belgenin ilk satırı bir K kadar ileri kayar; chunk loader
-                // index'i onunla birlikte ilerlemelidir (aksi halde stale _loadedFrom → sonraki scroll-to-top
-                // prepend'i YANLIŞ dilimi yükler = tekrar/kayıp).
-                //
-                // Kırpılan satırların bir kısmı backlog'da ZATEN vardır (belgeye oradan yüklenmişlerdi);
-                // geri kalanı hiç kaydedilmemiş CANLI satırlardır ve backlog'un SONUNA eklenir. Eski kod bu
-                // ikinciyi yapmıyor, index'i backlog'un uzunluğuna clamp'liyordu — o clamp tam da deliğin
-                // kendisiydi: canlı kırpılan satır ne belgede ne backlog'da kalıyordu.
-                if (trimmed > 0)
-                {
-                    int alreadyInBacklog = _backlogLines.Count - _loadedFrom;
-                    if (trimmed > alreadyInBacklog)
-                        _backlogLines.AddRange(LastLines(removed, trimmed - alreadyInBacklog));
-                    _loadedFrom += trimmed;
-                }
-            }
+            // okuduğu satırlar ayağının altından siliniyordu. Takip geri gelince (bekleme dolar, pill, mod geçişi)
+            // anlatıda kırpma sonraki batch'i beklemeden tek hamlede yetişir (TrimNarrativeWhenFollowing) ve o an
+            // panel zaten dipte olduğu için görünmez.
+            if (_bottomAnchor.ShouldFollow) TrimToRenderSlice(document);
         }
         finally
         {
@@ -317,9 +367,15 @@ public partial class ConsoleView : UserControl
         // Dibe çekme yetkisi TEK yerdedir (BottomAnchorBehavior.ShouldFollow): takip açık, uçuşta atlama yok
         // ve direksiyon kullanıcıda değil. Burası eskiden salt StickToBottom'a bakıyordu — kullanıcının
         // kaydırmasını görmeyen ikinci bir auto-scroll yoluydu ve derleme sürerken konsolu kaydırılamaz
-        // hâle getiriyordu.
+        // hâle getiriyordu. Dibe istek de tektir ve yalnız dikeydir (RequestBottom — yatay okuma konumu kalır).
         if (_bottomAnchor.ShouldFollow)
-            EditorControl.ScrollToEnd();
+            RequestBottom();
+        else
+            // [B2 fix 1 · F1] İzlenmeyen belge büyüdü: görünüm oynamaz ama dipten uzaklık değişti — pill yeniden okunur
+            // (OnVisualLinesChanged). AvalonEdit eklemede yalnız görünür satırlara (ya da öncesine) dokunan değişiklikte yeniden ölçer;
+            // okuyucu sondan iki satır ve daha yukarıdaysa ölçüm hiç gelmez, içerik yüksekliği de güncellenmezdi. Ölçüm burada istenir;
+            // uzaklık o ölçümün TextView verisinden okunur (uzaklığın tek geometri kaynağı — ScrollGeometry).
+            EditorControl.TextArea.TextView.InvalidateMeasure();
     }
 
     /// <summary>
@@ -330,8 +386,9 @@ public partial class ConsoleView : UserControl
     /// <para><b>Neden önce <c>UpdateLayout</c>:</b> belge az önce değiştirildi ve editörün kaydırma
     /// geometrisi (extent/viewport) henüz yeniden ölçülmemiştir. O anda kaydırmak hesabı ESKİ geometriye
     /// yaptırır ve panel istenen uçta durmaz (ölçüldü: 3739px'lik bir belgede dip 3161 yerine 19'da
-    /// kalıyordu). Ölçüm zorlandığında pin deterministik olur — geçişte bir kez çalışır ve belge zaten
-    /// render dilimiyle (200 satır) sınırlıdır.</para>
+    /// kalıyordu). Ölçüm zorlandığında pin deterministik olur — geçişte bir kez çalışır; anlatı belgesi render dilimiyle (200 satır)
+    /// sınırlıdır, proje sayfası logun tamamıdır ama editör yalnız görünür satırları kurar (ölçüm: 10 000 satırlık sayfa ~21 ms'de
+    /// açılır — <see cref="ReplaceProjectDocument"/>).</para>
     ///
     /// <para><b>Neden bir de SONRA:</b> <c>ScrollToEnd</c> bir İSTEKTİR, bir hareket değil —
     /// <c>ScrollViewer</c> onu ancak bir sonraki ölçüm turunda <c>TextView</c>'e iletir. İkinci tur olmadan
@@ -359,15 +416,16 @@ public partial class ConsoleView : UserControl
         // Döngü sınırlıdır: birkaç turda oturmuyorsa geometri zaten oynaktır ve daha fazla tur bir şey katmaz.
         for (int pass = 0; pass < MaxPinPasses; pass++)
         {
-            double before = EditorControl.ExtentHeight;
+            double before = ScrollGeometry.ExtentHeight;
             EditorControl.ScrollToEnd();
             EditorControl.UpdateLayout();
-            if (Math.Abs(EditorControl.ExtentHeight - before) < 0.5) break;
+            if (Math.Abs(ScrollGeometry.ExtentHeight - before) < 0.5) break;
         }
     }
 
     /// <summary>
-    /// Geçiş oturduktan SONRA dibi tazeler — yalnız anlatı modunda ve panel akışı izliyorken.
+    /// Geçiş oturduktan SONRA dibi tazeler — yalnız panel akışı izliyorken (<see cref="BottomAnchorBehavior.ShouldFollow"/>; proje sayfası
+    /// hiç izlemez, yani yalnız anlatıda).
     ///
     /// <para><b>Neden pin tek başına yetmiyor:</b> <see cref="PinAfterModeSwitch"/> belge takasının hemen
     /// ardından ölçümü sabitler, ama geçişin 340 ms'i boyunca daha geç yerleşim turları gelir — prompt satırı
@@ -380,7 +438,7 @@ public partial class ConsoleView : UserControl
     /// kapanır ve buraya girilmez: bir geçiş, okuyucunun kendi kaydırmasını ezmez.</para></summary>
     private void SettleAtBottomIfFollowing()
     {
-        if (_projectMode || !_bottomAnchor.ShouldFollow) return;
+        if (!_bottomAnchor.ShouldFollow) return;
         PinAfterModeSwitch(toBottom: true);
     }
 
@@ -388,19 +446,83 @@ public partial class ConsoleView : UserControl
     /// üçüncüsü emniyettir. Sayı çağrı yerinde literal YAZILMAZ (StatusGlyph.PulseMs deseni).</summary>
     private const int MaxPinPasses = 3;
 
-    // Belgeyi son RenderSliceLines satıra kırpar (baştaki fazla satırları TEK Remove ile siler).
-    // Silinen satır SAYISINI ve METNİNİ döndürür: sayı [C-1] _loadedFrom'u ilerletmek, metin ise hiç
-    // kaydedilmemiş canlı satırları backlog'a taşımak içindir (bkz. AppendBatch).
-    private static (int Lines, string Removed) TrimToRenderSlice(TextDocument document)
+    /// <summary>
+    /// Belgeyi son <see cref="RenderSliceLines"/> satıra kırpar — baştaki fazla satırları TEK <c>Remove</c> ile siler — ve chunk
+    /// loader index'ini (<see cref="_loadedFrom"/>) kırpılan satır sayısı kadar ilerletir [C-1]: belgenin ilk satırı K satır ileri
+    /// kayar, index onunla birlikte ilerlemezse sonraki scroll-to-top prepend'i YANLIŞ dilimi yükler (tekrar/kayıp). Çağıran
+    /// belge güncellemesini (<c>BeginUpdate</c>/<c>EndUpdate</c>) ve takip kararını tutar: <see cref="AppendBatch"/> ve
+    /// <see cref="TrimNarrativeWhenFollowing"/>.
+    ///
+    /// <para><b>Kırpılan metin okunmaz ve hiçbir yere verilmez.</b> Anlatıda kırpılan her satır zaten store'dadır (her satır önce store'a,
+    /// sonra pompaya) ve tepeye kaydırınca oradan bitişik geri gelir; proje sayfası hiç kırpılmaz. Store görünümün arkasından boşalmış
+    /// olabilir — gizli pencerede yeni işlem (<c>ConsoleCleared</c> belgeye dokunmaz, yalnız bayat bayrağını kaldırır) ve bottom-anchor
+    /// zamanlayıcıları pencere gizliyken de ateşlenir: store belgenin gerisinde kalır (<c>Count &lt; _loadedFrom</c>). Kırpma o zaman da
+    /// yalnız belgeyi kısaltır ve index'i ilerletir; bayat belge dönüşte modelden yeniden kurulur.</para>
+    ///
+    /// <para>[DEĞİŞEN KURAL — B3 · O2 adım 2] Kırpılanların backlog'un ucunu aşan kısmı (hiç kaydedilmemiş canlı kuyruk) eskiden
+    /// <c>Remove</c>'dan önce belgeden okunur (<c>GetText</c> + <c>Split</c>) ve onu saklayan backlog'a verilirdi (<c>AcceptTrimmed</c>,
+    /// kapısı <c>KeepsTrimmedLines</c>); saklayan tek backlog görünümün kendi listesiydi (<c>ListBacklog</c>) ve B2'nin O2 adım 1'inden
+    /// beri üretimde kullanıcısı yoktu — kuyruk hesabı, okuma ve liste birlikte kalktı. Kuyruğun hesabı, backlog belgenin gerisindeyken
+    /// alt sınırsız kalırsa <c>GetLineByNumber</c>'ı fırlatıyordu; hesap yok, o yol da yok. Daha önce (final review 91) kırpılan metnin
+    /// TAMAMI okunuyordu: anlatıda hiç kullanılmadığı hâlde her büyük batch'te batch boyunda bir LOH çöpüydü (ölçüm:
+    /// <c>ConsoleMemoryTests</c>).</para>
+    /// </summary>
+    private void TrimToRenderSlice(TextDocument document)
     {
         int excess = document.LineCount - RenderSliceLines;
-        if (excess <= 0) return (0, "");
-        var lastToRemove = document.GetLineByNumber(excess); // 1..excess satırlarını (ayraçlarıyla) sil
-        int length = lastToRemove.Offset + lastToRemove.TotalLength;
-        string removed = document.GetText(0, length);
-        document.Remove(0, length);
-        return (excess, removed);
+        if (excess <= 0) return;
+        var lastRemoved = document.GetLineByNumber(excess); // 1..excess satırları (ayraçlarıyla) silinir
+        document.Remove(0, lastRemoved.Offset + lastRemoved.TotalLength);
+        _loadedFrom += excess;
     }
+
+    /// <summary>
+    /// [idle-memory · final review m1] <b>Takip geri gelince anlatı belgesi render dilimine döner</b> — sonraki batch beklenmez.
+    /// Kırpma yalnız takip açıkken yapılır (<see cref="AppendBatch"/>), yani kullanıcı yukarıdayken gelen satırlar ve tepeye
+    /// kaydırınca yüklenen dilimler belgede birikir. Koşu sürerken sonraki batch onları kırpar; koşu bittiyse sonraki batch yoktur
+    /// ve belge bir sonraki işleme dek store'un ikinci, kısmi kopyası olarak kalırdı (ip, satır ağacı, yükseklik ağacı — spec §5
+    /// bellek bütçesi).
+    ///
+    /// <para>Bottom-anchor'ın her bildiriminde sorulur (<see cref="OnBottomAnchorChanged"/>): takip geri geldiğinde — pill, bekleme
+    /// sonu (dibe dönüş ya da dipte bırakılan direksiyon), mod geçişi — <see cref="BottomAnchorBehavior.ShouldFollow"/> açıktır.
+    /// Kırpma yetkisi yine o TEK predicate'tedir; kırpılıp dibe pinlenir ve panel dipte olduğu için görünmez. Belge render dilimi
+    /// kadarsa (tohum: son dilim + boş prompt satırı) dokunulmaz. Prepend sürerken belge değişmektedir, kırpılmaz. Proje logu
+    /// sayfası kapsam dışıdır (spec §6.2): o sayfa hiç izlemez (dalga 3 · karar 45 — predicate orada hiç açılmaz) ve belgesi sayfayla
+    /// birlikte bırakılır.</para>
+    ///
+    /// <para>[son temizlik · madde 4] <b>Kırpma ile dibe isteği arasında yerleşim KOŞMAZ</b> — ikisi aynı senkron adımdadır ve öyle kalmalıdır.
+    /// Okuyucu yukarıdayken bir görünür alandan fazla satır birikmişse kırpma belgeyi o kadar kısaltır ve eski dikey ofset kırpılmış belgenin
+    /// sonunun ÖTESİNDE kalır. Arada bir yerleşim koşsaydı editör o ofsetten ölçer: yalnız son (boş) satırı kurar, yatay içerik genişliği çöker
+    /// ve okuyucunun yatay okuma konumu 0'a kenetlenirdi (ölçüldü: <c>ConsoleReaderNavigationTests.A_sideways_step_survives_the_return_to_following</c>'in
+    /// 60 satırlık satırı — <c>Expected: 7,2 / Actual: 0</c>). Sonlu istek (<see cref="RequestBottom"/>) eski ofset ölçülmeden uygulanır; sonraki
+    /// ölçüm dipteki satırları gerçek genişlikleriyle kurar.</para>
+    /// </summary>
+    private void TrimNarrativeWhenFollowing()
+    {
+        if (_prepending || !_bottomAnchor.ShouldFollow) return;
+        var document = EditorControl.Document;
+        if (document.LineCount <= SeededDocumentLines) return;
+        document.BeginUpdate();
+        try { TrimToRenderSlice(document); }
+        finally { document.EndUpdate(); }
+        RequestBottom();
+    }
+
+    /// <summary>
+    /// [B2 fix 2 · madde 3] <b>Takibin ve End'in dibe isteği — yalnız DİKEY ve sonlu:</b> görünümü belgenin ŞU ANKİ sonuna ister
+    /// (<see cref="PendingBottomOffset"/>), yatay okuma konumuna dokunmaz. Takip (<see cref="AppendBatch"/>, <see cref="TrimNarrativeWhenFollowing"/>)
+    /// ve End (<see cref="NavigationScrolls"/> — "takibin kendi isteği") bunu kullanır. Mod geçişinin pini (<see cref="PinAfterModeSwitch"/>)
+    /// bilerek +∞'dur ve yatayı sıfırlar: yeni belge sol kenardan okunur.
+    /// <para><b>Neden sonlu:</b> AvalonEdit görsel satırları istenen konumdan kurar; +∞ konumunda yalnız son (boş) satır kurulur — yatay içerik
+    /// genişliği o satıra çöker (ölçüldü: 2940,6 → 3,0 px), yatay çubuk kaybolur (görünür alan 555,2 → 565,2 px) ve yerleşim ofseti kenetler:
+    /// yatay 0'a, dikey 10 px kısa (3154,8; dip 3164,8). Sonlu hedefte dipteki satırlar kurulur, genişlik ve çubuk yerinde kalır. Hedefin neden
+    /// ölçülmüş dip değil bekleyen dip olduğu <see cref="PendingBottomOffset"/>'tedir.</para>
+    /// <para>[DEĞİŞEN KURAL] Eskiden istek <c>TextEditor.ScrollToEnd</c>'di ("dikeyde +∞, yatayda sol kenar"): izleyen anlatıda uzun bir satırı
+    /// yana kaydırıp okuyan okuyucu her batch'te sol kenara atılıyor, geniş satırlarda dibin 10 px üstünde kalıyordu. Yana jestler (←/→, yatay
+    /// tekerlek, yatay çubuk — <see cref="UserScrollSignal"/>) direksiyonu almaz, takip sürer; artık yatay konum da kalır.</para>
+    /// <para>internal: ölçüm testi isteğin kendisini tuşsuz çağırır (<c>ConsolePageEndMeasurementTests</c>) — paralel bir kopya yol değil.</para>
+    /// </summary>
+    internal void RequestBottom() => EditorControl.ScrollToVerticalOffset(PendingBottomOffset);
 
     // ---------------------------------------------------------------- colorizer
 
@@ -431,31 +553,22 @@ public partial class ConsoleView : UserControl
         EditorControl.TextArea.TextView.LineTransformers.Add(_colorizer);
     }
 
-    // ---------------------------------------------------------------- [D4] anlatı batch'i (en yeni satır daktilo)
+    // ---------------------------------------------------------------- [D4] anlatı batch'i
 
     /// <summary>
-    /// [D4/T56-UI + T34] Run/anlatı modu batch'i. Batch'in TÜM satırları anında commit edilir; YALNIZ EN YENİ
-    /// satır — degradation kuralları izin verirse (<see cref="ConsoleTypingGate"/>) — hibrit daktiloyla yazılır
-    /// (<see cref="TypeActiveLine"/>). Aksi halde (ham MSBuild / hata / fırtına / yüksek throughput / reduced-motion)
-    /// tüm batch <see cref="AppendBatch"/> ile instant basılır. Proje-log modu BU yoldan GEÇMEZ — MainWindow orada
-    /// doğrudan <see cref="AppendBatch"/> çağırır (ham çıktı asla daktilolanmaz — DD2). Batch sözleşmesi: metin
-    /// '\n' SONEKLİ tam satırlarla biter (<see cref="ConsoleBatcher"/>).
+    /// [D4/T56-UI] Run/anlatı modu batch'i: boşta "ready" metni kalkar (<see cref="ClearReadyText"/>) ve batch'in TÜM satırları
+    /// anında basılır (<see cref="AppendBatch"/> — [design v1.7.0 §2.5] daktilo yoktur). Proje-log modu BU yoldan GEÇMEZ —
+    /// MainWindow orada doğrudan <see cref="AppendBatch"/> çağırır. Batch sözleşmesi: metin '\n' SONEKLİ tam satırlarla biter
+    /// (<see cref="ConsoleBatcher"/>).
+    /// <para>[idle-memory · final review m2] Batch kopyalanmaz: daktilo kaldırılırken burada ölü kalan "en yeni satırı ayır" hesabı
+    /// her batch'in iki tam kopyasını üretip atıyordu — büyük batch'te iki LOH çöpü (ölçüm: <c>ConsoleMemoryTests</c>).</para>
     /// </summary>
     public void AppendNarrativeBatch(string text)
     {
         if (string.IsNullOrEmpty(text)) return;
         ClearReadyText();
         EnsureColorizer();
-
-        // Son tam satırı ayır: newest = son satır (soneksiz); prefix = ondan önceki her şey ('\n' sonekli).
-        string body = text[^1] == '\n' ? text[..^1] : text;
-        int lastNl = body.LastIndexOf('\n');
-        string newest = lastNl < 0 ? body : body[(lastNl + 1)..];
-        string prefix = lastNl < 0 ? "" : text[..(lastNl + 1)];
-        int lineCount = 1;
-        for (int i = 0; i < body.Length; i++) if (body[i] == '\n') lineCount++;
-
-        AppendBatch(text); // [design v1.7.0 §2.5] anlatı satırları ANINDA basılır — daktilo yok
+        AppendBatch(text);
     }
 
     /// <summary>[design v1.7.0 §2.5] Boşta (idle/boot) tek prompt satırı: <b>yanıp sönen blok imleç + "ready"
@@ -510,15 +623,24 @@ public partial class ConsoleView : UserControl
 
     /// <summary>
     /// Prompt satırının TEK görünürlük yazıcısı. İki koşul: <b>anlatı modunda</b> olmak (proje-log modunun
-    /// kendi sonu vardır) ve <b>dipte</b> olmak.
+    /// kendi sonu vardır) ve <b>CANLI dipte</b> olmak.
     ///
     /// <para>Dip koşulu şundandır: prompt panelin altına yaslıdır, belgeyle birlikte kaymaz. Kullanıcı yukarı
     /// kaydırıp geçmişe baktığında dipte asılı kalan bir imleç oradaki metnin üstüne binerdi. Dipten
     /// uzaklaşınca zaten <c>⌄ latest</c> pill'i çıkar; prompt onunla birlikte gider ve dibe dönünce geri gelir.</para>
+    ///
+    /// <para><b>[B2 fix 2 · madde 1] "Canlı dip" üç şeydir</b> — tanımı anchor'dadır (<see cref="BottomAnchorBehavior.AtLiveBottom"/>, B2 fix 3 ·
+    /// madde 9): takip durumu dipte, pill gizli ve uçuşta bir <c>⌄ latest</c> atlaması yok. [DEĞİŞEN KURAL] Eskiden yalnız takip durumuna
+    /// bakılıyordu ve iki yerde imleç pill'le birlikte görünüyordu: eşiğin içinden kaydıran okuyucunun altına satırlar gelince (durum "dipte"
+    /// kalır, uzaklık eşiği aşar —
+    /// pill çıkar) ve atlama sürerken (atlama durumu iyimser biçimde "dipte" yapar; son satır görünür alanda değilken imleç eski yerinde,
+    /// metnin üstünde kalırdı). Pill koşulu DUYURULAN değeri okur (<see cref="BottomAnchorBehavior.PillShown"/>) — pill'in kendisiyle aynı
+    /// değer; canlı uzaklık izlenen belgede bir an eşiği aşar ve imleç her batch'te yanıp sönerdi. Atlamadan sonra imleç pencere kapanınca
+    /// döner (<see cref="BottomAnchorDecision.JumpingWindowMs"/>; hareket açıkken inişten biraz sonra) — ikinci bir zamanlayıcı kurulmaz.</para>
     /// </summary>
     private void RefreshPrompt()
     {
-        bool show = !_projectMode && _bottomAnchor.IsStuck;
+        bool show = !_projectMode && _bottomAnchor.AtLiveBottom;
         ActiveLineOverlay.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
         if (!show) { StopBlink(); return; }
         ActiveCursor.Opacity = 1.0;
@@ -601,84 +723,108 @@ public partial class ConsoleView : UserControl
     // ---------------------------------------------------------------- narrative (run) modu
 
     /// <summary>[3b] Run/anlatı dokümanını kurar (<c>← Back</c> akışı): render dilimi (son
-    /// <see cref="RenderSliceLines"/>) belgeye yüklenir, ÖNCESİ backlog'a bırakılır ve canlı append'te
-    /// tail-trim açıktır.
+    /// <see cref="RenderSliceLines"/>) belgeye yüklenir, ÖNCESİ backlog'da kalır ve canlı append'te tail-trim açıktır.
     ///
     /// <para><b>Anlatıya dönüş SONDAN okunur</b> (kullanıcı kararı): koşu anlatısında ilgi çeken şey en son
     /// olandır ve panel canlı akışı izlemeye devam eder. Proje logu tersidir — bkz.
     /// <see cref="PlayCascade"/>.</para>
     ///
-    /// <para><b>Geçmiş erişilebilirdir</b> (bkz. <see cref="_backlogLines"/>): render dilimi bir SINIR değil
-    /// bir PENCEREdir — tepeye kaydırınca önceki dilim geri gelir, tıpkı proje logunda olduğu gibi. Kaynak
-    /// farkı önemsizdir: proje logu diskten sayfalanır, anlatı ise VM'in tam tamponundan gelir ve bu metot
-    /// onu zaten tam metin olarak alır.</para>
+    /// <para><b>Geçmiş erişilebilirdir</b> (bkz. <see cref="_backlog"/>): render dilimi bir SINIR değil bir PENCEREdir — tepeye kaydırınca
+    /// önceki dilim VM'in anlatı store'undan geri gelir; bu metot tam metni değil store'un snapshot'ını alır (<see cref="NarrativeSnapshot"/>).
+    /// [DEĞİŞEN KURAL — dalga 3 · karar 44] Bu paragraf eskiden "tıpkı proje logunda olduğu gibi" diyordu: proje sayfası da son dilim + görünümün
+    /// listesiydi ve oradan sayfalanıyordu. Proje sayfası artık logun tamamını taşır; dilim ve pencere yalnız anlatınındır.</para>
     /// <para>[design v1.7.0 §2.5] Geçiş animasyonu İKİ YÖNDE de aynıdır (<see cref="PlayTiltIn"/>).</para></summary>
-    public void ShowRunDocument(string fullRunText)
+    public void ShowRunDocument(NarrativeSnapshot snapshot)
     {
-        ReplaceRunDocument(fullRunText);
+        ReplaceRunDocument(snapshot);
         PlayTiltIn(fromAbove: true); // dönüş açılışın TAM AYNASI
     }
-
-    /// <summary>
-    /// [design v1.13.2 §2.5 · §9] <b>Yeni işlem başladı: anlatı belgesi ANINDA boşalır.</b> Konsol ve event
-    /// stream her işlemde (Build · Rebuild · Resolve · Sync) temizlenir, ardından yalnız o işlemin satırları
-    /// yazılır. VM kendi tamponunu <c>RunViewModel.ClearConsoleForNewOperation</c>'da siler; ekrandaki belge
-    /// onu BU çağrıyla izler (kablo <c>MainWindow</c>'da, <c>RunViewModel.ConsoleCleared</c>).
-    ///
-    /// <para><b>Tilt YOK:</b> <see cref="PlayTiltIn"/> yalnız panel GEÇİŞİNDE (proje logu ↔ anlatı) oynar; bu
-    /// ise aynı panelin sıfırlanmasıdır — tilt'siz çekirdek <see cref="ReplaceRunDocument"/>'tır. "ready" satırına
-    /// dokunulmaz: ilk anlatı satırı gelince metni zaten boşalır (<see cref="ClearReadyText"/>).</para>
-    ///
-    /// <para><b>[DEĞİŞEN KURAL — ölçüldü]</b> Eskiden işlem başlangıcında ekrana hiç dokunulmuyordu: VM
-    /// tamponu silinse de AvalonEdit belgesi yalnız mod geçişinde yeniden kuruluyordu, yeni işlemin satırları
-    /// bir öncekinin ALTINA ekleniyordu — Build ve Sync'te konsol "hiç temizlenmiyor" diye görülen buydu.</para>
-    /// </summary>
-    public void ClearRunDocument() => ReplaceRunDocument("");
 
     /// <summary>[test yüzeyi] <see cref="ReplaceRunDocument"/> çağrı sayısı: gizli pencere dönüşünde belgenin TEK
     /// seferde kurulduğunu (gizliyken hiç kurulmadığını) sayıyla sınar. Üretimde zararsız bir sayaçtır.</summary>
     internal int RunDocumentReplacedCount { get; private set; }
 
-    /// <summary>Anlatı belgesini verilen metinle yeniden kurar (render dilimi + chunk loader + dip pini + takip) —
-    /// <b>tilt'siz</b>. Üç yol bu TEK gövdeyi paylaşır (kopya YASAK): <see cref="ShowRunDocument"/> (mod geçişi; ardına
-    /// <see cref="PlayTiltIn"/> ekler), <see cref="ClearRunDocument"/> (boş metin) ve gizli pencere dönüşü
-    /// (<c>MainWindow.ResyncAfterShow</c>: tepsideyken belgeye yazılmadı, dönüşte modelin tam metninden bir kez kurulur).
-    /// Belge satır taşıyorsa boşta "ready" satırı da gider: gizliyken ilk anlatı satırı belgeye hiç girmediği için onu
-    /// silen <see cref="AppendNarrativeBatch"/> yolu çalışmamıştır.</summary>
-    public void ReplaceRunDocument(string fullRunText)
+    /// <summary>
+    /// [idle-memory · dalga 1] Anlatı backlog'unu belgeyi YENİDEN KURMADAN bağlar: kabuk açılışta, belge henüz boşken VM'in
+    /// anlatı store'unu verir. Belgenin ilk satırı store'un 0. satırıdır — store'daki her satır pompadan SIRAYLA gelecektir
+    /// (pompa kabuğun kurulumunda başlar; gizli açılışta batch'ler düşer ve dönüş kurulumu belgeyi store'dan yeniden kurar).
+    ///
+    /// <para><b>Neden ayrı bir bağ:</b> bağ olmasaydı görünüm ilk anlatı kurulumuna (mod geçişi, işlem temizliği, tepsiden
+    /// dönüş) kadar boş backlog'da (<see cref="EmptyBacklog"/>) kalır ve o arada belgeden kırpılan satırlar tepeye kaydırınca geri gelmezdi
+    /// (store'da dururlar ama görünüm onları istemeyi bilmez). [DEĞİŞEN KURAL — B2 fix 1 O2] Yer tutucu eskiden görünümün kendi boş listesiydi
+    /// ve o arada kırpılan her satırı KOPYALIYORDU. Bağ bir yeniden kurulum değildir: <see cref="RunDocumentReplacedCount"/> artmaz, belgeye ve
+    /// prompt'a dokunulmaz.</para>
+    ///
+    /// <para>[idle-memory · final review 92] <b>Ön-koşul sessizce varsayılmaz:</b> belge boş ve konsol anlatı modunda olmalıdır;
+    /// değilse <see cref="InvalidOperationException"/>. Satır taşıyan bir belgeye kurulan bağ store'un hiç görmediği satırları store
+    /// indeksleriyle eşlerdi (tepeye kaydırma yanlış dilimi getirir); proje logu açıkken belge ve backlog o sayfanındır. Anlatının
+    /// her yeniden kurulumu bağı zaten kendisi kurar (<see cref="ReplaceRunDocument"/>).</para>
+    /// </summary>
+    public void BindNarrative(IConsoleBacklog narrative)
     {
+        ArgumentNullException.ThrowIfNull(narrative);
+        if (_projectMode)
+            throw new InvalidOperationException("The narrative cannot be bound while the console shows a project log.");
+        if (EditorControl.Document.TextLength > 0)
+            throw new InvalidOperationException(
+                "The narrative can only be bound to an empty console document: its first line is taken as the narrative's first line.");
+        _backlog = narrative;
+        _loadedFrom = 0;
+    }
+
+    /// <summary>Anlatı belgesini snapshot'tan yeniden kurar (render dilimi + chunk loader + dip pini + takip) —
+    /// <b>tilt'siz</b>. Backlog snapshot'ınkidir (üretimde VM'in anlatı store'u); belge onun SON diliminden kurulur, öncesi
+    /// backlog'da kalır (tam metin taşınmaz, kopyalanmaz). Üç yol bu TEK gövdeyi paylaşır (kopya YASAK):
+    /// <see cref="ShowRunDocument"/> (mod geçişi; ardına <see cref="PlayTiltIn"/> ekler), yeni işlem temizliği ve gizli
+    /// pencere dönüşü (<c>MainWindow.ResyncAfterShow</c>: tepsideyken belgeye yazılmadı, dönüşte modelden bir kez kurulur).
+    /// Belge satır taşıyorsa boşta "ready" satırı da gider: gizliyken ilk anlatı satırı belgeye hiç girmediği için onu
+    /// silen <see cref="AppendNarrativeBatch"/> yolu çalışmamıştır.
+    ///
+    /// <para><b>[design v1.13.2 §2.5 · §9] Yeni işlem temizliği:</b> konsol ve event stream her işlemde (Build · Rebuild ·
+    /// Resolve · Sync) temizlenir, ardından yalnız o işlemin satırları yazılır. VM anlatıyı
+    /// <c>RunViewModel.ClearConsoleForNewOperation</c>'da siler; kabuk belgeyi bu metotla store'a BOŞ bağlar (satır sayısı 0 —
+    /// gerekçe kabloda, <c>MainWindow</c>'un <c>ConsoleCleared</c> işleyicisinde). Tilt YOK: geçiş yalnız panel GEÇİŞİNDE
+    /// (proje logu ↔ anlatı) oynar, bu ise aynı panelin sıfırlanmasıdır; "ready" satırına dokunulmaz — ilk anlatı satırı
+    /// gelince metni zaten boşalır (<see cref="ClearReadyText"/>). <b>[DEĞİŞEN KURAL — ölçüldü]</b> Eskiden işlem
+    /// başlangıcında ekrana hiç dokunulmuyordu: VM tamponu silinse de belge yalnız mod geçişinde yeniden kuruluyordu, yeni
+    /// işlemin satırları bir öncekinin ALTINA ekleniyordu — Build ve Sync'te konsol "hiç temizlenmiyor" diye görülen
+    /// buydu.</para></summary>
+    public void ReplaceRunDocument(NarrativeSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
         RunDocumentReplacedCount++;
         _projectMode = false;
-        _armedForChunk = false; // ilk layout'ta spurious prepend olmasın (kullanıcı henüz kaydırmadı)
-        _backlogLines = SplitLines(fullRunText ?? "");
-        // Render dilimi: son RenderSliceLines satır belgeye; öncesi chunk loader'a bırakılır (PlayCascade ile
-        // AYNI hesap — iki mod tek kuralı paylaşır).
-        _loadedFrom = Math.Max(0, _backlogLines.Count - RenderSliceLines);
-        EditorControl.Document = NewDocument(Join(_backlogLines, _loadedFrom, _backlogLines.Count));
-        PinAfterModeSwitch(toBottom: true);
-        // [SIRA ÖNEMLİ] Takibi devralmak pin'den SONRA gelir. Kullanıcı önceki modda serbest kaydırmış olsa
-        // bile mod değişimi takibi yeniden alır — ama ForceStuck bir bildirim yayınlar ve pill'in görünürlüğü
-        // yalnız DİPTEN UZAKLIĞA bakar (BottomAnchorDecision.ShouldShowPill). Pin'den ÖNCE çağrıldığında editör
-        // hâlâ ÖNCEKİ belgeyi (proje logu, tepede) tutuyor, uzaklık kocaman çıkıyor ve `⌄ latest` tam o karede
-        // beliriyor, pin bitince kayboluyordu — sahada "geri diyorsun latest çıkıyor kayboluyor" diye görülen
-        // buydu. Pin'den SONRA geometri doğrudur: uzaklık sıfır, pill hiç çıkmaz.
-        _bottomAnchor.ForceStuck(true);
+        _backlog = snapshot.Backlog;
+        // Render dilimi: son RenderSliceLines satır belgeye; öncesi chunk loader'a bırakılır. Kural anlatıya özgüdür — proje sayfası
+        // logun tamamını taşır (ReplaceProjectDocument, dalga 3 · karar 44).
+        _loadedFrom = Math.Max(0, snapshot.Count - RenderSliceLines);
+        string slice = _backlog.Join(_loadedFrom, snapshot.Count);
+        // [idle-memory · dalga 2 · inceleme M1] Dilim okunamadıysa (store'un dosyası — Join tam aralık ya da "" verir) belge boş başlar
+        // ve ilk satırı anlatının SONUDUR: indeks gerçekte gösterilenle tutarlı kalır, tepeye kaydırma dilimi yeniden ister. Aksi hâlde
+        // indeks gösterilmeyen satırları belgede sanır — son dilim hiç gelmez, canlı satırlar da o kadar geride sayılır.
+        if (slice.Length == 0) _loadedFrom = snapshot.Count;
+        SwapDocument(slice, toBottom: true); // takibi de devralır — kullanıcı önceki modda serbest kaydırmış olsa bile
         // Belge satır taşıyorsa boşta "ready" gider: gizliyken ilk anlatı satırı belgeye girmediği için onu silen
-        // AppendNarrativeBatch (ClearReadyText) koşmadı. Boş metinde (ClearRunDocument) "ready"ye dokunulmaz.
-        if (_backlogLines.Count > 0) ClearReadyText();
+        // AppendNarrativeBatch (ClearReadyText) koşmadı. Boş anlatıda (yeni işlem temizliği) "ready"ye dokunulmaz.
+        if (snapshot.Count > 0) ClearReadyText();
         RefreshPrompt(); // anlatıya dönüldü → prompt satırı geri gelir
     }
 
     // ---------------------------------------------------------------- proje-log kaskatı
 
     /// <summary>
-    /// [design v1.7.0 §2.5] Proje-log moduna geçiş. İçerik <see cref="PlayTiltIn"/> ile TEK PARÇA serilir ve
-    /// chunk loader kurulur. Motion TAZE okunur.
+    /// [design v1.7.0 §2.5] Proje-log moduna geçiş. İçerik <see cref="PlayTiltIn"/> ile TEK PARÇA serilir. Motion TAZE okunur.
     ///
     /// <para><b>Proje logu BAŞTAN okunur</b> (kullanıcı kararı, §5.1'den bilinçli sapma): bir derleme logunda
-    /// aranan şey ilk hatadır, son satır değil. Takip de bu yüzden KAPALI açılır — açık olsaydı gelen ilk
-    /// canlı satır okuyucuyu hemen dibe fırlatırdı. Kullanıcı kendi eliyle dibe inerse takip geri gelir
-    /// (bu, herhangi bir kullanıcı kaydırmasıyla aynı kuraldır).</para>
+    /// aranan şey ilk hatadır, son satır değil. Sayfa logun İLK satırından açılır ve logun tamamını taşır — geri kalanına aşağı
+    /// kaydırarak ulaşılır (<see cref="ReplaceProjectDocument"/>).</para>
+    ///
+    /// <para><b>[idle-memory · dalga 3 · karar 45] Proje sayfası HİÇ İZLEMEZ:</b> açılırken izlemez — açık olsaydı derlenen projenin
+    /// gelen ilk canlı satırı okuyucuyu hemen dibe fırlatırdı —, okuyucu kendi eliyle sonuna inince izlemez, <c>⌄ latest</c> sayfanın
+    /// sonuna BİR KEZ atlar ve takibi açmaz. Yeni canlı satırlar sayfanın sonuna eklenir, görünüm yerinden oynamaz. Kural anchor'ın takip
+    /// izninde durur (ctor'daki <c>followAllowed</c>). [DEĞİŞEN KURAL] Bu doc eskiden "kullanıcı kendi eliyle dibe inerse takip geri gelir"
+    /// diyordu — doğru değildi (proje modunda bekleme dönüşü kurulmadığından direksiyon okuyucuda kalıyor, takip gelmiyordu); pill ise
+    /// takibi açıyordu. Sahip kararı bugünkü "dibe inmek takip açmaz" davranışını kural yaptı, pill'i de ona bağladı.</para>
     ///
     /// <para><b>[DEĞİŞEN KURAL] Sayfanın sonunda "build in progress ▮" işareti YOKTUR.</b> Eskiden derlenen bir
     /// projenin logu açıldığında sona amber, yanıp sönen bir işaret konurdu. Ölçülen sorun: işaret açılış ANINDA
@@ -687,34 +833,133 @@ public partial class ConsoleView : UserControl
     /// listedeki satırın kendisi. Üçüncü ve senkronu olmayan bir kanal, doğru olmadığı anlarda ekranı yalancı
     /// yapıyordu; senkronlamak yerine kaldırıldı.</para>
     /// </summary>
-    public void PlayCascade(IReadOnlyList<string> allLines)
+    public void PlayCascade(string text)
     {
-        ReplaceProjectDocument(allLines);
+        ReplaceProjectDocument(text);
         PlayTiltIn(fromAbove: false);
     }
 
     /// <summary>[perf Faz A · A2] Proje-log belgesini kurar — <see cref="PlayCascade"/>'in <b>tilt'siz</b> çekirdeği:
-    /// mod, prompt, backlog, render dilimi ve tepe pini; takip KAPALI (proje logu baştan okunur — ayrıntı
-    /// <see cref="PlayCascade"/>'te). <see cref="PlayCascade"/> bunun ardına <see cref="PlayTiltIn"/> ekler; gizli
-    /// pencere dönüşü (<c>MainWindow.ResyncAfterShow</c>) onu tilt'siz çağırır: panel geçişi değil, aynı proje logunun
-    /// modelin tam metninden yeniden kurulmasıdır.</summary>
-    public void ReplaceProjectDocument(IReadOnlyList<string> allLines)
+    /// mod, prompt, belge ve tepe pini; takip yok (proje sayfası izlemez — ayrıntı <see cref="PlayCascade"/>'te). <see cref="PlayCascade"/>
+    /// bunun ardına <see cref="PlayTiltIn"/> ekler; gizli pencere dönüşü (<c>MainWindow.ResyncAfterShow</c>) onu tilt'siz çağırır: panel
+    /// geçişi değil, aynı proje logunun modelin tam metninden yeniden kurulmasıdır.
+    ///
+    /// <para><b>[idle-memory · dalga 3 · karar 44] Belge logun TAMAMIDIR, ilk satırından.</b> Arkasında bir şey yoktur (boş backlog —
+    /// <see cref="EmptyBacklog"/>, <see cref="_loadedFrom"/> 0): chunk yükleyici tepede yükleyecek bir şey bulmaz, takip kırpması da hiç koşmaz
+    /// (sayfa izlemez). Derlenen projenin canlı satırları belgenin sonuna eklenir (<see cref="AppendBatch"/>) — sırayla, hiçbiri kırpılmadan.
+    /// Render dilimi ve yükleyici anlatıya özgüdür. [DEĞİŞEN KURAL] Eskiden belge logun son <see cref="RenderSliceLines"/> satırıydı ve o
+    /// dilimin TEPESİNE sabitleniyordu, öncesi görünümün kendi listesindeydi (<c>ListBacklog</c>, logun kopyası): 1000 satırlık bir log
+    /// 800. satırından açılıyordu, baş ancak tepeye kaydırınca dilim dilim geliyordu — "baştan okunur" sözü yalnız ≤ 200 satırlık loglarda
+    /// doğruydu.</para>
+    ///
+    /// <para><b>[B2 fix 1 · O1] Sayfa metni olduğu gibi alır</b> (<paramref name="text"/>: logun kendisi ya da boş logun durum satırları —
+    /// <c>MainWindow.ProjectDocumentText</c>): bölünmez, yeniden birleştirilmez; belge onu AvalonEdit'in ayraç kuralıyla gösterir. Tek garanti
+    /// sondaki '\n'dir (<see cref="ConsoleLines.Terminated"/>): sonradan gelen canlı batch yeni satırda başlar. [DEĞİŞEN KURAL] Eskiden sayfa
+    /// satır listesi alıyordu: kabuk logu konsolun kuralıyla bölüyor (<c>ConsoleLines.Split</c>), görünüm yeniden birleştiriyordu — logun iki
+    /// tam kopyası ve '\r'/"\r\n" ayraçlarının '\n'e dönüşmesi, her açılışta.</para>
+    ///
+    /// <para><b>Neden logun tamamı, aşağı doğru dilim yüklemesi değil (ölçüldü, 800×600 gerçek pencere, satır ~190 karakter, hareket
+    /// açık):</b> 10 000 satırlık bir log eşzamanlı ~21 ms'de açılır (dilimle ~14 ms), sayfa açıkken yığın ~5,8 MB tutar (dilim + liste
+    /// kopyasıyla ~4,0 MB) ve Back'te ikisi de tamamen bırakılır; 100 000 satırda ~140 ms / ~57 MB (dilimle ~14 ms / ~38 MB) — B2 fix 1 O1
+    /// bölme → birleştirme turunu kaldırınca 100 000 satır ~70–90 ms (kabuğun ~20 ms'lik bölmesi de kalktı), 10 000 satır değişmedi. AvalonEdit
+    /// yalnız görünür satırları kurar. Aşağı doğru yükleme açılışı dilimle aynı tutardı ama sonu yüklenmemiş bir belgeye canlı satır eklemeyi
+    /// (sıra), pill'in "gerçek sonunu" ve ikinci bir yükleyiciyi gerektirirdi — en basit doğru seçenek logun tamamıdır.</para></summary>
+    public void ReplaceProjectDocument(string text)
     {
+        ArgumentNullException.ThrowIfNull(text);
         EnsureColorizer();
-        _bottomAnchor.ForceStuck(false); // proje logu baştan okunur — dibe çekilmez
-        allLines ??= [];
         _projectMode = true;
         RefreshPrompt();                 // proje-log modunda prompt imleci yoktur
         _idleReady = false;
         ApplyPromptText();
-        _armedForChunk = false;            // ilk layout'ta spurious prepend olmasın (kullanıcı henüz kaydırmadı)
-        _backlogLines = [.. allLines];     // kopya: backlog canlı satırlarla BÜYÜR, çağıranın listesi değişmez
-
-        // Render dilimi: son RenderSliceLines satır belgeye; öncesi chunk loader'a bırakılır.
-        _loadedFrom = Math.Max(0, _backlogLines.Count - RenderSliceLines);
-        EditorControl.Document = NewDocument(Join(_backlogLines, _loadedFrom, _backlogLines.Count));
-        PinAfterModeSwitch(toBottom: false);
+        _backlog = EmptyBacklog.Instance; // sayfanın arkasında bir şey yoktur: logun tamamı belgededir
+        _loadedFrom = 0;
+        SwapDocument(ConsoleLines.Terminated(text), toBottom: false); // baştan okunur, izlenmez
     }
+
+    /// <summary>
+    /// [idle-memory · dalga 2 · takip / beşinci inceleme — ölçüldü] Belge takasının TEK yolu (anlatı: <see cref="ReplaceRunDocument"/>,
+    /// proje logu: <see cref="ReplaceProjectDocument"/>): yeni belge kurulur ve dibe ya da tepeye sabitlenir; ardından chunk yükleyici ve
+    /// bottom-anchor yeniden kurulur — yükleyici belgenin OTURDUĞU konumdan (<see cref="SettledOffset"/>), anchor'ın takibi sabitlendiği
+    /// uçtan; oturmuş geometriyi anchor'da yalnız pill okur. Yükleyici konumdan: tepeden uzaktaysa
+    /// silahlı, tepedeyse silahsız — dibe sabitlenen anlatıda okuyucunun TEK tepeye sıçraması (Ctrl+Home, kaydırma çubuğunun tek hamlesi)
+    /// önceki dilimi getirir; tepeye sabitlenen proje sayfası logun tamamıdır, yüklenecek bir şeyi yoktur (dalga 3 · karar 44). Anchor
+    /// sabitlendiği uçtan: dipten okunan anlatı dibi izler (direksiyon geri alınır), baştan okunan proje sayfası izlemez (hiçbir zaman —
+    /// karar 45); pill oturmuş uzaklıktan değerlendirilir — uzun bir sayfanın tepesinde görünür.
+    /// <para><b>Takasın kaydırma olayları okuyucunun jesti değildir</b>; ne yükleyiciye ne takip kararına gider
+    /// (<see cref="OnScrollOffsetChanged"/>). Ölçüldü: yeni belge atanınca TextView kaydırma verisini sıfırlar — tek olay; ofset, içerik ve
+    /// görünür alan 0 —, sonra pin kendi isteğini (dip için +∞) ve oturan konumu bildirir. Yükleyici eski belgenin konumundan silahlı
+    /// kaldığından o sıfırı "tepeye ulaştı" sayardı: dipteki bir belgenin yerine anlatı kurulurken önceki 200 satırı kendiliğinden
+    /// ekliyor, takip kırpması fazlayı atıyordu — UI thread'i boşuna bir dilim okuyup ekleyip kırpıyordu
+    /// (<c>ConsoleViewTests.Rebuilding_the_narrative_over_a_…</c>). Anchor da o sıfırda uzaklığı 0 okuyordu: okuyucu kaydırdıktan hemen
+    /// sonra (direksiyon ondayken) açılan proje sayfası İZLER hâle geliyor, bekleme dolunca derlenen projenin canlı satırı tepeyi kırpıp
+    /// okuyucuyu dibe atıyordu (<c>ConsoleReaderNavigationTests.A_project_page_opened_right_after_a_scroll_…</c>). Bu ikinci yol dalga 3 ·
+    /// karar 45'ten beri kapalıdır — proje sayfası hiç izlemez (<c>followAllowed</c>); takasın olaylarını yok saymanın gerekçesi yükleyici için
+    /// geçerli kalır.</para>
+    /// <para><b>[SIRA ÖNEMLİ] Takip kararı pin'den SONRA verilir.</b> <see cref="BottomAnchorBehavior.ForceStuck"/> bir bildirim yayınlar ve
+    /// pill'in görünürlüğü yalnız DİPTEN UZAKLIĞA bakar (<see cref="BottomAnchorDecision.ShouldShowPill"/>). Pin'den ÖNCE verildiğinde editör
+    /// hâlâ ÖNCEKİ belgeyi (proje logu, tepede) tutuyor, uzaklık kocaman çıkıyor ve <c>⌄ latest</c> tam o karede beliriyor, pin bitince
+    /// kayboluyordu — sahada "geri diyorsun latest çıkıyor kayboluyor" diye görülen buydu. Pin'den SONRA geometri doğrudur.</para>
+    /// <para>[DEĞİŞEN KURAL — ikinci inceleme] Eskiden takastan sonra yükleyici koşulsuz silahsız bırakılıyordu; takasın olayları (sabitlemenin
+    /// dibe kaydırması dahil) yok sayıldığından onu hiçbir şey silahlandırmıyordu: yeniden kurulan anlatıda tek bir tepeye sıçrama hiçbir
+    /// şey yüklemiyordu (<c>ConsoleViewTests.A_rebuilt_narrative_brings_the_previous_slice_on_a_single_jump_to_the_top</c>).</para>
+    /// <para>[DEĞİŞEN KURAL — beşinci inceleme] Eskiden takip kararı takasın iki ucuna dağılmıştı: anlatı onu pin'den sonra kendisi veriyordu,
+    /// proje sayfası takastan ÖNCE ("izleme") ve takasın olayları onu yeniden yazabiliyordu. Karar artık takasın sonunda, tek yerde.</para>
+    /// </summary>
+    private void SwapDocument(string text, bool toBottom)
+    {
+        _swappingDocument = true;
+        try
+        {
+            EditorControl.Document = NewDocument(text);
+            PinAfterModeSwitch(toBottom);
+        }
+        finally { _swappingDocument = false; }
+        _armedForChunk = SettledOffset > ChunkTopThresholdPx;
+        _bottomAnchor.ForceStuck(toBottom); // anlatı dipten izlenir; proje sayfası baştan okunur, izlenmez
+    }
+
+    /// <summary>
+    /// [idle-memory · dalga 2 · üçüncü/dördüncü/beşinci inceleme — ölçüldü] Konsolun kaydırma geometrisinin TEK kaynağı: TextView'in
+    /// KENDİ kaydırma verisi — ofset, içerik ve görünür alan yüksekliği. Chunk yükleyici (kaydırma işleyicisi, prepend'in telafisi, takasın
+    /// bıraktığı durum), bottom-anchor (takip kararı, <c>⌄ latest</c>, dibe dönüş hedefi), yumuşak dönüşün başlangıcı
+    /// (<see cref="AnimateToBottom"/>) ve dip pininin yakınsama ölçümü (<see cref="PinAfterModeSwitch"/>) buradan okur; istem satırı da aynı
+    /// olayda TextView'in ofsetini okur (<see cref="PositionPrompt"/>). Kaydırma KOMUTLARI ScrollViewer'dan geçer — onu güncel tutan yol
+    /// odur; olay dışında iki kaynak eşittir.
+    /// <para>ScrollViewer'ın aynası (<c>VerticalOffset</c>, <c>ExtentHeight</c>) TextView'in kaydırma olayında henüz eskidir ve sonraki
+    /// yerleşimde güncellenirken yeni olay gelmez. Ölçüldü (gerçek pencere): editörün Ctrl+Home'u TEK olay üretir, o olayda ScrollViewer
+    /// 3173,4, TextView 0 — yükleyici hiçbir şey yüklemiyor, anchor dipten uzaklığı 0 sayıp takibi bırakmıyordu (pill yok, istem satırı
+    /// metnin üstünde); ilk PageUp de öyle; tekerlek takibi eşiği aşan çentikten bir çentik sonra bırakıyordu; dibe dönüşün olayları pill'i
+    /// dönüş öncesi ofsetle değerlendirip görünür bırakıyordu. İçerik yüksekliği de olayda geride kalır (prepend telafisinde ScrollViewer
+    /// 3738,6, TextView 7458,6) — bu yüzden üç değer aynı yerden. Bir +∞ dibe isteği (mod geçişinin <c>ScrollToEnd</c>'i) uygulanırken
+    /// TextView'in ofseti tek bir olayda +∞, bir atlamanın hedefi kenetlenmeden önce dibin ötesi olabilir: anchor için uzaklık o an 0 (dipte)
+    /// sayılır; yükleyici konumu dibe kenetli okur (<see cref="SettledOffset"/>). Eklemenin ya da kırpmanın hemen ardından gidilecek dip ayrı bir
+    /// üyedir (<see cref="PendingBottomOffset"/>).</para>
+    /// <para>Testler: <c>ConsoleViewTests.A_real_ctrl_home_in_a_rebuilt_narrative_loads_the_previous_slice</c>,
+    /// <c>ConsoleReaderNavigationTests</c>.</para>
+    /// </summary>
+    private IScrollInfo ScrollGeometry => EditorControl.TextArea.TextView;
+
+    /// <summary>
+    /// [B2 fix 3 · madde 1] <b>Bekleyen dip</b> — belgenin ŞU ANKİ sonunun ofseti: takibin ve End'in dibe isteğinin hedefi
+    /// (<see cref="RequestBottom"/>). Kaydırma geometrisinin bir parçasıdır ama ölçülmüş değil, bekleyen değerdir: <see cref="ScrollGeometry"/>'nin
+    /// içerik yüksekliği (<c>ExtentHeight</c>) ancak sonraki ölçümde güncellenir — eklemenin ya da kırpmanın hemen ardından bayattır —, satır
+    /// yükseklik ağacının boyu (<c>DocumentHeight</c>) ise belgeyle eşzamanlıdır ve sonraki ölçümün oturacağı içerik yüksekliğinin ta kendisidir
+    /// (sarma yok, belgenin altında boşluk yok). Dipten uzaklık, pill ve yükleyici oturmuş dibi okur (<see cref="BottomAnchorBehavior.BottomOffset"/>);
+    /// bekleyen dip yalnız İSTEĞİN hedefidir.
+    /// </summary>
+    private double PendingBottomOffset => Math.Max(0, EditorControl.TextArea.TextView.DocumentHeight - ScrollGeometry.ViewportHeight);
+
+    /// <summary>
+    /// [idle-memory · dalga 2 · beşinci/altıncı inceleme — ölçüldü] Chunk yükleyicinin okuduğu konum — TEK kural, üç giriş: kaydırma
+    /// işleyicisi, prepend'in telafisi, takasın sonu. TextView'in ofseti, dibe kenetlenmiş (<see cref="BottomAnchorBehavior.BottomOffset"/>):
+    /// bir +∞ dibe isteği (mod geçişinin pini) uygulanırken ofset tek bir olayda +∞, bir atlamanın hedefi kenetlenmeden önce dibin ötesi olabilir —
+    /// oturduğu yer dibi aşmaz. Ölçüldü: +∞ yükleyiciyi "tepeden uzaklaştı" diye silahlandırıyor, görünüme sığan kısa bir belgede hemen
+    /// ardından kenetlenen 0 önceki dilimi isteyen olmadan ekliyordu; kenetli okumada o belgenin dibi 0'dır ve yükleyici silahlanmaz.
+    /// <para>[DEĞİŞEN KURAL — altıncı inceleme] Beşinci incelemede kaydırma işleyicisi dibi aşan olayları atlıyordu, takasın sonu ise ham
+    /// ofseti okuyordu — aynı soruya iki cevap. Kenetleme ikisini tek kurala indirir; atlanan bir olay artık dipte sayılır.</para>
+    /// </summary>
+    private double SettledOffset => Math.Min(ScrollGeometry.VerticalOffset, _bottomAnchor.BottomOffset);
 
     /// <summary>
     /// [design v1.7.0 §2.5 · animasyon spec §2] Panel geçişinin TEK hareketi. Log bloğu, <b>alt kenarı sabit
@@ -841,19 +1086,27 @@ public partial class ConsoleView : UserControl
     /// metodun ta kendisini doğrudan tetikleyebilsin (paralel bir kopya yol DEĞİL).</summary>
     internal void OnScrollOffsetChanged()
     {
-        // [I-1 fix] Bottom-anchor'ın yeniden-hesabı, chunk loader'dan (EvaluateChunkScroll) ÖNCE çalışır: bir
-        // prepend (aşağıda) belgeyi TEPEDE büyütür ve VerticalOffset'i ChunkStitch.CompensatedOffset'e telafi
-        // eder; önce çalışmak, henüz-prepend-edilmemiş geometriyle takip kararını taze tutar.
-        //
-        // Bu bir OFFSET olayıdır, extent olayı değil — AvalonEdit'in ScrollOffsetChanged'i yalnız kaydırma
-        // konumu değişince ateşlenir. Bir ara sürüm burada extent farkını elle izliyordu ve gerçek kusur oydu:
-        // kullanıcı yukarıdayken eklenen içerik offset'i oynatmadığından hiç olay doğmuyor, izlenen extent
-        // bayatlıyordu; kullanıcı nihayet tekerleği çevirdiğinde olay "içerik büyüdü" (extentChange>0) gibi
-        // görünüp takip kararını ATLATIYORDU. Panel dibe yapışık kalıyor ve her batch kullanıcıyı geri
-        // fırlatıyordu. İçerik büyümesini artık büyümeyi YAPAN yer bildirir (AppendBatch → ShouldFollow).
-        _bottomAnchor.OnScrollChanged(extentHeightChange: 0);
+        // Takasın kendi kaydırma olayları okuyucunun değildir (SwapDocument): ne takip kararı ne yükleyici onlarla verilir — takas
+        // bitince yükleyici oturmuş konumdan, takip sabitlenen uçtan kurulur (anlatı izler, proje sayfası izlemez); pill oturmuş
+        // uzaklığı okur.
+        if (!_swappingDocument)
+        {
+            // [I-1 fix] Bottom-anchor'ın yeniden-hesabı, chunk loader'dan (EvaluateChunkScroll) ÖNCE çalışır: bir
+            // prepend (aşağıda) belgeyi TEPEDE büyütür ve VerticalOffset'i ChunkStitch.CompensatedOffset'e telafi
+            // eder; önce çalışmak, henüz-prepend-edilmemiş geometriyle takip kararını taze tutar.
+            //
+            // Bu bir OFFSET olayıdır, extent olayı değil — AvalonEdit'in ScrollOffsetChanged'i yalnız kaydırma
+            // konumu değişince ateşlenir. Bir ara sürüm burada extent farkını elle izliyordu ve gerçek kusur oydu:
+            // kullanıcı yukarıdayken eklenen içerik offset'i oynatmadığından hiç olay doğmuyor, izlenen extent
+            // bayatlıyordu; kullanıcı nihayet tekerleği çevirdiğinde olay "içerik büyüdü" (extentChange>0) gibi
+            // görünüp takip kararını ATLATIYORDU. Panel dibe yapışık kalıyor ve her batch kullanıcıyı geri
+            // fırlatıyordu. İçerik büyümesini artık büyümeyi YAPAN yer bildirir (AppendBatch → ShouldFollow).
+            _bottomAnchor.OnScrollChanged(extentHeightChange: 0);
 
-        EvaluateChunkScroll(EditorControl.VerticalOffset); // [3b, DEĞİŞMEDİ] chunk loader — üstteki eşik ayrı kavram
+            // Chunk loader — üstteki eşik ayrı kavram. Ofset TextView'in kendisinden, dibe kenetli (SettledOffset): ScrollViewer'ınki bu
+            // olayda henüz eski, +∞ dibe isteği (mod geçişinin pini) ise bir olayda +∞ gösterir.
+            EvaluateChunkScroll(SettledOffset);
+        }
 
         // Prompt AYNI olayda taşınır. Konumu belgenin son satırından gelir; kaydırma o satırı yukarı iterken
         // imleç eski yerinde kalsaydı — bir tık tekerlek çevirmek yetiyordu — bir kare boyunca metnin ÜSTÜNE
@@ -862,24 +1115,86 @@ public partial class ConsoleView : UserControl
         RefreshHoverBand(); // [M-2 review round 1] imleç kımıldamadan scroll olursa bant ESKİ satırda asılı kalmasın
     }
 
-    // [T59] Pill tıklaması → yumuşak (reduced-motion'da anında) dibe.
+    // [T59] Pill tıklaması → yumuşak (reduced-motion'da anında) dibe. [dalga 3 · karar 45] Anlatıda takip geri gelir; proje sayfasında
+    // görünüm sona BİR KEZ gider ve takip açılmaz (anchor'ın takip izni — ctor'daki followAllowed).
     private void OnPillClick(object sender, RoutedEventArgs e) => _bottomAnchor.JumpToBottom();
+
+    /// <summary>
+    /// [idle-memory · dalga 3 · karar 46 · B2 fix 1 F2] <b>Klavye gezintisi GÖRÜNÜMÜ kaydırır, gizli imleci değil</b> — anlatıda da proje
+    /// sayfasında da. Editörün değiştiricisiz gezinme komutları (ve Ctrl'li sözcük adımları) tek tablodan (<see cref="NavigationScrolls"/>) bir
+    /// görünüm kaydırmasına eşlenir; komut tünelleyen önizlemede (editör, TextArea'nın atası) karşılanır ve editörün imleç-göreli işleyicisine
+    /// inmez. Kaydırma komutları ScrollViewer'dan geçer (TextView'in kendi adımları: bir görünür alan, bir satır, yatayda bir adım), konsolun
+    /// diğer kaydırma komutları gibi.
+    /// <para><b>Neden:</b> editörün gezinmesi imleç-görelidir — imleci taşıyıp görünür kılar. Konsolun imleci görünmez ve hiç taşınmaz
+    /// (yeniden kurulumdan sonra 1. satırdadır, eklemeler onu oynatmaz), dolayısıyla her gezinme tuşu görünümü imlece — belgenin başına —
+    /// sıçratıyordu. Ölçüldü: dipteki ilk PageUp 200 satırlık dilimin TEPESİNE sıçrıyor, PageDown dipten ~2645 px yukarı atıyordu (karar 46);
+    /// ↑/↓/Home/End ve oklar aynı kökten (B2 fix 1: dipteki ↑ dilimin tepesine, iki sayfa aşağıdaki ↓ sayfanın tepesine, Ctrl+End sonrası
+    /// Home sona sıçrıyor, End tepedeki sayfayı hiç oynatmıyordu).</para>
+    /// <para>Geri kalan her şey her jestteki gibidir: tuşun ham önizlemesi — komuttan ÖNCE — uçuştaki <c>⌄ latest</c> animasyonunu durdurur
+    /// (aksi hâlde sıradaki karesi tuşun kaydırmasını ezerdi — B2 fix 1 · M5) ve direksiyonu okuyucuya verir (<see cref="UserScrollSignal"/>);
+    /// kaydırmanın olayı takip kararını ve yükleyiciyi besler (<see cref="OnScrollOffsetChanged"/>). [B2 fix 2 · madde 2] İptal eskiden burada,
+    /// yalnız bu tablonun adımlarındaydı — editörde kalan tuşlar animasyonu durdurmuyordu; kural artık sinyalin tek tanımındadır. Shift'li seçim
+    /// adımları, Alt+Shift kutu seçimi ve Ctrl+Home/Ctrl+End editörde kalır (seçim ve Ctrl+C eskisi gibi).</para>
+    /// </summary>
+    private void OnPreviewNavigationCommand(object sender, ExecutedRoutedEventArgs e)
+    {
+        if (!NavigationScrolls.TryGetValue(e.Command, out var scroll)) return;
+        scroll(this);
+        e.Handled = true;
+    }
+
+    /// <summary>[B2 fix 1 · F2] Gezinme komutu → görünüm kaydırması: konsolun klavye gezintisinin TEK tablosu
+    /// (<see cref="OnPreviewNavigationCommand"/>). Home görünümü tepeye ve sol kenara (<see cref="TextEditor.ScrollToHome"/>), End belgenin tam
+    /// sonuna — takibin kendi isteğiyle (<see cref="RequestBottom"/>: yalnız dikey, yatay okuma konumu kalır — B2 fix 2 · madde 3) — götürür.
+    /// ←/→ ve Ctrl'li sözcük adımları yatayda bir adım kaydırır. Değer görünümü alır: PageUp'ın dilim sınırı adımı görünümün durumuna bakar
+    /// (<see cref="PageUpOneViewport"/>).</summary>
+    private static readonly Dictionary<ICommand, Action<ConsoleView>> NavigationScrolls = new()
+    {
+        [EditingCommands.MoveUpByPage] = view => view.PageUpOneViewport(),
+        [EditingCommands.MoveDownByPage] = view => view.EditorControl.PageDown(),
+        [EditingCommands.MoveUpByLine] = view => view.EditorControl.LineUp(),
+        [EditingCommands.MoveDownByLine] = view => view.EditorControl.LineDown(),
+        [EditingCommands.MoveToLineStart] = view => view.EditorControl.ScrollToHome(),
+        [EditingCommands.MoveToLineEnd] = view => view.RequestBottom(),
+        [EditingCommands.MoveLeftByCharacter] = view => view.EditorControl.LineLeft(),
+        [EditingCommands.MoveRightByCharacter] = view => view.EditorControl.LineRight(),
+        [EditingCommands.MoveLeftByWord] = view => view.EditorControl.LineLeft(),
+        [EditingCommands.MoveRightByWord] = view => view.EditorControl.LineRight(),
+    };
+
+    /// <summary>[B2 fix 1 · M4] PageUp TAM BİR görünür alandır — anlatının dilim sınırında da: adım belgenin tepesini aşacaksa ve arkada
+    /// geçmiş varsa önce önceki dilim yüklenir (<see cref="PrependPreviousChunk"/> ofseti telafi eder), sonra sayfa kayar. [DEĞİŞEN KURAL]
+    /// Eskiden basış her jest gibi belgenin tepesinde duruyor, dilim orada geliyordu — o basış bir sayfadan kısaydı (ölçüldü: 565,2 yerine
+    /// ~347 px); sahip "bir sayfa" istedi. Proje sayfasının arkasında bir şey yoktur; orada ve anlatının başında adım tepede durur.</summary>
+    private void PageUpOneViewport()
+    {
+        if (SettledOffset - ScrollGeometry.ViewportHeight < 0 && _loadedFrom > 0) PrependPreviousChunk();
+        EditorControl.PageUp();
+    }
 
     // [T59] BottomAnchorBehavior'ın "scrollSmooth" delege'i. [M-1] Ortak desen (taze AnimationsEnabled + Duration.Slow
     // + KeySpline.EaseInOut + ScrollAnimator.AnimateTo) StickyLayerList.AnimateScrollTo ile PAYLAŞILIR —
     // MotionTokens.AnimateSlowEaseInOut'a çıkarıldı (kopya YASAK, CLAUDE.md); ayrı host'lar (TextEditor/ScrollViewer)
     // ScrollAnimator'ın ortak UIElement/ScrollToVerticalOffset çekirdeğinden geçer.
     private bool AnimateToBottom(double target) =>
-        MotionTokens.AnimateSlowEaseInOut(this, EditorControl, EditorControl.VerticalOffset, target);
+        MotionTokens.AnimateSlowEaseInOut(this, ScrollAnimationTarget, ScrollGeometry.VerticalOffset, target);
+
+    /// <summary>[B2 fix 3 · madde 8] Konsolun kaydırma animasyonunun TEK hedefi: <c>⌄ latest</c> atlaması onu canlandırır
+    /// (<see cref="AnimateToBottom"/>) ve okuyucunun jesti onu durdurur (<see cref="UserScrollSignal"/>). İki yer aynı üyeyi okur — iptal,
+    /// hareketin koştuğu elemandan sessizce kayamaz.</summary>
+    private UIElement ScrollAnimationTarget => EditorControl;
 
     /// <summary>[3b I-2] Chunk-scroll kararı. Offset dışarıdan verilir — üretimde <see cref="OnScrollOffsetChanged"/>
-    /// <c>EditorControl.VerticalOffset</c> ile çağırır; böylece GERÇEK yol (arm → tepeye-scroll → prepend → re-arm)
+    /// dibe kenetli konumla (<see cref="SettledOffset"/>) çağırır; böylece GERÇEK yol (arm → tepeye-scroll → prepend → re-arm)
     /// canlı bir scroll event'i olmadan test edilebilir (paralel bir kopya yol DEĞİL — üretimin çağırdığı metodun
     /// ta kendisi). Kullanıcı tepeden uzaklaşınca "arm" (ilk layout'ta offset=0 iken spurious prepend olmaz);
     /// yalnız gerçek bir tepeye-scroll önceki chunk'ı yükler.
     /// <para><b>Mod ayrımı YOKTUR:</b> jest anlatıda da proje logunda da aynıdır ve karar tek bir soruya
     /// bakar — backlog'da daha eski satır kaldı mı (<see cref="_loadedFrom"/> &gt; 0). Kapı eskiden proje
-    /// moduna bağlıydı ve run anlatısında geçmişe dönmenin hiçbir yolu yoktu.</para></summary>
+    /// moduna bağlıydı ve run anlatısında geçmişe dönmenin hiçbir yolu yoktu. Proje sayfasında cevap her zaman hayırdır: logun tamamı
+    /// belgededir (<see cref="ReplaceProjectDocument"/>).</para>
+    /// <para>Kendi değişikliklerimizin kaydırma olayları sayılmaz: prepend sürerken (<see cref="_prepending"/>) burada; belge takasının
+    /// olayları buraya hiç gelmez (<see cref="OnScrollOffsetChanged"/> — takip kararıyla birlikte tek yerde elenir).</para></summary>
     internal void EvaluateChunkScroll(double verticalOffset)
     {
         if (_prepending) return;
@@ -920,14 +1235,22 @@ public partial class ConsoleView : UserControl
     internal void PrependPreviousChunk()
     {
         int from = Math.Max(0, _loadedFrom - RenderSliceLines);
-        string chunk = Join(_backlogLines, from, _loadedFrom);
-        if (chunk.Length == 0) { _loadedFrom = from; return; }
+        string chunk = _backlog.Join(from, _loadedFrom);
+        if (chunk.Length == 0)
+        {
+            // [idle-memory · dalga 2 · inceleme M1] Backlog'un İÇİNDEKİ bir aralık boş dönmez; dönerse okunamamıştır (anlatı store'unun
+            // dosyası — Join tam aralık ya da "" verir). İndeks YERİNDE kalır: dilim atlanmaz, sonraki tepeye kaydırma onu yeniden ister
+            // (yeniden deneme yeniden "arm" ister — sıkı bir döngü olmaz). Yalnız backlog belgenin GERİSİNDEyse (gizliyken temizlenen
+            // anlatının bayat belgesi) yüklenecek bir şey yoktur ve indeks eskisi gibi iner; o belge dönüşte zaten yeniden kurulur.
+            if (_loadedFrom > _backlog.Count) _loadedFrom = from;
+            return;
+        }
 
         _prepending = true;
         try
         {
             var tv = EditorControl.TextArea.TextView;
-            double before = EditorControl.VerticalOffset;
+            double before = SettledOffset; // kaydırma olayının içinden de doğru: ScrollViewer'ınki orada henüz eski
             int prependedLines = _loadedFrom - from;
             double delta = prependedLines * tv.DefaultLineHeight;
 
@@ -946,46 +1269,16 @@ public partial class ConsoleView : UserControl
 
     // ---------------------------------------------------------------- yardımcılar
 
-    // Metni satırlara böler (ayraçlar ATILIR — Join onları geri koyar). Sondaki '\n'in doğurduğu boş kuyruk
-    // parçası satır SAYILMAZ: append sözleşmesi gereği canlı metin '\n' ile biter, yani o parça bir satır
-    // değil bir sonektir. Boş metin → boş liste.
     /// <summary>Konsol belgelerinin TEK fabrikası: geri-alma geçmişi KAPALI (<c>SizeLimit = 0</c>). Konsol salt-okunurdur;
     /// AvalonEdit yine de her Insert/Remove'u geri-alma yığınına kaydeder ve kaldırılan metni ip (rope) dilimi olarak canlı
     /// tutar — ÖLÇÜLDÜ: görünür bir Resolve'un ardından canlı yönetilen yığının yaklaşık yarısı, render dilimine kırpılmış
-    /// belgenin arkasında böyle tutulan koşu anlatısıydı (<c>ConsoleMemoryTests</c>). Geçmiş dilimi için satır listesi
-    /// yeter; belge yalnız pencereyi taşır ve kırpılan metin o an serbest kalır.</summary>
+    /// belgenin arkasında böyle tutulan koşu anlatısıydı (<c>ConsoleMemoryTests</c>). Geçmiş dilimi backlog'dadır
+    /// (<see cref="_backlog"/>); belge yalnız pencereyi taşır ve kırpılan metin o an serbest kalır.</summary>
     private static TextDocument NewDocument(string text)
     {
         var document = new TextDocument(text);
         document.UndoStack.SizeLimit = 0;
         return document;
-    }
-
-    private static List<string> SplitLines(string text)
-    {
-        var lines = new List<string>();
-        if (text.Length == 0) return lines;
-        int start = 0;
-        for (int i = 0; i < text.Length; i++)
-            if (text[i] == '\n') { lines.Add(text[start..i]); start = i + 1; }
-        if (start < text.Length) lines.Add(text[start..]); // '\n' ile bitmeyen son parça (savunmacı)
-        return lines;
-    }
-
-    // Metnin SON `count` satırı — kırpılan bloğun yalnız backlog'a girmemiş kuyruğunu almak için.
-    private static List<string> LastLines(string text, int count)
-    {
-        var lines = SplitLines(text);
-        return count >= lines.Count ? lines : lines.GetRange(lines.Count - count, count);
-    }
-
-    // allLines[from..to) satırlarını '\n' SONEKLİ birleştirir (append/dikiş sözleşmesiyle uyumlu — tam satır biter).
-    private static string Join(IReadOnlyList<string> lines, int from, int to)
-    {
-        if (from >= to) return "";
-        var sb = new System.Text.StringBuilder();
-        for (int i = from; i < to; i++) sb.Append(lines[i]).Append('\n');
-        return sb.ToString();
     }
 
     // Duration.* kaynağını çözer (motion sözleşmesi: süreler token'dan); yoksa fallback ms.

@@ -411,24 +411,12 @@ public class UpdateRestartScreenTests
 
     /// <summary>Tuş olayları için bir girdi kaynağı — <see cref="KeyEventArgs"/> bir <see cref="PresentationSource"/>
     /// ister ve kabuk testlerinde pencere gösterilmez; ekran dışı küçük bir pencere yeter (olayın hedefi yine
-    /// ana penceredir).</summary>
+    /// ana penceredir). Basış <see cref="KeyInput.Press"/>'tedir: önce önizleme, sonra aynı argümanla KeyDown.</summary>
     private static (PresentationSource source, Window keepAlive) KeySource()
     {
         var anchor = new Border();
         var window = DsResources.Realize(DsResources.NewHost(), anchor);
         return (PresentationSource.FromVisual(anchor)!, window);
-    }
-
-    /// <summary>Bir tuşa WPF'in girdi yöneticisi gibi basar: önce tünelleyen <c>PreviewKeyDown</c>, sonra AYNI argümanla
-    /// kabarcıklanan <c>KeyDown</c> — pencerenin <see cref="KeyBinding"/>'leri ikincisinde, yalnız olay handled
-    /// değilse çalışır.</summary>
-    private static KeyEventArgs PressKey(MainWindow window, PresentationSource source, Key key)
-    {
-        var args = new KeyEventArgs(Keyboard.PrimaryDevice, source, 0, key) { RoutedEvent = Keyboard.PreviewKeyDownEvent };
-        window.RaiseEvent(args);
-        args.RoutedEvent = Keyboard.KeyDownEvent;
-        window.RaiseEvent(args);
-        return args;
     }
 
     /// <summary>Ekran görünürken pencere klavyeyi yok sayar (prototip: keydown'da erken dönüş): F5 derleme başlatmaz, Esc
@@ -443,13 +431,13 @@ public class UpdateRestartScreenTests
         var rig = NewShell(temp);
         var (source, keepAlive) = KeySource();
         rig.Vm.SelectProject(MainWindowHost.IdOf("A"));
-        PressKey(rig.Window, source, Key.Escape);
+        KeyInput.Press(rig.Window, Key.Escape, source);
         Assert.Null(rig.Vm.SelectedProjectId); // kontrol: ekran yokken Esc bağlamaya ulaşır
         rig.Vm.SelectProject(MainWindowHost.IdOf("A"));
 
         rig.PressRestart();
-        var f5 = PressKey(rig.Window, source, Key.F5);
-        var esc = PressKey(rig.Window, source, Key.Escape);
+        var f5 = KeyInput.Press(rig.Window, Key.F5, source);
+        var esc = KeyInput.Press(rig.Window, Key.Escape, source);
 
         Assert.True(f5.Handled);
         Assert.True(esc.Handled);

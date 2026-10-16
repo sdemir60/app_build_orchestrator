@@ -306,6 +306,50 @@ public class RibbonTextTests
         Assert.Equal("Engine stopped unexpectedly (exit 139)", dead.Text);
     }
 
+    /// <summary>[idle-memory · dalga 3 · karar 38] Uyuyan motor uyanırken (VM'in motor durumu <c>Waking</c>) şerit motorun başladığını söyler —
+    /// şeridin faz satırlarının biçimiyle: ▸ işareti, <c>Brush.TextSecondary</c>, statü glyph'i yok (bu bir sonuç değil, bir bekleyiştir). Sabitin
+    /// metni bir kez pinlenir.
+    /// <para>KIRMIZI: girdi yok sayılıyordu — şerit fazın satırını ("▸ Ready — …") gösteriyordu.</para></summary>
+    [Fact]
+    public void The_waking_line_says_the_engine_is_starting()
+    {
+        Assert.Equal("▸ Starting the engine…", RibbonText.StartingTheEngine); // metnin TEK literal pini
+
+        var line = RibbonText.Compose(AppPhase.Idle, true, false, Counters(), 3, 0, 14, 0, null, null, 0, engineWaking: true);
+
+        Assert.Equal(RibbonText.StartingTheEngine, line.Text);
+        Assert.Equal("Brush.TextSecondary", line.BrushKey);
+        Assert.Null(line.Glyph);
+    }
+
+    /// <summary>[karar 38] Uyanma satırının yeri öncelik zincirinde: motorun ölüm ve erişilemezlik metinleri (kırmızı, kalıcı), motor sessizliği
+    /// (amber) ve çıkış bekleyişi (Stopping) onu EZER — bunlar uyanmadan büyük ya da onu kesen olgulardır. Uyanma satırı ise Sync/koşu hatalarını
+    /// ve HER fazın satırını ezer: canlı bir bekleyiştir; alttakiler geçmişe ait bir olgudur ya da "motor çalışıyor" varsayar.
+    /// <para>KIRMIZI: girdi yok sayılıyordu — her durumda alttaki metin.</para></summary>
+    [Fact]
+    public void The_waking_line_outranks_failures_and_every_phase_but_not_the_engine_texts_or_the_exit()
+    {
+        foreach (var phase in Enum.GetValues<AppPhase>())
+        {
+            var line = RibbonText.Compose(phase, true, false, Counters(building: 1), 10, 3, 14, 0, null, null, 0,
+                syncError: "fetch failed", runError: "run blew up", engineWaking: true);
+            Assert.Equal(RibbonText.StartingTheEngine, line.Text);
+        }
+
+        // Üstteki her metin uyanma satırını ezer: uyanma girdisi açıkken satır, girdi kapalıykenkinin AYNISIDIR (metinler kendi testlerinde
+        // pinli — burada yeniden yazılmaz).
+        RibbonLine With(bool waking, string? engineDied = null, string? overdue = null, bool exitPending = false) =>
+            RibbonText.Compose(AppPhase.Idle, true, false, Counters(), 10, 3, 14, 0, null, null, 0,
+                engineDiedMessage: engineDied, engineOverdue: overdue, exitPending: exitPending, engineWaking: waking);
+        foreach (string engineText in new[] { RunViewModel.EngineDiedText("exit 1"), RunViewModel.EngineMissingMessage, RunViewModel.EngineCannotStartMessage })
+        {
+            Assert.Equal(engineText, With(waking: true, engineDied: engineText).Text);
+            Assert.Equal(With(waking: false, engineDied: engineText), With(waking: true, engineDied: engineText));
+        }
+        Assert.Equal(With(waking: false, overdue: RunViewModel.EngineSilentMessage), With(waking: true, overdue: RunViewModel.EngineSilentMessage));
+        Assert.Equal(With(waking: false, exitPending: true), With(waking: true, exitPending: true));
+    }
+
     /// <summary>Eski metin <c>▸ Stopped — 3/10 · rest queued</c> idi. "queued" SÜRDÜRÜLEBİLİRLİK ima ediyordu
     /// (Continue butonu vardı); Continue kaldırıldığı için o söz artık karşılıksız — kalanlar bir sonraki
     /// Build'de baştan işlenir. Yeni metin yalnızca olguyu söyler.</summary>

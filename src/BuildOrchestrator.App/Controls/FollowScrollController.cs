@@ -1,5 +1,3 @@
-using System.Windows.Threading;
-
 namespace BuildOrchestrator.App.Controls;
 
 /// <summary>
@@ -34,7 +32,8 @@ public sealed class FollowScrollController
     /// <param name="getCurrentOffset">Anlık ScrollViewer.VerticalOffset.</param>
     /// <param name="animateTo">Hedefe kaydır (host, tipik olarak <see cref="ScrollAnimator.AnimateTo"/>'ya sarar).</param>
     /// <param name="nowMs">D8: enjekte edilebilir saat (throttle testte deterministik).</param>
-    /// <param name="scheduleOnce">D8: 90ms gecikmeyi zamanlar — testte enjekte edilebilir; üretim varsayılanı DispatcherTimer.</param>
+    /// <param name="scheduleOnce">D8: 90ms gecikmeyi zamanlar — testte enjekte edilebilir; üretim varsayılanı
+    /// <see cref="BottomAnchorBehavior.DefaultScheduleOnce"/> (tek seferlik DispatcherTimer'ın tek tanımı).</param>
     public FollowScrollController(LayoutMetrics metrics, Func<double> getViewportHeight, Func<double> getCurrentOffset,
         Func<double, bool> animateTo, Func<long>? nowMs = null, Action<TimeSpan, Action>? scheduleOnce = null)
     {
@@ -44,7 +43,7 @@ public sealed class FollowScrollController
         _getCurrentOffset = getCurrentOffset;
         _animateTo = animateTo;
         _nowMs = nowMs ?? (() => Environment.TickCount64);
-        _scheduleOnce = scheduleOnce ?? DefaultScheduleOnce;
+        _scheduleOnce = scheduleOnce ?? BottomAnchorBehavior.DefaultScheduleOnce;
     }
 
     /// <summary>Seçim yokken true — follow-mode aktif.</summary>
@@ -122,12 +121,5 @@ public sealed class FollowScrollController
     {
         _hasSelection = false;
         _selectionGeneration++; // bekleyen bir seçim-scroll'u geçersiz kıl
-    }
-
-    private static void DefaultScheduleOnce(TimeSpan delay, Action callback)
-    {
-        var timer = new DispatcherTimer { Interval = delay };
-        timer.Tick += (_, _) => { timer.Stop(); callback(); };
-        timer.Start();
     }
 }

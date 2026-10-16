@@ -10,6 +10,7 @@ using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.Core.Diagnostics;
 using BuildOrchestrator.Core.Logs;
 
 namespace BuildOrchestrator.App.Views;
@@ -144,7 +145,10 @@ public partial class AboutDialog : Controls.ModalDialog
     /// <summary>Tanı modelini TEK yerden (<see cref="DiagnosticsReport"/>) yeniden kurar ve üç satır listesini
     /// ondan besler. Kimlik değerleri <see cref="AppIdentity"/>'den, motor değerleri motorun KENDİ bildiriminden
     /// (<see cref="RunViewModel.EngineVersion"/>, <see cref="RunViewModel.EnginePid"/>), yol metinleri üretimin
-    /// kendi static'lerinden gelir — burada YENİDEN YAZILMAZ.</summary>
+    /// kendi static'lerinden, App'in belleği motorun bellek satırını besleyen AYNI okumadan (<see cref="MemoryLine.TryRead()"/>:
+    /// <see cref="MemoryLine.Read"/>'in korumalı hâli) gelir — burada YENİDEN YAZILMAZ. Okuma patlarsa üç bellek satırı "—" gösterir,
+    /// diyalog açılır. Bellek satırları kurulum anının görüntüsüdür, canlı değildir: model açılışta ve MSBuild çözülünce
+    /// (Environment sekmesinin ilk seçimi) kurulur.</summary>
     private void RefreshDiagnostics()
     {
         if (_run is not { } run) return;
@@ -154,8 +158,10 @@ public partial class AboutDialog : Controls.ModalDialog
             Copyright: AppIdentity.Copyright,
             EngineVersion: run.EngineVersion,
             EnginePid: run.EnginePid,
+            EngineState: run.EngineState,
             Runtime: RuntimeInformation.FrameworkDescription,
             Os: RuntimeInformation.OSDescription,
+            Memory: MemoryLine.TryRead(),
             MsBuild: _msBuild,
             RepositoryRoot: run.RootPath,
             StateFile: JsonUiStateStore.DefaultPath,

@@ -10,7 +10,6 @@ using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Core.Discovery;
 using BuildOrchestrator.Core.Git;
 using BuildOrchestrator.Core.Incremental;
-using BuildOrchestrator.Core.Logs;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Core.Processes;
 using BuildOrchestrator.Core.State;
@@ -107,11 +106,9 @@ public class CleanDispatchTests : IDisposable
 
         // Planlama, testin sonuna kadar BLOKLANIR → _runActive true kalır (sinyal, Thread.Sleep DEĞİL [D8]).
         var releasePlanning = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var coordinator = new RunCoordinator(
+        using var coordinator = SupervisorHostHarness.NewIdleCoordinator(job, writer, _ => { },
             planner: (_, _) => { releasePlanning.Task.GetAwaiter().GetResult(); throw new InvalidOperationException("plan yok"); },
-            msbuildFactory: _ => throw new InvalidOperationException("bu testte msbuild yok"),
-            logFactory: startedAt => new RunLogWriter(Path.Combine(_sandbox, "logs"), startedAt),
-            writer: writer, innerJob: job, nowMs: () => 0, console: _ => { });
+            logsRoot: Path.Combine(_sandbox, "logs"));
 
         // startRun SENKRON olarak slotu tutar ve döner; dispatch loop serildir, yani cleanWorkspace okunduğunda
         // run KESİNLİKLE aktiftir — yarış yok.
@@ -149,9 +146,7 @@ public class CleanDispatchTests : IDisposable
         Assert.Contains(all, e => e is PongEvent { Seq: 7 }); // host ayakta: sonraki komut hâlâ işleniyor
     }
 
-    private RunCoordinator NewCoordinator(NdjsonWriter writer, JobObject job) => new(
-        planner: (_, _) => throw new InvalidOperationException("bu testte run yok"),
-        msbuildFactory: _ => throw new InvalidOperationException("bu testte run yok"),
-        logFactory: startedAt => new RunLogWriter(Path.Combine(_sandbox, "logs"), startedAt),
-        writer: writer, innerJob: job, nowMs: () => 0, console: _ => { });
+    private RunCoordinator NewCoordinator(NdjsonWriter writer, JobObject job) =>
+        SupervisorHostHarness.NewIdleCoordinator(job, writer, _ => { },
+            logsRoot: Path.Combine(_sandbox, "logs"));
 }

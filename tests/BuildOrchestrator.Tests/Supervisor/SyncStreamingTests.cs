@@ -5,7 +5,6 @@ using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Core.Discovery;
 using BuildOrchestrator.Core.Git;
 using BuildOrchestrator.Core.Incremental;
-using BuildOrchestrator.Core.Logs;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Core.Processes;
 using BuildOrchestrator.Core.State;
@@ -108,11 +107,8 @@ public class SyncStreamingTests
         stdin.Position = 0; // komut okunduktan sonra EOF → host düzenli çıkar
 
         using var job = JobObject.CreateKillOnClose();
-        using var coordinator = new RunCoordinator(
-            planner: (_, _) => throw new InvalidOperationException("bu testte run yok"),
-            msbuildFactory: _ => throw new InvalidOperationException("bu testte run yok"),
-            logFactory: startedAt => new RunLogWriter(Path.Combine(sandbox, "logs"), startedAt),
-            writer: writer, innerJob: job, nowMs: () => 0, console: _ => { });
+        using var coordinator = SupervisorHostHarness.NewIdleCoordinator(job, writer, _ => { },
+            logsRoot: Path.Combine(sandbox, "logs"));
 
         // Sync servisi GERÇEK; yalnız git process runner'ı kapılı. Diğer fabrikalar bu testte kullanılmaz.
         var services = new WorkspaceServices(

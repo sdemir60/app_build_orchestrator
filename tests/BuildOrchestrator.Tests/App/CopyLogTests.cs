@@ -176,6 +176,33 @@ public class CopyLogTests
         Assert.False(header.IsShowingCopied);
     }
 
+    /// <summary>
+    /// [dalga 3 · karar 44] Gerçek kabukta uzun bir proje logunu kopyalamak logun HER satırını kopyalar — sayfa açıldıktan sonra gelen
+    /// canlı satırlar dahil. Kopyanın kaynağı sayfa belgesi değil, VM'in proje metnidir (<c>RunViewModel.GetProjectDocumentText</c>);
+    /// sayfanın belgeyi nasıl kurduğu (dilim ya da logun tamamı) kopyayı değiştirmez.
+    /// <para>PİN — karardan önce de yeşildi.</para>
+    /// </summary>
+    [StaFact]
+    public void Copying_a_long_project_log_in_the_shell_copies_every_line_of_it()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        var row = MainWindowHost.ProjectOf(vm, "A");
+        vm.ActiveProjectId = row.Id; // proje logu açık (motor round-trip'i yok: mod doğrudan kurulur)
+        for (int i = 0; i < 1000; i++) MainWindowHost.LogLine(vm, "A", i + 1, $"line{i}");
+        vm.SelectProject(row.Id);    // kart seçildi → sayfa kurulur, başlığın kopya kaynağı bağlanır
+        MainWindowHost.LogLine(vm, "A", 1001, "live0");
+        window.AppendConsoleBatch("live0\n", window.ConsoleReseedGen); // canlı satır, pompanın yolundan
+        var header = window.Shell.ConsoleHeaderControl;
+        string? copied = null;
+        header.ClipboardWriter = text => { copied = text; return true; };
+
+        header.CopyLog();
+
+        Assert.Equal(string.Concat(Enumerable.Range(0, 1000).Select(i => $"line{i}\n")) + "live0\n", copied);
+        GC.KeepAlive(window);
+    }
+
     [StaFact]
     public void CopyLog_failed_clipboard_does_not_enter_copied_state()
     {

@@ -5,34 +5,14 @@ namespace BuildOrchestrator.App.Console;
 /// (in-memory belge tamponu bu kadarla sınırlı; hacim/performans). "N lines" sayacı bu dilimden ETKİLENMEZ —
 /// TAM mantıksal sayacı VM (<c>RunViewModel.GetActiveLineCount</c>) taşır (render dilimi DEĞİL).
 ///
-/// <para>Bu SAF yardımcı yalnız metin kırpma matematiğidir (tohumlama için). Canlı append'te belge, aynı
-/// sınırla <c>ConsoleView.AppendBatch</c> içinde baştan kırpılır.</para>
+/// <para>Sınırın TEK tanımıdır. Anlatı belgesi her kurulumda backlog'un son diliminden kurulur (<c>ConsoleView.ReplaceRunDocument</c>),
+/// canlı append'te ve takip geri gelince aynı sınırla baştan kırpılır (<c>ConsoleView.AppendBatch</c>). Proje sayfası bu sınırın dışındadır:
+/// logun tamamını taşır ve hiç izlemediği için kırpılmaz (<c>ConsoleView.ReplaceProjectDocument</c>, dalga 3 · karar 44-45).
+/// [idle-memory · final review 90] Metin kırpan eski yardımcı (<c>LastLines</c>) kalktı: tohumlama metinden değil backlog'dan yapıldığından
+/// üretimde çağıranı yoktu.</para>
 /// </summary>
 public static class ConsoleRenderSlice
 {
     /// <summary>design-v1 §2.5 / Ek A #16: konsol son 200 satır (tampon ~240 — burada render dilimi=200).</summary>
     public const int DefaultMaxLines = 200;
-
-    /// <summary>Metnin son <paramref name="maxLines"/> (mantıksal, '\n' ile ayrılmış) satırını döner. Satır
-    /// sayısı sınırın altındaysa metin OLDUĞU GİBİ döner. Sondaki '\n' korunur (satırlar '\n' sonekli birikir).</summary>
-    public static string LastLines(string text, int maxLines = DefaultMaxLines)
-    {
-        if (string.IsNullOrEmpty(text) || maxLines <= 0) return text ?? "";
-
-        // Sondan geriye maxLines adet '\n' say; (maxLines)'inci '\n'den SONRAki karakterden itibaren kes.
-        // Metin "a\nb\nc\n" ise ve maxLines=2 → "b\nc\n" (son iki satır + boş sonek satırı).
-        int newlinesNeeded = maxLines;
-        int cut = text.Length;
-        // Sondaki (varsa) '\n' bir sonraki BOŞ satırı başlatır — onu bir "satır" saymamak için atla.
-        int i = text.Length - 1;
-        if (i >= 0 && text[i] == '\n') i--;
-        for (; i >= 0; i--)
-        {
-            if (text[i] == '\n')
-            {
-                if (--newlinesNeeded == 0) { cut = i + 1; return text[cut..]; }
-            }
-        }
-        return text; // sınırın altında — tümü
-    }
 }

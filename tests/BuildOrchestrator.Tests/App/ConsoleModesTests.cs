@@ -6,6 +6,9 @@ using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Tests.Supervisor;
+using ICSharpCode.AvalonEdit.Document;
+using static BuildOrchestrator.Tests.App.MainWindowHost;
+using static BuildOrchestrator.Tests.App.ConsoleDocument;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -16,8 +19,6 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class ConsoleModesTests
 {
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
-
     // ---------------------------------------------------------------- başlık modları
 
     // [v1.18.0 §9] Sol grubun tamamı (Back + ad + statü + rozetler) artık TEK bir konteynerdir
@@ -103,7 +104,7 @@ public class ConsoleModesTests
         bool raised = false;
         header.BackRequested += (_, _) => raised = true;
 
-        header.BackButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+        CommandPress.Click(header.BackButton);
 
         Assert.True(raised);
     }
@@ -130,35 +131,70 @@ public class ConsoleModesTests
         // reseed yolunda apply yalnız pump sentinel'e uğrayınca çağrılırdı → gövde eski içeriği gösterirdi (RED);
         // Solution B'de doküman senkron kurulur → gövde eski içeriği ARTIK göstermez (GREEN).
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var batcher = new ConsoleBatcher(_ => Task.Delay(Timeout.Infinite)); // pump asla ilerlemez
+        var batcher = NeverTickingBatcher(); // pump asla ilerlemez
         var vm = new RunViewModel(engine, batcher, () => "r1");
         var view = new ConsoleView();
         var header = new ConsoleHeader();
 
-        // Önceki anlatı/run içeriği + gövdeye senkron kur.
+        // Önceki anlatı/run içeriği + gövdeye senkron kur (kabuğun anlatıya dönüş yolu: ShowRunConsole).
         vm.OnEvent(new SyncProgressEvent("Sync complete — 7 changed projects, 14 to build", "info"));
-        view.ShowRunDocument(vm.GetRunDocumentText());
+        vm.SeedRunDocument(view.ShowRunDocument);
         const string previousRunText = "Sync complete — 7 changed projects";
         Assert.Contains(previousRunText, view.Document.Text);
 
-        // Bir kart seçilmiş gibi: canlı log tamponlanır ve dikişle ActiveProjectId kurulur (kart-tıklaması yolu).
+        // Bir kart seçilmiş gibi: istekten önce gelen satırlar diskte ve motorun snapshot'ındadır (motor satırı olayını
+        // yaymadan önce diske yazar) — dikiş onları chunk'tan alır ve ActiveProjectId'yi kurar (kart-tıklaması yolu). Canlı
+        // satır tamponu yalnız istekten sonra gelenleri tutar (idle-memory spec §6.2).
         const string projectId = @"C:\p\a.csproj";
         vm.OnEvent(new ProjectStartedEvent("r1", projectId, "A"));
         vm.OnEvent(new ProjectLogEvent("r1", projectId, 1, "Determining projects to restore..."));
         vm.OnEvent(new ProjectLogEvent("r1", projectId, 2, "Restored A.csproj"));
         vm.SelectProject(projectId); // [D4 review §2] üretimde seçim load'dan önce kurulur (proje modu koşulu)
-        var load = vm.LoadProjectLogAsync(projectId);
-        vm.OnEvent(new ProjectLogChunkEvent(projectId, 0, "", IsLast: true, ThroughLineNumber: 0));
+        var (load, request) = ProjectLogIpc.Request(vm, projectId);
+        vm.OnEvent(ProjectLogIpc.Reply(request, projectId, "Determining projects to restore...\nRestored A.csproj\n",
+            through: 2));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
 
         // Tıklama anı: başlık + gövde SENKRON proje-loguna geçer (pump beklenmeden).
         header.ShowProjectLog(ConsoleHeaderRow.For("A", ProjectRowState.Started, inCycle: false,
             depIssues: null, namePrefix: ""), vm.GetActiveLineCount());
-        vm.SeedProjectDocument(projectId, text =>
-            view.PlayCascade(text.Length == 0 ? [] : text.TrimEnd('\n').Split('\n')));
+        // [B2 fix 1 · O1] Sayfa logun metnidir, bölünmez (kabuğun kuralı — MainWindow.ProjectDocumentText; eskiden konsolun satır kuralıyla
+        // bölünüp görünümde yeniden birleştiriliyordu).
+        vm.SeedProjectDocument(projectId, view.PlayCascade); // kabuğun kart seçimi: logun metni olduğu gibi
 
         Assert.Equal(ConsoleHeader.HeaderMode.ProjectLog, header.Mode);
         Assert.DoesNotContain(previousRunText, view.Document.Text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// [dalga 3 · karar 44] <b>Derlenen bir projenin sayfası, dikilmiş logun TAMAMIDIR — ilk satırından.</b> İstekten önce diske yazılan log
+    /// (motorun snapshot'ı, 1000 satır), istekle cevap arasında gelen canlı satırlar (dikiş: snapshot'ta da olanlar tekrar edilmez) ve sayfa
+    /// açıldıktan sonra gelen satırlar (pompa → kabuğun <c>Route.Raw</c>'ı → <c>AppendBatch</c>) sayfada sırayla, tekrarsız ve eksiksiz
+    /// durur; sayfa tepesinde açılır.
+    /// <para>KIRMIZI (karardan önce): sayfa dikilmiş logun yalnız son 200 satırıyla kuruluyordu — belge <c>log813</c>'ten başlıyordu (öncesi
+    /// görünümün listesinde, tepeye kaydırınca gelirdi). Dikişin kendisi (VM, <c>OnProjectLogChunk</c>) değişmedi; bu test onu sayfanın
+    /// tamamı üzerinden sınar.</para>
+    /// </summary>
+    [StaFact]
+    public async Task A_building_projects_page_is_its_whole_stitched_log_from_the_first_line_with_later_lines_after_it()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var view = LaidOutView();
+        const string projectId = @"C:\p\a.csproj";
+        vm.OnEvent(new ProjectStartedEvent("r1", projectId, "A"));
+        vm.SelectProject(projectId); // üretimde seçim yüklemeden önce kurulur
+        var (load, request) = ProjectLogIpc.Request(vm, projectId);
+        foreach (int n in Enumerable.Range(995, 16)) // istekten sonra gelenler: 995..1000 snapshot'ta da var, 1001..1010 yalnız tamponda
+            vm.OnEvent(new ProjectLogEvent("r1", projectId, n, $"log{n}"));
+        vm.OnEvent(ProjectLogIpc.Reply(request, projectId, string.Concat(Enumerable.Range(1, 1000).Select(n => $"log{n}\n")), through: 1000));
+        await load.WaitAsync(TimeSpan.FromSeconds(5));
+
+        vm.SeedProjectDocument(projectId, view.PlayCascade); // kabuğun kart seçimi: logun metni olduğu gibi (bölünmez)
+        view.AppendBatch("log1011\nlog1012\n");                                             // sayfa açıldıktan sonra gelenler
+
+        Assert.Equal(Enumerable.Range(1, 1012).Select(n => $"log{n}"), LinesOf(view.Document));
+        Assert.Equal(0, view.Editor.VerticalOffset);
     }
 
     // ---------------------------------------------------------------- boş-durum metinleri (verbatim §2.5)
@@ -465,38 +501,91 @@ public class ConsoleModesTests
         };
 
     /// <summary>
-    /// <b>Logu olmayan bir projeye tıklamak da o projenin sayfasını AÇAR.</b> Eskiden motor
-    /// <c>logNotFound</c> dediğinde proje modu hiç kurulmuyor, konsol run anlatısında kalıyordu — atlanmış bir
+    /// <b>Logu olmayan bir projeye tıklamak da o projenin sayfasını AÇAR.</b> Eskiden motor "log yok"
+    /// dediğinde proje modu hiç kurulmuyor, konsol run anlatısında kalıyordu — atlanmış bir
     /// projenin log dosyası HİÇ yazılmadığı için (gerekçe yalnız <c>decision.log</c>'a gider) bu, en sık
     /// tıklanan durumdu ve tıklama "hiçbir şey yapmıyor" gibi görünüyordu.
+    /// <para>[DEĞİŞEN KURULUM — idle-memory I1] "Log yok" cevabı eskiden <c>error(logNotFound)</c>'du; artık isteğin kimliğini
+    /// yankılayan tek, boş, bayraklı bir chunk'tır. İddia aynı.</para>
     /// </summary>
     [Fact]
     public async Task Clicking_a_project_without_a_log_still_opens_its_page()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe); // hiç başlatılmadı
-        var vm = new RunViewModel(engine, new ConsoleBatcher(_ => Task.Delay(Timeout.Infinite)), () => "r1");
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         const string projectId = @"C:\p\skipped.csproj";
         vm.OnEvent(new ProjectSkippedEvent("r1", projectId, SkipReasons.UpToDate));
 
         vm.SelectProject(projectId);
-        var load = vm.LoadProjectLogAsync(projectId);
-        vm.OnEvent(new ErrorEvent("logNotFound", projectId));
+        var (load, request) = ProjectLogIpc.Request(vm, projectId);
+        vm.OnEvent(ProjectLogIpc.NotFound(request, projectId));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Equal(projectId, vm.ActiveProjectId);
         Assert.True(vm.ShouldShowLoadedProject(projectId));
+        // Sayfanın metni boş: kabuk boş metinde projenin boş durum sayfasını kurar (MainWindow.ProjectDocumentText) — "log yok"
+        // cevabı boş bir snapshot olarak dikilse de bu kural aynen işler [idle-memory I1].
+        Assert.Equal("", vm.GetProjectDocumentText(projectId));
         // Ve gerekçe satırda tutuluyor — sayfa metni onu okuyacak.
         var row = Assert.Single(vm.Projects);
         Assert.Equal(SkipReasons.UpToDate, row.SkipReason);
     }
 
+    // ---------------------------------------------------------------- proje sayfası logun metninin kendisidir
+
+    /// <summary>
+    /// [dalga 3 · B2 fix 1 · O1] <b>Proje sayfası logun METNİNİN KENDİSİDİR</b> — kabuk sayfayı bölmez, yeniden birleştirmez
+    /// (<c>MainWindow.ProjectDocumentText</c>); belge logu AvalonEdit'in kendi ayraç kuralıyla gösterir. İki fark pinlenir. <b>Fark 1 — sondaki
+    /// boş satır:</b> bir derleme logunun boş bir satırla bitmesi sık görülür; sayfa onu da gösterir ve sonradan gelen canlı satır boş satırın
+    /// ALTINA düşer. <b>Fark 2 — tek başına '\r':</b> belge onu satır ayracı sayar; sayfa, log + canlı satırların belgede gösterdiği satırların
+    /// aynısıdır (kâhin AvalonEdit'in kendi belgesi) — tekrar yok, kayıp yok.
+    /// <para>[DEĞİŞEN KURAL — final review 90] Kabuk sayfayı kendi kuralıyla bölüyordu (<c>TrimEnd('\n').Split('\n')</c>): sondaki BÜTÜN boş
+    /// satırlar düşüyor, sonradan gelen canlı satır onların yerine oturuyordu (KIRMIZI: Fark 1); tek başına '\r' listede bir girdi kalıp belgede
+    /// iki satır oluyor, sayfa son dilim + backlog'ken indeks kayıyordu — tepeye kaydırmada dikişte bir satır iki kez (KIRMIZI:
+    /// <c>line161</c>). Final review 90 kabuğu konsolun satır kuralına (<c>ConsoleLines.Split</c>) bağlamıştı.</para>
+    /// <para>[DEĞİŞEN KURAL — dalga 3 · karar 44-45 · B2 fix 1 O1/M2] Sayfa logun tamamıdır ve hiç izlenmez (indeksli backlog yok, kırpma yok):
+    /// Fark 2'nin kayması artık doğamaz ve ayrı '\r' testi (<c>A_lone_carriage_return_in_a_project_log_shows_the_page_line_for_line</c>) hiçbir
+    /// şeyi ayırt etmiyordu (inceleme M2) — iddiası buraya katlandı; Fark 1'in testi (<c>A_project_page_keeps_the_empty_line_its_log_ends_with</c>)
+    /// da. O1 bölme → birleştirme turunu kaldırdı: sayfa metni olduğu gibi alır. KIRMIZI (O1'den önce): belgenin metni logunkinden farklıydı —
+    /// '\r' bölünüp '\n' olarak geri yazılıyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void A_project_page_is_its_log_text_itself_line_for_line()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        var console = window.Shell.ConsoleViewControl;
+        var row = MainWindowHost.ProjectOf(vm, "A");
+        vm.ActiveProjectId = row.Id;                                     // proje logu açık (motor round-trip'i yok: mod doğrudan kurulur)
+        MainWindowHost.LogLine(vm, "A", 1, "restore 50%\rrestore 100%"); // Fark 2: tek başına '\r'
+        MainWindowHost.LogLine(vm, "A", 2, "Build succeeded.");
+        MainWindowHost.LogLine(vm, "A", 3, "");                          // Fark 1: log boş bir satırla bitiyor
+        string log = vm.GetProjectDocumentText(row.Id);
+        Assert.Equal("restore 50%\rrestore 100%\nBuild succeeded.\n\n", log); // ön-koşul
+
+        vm.SelectProject(row.Id);                                        // kart seçildi → sayfa kurulur (PlayCascade)
+        window.AppendConsoleBatch("Time Elapsed 00:00:01.23\n", window.ConsoleReseedGen); // canlı satır, pompanın yolundan
+
+        string page = log + "Time Elapsed 00:00:01.23\n";
+        Assert.Equal(page, console.Document.Text);                       // sayfa logun metnidir
+        string[] shown = ["restore 50%", "restore 100%", "Build succeeded.", "", "Time Elapsed 00:00:01.23"]; // Fark 2 + Fark 1
+        Assert.Equal(shown, ConsoleDocument.LinesOf(console.Document));
+        Assert.Equal(ConsoleDocument.LinesOf(new TextDocument(page)), ConsoleDocument.LinesOf(console.Document)); // AvalonEdit'in kuralı
+        GC.KeepAlive(window);
+    }
+
     // ---------------------------------------------------------------- N lines = TAM tampon (Ek A #23)
 
+    /// <summary>"N lines" anlatının tamamını sayar (render dilimini değil) — satır satır.
+    /// <para>[DEĞİŞEN KURULUM — idle-memory dalga 2 · spec §6.5] VM kompakt konsolu açıkça KAPALI kurar: eskiden her proje satırı
+    /// anlatıya aynen girerdi; üretim varsayılanı artık kompakt kiptir ve buradaki üç bilgi satırını gizler (sayaç 1: yalnız
+    /// başlık). İddia aynı, tam kipte — kompakt kipte sayacın anlatının gerçek satırlarını (başlık ve özet dahil) saydığı
+    /// <see cref="CompactConsoleTests"/>'tedir.</para></summary>
     [Fact]
     public async Task GetActiveLineCount_reflects_full_run_buffer_length_line_for_line()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe); // hiç başlatılmadı — OnEvent engine'e dokunmaz
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { CompactConsole = false };
 
         Assert.Equal(0, vm.GetActiveLineCount());
 
@@ -506,5 +595,26 @@ public class ConsoleModesTests
 
         // ActiveProjectId null (run modu) → aktif tampon = run dokümanı; sayaç satır satır artar.
         Assert.Equal(3, vm.GetActiveLineCount());
+    }
+
+    /// <summary>
+    /// [idle-memory · dalga 1] Çok satırlı bir anlatı satırı (çok satırlı hata mesajı — motorun <c>ex.Message</c>'ı, git stderr)
+    /// belgede kaç satırsa "N lines" o kadar sayar ve anlatı onu o satırlar olarak tutar.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eskiden sayaç GİRDİ başına birdi: iki satırlık bir hata belgede iki satır, başlıkta bir
+    /// satırdı. Değişme gerekçesi: anlatının tek sahibi (<c>NarrativeStore</c>) aynı zamanda konsolun chunk loader indeksidir ve
+    /// indeks belge satırıyla birebir yürümek zorundadır (kırpılan belge satırı sayısı indekse eklenir; ayrışırsa yukarı
+    /// kaydırma tekrar ya da delik getirir). Store çok satırlı girdiyi belgenin ayraç kuralıyla böler; sayaç da onu sayar.</para>
+    /// </summary>
+    [Fact]
+    public async Task GetActiveLineCount_counts_the_lines_a_multi_line_narrative_entry_shows()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe); // hiç başlatılmadı — OnEvent engine'e dokunmaz
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new ErrorEvent("runFailed", "first line\r\n   at Second.Line()"));
+
+        Assert.Equal(2, vm.GetActiveLineCount());
+        Assert.Equal("[error] runFailed: first line\n   at Second.Line()\n", vm.GetRunDocumentText());
     }
 }

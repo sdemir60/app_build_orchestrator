@@ -37,10 +37,8 @@ public class ProjectRowInputTests
 {
     private const string RowId = @"C:\p\a.csproj";
 
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
-
     private static RunViewModel NewRunVm() =>
-        new(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        new(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
 
     private static ProjectRow Realize(RunViewModel runVm, ProjectRowViewModel rowVm, out Window window)
     {
@@ -64,12 +62,7 @@ public class ProjectRowInputTests
         Assert.True(row.Focus(), "kart klavye odağını ALAMADI — Focusable/IsTabStop regresyonu");
         Assert.True(row.IsKeyboardFocused);
 
-        var args = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(row)!, 0, key)
-        {
-            RoutedEvent = Keyboard.KeyDownEvent,
-        };
-        row.RaiseEvent(args);
-        return args;
+        return KeyInput.Raise(row, key, Keyboard.KeyDownEvent);
     }
 
     private static void RaiseMouse(ProjectRow row, RoutedEvent mouseEvent) =>

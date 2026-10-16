@@ -140,7 +140,7 @@ public partial class SettingsDialog : ModalDialog
         _pickFolder = pickFolder;
         _draft = new SettingsDraftViewModel(
             run.LayerPatterns, run.RootPath, run.ExternalProjects, run.UpdateExternals, run.StashOnBranchSwitch,
-            store.Load(), Autostart, run.ResolveAtFullPriority);
+            store.Load(), Autostart, run.ResolveAtFullPriority, run.CompactConsole, run.StopEngineWhenIdle);
         DataContext = _draft;
         ResetFeedback();
         // [design v1.19.0 §2.9] Açılış bölümü her açılışta yeniden seçilir (OpeningSection).

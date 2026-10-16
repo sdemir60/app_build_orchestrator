@@ -48,6 +48,13 @@ public class BottomAnchorBehaviorTests
         Assert.Equal(500, behavior.DistanceFromBottom);
     }
 
+    /// <summary>
+    /// Takipteyken içerik büyürse görünüm ANINDA (animasyonsuz) yeni dibe gider.
+    /// <para>[DEĞİŞEN KURAL — dalga 2 altıncı inceleme] Eski iddia: anında kaydırmanın hedefi içerik yüksekliğinin kendisiydi (1050 —
+    /// <c>ScrollToEnd</c> gibi dibi aşan bir istek, host kenetliyordu). "Dip"in artık tek tanımı var
+    /// (<see cref="BottomAnchorBehavior.BottomOffset"/>: içerik eksi görünür alan) ve dibe her gidiş onu hedefler. Gerçek host'ta oturulan
+    /// konum aynıdır (kenetleme) — gerçek pencereli takip ve kaydırma pinleri değişiklikten sonra yeşil kaldı.</para>
+    /// </summary>
     [Fact]
     public void OnScrollChanged_with_content_growth_while_stuck_performs_an_instant_catch_up()
     {
@@ -59,7 +66,7 @@ public class BottomAnchorBehaviorTests
         behavior.OnScrollChanged(extentHeightChange: 50);
 
         Assert.Single(f.InstantScrolls);
-        Assert.Equal(1050, f.InstantScrolls[0]); // ANINDA yeni dibe (AppendBatch/ScrollToEnd deseni — animasyon YOK)
+        Assert.Equal(f.Extent - f.Viewport, f.InstantScrolls[0]); // ANINDA yeni dibe — animasyon YOK
     }
 
     [Fact]
@@ -143,6 +150,39 @@ public class BottomAnchorBehaviorTests
         Assert.True(behavior.ShowPill);
     }
 
+    /// <summary>
+    /// [B2 fix 1 · F1] <see cref="BottomAnchorBehavior.RefreshPill"/> yalnız pill'i yeniden okur: içerik kaydırmasız büyüyüp dipten uzaklık
+    /// eşiği aştığında pill DEĞİŞTİYSE bildirir; değişmediyse bildirmez. Karar vermez (yapışıklık ve takip aynı kalır) ve kaydırmaz.
+    /// <para>KIRMIZI: yöntem yoktu (derleme hatası) — konsolda içerik büyüyünce pill hiç yeniden okunmuyordu.</para>
+    /// </summary>
+    [Fact]
+    public void RefreshPill_raises_only_when_the_pill_flips_and_neither_scrolls_nor_decides()
+    {
+        var f = new Fake { Extent = 1000, Offset = 790, Viewport = 200 }; // dipten 10 px: eşiğin içinde
+        var behavior = f.New();
+        behavior.NotifyUserScroll();
+        behavior.OnScrollChanged(extentHeightChange: 0);
+        Assert.True(behavior.IsStuck);  // ön-koşul: dipte
+        Assert.False(behavior.ShowPill);
+        int changed = 0;
+        behavior.Changed += (_, _) => changed++;
+
+        behavior.RefreshPill();         // hiçbir şey değişmedi
+        Assert.Equal(0, changed);
+
+        f.Extent += 100;                // içerik kaydırmasız büyüdü: dipten 110 px
+        behavior.RefreshPill();
+        Assert.Equal(1, changed);
+        Assert.True(behavior.ShowPill);
+        Assert.True(behavior.IsStuck);  // karar verilmedi
+        Assert.Equal(790, f.Offset);    // kaydırılmadı
+        Assert.Empty(f.InstantScrolls);
+        Assert.Null(f.SmoothTarget);
+
+        behavior.RefreshPill();         // pill zaten görünür: yeniden bildirilmez
+        Assert.Equal(1, changed);
+    }
+
     [Fact]
     public void JumpToBottom_when_animated_enters_jumping_and_hides_pill_until_window_elapses()
     {
@@ -163,6 +203,81 @@ public class BottomAnchorBehaviorTests
 
         Assert.False(behavior.IsJumping);
         Assert.True(behavior.IsStuck);
+    }
+
+    /// <summary>
+    /// [B2 fix 3 · madde 5 · inceleme M3] Duyurulan pill (<see cref="BottomAnchorBehavior.PillShown"/>) canlı pill'den
+    /// (<see cref="BottomAnchorBehavior.ShowPill"/>) AYRIDIR: içerik bir duyuru olmadan büyüyünce canlı değer döner, duyurulan yerinde kalır —
+    /// ve canlı dibe bağlı gösterge (<see cref="BottomAnchorBehavior.AtLiveBottom"/>) de duyurulanı okur; ancak bir duyuru
+    /// (<see cref="BottomAnchorBehavior.RefreshPill"/>) ikisini birden ilerletir.
+    /// <para>PİN — bozma: <c>PillShown =&gt; ShowPill</c> ya da <c>AtLiveBottom</c> canlı değeri okursa kırmızı.</para>
+    /// </summary>
+    [Fact]
+    public void The_announced_pill_stays_put_while_the_live_one_flips_until_the_anchor_announces()
+    {
+        var f = new Fake { Extent = 1000, Offset = 800, Viewport = 200 }; // dipte
+        var behavior = f.New();
+        behavior.ForceStuck(true); // duyuru: pill yok
+        Assert.False(behavior.PillShown);
+        Assert.True(behavior.AtLiveBottom);
+
+        f.Extent = 1100; // içerik büyüdü — kaydırma olayı yok, duyuru yok
+
+        Assert.True(behavior.ShowPill);      // canlı: dipten 100 px
+        Assert.False(behavior.PillShown);    // duyurulan: yerinde
+        Assert.True(behavior.AtLiveBottom);  // canlı dip duyurulanı okur
+
+        behavior.RefreshPill(); // duyuru
+
+        Assert.True(behavior.PillShown);
+        Assert.False(behavior.AtLiveBottom);
+    }
+
+    /// <summary>
+    /// [B2 fix 2 · madde 2b] Uçuştaki atlamayı DURDURAN kullanıcı jesti atlama penceresini hemen kapatır ve panelin durduğu yeri bir
+    /// kullanıcı kaydırması olarak yargılar: dipten uzakta durduysa takip bırakılır, pill görünür ve bu duyurulur; bekleyen pencere sonu
+    /// artık hiçbir şey yapmaz (yeniden duyurmaz).
+    /// <para>KIRMIZI (madde 2b'den önce): jest pencereye dokunmuyordu — atlama 560 ms boyunca sürüyor, durum iyimser "dipte"de kalıyordu.</para>
+    /// </summary>
+    [Fact]
+    public void A_user_gesture_that_stopped_the_jump_closes_the_window_and_judges_where_the_panel_stopped()
+    {
+        var f = new Fake { Extent = 1000, Offset = 0, Viewport = 200 };
+        var behavior = f.New();
+        behavior.JumpToBottom();
+        var windowEnd = f.PendingSchedule!;
+        f.Offset = 300; // atlama yolun ortasında durduruldu: dipten 500 px
+        int changed = 0;
+        behavior.Changed += (_, _) => changed++;
+
+        behavior.NotifyUserScroll(stoppedJump: true);
+
+        Assert.False(behavior.IsJumping);
+        Assert.False(behavior.IsStuck);
+        Assert.False(behavior.ShouldFollow);
+        Assert.True(behavior.PillShown);
+        Assert.Equal(1, changed);
+
+        windowEnd(); // pencerenin bayat sonu
+        Assert.Equal(1, changed);
+        Assert.False(behavior.IsStuck);
+    }
+
+    /// <summary>
+    /// [B2 fix 2 · madde 2b] Kural dardır: bir uçuşu DURDURMAYAN jest (atlama inmiş, pencere hâlâ açık) pencereyi kapatmaz — kaydırma
+    /// bugünkü gibi pencere sonunda yargılanır.
+    /// <para>PİN — madde 2b'den önce de yeşildi (bozma: jest her pencerede kapatırsa kırmızı).</para>
+    /// </summary>
+    [Fact]
+    public void A_user_gesture_that_stopped_no_flight_leaves_the_jump_window_open()
+    {
+        var f = new Fake { Extent = 1000, Offset = 0, Viewport = 200 };
+        var behavior = f.New();
+        behavior.JumpToBottom();
+
+        behavior.NotifyUserScroll(stoppedJump: false);
+
+        Assert.True(behavior.IsJumping);
     }
 
     [Fact]
@@ -215,9 +330,9 @@ public class BottomAnchorBehaviorTests
         // extentHeightChange==0 (saf offset değişimi) recompute'u ÖNCE çalışıp IsStuck'ı false'a çevirir; prepend'in
         // KENDİ içerik-büyümesi (extentHeightChange>0) — ister AYNI olayda senkron gözlemlensin ister AvalonEdit'in
         // layout'u geciktirmesiyle SONRAKİ bir olayda — artık STALE-true bir IsStuck'a çarpmaz, CompensatedOffset'i
-        // ezen bir "dibe git" YANKI tetiklemez. Bu, ConsoleView seviyesinde gerçek AvalonEdit scroll geometrisiyle
-        // güvenilir biçimde yeniden üretilemeyen (bkz. ConsoleViewTests.Real_OnScrollOffsetChanged_path_... dürüstlük
-        // notu) SIRA korumasının SAF çekirdeğidir — WPF'siz, deterministik olarak burada kanıtlanır.
+        // ezen bir "dibe git" YANKI tetiklemez. Bu, SIRA korumasının SAF çekirdeğidir — WPF'siz, deterministik olarak burada kanıtlanır;
+        // gerçek pencerede gerçek tuşla eşi ConsoleViewTests.A_real_ctrl_home_in_a_rebuilt_narrative_loads_the_previous_slice'tadır
+        // ([B2 fix 1 · O3] eskiden ayrı bir ConsoleViewTests.Real_OnScrollOffsetChanged_path_… testindeydi; oraya katlandı).
         var f = new Fake { Extent = 1000, Offset = 900, Viewport = 200 }; // dipte (distance=0) → IsStuck kalır true
         var behavior = f.New();
         Assert.True(behavior.IsStuck);
@@ -246,6 +361,9 @@ public class BottomAnchorBehaviorTests
         // >0'ıyla karşılaşır — davranış (bu sınıfın kendisi, ConsoleView'dan bağımsız SAF) BUNU YAKALAR: dibe anında
         // bir kaydırma TETİKLENİR. Bu test, I-1'in düzeltmediği (SIRA yanlışken) durumda gerçekten neyin ters
         // gideceğini SOMUT gösterir — ConsoleView'ın düzeltmesi tam olarak yukarıdaki testteki SIRAYI garanti eder.
+        //
+        // [DEĞİŞEN KURAL — dalga 2 altıncı inceleme] Eski iddia: çekişin hedefi içerik yüksekliğiydi (1300, host kenetliyordu). Dibe her
+        // gidiş artık dibin tek tanımını hedefler (BottomAnchorBehavior.BottomOffset) — host'ta oturulan konum aynı.
         var f = new Fake { Extent = 1000, Offset = 900, Viewport = 200 }; // dipte, IsStuck=true
         var behavior = f.New();
 
@@ -255,6 +373,6 @@ public class BottomAnchorBehaviorTests
 
         Assert.True(behavior.IsStuck); // stale — kullanıcı aslında tepeye zıplamıştı, ama bu henüz yansımadı
         Assert.Single(f.InstantScrolls);
-        Assert.Equal(1300, f.InstantScrolls[0]); // YANK: CompensatedOffset'i ezip dibe (extent) kaydırır — I-1 riski
+        Assert.Equal(f.Extent - f.Viewport, f.InstantScrolls[0]); // YANK: CompensatedOffset'i ezip dibe kaydırır — I-1 riski
     }
 }

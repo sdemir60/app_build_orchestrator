@@ -36,10 +36,6 @@ public class FrontierFollowResumeTests(ITestOutputHelper output)
             $@"C:\p\Proj{i}.csproj", $"Proj{i}", $@"C:\p\Proj{i}.csproj",
             ["Osys"], [], i, null, null, false, null))];
 
-    private static void RaiseFrontierWheel(StickyLayerList list) =>
-        list.Scroll.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, -120)
-        { RoutedEvent = UIElement.PreviewMouseWheelEvent });
-
     /// <summary>Koşan bir run + frontier satırı; liste follow etmiş durumda döner.</summary>
     private static (MainWindow window, RunViewModel vm, StickyLayerList list, List<ProjectNode> nodes, long[] clock)
         RunningWithFrontier(TempDir temp, int frontierIndex)
@@ -87,7 +83,7 @@ public class FrontierFollowResumeTests(ITestOutputHelper output)
         double frontierTop = list.Metrics!.OffsetOfRow(30);
         Assert.InRange(frontierTop, list.Scroll.VerticalOffset, list.Scroll.VerticalOffset + list.Scroll.ViewportHeight);
 
-        RaiseFrontierWheel(list); // kullanıcı tam burada kaydırıyor — uzağa GİTMİYOR
+        MouseInput.PreviewWheel(list.Scroll, -Mouse.MouseWheelDeltaForOneLine); // kullanıcı tam burada kaydırıyor — uzağa GİTMİYOR
 
         bool followed = FollowsTo(vm, list, nodes, 30, 32);
         output.WriteLine($"[ekranda] frontier ekrandayken kaydırma sonrası takip: {followed}");
@@ -109,7 +105,7 @@ public class FrontierFollowResumeTests(ITestOutputHelper output)
         var (window, vm, list, nodes, clock) = RunningWithFrontier(temp, frontierIndex: 30);
 
         // 1) Tekerlek → follow duraklar; kullanıcı UZAĞA (tepeye) gider.
-        RaiseFrontierWheel(list);
+        MouseInput.PreviewWheel(list.Scroll, -Mouse.MouseWheelDeltaForOneLine);
         list.Scroll.ScrollToVerticalOffset(0);
         list.UpdateLayout();
         Assert.False(FollowsTo(vm, list, nodes, 30, 40)); // uzaktayken takip ETMEZ
@@ -140,7 +136,7 @@ public class FrontierFollowResumeTests(ITestOutputHelper output)
         var (window, vm, list, nodes, clock) = RunningWithFrontier(temp, frontierIndex: 30);
 
         // 1) Tekerlek → follow duraklar; kullanıcı uzakta kalır ve HİÇ dokunmaz.
-        RaiseFrontierWheel(list);
+        MouseInput.PreviewWheel(list.Scroll, -Mouse.MouseWheelDeltaForOneLine);
         list.Scroll.ScrollToVerticalOffset(0);
         list.UpdateLayout();
         Assert.False(FollowsTo(vm, list, nodes, 30, 40)); // hemen ardından takip ETMEZ (doğru)
@@ -167,7 +163,7 @@ public class FrontierFollowResumeTests(ITestOutputHelper output)
         for (int i = 0; i < 4; i++)
         {
             clock[0] += StickyLayerList.FrontierIdleResumeMs - 1; // eşiğin hep BİR TIK altında kal
-            RaiseFrontierWheel(list);
+            MouseInput.PreviewWheel(list.Scroll, -Mouse.MouseWheelDeltaForOneLine);
         }
 
         bool followed = FollowsTo(vm, list, nodes, 30, 40);

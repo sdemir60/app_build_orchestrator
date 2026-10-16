@@ -20,11 +20,9 @@ public class RowBuildCommandTests
     private const string A = @"C:\p\a.csproj";
     private const string B = @"C:\p\b.csproj";
 
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
-
     private static RunViewModel NewVm(EngineHost engine)
     {
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         VmTopology.Seed(vm, A, B);
         return vm;
     }
@@ -264,7 +262,7 @@ public class RowBuildCommandTests
     public async Task The_row_commands_share_the_run_gate_and_need_a_project()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var bare = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var bare = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         Assert.False(bare.BuildProjectCommand.CanExecute(A));   // topoloji yok → tam koşu gibi kapalı
 
         var vm = NewVm(engine);

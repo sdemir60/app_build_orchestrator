@@ -49,10 +49,8 @@ public sealed class TrayIndicatorBinderTests
         }
     }
 
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
-
     private static RunViewModel NewVm() =>
-        new(new BuildOrchestrator.App.Services.EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1")
+        new(new BuildOrchestrator.App.Services.EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1")
         { RootPath = @"D:\repo" };
 
     /// <summary>Bağlanmış bir üçlü: VM + controller + iki casus. Pencere TEPSİDE (gizli) kabul edilir —

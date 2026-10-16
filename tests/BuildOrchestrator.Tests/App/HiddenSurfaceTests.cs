@@ -182,9 +182,9 @@ public class HiddenSurfaceTests
 
     /// <summary>
     /// [perf Faz A · A2] <b>Gizli pencerede konsol belgesine yazılmaz.</b> Tepsideyken derlenen bir koşunun satırları
-    /// kimsenin görmediği AvalonEdit belgesine basılıyor ve her basış görünmeyen bir düzen işini zorluyordu. Metin VM
-    /// tamponunda zaten durur (<c>OnProjectLog</c> run metnine yazar); pencere dönünce belge o TAM metinden BİR kez
-    /// kurulur. Pompa bu fixture'da hiç tick etmez (<see cref="MainWindowHost.NeverTickingBatcher"/>): batch
+    /// kimsenin görmediği AvalonEdit belgesine basılıyor ve her basış görünmeyen bir düzen işini zorluyordu. Metin modelde
+    /// zaten durur (<c>OnProjectLog</c> anlatı store'una yazar); pencere dönünce belge modelden BİR kez kurulur. Pompa bu
+    /// fixture'da hiç tick etmez (<see cref="MainWindowHost.NeverTickingBatcher"/>): batch
     /// üretimdeki hedefe (<c>MainWindow.AppendConsoleBatch</c>) pompanın yaptığı gibi test tarafından verilir.
     /// </summary>
     [StaFact]
@@ -209,7 +209,7 @@ public class HiddenSurfaceTests
     /// <summary>
     /// Boşta açılışta overlay'de "ready" durur ve belgeye gelen İLK anlatı satırı onu siler
     /// (<c>AppendNarrativeBatch</c> → <c>ClearReadyText</c>). Gizliyken batch'ler belgeye hiç girmediği için o yol
-    /// çalışmaz; dönüşte belgeyi tam metinle kuran yol "ready"yi kendisi silmezse tepsiden başlatılan İLK derleme dolu
+    /// çalışmaz; dönüşte belgeyi modelden kuran yol "ready"yi kendisi silmezse tepsiden başlatılan İLK derleme dolu
     /// bir konsolun altında "ready" gösterirdi.
     /// </summary>
     [StaFact]
@@ -234,7 +234,7 @@ public class HiddenSurfaceTests
     }
 
     /// <summary>
-    /// Yeni işlem konsolu temizler (<c>ConsoleCleared</c> → <c>ClearRunDocument</c>); gizli pencerede belgeye
+    /// Yeni işlem konsolu temizler (<c>ConsoleCleared</c> → belge boş anlatıya bağlanır); gizli pencerede belgeye
     /// dokunulmaz — temizlik de dönüşteki tek kurulumun işidir ve belge modelin o anki hâlinden kurulur.
     /// </summary>
     [StaFact]
@@ -244,7 +244,7 @@ public class HiddenSurfaceTests
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
         MainWindowHost.AcceptSends(vm);
         var console = window.Shell.ConsoleViewControl;
-        console.ShowRunDocument("Build succeeded\n"); // önceki işlemin satırı ekranda (OperationConsoleClearTests deseni)
+        console.ShowRunDocument(NarrativeSnapshots.FromText("Build succeeded\n")); // önceki işlemin satırı ekranda (OperationConsoleClearTests deseni)
         Assert.Contains("Build succeeded", console.EditorControl.Document.Text); // ön-koşul
         window.SetSurfaceHidden(true);
         int replacedBefore = console.RunDocumentReplacedCount;
@@ -257,6 +257,53 @@ public class HiddenSurfaceTests
         DispatcherPump.PumpUntil(() => console.RunDocumentReplacedCount > replacedBefore, TimeSpan.FromSeconds(2));
         Assert.DoesNotContain("Build succeeded", console.EditorControl.Document.Text); // dönüşte model neyse o: temiz
         Assert.Equal(replacedBefore + 1, console.RunDocumentReplacedCount);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [idle-memory · group B re-review · ÇÖKME YOLU] <b>Gizliyken yeni işlem anlatıyı boşaltırsa, bottom-anchor bekleme süresi dolunca
+    /// kırpma fırlatmaz ve dönüşte belge modelden doğru kurulur.</b> Kullanıcı yukarı kaydırıp pencereyi tepsiye indirir (takip
+    /// kapalı, belge render diliminin üstünde); gizliyken bir işlem başlar: VM anlatıyı boşaltır, kabuk belgeye dokunmaz (yalnız
+    /// bayat bayrağı). 5 sn'lik "elini çekti" zamanlayıcısı gizli pencerede de ateşlenir ve takibi geri getirir — kırpma, store'un
+    /// <c>Count</c>'u görünümün <c>_loadedFrom</c>'unun gerisinde iken kuyruğu okumaya kalkıp <c>ArgumentOutOfRangeException</c>
+    /// atıyordu; <c>DispatcherUnhandledException</c> işleyicisi olmadığı için süreç düşerdi. Bekleme dolması burada
+    /// <c>StickToBottom = true</c> ile verilir (zamanlayıcının bildirdiği olayın aynısı: <c>ForceStuck</c> → <c>Changed</c>).
+    /// </summary>
+    [StaFact]
+    public void A_console_cleared_while_hidden_survives_the_idle_resume_trim_and_the_document_is_rebuilt_on_show()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        MainWindowHost.AcceptSends(vm);
+        var console = window.Shell.ConsoleViewControl;
+        for (int i = 0; i < 300; i++)
+        {
+            MainWindowHost.LogLine(vm, "A", i + 1, $"old {i}");
+            window.AppendConsoleBatch($"old {i}\n", window.ConsoleReseedGen); // görünürken akış: takip açık, belge kırpılır
+        }
+        console.StickToBottom = false; // kullanıcı yukarıda okuyor
+        for (int i = 300; i < 600; i++)
+        {
+            MainWindowHost.LogLine(vm, "A", i + 1, $"old {i}");
+            window.AppendConsoleBatch($"old {i}\n", window.ConsoleReseedGen); // takip kapalı: belge kırpılmadan büyür
+        }
+        Assert.True(console.Document.LineCount > ConsoleView.SeededDocumentLines, "ön-koşul: takip kapalıyken belge kırpılmadı");
+        window.SetSurfaceHidden(true);
+        int replacedBefore = console.RunDocumentReplacedCount;
+        _ = vm.BuildCommand.ExecuteAsync(null); // temizlik ilk await'ten ÖNCE, senkron: VM anlatıyı boşaltır (işlemin "requested" satırı kalır)
+        Assert.True(vm.Narrative.Count < 300 - ConsoleView.RenderSliceLines, // görünümün belgesi store'un 100. satırında başlıyordu
+            $"ön-koşul: anlatı temizlenmedi ({vm.Narrative.Count} satır)");
+        Assert.Contains("old 599", console.Document.Text); // ön-koşul: ekrandaki belge bayat (gizliyken dokunulmadı)
+
+        var thrown = Record.Exception(() => console.StickToBottom = true); // bekleme doldu: takip geri geldi
+
+        Assert.Null(thrown); // KIRMIZI: bugün ArgumentOutOfRangeException
+        MainWindowHost.LogLine(vm, "A", 1, "new 0"); // yeni işlemin bir satırı daha gizliyken modele düştü (pompa batch'i gizliyken atılır)
+        window.SetSurfaceHidden(false);
+        DispatcherPump.PumpUntil(() => console.RunDocumentReplacedCount > replacedBefore, TimeSpan.FromSeconds(2));
+        Assert.Equal(replacedBefore + 1, console.RunDocumentReplacedCount);
+        Assert.DoesNotContain("old ", console.Document.Text);                  // bayat belge atıldı
+        Assert.Equal(vm.GetRunDocumentText(), console.Document.Text);          // dönüşte belge == model: ne eksik ne artık satır
         GC.KeepAlive(window);
     }
 
@@ -294,9 +341,9 @@ public class HiddenSurfaceTests
     /// [perf Faz A · final · M2] <b>Gösterim ile dönüş kurulumu arasında gelen batch bayat belgeye basılmaz.</b> Dönüş
     /// kurulumu (<c>ResyncAfterShow</c>) Loaded önceliğiyle kuyruklanır; pompanın Normal öncelikli batch'i ondan ÖNCE
     /// koşabilir. O anda belge hâlâ gizlenmeden önceki hâlindedir: batch ona basılsaydı boşa giderdi (dönüş kurulumu belgeyi
-    /// tam metinden yeniden kurar) ve belge kısa süre aradaki satırlar eksik kalırdı. Kapı bu yüzden yalnız pencerenin
-    /// gizliliğine değil ekranın bayatlığına da bakar: bayrak kalkık kaldıkça batch yalnız modelde (<c>RunViewModel</c>
-    /// tamponu) durur ve dönüş kurulumu hepsini TEK seferde yazar.
+    /// modelden yeniden kurar) ve belge kısa süre aradaki satırlar eksik kalırdı. Kapı bu yüzden yalnız pencerenin
+    /// gizliliğine değil ekranın bayatlığına da bakar: bayrak kalkık kaldıkça batch yalnız modelde (<c>RunViewModel</c>'in
+    /// anlatı store'u) durur ve dönüş kurulumu hepsini TEK seferde yazar.
     /// </summary>
     [StaFact]
     public void A_console_batch_that_arrives_between_the_show_and_the_resync_is_left_for_the_single_rebuild()
@@ -331,7 +378,7 @@ public class HiddenSurfaceTests
     }
 
     /// <summary>
-    /// [perf Faz A · final · O1] Belgeyi modelin tam metninden kuran görünür bir yol bayrağı da düşürür. Gösterimden sonra
+    /// [perf Faz A · final · O1] Belgeyi modelden kuran görünür bir yol bayrağı da düşürür. Gösterimden sonra
     /// ama dönüş kurulumundan önce bir mod geçişi (proje kartı kalkar → <c>ShowRunConsole</c>) belgeyi zaten kurar; bayrak
     /// yerinde kalsaydı dönüş kurulumu belgeyi tilt sürerken ikinci kez, tilt'siz kurardı.
     /// </summary>
@@ -576,8 +623,8 @@ public class HiddenSurfaceTests
     }
 
     /// <summary>
-    /// [A2 fix 1 · M1] <b>Uçuştaki bayat batch.</b> Pompa bir batch'i okuyup UI thread'ine kuyruklarken (damga = o anki
-    /// reseed nesli) pencere dönüp belgeyi yeniden kurabilir. Dönüş kurulumu reseed-drop sentinel'ini yazar
+    /// [A2 fix 1 · M1] <b>Uçuştaki bayat batch.</b> Pompa bir batch'i okuyup UI thread'ine kuyruklarken (damga = pompanın
+    /// tükettiği son sentinel'in nesli; kanalda bekleyen sentinel yokken o anki nesil) pencere dönüp belgeyi yeniden kurabilir. Dönüş kurulumu reseed-drop sentinel'ini yazar
     /// (<c>SeedRunDocument</c>); eski damgalı batch kurulumdan SONRA gelse de belgeye ikinci kez inmez. Üretimde pencere
     /// ile VM AYNI <c>ConsoleBatcher</c>'ı paylaşır; fixture de paylaşır — ayrı örneklerle pencerenin nesli VM'in
     /// sentinel'ini hiç göremez ve bu kural sınanamazdı.
@@ -590,7 +637,7 @@ public class HiddenSurfaceTests
         var console = window.Shell.ConsoleViewControl;
         window.SetSurfaceHidden(true);
         MainWindowHost.LogLine(vm, "A", 1, "line 0");
-        long staleGen = window.ConsoleReseedGen;           // pompanın bu batch'i okuduğu andaki nesil
+        long staleGen = window.ConsoleReseedGen;           // pompanın damgası: bekleyen sentinel yok → o anki nesil
         window.AppendConsoleBatch("line 0\n", staleGen);   // gizliyken: belgeye basılmaz, "ekran bayat" bayrağı kalkar
         window.SetSurfaceHidden(false);
         window.ResyncAfterShow();                          // dönüşte belge modelden BİR kez kurulur (sentinel yazılır)
@@ -1363,7 +1410,7 @@ public class HiddenSurfaceTests
 
     /// <summary>
     /// [perf Faz A · A8 · Review Focus 1] <b>Gizle → göster → gizle → göster konsolu çiftlemez.</b> Her gösterimde konsol belgesi
-    /// modelin O ANKİ tam metninden BİR kez kurulur; gizliyken gelen batch'ler belgeye hiç inmez (model zaten tutar), görünürken
+    /// modelin O ANKİ hâlinden BİR kez kurulur; gizliyken gelen batch'ler belgeye hiç inmez (model zaten tutar), görünürken
     /// gelenler bir kez eklenir ve kurulumdan önce okunmuş uçuştaki bayat batch kurulumdan sonra gelse de düşer. Her geçişte
     /// belgenin satır sayısı modelinkine eşittir, hiçbir satır iki kez ya da eksik durmaz. (Bayat batch'in düşme kuralının kendisi
     /// <see cref="A_batch_stamped_before_the_rebuild_on_show_is_dropped_instead_of_landing_twice"/>'ta pinlidir.)
@@ -1412,7 +1459,7 @@ public class HiddenSurfaceTests
         window.SetSurfaceHidden(false);                               // gösterim 1
         DispatcherPump.PumpUntil(() => console.RunDocumentReplacedCount == 1, TimeSpan.FromSeconds(2));
         Assert.Equal(1, console.RunDocumentReplacedCount);
-        AssertConsoleMatchesModel();                                  // belge modelin tam metninden bir kez kuruldu
+        AssertConsoleMatchesModel();                                  // belge modelden bir kez kuruldu
         window.AppendConsoleBatch(inFlight, inFlightGen);             // uçuştaki bayat batch kurulumdan SONRA gelir
         AssertConsoleMatchesModel();                                  // ikinci kez inmez
 

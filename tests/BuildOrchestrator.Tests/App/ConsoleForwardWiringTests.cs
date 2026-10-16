@@ -16,8 +16,6 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 public class ConsoleForwardWiringTests
 {
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(System.Threading.Timeout.Infinite));
-
     // ---------------------------------------------------------------- [§1] AppendConsoleBatch routing (SAF karar)
 
     [Theory]
@@ -58,7 +56,7 @@ public class ConsoleForwardWiringTests
     public async Task NextConsoleSelection_returns_ShowRun_when_nothing_is_selected()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1");
 
         Assert.Equal(ConsoleSelection.ShowRun, vm.NextConsoleSelection(out var id));
         Assert.Null(id);
@@ -68,7 +66,7 @@ public class ConsoleForwardWiringTests
     public async Task NextConsoleSelection_returns_LoadProjectLog_with_the_selected_id()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1");
         const string a = @"C:\p\a.csproj";
         vm.SelectProject(a);
 
@@ -80,11 +78,11 @@ public class ConsoleForwardWiringTests
     public async Task ShouldShowLoadedProject_is_true_when_load_set_project_mode_and_selection_still_matches()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1");
         const string a = @"C:\p\a.csproj";
         vm.SelectProject(a);
-        var load = vm.LoadProjectLogAsync(a);
-        vm.OnEvent(new ProjectLogChunkEvent(a, 0, "disk\n", IsLast: true, ThroughLineNumber: 0));
+        var (load, request) = ProjectLogIpc.Request(vm, a);
+        vm.OnEvent(ProjectLogIpc.Reply(request, a, "disk\n", through: 0));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Equal(a, vm.ActiveProjectId);
@@ -95,11 +93,11 @@ public class ConsoleForwardWiringTests
     public async Task ShouldShowLoadedProject_is_false_when_selection_changed_after_the_load()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1");
         const string a = @"C:\p\a.csproj";
         vm.SelectProject(a);
-        var load = vm.LoadProjectLogAsync(a);
-        vm.OnEvent(new ProjectLogChunkEvent(a, 0, "disk\n", IsLast: true, ThroughLineNumber: 0));
+        var (load, request) = ProjectLogIpc.Request(vm, a);
+        vm.OnEvent(ProjectLogIpc.Reply(request, a, "disk\n", through: 0));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
 
         vm.SelectProject(null); // yükleme bittikten SONRA seçim kalktı
@@ -108,28 +106,31 @@ public class ConsoleForwardWiringTests
     }
 
     /// <summary>
-    /// <b>[DEĞİŞEN KURAL] Log BULUNAMASA da (logNotFound) proje modu KURULUR.</b>
+    /// <b>[DEĞİŞEN KURAL] Log BULUNAMASA da ("log yok" cevabı) proje modu KURULUR.</b>
     ///
     /// <para><b>Eski iddia:</b> guard1 — yükleme log bulamazsa mod kurulmaz, konsol run anlatısında kalır.</para>
     ///
     /// <para><b>Değişme gerekçesi (kullanıcı):</b> her projeye tıklandığında sayfası açılmalıdır. Atlanmış bir
-    /// projenin log dosyası HİÇ yazılmaz (gerekçe yalnız <c>decision.log</c>'a gider), yani <c>logNotFound</c>
+    /// projenin log dosyası HİÇ yazılmaz (gerekçe yalnız <c>decision.log</c>'a gider), yani "log yok" cevabı
     /// istisnai değil EN SIK durumdu — ve o durumda tıklama görünürde hiçbir şey yapmıyordu. Sayfa artık
     /// açılıyor ve gövde, projenin o anki durumunu anlatıyor (<c>ConsoleEmptyState.ForEmptyLog</c>).</para>
     ///
     /// <para>guard2 DEĞİŞMEDİ: mod yalnız seçim HÂLÂ o projedeyken kurulur — hızlı select→deselect'te gecikmiş
     /// bir cevap ActiveProjectId'yi takılı bırakamaz (bkz. aşağıdaki test).</para>
+    ///
+    /// <para>[DEĞİŞEN KURULUM — idle-memory I1] Cevap eskiden <c>error(logNotFound)</c>'du; artık isteğin kimliğini yankılayan
+    /// tek, boş, bayraklı bir chunk'tır ve her cevap gibi dikilir. İddia aynı.</para>
     /// </summary>
     [Fact]
     public async Task A_load_that_found_no_log_still_opens_the_project_page()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1");
         const string a = @"C:\p\skipped.csproj";
         vm.OnEvent(new ProjectSkippedEvent("r1", a, "cycle"));
         vm.SelectProject(a);
-        var load = vm.LoadProjectLogAsync(a);
-        vm.OnEvent(new ErrorEvent("logNotFound", a));
+        var (load, request) = ProjectLogIpc.Request(vm, a);
+        vm.OnEvent(ProjectLogIpc.NotFound(request, a));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Equal(a, vm.ActiveProjectId);          // mod KURULDU
@@ -138,18 +139,20 @@ public class ConsoleForwardWiringTests
     }
 
     /// <summary>guard2 (DEĞİŞMEDİ): seçim arada kalktıysa "log yok" cevabı da modu kurmaz — aksi halde
-    /// ActiveProjectId takılı kalır ve run konsolu (AppendRunLine'ın null kapısı) sessizce donar.</summary>
+    /// ActiveProjectId takılı kalır ve run konsolu (AppendRunLine'ın null kapısı) sessizce donar.
+    /// <para>[DEĞİŞEN KURULUM — idle-memory I1] Cevap eskiden <c>error(logNotFound)</c>'du; artık isteğin kimliğini yankılayan
+    /// tek, boş, bayraklı bir chunk'tır ve her cevap gibi dikilir. İddia aynı.</para></summary>
     [Fact]
     public async Task A_load_that_found_no_log_does_not_open_the_page_if_the_card_was_released()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1");
         const string a = @"C:\p\skipped.csproj";
         vm.OnEvent(new ProjectSkippedEvent("r1", a, "cycle"));
         vm.SelectProject(a);
-        var load = vm.LoadProjectLogAsync(a);
+        var (load, request) = ProjectLogIpc.Request(vm, a);
         vm.SelectProject(null);                       // IPC dönmeden kullanıcı kartı bıraktı
-        vm.OnEvent(new ErrorEvent("logNotFound", a));
+        vm.OnEvent(ProjectLogIpc.NotFound(request, a));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Null(vm.ActiveProjectId);

@@ -82,6 +82,53 @@ public class IpcMessagesTests
         }
     }
 
+    /// <summary>[idle-memory · I1] Proje log isteği kendi kimliğini taşır ve motorun her cevap chunk'ı onu yankılar — App cevabı
+    /// isteğiyle bundan eşleştirir; "log yok" cevabı da bir chunk'tır (boş, son, <c>Through 0</c>, bayraklı). İki alan camelCase
+    /// yazılır ve geri döner; alanlardan ÖNCE yazılmış bir chunk satırı kimliksiz (0) ve bulunmuş (false) okunur.</summary>
+    [Fact]
+    public void Project_log_request_ids_and_the_not_found_reply_round_trip()
+    {
+        IpcCommand request = new GetProjectLogCommand(@"C:\p\a.csproj", RequestId: 7);
+        string requestJson = JsonSerializer.Serialize(request, IpcJson.Options);
+        Assert.Contains("\"requestId\":7", requestJson, StringComparison.Ordinal);
+        Assert.Equal(request, JsonSerializer.Deserialize<IpcCommand>(requestJson, IpcJson.Options));
+
+        IpcEvent notFound = new ProjectLogChunkEvent(@"C:\p\a.csproj", 0, "", IsLast: true, ThroughLineNumber: 0,
+            RequestId: 7, NotFound: true);
+        string replyJson = JsonSerializer.Serialize(notFound, IpcJson.Options);
+        Assert.Contains("\"requestId\":7", replyJson, StringComparison.Ordinal);
+        Assert.Contains("\"notFound\":true", replyJson, StringComparison.Ordinal);
+        Assert.Equal(notFound, JsonSerializer.Deserialize<IpcEvent>(replyJson, IpcJson.Options));
+
+        var legacy = Assert.IsType<ProjectLogChunkEvent>(JsonSerializer.Deserialize<IpcEvent>(
+            """{"type":"projectLogChunk","projectId":"C:\\p\\a.csproj","sequence":0,"text":"line\n","isLast":true,"throughLineNumber":42}""",
+            IpcJson.Options));
+        Assert.Equal(0, legacy.RequestId);
+        Assert.False(legacy.NotFound);
+    }
+
+    /// <summary>[idle-memory · dalga 3 · karar 37] Proje log isteği App'in gördüğü son koşunun klasörünü taşır (<c>runDirectory</c>, camelCase) ve
+    /// geri döner. Geriye uyumludur: klasör yoksa alan JSON'a YAZILMAZ (App henüz bir koşu görmedi — bugünkü istek satırı aynen) ve alandan ÖNCE
+    /// yazılmış bir satır klasörsüz (<c>null</c>) okunur.
+    /// <para>KIRMIZI: derleme — sözleşmede alan yoktu.</para></summary>
+    [Fact]
+    public void A_project_log_request_carries_the_run_folder_and_reads_null_when_absent()
+    {
+        IpcCommand request = new GetProjectLogCommand(@"C:\p\a.csproj", RequestId: 7,
+            RunDirectory: @"C:\Users\u\AppData\Local\BuildOrchestrator\logs\run-20261015-101010-123");
+        string json = JsonSerializer.Serialize(request, IpcJson.Options);
+        Assert.Contains("\"runDirectory\":", json, StringComparison.Ordinal);
+        Assert.Equal(request, JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
+
+        string withoutFolder = JsonSerializer.Serialize<IpcCommand>(new GetProjectLogCommand(@"C:\p\a.csproj", RequestId: 7), IpcJson.Options);
+        Assert.DoesNotContain("runDirectory", withoutFolder, StringComparison.Ordinal);
+
+        var legacy = Assert.IsType<GetProjectLogCommand>(JsonSerializer.Deserialize<IpcCommand>(
+            """{"type":"getProjectLog","projectId":"C:\\p\\a.csproj","requestId":7}""", IpcJson.Options));
+        Assert.Null(legacy.RunDirectory);
+        Assert.Equal(7, legacy.RequestId);
+    }
+
     [Theory]
     [InlineData(RunMode.Build, "\"mode\":\"build\"")]
     [InlineData(RunMode.Cycles, "\"mode\":\"cycles\"")]
