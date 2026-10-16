@@ -1,8 +1,7 @@
-using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
-using System.Runtime.InteropServices;
 using System.Windows.Input;
+using BuildOrchestrator.App.Console;
 using Xunit.Abstractions;
 
 namespace BuildOrchestrator.Tests.App;
@@ -14,6 +13,10 @@ namespace BuildOrchestrator.Tests.App;
 /// yazılır, eşik yoktur. Karar kuralı (kontrolcü): 10 000 ya da 12 000 satırda Ctrl+End'in UI thread CPU'su 50 ms'yi aşar VE maliyet
 /// editörün komut yolundaysa (Ctrl+End ≫ End) Ctrl+Home/Ctrl+End tabloya alınır; aksi hâlde kod değişmez.
 ///
+/// <para><b>[B2 fix 3 · madde 13] Satırlar gerçekçidir</b> (<see cref="MsBuildLines.Warning"/>: ~190 karakterlik MSBuild uyarısı) ve sayfa
+/// renklendirilir (konsolun kendi renklendiricisi — ön-koşul olarak doğrulanır). [DEĞİŞEN KURULUM] İlk turda satırlar <c>page{i}</c>'ydi
+/// (≤ 11 karakter): editörün satır kurma ve renklendirme maliyeti ölçüme girmiyordu (inceleme M-4).</para>
+///
 /// <para><b>Neden kapılı:</b> gerçek (ekran dışı) bir pencere açar, 100 000 satıra kadar sayfalar kurar ve yüzlerce tuş basar.
 /// <c>Category=Measurement</c> etiketi TEK BAŞINA bunu sağlamaz (<c>Category!=Acceptance</c> filtresi her kategoriyi kabul eder): gerçek
 /// kapı ilk satırdaki <c>Skip.IfNot</c>'tur — <c>BO_MEASURE_CTRL_END</c> <c>"1"</c> değilse test SKIPPED raporlanır ve pencere hiç açılmaz.
@@ -23,12 +26,12 @@ namespace BuildOrchestrator.Tests.App;
 /// tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj --filter "FullyQualifiedName~ConsolePageEndMeasurementTests"
 /// --logger "console;verbosity=detailed"</c>. Sayılar yalnız ayrıntılı çıktıda görünür.</para>
 ///
-/// <para><b>Ne ölçülür:</b> her boy ve her yol için sayfa YENİDEN açılır (<see cref="RealizedNarrative.OpenPage(int)"/>); açılıştan sonraki
+/// <para><b>Ne ölçülür:</b> her boy ve her yol için sayfa YENİDEN açılır (<see cref="RealizedNarrative.OpenPage(string[])"/>); açılıştan sonraki
 /// ilk iniş ayrı yazılır (sonun görsel satırları ilk kez kurulur; sürecin ilk okumasında JIT de içindedir), ardından bir ısınma ve yedi örnek.
-/// Her örnekten önce görünüm sayfanın tepesine döner (Ctrl+Home — ölçülmez). Ölçülen: tuş (ya da istek) ve dispatcher'ın boşa kadar
-/// pompalanması — yerleşim ve kare dahil, kullanıcının beklediği iş. Örnek başına: duvar saati, UI thread'in CPU zamanı
-/// (<c>QueryThreadCycleTime</c>; döngü → ms dönüşümü thread'in kendi meşgul döngüsünden ölçülür), GC 0/1/2 sayısı ve toplam GC
-/// duraklaması farkı. Headless'ta hareket kapalıdır: açılışın geçişi anında biter, örneklere karışmaz.</para>
+/// Her örnekten önce görünüm sayfanın tepesine döner (Ctrl+Home — ölçülmez, doğrulanır). Ölçülen: tuş (ya da istek) ve dispatcher'ın boşa
+/// kadar pompalanması — yerleşim ve kare dahil, kullanıcının beklediği iş. Örnek başına: duvar saati, UI thread'in CPU zamanı
+/// (<see cref="PerfMeasure.ThreadCycles"/>, <see cref="PerfMeasure.CyclesPerMs"/>), GC 0/1/2 sayısı ve toplam GC duraklaması farkı. Headless'ta
+/// hareket kapalıdır: açılışın geçişi anında biter, örneklere karışmaz.</para>
 /// </summary>
 [Trait("Category", "Measurement")]
 [Collection("Console UI (serial)")]
@@ -40,21 +43,6 @@ public sealed class ConsolePageEndMeasurementTests(ITestOutputHelper output)
     private enum Route { CtrlEnd, End, FollowRequest }
 
     private readonly record struct Sample(double WallMs, double CpuMs, int Gen0, int Gen1, int Gen2, double PauseMs);
-
-    [DllImport("kernel32.dll")]
-    private static extern nint GetCurrentThread();
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool QueryThreadCycleTime(nint thread, out ulong cycles);
-
-    /// <summary>Çağıran thread'in o ana dek harcadığı CPU döngüsü. Çağrı başarısız olursa 0 basmak yerine fırlatır: sessiz 0, okumayı sahte bir
-    /// "sıfır maliyet"e çevirirdi.</summary>
-    private static ulong ThreadCycles()
-    {
-        if (!QueryThreadCycleTime(GetCurrentThread(), out ulong cycles)) throw new Win32Exception(Marshal.GetLastWin32Error());
-        return cycles;
-    }
 
     [SkippableFact]
     public async Task Going_to_the_end_of_a_project_page_costs_this_much_UI_thread_time()
@@ -68,18 +56,24 @@ public sealed class ConsolePageEndMeasurementTests(ITestOutputHelper output)
 
     private static List<string> MeasureAll()
     {
-        double cyclesPerMs = CyclesPerMs();
+        double cyclesPerMs = PerfMeasure.CyclesPerMs();
+        string[] all = [.. Enumerable.Range(0, PageSizes.Max()).Select(MsBuildLines.Warning)];
         var report = new List<string>
         {
             string.Format(CultureInfo.InvariantCulture, "UI thread: {0:0.00} Mcycles per ms of CPU (calibrated)", cyclesPerMs / 1_000_000),
-            "lines   route          first: wall / cpu ms | samples ({0}): wall median / max, cpu median / max ms | GC 0/1/2, pause ms".Replace("{0}", Samples.ToString(CultureInfo.InvariantCulture)),
+            string.Format(CultureInfo.InvariantCulture, "lines: MSBuild warnings, {0:0} characters on average, colorized", all.Average(l => l.Length)),
+            "lines   route          first: wall / cpu ms | samples (" + Samples.ToString(CultureInfo.InvariantCulture)
+                + "): wall median / max, cpu median / max ms | GC 0/1/2, pause ms",
         };
         using var narrative = new RealizedNarrative(lines: 400);
+        if (!narrative.View.Editor.TextArea.TextView.LineTransformers.OfType<ConsoleColorizer>().Any())
+            throw new InvalidOperationException("the console is not colorized — the measurement would not see the colorizer's cost");
         foreach (int lines in PageSizes)
         {
+            string[] page = all[..lines];
             foreach (var route in Enum.GetValues<Route>())
             {
-                narrative.OpenPage(lines);
+                narrative.OpenPage(page);
                 var first = Measure(narrative, route, cyclesPerMs, fromTheTop: false); // sayfa tepede açılır
                 Measure(narrative, route, cyclesPerMs, fromTheTop: true);              // ısınma
                 var samples = Enumerable.Range(0, Samples).Select(_ => Measure(narrative, route, cyclesPerMs, fromTheTop: true)).ToList();
@@ -97,7 +91,7 @@ public sealed class ConsolePageEndMeasurementTests(ITestOutputHelper output)
         if (narrative.View.Editor.VerticalOffset > 0) throw new InvalidOperationException($"{route} sample did not start at the top of the page");
         int gen0 = GC.CollectionCount(0), gen1 = GC.CollectionCount(1), gen2 = GC.CollectionCount(2);
         var pause = GC.GetTotalPauseDuration();
-        ulong cycles = ThreadCycles();
+        ulong cycles = PerfMeasure.ThreadCycles();
         var wall = Stopwatch.StartNew();
 
         switch (route)
@@ -111,41 +105,19 @@ public sealed class ConsolePageEndMeasurementTests(ITestOutputHelper output)
         }
 
         wall.Stop();
-        double cpuMs = (ThreadCycles() - cycles) / cyclesPerMs;
+        double cpuMs = (PerfMeasure.ThreadCycles() - cycles) / cyclesPerMs;
         if (narrative.DistanceFromBottom > 48) throw new InvalidOperationException($"{route} did not reach the end of the page");
         return new Sample(wall.Elapsed.TotalMilliseconds, cpuMs,
             GC.CollectionCount(0) - gen0, GC.CollectionCount(1) - gen1, GC.CollectionCount(2) - gen2,
             (GC.GetTotalPauseDuration() - pause).TotalMilliseconds);
     }
 
-    /// <summary>Döngü → ms: thread bir süre boyunca kesintisiz döner, döngü sayacının o süredeki artışı okunur. Üç denemenin en büyüğü alınır —
-    /// bir kesinti oranı yalnız düşürür.</summary>
-    private static double CyclesPerMs()
-    {
-        double best = 0;
-        for (int attempt = 0; attempt < 3; attempt++)
-        {
-            ulong start = ThreadCycles();
-            var clock = Stopwatch.StartNew();
-            while (clock.ElapsedMilliseconds < 200) { }
-            best = Math.Max(best, (ThreadCycles() - start) / clock.Elapsed.TotalMilliseconds);
-        }
-        return best;
-    }
-
-    private static string Row(int lines, Route route, Sample first, List<Sample> samples)
-    {
-        static double Median(IEnumerable<double> values)
-        {
-            var sorted = values.Order().ToArray();
-            return sorted[sorted.Length / 2];
-        }
-        return string.Format(CultureInfo.InvariantCulture,
+    private static string Row(int lines, Route route, Sample first, List<Sample> samples) =>
+        string.Format(CultureInfo.InvariantCulture,
             "{0,7} {1,-14} first {2,7:0.0} / {3,7:0.0} | wall {4,7:0.0} / {5,7:0.0}, cpu {6,7:0.0} / {7,7:0.0} | GC {8}/{9}/{10}, pause {11:0.0} (first: GC {12}/{13}/{14}, pause {15:0.0})",
             lines, route, first.WallMs, first.CpuMs,
-            Median(samples.Select(s => s.WallMs)), samples.Max(s => s.WallMs),
-            Median(samples.Select(s => s.CpuMs)), samples.Max(s => s.CpuMs),
+            PerfMeasure.Median(samples.Select(s => s.WallMs)), samples.Max(s => s.WallMs),
+            PerfMeasure.Median(samples.Select(s => s.CpuMs)), samples.Max(s => s.CpuMs),
             samples.Sum(s => s.Gen0), samples.Sum(s => s.Gen1), samples.Sum(s => s.Gen2), samples.Sum(s => s.PauseMs),
             first.Gen0, first.Gen1, first.Gen2, first.PauseMs);
-    }
 }

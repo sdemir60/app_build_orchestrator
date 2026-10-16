@@ -1,8 +1,6 @@
-using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.ExceptionServices;
-using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows;
 using System.Windows.Threading;
@@ -59,22 +57,7 @@ public sealed class HiddenSurfaceMeasurementTests(ITestOutputHelper output)
     private static readonly TimeSpan FeedInterval = TimeSpan.FromMilliseconds(20);
     private static readonly TimeSpan SettleWindow = TimeSpan.FromMilliseconds(600);
 
-    [DllImport("kernel32.dll")]
-    private static extern nint GetCurrentThread();
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool QueryThreadCycleTime(nint thread, out ulong cycles);
-
     private readonly record struct Reading(double MegaCyclesPerSecond, int LayoutPasses, int Projects, int Events, double Seconds);
-
-    /// <summary>Çağıran thread'in o ana dek harcadığı CPU döngüsü. Çağrı başarısız olursa 0 basmak yerine fırlatır: sessiz 0,
-    /// okumayı sahte bir "sıfır maliyet"e çevirirdi.</summary>
-    private static ulong ThreadCycles()
-    {
-        if (!QueryThreadCycleTime(GetCurrentThread(), out ulong cycles)) throw new Win32Exception(Marshal.GetLastWin32Error());
-        return cycles;
-    }
 
     [SkippableFact]
     public async Task An_OSYS_sized_project_run_costs_this_much_UI_thread_time_hidden_and_visible()
@@ -160,9 +143,9 @@ public sealed class HiddenSurfaceMeasurementTests(ITestOutputHelper output)
             };
             if (withEvents) feed.Start();
 
-            ulong cyclesBefore = ThreadCycles();
+            ulong cyclesBefore = PerfMeasure.ThreadCycles();
             DispatcherPump.PumpFor(StreamWindow);
-            ulong cyclesAfter = ThreadCycles();
+            ulong cyclesAfter = PerfMeasure.ThreadCycles();
             double seconds = clock.Elapsed.TotalSeconds;
 
             feed.Stop();
