@@ -292,12 +292,11 @@ public sealed partial class RunViewModel
     /// [T21 OOS-1 · round 2] Motor kapısının geçişi: kapının kararı (<see cref="Send"/>) ve kapıda BEKLEMİŞ bir isteğin kaydı
     /// (<see cref="_engineGate"/>). Kayıt, istek motora teslim edilene (<see cref="SendWithFailureLineAsync"/> teslimden hemen önce bırakır) ya da
     /// geçiş dispose edilene dek yaşar; çağıran geçişi <c>using</c> ile tutar — kayıt hiçbir yolda sızamaz. Böylece kapının "gönder" kararıyla teslim
-    /// arasındaki dispatcher sıçrayışında (üretimde kapının devamı ile çağıranınki ayrı dispatcher işlemlerinde koşar: çağıranın devamı post edilir)
-    /// gelen bir motor kaybı isteği bitmiş saymaz: istek teslim edilmedi,
-    /// ölü motora gönderimi bugünkü satırıyla düşer ve geri alımı kendisinindir. Kayıt teslimde biter, gönderimin sonunda DEĞİL: teslimden sonra gelen
-    /// kayıp isteği gönderilmiş sayar (dalga öncesi anlam) — aksi hâlde yazımı başarıyla biten ama motoru ölmüş bir isteğin penceresini kimse
-    /// bırakmazdı. Beklemeyen isteğin (motor uyku döngüsünde değildi) geçişi kayıt taşımaz, Dispose'u no-op'tur. Kopyalar aynı kaydı gösterir;
-    /// Dispose tekrarlanabilir.
+    /// arasındaki dispatcher sıçrayışında (üretimde kapının devamı ile çağıranınki ayrı dispatcher işlemlerinde koşar: çağıranın devamı post
+    /// edilir) gelen bir motor kaybı isteği bitmiş saymaz: istek teslim edilmedi, ölü motora gönderimi bugünkü satırıyla düşer ve geri alımı
+    /// kendisinindir. Kayıt teslimde biter, gönderimin sonunda DEĞİL: teslimden sonra gelen kayıp isteği gönderilmiş sayar (dalga öncesi anlam) —
+    /// aksi hâlde yazımı başarıyla biten ama motoru ölmüş bir isteğin penceresini kimse bırakmazdı. Beklemeyen isteğin (motor uyku döngüsünde
+    /// değildi) geçişi kayıt taşımaz, Dispose'u no-op'tur. Kopyalar aynı kaydı gösterir; Dispose tekrarlanabilir.
     /// </summary>
     private readonly struct GatePass : IDisposable
     {
@@ -335,7 +334,8 @@ public sealed partial class RunViewModel
     /// <summary>[T21 OOS-1 · karar 34 · round 2 · B1 fix 3] Kapıda beklemiş, motora henüz teslim edilmemiş isteklerin kaydı ve boşalması — kapının
     /// durumu, değişmeziyle tek yerde (<see cref="EngineGate"/>). Kapı beklemeye başlarken kaydeder (<see cref="EnsureEngineAwakeAsync"/>), geçiş
     /// teslimde ya da dispose'ta siler (<see cref="GatePass"/>). Motor kaybı kayıtlı isteklerin pencerelerini bırakmaz
-    /// (<see cref="ReleaseAfterEngineLoss"/>); kesilmiş koşu kurtaran uyanmanın tazelemesi boşalmayı bekler (<see cref="RefreshAfterRecoveringWakeAsync"/>).</summary>
+    /// (<see cref="ReleaseAfterEngineLoss"/>); kesilmiş koşu kurtaran uyanmanın tazelemesi boşalmayı bekler
+    /// (<see cref="RefreshAfterRecoveringWakeAsync"/>).</summary>
     private readonly EngineGate _engineGate = new();
 
     /// <summary>
@@ -577,14 +577,14 @@ public sealed partial class RunViewModel
     [ObservableProperty] private string? _engineOverdueMessage;
 
     /// <summary>SON MOTOR ETKİNLİĞİNİN zamanı (monotonik) — motorla konuşmanın TEK damgası [idle-memory · dalga 3 · karar 13 · C8: ikinci bir
-    /// etkinlik damgası yoktur]. Yazımı tek yerdedir (<see cref="StampEngineActivity"/>). Üç yazan: motordan gelen her olay (<see cref="OnEvent"/>), motordan cevap beklenen her bekleyişin başı — yani
-    /// komut gönderimi (<see cref="ArmEngineWatchdog"/>: koşu isteği, Sync, Clean, Optimize, checkout, pull, Stop/Sync fazı) — ve motorun hazır
-    /// bildirimi (<see cref="EnterEngineReady"/>). İki okuyan, ikisi de UI thread'indeki tikte: sessizlik bekçisi
-    /// (<see cref="EvaluateEngineSilence"/> — bir bekleyişte motor ne zamandır susuyor) ve boşta kuralı (<see cref="EvaluateEngineIdle"/> —
-    /// motor ne zamandır işsiz). Cevabı bekleyişe sayılmayan gönderimler damgayı yazmaz: proje log isteği (cevabı beklenirken boşta kuralını
-    /// <see cref="HasPendingLogLoad"/> tutar, cevabı olay olarak damgalanır) ve branch envanteri (Sync'in hemen ardından gider, cevabı
-    /// damgalanır). <c>ProjectLogEvent</c> dalı UI thread'ine marshal EDİLMEDİĞİ için erişim <see cref="Volatile"/>'dir; değerlendirme (ve
-    /// gözlemlenebilir alanların yazımı) yalnız tikte yapılır.</summary>
+    /// etkinlik damgası yoktur]. Yazımı tek yerdedir (<see cref="StampEngineActivity"/>). Üç yazan: motordan gelen her olay (<see cref="OnEvent"/>),
+    /// motordan cevap beklenen her bekleyişin başı — yani komut gönderimi (<see cref="ArmEngineWatchdog"/>: koşu isteği, Sync, Clean, Optimize,
+    /// checkout, pull, Stop/Sync fazı) — ve motorun hazır bildirimi (<see cref="EnterEngineReady"/>). İki okuyan, ikisi de UI thread'indeki
+    /// tikte: sessizlik bekçisi (<see cref="EvaluateEngineSilence"/> — bir bekleyişte motor ne zamandır susuyor) ve boşta kuralı
+    /// (<see cref="EvaluateEngineIdle"/> — motor ne zamandır işsiz). Cevabı bekleyişe sayılmayan gönderimler damgayı yazmaz: proje log isteği
+    /// (cevabı beklenirken boşta kuralını <see cref="HasPendingLogLoad"/> tutar, cevabı olay olarak damgalanır) ve branch envanteri (Sync'in
+    /// hemen ardından gider, cevabı damgalanır). <c>ProjectLogEvent</c> dalı UI thread'ine marshal EDİLMEDİĞİ için erişim
+    /// <see cref="Volatile"/>'dir; değerlendirme (ve gözlemlenebilir alanların yazımı) yalnız tikte yapılır.</summary>
     private long _lastEngineSignalMs;
 
     // ---------------------------------------------------------------- gönderim

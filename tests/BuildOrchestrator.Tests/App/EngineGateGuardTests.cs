@@ -16,10 +16,14 @@ namespace BuildOrchestrator.Tests.App;
 /// referansla motora giden gönderim de görülür; App'te motorla ilgisiz bir <c>SendAsync</c> doğarsa izin listesine gerekçesiyle girer.</para>
 ///
 /// <para><b>[round 2 · T21 OOS-1] Kapının geçişi unutulamaz:</b> kapı bir geçiş döner (<c>RunViewModel.GatePass</c>); kapıda beklemiş bir isteğin
-/// kaydı (<c>EngineGate</c> — kapının durumu, B1 fix 3) onunla yaşar ve motor kaybı kayıtlı isteğin penceresini bırakmaz. Her kapı çağrısı bir <c>using</c> bildiriminin başlatıcısıdır — bir
-/// çağıran geçişi tutmayı unutursa kayıt hiç silinmez ve sonraki her kayıp o türün penceresini atlar. [B1 fix 4] Kaydın kendisi de yalnız kapıdan
-/// açılır (<c>EngineGate.Enter</c> yalnız <c>EnsureEngineAwakeAsync</c>'ten, alıcıdan bağımsız taranır): geçişe bağlanmayan bir kayıt hiç bırakılmaz,
-/// kurtaran uyanmanın tazelemesi de kapının boşalmasını sonsuza dek beklerdi.</para>
+/// kaydı (<c>EngineGate</c> — kapının durumu, B1 fix 3) onunla yaşar ve motor kaybı kayıtlı isteğin penceresini bırakmaz. Her kapı çağrısı bir
+/// <c>using</c> bildiriminin başlatıcısıdır — bir çağıran geçişi tutmayı unutursa kayıt hiç silinmez ve sonraki her kayıp o türün penceresini
+/// atlar. [B1 fix 4] Kaydın kendisi de yalnız kapıdan açılır (<c>EngineGate.Enter</c> yalnız <c>EnsureEngineAwakeAsync</c>'ten, alıcıdan bağımsız
+/// taranır): geçişe bağlanmayan bir kayıt hiç bırakılmaz, kurtaran uyanmanın tazelemesi de kapının boşalmasını sonsuza dek beklerdi.</para>
+///
+/// <para><b>[son temizlik · madde 10-11] Kaybın kapı soruları testlerin listesine bağlıdır:</b> motor kaybının geri alımındaki
+/// <c>Holds(typeof(X))</c> soruları, pencere tutan türlerin listesiyle (<c>EngineWakeTests.WindowHolders</c> — davranışını kayıp teorisi sınar)
+/// aynı kümedir; uyandıran ama kapıya hiç sormayan tek tür, branch envanteri, Sync'in geçişiyle ve kayıtsız gider.</para>
 ///
 /// <para><b>İzin listesi DAR ve GEREKÇELİ:</b> gönderimin varsayılan yolu (kapı + tek gönderim), komutunu kapıdan sonra kuran koşu, Sync ile
 /// ardındaki branch envanteri için kapıya BİR kez soran Sync ve yerini yenisi alabilen proje logu. Çağrı adedi PİNLENMEZ, çağıran yöntem listesi
@@ -52,6 +56,17 @@ public sealed class EngineGateGuardTests
     /// <summary>[B1 fix 4] Kapıya kayıt — alıcıdan BAĞIMSIZ: <c>_engineGate.Enter(</c> ya da kapının durumuna giden başka bir referans. App'te
     /// kapıyla ilgisiz bir üye erişimli <c>Enter(</c> doğarsa izin listesine gerekçesiyle girer.</summary>
     private static readonly Regex GateEntry = new(@"\.\s*Enter\s*\(", RegexOptions.Compiled);
+
+    /// <summary>[son temizlik · madde 10] Motor kaybının kapı sorusu — alıcıdan bağımsız, sorulan komut türüyle (<c>operand</c>).</summary>
+    private static readonly Regex LossQuestion = new(@"\.\s*Holds\s*\(\s*typeof\s*\(\s*(?<operand>\w+)\s*\)\s*\)", RegexOptions.Compiled);
+
+    /// <summary>[son temizlik · madde 11 · O-6] Branch envanterinin kurulumu.</summary>
+    private static readonly Regex InventoryBuilt = new(@"\bnew\s+ListBranchesCommand\s*\(", RegexOptions.Compiled);
+
+    /// <summary>[son temizlik · madde 11 · O-6] Branch envanterinin kapısız gönderimi: kapıdan geçmiş isteğin tek gönderimine, devredilecek kayıt
+    /// olmadan (<c>GatePass.None</c>) verilir.</summary>
+    private static readonly Regex InventorySentWithoutTheGate = new(
+        @"\bSendWithFailureLineAsync\s*\(\s*new\s+ListBranchesCommand\s*\([^;]*,\s*GatePass\.None\s*\)\s*;", RegexOptions.Compiled);
 
     /// <summary>Çağrının bulunduğu satırda, çağrıdan hemen önce: geçişi tutan <c>using</c> bildirimi (<c>using var x = await</c> ya da
     /// <c>using (var x = await</c>).</summary>
@@ -88,8 +103,9 @@ public sealed class EngineGateGuardTests
     /// bırakılmaz — motor kaybı o türün penceresini bir daha bırakmaz, kurtaran uyanmanın tazelemesi kapının boşalmasını sonsuza dek bekler.</summary>
     private static readonly IReadOnlyCollection<string> GateEntryCallers = ["EnsureEngineAwakeAsync"];
 
-    /// <summary>Kaynaktaki bir çağrı: <c>dosya:satır</c>, içinde bulunduğu üye ve geçişi tutan bir <c>using</c>'in başlatıcısı olup olmadığı.</summary>
-    private readonly record struct Call(string Where, string Member, bool Held);
+    /// <summary>Kaynaktaki bir çağrı: <c>dosya:satır</c>, içinde bulunduğu üye, geçişi tutan bir <c>using</c>'in başlatıcısı olup olmadığı ve
+    /// — kalıp <c>operand</c> grubu taşıyorsa — sorulan şey (yoksa boş).</summary>
+    private readonly record struct Call(string Where, string Member, bool Held, string Operand);
 
     [Fact]
     public void Only_the_gated_methods_call_the_gated_send() =>
@@ -146,6 +162,38 @@ public sealed class EngineGateGuardTests
     [Fact]
     public void Every_gate_pass_is_held_with_using() =>
         AssertNoOffenders(AppCalls(GateCall).Where(c => !c.Held), "Kapının geçişi using ile tutulmuyor (kayıt sızabilir):");
+
+    /// <summary>
+    /// [son temizlik · madde 10 · M-2 + O-3] Motor kaybı kapıya TAM OLARAK pencere tutan türler için sorar: <c>ReleaseAfterEngineLoss</c>'taki
+    /// <c>Holds(typeof(X))</c> sorularının türleri, pencere tutan türlerin listesiyle (<c>EngineWakeTests.WindowHolders</c>) aynı kümedir. Kayıp
+    /// teorisi listenin her satırını davranışla sınar; bu tarama listeyi kaynağa bağlar — yedinci bir soru, istisna bir tür
+    /// (<c>GetProjectLogCommand</c>, <c>ListBranchesCommand</c>) için eklenen soru, silinen ya da çiftlenen bir soru kırmızıdır.
+    /// <para>Mutasyon: <c>ReleaseAfterEngineLoss</c>'a <c>Holds(typeof(GetProjectLogCommand))</c> sorusu eklenince kırmızı.</para>
+    /// </summary>
+    [Fact]
+    public void The_engine_loss_asks_the_gate_exactly_for_the_window_holding_types()
+    {
+        var asked = AppCalls(LossQuestion).Where(c => c.Member == "ReleaseAfterEngineLoss").Select(c => c.Operand);
+
+        Assert.Equal(EngineWakeTests.WindowHolders.Select(holder => holder.Command.Name).Order(), asked.Order());
+    }
+
+    /// <summary>
+    /// [son temizlik · madde 11 · O-6] Branch envanteri kapıya HİÇ sormaz: <c>ListBranchesCommand</c> App'te yalnız Sync'in kapısından geçen
+    /// <c>SyncCoreAsync</c>'te kurulur ve devredilecek kayıt olmadan (<c>GatePass.None</c>) gönderilir — kapının kararı ve kaydı Sync'in
+    /// geçişindeydi. Kendi kapı sorusu olsaydı (<c>TrySendAsync</c> ya da <c>EnsureEngineAwakeAsync</c>) kendi penceresi de olurdu ve motor kaybı
+    /// onun için de kapıya sormalıydı. Uyandıran türlerin istisna listesindeki gerekçenin pini (<c>EngineWakeTests.WakingWithoutAGatedWindow</c>).
+    /// <para>Mutasyon: envanterin gönderiminde <c>GatePass.None</c> yerine Sync'in geçişi verilince kırmızı.</para>
+    /// </summary>
+    [Fact]
+    public void The_branch_inventory_never_asks_the_gate()
+    {
+        var built = AppCalls(InventoryBuilt);
+
+        Assert.NotEmpty(built); // vakum karşıtı
+        Assert.All(built, call => Assert.Equal("SyncCoreAsync", call.Member));
+        Assert.Equal(built.Count, AppCalls(InventorySentWithoutTheGate).Count); // her kurulum kapısız gönderimin içindedir
+    }
 
     /// <summary>Guard'ın kendi kanıtı: kapıya sormayan bir yöntemdeki gönderim raporlanır; tanımın kendisi, yorum ve yerel fonksiyon raporlanmaz
     /// (yerel fonksiyonun içindeki çağrı içinde bulunduğu üyeye sayılır).</summary>
@@ -315,7 +363,8 @@ public sealed class EngineGateGuardTests
             int line = code.AsSpan(0, match.Index).Count('\n') + 1;
             int lineStart = code.LastIndexOf('\n', Math.Max(0, match.Index - 1)) + 1;
             bool held = HeldWithUsing.IsMatch(code[lineStart..match.Index]);
-            calls.Add(new Call($"{relative}:{line}", owner, held));
+            string operand = match.Groups["operand"] is { Success: true } asked ? asked.Value : "";
+            calls.Add(new Call($"{relative}:{line}", owner, held, operand));
         }
         return calls;
     }

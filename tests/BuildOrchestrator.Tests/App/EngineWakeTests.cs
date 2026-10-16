@@ -37,9 +37,10 @@ namespace BuildOrchestrator.Tests.App;
 ///
 /// <para><b>Neden <c>[WpfFact]</c> ve devamların sırası:</b> kabuk testleri üretimin UI bağlamında koşar
 /// (<see cref="System.Windows.Threading.DispatcherSynchronizationContext"/> + pompa). Bir göreve yapılan <c>await</c>'in devamı iki kurala uyar:
-/// (1) .NET aynı göreve yapılmış birden çok <c>await</c>'ten yalnız İLKİNİN devamını satır içi koşturabilir, ötekileri zorla asenkron kuyruğa
-/// koyar; (2) WPF'te her dispatcher işlemi kendi bağlam örneğini taşır ve devam ancak görevi tamamlayan kod AYNI işlemde (aynı örnekte) koşuyorsa
-/// satır içi koşar — başka bir işlemden ya da havuzdan tamamlanan görevin devamı UI bağlamına post edilir ve kuyruğun sırasıyla koşar. Üretimde
+/// (1) aynı göreve yapılmış birden çok <c>await</c>'ten yalnız İLKİNİN devamı satır içi koşabilir, ötekiler zorla asenkron kuyruğa girer — bu
+/// bir .NET garantisi DEĞİLDİR, çalışma zamanının bugünkü davranışıdır ve bu düzenekte ölçülmüştür (ona dayanan testler ölçümle kuruldu);
+/// (2) WPF'te her dispatcher işlemi kendi bağlam örneğini taşır ve devam ancak görevi tamamlayan kod AYNI işlemde (aynı örnekte) koşuyorsa satır
+/// içi koşar — başka bir işlemden ya da havuzdan tamamlanan görevin devamı UI bağlamına post edilir ve kuyruğun sırasıyla koşar. Üretimde
 /// uyanma havuzda biter: uyanmanın devamı, kapıdakilerin devamı ve çağıranlarınki birer sıçrayışla post edilir (ölçüldü:
 /// <see cref="A_held_wake_that_recovered_interrupted_projects_sends_the_waking_request_before_the_silent_sync"/>'in kırmızısı). Uyanmayı testin
 /// kendi işleminden bitiren bir test kapıdaki TEK isteği aynı çağrıda satır içi teslim ettirebilir — üretimin sırasını sınayan testler uyanmayı
@@ -125,18 +126,20 @@ public class EngineWakeTests
         return waking;
     }
 
-    /// <summary>[Go5] Uyanmayı bekleyen koşu: uyuyan kabuk, bekletilen uyanma (TCS) ve Build — koşunun komutu bekleyen-koşu penceresinde kapıda,
-    /// uyanma sürüyor. <c>PhaseBefore</c> tıklamadan önceki fazdır (koşunun kendi geri alımı oraya döner).</summary>
+    /// <summary>[Go5 · son temizlik · madde 11 · O-5] Kapıda bekleyen istek — TEK kurulum: uyuyan kabuk, bekletilen uyanma (TCS) ve pencere tutan
+    /// bir yolun üretimdeki girişi (<see cref="Begin"/>); istek kapıda, uyanma sürüyor ve isteğin penceresi açık (<see cref="WindowHolder.Window"/>
+    /// — Build'de bekleyen-koşu penceresi). <c>Work</c> yolun işidir, <c>PhaseBefore</c> tıklamadan önceki faz (koşunun kendi geri alımı oraya
+    /// döner). ESKİ: üç kopya — Build'e özel <c>BuildWaitingForWake</c>, kayıp teorisinin ve çıkışta geri çekilen Clean testinin kendi kurulumu.</summary>
     private static (MainWindow Window, RunViewModel Vm, EngineSleepProbe Probe, SentLog Sent, TaskCompletionSource<EngineReadyEvent> Waking,
-        Task Build, AppPhase PhaseBefore) BuildWaitingForWake(TempDir dir)
+        Task Work, AppPhase PhaseBefore) WaitingAtTheGate(TempDir dir, WakingPath path)
     {
         var (window, vm, probe, sent, waking) = AsleepShellWithHeldWake(dir);
         var phaseBefore = vm.Phase;
-        var build = vm.BuildCommand.ExecuteAsync(null);
+        var work = Begin(path, window, vm);
         DispatcherPump.DrainToIdle();
-        Assert.Equal(EngineState.Waking, vm.EngineState); // ön-koşul: koşu kapıda, uyanma sürüyor
-        Assert.True(vm.IsStarting);
-        return (window, vm, probe, sent, waking, build, phaseBefore);
+        Assert.Equal(EngineState.Waking, vm.EngineState); // ön-koşul: istek kapıda, uyanma sürüyor...
+        Assert.True(HolderOf(path).Window(vm));           // ...ve penceresi açık
+        return (window, vm, probe, sent, waking, work, phaseBefore);
     }
 
     /// <summary>Ölü ya da erişilemez motorun gönderimi: gönderim kabulü kaldırılır — komut fixture'ın hiç başlamamış konağına gider ve orada
@@ -508,7 +511,7 @@ public class EngineWakeTests
     public async Task A_build_waiting_for_a_recovering_wake_runs_and_no_sync_follows()
     {
         using var dir = new TempDir();
-        var (window, vm, probe, sent, waking, build, _) = BuildWaitingForWake(dir);
+        var (window, vm, probe, sent, waking, build, _) = WaitingAtTheGate(dir, WakingPath.Build);
 
         CompleteOffTheDispatcher(waking, RecoveringWake);
         DispatcherPump.DrainToIdle();
@@ -823,7 +826,7 @@ public class EngineWakeTests
     public async Task Stop_during_a_wake_cancels_the_build_and_sends_nothing()
     {
         using var dir = new TempDir();
-        var (window, vm, _, sent, waking, build, _) = BuildWaitingForWake(dir);
+        var (window, vm, _, sent, waking, build, _) = WaitingAtTheGate(dir, WakingPath.Build);
 
         await vm.StopCommand.ExecuteAsync(null);
         Assert.False(vm.IsStarting);
@@ -872,7 +875,7 @@ public class EngineWakeTests
     public async Task Exit_during_a_wake_sends_nothing_and_is_ready_at_once(bool disposePreempts)
     {
         using var dir = new TempDir();
-        var (window, vm, _, sent, waking, build, _) = BuildWaitingForWake(dir);
+        var (window, vm, _, sent, waking, build, _) = WaitingAtTheGate(dir, WakingPath.Build);
         int exitReady = 0;
         vm.ExitReady += (_, _) => exitReady++;
 
@@ -1009,7 +1012,7 @@ public class EngineWakeTests
         else
         {
             TaskCompletionSource<EngineReadyEvent> waking;
-            (window, vm, probe, sent, waking, build, _) = BuildWaitingForWake(dir);
+            (window, vm, probe, sent, waking, build, _) = WaitingAtTheGate(dir, WakingPath.Build);
             release = () => waking.SetResult(Woken());
         }
         Assert.True(vm.IsMidRunLocked); // ön-koşul: chip koşuya etki eder
@@ -1247,7 +1250,7 @@ public class EngineWakeTests
     public async Task A_build_waiting_for_a_wake_whose_engine_dies_is_rolled_back_once_by_itself()
     {
         using var dir = new TempDir();
-        var (window, vm, _, sent, waking, build, phaseBefore) = BuildWaitingForWake(dir);
+        var (window, vm, _, sent, waking, build, phaseBefore) = WaitingAtTheGate(dir, WakingPath.Build);
         int ended = vm.EndedOperationSerial;
         Assert.Equal(AppPhase.Starting, vm.Phase);
 
@@ -1389,13 +1392,20 @@ public class EngineWakeTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>[T21 OOS-1 · karar 34] Uyanma başarılı olur ve motor hemen ölür — kapıda uyanmayı bekleyen bir Sync'in devamı henüz koşmamışken
-    /// (uyanmanın bitişi katılanların devamını dispatcher'a post eder; ölüm sinyali onları öne geçer): motor kaybı o Sync'i bitmiş SAYMAZ — istek
-    /// motora hiç gitmedi ve kendi geri alımı kapıdan dönünce çalışır; sahte işlem sonu yoktur (ne <c>EndSync</c> ne <c>EndedOperationSerial</c>
-    /// artışı). Kayıp yalnız motora GİTMİŞ isteklerin pencerelerini bırakır, kapıda bekleyenlerinkini bırakmaz.
-    /// <para><b>Kurgu (sıra deterministik):</b> proje logu tıklaması uyanmayı başlatır, Sync ona katılır. Uyanma bittiği anda ölüm gelir — uyanmanın
-    /// devamı tamamlayan bağlamda satır içi koştuysa hemen, post edildiyse onun hemen ardından (aynı öncelik, sıra): katılan Sync'in devamı ikisinden
-    /// sonradır. Ön-koşul bunu gösterir: ölüm anında motor hazır, Sync gönderilmemiş, istek penceresi açık.</para>
+    /// <summary>[T21 OOS-1 · karar 34] Uyanma başarılı olur ve motor hemen ölür — uyanmayı bekleyen bir Sync'in kapıdaki devamı henüz koşmamışken:
+    /// motor kaybı o Sync'i bitmiş SAYMAZ — istek motora hiç gitmedi ve kendi geri alımı kapıdan dönünce çalışır; sahte işlem sonu yoktur (ne
+    /// <c>EndSync</c> ne <c>EndedOperationSerial</c> artışı). Kayıp yalnız motora GİTMİŞ isteklerin pencerelerini bırakır, kapıda bekleyenlerinkini
+    /// bırakmaz.
+    /// <para><b>Kurgu (sıra deterministik):</b> proje logu tıklaması uyanmayı başlatır, Sync ona KATILIR — kapıda uyanmanın ikinci bekleyenidir.
+    /// Uyanmayı test kendi işleminden bitirir: uyanmanın devamı satır içi koşabilir ya da post edilir (sınıf özetindeki kural 2); ikinci bekleyenin
+    /// — Sync'in — devamı her iki durumda da kuyruğa girer (kural 1). Ölüm uyanmanın devamından hemen sonra gelir: satır içi koştuysa hemen, post
+    /// edildiyse onun ardından (aynı öncelik, sıra) — Sync'in kapı devamı ikisinden sonradır. Ön-koşul bunu gösterir: ölüm anında motor hazır, Sync
+    /// gönderilmemiş, istek penceresi açık.</para>
+    /// <para>[son temizlik · madde 12 · O-1] Kayıp teorisinin Sync satırıyla
+    /// (<see cref="A_loss_right_after_a_wake_keeps_the_window_of_a_request_still_held_at_the_gate"/>, <c>SyncButton</c>) aynı ürün yolunu — kaybın
+    /// Sync için kapı sorusunu — sınar. Teori uyanmayı isteğin KENDİSİNİN başlattığı ve uyanmanın havuzda bittiği sırayı sınar; bu test uyanmaya
+    /// KATILAN isteği ve testin kendi işleminden biten uyanmayı. Bu testin teoride olmayan iddiaları (işlem sonu yok, tek uyanma, ölü motor)
+    /// teoriye katlandı — pencere tutan altı türün her biri için.</para>
     /// <para>KIRMIZI (değişiklikten önce): kayıp kapıda bekleyen Sync'i bitirdi — <c>EndedOperationSerial</c> bir arttı.</para></summary>
     [WpfFact]
     public void A_death_right_after_a_wake_ends_no_request_still_waiting_at_the_gate()
@@ -1433,66 +1443,75 @@ public class EngineWakeTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[son temizlik · madde 11 · O-4] Pencere tutan bir komut türü: türü üretimde açan yol ve isteğin penceresi — isteğin açtığı ve motor
+    /// kaybında bırakılan durum — tek satırda.</summary>
+    internal sealed record WindowHolder(Type Command, WakingPath Path, Func<RunViewModel, bool> Window);
+
     /// <summary>[B1 fix 4 · madde 5 · karar A] Pencere tutan komut türleri — motor kaybının geri alımı (<c>ReleaseAfterEngineLoss</c>) her biri için
-    /// kapıya sorar: kapıda bekleyen isteğin penceresini bırakmaz — ve her birini üretimde açan yol. TEK liste: kayıp teorisinin satırları
-    /// (<see cref="WindowHolderPaths"/>) ve sürüklenme testi (<see cref="Every_waking_command_type_is_classified_for_engine_loss"/>) buradan okur.</summary>
-    private static readonly IReadOnlyDictionary<Type, WakingPath> WindowHolders = new Dictionary<Type, WakingPath>
-    {
-        [typeof(StartRunCommand)] = WakingPath.Build,           // koşunun açılışı
-        [typeof(SyncWorkspaceCommand)] = WakingPath.SyncButton,
-        [typeof(CleanWorkspaceCommand)] = WakingPath.DeepClean, // bakım Clean'i
-        [typeof(OptimizeWorkspaceCommand)] = WakingPath.Optimize,
-        [typeof(CheckoutBranchCommand)] = WakingPath.Checkout,
-        [typeof(PullRepositoryCommand)] = WakingPath.Pull,
-    };
+    /// kapıya sorar: kapıda bekleyen isteğin penceresini bırakmaz. TEK liste: kayıp teorisinin satırları (<see cref="WindowHolderPaths"/>), kapıda
+    /// bekleyen isteğin kurulumu (<see cref="WaitingAtTheGate"/>), sürüklenme testi
+    /// (<see cref="Every_waking_command_type_is_classified_for_engine_loss"/>) ve kaybın kapı sorularının kaynak taraması
+    /// (<c>EngineGateGuardTests.The_engine_loss_asks_the_gate_exactly_for_the_window_holding_types</c>) buradan okur.
+    /// <para>[son temizlik · madde 11 · O-4] ESKİ: tür → yol sözlüğü ve onun yanında yol → pencere eşlemesi (<c>WindowOf</c>, eşlenmemiş yolda
+    /// <c>default: throw</c>) — aynı satırın iki paralel listesi. Artık her satır türü, yolu ve pencereyi birlikte taşır.</para></summary>
+    internal static readonly IReadOnlyList<WindowHolder> WindowHolders =
+    [
+        new(typeof(StartRunCommand), WakingPath.Build, vm => vm.IsStarting),          // koşunun açılışı
+        new(typeof(SyncWorkspaceCommand), WakingPath.SyncButton, vm => vm.SyncBusy),
+        new(typeof(CleanWorkspaceCommand), WakingPath.DeepClean, vm => vm.CleanBusy), // bakım Clean'i
+        new(typeof(OptimizeWorkspaceCommand), WakingPath.Optimize, vm => vm.OptimizeBusy),
+        new(typeof(CheckoutBranchCommand), WakingPath.Checkout, vm => vm.CheckoutBusy),
+        new(typeof(PullRepositoryCommand), WakingPath.Pull, vm => vm.PullBusy),
+    ];
+
+    /// <summary>Yolun satırı — her yol listede tek satırdadır (<see cref="Every_waking_command_type_is_classified_for_engine_loss"/>).</summary>
+    private static WindowHolder HolderOf(WakingPath path) => WindowHolders.Single(holder => holder.Path == path);
 
     /// <summary>Kayıp teorisinin satırları — pencere tutan her türün yolu (<see cref="WindowHolders"/>).</summary>
     public static TheoryData<WakingPath> WindowHolderPaths()
     {
         var paths = new TheoryData<WakingPath>();
-        foreach (var path in WindowHolders.Values) paths.Add(path);
+        foreach (var holder in WindowHolders) paths.Add(holder.Path);
         return paths;
     }
 
     /// <summary>[B1 fix 4 · madde 5 · karar A] Uyuyan motoru uyandıran (<see cref="EngineWakeRule"/>) ama penceresi motor kaybında kapı sorusuyla
-    /// KORUNMAYAN türler — gerekçeleriyle.</summary>
-    private static readonly IReadOnlyDictionary<Type, string> WakingWithoutAGatedWindow = new Dictionary<Type, string>
-    {
-        [typeof(GetProjectLogCommand)] = "kapıya sorulur, ama cevap beklentisi kapıda beklerken de BİLEREK bırakılır (ReleaseAfterEngineLoss): "
-            + "kapıda kalmış eski bir yükleme, gönderilmiş yenisinin beklentisini tutmamalı",
-        [typeof(ListBranchesCommand)] = "kapıya hiç sorulmaz: Sync'in ikinci parçasıdır ve GatePass.None ile gider (kapının kararı ve kaydı Sync'in "
-            + "geçişindeydi) — kendi penceresi yoktur",
-    };
+    /// KORUNMAYAN türler. Gerekçeler yorumdadır ve her biri pinlidir.
+    /// <para>[son temizlik · madde 11 · O-6] ESKİ: gerekçeler hiçbir iddianın okumadığı metinlerdi (tür → metin sözlüğü). Artık gerekçe yorumdur;
+    /// doğruluğunu kaynak taraması pinler.</para></summary>
+    private static readonly IReadOnlyCollection<Type> WakingWithoutAGatedWindow =
+    [
+        // Kapıya sorulur, ama cevap beklentisi kapıda beklerken de BİLEREK bırakılır (ReleaseAfterEngineLoss): kapıda kalmış eski bir yükleme,
+        // gönderilmiş yenisinin beklentisini tutmamalı. Pin: kayıp onun için kapıya sormaz
+        // (EngineGateGuardTests.The_engine_loss_asks_the_gate_exactly_for_the_window_holding_types).
+        typeof(GetProjectLogCommand),
+        // Kapıya hiç sorulmaz: Sync'in ikinci parçasıdır ve GatePass.None ile gider (kapının kararı ve kaydı Sync'in geçişindeydi) — kendi
+        // penceresi yoktur. Pin: EngineGateGuardTests.The_branch_inventory_never_asks_the_gate.
+        typeof(ListBranchesCommand),
+    ];
 
     /// <summary>
     /// [B1 fix 4 · madde 5 · karar A] Sürüklenme testi: uyuyan motoru uyandıran HER komut türü (<see cref="EngineWakeRule.Table"/>) motor kaybı için
     /// sınıflandırılmıştır — ya pencere tutar ve kayıp onun için kapıya sorar (<see cref="WindowHolders"/>; davranışını kayıp teorisi sınar) ya da
     /// gerekçeli bir istisnadır (<see cref="WakingWithoutAGatedWindow"/>). Tabloya yeni bir uyandıran tür eklenince bu test, türün motor kaybında ne
     /// olacağına karar verilmeden geçmez; sınıflandırılmış ama artık uyandırmayan bir tür de bayat satır olarak düşer.
-    /// <para>Mutasyon (tabloda uyandırmayan bir türü uyandırır yapmak — pencere de istisna da yok) kırmızı.</para>
+    /// <para>[son temizlik · madde 10 · M-2] Liste iki yönden de tektir: her tür ve her yol tek satırda. İki tür aynı yolu paylaşsaydı kayıp
+    /// teorisi o yolu iki kez sınar, öbür türün penceresini hiç sınamazdı (satır yoldan seçilir — <see cref="HolderOf"/>).</para>
+    /// <para>Mutasyon (tabloda uyandırmayan bir türü uyandırır yapmak — pencere de istisna da yok) kırmızı; Optimize'ın satırına bakım Clean'inin
+    /// yolu verilince kırmızı.</para>
     /// </summary>
     [Fact]
     public void Every_waking_command_type_is_classified_for_engine_loss()
     {
         var waking = EngineWakeRule.Table.Where(row => row.Value).Select(row => row.Key).ToHashSet();
+        var holders = WindowHolders.Select(holder => holder.Command).ToList();
 
-        Assert.Empty(WindowHolders.Keys.Intersect(WakingWithoutAGatedWindow.Keys));            // her tür tek sınıfta
-        Assert.Empty(waking.Except(WindowHolders.Keys).Except(WakingWithoutAGatedWindow.Keys)); // sınıflandırılmamış uyandıran tür yok
-        Assert.All(WindowHolders.Keys.Concat(WakingWithoutAGatedWindow.Keys), type => Assert.Contains(type, waking)); // bayat satır yok
+        Assert.Equal(holders.Count, holders.Distinct().Count());                                     // her tür tek satırda
+        Assert.Equal(WindowHolders.Count, WindowHolders.Select(holder => holder.Path).Distinct().Count()); // her yol tek türün
+        Assert.Empty(holders.Intersect(WakingWithoutAGatedWindow));                                  // her tür tek sınıfta
+        Assert.Empty(waking.Except(holders).Except(WakingWithoutAGatedWindow));                      // sınıflandırılmamış uyandıran tür yok
+        Assert.All(holders.Concat(WakingWithoutAGatedWindow), type => Assert.Contains(type, waking)); // bayat satır yok
     }
-
-    /// <summary>Yolun penceresi — isteğin açtığı ve motor kaybında bırakılan durum: koşunun açılışı (<see cref="StartRunCommand"/>), Sync, bakım
-    /// Clean'i, Optimize, checkout ve pull kilitleri.</summary>
-    private static bool WindowOf(WakingPath path, RunViewModel vm) => path switch
-    {
-        WakingPath.Build => vm.IsStarting,
-        WakingPath.SyncButton => vm.SyncBusy,
-        WakingPath.DeepClean => vm.CleanBusy,
-        WakingPath.Optimize => vm.OptimizeBusy,
-        WakingPath.Checkout => vm.CheckoutBusy,
-        WakingPath.Pull => vm.PullBusy,
-        _ => throw new ArgumentOutOfRangeException(nameof(path), path, null),
-    };
 
     /// <summary>
     /// [T21 OOS-1 · karar 34 · B1 fix 4 · PİN] Kapıdan geçişini hâlâ tutan isteğin penceresini motor kaybı BIRAKMAZ — pencere tutan HER komut türü
@@ -1508,39 +1527,45 @@ public class EngineWakeTests
     /// koşturuyordu — o devam havuzdan post edildiği için kapının devamıyla yarışıyordu (sıra [uyanma, kapı, test] olunca kapı "gönder" der ve
     /// istek ölü motora gider: son <c>Assert.Empty</c> ürün gerilemesi gibi düşerdi). GEREKÇE: yük benzetiminde (havuz thread'i <c>SetResult</c>'tan
     /// sonra 300 ms gecikti) eski kurulumun altı satırı da kırmızıydı, yenisinin altısı da yeşil.</para>
+    /// <para>[son temizlik · madde 12 · O-1] Sync'e katılan isteğin kurgusu ayrı testtedir
+    /// (<see cref="A_death_right_after_a_wake_ends_no_request_still_waiting_at_the_gate"/>); onun teoride olmayan iddiaları buraya, her türe katlandı:
+    /// motor ölü kalır, kapıda geri çekilen istek bir işlem bitirmiş sayılmaz (<c>EndedOperationSerial</c> değişmez) ve uyanma tektir.</para>
     /// </summary>
     [WpfTheory]
     [MemberData(nameof(WindowHolderPaths))]
     public async Task A_loss_right_after_a_wake_keeps_the_window_of_a_request_still_held_at_the_gate(WakingPath path)
     {
         using var dir = new TempDir();
-        var (window, vm, _, sent, waking) = AsleepShellWithHeldWake(dir);
-        var work = Begin(path, window, vm);
-        DispatcherPump.DrainToIdle();
-        Assert.Equal(EngineState.Waking, vm.EngineState); // ön-koşul: istek kapıda, uyanma sürüyor
+        var (window, vm, probe, sent, waking, work, _) = WaitingAtTheGate(dir, path);
+        var holder = HolderOf(path);
+        int ended = vm.EndedOperationSerial;
 
         CompleteOffTheDispatcher(waking, Woken()); // kuyruk: [uyanmanın devamı]
         var loss = System.Windows.Threading.Dispatcher.CurrentDispatcher.InvokeAsync(() => // kuyruk: [uyanmanın devamı, ölüm]
         {
             Assert.Equal(EngineState.Ready, vm.EngineState); // ön-koşul: uyanma bitti...
             Assert.Empty(sent.Commands);                     // ...istek henüz teslim edilmedi...
-            Assert.True(WindowOf(path, vm));                 // ...ve penceresi açık
+            Assert.True(holder.Window(vm));                  // ...ve penceresi açık
 
             vm.OnEngineExited(-1);
 
-            Assert.True(WindowOf(path, vm)); // kayıp kapıdaki isteğin penceresini bırakmadı
+            Assert.True(holder.Window(vm)); // kayıp kapıdaki isteğin penceresini bırakmadı
         });
         DispatcherPump.DrainToIdle();
         await loss; // ölümün içindeki iddialar: düşen biri burada yükselir
-        Assert.True(work.IsCompleted);    // istek kapıdan "gönderme" aldı...
-        Assert.False(WindowOf(path, vm)); // ...ve penceresini kendi geri alımı bıraktı
-        Assert.Empty(sent.Commands);      // hiçbir şey gönderilmedi
+        Assert.True(work.IsCompleted);                 // istek kapıdan "gönderme" aldı...
+        Assert.False(holder.Window(vm));               // ...ve penceresini kendi geri alımı bıraktı
+        Assert.Empty(sent.Commands);                   // hiçbir şey gönderilmedi
+        Assert.Equal(EngineState.Dead, vm.EngineState);
+        Assert.Equal(ended, vm.EndedOperationSerial);  // kapıda geri çekilen istek bir işlem bitirmiş sayılmadı
+        Assert.Equal(1, probe.WakeCalls);
         GC.KeepAlive(window);
     }
 
     /// <summary>[T21 OOS-1 · round 2] Kapının "gönder" kararı ile isteğin motora teslimi arasında bir dispatcher sıçrayışı vardır: kapının devamı ile
-    /// çağıranınki ayrı dispatcher işlemlerinde koşar ve çağıranın devamı post edilir (sınıf özetindeki kural 2). Ölüm tam bu sıçrayışta gelirse — uyanma başarılı, kapıda bekleyen Sync "gönder" kararını aldı ama çağıranı
-    /// (<c>SyncCoreAsync</c>) henüz devam etmedi — motor kaybı o Sync'i bitmiş SAYMAZ: istek kapıdan geçişini hâlâ tutuyor, motora teslim edilmedi.
+    /// çağıranınki ayrı dispatcher işlemlerinde koşar ve çağıranın devamı post edilir (sınıf özetindeki kural 2). Ölüm tam bu sıçrayışta gelirse —
+    /// uyanma başarılı, kapıda bekleyen Sync "gönder" kararını aldı ama çağıranı (<c>SyncCoreAsync</c>) henüz devam etmedi — motor kaybı o Sync'i
+    /// bitmiş SAYMAZ: istek kapıdan geçişini hâlâ tutuyor, motora teslim edilmedi.
     /// Çağıranı devam eder, ölü motora gönderim bugünkü satırlarıyla düşer (Sync ve ardındaki envanter, birer kez) ve Sync'in kendi geri alımı
     /// TEK kez çalışır; sahte işlem sonu yoktur.
     /// <para><b>Kurgu (ölçülen sıra — b11):</b> üç yol aynı uyanmayı bekler: ilk proje logu (uyanmayı başlatır, yerini ikincisi alır), ikinci log ve
@@ -1632,7 +1657,7 @@ public class EngineWakeTests
     public async Task A_refused_gate_pass_leaves_no_registration_behind()
     {
         using var dir = new TempDir();
-        var (window, vm, _, sent, waking, build, _) = BuildWaitingForWake(dir);
+        var (window, vm, _, sent, waking, build, _) = WaitingAtTheGate(dir, WakingPath.Build);
         await vm.StopCommand.ExecuteAsync(null); // bekleyen koşu geri alınır — kapı "gönderme" der
         waking.SetResult(Woken());
         DispatcherPump.DrainToIdle();
@@ -1660,13 +1685,9 @@ public class EngineWakeTests
     public async Task An_exit_requested_during_a_wake_withdraws_a_clean_waiting_in_the_gate()
     {
         using var dir = new TempDir();
-        var (window, vm, probe, sent, waking) = AsleepShellWithHeldWake(dir);
+        var (window, vm, _, sent, waking, clean, _) = WaitingAtTheGate(dir, WakingPath.DeepClean); // ön-koşul: Clean kapıda, penceresi açık
         int exitReady = 0;
         vm.ExitReady += (_, _) => exitReady++;
-        var clean = vm.CleanCommand.ExecuteAsync(null);
-        DispatcherPump.DrainToIdle();
-        Assert.Equal(EngineState.Waking, vm.EngineState); // ön-koşul: Clean kapıda
-        Assert.True(vm.CleanBusy);
 
         vm.RequestExit();
         Assert.Equal(0, exitReady); // çıkış kapıda bekleyen Clean'i bekliyor (istek uçuşta sayılır)
