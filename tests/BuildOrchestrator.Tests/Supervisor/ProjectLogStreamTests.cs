@@ -418,7 +418,10 @@ public class ProjectLogStreamTests
     /// <summary>
     /// [karar 37 · B1 fix 1 · m-5] Okunamayan bir proje logu (başka bir süreç dosyayı paylaşımsız tutuyor; ya da klasör okunurken silindi — uyanan
     /// motorun açılıştaki saklama süpürmesi) motoru düşürmez: cevap bugünkü "log yok" chunk'ıdır ve motor komut almaya devam eder (ping → pong).
-    /// <para>KIRMIZI: okuma hatası komut döngüsünden yükseliyor, host çıkıyordu — cevap hiç gelmiyordu (okuma zaman aşımı).</para>
+    /// [B1 fix 3] Silinen klasör YOK olan logdur (Core'un <c>null</c>'ı); kilitli dosyayı "log yok"a çeviren tek yer koordinatördür
+    /// (<see cref="RunCoordinator.TryGetProjectLogSnapshot"/>).
+    /// <para>KIRMIZI: okuma hatası komut döngüsünden yükseliyor, host çıkıyordu — cevap hiç gelmiyordu (okuma zaman aşımı). Mutasyon (B1 fix 3:
+    /// koordinatörün yakalaması kaldırılır) yine kırmızı.</para>
     /// </summary>
     [Fact]
     public async Task A_project_log_that_cannot_be_read_is_answered_as_no_log_and_the_engine_keeps_answering()
@@ -440,11 +443,16 @@ public class ProjectLogStreamTests
     }
 
     /// <summary>
-    /// [B1 fix 2 · 4a] Proje log isteğini cevaplarken beklenmedik bir hata — burada bozuk bir istek: kimliksiz (<c>projectId</c> yok) ve kabul
-    /// edilen bir koşu klasörü; adlandırma kuralı kimliksiz isteği okuyamaz — motoru düşürmez: komutun kendi yakalaması onu bugünkü "log yok"
-    /// cevabına çevirir (tek, boş, <c>NotFound</c>, isteğin kimliğini yankılayan bir chunk) ve motor komut almaya devam eder (ping → pong). Öteki
-    /// komutların (Sync, checkout, Clean, Optimize) yakalamasıyla aynı kural: istisna IPC sınırını geçmez.
-    /// <para>KIRMIZI: hata komut döngüsünden yükseliyor, host çıkıyordu — cevap hiç gelmiyordu (okuma zaman aşımı).</para>
+    /// [B1 fix 2 · 4a · B1 fix 3] Proje log isteğini cevaplarken beklenmedik bir hata — burada bozuk bir istek: kimliksiz (<c>projectId</c> yok) ve
+    /// kabul edilen bir koşu klasörü; adlandırma kuralı kimliksiz isteği okuyamaz — motoru düşürmez: cevap bugünkü "log yok"tur (tek, boş,
+    /// <c>NotFound</c>, isteğin kimliğini yankılayan bir chunk) ve motor komut almaya devam eder (ping → pong). Okumanın her hatasını "log yok"a
+    /// çeviren TEK yer koordinatördür (<see cref="RunCoordinator.TryGetProjectLogSnapshot"/> — tanı kanalına tek uyarı satırı yazar; bu harness o
+    /// kanalı atar, satırı <c>RunCoordinatorTests</c> sınar); host'un kendi yakalaması yoktur.
+    /// <para><b>[DEĞİŞEN GEREKÇE — B1 fix 3]</b> Eski anlatım: hatayı "komutun kendi yakalaması" (host'ta) karşılar, "öteki komutların yakalamasıyla
+    /// aynı kural". Değişme gerekçesi (kontrolcü kararı): okuma hatası kuralı tek yere, koordinatöre toplandı ve host'un yakalaması kalktı; benzetme
+    /// de doğru değildi (ListBranches, Pull, SetPerfMode ve StopRun'ın böyle bir yakalaması yok). İddia değişmedi.</para>
+    /// <para>KIRMIZI (B1 fix 2 öncesi): hata komut döngüsünden yükseliyor, host çıkıyordu — cevap hiç gelmiyordu (okuma zaman aşımı). Mutasyon (B1 fix 3:
+    /// koordinatörün yakalaması kaldırılır) yine kırmızı.</para>
     /// </summary>
     [Fact]
     public async Task A_project_log_request_that_fails_unexpectedly_is_answered_as_no_log_and_the_engine_keeps_answering()

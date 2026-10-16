@@ -398,23 +398,13 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
     /// metni tek bir son chunk'a çevirir. Eskiden cevap <c>error(logNotFound)</c>'du; ne isteği taşıyordu ne dikişten geçiyordu.</para>
     /// <para>[idle-memory · dalga 3 · karar 37] İsteğin koşu klasörü (<see cref="GetProjectLogCommand.RunDirectory"/>) koordinatöre geçer: bu
     /// süreç hiç koşu yürütmediyse (uyanmış ya da yeniden başlatılmış motor) okuma oradan yapılır — kabul kuralı koordinatördedir.</para>
-    /// <para>[dalga 3 · B1 fix 2 · 4a] Okumanın beklenmedik hatası (bozuk istek, okuma yolunda yakalanmamış bir hata) komut döngüsünü düşürmez:
-    /// cevap bugünkü "log yok"tur — öteki komutların yakalamasıyla aynı kural, istisna IPC sınırını geçmez. Yakalama yalnız okumayı sarar; cevabın
+    /// <para>[dalga 3 · B1 fix 3] Okumanın her hatası (okunamayan dosya, bozuk istek) koordinatörde "log yok"a döner ve tanı satırı bırakır —
+    /// kuralın TEK yeri <see cref="RunCoordinator.TryGetProjectLogSnapshot"/>'tır; host'un kendi yakalaması yoktur, okuma döngüyü düşürmez. Cevabın
     /// yazımı düşerse (boru koptu) motor bugünkü gibi durur.</para>
     /// </summary>
     private async Task SendProjectLogAsync(GetProjectLogCommand g, CancellationToken ct)
     {
-        bool found;
-        string text;
-        int throughLineNumber;
-        try
-        {
-            found = coordinator.TryGetProjectLogSnapshot(g.ProjectId, out text, out throughLineNumber, g.RunDirectory);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            (found, text, throughLineNumber) = (false, "", 0); // "log yok" — koordinatörün boş snapshot'ıyla aynı cevap
-        }
+        bool found = coordinator.TryGetProjectLogSnapshot(g.ProjectId, out string text, out int throughLineNumber, g.RunDirectory);
         foreach (var c in LogChunker.Chunk(text))
             await writer.WriteAsync(new ProjectLogChunkEvent(g.ProjectId, c.Sequence, c.Text, c.IsLast, throughLineNumber,
                 g.RequestId, NotFound: !found), ct);

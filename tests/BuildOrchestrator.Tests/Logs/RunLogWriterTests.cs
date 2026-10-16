@@ -59,19 +59,38 @@ public class RunLogWriterTests : IDisposable
         Assert.Null(w.SnapshotProjectLog(@"C:\repo\Nope\Nope.csproj"));
     }
 
-    /// <summary>[idle-memory · dalga 3 · B1 fix 1 · m-5] Okunamayan bir proje logu — başka bir süreç dosyayı paylaşımsız tutuyor; ya da klasör
-    /// okunurken silindi (uyanan motorun açılıştaki saklama süpürmesi) — "log yok" okunur, istisna yükselmez: okuma motorun komut döngüsündedir
-    /// ve oradaki bir IO hatası motoru düşürürdü.
-    /// <para>KIRMIZI: paylaşım ihlali (<see cref="IOException"/>) çağırana yükseliyordu.</para></summary>
+    /// <summary>[idle-memory · dalga 3 · B1 fix 3] Okunamayan bir proje logu (başka bir süreç dosyayı paylaşımsız tutuyor) FIRLATIR: "okunamadı"
+    /// "yok" değildir. Okumanın hatasını "log yok"a çeviren ve tanı satırını yazan TEK yer koordinatördür (<c>RunCoordinator.TryGetProjectLogSnapshot</c>);
+    /// Core yalnız yokluğu söyler (<see cref="An_absent_project_log_reads_as_no_log"/>).
+    /// <para><b>[DEĞİŞEN KURAL — B1 fix 3]</b> Eski iddia (<c>A_project_log_that_cannot_be_read_reads_as_no_log</c>, B1 fix 1 · m-5): paylaşım ihlali
+    /// "log yok" (<c>null</c>) okunur, istisna yükselmez. Değişme gerekçesi (kontrolcü kararı): Core ilkeli "yok" ile "okunamadı"yı tek <c>null</c>'a
+    /// karıştırıyordu ve "okunamadı → log yok" kuralı üç katmana yayılmıştı (Core, host, koordinatör); kural koordinatörde tek yere toplandı ve
+    /// okunamayan log artık iz bırakır (tanı satırı).</para>
+    /// <para>KIRMIZI (f611591c): istisna yükselmiyordu — Core paylaşım ihlalini sessizce <c>null</c>'a çeviriyordu.</para></summary>
     [Fact]
-    public void A_project_log_that_cannot_be_read_reads_as_no_log()
+    public void A_project_log_that_cannot_be_read_throws()
     {
         using var w = new RunLogWriter(_root, Ts);
         string id = @"C:\repo\A\A.csproj";
         using (var log = w.OpenProjectLog(id)) log.AppendLine("first");
         using var held = new FileStream(w.ProjectLogPath(id), FileMode.Open, FileAccess.Read, FileShare.None); // başka bir sürecin kilidi
 
-        Assert.Null(RunLogWriter.ReadProjectLogFromDisk(w.RunDirectory, id));
+        Assert.Throws<IOException>(() => RunLogWriter.ReadProjectLogFromDisk(w.RunDirectory, id));
+    }
+
+    /// <summary>[B1 fix 3] YOK olan log <c>null</c>'dır, istisna değil: koşu klasöründe dosya yok ya da klasörün kendisi yok — uyanan motorun açılıştaki
+    /// saklama süpürmesi klasörü okunurken siler (beklenen yarış). Yokluğu okumanın kendisi söyler (<see cref="FileNotFoundException"/>,
+    /// <see cref="DirectoryNotFoundException"/>): önceden <c>File.Exists</c> sorulmaz, "hiç yoktu" ile "okunurken gitti" tek daldır ve bu test o dalı sınar.
+    /// <para>PİN: bugünkü kod da <c>null</c> döner (ön kontrolle). Mutasyon: yokluğun yakalaması kaldırılınca kırmızı.</para></summary>
+    [Theory]
+    [InlineData(false)] // klasör var, dosya yok
+    [InlineData(true)]  // klasörün kendisi yok
+    public void An_absent_project_log_reads_as_no_log(bool folderGone)
+    {
+        string runDirectory = Path.Combine(_root, RunLogPaths.RunDirName(Ts));
+        if (!folderGone) Directory.CreateDirectory(runDirectory);
+
+        Assert.Null(RunLogWriter.ReadProjectLogFromDisk(runDirectory, @"C:\repo\A\A.csproj"));
     }
 
     [Fact] // decision log çok worker'dan yazılır: satır kaybı/karışması YOK

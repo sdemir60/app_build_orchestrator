@@ -269,7 +269,15 @@ public sealed class RunCoordinator(
     /// koşu klasörlerinden biriyse kabul edilir (<see cref="RunLogPaths.TryGetRunDirectory"/>: tam nitelikli, kökün doğrudan altında, adı koşu
     /// klasörü kalıbında) ve okuma kuralın döndüğü NORMALLEŞTİRİLMİŞ klasörden yapılır — isteğin ham metninden değil [B1 fix 1 · m-2]; aksi hâlde —
     /// ya da kök bilinmiyorsa — bugünkü "log yok". Sıra: canlı writer → motorun son koşusu → isteğin klasörü; kendi koşusu olan motor isteğin
-    /// klasörüne hiç bakmaz. Okunamayan bir dosya da "log yok"tur (<see cref="RunLogWriter.ReadProjectLogFromDisk"/>, m-5).</para>
+    /// klasörüne hiç bakmaz.</para>
+    ///
+    /// <para>[idle-memory · dalga 3 · B1 fix 3] <b>Okumanın her hatasını "log yok"a çeviren TEK yer burasıdır</b> — disk okuması (paylaşım ihlali,
+    /// erişim reddi), canlı yazıcının anlık görüntüsü, bozuk bir istek (kimliksiz), klasör kuralı: hata hiçbir yolda çağırana (host'un komut
+    /// döngüsüne) yükselmez ve tanı kanalına TEK <c>warning: project log could not be read (&lt;proje&gt;): &lt;ileti&gt;</c> satırı düşer. Kanal
+    /// motorun stderr'idir; App onu boşaltır ve ATAR — satır harness'ler ve tanı içindir, kullanıcıya ulaşmaz. Satırı biçimlemek ya da yazmak patlarsa
+    /// o hata da yutulur (<see cref="TrimAndReportMemory"/>'in iç yakalaması): iz, cevaptan ağır bir hata üretemez. YOK olan log (Core'un
+    /// <c>null</c>'ı, <see cref="RunLogWriter.ReadProjectLogFromDisk"/>) ve kuralın reddettiği klasör ise birer karardır, hata değil: sessiz
+    /// "log yok", satır yok.</para>
     ///
     /// <para>[Task 18] Gerçek disk okuması (<c>File.ReadAllText</c> / <c>ProjectLogFile.Snapshot</c>'ın
     /// FileStream'i) kilit DIŞINDA yapılır: kilit altında yalnız "hangi kaynaktan okunacağı" (canlı writer
@@ -295,11 +303,21 @@ public sealed class RunCoordinator(
             logs = _logs;
             lastRunDirectory = _lastRunDirectory;
         }
-        string? diskDirectory = lastRunDirectory
-            ?? (_logsRoot is { } root && RunLogPaths.TryGetRunDirectory(root, runDirectory, out string? requested) ? requested : null);
-        (string Text, int ThroughLineNumber)? snap = logs is not null
-            ? logs.SnapshotProjectLog(projectId)
-            : diskDirectory is not null ? RunLogWriter.ReadProjectLogFromDisk(diskDirectory, projectId) : null;
+        (string Text, int ThroughLineNumber)? snap;
+        try
+        {
+            string? diskDirectory = lastRunDirectory
+                ?? (_logsRoot is { } root && RunLogPaths.TryGetRunDirectory(root, runDirectory, out string? requested) ? requested : null);
+            snap = logs is not null
+                ? logs.SnapshotProjectLog(projectId)
+                : diskDirectory is not null ? RunLogWriter.ReadProjectLogFromDisk(diskDirectory, projectId) : null;
+        }
+        catch (Exception ex)
+        {
+            snap = null; // okunamayan log "log yok"tur — kuralın tek yeri
+            try { console($"warning: project log could not be read ({projectId}): {ex.Message}"); }
+            catch (Exception) { /* tanı kanalı da yazılamıyor — vazgeç, cevabı bozma */ }
+        }
         if (snap is { } s) { text = s.Text; throughLineNumber = s.ThroughLineNumber; return true; }
         text = ""; throughLineNumber = 0; return false;
     }

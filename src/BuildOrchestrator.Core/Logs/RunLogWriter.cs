@@ -65,17 +65,18 @@ public sealed class RunLogWriter : IDisposable
     /// dosyayı okur. Satır sayısı '\n' sayılarak elde edilir — <see cref="ProjectLogFile.AppendLine"/>'ın
     /// tek-satır-tek-çağrı garantisi sayesinde canlı sayaçla AYNI sonucu verir. <see cref="SnapshotProjectLog"/>'un
     /// disk-fallback dalı da AYNI metodu çağırır — iki dal aynı sonucu üretir, kopya sayım mantığı YOK.
-    /// <para>[idle-memory · dalga 3 · B1 fix 1 · m-5] <b>Okunamayan log "log yok"tur</b> (<c>null</c>), istisna değil: dosyayı başka bir süreç
-    /// paylaşımsız tutuyor ya da klasör okunurken silindi (uyanan motorun açılıştaki saklama süpürmesi), erişim reddedildi. Okuma motorun komut
-    /// döngüsündedir (<c>getProjectLog</c>) — oradan yükselen bir IO hatası motoru düşürürdü.</para>
+    /// <para>[idle-memory · dalga 3 · B1 fix 3] <b>Yalnız YOK olan log <c>null</c>'dır:</b> dosya yok ya da dosya veya klasörü okunurken gitti
+    /// (uyanan motorun açılıştaki saklama süpürmesi — beklenen yarış). Yokluğu okumanın kendisi söyler (<see cref="FileNotFoundException"/>,
+    /// <see cref="DirectoryNotFoundException"/>); önceden <c>File.Exists</c> sorulmaz, "hiç yoktu" ile "okunurken gitti" tek daldır. Başka her okuma
+    /// hatası (paylaşım ihlali, erişim reddi…) çağırana YÜKSELİR: "okunamadı" "yok" değildir — motorda onu "log yok"a çeviren ve iz bırakan TEK yer
+    /// koordinatördür (<c>RunCoordinator.TryGetProjectLogSnapshot</c>).</para>
     /// </summary>
     public static (string Text, int ThroughLineNumber)? ReadProjectLogFromDisk(string runDirectory, string projectId)
     {
         string path = Path.Combine(runDirectory, ProjectLogNaming.FileNameFor(projectId));
-        if (!File.Exists(path)) return null;
         string text;
         try { text = File.ReadAllText(path); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { return null; } // yok — ya da okunurken gitti
         return (text, CountLines(text));
     }
 
