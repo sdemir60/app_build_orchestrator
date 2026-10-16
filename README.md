@@ -205,12 +205,18 @@ re-runs a failed release's failed jobs once. Installed copies pick the release u
    settings file, *Import settings…* on the invitation opens the dialog and, once it has settled, the file
    picker, centred over the window.
 
-   **General** holds switches in five groups — Startup, Build, Branches, Console and Notifications. *Pull before
-   build* (see step 4), *Resolve cycles at full priority* (see [Performance modes](#performance-modes)), *Stash and
-   switch branches* (see step 3), *Compact console* (on by default; see the console, further down), *Start with
-   Windows*, *Start minimized to tray*, *Close to tray* and *Show notifications* all work, and *Save* keeps them.
-   *Close to tray* and *Show notifications* are on by default; what they change is described with the tray, further
-   down.
+   **General** holds switches in six groups — Startup, Build, Branches, Console, Engine and Notifications. *Pull
+   before build* (see step 4), *Resolve cycles at full priority* (see [Performance modes](#performance-modes)),
+   *Stash and switch branches* (see step 3), *Compact console* (on by default; see the console, further down), *Stop
+   the engine when idle* (on by default; see below), *Start with Windows*, *Start minimized to tray*, *Close to tray*
+   and *Show notifications* all work, and *Save* keeps them. *Close to tray* and *Show notifications* are on by
+   default; what they change is described with the tray, further down.
+
+   *Stop the engine when idle* lets the engine process exit after five minutes without work — with the window open
+   or in the tray — so an idle app holds less memory. The next piece of work that needs it — a build, a Sync, a Clean
+   or Optimize, the branch menu or a branch switch, a pull, a project's log — starts it again in a moment; meanwhile
+   the ribbon reads `▸ Starting the engine…`, and the last run's project logs stay readable. Turning the switch off
+   does not wake an engine that is already asleep; it stays asleep until the next piece of work.
 
    *Start with Windows* starts the app when you sign in to Windows. *Save* applies it at once, and the switch
    always shows what Windows will actually do. *Start minimized to tray* (available while *Start with Windows* is
@@ -502,12 +508,16 @@ with a tooltip saying their projects are still out of date, and rows that compil
 cycle reached the round ceiling carry the same triangle with a tooltip saying their output may be one generation stale.
 
 The console keeps long MSBuild lines on one line rather than wrapping them, so it scrolls sideways as well as
-down: a horizontal wheel or a touchpad's two-finger sideways pan moves it, not only dragging the bar. At the
-bottom sits a blinking amber block caret on a line of its own; output piles up above it and it stays put, with
-`ready` beside it while nothing is running. Scroll away from the bottom and it steps aside with the
-`⌄ latest` pill. Touch the panel — wheel, scrollbar or the navigation keys — and it is yours: arriving lines
-will not pull it down, and about five seconds after you stop, it returns to the bottom and picks the stream
-back up. Nothing is deleted from the top while you are reading, either, so the text you are looking at holds
+down: a horizontal wheel or a touchpad's two-finger sideways pan moves it, not only dragging the bar or pressing
+←/→, and the sideways position holds while new lines arrive. At the bottom sits a blinking amber block caret on a
+line of its own; output piles up above it and it stays put, with `ready` beside it while nothing is running. Scroll
+away from the bottom and it steps aside with the `⌄ latest` pill — the pill also appears when output piles up below
+you while the panel is yours. Scroll the panel yourself — the wheel, the vertical scrollbar or the navigation keys
+(PageUp/PageDown a screen, ↑/↓ a line, Home/End the top and the end) — and it is yours: arriving lines will not pull
+it down, the same gestures stop a `⌄ latest` slide that is under way, and about five seconds after you stop, it
+returns to the bottom and picks the stream back up. Reading sideways does not take the panel, so a console that
+follows the output keeps following; while the panel is yours, reading sideways counts as touching it and holds off
+the return. Nothing is deleted from the top while you are reading, either, so the text you are looking at holds
 still. The event stream behaves the same way and keeps a caret of its own on a timestamped line from the
 moment you open the app, whether or not anything has happened yet.
 
@@ -518,10 +528,10 @@ stays in the project's log: click the project to read it whole. The tool's own l
 console writes this way its header says `compact` beside the line count. Turn *Settings → General → Compact console*
 off to see every line; the change applies from the next run, and what is already on screen is not rewritten.
 
-A project's log opens **at the beginning** and stays there — what you are looking for in a build log is the
-first error, not the last line — so it does not follow the output and does not return on its own. Scroll to
-the bottom yourself and it starts following again. The header's `Back` button (an arrow icon and the word
-"Back") returns you to the run narrative at its end.
+A project's log opens **at the beginning** and stays where you put it — what you are looking for in a build log is
+the first error, not the last line — so it never follows the output and never returns on its own, not even when you
+scroll to the bottom. The `⌄ latest` pill takes you to the end once and appears again when new lines arrive below
+you. The header's `Back` button (an arrow icon and the word "Back") returns you to the run narrative at its end.
 
 **Every project has a page, log or not.** A skipped project never writes a log file at all — the reason goes
 to the run's decision log — so clicking its card used to look like it did nothing. The page now opens either
@@ -576,7 +586,9 @@ If the engine ever stops answering — no event at all while a run start, a stop
 branch switch or a pull is still waiting for its answer — the ribbon says so in amber and offers *Restart
 engine*. Nothing unlocks by itself, because a drain can legitimately take minutes; the action is there for the
 case where waiting is no longer the answer. Restarting kills the engine and every `MSBuild.exe` under it, then
-brings a fresh engine up.
+brings a fresh engine up. An engine that cannot be stopped when it goes idle, or cannot be started again when work
+arrives, says so in red — *Engine stopped unexpectedly (idle shutdown failed)* or *(wake failed)* — and offers
+*Restart engine* the same way.
 
 ### Keyboard shortcuts
 
@@ -623,7 +635,8 @@ the tagline on the left; a *licensed to* block with the company logo on the righ
   `not started`) and the copyright, and a *What's new in {version}* button that opens the release notes.
 - **Environment** — two groups: *Runtime* (engine PID, .NET runtime, OS, and the app's own memory — *App
   private*, *GC committed* and *Managed heap*, in MB: a snapshot taken when the screen opens and once more when
-  `MSBuild.exe` resolves, not a live reading, and `—` when it cannot be read) and *Paths* (the resolved
+  `MSBuild.exe` resolves, not a live reading, and `—` when it cannot be read; the engine PID reads `asleep` while
+  the engine sleeps) and *Paths* (the resolved
   `MSBuild.exe` and its version, the repository root, and the state and log paths).
 - **Shortcuts** — the table above in three groups, *Global*, *Build* and *Application*, rendered from the same
   source the app binds its keys from, so a rebound key can never drift from what the screen claims.
@@ -787,6 +800,9 @@ The reasoning behind all three is in [`ARCHITECTURE.md` §11](ARCHITECTURE.md#11
   folder, stays in memory until a new console section opens — the next run, Clean or Optimize, a Sync you press, a
   branch or Debug/Release change, or closing the workspace. A pull and every other Sync add to the open section
   instead.
+- **The first piece of work after the engine has slept waits for it.** With *Stop the engine when idle* on, the
+  engine process exits after five idle minutes; the next build, Sync or other engine command starts it again first —
+  a moment, with `▸ Starting the engine…` in the ribbon — and only then runs.
 - **The IPC has no field-level schema validation.** A malformed *JSON* line is recoverable — the Supervisor
   answers `error(badCommand)` and keeps going — but a **framing** error (over-long or truncated line) is treated
   as unrecoverable: it writes `error(framing)` and exits with code 2, and the App reports the engine as dead.
