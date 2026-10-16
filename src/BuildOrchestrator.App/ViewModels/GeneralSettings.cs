@@ -104,12 +104,14 @@ public static class GeneralSettingsCatalog
         ]),
         new("CONSOLE",
         [
+            // Açık: onaylanmış varsayılan (idle-memory spec §6.5) — anlatı derleme çıktısını kısaltır; her satır proje logunda ve diskte kalır.
             new(GeneralSetting.CompactConsole, "Compact console",
                 "Errors in full, the first warnings of each project and a count of the rest; every other MSBuild line stays in "
                 + "the project log. Off: every line.", Default: true),
         ]),
         new("ENGINE",
         [
+            // Açık: onaylanmış varsayılan (idle-memory spec §6.4) — işsiz motor süreci belleğini bırakır; sonraki iş onu yeniden başlatır.
             new(GeneralSetting.StopEngineWhenIdle, "Stop the engine when idle",
                 "After five minutes without work the engine process exits. It starts again in a moment when you build or sync.",
                 Default: true),

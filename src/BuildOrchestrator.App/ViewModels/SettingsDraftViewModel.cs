@@ -117,8 +117,8 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     public GeneralSettingRowViewModel GeneralRow(GeneralSetting setting) => _generalRows[setting];
 
     /// <summary>[design v1.15.0 → v1.19.0 §2.9] Harici çalışma kopyaları her build'den ÖNCE güncellensin mi — General
-    /// sayfasının BUILD grubundaki <c>Pull before build</c> satırının KENDİSİ (iki yüz tek değer). Varsayılan AÇIK;
-    /// Save'e kadar yalnız taslaktır.</summary>
+    /// sayfasının BUILD grubundaki <c>Pull before build</c> satırının KENDİSİ (iki yüz tek değer). Varsayılanı kataloğun satırıdır
+    /// (<see cref="GeneralSettingsCatalog.DefaultOf"/>); Save'e kadar yalnız taslaktır.</summary>
     public bool PullExternalsBeforeBuild
     {
         get => GeneralRow(GeneralSetting.PullBeforeBuild).IsOn;
@@ -127,7 +127,8 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
 
     /// <summary>[spec 2026-09-18 §6.3] Branch chip'inden checkout'ta kirli ağaç stash'lenip geçilsin mi — General
     /// sayfasının BRANCHES grubundaki <c>Stash and switch branches</c> satırının KENDİSİ (iki yüz tek değer,
-    /// <see cref="PullExternalsBeforeBuild"/> deseni). Varsayılan KAPALI; Save'e kadar yalnız taslaktır.</summary>
+    /// <see cref="PullExternalsBeforeBuild"/> deseni). Varsayılanı kataloğun satırıdır (<see cref="GeneralSettingsCatalog.DefaultOf"/>); Save'e
+    /// kadar yalnız taslaktır.</summary>
     public bool StashOnBranchSwitch
     {
         get => GeneralRow(GeneralSetting.StashOnBranchSwitch).IsOn;
@@ -135,7 +136,8 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     }
 
     /// <summary>[RESOLVE Faz 4 / karar 11] General sayfasının BUILD grubundaki <c>Resolve cycles at full priority</c>
-    /// satırının KENDİSİ (<see cref="StashOnBranchSwitch"/> deseni). Varsayılan AÇIK; Save'e kadar yalnız taslaktır.</summary>
+    /// satırının KENDİSİ (<see cref="StashOnBranchSwitch"/> deseni). Varsayılanı kataloğun satırıdır (<see cref="GeneralSettingsCatalog.DefaultOf"/>);
+    /// Save'e kadar yalnız taslaktır.</summary>
     public bool ResolveAtFullPriority
     {
         get => GeneralRow(GeneralSetting.ResolveAtFullPriority).IsOn;
@@ -143,7 +145,8 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     }
 
     /// <summary>[idle-memory · dalga 2 / spec §6.5] General sayfasının CONSOLE grubundaki <c>Compact console</c> satırının
-    /// KENDİSİ (<see cref="ResolveAtFullPriority"/> deseni). Varsayılan AÇIK; Save'e kadar yalnız taslaktır.</summary>
+    /// KENDİSİ (<see cref="ResolveAtFullPriority"/> deseni). Varsayılanı kataloğun satırıdır (<see cref="GeneralSettingsCatalog.DefaultOf"/>); Save'e
+    /// kadar yalnız taslaktır.</summary>
     public bool CompactConsole
     {
         get => GeneralRow(GeneralSetting.CompactConsole).IsOn;
@@ -151,7 +154,8 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     }
 
     /// <summary>[idle-memory · dalga 3 / spec §6.4] General sayfasının ENGINE grubundaki <c>Stop the engine when idle</c> satırının
-    /// KENDİSİ (<see cref="CompactConsole"/> deseni). Varsayılan AÇIK (kataloğun satırı); Save'e kadar yalnız taslaktır.</summary>
+    /// KENDİSİ (<see cref="CompactConsole"/> deseni). Varsayılanı kataloğun satırıdır (<see cref="GeneralSettingsCatalog.DefaultOf"/>); Save'e
+    /// kadar yalnız taslaktır.</summary>
     public bool StopEngineWhenIdle
     {
         get => GeneralRow(GeneralSetting.StopEngineWhenIdle).IsOn;
