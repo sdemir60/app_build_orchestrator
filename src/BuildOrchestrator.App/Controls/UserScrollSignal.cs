@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 
@@ -8,6 +9,13 @@ namespace BuildOrchestrator.App.Controls;
 /// "Kullanıcı GERÇEKTEN kaydırdı" sinyalinin TEK kablajı — proje listesi, konsol ve event stream AYNI jestleri
 /// dinler (kopya YASAK, CLAUDE.md). Sinyal geometriden ÇIKARILMAZ, ham girdiden gelir; tüketicileri konsol ve
 /// stream'de <see cref="BottomAnchorBehavior.NotifyUserScroll"/>, listede frontier follow'un kullanıcı duraklatmasıdır.
+///
+/// <para><b>[B2 fix 3 · madde 2] Kural tek cümledir:</b> DİKEY kullanıcı jestleri (tekerlek, dikey kaydırma çubuğu, dikey kaydırma tuşları)
+/// direksiyonu alır ve uçuştaki kaydırma animasyonunu durdurur; YANA jestler (←/→, Ctrl+←/→, yatay tekerlek, yatay kaydırma çubuğu) ikisini de
+/// yapmaz — yatay okuma konumu dikey takipten ve atlamadan bağımsızdır. ←/→ ve yatay tekerlek bu kabloya hiç ulaşmaz (tuş kümesinde yok;
+/// yatay tekerlek uygulamanın kendi kancasından geçer — <c>HorizontalWheelScroll</c>); yatay çubuk ulaşır ve süzülür. [DEĞİŞEN KURAL] Çubuk
+/// kanalı eskiden yönü ayırmıyordu: yatay çubuğu sürüklemek direksiyonu alıyor (takip beş saniye duruyordu) ve dikey pill animasyonunu
+/// durduruyordu.</para>
 ///
 /// <para><b>Kaydırma çubuğu neden ayrı bir kanal:</b> tekerlek olayı yalnız tekerleği görür. Kullanıcı çubuğun
 /// başlığını sürüklediğinde ya da oluğa tıkladığında hiç tekerlek olayı doğmaz — panel "kimse dokunmadı"
@@ -31,6 +39,9 @@ internal static class UserScrollSignal
     private static bool IsScrollKey(Key key) =>
         key is Key.PageUp or Key.PageDown or Key.Up or Key.Down or Key.Home or Key.End;
 
+    /// <summary>Çubuk olayı DİKEY bir çubuktan mı geldi — yatay çubuk yana bir jesttir (sınıf doc'u). Olay çubuğun kendisinden baloncuklanır.</summary>
+    private static bool IsVerticalBar(object source) => source is ScrollBar { Orientation: Orientation.Vertical };
+
     /// <summary>Üç girdi kanalını da <paramref name="host"/>'un ağacına bağlar (tünelleyen tekerlek/klavye olayları ve baloncuklanan
     /// çubuk olayı kökte yakalanır — iç kontrolün tipini bilmek gerekmez). Her jestte önce <paramref name="scrollTarget"/>'ın uçuştaki
     /// animasyonu durdurulur, sonra <paramref name="notify"/> çağrılır: argümanı jestin bir uçuşu durdurup durdurmadığıdır.</summary>
@@ -38,7 +49,7 @@ internal static class UserScrollSignal
     {
         void Gesture() => notify(ScrollAnimator.CancelForUser(scrollTarget));
         host.PreviewMouseWheel += (_, _) => Gesture();
-        host.AddHandler(ScrollBar.ScrollEvent, new ScrollEventHandler((_, _) => Gesture()));
+        host.AddHandler(ScrollBar.ScrollEvent, new ScrollEventHandler((_, e) => { if (IsVerticalBar(e.OriginalSource)) Gesture(); }));
         host.PreviewKeyDown += (_, e) => { if (IsScrollKey(e.Key)) Gesture(); };
     }
 }

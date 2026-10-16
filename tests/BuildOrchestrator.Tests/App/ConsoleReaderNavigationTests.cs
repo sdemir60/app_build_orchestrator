@@ -813,13 +813,18 @@ public class ConsoleReaderNavigationTests
     }
 
     /// <summary>
-    /// [B2 fix 2 · madde 2] Yana bir adım (→) <c>⌄ latest</c>'in animasyonunu DURDURMAZ: dikey bir kaydırma jesti değildir — animasyon
-    /// yalnız dikey konumu sürer, adım yalnız yataydır; direksiyonu da almaz (takip sürer — madde 3).
-    /// <para>KIRMIZI (madde 2'den önce): konsolun tuş tablosu her adımda — ←/→ dahil — animasyonu durduruyordu; kural artık jestin tek
-    /// tanımındadır (<c>UserScrollSignal</c>: tekerlek, çubuk, dikey kaydırma tuşları).</para>
+    /// [B2 fix 2 · madde 2 · B2 fix 3 · madde 2] Yana bir jest (→, yatay çubuk) <c>⌄ latest</c>'in animasyonunu DURDURMAZ: dikey bir kaydırma
+    /// jesti değildir — animasyon yalnız dikey konumu sürer, jest yalnız yataydır; direksiyonu da almaz
+    /// (<see cref="A_sideways_gesture_in_a_following_narrative_does_not_take_the_steering"/>).
+    /// <para>KIRMIZI (→, madde 2'den önce): konsolun tuş tablosu her adımda — ←/→ dahil — animasyonu durduruyordu; kural artık jestin tek
+    /// tanımındadır (<c>UserScrollSignal</c>).</para>
+    /// <para>KIRMIZI (yatay çubuk, B2 fix 3 · madde 2'den önce): sinyalin çubuk kanalı yönü ayırmıyordu — yatay çubuğu sürüklemek de dikey
+    /// animasyonu durduruyordu.</para>
     /// </summary>
-    [StaFact]
-    public void A_sideways_step_during_the_latest_pills_animation_does_not_stop_it()
+    [StaTheory]
+    [InlineData("→")]
+    [InlineData("horizontal bar")]
+    public void A_sideways_gesture_during_the_latest_pills_animation_does_not_stop_it(string gesture)
     {
         using var motion = MotionScope.Enable(new FakeMotionSettings { AnimationsEnabled = true });
         using var narrative = new RealizedNarrative(lines: 400);
@@ -827,9 +832,36 @@ public class ConsoleReaderNavigationTests
         narrative.ClickLatest();
         HoldTheJumpMidway(narrative);
 
-        narrative.Press(Key.Right);
+        if (gesture == "→") narrative.Press(Key.Right);
+        else narrative.DragTheHorizontalBar();
 
         Assert.True(ScrollAnimation.IsAnimating(narrative.View.Editor));
+    }
+
+    /// <summary>
+    /// [B2 fix 3 · madde 2] Akışı izleyen anlatıda yana bir jest (→, yatay çubuk) direksiyonu ALMAZ: takip sürer — gelen satırlar görünümü
+    /// dibe götürür, pill çıkmaz. Kural tek cümledir (<c>UserScrollSignal</c>): dikey jestler (tekerlek, dikey çubuk, dikey kaydırma tuşları)
+    /// direksiyonu alır ve pill uçuşunu durdurur; yana jestler (←/→, Ctrl+←/→, yatay tekerlek, yatay çubuk) ikisini de yapmaz.
+    /// <para>PİN (→): madde 3'ten beri yeşil — ← / → sinyalin tuşları değildir.</para>
+    /// <para>KIRMIZI (yatay çubuk, madde 2'den önce): sinyalin çubuk kanalı yönü ayırmıyordu — yatay çubuğu sürüklemek direksiyonu alıyor,
+    /// takibi beş saniye durduruyordu.</para>
+    /// </summary>
+    [StaTheory]
+    [InlineData("→")]
+    [InlineData("horizontal bar")]
+    public void A_sideways_gesture_in_a_following_narrative_does_not_take_the_steering(string gesture)
+    {
+        using var narrative = new RealizedNarrative(lines: 400);
+        NarrativeSnapshots.Deliver(narrative.Store, narrative.View, [LongLine(400)]); // yatay taşma: yatay çubuk görünür
+        DispatcherPump.DrainToIdle();
+
+        if (gesture == "→") narrative.Press(Key.Right);
+        else narrative.DragTheHorizontalBar();
+        NarrativeSnapshots.Deliver(narrative.Store, narrative.View, ["live0", "live1", "live2", "live3"]);
+        DispatcherPump.DrainToIdle();
+
+        Assert.True(narrative.IsShown("live3"), "the follow did not bring the new lines into view");
+        AssertFollowingAtTheBottom(narrative);
     }
 
     /// <summary>

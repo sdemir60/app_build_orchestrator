@@ -243,6 +243,32 @@ public class ScrollAnimatorTests
     }
 
     /// <summary>
+    /// [B2 fix 3 · madde 2] YATAY çubuğu sürüklemek bir kaydırma jesti DEĞİLDİR: uçuştaki dikey animasyon sürer, tüketiciye haber gitmez —
+    /// direksiyon da alınmaz. Kural sinyaldedir, üç panelde aynıdır (konsol, stream, liste).
+    /// <para>KIRMIZI (madde 2'den önce): çubuk kanalı yönü ayırmıyordu — yatay çubuk da animasyonu durduruyor ve tüketiciyi uyarıyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void A_horizontal_bar_drag_is_not_a_user_scroll_gesture()
+    {
+        var sv = new ScrollViewer
+        {
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Visible,
+            Content = new Border { Height = 3000, Width = 3000 },
+        };
+        AnimationHost.ShowOffscreen(sv, width: 100, height: 200);
+        var stopped = new List<bool>();
+        UserScrollSignal.Wire(sv, sv, stopped.Add);
+        ScrollAnimator.AnimateTo(sv, 0, 500, true, TimeSpan.FromSeconds(30), new KeySpline(0.65, 0, 0.35, 1));
+        DispatcherPump.PumpUntil(() => ScrollAnimation.IsAnimating(sv), TimeSpan.FromSeconds(2));
+        Assert.True(ScrollAnimation.IsAnimating(sv)); // ön-koşul
+
+        UserScrollGesture.DragHorizontalBarOf(sv);
+
+        Assert.True(ScrollAnimation.IsAnimating(sv));
+        Assert.Empty(stopped);
+    }
+
+    /// <summary>
     /// [B2 fix 2 · madde 2b] <see cref="ScrollAnimator.CancelForUser"/> bir UÇUŞU durdurup durdurmadığını söyler: yoldaki hareket "evet"; hiç
     /// başlamamış ve inmiş (<c>HoldEnd</c> ile hedefte duran) hareket "hayır". Konsol ve stream'in atlama penceresi yalnız gerçekten durdurulan
     /// bir uçuşta kapanır (<c>BottomAnchorBehavior.NotifyUserScroll</c>). İniş belirlenimlidir: saat sonuna konumlanır

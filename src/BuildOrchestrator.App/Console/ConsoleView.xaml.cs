@@ -526,8 +526,8 @@ public partial class ConsoleView : UserControl
     /// yatay 0'a, dikey 10 px kısa (3154,8; dip 3164,8). Sonlu hedefte dipteki satırlar kurulur, genişlik ve çubuk yerinde kalır. Hedefin neden
     /// ölçülmüş dip değil bekleyen dip olduğu <see cref="PendingBottomOffset"/>'tedir.</para>
     /// <para>[DEĞİŞEN KURAL] Eskiden istek <c>TextEditor.ScrollToEnd</c>'di ("dikeyde +∞, yatayda sol kenar"): izleyen anlatıda uzun bir satırı
-    /// yana kaydırıp okuyan okuyucu her batch'te sol kenara atılıyor, geniş satırlarda dibin 10 px üstünde kalıyordu. Yatay adım (←/→, yatay
-    /// tekerlek) direksiyonu almaz, takip sürer; artık yatay konum da kalır.</para>
+    /// yana kaydırıp okuyan okuyucu her batch'te sol kenara atılıyor, geniş satırlarda dibin 10 px üstünde kalıyordu. Yana jestler (←/→, yatay
+    /// tekerlek, yatay çubuk — <see cref="UserScrollSignal"/>) direksiyonu almaz, takip sürer; artık yatay konum da kalır.</para>
     /// <para>internal: ölçüm testi isteğin kendisini tuşsuz çağırır (<c>ConsolePageEndMeasurementTests</c>) — paralel bir kopya yol değil.</para>
     /// </summary>
     internal void RequestBottom() => EditorControl.ScrollToVerticalOffset(PendingBottomOffset);
