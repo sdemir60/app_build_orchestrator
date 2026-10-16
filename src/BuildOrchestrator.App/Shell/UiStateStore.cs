@@ -94,8 +94,8 @@ public sealed class UiState
 
     /// <summary>[design v1.14.0 §9] Build, harici çalışma kopyalarını derlemeden ÖNCE kendi klonundan
     /// güncellesin mi (ff-only).
-    /// <para><b>Alan NULLABLE ve varsayılanı "güncelle"dir.</b> <c>bool</c> olsaydı diskteki açık bir
-    /// <c>null</c> token'ı (elle düzenleme, yarım yazım) <see cref="JsonUiStateStore.Load"/>'u düşürür ve TÜM
+    /// <para><b>Alan NULLABLE; yok ⇒ kataloğun varsayılanı</b> (açık — "güncelle"; MainWindow seed'i). <c>bool</c> olsaydı diskteki
+    /// açık bir <c>null</c> token'ı (elle düzenleme, yarım yazım) <see cref="JsonUiStateStore.Load"/>'u düşürür ve TÜM
     /// yerleşimi sıfırlardı — <see cref="LegacyTolerantStringConverter"/> ile aynı gerekçe. Ayrıca "hiç
     /// yazılmamış" ile "false yazılmış" ayrımı burada taşınmak zorundadır: bayrak öncesi kaydedilmiş bir
     /// dosya, özelliğin bugünkü davranışını (güncelle) korumalıdır.</para></summary>
@@ -103,17 +103,17 @@ public sealed class UiState
 
     /// <summary>[spec 2026-09-18 §6.3] Branch chip'inden checkout'ta kirli ağaç stash'lenip geçilsin mi.
     /// <see cref="UpdateExternals"/> ile AYNI gerekçeyle NULLABLE (bayat bir <c>null</c> token'ı yerleşimi
-    /// sıfırlamasın); yok ⇒ kapalı (MainWindow seed'i).</summary>
+    /// sıfırlamasın); yok ⇒ kataloğun varsayılanı (kapalı; MainWindow seed'i).</summary>
     public bool? StashOnBranchSwitch { get; set; }
 
     /// <summary>[RESOLVE Faz 4 / karar 11] Settings → General → <c>Resolve cycles at full priority</c>.
-    /// <see cref="UpdateExternals"/> ile AYNI gerekçeyle NULLABLE; yok ⇒ AÇIK (MainWindow seed'i) — anahtarı taşımayan
-    /// eski bir dosya onaylanmış varsayılanı alır.</summary>
+    /// <see cref="UpdateExternals"/> ile AYNI gerekçeyle NULLABLE; yok ⇒ kataloğun varsayılanı (açık; MainWindow seed'i) — anahtarı
+    /// taşımayan eski bir dosya onaylanmış varsayılanı alır.</summary>
     public bool? ResolveAtFullPriority { get; set; }
 
     /// <summary>[idle-memory · dalga 2 / spec §6.5] Settings → General → CONSOLE → <c>Compact console</c>: konsol anlatısı
-    /// proje çıktısını kompakt mı göstersin. <see cref="UpdateExternals"/> ile AYNI gerekçeyle NULLABLE; yok ⇒ AÇIK
-    /// (MainWindow seed'i) — anahtarı taşımayan eski bir dosya varsayılanı alır.</summary>
+    /// proje çıktısını kompakt mı göstersin. <see cref="UpdateExternals"/> ile AYNI gerekçeyle NULLABLE; yok ⇒ kataloğun varsayılanı
+    /// (açık; MainWindow seed'i) — anahtarı taşımayan eski bir dosya varsayılanı alır.</summary>
     public bool? CompactConsole { get; set; }
 
     /// <summary>[idle-memory · dalga 3 / spec §6.4] Settings → General → ENGINE → <c>Stop the engine when idle</c>:

@@ -280,14 +280,19 @@ public sealed partial class RunViewModel
     /// üretirdi; Sync/Build/Rebuild düğmelerinin o durumda devre dışı kalmasıyla AYNI mantık.
     /// Save bir düğme DEĞİLDİR (CanExecute'la kapatılamaz), bu yüzden kapı metodun İÇİNDE durur. Katmanlar ve
     /// kök yine de uygulanır: ikisi de motora dokunmaz, kök kalıcı duruma yazılır (UiState.RepositoryRoot) ve
-    /// motor geri geldiğinde ilk Sync onu taşır — motorun yokluğu bir kök seçimini YANLIŞ yapmaz.</para></summary>
+    /// motor geri geldiğinde ilk Sync onu taşır — motorun yokluğu bir kök seçimini YANLIŞ yapmaz.</para>
+    ///
+    /// <para><b>[B3 · karar 47a] Beş General anahtarı <c>bool?</c>'dur; <c>null</c> ⇒ DOKUNULMAZ.</b> Settings'in Save'i her değeri her
+    /// zaman verir (<see cref="SettingsDraftViewModel.CommitAsync"/>); ayarı hiç anmayan bir çağıran onu kendiliğinden değiştirip konsola
+    /// not düşmemeli. Varsayılanın TEK tanımı kataloğun satırıdır — bir argüman varsayılanı ikinci bir tanım olurdu. Değer verildiyse
+    /// uygulanır ve yalnız GERÇEKTEN değiştiyse konsola not düşer.</para></summary>
     /// <param name="patterns">Taslağın katman tanımları.</param>
     /// <param name="repositoryRoot">Bekleyen repo kökü (değişmediyse mevcut kökün aynısı).</param>
     /// <param name="externals">[K5] Taslağın harici proje listesi — katmanlarla AYNI koşulsuz adımda uygulanır
     /// (motora dokunmaz, mid-run kilidinden ETKİLENMEZ — <see cref="ApplyLayerPatterns"/> ile AYNI gerekçe:
     /// ikisi de yalnız App içi durumdur, koşan bir build'i etkilemez).</param>
-    /// <param name="pullExternalsBeforeBuild">[design v1.15.0] Bölümün "Pull before build" switch'i.</param>
-    /// <param name="stashOnBranchSwitch">[spec 2026-09-18 §6.3] General'ın "Stash and switch branches" switch'i.</param>
+    /// <param name="pullExternalsBeforeBuild">[design v1.15.0] General'ın "Pull before build" switch'i; <c>null</c> ⇒ dokunulmaz.</param>
+    /// <param name="stashOnBranchSwitch">[spec 2026-09-18 §6.3] General'ın "Stash and switch branches" switch'i; <c>null</c> ⇒ dokunulmaz.</param>
     /// <param name="settingNotes">[P3 · P4] <see cref="BuildOrchestrator.App.Shell.ShellSwitches"/>'in <c>Commit</c>'inin
     /// ürettiği, DEĞİŞEN kabuk anahtarlarının (Start with Windows, Start minimized to tray, Close to tray, Show
     /// notifications) konsol notları —
@@ -296,18 +301,15 @@ public sealed partial class RunViewModel
     /// sırayla yazılır (bu yüzden motor/workspace durumundan ETKİLENMEZ — <see cref="ApplyPullExternals"/>/
     /// <see cref="ApplyStashOnBranchSwitch"/>'in kendi notlarıyla AYNI konum).</param>
     /// <param name="resolveAtFullPriority">[RESOLVE Faz 4 / karar 11] General'ın "Resolve cycles at full priority"
-    /// switch'i.</param>
+    /// switch'i; <c>null</c> ⇒ dokunulmaz.</param>
     /// <param name="compactConsole">[idle-memory · dalga 2 / spec §6.5] General'ın "Compact console" switch'i — App-içi
     /// tercih (motora gitmez); değer değiştiyse konsola not düşer, değişiklik bir sonraki işlemde geçerli olur. <c>null</c> ⇒
-    /// DOKUNULMAZ: Settings'in Save'i değeri her zaman verir (<see cref="SettingsDraftViewModel.CommitAsync"/>); ayarı hiç anmayan
-    /// bir çağıran kipi kendiliğinden değiştirip konsola not düşmemeli.</param>
+    /// dokunulmaz.</param>
     /// <param name="stopEngineWhenIdle">[idle-memory · dalga 3 / spec §6.4] General'ın "Stop the engine when idle" switch'i — App-içi
-    /// tercih (motora gitmez); değer değiştiyse konsola not düşer. <c>null</c> ⇒ DOKUNULMAZ (<paramref name="compactConsole"/> ile aynı
-    /// kural ve gerekçe: Settings'in Save'i değeri her zaman verir; ayarı hiç anmayan bir çağıran ayarı kendiliğinden açıp konsola not
-    /// düşmemeli).</param>
+    /// tercih (motora gitmez); değer değiştiyse konsola not düşer. <c>null</c> ⇒ dokunulmaz.</param>
     public async Task ApplySettingsAsync(IReadOnlyList<LayerPattern> patterns, string? repositoryRoot,
-        IReadOnlyList<ExternalProject> externals, bool pullExternalsBeforeBuild = true, bool stashOnBranchSwitch = false,
-        IReadOnlyList<string>? settingNotes = null, bool resolveAtFullPriority = true, bool? compactConsole = null,
+        IReadOnlyList<ExternalProject> externals, bool? pullExternalsBeforeBuild = null, bool? stashOnBranchSwitch = null,
+        IReadOnlyList<string>? settingNotes = null, bool? resolveAtFullPriority = null, bool? compactConsole = null,
         bool? stopEngineWhenIdle = null)
     {
         string root = RootOf(repositoryRoot);
@@ -315,9 +317,9 @@ public sealed partial class RunViewModel
         ApplyLayerPatterns(patterns);
         // SIRA: bayrağın notu listeyi TANIMLI görmeli — "harici proje varsa yaz" kuralı yeni listeye bakar.
         ApplyExternalProjects(externals);
-        ApplyPullExternals(pullExternalsBeforeBuild);
-        ApplyStashOnBranchSwitch(stashOnBranchSwitch);
-        ApplyResolveAtFullPriority(resolveAtFullPriority);
+        if (pullExternalsBeforeBuild is { } pull) ApplyPullExternals(pull);
+        if (stashOnBranchSwitch is { } stash) ApplyStashOnBranchSwitch(stash);
+        if (resolveAtFullPriority is { } fullPriority) ApplyResolveAtFullPriority(fullPriority);
         if (compactConsole is { } compact) ApplyCompactConsole(compact);
         if (stopEngineWhenIdle is { } stopIdle) ApplyStopEngineWhenIdle(stopIdle);
         if (settingNotes is not null)

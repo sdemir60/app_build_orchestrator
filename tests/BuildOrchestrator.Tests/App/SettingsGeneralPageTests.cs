@@ -19,13 +19,13 @@ namespace BuildOrchestrator.Tests.App;
 /// gruplar ve tek <c>ToggleRow</c> şablonu; <c>Pull before build</c>'in buraya taşınması ve External projects sayfasının
 /// altındaki "nereye gitti" satırı.
 ///
-/// <para>Dokuz anahtarın hepsi gerçektir: <c>Pull before build</c> (<see cref="PullBeforeBuildTests"/>), <c>Resolve
-/// cycles at full priority</c> (<see cref="ResolveAtFullPrioritySettingsTests"/>), <c>Stash and
-/// switch branches</c> (<see cref="StashOnBranchSwitchTests"/>), <c>Compact console</c>
-/// (<see cref="CompactConsoleSettingsTests"/>), <c>Stop the engine when idle</c>
-/// (<see cref="StopEngineWhenIdleSettingsTests"/>), <c>Start with Windows</c> ve <c>Start minimized to
-/// tray</c> (<see cref="StartWithWindowsTests"/>), <c>Close to tray</c> ve <c>Show notifications</c>
-/// (<see cref="ShellSwitchesTests"/>; davranışları <see cref="CloseToTrayTests"/> ve tepsi balonu testleri).</para>
+/// <para>Dokuz anahtarın hepsi gerçektir; her birinin zinciri (varsayılan, taslak, ayar dosyası, Save, kabuğun tohumu ve kalıcılığı)
+/// <see cref="GeneralSettingChainTests"/>'tedir. Ayara özgü davranış kendi sınıfındadır: <c>Pull before build</c>
+/// (<see cref="PullBeforeBuildTests"/>), <c>Resolve cycles at full priority</c> (<see cref="ResolveAtFullPrioritySettingsTests"/>),
+/// <c>Stash and switch branches</c> (<see cref="BranchCheckoutTests"/>), <c>Compact console</c> (<see cref="CompactConsoleTests"/>),
+/// <c>Stop the engine when idle</c> (<see cref="StopEngineWhenIdleSettingsTests"/>), <c>Start with Windows</c> ve <c>Start minimized to
+/// tray</c> (<see cref="StartWithWindowsTests"/>), <c>Close to tray</c> ve <c>Show notifications</c> (<see cref="CloseToTrayTests"/> ve
+/// tepsi balonu testleri).</para>
 /// <para><b>[DEĞİŞEN KURAL — P3 2026-09-28 · P4 2026-09-29, kullanıcı kararları]</b> ESKİ (kullanıcı kararı 1): dört
 /// kabuk anahtarı (<c>Start with Windows</c>, <c>Start minimized to tray</c>, <c>Close to tray</c>, <c>Show
 /// notifications</c>) YALNIZ taslakta yaşardı — kaydedilmez, dosyaya yazılmaz, her açılışta varsayılana dönerdi. Artık
@@ -63,7 +63,7 @@ public class SettingsGeneralPageTests
     /// <para><b>[DEĞİŞEN KURAL — idle-memory dalga 2 / spec §6.5]</b> Eski iddia: katalog dört gruptu (STARTUP, BUILD,
     /// BRANCHES, NOTIFICATIONS) ve NOTIFICATIONS dördüncüydü. Kompakt konsol bir ayar oldu: BRANCHES ile NOTIFICATIONS
     /// arasına beşinci grup CONSOLE ve tek satırı <c>Compact console</c> girdi; NOTIFICATIONS beşinci sıraya kaydı
-    /// (ayrıntı <see cref="CompactConsoleSettingsTests"/>).</para>
+    /// (ayrıntı <see cref="CompactConsoleTests"/>; zinciri <see cref="GeneralSettingChainTests"/>).</para>
     /// <para><b>[DEĞİŞEN KURAL — idle-memory dalga 3 / spec §6.4]</b> Eski iddia: katalog beş gruptu (STARTUP, BUILD, BRANCHES,
     /// CONSOLE, NOTIFICATIONS) ve NOTIFICATIONS beşinciydi. Boştaki motoru durdurmak bir ayar oldu: CONSOLE ile NOTIFICATIONS
     /// arasına altıncı grup ENGINE ve tek satırı <c>Stop the engine when idle</c> girdi (metin spec'in birebir cümlesidir);
@@ -132,22 +132,6 @@ public class SettingsGeneralPageTests
             GeneralSettingsCatalog.Groups.SelectMany(g => g.Rows).Where(r => r.DependsOn is not null).Select(r => r.Setting));
     }
 
-    /// <summary>Pull satırı taslağın GERÇEK bayrağıdır: iki yüz aynı değeri okur ve yazar.</summary>
-    [Fact]
-    public void The_pull_row_and_the_draft_flag_are_one_value()
-    {
-        var draft = new SettingsDraftViewModel(null, @"D:\repo");
-        var notified = new List<string?>();
-        draft.PropertyChanged += (_, e) => notified.Add(e.PropertyName);
-
-        draft.GeneralRow(GeneralSetting.PullBeforeBuild).IsOn = false;
-        Assert.False(draft.PullExternalsBeforeBuild);
-        Assert.Contains(nameof(SettingsDraftViewModel.PullExternalsBeforeBuild), notified);
-
-        draft.PullExternalsBeforeBuild = true;
-        Assert.True(draft.GeneralRow(GeneralSetting.PullBeforeBuild).IsOn);
-    }
-
     /// <summary>Bağımlı satır üst anahtar kapalıyken etkin DEĞİLDİR; açılınca etkinleşir.</summary>
     [Fact]
     public void The_dependent_row_follows_its_parent()
@@ -174,24 +158,10 @@ public class SettingsGeneralPageTests
         Assert.True(draft.PullExternalsBeforeBuild);
     }
 
-    /// <summary>Dört kabuk anahtarı ayar dosyasında taşınır: dördü çevrilip dışa aktarılan dosya yeni bir taslağa
-    /// yüklenince dördü de çevrik gelir — tablonun (<see cref="ShellSwitches.All"/>) her satırı Export/Import'a bağlıdır.
-    /// <para><b>[DEĞİŞEN KURAL — P3 2026-09-28 · P4 2026-09-29, kullanıcı kararları]</b> ESKİ İDDİA
-    /// (<c>The_four_new_switches_are_not_written_to_the_settings_file</c>): dört anahtarın hiçbiri ayar dosyasına
-    /// girmezdi — çevrilseler de export JSON'u varsayılanla aynıydı. Artık dördü de kalıcıdır; tek tek round-trip
-    /// testleri <see cref="ShellSwitchesTests"/> ve <see cref="StartWithWindowsTests"/>'tedir.</para></summary>
-    [Fact]
-    public void The_four_shell_switches_travel_in_the_settings_file()
-    {
-        var flipped = new SettingsDraftViewModel(null, @"D:\repo");
-        foreach (var s in ShellSwitches.All) flipped.GeneralRow(s.Setting).IsOn = !flipped.GeneralRow(s.Setting).IsOn;
-
-        var loaded = new SettingsDraftViewModel(null, @"D:\repo");
-        loaded.LoadFrom(SettingsFile.TryParse(flipped.ToFile().ToJson())!);
-
-        Assert.All(ShellSwitches.All, s =>
-            Assert.Equal(!GeneralSettingsCatalog.Definition(s.Setting).Default, loaded.GeneralRow(s.Setting).IsOn));
-    }
+    // [B3 · katlama] Dört kabuk anahtarının ayar dosyasında taşınması (eski The_four_shell_switches_travel_in_the_settings_file) ve
+    // pull satırının taslağın bayrağıyla tek değer oluşu (eski The_pull_row_and_the_draft_flag_are_one_value) öteki General ayarlarıyla
+    // birlikte GeneralSettingChainTests'tedir (Every_setting_round_trips_through_the_settings_file,
+    // A_workflow_settings_row_and_its_draft_flag_are_one_value).
 
     // ---------------------------------------------------------------- realize
 
@@ -400,7 +370,7 @@ public class SettingsGeneralPageTests
     }
 
     /// <summary>[Task 1] Diyalog kayıtlı KAPALI değerle açılır — Close to tray ve Show notifications switch'leri
-    /// kapalı realize olur (<see cref="ShellSwitchesTests.The_draft_opens_on_the_saved_values"/>'ın realize eşi).</summary>
+    /// kapalı realize olur (<see cref="GeneralSettingChainTests.The_draft_opens_a_shell_switch_on_its_saved_value"/>'ın realize eşi).</summary>
     [StaFact]
     public void The_general_page_opens_on_the_saved_switch_values()
     {

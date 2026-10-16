@@ -203,19 +203,14 @@ public partial class MainWindow : Window
         // yanı başında) — null-safe desen kardeşleriyle hizalı. Seed yalnız App içi listeyi doldurur, hiçbir
         // IPC/Sync tetiklemez; liste bir sonraki Sync/Build komutuyla motora gider.
         if (saved.ExternalProjects is { Count: > 0 }) _vm.ExternalProjects = saved.ExternalProjects;
-        // [design v1.14.0 §9] Bayrak hiç yazılmamışsa (ya da bayat bir null token'sa) varsayılan GÜNCELLE:
-        // bayrak öncesi kaydedilmiş bir dosya özelliğin bugünkü davranışını korumalıdır.
-        _vm.UpdateExternals = saved.UpdateExternals ?? true;
-        // [spec 2026-09-18 §6.3] Stash ayarı: hiç yazılmamışsa KAPALI — araç commit'lenmemiş işi kendiliğinden kenara koymaz.
-        _vm.StashOnBranchSwitch = saved.StashOnBranchSwitch ?? false;
-        // [RESOLVE Faz 4 / karar 11] Resolve tam öncelik: hiç yazılmamışsa AÇIK — onaylanmış varsayılan; eski dosya da onu alır.
-        _vm.ResolveAtFullPriority = saved.ResolveAtFullPriority ?? true;
-        // [idle-memory · dalga 2 / spec §6.5] Compact console: hiç yazılmamışsa kataloğun varsayılanı (onaylanmış değer: açık) — eski
-        // dosya da onu alır. Varsayılanın TEK tanımı kataloğun satırıdır; burada ikinci bir literal yazılmaz (son inceleme · defter 12).
-        _vm.CompactConsole = saved.CompactConsole ?? GeneralSettingsCatalog.Definition(GeneralSetting.CompactConsole).Default;
-        // [idle-memory · dalga 3 / spec §6.4] Stop the engine when idle: hiç yazılmamışsa kataloğun varsayılanı (onaylanmış değer: açık) —
-        // eski dosya da onu alır. Varsayılanın TEK tanımı kataloğun satırıdır (Compact console'un kuralı); burada ikinci bir literal yok.
-        _vm.StopEngineWhenIdle = saved.StopEngineWhenIdle ?? GeneralSettingsCatalog.Definition(GeneralSetting.StopEngineWhenIdle).Default;
+        // [B3 · karar 47a] Beş iş akışı tercihi: kayıtlı değer ?? kataloğun varsayılanı. Anahtar hiç yazılmamışsa (ayar öncesi kaydedilmiş
+        // bir dosya ya da bayat bir null token) ayar kataloğun varsayılanıyla açılır. Varsayılanın TEK tanımı kataloğun satırıdır
+        // (onaylanmış değerler ve gerekçeleri orada); burada ikinci bir literal yazılmaz.
+        _vm.UpdateExternals = saved.UpdateExternals ?? GeneralSettingsCatalog.DefaultOf(GeneralSetting.PullBeforeBuild);
+        _vm.StashOnBranchSwitch = saved.StashOnBranchSwitch ?? GeneralSettingsCatalog.DefaultOf(GeneralSetting.StashOnBranchSwitch);
+        _vm.ResolveAtFullPriority = saved.ResolveAtFullPriority ?? GeneralSettingsCatalog.DefaultOf(GeneralSetting.ResolveAtFullPriority);
+        _vm.CompactConsole = saved.CompactConsole ?? GeneralSettingsCatalog.DefaultOf(GeneralSetting.CompactConsole);
+        _vm.StopEngineWhenIdle = saved.StopEngineWhenIdle ?? GeneralSettingsCatalog.DefaultOf(GeneralSetting.StopEngineWhenIdle);
         _vm.PropertyChanged += OnWorkflowPreferenceChanged;
 
         // [design v1.11.0 §2.1] Title bar'ın mono bağlam metni (OSYS · main · main-2) KALDIRILDI — başlık

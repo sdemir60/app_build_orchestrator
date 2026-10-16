@@ -168,16 +168,18 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// yoktur; yeni satırlar yalnız placeholder gösterir (<see cref="LayerPlaceholders"/>). Save'e basılmadıkça ne
     /// <see cref="RunViewModel.LayerPatterns"/> ne UiState değişir.
     /// <paramref name="initialExternals"/> harici proje listesinin AYNI kuralla gelen taslağıdır (K5) — boşsa
-    /// taslak da boş kalır.</summary>
-    /// <param name="pullExternalsBeforeBuild">Canlı bayrağın taslak kopyası (varsayılan açık).</param>
-    /// <param name="stashOnBranchSwitch">Canlı stash ayarının taslak kopyası (varsayılan kapalı).</param>
-    /// <param name="resolveAtFullPriority">[RESOLVE Faz 4] Canlı Resolve tam öncelik ayarının taslak kopyası (varsayılan açık).</param>
-    /// <param name="compactConsole">[idle-memory · dalga 2] Canlı Compact console ayarının taslak kopyası. <c>null</c> ⇒ satır kataloğun
-    /// varsayılanında kalır (<see cref="GeneralSettingRowViewModel"/> ctor'u) — varsayılanın TEK tanımı kataloğun satırıdır, burada ikinci
-    /// bir literal yazılmaz (son inceleme · defter 12).</param>
-    /// <param name="stopEngineWhenIdle">[idle-memory · dalga 3] Canlı Stop the engine when idle ayarının taslak kopyası. <c>null</c> ⇒ satır
-    /// kataloğun varsayılanında kalır (<paramref name="compactConsole"/> ile aynı kural ve gerekçe: varsayılanın TEK tanımı kataloğun
-    /// satırıdır, burada ikinci bir literal yazılmaz).</param>
+    /// taslak da boş kalır.
+    /// <para>[B3 · karar 47a] Beş iş akışı tercihi <c>bool?</c>'dur: verilen değer canlı ayarın taslak kopyasıdır, <c>null</c> ⇒ satır
+    /// kataloğun varsayılanında kalır (<see cref="GeneralSettingRowViewModel"/> ctor'u) — varsayılanın TEK tanımı kataloğun satırıdır, burada
+    /// ikinci bir literal yazılmaz. Diyalog (<c>SettingsDialog.Open</c>) beşini de her zaman canlı değerden verir.</para></summary>
+    /// <param name="pullExternalsBeforeBuild">Canlı "Pull before build" bayrağının taslak kopyası; <c>null</c> ⇒ kataloğun varsayılanı.</param>
+    /// <param name="stashOnBranchSwitch">Canlı stash ayarının taslak kopyası; <c>null</c> ⇒ kataloğun varsayılanı.</param>
+    /// <param name="resolveAtFullPriority">[RESOLVE Faz 4] Canlı Resolve tam öncelik ayarının taslak kopyası; <c>null</c> ⇒ kataloğun
+    /// varsayılanı.</param>
+    /// <param name="compactConsole">[idle-memory · dalga 2] Canlı Compact console ayarının taslak kopyası; <c>null</c> ⇒ kataloğun
+    /// varsayılanı.</param>
+    /// <param name="stopEngineWhenIdle">[idle-memory · dalga 3] Canlı Stop the engine when idle ayarının taslak kopyası; <c>null</c> ⇒
+    /// kataloğun varsayılanı.</param>
     /// <param name="saved">[P3 · P4] Kalıcı kabuk anahtarlarının (<see cref="ShellSwitches"/>) kayıtlı durumu — verildiyse
     /// <see cref="ShellSwitches.All"/>'daki HER satır <see cref="ShellSwitches.IsOn"/> ile tohumlanır; <c>null</c> ⇒
     /// satırlar zaten kendi katalog varsayılanındadır (<see cref="GeneralSettingRowViewModel"/> ctor'u).</param>
@@ -185,16 +187,16 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// Windows'un gerçek durumundan (<see cref="AutostartService.State"/>) tohumlanır ve <see cref="CommitAsync"/> kaydı
     /// anında yazar.</param>
     public SettingsDraftViewModel(IReadOnlyList<LayerPattern>? initial, string? repositoryRoot,
-        IReadOnlyList<ExternalProject>? initialExternals = null, bool pullExternalsBeforeBuild = true,
-        bool stashOnBranchSwitch = false, UiState? saved = null, AutostartService? autostart = null,
-        bool resolveAtFullPriority = true, bool? compactConsole = null, bool? stopEngineWhenIdle = null)
+        IReadOnlyList<ExternalProject>? initialExternals = null, bool? pullExternalsBeforeBuild = null,
+        bool? stashOnBranchSwitch = null, UiState? saved = null, AutostartService? autostart = null,
+        bool? resolveAtFullPriority = null, bool? compactConsole = null, bool? stopEngineWhenIdle = null)
     {
         _repositoryRoot = repositoryRoot;
         _openedWithoutWorkspace = string.IsNullOrWhiteSpace(repositoryRoot);
         GeneralGroups = BuildGeneralGroups();
-        PullExternalsBeforeBuild = pullExternalsBeforeBuild;
-        StashOnBranchSwitch = stashOnBranchSwitch;
-        ResolveAtFullPriority = resolveAtFullPriority;
+        if (pullExternalsBeforeBuild is { } pull) PullExternalsBeforeBuild = pull;
+        if (stashOnBranchSwitch is { } stash) StashOnBranchSwitch = stash;
+        if (resolveAtFullPriority is { } fullPriority) ResolveAtFullPriority = fullPriority;
         if (compactConsole is { } compact) CompactConsole = compact;
         if (stopEngineWhenIdle is { } stopIdle) StopEngineWhenIdle = stopIdle;
         if (saved is not null)

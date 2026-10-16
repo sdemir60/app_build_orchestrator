@@ -802,44 +802,45 @@ public sealed partial class RunViewModel : ObservableObject
 
     /// <summary>[design v1.14.0 §9] Build, harici çalışma kopyalarını derlemeden ÖNCE kendi sürüm
     /// kontrolünden güncellesin mi (git <c>fetch</c> + <c>merge --ff-only</c> / <c>tf vc get</c>).
-    /// <b>Varsayılan: evet.</b>
+    /// Varsayılanın TEK tanımı kataloğun satırıdır (<see cref="GeneralSettingsCatalog.DefaultOf"/> — onaylanmış değer: evet).
     /// <para>Kapalıyken tek bir VCS komutu bile çalışmaz ve kir kapısı da yoktur — harici projeler ana repo
     /// gibi, oldukları hâliyle derlenir. Karar doğruluğu bundan etkilenmez: harici projelerin imzası çalışma
     /// kopyasının İÇERİĞİNDEN hesaplanır.</para>
     /// <para><see cref="ObservablePropertyAttribute"/>: kalıcılık bu bildirimden sürer ve bir aç/kapa
     /// kontrolü doğrudan buna bağlanabilir.</para></summary>
-    [ObservableProperty] private bool _updateExternals = true;
+    [ObservableProperty] private bool _updateExternals = GeneralSettingsCatalog.DefaultOf(GeneralSetting.PullBeforeBuild);
 
     /// <summary>[spec 2026-09-18 §6.3] Settings → General "Stash and switch branches": branch chip'inden checkout'ta
-    /// ağaç kirliyse değişiklikler (izlenmeyenler dahil) stash'lenip geçilsin mi. <b>Varsayılan: hayır</b> — checkout
-    /// durur ve kullanıcıdan önce commit/stash ister. Değer her <see cref="CheckoutBranchCommand"/> ile motora gider.
+    /// ağaç kirliyse değişiklikler (izlenmeyenler dahil) stash'lenip geçilsin mi. Varsayılanın TEK tanımı kataloğun satırıdır
+    /// (<see cref="GeneralSettingsCatalog.DefaultOf"/> — onaylanmış değer: hayır; checkout durur ve kullanıcıdan önce commit/stash ister).
+    /// Değer her <see cref="CheckoutBranchCommand"/> ile motora gider.
     /// <para><see cref="ObservablePropertyAttribute"/>: kalıcılık bu bildirimden sürer (MainWindow).</para></summary>
-    [ObservableProperty] private bool _stashOnBranchSwitch;
+    [ObservableProperty] private bool _stashOnBranchSwitch = GeneralSettingsCatalog.DefaultOf(GeneralSetting.StashOnBranchSwitch);
 
     /// <summary>[RESOLVE Faz 4 / karar 11] Settings → General "Resolve cycles at full priority": Resolve cycles koşusu
-    /// profilin işçi sayısıyla ama cap'siz ve Normal öncelikte mi koşsun. <b>Varsayılan: evet</b> (kullanıcı onayı) —
-    /// kapalıyken Resolve da profili izler. Değer her <see cref="StartRunCommand"/> ile motora gider; Build/Rebuild/Clean'i
-    /// etkilemez (dönüşüm Core'da: <see cref="PerfProfile.ForRun"/>).
+    /// profilin işçi sayısıyla ama cap'siz ve Normal öncelikte mi koşsun. Varsayılanın TEK tanımı kataloğun satırıdır
+    /// (<see cref="GeneralSettingsCatalog.DefaultOf"/> — onaylanmış değer: evet, kullanıcı onayı) — kapalıyken Resolve da profili izler.
+    /// Değer her <see cref="StartRunCommand"/> ile motora gider; Build/Rebuild/Clean'i etkilemez (dönüşüm Core'da: <see cref="PerfProfile.ForRun"/>).
     /// <para><see cref="ObservablePropertyAttribute"/>: kalıcılık bu bildirimden sürer (MainWindow).</para></summary>
-    [ObservableProperty] private bool _resolveAtFullPriority = true;
+    [ObservableProperty] private bool _resolveAtFullPriority = GeneralSettingsCatalog.DefaultOf(GeneralSetting.ResolveAtFullPriority);
 
     /// <summary>[idle-memory · dalga 2 / spec §6.5] Settings → General → CONSOLE "Compact console": konsol anlatısı proje
     /// çıktısını kompakt mı göstersin — açık ⇒ hatalar tam, her projenin ilk uyarıları ve kalanın sayısı; kapalı ⇒ her
     /// satır. Proje logu sayfası ve disk her zaman tamdır. Varsayılanın TEK tanımı kataloğun satırıdır
-    /// (<see cref="GeneralSettingsCatalog"/> — onaylanmış değer: açık). Değişiklik bir SONRAKİ işlemde geçerli olur (mevcut anlatı
+    /// (<see cref="GeneralSettingsCatalog.DefaultOf"/> — onaylanmış değer: açık). Değişiklik bir SONRAKİ işlemde geçerli olur (mevcut anlatı
     /// yeniden yazılmaz; <see cref="CompactConsoleInEffect"/>). Bayrak yalnız App içidir — motora GİTMEZ (komutlarda alanı yoktur).
     /// <para><see cref="ObservablePropertyAttribute"/>: kalıcılık bu bildirimden sürer (MainWindow).</para></summary>
     [ObservableProperty]
-    private bool _compactConsole = GeneralSettingsCatalog.Definition(GeneralSetting.CompactConsole).Default;
+    private bool _compactConsole = GeneralSettingsCatalog.DefaultOf(GeneralSetting.CompactConsole);
 
     /// <summary>[idle-memory · dalga 3 / spec §6.4] Settings → General → ENGINE "Stop the engine when idle": işsiz kalan motor süreci
     /// <see cref="Services.EngineIdleRule.IdleAfter"/> sonra çıksın mı (sonraki iş onu yeniden başlatır). Varsayılanın TEK tanımı kataloğun
-    /// satırıdır (<see cref="GeneralSettingsCatalog"/> — onaylanmış değer: açık). Bayrak yalnız App içidir — motora GİTMEZ (komutlarda alanı
+    /// satırıdır (<see cref="GeneralSettingsCatalog.DefaultOf"/> — onaylanmış değer: açık). Bayrak yalnız App içidir — motora GİTMEZ (komutlarda alanı
     /// yoktur); burası yalnız kullanıcının kararını taşır ve kalıcılaştırır, motoru durdurma kararını boşta kuralı verir
     /// (<see cref="Services.EngineIdleRule"/> — tikte <see cref="EvaluateEngineIdle"/> sorar). Kapatmak uyuyan motoru uyandırmaz (karar 10).
     /// <para><see cref="ObservablePropertyAttribute"/>: kalıcılık bu bildirimden sürer (MainWindow).</para></summary>
     [ObservableProperty]
-    private bool _stopEngineWhenIdle = GeneralSettingsCatalog.Definition(GeneralSetting.StopEngineWhenIdle).Default;
+    private bool _stopEngineWhenIdle = GeneralSettingsCatalog.DefaultOf(GeneralSetting.StopEngineWhenIdle);
 
     /// <summary>
     /// [idle-memory · dalga 2 · spec §6.5 · karar 8 · karar 204] Konsolun proje çıktısını BUNDAN SONRA yazacağı kip —
