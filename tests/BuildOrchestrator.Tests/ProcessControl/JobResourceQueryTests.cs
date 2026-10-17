@@ -166,8 +166,9 @@ public class JobResourceQueryTests
 
     /// <summary>
     /// İç tampon kilit altında yeniden kullanılır: farklı boyda hedeflerle EŞZAMANLI okuyan iş parçacıkları birbirinin tamponunu
-    /// bozmaz (kilitsiz bir tampon büyürken başka bir okuyucunun altından çekilir ya da iki çağrının başlığı birbirine karışır; dar
-    /// hedef sıfır, geniş hedef bir üye görürdü). Sürekli uyuyan ağaçta üye sayısı hiç azalmaz, yani her okuma ≥ 2 üye görmelidir.
+    /// bozmaz. Kilit geçici kaldırılınca bu test KIRMIZI verdi (16 000 okumanın 1 392–2 332'si bozuk: geniş hedef kendi üye sayısı yerine
+    /// dar hedefin yazdığı 1'i okudu — iki çağrı aynı tamponun başlığını eşzamanlı yazıyordu). Sürekli uyuyan ağaçta üye sayısı hiç
+    /// azalmaz, yani her okuma ≥ 2 üye görmelidir.
     /// </summary>
     [Fact]
     public async Task Concurrent_pid_queries_with_different_destination_sizes_do_not_disturb_each_other()
@@ -307,9 +308,10 @@ public class JobResourceQueryTests
     }
 
     /// <summary>
-    /// Çıkmış bir süreç <c>null</c> okunur. ÖLÇÜLDÜ: çıkmış bir sürecin tutamacı başka birinde (çağıran, <c>csrss</c>, bir izleyici) açık
-    /// kaldıkça <c>OpenProcess</c> BAŞARILIR ve <c>GetProcessMemoryInfo</c> başarıyla ESKİ bir sayı verir (~76 KB) — okuma "açılamadı"
-    /// diye düşmez, bu yüzden çıkış ayrıca sorulur. Tutamaç burada bilerek AÇIK tutulur: PID bir başkasına verilemez, test kararlıdır.
+    /// Çıkmış bir süreç <c>null</c> okunur. ÖLÇÜLDÜ: çıkmış bir sürecin nesnesi bir yerde (çağıranda, bir sistem bileşeninde, bir izleyicide)
+    /// tutamaçla açık kaldıkça <c>OpenProcess</c> BAŞARILIR — son görünür tutamaç kapandıktan sonra bile — ve <c>GetProcessMemoryInfo</c>
+    /// başarıyla ESKİ bir sayı verir (~76 KB); okuma "açılamadı" diye düşmez, bu yüzden çıkış ayrıca sorulur. Tutamaç burada bilerek AÇIK
+    /// tutulur: PID bir başkasına verilemez, test kararlıdır.
     /// </summary>
     [Fact]
     public void A_process_that_has_exited_reads_as_null()

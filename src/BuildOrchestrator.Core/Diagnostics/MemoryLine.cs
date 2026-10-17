@@ -96,8 +96,9 @@ public static class MemoryLine
     /// olağan bir durumdur (çıkan bir derleyici), hata değil; çağıran <c>null</c>'ı "bu sürecin belleği yok" diye ele alır. Isınma sonrası
     /// bayt ayırmaz; makinedeki süreçleri taramaz, yalnız verilen PID'i açar.
     ///
-    /// <para>Çıkış AYRICA sorulur (<c>GetExitCodeProcess</c>): ölçüldü, çıkmış bir sürecin tutamacı başka birinde (çağıran, <c>csrss</c>, bir
-    /// izleyici) açık kaldıkça <c>OpenProcess</c> BAŞARILIR ve <c>GetProcessMemoryInfo</c> başarıyla ESKİ bir sayı verir (~76 KB); okuma
+    /// <para>Çıkış AYRICA sorulur (<c>GetExitCodeProcess</c>): ölçüldü, çıkmış bir sürecin nesnesi bir yerde (çağıranda, bir sistem bileşeninde,
+    /// bir izleyicide) tutamaçla açık kaldıkça <c>OpenProcess</c> BAŞARILIR — son görünür tutamaç kapandıktan sonra bile — ve
+    /// <c>GetProcessMemoryInfo</c> başarıyla ESKİ bir sayı verir (~76 KB); okuma
     /// "açılamadı" diye düşmez. Çıkış kodu <c>STILL_ACTIVE</c>'ten (259) farklıysa süreç yoktur. 259 koduyla çıkmış bir süreç çalışıyor
     /// görünür ve bu eski sayıyı verir — kabul edilen ve zararsız (MB'ye yuvarlanınca 0) tek sınır.</para>
     /// </summary>

@@ -27,8 +27,9 @@ internal static class JobTestChildren
     /// tutar (uyku/poll yok: boru üzerinde bloklu okuma), stdin'i kapatmak yükü başlatır ve çocuk biter. Döngü sonsuz DEĞİLDİR:
     /// <see cref="BusyLoopChildCmdLine"/>'ın aksine çocuk kendi çıkar, yani "çıkmış üyenin işlemci zamanı job'da kalır" sorusu sorulabilir.
     /// Yük bu makinede ~0,1 sn işlemci zamanıdır (job muhasebesi ~15,6 ms'lik saat tikleriyle ilerler; yük bir tikten çok büyüktür) ve
-    /// yavaş bir makinede yalnız uzar. <c>pause</c> ve <c>set /p</c> bekleyiş OLAMAZ: ölçüldü, yönlendirilmiş stdin'de beklemeden
-    /// dönerler (<c>more</c>, <c>sort</c>, <c>findstr</c> bekler).</summary>
+    /// yavaş bir makinede yalnız uzar. Bekleyiş için <c>more</c> seçildi: <c>JobProcessLauncher</c> ile üçü de (<c>more</c>, <c>pause</c>,
+    /// <c>set /p</c>) bekler, ama <c>System.Diagnostics.Process</c> + yönlendirilmiş stdin ile (Windows PowerShell 5.1) <c>pause</c> ve
+    /// <c>set /p</c> beklemeden döndü — <c>more</c> (ve <c>sort</c>, <c>findstr</c>) iki başlatıcıda da bekler.</summary>
     public static string GatedBurnChildCmdLine() => WindowsCommandLine.Build(
         CmdExe, "/c", "more >nul & for /l %i in (1,1,500000) do @rem");
 }
