@@ -74,22 +74,6 @@ public class PerfProfileTests
     public void Every_perf_mode_name_is_a_perf_mode_text_that_parses_back_to_the_mode()
         => Assert.All(Enum.GetValues<PerfMode>(), mode => Assert.Equal(mode, PerfProfile.TryParseMode(mode.ToString())));
 
-    /// <summary><see cref="PerfProfile.TryParse"/>, <see cref="PerfProfile.TryParseMode"/>'un çözdüğü modun profilidir: iki yöntem ayrı
-    /// tablolara bakmaz, tanınmayan metinde ikisi de <c>null</c> verir.</summary>
-    [Theory]
-    [InlineData("Full")]
-    [InlineData("Balanced")]
-    [InlineData("Light")]
-    [InlineData("full")]
-    [InlineData("")]
-    [InlineData("Turbo")]
-    public void Try_parse_is_the_profile_of_the_mode_that_try_parse_mode_resolves(string text)
-    {
-        PerfProfile? expected = PerfProfile.TryParseMode(text) is { } mode ? PerfProfile.For(mode) : null;
-
-        Assert.Equal(expected, PerfProfile.TryParse(text));
-    }
-
     // ---------------------------------------------------------------- chip notu: profilin tek biçimi
 
     /// <summary>

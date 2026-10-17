@@ -15,6 +15,10 @@ namespace BuildOrchestrator.Core.Diagnostics;
 ///
 /// <para>Hayalet sabitleri (<see cref="CpuGhost"/> ...) şeridin sabit çerçevesinin ölçüsüdür: her hücre, o an görünen metin ne
 /// olursa olsun en geniş değer kadar yer ayırır, değer değişince hiçbir şey kaymaz.</para>
+///
+/// <para>Ürün adı burada YAZILMAZ: adı içeren iki tooltip (<see cref="CpuTooltip"/>, <see cref="MemoryTooltip"/>) onu parametre olarak
+/// alır — App'te <c>AppIdentity.Product</c>, adın tek kaynağı. Bu dosya AppIdentityTests'in kaynak guard'ı tarafından taranır; adı bir
+/// literalin içine gömen satır süiti kırar.</para>
 /// </summary>
 public static class ResourceStripText
 {
@@ -92,24 +96,26 @@ public static class ResourceStripText
     }
 
     /// <summary>
-    /// CPU hücresinin tooltip'i: <c>"CPU used by Build Orchestrator — app, engine and compilers · cap 70%"</c>. Cap modun TABLO
-    /// değeridir (<c>PerfProfile.For(mode).CpuCapPercent</c>); copy-floor penceresindeki geçici yükselme ve koşu ortası değişim burada
+    /// CPU hücresinin tooltip'i: <c>"CPU used by {product} — app, engine and compilers · cap 70%"</c>. <paramref name="product"/> ürün
+    /// adıdır ve ÇAĞIRANDAN gelir (App'te <c>AppIdentity.Product</c>); burada yazılmaz. Cap modun TABLO değeridir
+    /// (<c>PerfProfile.For(mode).CpuCapPercent</c>); copy-floor penceresindeki geçici yükselme ve koşu ortası değişim burada
     /// gösterilmez (konsol notu zaten yazar). Cap'siz profilde (Full) <c>· cap …</c> eki YOKTUR — "cap off" yazılmaz. Cap'in <c>70%</c>
     /// yazısı konsol notunun yazısıdır (<see cref="PerfNoteText.CapValue"/>).
     /// </summary>
-    public static string CpuTooltip(PerfMode mode)
+    public static string CpuTooltip(string product, PerfMode mode)
     {
-        const string text = "CPU used by Build Orchestrator — app, engine and compilers";
+        string text = $"CPU used by {product} — app, engine and compilers";
         return PerfProfile.For(mode).CpuCapPercent is { } cap ? $"{text} · cap {PerfNoteText.CapValue(cap)}" : text;
     }
 
     /// <summary>
-    /// RAM hücresinin tooltip'i: <c>"Memory used by Build Orchestrator · app 310 MB · engine 85 MB · compilers 4.4 GB"</c>. Her parça
+    /// RAM hücresinin tooltip'i: <c>"Memory used by {product} · app 310 MB · engine 85 MB · compilers 4.4 GB"</c>.
+    /// <paramref name="product"/> ürün adıdır ve ÇAĞIRANDAN gelir (App'te <c>AppIdentity.Product</c>); burada yazılmaz. Her parça
     /// <see cref="Memory"/> ile yazılır: okunamayan parça <c>—</c>, uyuyan motor ve derleyiciler (job boş) çağıranın verdiği 0 ile
     /// <c>0 MB</c>. Git'in çocukları (Sync) derleyicilere sayılır.
     /// </summary>
-    public static string MemoryTooltip(long? app, long? engine, long? compilers) =>
-        $"Memory used by Build Orchestrator · app {Memory(app)} · engine {Memory(engine)} · compilers {Memory(compilers)}";
+    public static string MemoryTooltip(string product, long? app, long? engine, long? compilers) =>
+        $"Memory used by {product} · app {Memory(app)} · engine {Memory(engine)} · compilers {Memory(compilers)}";
 
     /// <summary>Paralellik hücresinin paydası: <c>"/4"</c> — modun tablo paralelliği (<c>PerfProfile.For(mode).Parallelism</c>). Pay (o an
     /// derlenen proje sayısı) ayrı bir metindir ve burada değil view model'dedir.</summary>

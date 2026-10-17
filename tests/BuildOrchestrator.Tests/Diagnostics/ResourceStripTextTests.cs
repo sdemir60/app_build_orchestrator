@@ -118,8 +118,8 @@ public class ResourceStripTextTests
             Assert.Equal("1.3 GB", ResourceStripText.Memory(1280 * Mb));
             Assert.Equal("69%", ResourceStripText.Cpu(69));
             Assert.Equal("/4", ResourceStripText.ParallelAllowed(PerfMode.Balanced));
-            Assert.Equal("Memory used by Build Orchestrator · app 310 MB · engine 85 MB · compilers 4.4 GB",
-                ResourceStripText.MemoryTooltip(310 * Mb, 85 * Mb, 4506 * Mb));
+            Assert.Equal("Memory used by Acme · app 310 MB · engine 85 MB · compilers 4.4 GB",
+                ResourceStripText.MemoryTooltip("Acme", 310 * Mb, 85 * Mb, 4506 * Mb));
             Assert.Equal("3 of 4 projects building in parallel",
                 ResourceStripText.ParallelTooltip(PerfMode.Balanced, 3, running: true, reducedReason: null));
         }
@@ -128,33 +128,49 @@ public class ResourceStripTextTests
 
     // ---------------------------------------------------------------- tooltip'ler
 
-    /// <summary>Cap modun tablo değeridir (Balanced %70, Light %40); cap'siz Full'de ek hiç yoktur ("cap off" yazılmaz).</summary>
+    // Ürün adı çağıranın parametresidir (App'te AppIdentity.Product): bu testler tarafsız bir örnek ad ("Acme") verir; Core metne kendi
+    // adını gömseydi beklenen metin tutmazdı. Gömmeme kuralının kaynak tarafı AppIdentityTests'tedir (adın literal olarak yazılamadığı yüzeyler).
+
+    /// <summary>Cap modun tablo değeridir (Balanced %70, Light %40); cap'siz Full'de ek hiç yoktur ("cap off" yazılmaz). Ürün adı verilen addır.</summary>
     [Theory]
-    [InlineData(PerfMode.Full, "CPU used by Build Orchestrator — app, engine and compilers")]
-    [InlineData(PerfMode.Balanced, "CPU used by Build Orchestrator — app, engine and compilers · cap 70%")]
-    [InlineData(PerfMode.Light, "CPU used by Build Orchestrator — app, engine and compilers · cap 40%")]
-    public void CpuTooltip_names_the_cap_of_the_mode_and_Full_carries_none(PerfMode mode, string expected) =>
-        Assert.Equal(expected, ResourceStripText.CpuTooltip(mode));
+    [InlineData(PerfMode.Full, "CPU used by Acme — app, engine and compilers")]
+    [InlineData(PerfMode.Balanced, "CPU used by Acme — app, engine and compilers · cap 70%")]
+    [InlineData(PerfMode.Light, "CPU used by Acme — app, engine and compilers · cap 40%")]
+    public void CpuTooltip_names_the_given_product_and_the_cap_of_the_mode_and_Full_carries_none(PerfMode mode, string expected) =>
+        Assert.Equal(expected, ResourceStripText.CpuTooltip("Acme", mode));
 
     [Fact]
     public void MemoryTooltip_lists_app_engine_and_compilers_each_as_a_memory_text() =>
-        Assert.Equal("Memory used by Build Orchestrator · app 310 MB · engine 85 MB · compilers 4.4 GB",
-            ResourceStripText.MemoryTooltip(310 * Mb, 85 * Mb, 4506 * Mb));
+        Assert.Equal("Memory used by Acme · app 310 MB · engine 85 MB · compilers 4.4 GB",
+            ResourceStripText.MemoryTooltip("Acme", 310 * Mb, 85 * Mb, 4506 * Mb));
 
     /// <summary>Uyuyan motorun job'ı boştur: motor ve derleyiciler 0 verilir ve <c>0 MB</c> yazılır — ölçüm vardır, değeri sıfırdır.</summary>
     [Fact]
     public void MemoryTooltip_writes_a_sleeping_engine_and_no_compilers_as_zero_megabytes() =>
-        Assert.Equal("Memory used by Build Orchestrator · app 300 MB · engine 0 MB · compilers 0 MB",
-            ResourceStripText.MemoryTooltip(300 * Mb, 0, 0));
+        Assert.Equal("Memory used by Acme · app 300 MB · engine 0 MB · compilers 0 MB",
+            ResourceStripText.MemoryTooltip("Acme", 300 * Mb, 0, 0));
 
     /// <summary>Okunamayan parça <c>—</c> olur, öteki parçalar yerinde kalır (bir parçanın hatası ötekini silmez).</summary>
     [Fact]
     public void MemoryTooltip_writes_an_unreadable_part_as_the_mark_and_keeps_the_others()
     {
-        Assert.Equal("Memory used by Build Orchestrator · app — · engine 85 MB · compilers —",
-            ResourceStripText.MemoryTooltip(null, 85 * Mb, null));
-        Assert.Equal("Memory used by Build Orchestrator · app — · engine — · compilers —",
-            ResourceStripText.MemoryTooltip(null, null, null));
+        Assert.Equal("Memory used by Acme · app — · engine 85 MB · compilers —",
+            ResourceStripText.MemoryTooltip("Acme", null, 85 * Mb, null));
+        Assert.Equal("Memory used by Acme · app — · engine — · compilers —",
+            ResourceStripText.MemoryTooltip("Acme", null, null, null));
+    }
+
+    /// <summary>Ürün adı olduğu gibi geçer — özel karakter, süslü parantez ve çok baytlı harf dahil; ikinci bir ad hiçbir yerde belirmez.</summary>
+    [Theory]
+    [InlineData("Acme")]
+    [InlineData("Acme {0} & Sons — 2")]
+    [InlineData("Café Ω")]
+    public void Both_tooltips_carry_exactly_the_product_name_they_are_given(string product)
+    {
+        Assert.Equal($"CPU used by {product} — app, engine and compilers · cap 70%",
+            ResourceStripText.CpuTooltip(product, PerfMode.Balanced));
+        Assert.Equal($"Memory used by {product} · app 1 MB · engine 2 MB · compilers 3 MB",
+            ResourceStripText.MemoryTooltip(product, 1 * Mb, 2 * Mb, 3 * Mb));
     }
 
     // ---------------------------------------------------------------- paralellik
@@ -225,7 +241,7 @@ public class ResourceStripTextTests
             Assert.Equal($"1 of {workers} projects building in parallel",
                 ResourceStripText.ParallelTooltip(mode, 1, running: true, reducedReason: null));
 
-            string cpuTooltip = ResourceStripText.CpuTooltip(mode);
+            string cpuTooltip = ResourceStripText.CpuTooltip("Acme", mode);
             if (profile.CpuCapPercent is { } cap)
                 Assert.EndsWith($" · cap {cap.ToString(CultureInfo.InvariantCulture)}%", cpuTooltip, StringComparison.Ordinal);
             else
