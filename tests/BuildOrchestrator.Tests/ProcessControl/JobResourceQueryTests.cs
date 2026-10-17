@@ -36,7 +36,7 @@ public class JobResourceQueryTests
     /// girdi taşır (en büyük değer ~0x3FFFFFC), yani 0x7FFFFFFC'ye hiçbir çekirdek nesnesi hiçbir zaman verilemez — ne bu testin ne de
     /// eşzamanlı çalışan başka bir testin ayırdığı bir tutamaç bu değere düşebilir. Sorgu <c>ERROR_INVALID_HANDLE</c> ile düşer.
     /// </summary>
-    private static readonly nint ImpossibleHandle = 0x7FFFFFFC;
+    internal static readonly nint ImpossibleHandle = 0x7FFFFFFC;
 
     /// <summary>
     /// Job muhasebesinin ölçülmüş saat çözünürlüğü payı: iki tik (2 × 15,625 ms = 312 500 × 100 ns). <c>TotalUserTime</c>/
@@ -56,8 +56,9 @@ public class JobResourceQueryTests
     /// <summary><see cref="ImpossibleHandle"/> gibi, hiçbir çekirdek nesnesine ait olamayacak bir değerin üstüne kurulmuş bir
     /// <see cref="JobObject"/>. Kurucu özeldir (üretimde tek yol <c>CreateKillOnClose</c>); üretim kodu değişmesin diye yansımayla
     /// çağrılır. Bu örnek DISPOSE EDİLMEZ: geçersiz bir değeri kapatmak anlamsızdır (hata ayıklayıcıda geçersiz-tutamaç istisnası verir) ve
-    /// <c>JobObject</c>'in sonlandırıcısı yoktur, yani bırakmak sızıntı doğurmaz.</summary>
-    private static JobObject JobOver(nint handle) => (JobObject)Activator.CreateInstance(
+    /// <c>JobObject</c>'in sonlandırıcısı yoktur, yani bırakmak sızıntı doğurmaz. Kaynak şeridinin probe testleri de (<c>ResourceSamplerTests</c>:
+    /// okunamayan job) bu yardımcıyı ve <see cref="ImpossibleHandle"/>'ı kullanır — geçersiz-job kurulumunun TEK tanımı burasıdır.</summary>
+    internal static JobObject JobOver(nint handle) => (JobObject)Activator.CreateInstance(
         typeof(JobObject), BindingFlags.Instance | BindingFlags.NonPublic, binder: null, args: [handle], culture: null)!;
 
     // ---------------------------------------------------------------- job muhasebesi ve PID listesi
