@@ -553,9 +553,6 @@ a row (§13.2). It defaults to null, so a full run writes the same line it alway
 When it is set the engine plans in full and then cuts the plan down to that one project (§8.1): dependencies
 are not compiled and nothing outside the scope enters the run.
 
-`startRun` also carries **`resolveAtFullPriority`** — the user's *Resolve cycles at full priority* setting, read
-only by a `Cycles` run (§11.1). A line without it decodes as on, the setting's default.
-
 Which runs compile dependency cycles is not a field: every compiling mode does (`Build`, `Rebuild`, `Cycles`;
 §8.1), and `Cycles` is the narrow-scope one. Modes are written to the wire as camelCase text like every other
 enum, so adding a value never shifts the meaning of an older line. `syncWorkspace` carries no cycle decision at
@@ -1393,10 +1390,6 @@ of the plan, `Cycles` compiles only the cycle groups and their stale upstream. W
 in one place (`CycleCompilation`), and so is the component map a run carries (`CycleCompilation.GroupsFor`: a full
 run of a compiling mode over a plan with cycles). `Cycles` is the third icon of the maintenance box in the action
 bar (§13.2) and is optional — useful when the cycles alone are the work to pay for.
-
-A `Cycles` run is also the one run that does not take the perf profile's cap and priority: it keeps the
-profile's worker count and runs uncapped at Normal priority, unless *Resolve cycles at full priority* is turned off in
-Settings (§11.1).
 
 **A single project is a scope, not a mode.** A run started from a row (§13.2) carries the project's identity
 and keeps the mode of the item pressed — *Build* or *Rebuild*. Planning runs in full, exactly as for any run,
@@ -2856,27 +2849,25 @@ is the worker count a profile *asks for* — the engine fits the request to the 
 | Balanced (default) | 4 | BelowNormal | 70 % |
 | Light | 2 | Idle | 40 % |
 
-A Resolve cycles run is not a fourth profile: with *Resolve cycles at full priority* on it keeps the chosen profile's
-parallelism and takes the Full row's priority and cap — Normal, none (below).
+A run's mode never changes the row that applies: `Build`, `Rebuild`, `Clean` and `Cycles` (§8.1) all run with the
+chosen profile's cap and priority exactly as the table gives them — a Resolve cycles run is not a fourth profile. The
+Supervisor applies the profile as it is, at the start of the run and on every mid-run switch, and the copy floor and
+the drain rule (§11.3) work on that same profile. Full is the only profile without a cap.
 
-Switching mid-run changes the cap and the priority live and writes a console note whose body is exactly
-`parallelism: <n> · cpu cap <p>%` (`cpu cap off` for Full); during a Resolve cycles run at full priority a switch to
-Balanced or Light writes the Resolve cycles note below instead, which adds the priority. **Parallelism does not
-change mid-run** — workers are created once at the start of a run — so the new worker count applies to the next run.
-The note text has a single owner in Core, called by both the App and the Supervisor.
+Switching mid-run changes the cap and the priority live and writes a console note, whatever the run's mode, whose body
+is exactly `parallelism: <n> · cpu cap <p>%` (`cpu cap off` for Full). **Parallelism does not change mid-run** —
+workers are created once at the start of a run — so the new worker count applies to the next run. The note text has a
+single owner in Core (`PerfNoteText`): the App takes the note from it, and the Supervisor's run-start lines take the
+wording of the cap from it too.
 
-**A Resolve cycles run takes full priority.** A `Cycles` run (§8.1) keeps the worker count of the chosen profile but
-takes the cap and the priority of the Full row — no cap, Normal — whatever the profile. Measured on a machine with
-other work running, Balanced's cap and lower priority stretched a Resolve run markedly, while on a quiet machine the
-difference was small; the run is short and the user is waiting for it. The rule is one pure function in Core
-(`PerfProfile.ForRun`); the Supervisor applies it at the start of the run and to every mid-run switch, with the mode
-and the setting that came with the run, so the copy floor and the drain rule (§11.3) work on the profile actually in
-force. `runStarted` carries the cap actually written — none — and the console and `decision.log` get one line,
-`parallelism: <n> · cpu cap off · priority normal (Resolve cycles)`, which is also the note a mid-run switch to
-Balanced or Light writes during such a run. *Settings → General → Resolve cycles at full priority* (on by default,
-carried by every `startRun`) turns the rule off, and a Resolve run then follows the profile like any other run.
-`Build`, `Rebuild` and `Clean` are never affected — including the cycle rounds a `Build` runs for a dirty group — and
-Full is uncapped at Normal already.
+**Resolve cycles follows the profile.** A `Cycles` run takes the chosen profile's cap and priority like any other run,
+and whoever wants Resolve to run faster picks Full. Running it uncapped at Normal priority whatever the profile does
+not pay for itself. Measured on the real workspace — Balanced's four workers, the same 25 projects each time — the
+uncapped run gained nothing on a quiet machine (56.5 s, against 52.4 s with Balanced's cap and priority) and about five
+percent on a machine kept busy by three busy loops and an IDE (143.8 s against 151.0 s). The price was the interface:
+it went without a frame for more than a quarter of a second 23 times, the longest wait 5.2 s, where the capped run did
+so twice, the longest 1.6 s. The chip alone sets the cap and the priority a run starts with; no run mode and no
+setting overrides them.
 
 The perf intent is also honoured during the planning window: a change made while a run is starting is held and
 applied when the run begins, rather than being silently dropped.
@@ -2911,7 +2902,12 @@ and the whole desktop stalls — not just this tool. Measured on such a machine 
 interface thread itself stayed responsive under every profile, while free physical memory under Full fell to
 a fraction of a gigabyte and committed memory passed the machine's limit; Balanced kept a working margin.
 That is why Balanced is the default, and why a build that freezes the machine is answered by a lower profile.
-The measurement is kept as an opt-in test (§17.5).
+The measurement is kept as an opt-in test (§17.5). The processor adds a reason of its own, and it shows in the
+interface rather than in the memory counters: under Full the compilers run at the same priority class as the
+interface and with no cap, so when other work keeps the cores busy they compete with it on equal terms. The Resolve
+measurement above — a run without a cap at Normal priority, on such a machine — left the interface with frame gaps of
+several seconds, where Balanced's cap and lower priority kept the gaps fewer and shorter. This is the CPU-side reason
+Balanced is the default. The interface shows no warning for Full.
 
 ### 11.2 What the cap does and does not cover
 
@@ -2935,8 +2931,8 @@ fresh structure would silently clear the kill flag.
 While a post-build copy is stuck on contention, the cap and priority are raised to the Balanced values
 (70 % / BelowNormal) for the duration of that window, which is reference-counted. Light's 40 % is therefore not
 an absolute ceiling. The floor is *defined as* Balanced's values rather than as separate constants, so the two
-cannot drift apart. The floor only raises: a run with no cap — Full, or a Resolve cycles run at full priority
-(§11.1) — never opens the window, and a Normal priority is never lowered to it.
+cannot drift apart. The floor only raises: a run with no cap — Full — never opens the window, and a Normal priority
+is never lowered to it.
 
 Once a graceful stop starts draining, the cap is never re-applied and the priority cannot go below the same
 floor (§4.5).
@@ -4270,27 +4266,27 @@ The rail exists because settings grow. A single column put every section under t
 setting squeezed it further; a section list keeps each page short and gives the next settings a place to land
 without widening the dialog. **General** is that place. Its rows come from one catalog
 (`GeneralSettingsCatalog`) in six groups — *Startup* (*Start with Windows*, *Start minimized to tray*, *Close
-to tray*), *Build* (*Pull before build*, *Resolve cycles at full priority*), *Branches* (*Stash and switch
+to tray*), *Build* (*Pull before build*), *Branches* (*Stash and switch
 branches*, §10.3), *Console* (*Compact console*, §13.5), *Engine* (*Stop the engine when idle*, §4.7) and
 *Notifications* (*Show notifications*) — and every row is drawn by one template (`Ds.Settings.ToggleRow`): the name
 over a single line of description on the left, a switch on the right, a hairline between rows but not above a group's
 first. Adding a setting is adding a catalog row; there is no layout work. The row is also the setting's one default:
 the view model's field, the window's seed from a `ui-state.json` that has no key for it and the shell switches' reader
-all ask the catalog (`DefaultOf`), the dialog's draft opens on the row and *Clear* returns to it, and for the five
+all ask the catalog (`DefaultOf`), the dialog's draft opens on the row and *Clear* returns to it, and for the four
 workflow preferences — the ones that are not shell switches — the row carries the approved value together with the
 reason for it, so that neither is written twice in the source. A row that depends on another (*Start minimized to
 tray* on *Start with Windows*) fades to the switch's own disabled opacity and stops taking input while its parent is
 off, without moving anything. Every switch on the page drives behaviour. *Stash and switch branches* follows the pull
 switch's rules: saved with *Save*, carried to the engine on the next checkout, and a console note written only when
-its value actually changed. *Resolve cycles at full priority* follows the same rules and travels with every `startRun`
-(§11.1). *Compact console* is saved and noted the same way — `Compact console on — errors, the first warnings of each
-project and a warning count from the next run`, or `Compact console off — every MSBuild line is shown from the next
-run` — but it never reaches the engine: it is the App's own choice of how the console writes each project's output
-(§13.5). The mode in effect follows the switch whenever no work is in flight — no run, Sync, Clean, Optimize, checkout
-or pull; while work is in flight the mode it had when that work started holds, so a run's narrative is written in one
-mode and no project's count of warnings changes its rules halfway. A *Save* made while nothing is in flight therefore
-takes effect at once, and one made during a run or any other work the moment none is left, however that work ended — a
-pull the engine refused or a run that never started included. Text already on screen is never rewritten.
+its value actually changed. *Compact console* is saved and noted the same way — `Compact console on — errors, the
+first warnings of each project and a warning count from the next run`, or `Compact console off — every MSBuild line
+is shown from the next run` — but it never reaches the engine: it is the App's own choice of how the console writes
+each project's output (§13.5). The mode in effect follows the switch whenever no work is in flight — no run, Sync,
+Clean, Optimize, checkout or pull; while work is in flight the mode it had when that work started holds, so a run's
+narrative is written in one mode and no project's count of warnings changes its rules halfway. A *Save* made while
+nothing is in flight therefore takes effect at once, and one made during a run or any other work the moment none is
+left, however that work ended — a pull the engine refused or a run that never started included. Text already on
+screen is never rewritten.
 
 *Stop the engine when idle* is saved and noted the same way — `Stop the engine when idle on — the engine exits after
 five idle minutes`, or `Stop the engine when idle off — the engine is no longer stopped when idle` — and it never
@@ -4371,7 +4367,7 @@ then the pending repository root (which resets the project rows to hollow), then
 order is load-bearing, because the Sync command carries the layer patterns and the external list — sent before
 they were applied, it would carry stale ones: the grouping would be wrong for a whole Sync and the external rows
 would describe the previous list. The Sync itself is unconditional: Save does not compare old and new state to
-decide whether to run it. The five workflow preferences ride along as optional values: *Save* gives all five, and a
+decide whether to run it. The four workflow preferences ride along as optional values: *Save* gives all four, and a
 caller that leaves one out leaves that setting as it was, without a note.
 
 The pull switch has a note of its own, and it is quieter still: it prints only when the value actually changed
@@ -4416,12 +4412,12 @@ change deferred — …`. A root entered afterwards is a first setup again: sile
 
 **Export · Import · Clear.** The footer carries three icon buttons on its left. Export writes
 `build-orchestrator-settings.json` — `{ app, version, repositoryRoot, externalProjects[{ path }],
-pullExternalBeforeBuild, stashOnBranchSwitch, resolveAtFullPriority, compactConsole, stopEngineWhenIdle,
+pullExternalBeforeBuild, stashOnBranchSwitch, compactConsole, stopEngineWhenIdle,
 startWithWindows, startMinimizedToTray, closeToTray, showNotifications, layers[{ name, pattern }] }`, the external
 array sitting between the root and the layers (the field order the file is written in, not just a key that happens to
 be present) and holding only cards with a non-blank path; import reads one back **into the form**; clear empties the
 root, every layer and every external card, and returns every General switch to its catalog default — *Pull before
-build*, *Resolve cycles at full priority*, *Compact console*, *Stop the engine when idle*, *Close to tray* and *Show
+build*, *Compact console*, *Stop the engine when idle*, *Close to tray* and *Show
 notifications* on, the rest off. Every General switch travels in the file, so saving an imported file that has *Start
 with Windows* on turns it on for that machine — deliberately. All three touch the draft only: nothing is applied until
 *Save*, and there is no confirmation dialog. Clear's confirmation is the button itself — the first press turns the icon
@@ -4449,8 +4445,8 @@ highlighted pattern`, in that order of priority. The draft derives the reason fr
 conditions that gate *Save* (`SaveBlockedReason`, with `CanSave` defined as "no reason"), so the button and the
 line cannot disagree.
 
-A file that omits a switch's key (`pullExternalBeforeBuild`, `stashOnBranchSwitch`, `resolveAtFullPriority`,
-`compactConsole`, `stopEngineWhenIdle`, `startWithWindows`, `startMinimizedToTray`, `closeToTray` or
+A file that omits a switch's key (`pullExternalBeforeBuild`, `stashOnBranchSwitch`, `compactConsole`,
+`stopEngineWhenIdle`, `startWithWindows`, `startMinimizedToTray`, `closeToTray` or
 `showNotifications`) leaves that switch where it is, the same rule the external list already follows: a file cannot
 silently reset a setting it does not carry.
 
@@ -6286,7 +6282,7 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 | `source-hash-cache.json` | source content hashes keyed by path, size and modification time (§7.1) — this is what turns the content decision into one stat pass per run | falls back to empty (the next run re-reads and rebuilds it) |
 | `run-inflight.json` | the ids of the projects the engine has dispatched and not yet reported — written at dispatch, erased at the result, emptied at the end of every run; left non-empty only by an engine that died mid-run, and read once at the next engine start (§8.7). Absent while no run is in flight | an unparsable file is deleted and nothing is recovered; an unreadable one stays for the next start |
 | `msbuild\wpf-temporary-assembly.targets`, `msbuild\wpf-temporary-assembly-friend.cs` | the two files behind `-p:CustomBeforeMicrosoftCommonTargets` (§9.2). An engine writes them the first time it resolves `MSBuild.exe` — on its first run or its first Optimize — and only when the content on disk differs from its own; both files carry a fixed, old modification time however they were written (§9.2); the path carries no version, and a missing or edited file is repaired the next time a new engine resolves MSBuild | rewritten from the engine's own copy the next time a new engine resolves MSBuild; if they cannot be written or pinned, builds run without the argument |
-| `ui-state.json` | layout mode + three splits, repository root, configuration, perf mode, layer patterns, external roots (path) and whether to update them (§10.4), whether to stash before a branch switch (§10.3), whether *Resolve cycles* runs at full priority (§11.1), whether the console is compact (§13.5) and whether an idle engine is stopped (§4.7) — all three on when the field is absent —, the gestures of the two global hotkeys (show/hide and build, §12.3), *Start with Windows* (`Autostart`) and *Start minimized to tray*, whether closing the window hides to the tray and whether tray notifications are shown (§12.3), tray-balloon-shown, last-seen release-notes version. The branch is not stored: it is whatever is checked out. Fields older versions wrote and this one no longer reads are ignored | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
+| `ui-state.json` | layout mode + three splits, repository root, configuration, perf mode, layer patterns, external roots (path) and whether to update them (§10.4), whether to stash before a branch switch (§10.3), whether the console is compact (§13.5) and whether an idle engine is stopped (§4.7) — the last two on when the field is absent —, the gestures of the two global hotkeys (show/hide and build, §12.3), *Start with Windows* (`Autostart`) and *Start minimized to tray*, whether closing the window hides to the tray and whether tray notifications are shown (§12.3), tray-balloon-shown, last-seen release-notes version. The branch is not stored: it is whatever is checked out. Fields older versions wrote and this one no longer reads are ignored | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
 
 *Start with Windows* additionally writes one `HKCU\...\Run` value, and turning it on removes Task Manager's
 disabled mark for that value under `HKCU\...\Explorer\StartupApproved\Run` when there is one (§12.3).
@@ -6499,7 +6495,7 @@ A category of tests that assert properties of the *source*, not of a run:
 | One memory read (`MemoryReadGuardTests`) | the process's memory (`PrivateMemorySize64`, `GetGCMemoryInfo`, `GC.GetTotalMemory`) is read only in `Core/Diagnostics/MemoryLine.cs` (§11.4), and `GC.GetTotalMemory` only with the literal `false` — any other argument may be a hidden full collection, which the `GC.Collect` guard cannot see |
 | One engine gate (`EngineGateGuardTests`) | every request to the engine passes the gate of §4.7 and nothing walks around it: `SendWithFailureLineAsync(` is called only from the four methods that ask the gate first (`TrySendAsync`, `BeginRunAsync`, `SyncCoreAsync`, `LoadProjectLogAsync`); `SendToEngineAsync(` only from `SendWithFailureLineAsync`, and the host's `SendAsync(` — through any reference — only from `SendToEngineAsync`; a request is registered with the gate (`EngineGate.Enter`, whatever the receiver) only from `EnsureEngineAwakeAsync`, and every call of the gate holds its pass with `using`; the gate questions that `ReleaseAfterEngineLoss` asks are exactly the list of window-holding types the loss theory walks; and the branch inventory never asks the gate. The scans read code only — comments and string literals are skipped — and the call-form rules each have a proof test that catches their form of bypass. Two things stay for review: a send made inside an allowed method without asking the gate, and an allowed method bound to a delegate and called from elsewhere |
 | One infinite bottom request (`ConsoleBottomRequestGuardTests`) | the console asks for an infinite bottom (`ScrollToEnd(`) only in the mode switch's pin, `PinAfterModeSwitch`; the follow's and End's request is finite and vertical (§13.4). The scan reads code only, proves first that the pin still asks for it, and is shown to see a request outside the pin and to ignore a comment, a literal and a brace inside the pin |
-| No literal default (`GeneralSettingChainTests.No_workflow_setting_starts_from_a_literal_default`) | none of the five workflow preferences starts from a literal in the source: not the view model's field (written with `true` or `false`, or left unset), not the draft's or the apply call's parameter, not the window's seed from a key-less state (`?? true`); the catalog row is the one default (§13.3). The wire records of the contracts keep their own field defaults, which only say how a line without the field reads, and lie outside the rule. The rule is shown to catch each form, and to ignore a comment, a string and a field that reads the catalog |
+| No literal default (`GeneralSettingChainTests.No_workflow_setting_starts_from_a_literal_default`) | none of the four workflow preferences starts from a literal in the source: not the view model's field (written with `true` or `false`, or left unset), not the draft's or the apply call's parameter, not the window's seed from a key-less state (`?? true`); the catalog row is the one default (§13.3). The wire records of the contracts keep their own field defaults, which only say how a line without the field reads, and lie outside the rule. The rule is shown to catch each form, and to ignore a comment, a string and a field that reads the catalog |
 
 **Tests never run the real collection.** The operation-end trim (§11.4, §12.3) is a blocking, compacting collection of
 the whole process; paid at the end of every operation of every window and coordinator test, it would stall the suite
@@ -6583,8 +6579,8 @@ repository whose root comes from `BO_MEASURE_ROOT`, `BO_MEASURE_COLD_ROOT` or `B
 skip only when that root is absent — on a machine where the default root exists they run with the normal suite. One
 probe lives in the application rather than the suite, because what it measures only exists there: with
 `BO_PROBE_FRAMES=<file>` the shell records the gap between every two frames it draws, one line per five-second window
-(frames drawn, longest gap, gaps over 33/50/100/250 ms), which is how an animation freeze under a real, full-priority
-run is measured; without the variable nothing is created.
+(frames drawn, longest gap, gaps over 33/50/100/250 ms), which is how an animation freeze under a real run with no cap
+(Full) is measured; without the variable nothing is created.
 
 The memory budget (`NarrativeBudgetTests`) has two halves. The measurement drives a long synthetic run through the real
 shell and view model — a run that names its run folder, as the engine's do, so the narrative spools to disk (§13.5) —
@@ -7374,7 +7370,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Job object: creation, assignment, CPU rate, priority, terminate | `Core/ProcessControl/JobObject.cs`, `NativeMethods.cs` |
 | Suspended launch + handle-list inheritance | `Core/ProcessControl/JobProcessLauncher.cs`, `ProcThreadAttributeList.cs`, `JobChildProcess.cs` |
 | Job completion port notifications | `Core/ProcessControl/JobCompletionPort.cs` |
-| Perf table, copy-phase floor, and the Resolve cycles full-priority rule: the transform, its note, the single point where the engine applies it (run start and every mid-run switch) and where the App writes the note (run start, mid-run switch) | `Core/ProcessControl/PerfProfile.cs` (`ForRun`), `PerfNoteText.cs` (`ResolveNote`), `ICpuGovernor.cs`, `ICopyPhaseCpuFloor.cs`, `Supervisor/RunCoordinator.cs` (`ApplyPerfLocked`), `App/ViewModels/RunViewModel.cs` (`OnRunStarted`, `CyclePerfAsync`) |
+| Perf table and copy-phase floor; the chip's note; the single point where the engine applies the chosen profile (run start and every mid-run switch) and where the App writes the note (mid-run switch) | `Core/ProcessControl/PerfProfile.cs`, `PerfNoteText.cs` (`Note`), `ICpuGovernor.cs`, `ICopyPhaseCpuFloor.cs`, `Supervisor/RunCoordinator.cs` (`ApplyPerfLocked`), `App/ViewModels/RunViewModel.cs` (`CyclePerfAsync`) |
 | Worker budget: the clamp rule with all its constants, the machine reading it uses (logical processors, free physical memory), the note a reduction writes, the single point where the engine applies it at run start (and writes the note to `decision.log`), and where the App writes the note (console at run start, event stream right after the opening line) | `Core/ProcessControl/WorkerBudget.cs`, `MachineResources.cs`, `PerfNoteText.cs` (`WorkersReduced`), `NativeMethods.cs` (`GlobalMemoryStatusEx`), `Supervisor/RunCoordinator.cs`, `App/ViewModels/RunViewModel.cs` (`OnRunStarted`, `WorkersReducedNote`), `App/ViewModels/RunViewModel.Stream.cs` (`BuildPreviewEvent` branch) |
 | Run-start warnings (stale `obj`, reverse layer): gathered once before `runStarted`, written to `decision.log`, carried by `runStarted.warnings`, and where the App writes them (console at run start; event stream after the opening and reduction lines with the prefix dropped, folded into one counting line past a small limit) | `Supervisor/RunCoordinator.cs`, `Supervisor/StaleObjRunStartWarner.cs`, `Contracts/Ipc/IpcMessages.cs` (`RunStartedEvent.Warnings`), `App/ViewModels/RunViewModel.cs` (`OnRunStarted`), `App/ViewModels/RunViewModel.Stream.cs` (`BuildPreviewEvent` branch), `App/ViewModels/StreamText.cs` (`RunStartWarningLines`) |
 | File IO concurrency: the one degree shared by the first content-hash fill (the miss scan and the reads), input collection, the fingerprint warm-up, the output checks and the group-start surface hash | `Core/Io/IoParallelism.cs`, `Core/Incremental/SourceHashCache.cs`, `Core/Incremental/IncrementalRunBinder.cs`, `Supervisor/RunCoordinator.cs` |
