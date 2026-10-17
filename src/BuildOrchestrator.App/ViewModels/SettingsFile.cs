@@ -9,7 +9,7 @@ namespace BuildOrchestrator.App.ViewModels;
 /// <summary>
 /// [design v1.10.0 §2.9 · K5] Settings'in <b>dışa/içe aktarılan</b> dosya biçimi:
 /// <c>{ app, version, repositoryRoot, externalProjects[{ path }], pullExternalBeforeBuild, stashOnBranchSwitch,
-/// resolveAtFullPriority, compactConsole, stopEngineWhenIdle, startWithWindows, startMinimizedToTray, closeToTray,
+/// compactConsole, stopEngineWhenIdle, startWithWindows, startMinimizedToTray, closeToTray,
 /// showNotifications, layers[{ name, pattern }] }</c> —
 /// <c>externalProjects</c> BİLEREK <c>repositoryRoot</c> ile <c>layers</c> ARASINDADIR (design v1.14.0/§9),
 /// hem burada hem sınıf içindeki alan bildirim sırasında (JSON çıktısını o sıra belirler). Dosyanın adı
@@ -59,10 +59,6 @@ public sealed class SettingsFile
     /// taslaktaki değeri sıfırlamaz (<see cref="SettingsDraftViewModel.LoadFrom"/>).</summary>
     [JsonPropertyName("stashOnBranchSwitch")] public bool? StashOnBranchSwitch { get; set; }
 
-    /// <summary>[RESOLVE Faz 4 / karar 11] Resolve cycles tam öncelikte mi koşsun. <see cref="StashOnBranchSwitch"/> gibi
-    /// KASITLI OLARAK nullable: anahtarı taşımayan (eski) bir dosya taslaktaki değeri sıfırlamaz.</summary>
-    [JsonPropertyName("resolveAtFullPriority")] public bool? ResolveAtFullPriority { get; set; }
-
     /// <summary>[idle-memory · dalga 2 / spec §6.5] Konsol anlatısı proje çıktısını kompakt mı göstersin.
     /// <see cref="StashOnBranchSwitch"/> gibi KASITLI OLARAK nullable: anahtarı taşımayan (eski) bir dosya taslaktaki değeri
     /// sıfırlamaz.</summary>
@@ -109,7 +105,7 @@ public sealed class SettingsFile
     /// hiç eksik BIRAKMAZ (§9: "yalnız boş olmayan path'ler").</summary>
     public static SettingsFile From(string? repositoryRoot, IReadOnlyList<LayerPattern> layers,
         IReadOnlyList<ExternalProject>? externals = null, bool? pullExternalBeforeBuild = null,
-        bool? stashOnBranchSwitch = null, bool? resolveAtFullPriority = null, bool? compactConsole = null,
+        bool? stashOnBranchSwitch = null, bool? compactConsole = null,
         bool? stopEngineWhenIdle = null)
     {
         ArgumentNullException.ThrowIfNull(layers);
@@ -118,7 +114,6 @@ public sealed class SettingsFile
             RepositoryRoot = repositoryRoot,
             PullExternalBeforeBuild = pullExternalBeforeBuild,
             StashOnBranchSwitch = stashOnBranchSwitch,
-            ResolveAtFullPriority = resolveAtFullPriority,
             CompactConsole = compactConsole,
             StopEngineWhenIdle = stopEngineWhenIdle,
             // Sıra BİLEREK budur (RepositoryRoot → ExternalProjects → Layers): nesne başlatıcısının kendi

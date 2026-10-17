@@ -4,10 +4,9 @@ using CommunityToolkit.Mvvm.ComponentModel;
 namespace BuildOrchestrator.App.ViewModels;
 
 /// <summary>[design v1.19.0 §2.9] Settings → General sayfasının anahtarları.
-/// <para>Dokuz anahtarın hepsi gerçektir. <see cref="PullBeforeBuild"/>
-/// (<see cref="SettingsDraftViewModel.PullExternalsBeforeBuild"/>), <see cref="StashOnBranchSwitch"/>
-/// (<see cref="SettingsDraftViewModel.StashOnBranchSwitch"/>) ve <see cref="ResolveAtFullPriority"/>
-/// (<see cref="SettingsDraftViewModel.ResolveAtFullPriority"/>) motora giden iş akışı tercihleridir;
+/// <para>Sekiz anahtarın hepsi gerçektir. <see cref="PullBeforeBuild"/>
+/// (<see cref="SettingsDraftViewModel.PullExternalsBeforeBuild"/>) ve <see cref="StashOnBranchSwitch"/>
+/// (<see cref="SettingsDraftViewModel.StashOnBranchSwitch"/>) motora giden iş akışı tercihleridir;
 /// <see cref="CompactConsole"/> (<see cref="SettingsDraftViewModel.CompactConsole"/>) ve <see cref="StopEngineWhenIdle"/>
 /// (<see cref="SettingsDraftViewModel.StopEngineWhenIdle"/>) App-içi tercihlerdir — ilki konsol anlatısının proje çıktısını nasıl
 /// göstereceğini, ikincisi App'in boştaki motor sürecini ne zaman durduracağını söyler ve ikisi de motora GİTMEZ; kalan dördü kabuk
@@ -37,9 +36,6 @@ public enum GeneralSetting
     /// <summary>Gerçek bayrak: <see cref="SettingsDraftViewModel.StashOnBranchSwitch"/> — branch chip'inden
     /// checkout'ta kirli ağaç stash'lenip geçilsin mi (spec 2026-09-18 §6.3).</summary>
     StashOnBranchSwitch,
-    /// <summary>[RESOLVE Faz 4 / karar 11] Gerçek bayrak: <see cref="SettingsDraftViewModel.ResolveAtFullPriority"/> —
-    /// Resolve cycles koşusu profilin işçi sayısıyla ama cap'siz ve Normal öncelikte mi koşsun.</summary>
-    ResolveAtFullPriority,
     /// <summary>[idle-memory · dalga 2 / spec §6.5] Gerçek bayrak: <see cref="SettingsDraftViewModel.CompactConsole"/> —
     /// konsol anlatısı proje çıktısını kompakt mı göstersin (hatalar tam, her projenin ilk uyarıları ve kalanın sayısı;
     /// kapalıyken her satır). Motora gitmez; değişiklik bir sonraki işlemde geçerli olur.</summary>
@@ -89,11 +85,6 @@ public static class GeneralSettingsCatalog
             new(GeneralSetting.PullBeforeBuild, "Pull before build",
                 "Update every external working copy first — a fast-forward-only git pull, one per copy.", Default: true,
                 AutomationName: AccessibilityNames.PullExternalsBeforeBuild),
-            // Açık: onaylanmış varsayılan (RESOLVE Faz 4 / karar 11, kullanıcı onayı).
-            new(GeneralSetting.ResolveAtFullPriority, "Resolve cycles at full priority",
-                "Resolve cycles runs at normal priority with no CPU cap, whatever the performance mode — it finishes "
-                + "sooner on a busy machine, but other apps may slow down while it runs. Off: it follows the performance mode.",
-                Default: true),
         ]),
         new("BRANCHES",
         [
@@ -130,7 +121,7 @@ public static class GeneralSettingsCatalog
         Groups.SelectMany(g => g.Rows).Single(r => r.Setting == setting);
 
     /// <summary>[B3 · karar 47a] Ayarın varsayılanı — satırın <see cref="GeneralSettingDefinition.Default"/>'u. Varsayılanı okuyan HER yer
-    /// bunu çağırır: <see cref="RunViewModel"/>'in beş ayar alanı, kabuğun açılış tohumu (<c>MainWindow</c>: kayıtlı ?? bu) ve kabuk
+    /// bunu çağırır: <see cref="RunViewModel"/>'in dört ayar alanı, kabuğun açılış tohumu (<c>MainWindow</c>: kayıtlı ?? bu) ve kabuk
     /// anahtarlarının okuyucusu (<see cref="ShellSwitches.IsOn"/>); taslağın satırları tanımın kendisinden açılır. İkinci bir literal
     /// yazılmaz (kopya YASAK).</summary>
     public static bool DefaultOf(GeneralSetting setting) => Definition(setting).Default;

@@ -203,12 +203,11 @@ public partial class MainWindow : Window
         // yanı başında) — null-safe desen kardeşleriyle hizalı. Seed yalnız App içi listeyi doldurur, hiçbir
         // IPC/Sync tetiklemez; liste bir sonraki Sync/Build komutuyla motora gider.
         if (saved.ExternalProjects is { Count: > 0 }) _vm.ExternalProjects = saved.ExternalProjects;
-        // [B3 · karar 47a] Beş iş akışı tercihi: kayıtlı değer ?? kataloğun varsayılanı. Anahtar hiç yazılmamışsa (ayar öncesi kaydedilmiş
+        // [B3 · karar 47a] Dört iş akışı tercihi: kayıtlı değer ?? kataloğun varsayılanı. Anahtar hiç yazılmamışsa (ayar öncesi kaydedilmiş
         // bir dosya ya da bayat bir null token) ayar kataloğun varsayılanıyla açılır. Varsayılanın TEK tanımı kataloğun satırıdır
         // (onaylanmış değerler ve gerekçeleri orada); burada ikinci bir literal yazılmaz.
         _vm.UpdateExternals = saved.UpdateExternals ?? GeneralSettingsCatalog.DefaultOf(GeneralSetting.PullBeforeBuild);
         _vm.StashOnBranchSwitch = saved.StashOnBranchSwitch ?? GeneralSettingsCatalog.DefaultOf(GeneralSetting.StashOnBranchSwitch);
-        _vm.ResolveAtFullPriority = saved.ResolveAtFullPriority ?? GeneralSettingsCatalog.DefaultOf(GeneralSetting.ResolveAtFullPriority);
         _vm.CompactConsole = saved.CompactConsole ?? GeneralSettingsCatalog.DefaultOf(GeneralSetting.CompactConsole);
         _vm.StopEngineWhenIdle = saved.StopEngineWhenIdle ?? GeneralSettingsCatalog.DefaultOf(GeneralSetting.StopEngineWhenIdle);
         _vm.PropertyChanged += OnWorkflowPreferenceChanged;
@@ -1307,7 +1306,7 @@ public partial class MainWindow : Window
         SyncModeButtons(state.Mode);
     }
 
-    /// <summary>[D6 fold] İş akışı tercihi (RepositoryRoot/Configuration/PerfMode/UpdateExternals/StashOnBranchSwitch/ResolveAtFullPriority/
+    /// <summary>[D6 fold] İş akışı tercihi (RepositoryRoot/Configuration/PerfMode/UpdateExternals/StashOnBranchSwitch/
     /// CompactConsole/StopEngineWhenIdle) değişince kalıcı duruma yazar — yerleşim persist'iyle AYNI desen (Load → muta → Save; düşük frekans).
     /// [D7 M3] RootPath değişimi (Settings → Save ile uygulanan kök, ilk kurulum dahil)
     /// TEK noktadan buradan persist edilir; açılışta seed edilip hatırlanır.</summary>
@@ -1320,7 +1319,6 @@ public partial class MainWindow : Window
             case nameof(RunViewModel.PerfMode):
             case nameof(RunViewModel.UpdateExternals):
             case nameof(RunViewModel.StashOnBranchSwitch):
-            case nameof(RunViewModel.ResolveAtFullPriority):
             case nameof(RunViewModel.CompactConsole):
             case nameof(RunViewModel.StopEngineWhenIdle):
                 var s = _uiState.Load();
@@ -1329,7 +1327,6 @@ public partial class MainWindow : Window
                 s.PerfMode = _vm.PerfMode;
                 s.UpdateExternals = _vm.UpdateExternals;
                 s.StashOnBranchSwitch = _vm.StashOnBranchSwitch;
-                s.ResolveAtFullPriority = _vm.ResolveAtFullPriority;
                 s.CompactConsole = _vm.CompactConsole;
                 s.StopEngineWhenIdle = _vm.StopEngineWhenIdle;
                 _uiState.Save(s);

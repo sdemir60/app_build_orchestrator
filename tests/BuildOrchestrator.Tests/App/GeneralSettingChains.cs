@@ -10,9 +10,9 @@ namespace BuildOrchestrator.Tests.App;
 /// zinciri koşan teoriler (<see cref="GeneralSettingChainTests"/>) satırı ayarın adıyla buradan alır. Yeni bir ayar = kataloğa bir satır +
 /// buraya bir satır; tablonun kataloğu eksiksiz kapsadığı ayrıca pinlidir
 /// (<see cref="GeneralSettingChainTests.The_table_has_one_row_per_catalog_row_and_the_shell_rows_are_the_shell_switches"/>).
-/// <para>İki tür satır vardır: VM'de yaşayan beş iş akışı tercihi (<see cref="WorkflowFaces"/> — Pull before build, Resolve cycles at
-/// full priority, Stash and switch branches, Compact console, Stop the engine when idle) ve <see cref="ShellSwitches"/> tablosunun dört
-/// kabuk anahtarı (<see cref="ShellFaces"/>).</para>
+/// <para>İki tür satır vardır: VM'de yaşayan dört iş akışı tercihi (<see cref="WorkflowFaces"/> — Pull before build, Stash and switch
+/// branches, Compact console, Stop the engine when idle) ve <see cref="ShellSwitches"/> tablosunun dört kabuk anahtarı
+/// (<see cref="ShellFaces"/>).</para>
 /// </summary>
 internal static class GeneralSettingChains
 {
@@ -50,18 +50,6 @@ internal static class GeneralSettingChains
                 (r, v) => r.ApplySettingsAsync([], Root, [Mail], pullExternalsBeforeBuild: v),
                 OnNote: "Pull before build on — external working copies update first",
                 OffNote: "Pull before build off — external working copies are used as they are")),
-        // Varsayılan AÇIK (kullanıcı onayı). [DEĞİŞEN KURAL — fix 1A · M5] Notların soneki eskiden "Resolve cycles follows…" / "Resolve
-        // cycles runs…" idi; Save koşu sürerken de yazılır ve not uçuştaki koşuyu değiştiriyormuş gibi okunuyordu (motor koşu başındaki
-        // anahtarı korur) — sonek artık bir SONRAKİ Resolve koşusunu söyler. Etiket önekini kod katalogdan türetir; tablo literal metni pinler.
-        new(GeneralSetting.ResolveAtFullPriority, "Resolve cycles at full priority", ApprovedDefault: true,
-            "resolveAtFullPriority", f => f.ResolveAtFullPriority, s => s.ResolveAtFullPriority, (s, v) => s.ResolveAtFullPriority = v,
-            Workflow: new(nameof(SettingsDraftViewModel.ResolveAtFullPriority),
-                d => d.ResolveAtFullPriority, (d, v) => d.ResolveAtFullPriority = v,
-                v => new(null, Root, resolveAtFullPriority: v),
-                r => r.ResolveAtFullPriority, (r, v) => r.ResolveAtFullPriority = v,
-                (r, v) => r.ApplySettingsAsync([], Root, [], resolveAtFullPriority: v),
-                OnNote: "Resolve cycles at full priority on — the next Resolve cycles run runs at normal priority with no CPU cap",
-                OffNote: "Resolve cycles at full priority off — the next Resolve cycles run follows the performance mode")),
         // Varsayılan KAPALI: araç kullanıcının commit'lenmemiş işini kendiliğinden kenara koymaz.
         new(GeneralSetting.StashOnBranchSwitch, "Stash and switch branches", ApprovedDefault: false,
             "stashOnBranchSwitch", f => f.StashOnBranchSwitch, s => s.StashOnBranchSwitch, (s, v) => s.StashOnBranchSwitch = v,
@@ -107,7 +95,7 @@ internal static class GeneralSettingChains
         All.SingleOrDefault(c => c.Setting == setting)
         ?? throw new Xunit.Sdk.XunitException($"{setting}: the catalog has a row the chain table does not — add one to GeneralSettingChains");
 
-    /// <summary>VM'de yaşayan beş iş akışı tercihinin satırları (satırın kendi <see cref="GeneralSettingChain.Workflow"/> yüzüyle karışmasın diye
+    /// <summary>VM'de yaşayan dört iş akışı tercihinin satırları (satırın kendi <see cref="GeneralSettingChain.Workflow"/> yüzüyle karışmasın diye
     /// ad <c>…Rows</c>).</summary>
     public static IEnumerable<GeneralSettingChain> WorkflowRows => All.Where(c => c.Workflow is not null);
 
