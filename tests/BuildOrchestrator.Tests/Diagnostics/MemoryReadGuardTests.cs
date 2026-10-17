@@ -14,11 +14,11 @@ namespace BuildOrchestrator.Tests.Diagnostics;
 /// <para><b>Değişen kural (ölçüm, 2026-10-17):</b> eski iddia "özel baytlar <c>Process.PrivateMemorySize64</c> ile okunur, tek yeri
 /// <c>MemoryLine.Read</c>'dir" idi ve guard o adı tarıyordu. Kaynak şeridi App + motor + derleyicilerin özel baytlarını 3 sn'de bir okur ve
 /// makine çapında süreç taraması yasaktır (<see cref="NoProcessScanGuardTests"/>). Ölçüldü: <c>PrivateMemorySize64</c> HER çağrıda
-/// makinedeki tüm süreçlerin anlık görüntüsünü alır (~3,4 ms ve ~3,2 KB/çağrı); <c>GetProcessMemoryInfo(...).PrivateUsage</c> ~0,2 µs, 0
-/// bayt ve AYNI ölçüdür (başkasının sürecinde art arda okumada eşit; kendi sürecimizde eski sayaç kendi anlık görüntü tamponunu da sayar
-/// — bu makinede 1 MiB + 8 KiB fazla, bkz. <c>JobResourceQueryTests</c>). Bu yüzden özel baytların TEK yolu <c>GetProcessMemoryInfo</c>'dur ve
-/// <c>PrivateMemorySize64</c> üretim ağacında HİÇBİR yerde yoktur — <c>MemoryLine</c> içinde bile. Kural değişince bu guard yeni kuralı
-/// pinler (eski adı yasaklar), eski testi gevşetmez.</para>
+/// makinedeki tüm süreçlerin anlık görüntüsünü alır (çağrı başına milisaniyeler ve birkaç KB); <c>GetProcessMemoryInfo(...).PrivateUsage</c>
+/// mikrosaniyeler sürer, bayt ayırmaz ve AYNI ölçüdür (başkasının sürecinde art arda okumada eşit; kendi sürecimizde eski sayaç kendi
+/// anlık görüntü tamponunu da sayar — bu makinede 1 MiB + 8 KiB fazla, bkz. <c>JobResourceQueryTests</c>). Bu yüzden özel baytların TEK
+/// yolu <c>GetProcessMemoryInfo</c>'dur ve <c>PrivateMemorySize64</c> üretim ağacında HİÇBİR yerde yoktur — <c>MemoryLine</c> içinde bile.
+/// Kural değişince bu guard yeni kuralı pinler (eski adı yasaklar), eski testi gevşetmez.</para>
 ///
 /// <para><b>Bildirim dosyası muaftır:</b> <c>GetProcessMemoryInfo</c>'un P/Invoke bildirimi Core'un TEK P/Invoke dosyasında
 /// (<c>ProcessControl/NativeMethods.cs</c>) durur ve bildirim bir okuma değildir; ÇAĞRI yalnız <c>MemoryLine.cs</c>'tedir. Muafiyet yalnız bu

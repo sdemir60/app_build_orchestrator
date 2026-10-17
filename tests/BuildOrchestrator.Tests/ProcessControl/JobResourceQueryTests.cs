@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Reflection;
 using BuildOrchestrator.Core.Diagnostics;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Tests.App;
@@ -30,16 +31,34 @@ public class JobResourceQueryTests
     /// <summary>Win32 <c>ERROR_INVALID_HANDLE</c>.</summary>
     private const int ErrorInvalidHandle = 6;
 
-    /// <summary>Job'un son üyesi çıkana dek bekler (<c>JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO</c>): çıkışın kernel'deki karşılığı, uyku/poll
-    /// değil. Diğer bildirimler (doğumlar, tek tek çıkışlar) atlanır.</summary>
-    private static void WaitUntilJobIsEmpty(JobCompletionPort port, TimeSpan timeout)
-    {
-        while (true)
-        {
-            var notification = port.WaitNext(timeout) ?? throw new TimeoutException("the job never became empty");
-            if (notification.MessageId == NativeMethods.JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO) return;
-        }
-    }
+    /// <summary>
+    /// Hiçbir süreçte ASLA geçerli bir tutamaç olamayacak bir değer: tutamaç değerleri 4'ün katıdır ve süreç başına tablo en çok 2^24
+    /// girdi taşır (en büyük değer ~0x3FFFFFC), yani 0x7FFFFFFC'ye hiçbir çekirdek nesnesi hiçbir zaman verilemez — ne bu testin ne de
+    /// eşzamanlı çalışan başka bir testin ayırdığı bir tutamaç bu değere düşebilir. Sorgu <c>ERROR_INVALID_HANDLE</c> ile düşer.
+    /// </summary>
+    private static readonly nint ImpossibleHandle = 0x7FFFFFFC;
+
+    /// <summary>
+    /// Job muhasebesinin ölçülmüş saat çözünürlüğü payı: iki tik (2 × 15,625 ms = 312 500 × 100 ns). <c>TotalUserTime</c>/
+    /// <c>TotalKernelTime</c> ~15,625 ms'lik saat tikleriyle ilerler (probe: <c>user=312500</c> = 2 tik). Job toplamı ile çıkmış üyenin
+    /// KENDİ işlemci zamanı (<c>GetProcessTimes</c>) ayrı zamanlarda ve ayrı tik sınırlarında okunur; ~160 koşuda 3 kez job toplamı
+    /// üyenin kendi toplamından TAM BİR tik küçük okundu ("job total 00:00:00.1093750 must include the exited member's own
+    /// 00:00:00.1250000": fark 15,625 ms). Pay bu çözünürlüğün kendisidir, bütçe ya da eşik gevşetmesi DEĞİL: üyenin süresi job'dan
+    /// düşse (~100 ms ve üstü) yine yakalanır; "sıfırdan büyük" ve "önceki job okumasından küçük değil" iddiaları kesindir.
+    /// </summary>
+    private static readonly TimeSpan AccountingClockTolerance = TimeSpan.FromTicks(2 * 156_250);
+
+    /// <summary>Job toplamının, çıkmış bir üyenin KENDİ işlemci zamanını içerdiğini sınar — <see cref="AccountingClockTolerance"/> payıyla.</summary>
+    private static void AssertJobTotalIncludes(string job, TimeSpan jobTotal, TimeSpan memberOwn) =>
+        Assert.True(jobTotal + AccountingClockTolerance >= memberOwn,
+            $"{job} job total {jobTotal} must include the exited member's own {memberOwn} (clock tolerance {AccountingClockTolerance})");
+
+    /// <summary><see cref="ImpossibleHandle"/> gibi, hiçbir çekirdek nesnesine ait olamayacak bir değerin üstüne kurulmuş bir
+    /// <see cref="JobObject"/>. Kurucu özeldir (üretimde tek yol <c>CreateKillOnClose</c>); üretim kodu değişmesin diye yansımayla
+    /// çağrılır. Bu örnek DISPOSE EDİLMEZ: geçersiz bir değeri kapatmak anlamsızdır (hata ayıklayıcıda geçersiz-tutamaç istisnası verir) ve
+    /// <c>JobObject</c>'in sonlandırıcısı yoktur, yani bırakmak sızıntı doğurmaz.</summary>
+    private static JobObject JobOver(nint handle) => (JobObject)Activator.CreateInstance(
+        typeof(JobObject), BindingFlags.Instance | BindingFlags.NonPublic, binder: null, args: [handle], culture: null)!;
 
     // ---------------------------------------------------------------- job muhasebesi ve PID listesi
 
@@ -85,17 +104,18 @@ public class JobResourceQueryTests
         _ = member.SafeHandle;
 
         child.StandardInput!.Dispose(); // EOF: bekleyiş biter, çocuk sınırlı yükünü yakar ve çıkar
-        WaitUntilJobIsEmpty(port, TimeSpan.FromSeconds(60));
+        JobBirths.UntilEmpty(port, TimeSpan.FromSeconds(60), "the job never became empty");
 
         var after = job.QueryAccounting();
         Assert.Equal(0, after.ActiveProcesses);
         Assert.Equal(0, job.QueryProcessIds(pids)); // çıkan üye listeden düştü
         Assert.True(after.TotalCpuTime > TimeSpan.Zero, $"the job keeps the cpu time of members that exited: {after}");
         Assert.True(after.TotalCpuTime >= before.TotalCpuTime, $"cpu time never goes back: {before} -> {after}");
-        // Çıkmış çocuğun kendi işlemci zamanı da job toplamının içindedir (çocuk sınırlı yükünü yaktı: sıfırdan büyüktür).
+        // Çıkmış çocuğun kendi işlemci zamanı da job toplamının içindedir (çocuk sınırlı yükünü yaktı: sıfırdan büyüktür); iki okuma
+        // ayrı zamanlarda yapıldığı için saat çözünürlüğü payıyla (AccountingClockTolerance).
         TimeSpan own = member.TotalProcessorTime;
         Assert.True(own > TimeSpan.Zero, $"the gated child burns cpu once released: {own}");
-        Assert.True(after.TotalCpuTime >= own, $"job total {after.TotalCpuTime} must include the exited member's own {own}");
+        AssertJobTotalIncludes("this", after.TotalCpuTime, own);
     }
 
     /// <summary>
@@ -122,11 +142,11 @@ public class JobResourceQueryTests
         Assert.True(outer.QueryAccounting().ActiveProcesses >= inner.QueryAccounting().ActiveProcesses);
 
         child.StandardInput!.Dispose();
-        WaitUntilJobIsEmpty(port, TimeSpan.FromSeconds(60));
+        JobBirths.UntilEmpty(port, TimeSpan.FromSeconds(60), "the outer job never became empty");
 
         TimeSpan own = member.TotalProcessorTime;
         Assert.True(own > TimeSpan.Zero, $"the gated child burns cpu once released: {own}");
-        Assert.True(outer.QueryAccounting().TotalCpuTime >= own, $"outer {outer.QueryAccounting().TotalCpuTime} must include {own}");
+        AssertJobTotalIncludes("outer", outer.QueryAccounting().TotalCpuTime, own); // saat çözünürlüğü payıyla
         Assert.True(inner.QueryAccounting().TotalCpuTime > TimeSpan.Zero, "the nested job accounts the member too");
     }
 
@@ -200,15 +220,21 @@ public class JobResourceQueryTests
         Assert.True(failures.IsEmpty, $"{failures.Count} bad reads, first: {string.Join(" | ", failures.Take(3))}");
     }
 
-    /// <summary>Tutamacı job'un altından kapanmış bir sorgu Win32 hatasıyla düşer (<c>QueryCpuRate</c> kalıbı): sessiz bir sıfır
-    /// değil <see cref="Win32Exception"/>. Şeridin örnekleyicisi bu hatayı yakalar ve job alanlarını okunamadı sayar. <c>Dispose</c>
-    /// BİLEREK çağrılmaz — kapanmış tutamacı bir daha kapatmak, bu arada başka bir nesneye yeniden verilmiş bir değeri kapatabilir
-    /// (<c>JobObject</c>'in sonlandırıcısı yok, sızıntı zararsızdır).</summary>
+    /// <summary>
+    /// Geçersiz tutamaçlı bir sorgu Win32 hatasıyla düşer (<c>QueryCpuRate</c> kalıbı): sessiz bir sıfır değil
+    /// <see cref="Win32Exception"/>. Şeridin örnekleyicisi bu hatayı yakalar ve job alanlarını okunamadı sayar.
+    ///
+    /// <para><b>Değişen kurulum (gerekçe: ölçüm):</b> eski sürüm gerçek bir job'un tutamacını KAPATIP bayat değeri sorguluyordu. Bu
+    /// yarışlıydı: kapanan değer başka bir nesneye hemen yeniden verilir — ölçüldü, <c>CloseHandle</c> → <c>CreateJobObject</c> aynı değeri
+    /// 1000/1000 kez geri verdi — ve paralel koşan bir test yeni bir job açtığı anda sorgu BAŞARILIR (test "No exception was thrown" ile
+    /// düştü: <c>ProcessControl</c> diliminde 14 koşunun 2'sinde, düzeltme öncesi 15 koşuluk dilimde 6'sında). Şimdi
+    /// <see cref="ImpossibleHandle"/> üstüne kurulu bir job sorgulanır:
+    /// değer hiçbir çekirdek nesnesine verilemeyeceği için sonuç koşuya, zamanlamaya ve paralel testlere bağlı değildir.</para>
+    /// </summary>
     [Fact]
     public void Job_queries_throw_the_win32_error_when_the_job_handle_is_invalid()
     {
-        var job = JobObject.CreateKillOnClose();
-        Assert.True(NativeMethods.CloseHandle(job.Handle));
+        var job = JobOver(ImpossibleHandle); // Dispose edilmez (JobOver'ın doc'u)
 
         Assert.Equal(ErrorInvalidHandle, Assert.Throws<Win32Exception>(() => job.QueryAccounting()).NativeErrorCode);
         Assert.Equal(ErrorInvalidHandle, Assert.Throws<Win32Exception>(() => job.QueryProcessIds(new int[4])).NativeErrorCode);
@@ -235,7 +261,7 @@ public class JobResourceQueryTests
     /// <para><b>ÖLÇÜLDÜ — eski sayaç KENDİ anlık görüntü tamponunu da sayar:</b> görüntü bu sürecin içinde, sayaçtan hemen önce ayrılan
     /// (yerel) bir tampona yazılır ve çekirdek sayıyı tampon canlıyken verir. Tampon makinedeki süreç/iş parçacığı sayısıyla büyür: bu
     /// makinede 704 512 baytlık görüntü için 1 056 768 bayt (görüntünün 1,5 katı), yani eski sayaç iki yeni okumadan TAM 1 MiB + 8 KiB
-    /// büyük okudu; yeni okumalar birbirine eşitti. Brief'in 1 MiB toleransı bu yüzden bu makinede 8 KiB farkla düşüyordu. Tolerans bu
+    /// büyük okudu; yeni okumalar birbirine eşitti. İlk tahmin olan 1 MiB toleransı bu yüzden bu makinede 8 KiB farkla düşüyordu. Tolerans bu
     /// artefaktı kapsayacak kadar geniştir; GERÇEK ölçü eşitliği (tolerans 256 KiB) aşağıdaki testtedir, orada tampon bizim sürecimizde
     /// değil başkasında olduğu için fazlalık yoktur. Yeni okuma bu fazlalığı taşımaz: tamponu o ayırmaz.</para>
     /// </summary>

@@ -8,8 +8,8 @@ namespace BuildOrchestrator.Tests.Diagnostics;
 /// [kaynak şeridi · design v1.25.0 · plan Global Constraints] Üretim kodu makinedeki süreçleri TARAMAZ: <c>Process.GetProcesses()</c> ve
 /// <c>Process.GetProcessesByName(...)</c> App, Core, Supervisor ve Contracts kaynaklarında yoktur. Kaynak şeridi kendi maliyetini
 /// göstermeye çalışırken makineye yük olamaz: bir tarama her çağrıda bütün süreçlerin anlık görüntüsünü alır (ölçüldü:
-/// <c>Process.PrivateMemorySize64</c> bile, çünkü o da aynı görüntüyü alır — ~3,4 ms ve ~3,2 KB/çağrı), oysa şerit yalnız App'in kendi
-/// job'unu ve o job'daki süreçleri bilir (<c>JobObject.QueryProcessIds</c>) ve her birini PID'iyle tek tek açar
+/// <c>Process.PrivateMemorySize64</c> bile, çünkü o da aynı görüntüyü alır — çağrı başına milisaniyeler ve birkaç KB), oysa şerit yalnız
+/// App'in kendi job'unu ve o job'daki süreçleri bilir (<c>JobObject.QueryProcessIds</c>) ve her birini PID'iyle tek tek açar
 /// (<c>MemoryLine.PrivateBytesOf</c>).
 ///
 /// <para><b>Taranan:</b> TÜM üretim projeleri (<see cref="SourceGuard.ScanSrc"/>), yorum satırları hariç. Aynı işi Win32 ile yapan
@@ -25,7 +25,9 @@ public sealed class NoProcessScanGuardTests
 {
     /// <summary>Tarama biçimlerinin her biri: ad, tam adlı ya da metot grubu olarak (<c>Process.GetProcesses</c> parantezsiz de eşleşir).
     /// Nokta çevresindeki boşluk atomiktir; öndeki ön-bakış <c>MyProcess.GetProcesses</c> gibi daha uzun bir sahibi, sondaki
-    /// <c>GetProcessById</c> / <c>GetProcessesInfo</c> gibi başka bir adı eşlemez.</summary>
+    /// <c>GetProcessById</c> / <c>GetProcessesInfo</c> gibi başka bir adı eşlemez. <c>NtQuerySystemInformation</c> BİLEREK geniş
+    /// yasaklanır: çağrının hangi bilgi sınıfını sorduğunu (süreç listesi yalnız biri) kaynak taraması güvenle ayıramaz; süreç DIŞI meşru
+    /// bir gelecek kullanım çıkarsa guard'ı bilerek daraltır — o gün bu ifade o çağrıya göre değiştirilir, çağrı sessizce atlanmaz.</summary>
     private static readonly Regex MachineScan = new(
         @"(?<![A-Za-z0-9_])(?:Process\s*\.\s*GetProcesses(?:ByName)?|K32EnumProcesses|EnumProcesses|CreateToolhelp32Snapshot|NtQuerySystemInformation)(?![A-Za-z0-9_])",
         RegexOptions.Compiled);
