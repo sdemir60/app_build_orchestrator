@@ -18,8 +18,9 @@ namespace BuildOrchestrator.Tests.App;
 /// <c>WindowState</c> değişimi — sürülür. Örnekleyicinin ritmi ve tazelenme kuralları <see cref="ResourceSamplerTests"/>'tedir; burada yalnız
 /// kabuğun onu doğru anda açıp kapattığı sınanır. Hiçbir şey ayrıca zaman beklemez: örnekleyicinin zamanlayıcısı hiç pompalanmaz.</para>
 ///
-/// <para><b>R6</b> (plan): şerit <c>IsHitTestVisibleInChrome=True</c> olduğu için o bölge artık caption değildir; sol basış sürüklemeyi,
-/// çift tık büyütme/geri almayı, sağ bırakış sistem menüsünü şerit KENDİ iletir. Pencere eylemleri test dikişlerinden geçer
+/// <para><b>R6</b> (plan): şeridin hücreleri <c>IsHitTestVisibleInChrome</c> altında olduğu için hücrelerin üstü artık caption değildir; sol basış
+/// sürüklemeyi, çift tık büyütme/geri almayı, sağ bırakış sistem menüsünü şerit KENDİ iletir. (Şeridin kökünün zemini yoktur: hücre arası boşluklar ve
+/// hücrelerin üstü/altı yerel title bar'da kalır — o pin <see cref="ResourceStripRealizeTests"/>'tedir.) Pencere eylemleri test dikişlerinden geçer
 /// (<see cref="MainWindow.CaptionDragMoveForTest"/> …): gerçek <c>DragMove</c> ve sistem menüsü bir HWND ve fare ister.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
@@ -243,15 +244,16 @@ public class ResourceStripWiringTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>Çift tık büyütür/geri alır (mevcut maximize-restore yolu) — sürükleme BAŞLAMAZ. Her yerde: ikon, değer, hücre arası.</summary>
+    /// <summary>Çift tık büyütür/geri alır (mevcut maximize-restore yolu) — sürükleme BAŞLAMAZ. Bir hücrenin her parçasında: ikon, değer, mod sözcüğü
+    /// ve hücrenin kendisi (şeridin kökü hit-test edilemez, ona hiçbir basış gelmez).</summary>
     [StaFact]
-    public void A_double_click_anywhere_on_the_strip_toggles_maximize_and_does_not_drag()
+    public void A_double_click_anywhere_on_a_cell_toggles_maximize_and_does_not_drag()
     {
         using var temp = new TempDir();
         var (window, calls) = CaptionFixture(temp);
         var strip = window.ResourceStripView;
 
-        foreach (UIElement target in new UIElement[] { strip.CpuValue, strip.MemoryIcon, strip.ModeValue, strip.ParallelCell, strip })
+        foreach (UIElement target in new UIElement[] { strip.CpuValue, strip.MemoryIcon, strip.ModeValue, strip.ParallelCell })
         {
             calls.Clear();
             var args = MouseInput.Press(target, MouseButton.Left, clickCount: 2);

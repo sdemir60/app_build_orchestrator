@@ -138,6 +138,23 @@ public class ResourceStripGuardTests
         Assert.NotEmpty(SourceGuard.ScanText("Fake.xaml", """<TextBlock Text="{Binding StripCpuText}" />""", MarkupBinding)); // guard'ın kanıtı
     }
 
+    // ---------------------------------------------------------------- tıklama alanı yalnız hücreler
+
+    /// <summary>Şeridin KÖKÜNÜN zemini yoktur; <c>Background="Transparent"</c> yalnız üç hücrededir. Kökün zemini şeridin bütün kutusunu
+    /// (hücre arası 14px'ler, hücrelerin üstü ve altı, 6px'lik üst boyutlandırma bandı dahil) <c>IsHitTestVisibleInChrome</c> altında client yapar
+    /// (davranış pini: <c>ResourceStripRealizeTests</c>); bu guard zeminin geri sızmasını kaynakta çitler.</summary>
+    [Fact]
+    public void The_strip_root_declares_no_background_only_the_three_cells_carry_a_transparent_one()
+    {
+        string markup = Markup();
+        var root = Regex.Match(markup, @"<UserControl\b[^>]*>", RegexOptions.Singleline);
+
+        Assert.True(root.Success, "kök <UserControl> bulunamadı");
+        Assert.DoesNotContain("Background", root.Value, StringComparison.Ordinal);
+        Assert.Equal(3, Regex.Matches(markup, "Background=\"Transparent\"").Count);
+        Assert.Equal(3, Regex.Matches(markup, @"x:Name=""(?:Cpu|Memory|Parallel)Cell""[^>]*Background=""Transparent""", RegexOptions.Singleline).Count);
+    }
+
     // ---------------------------------------------------------------- işaretçiye tepki vermez, amber taşımaz
 
     /// <summary>Şerit yalnız okur: tıklanmaz (buton/komut/tıklama yok), hover zemini almaz (<c>IsMouseOver</c>/giriş-çıkış yok), imleç değişmez
@@ -174,28 +191,31 @@ public class ResourceStripGuardTests
         [
             "Icon.Cpu", "Icon.MemoryStick", "Icon.Parallel",
             "Icon.Cpu.StrokeThickness", "Icon.MemoryStick.StrokeThickness", "Icon.Parallel.StrokeThickness",
-            "Size.ResourceStripIcon", "Size.IconViewBox", "Thickness.ResourceStripCellGap", "Thickness.ResourceStripValueGap",
+            "Size.ResourceStripIcon", "Size.ResourceStripIconViewBox", "Thickness.ResourceStripCellGap", "Thickness.ResourceStripValueGap",
             "FontSize.2xs", "FontWeight.Body", "Brush.TextDim", "Brush.TextFaint",
         ];
-        Assert.All(keys, key => Assert.Contains(key, markup, StringComparison.Ordinal));
+        // Anahtar TAM olarak geçmeli: uzun bir anahtar (ör. Size.ResourceStripIconViewBox) kısa olanı (Size.ResourceStripIcon) karşılamış sayılmaz.
+        Assert.All(keys, key => Assert.Matches($@"(?<![\w.]){Regex.Escape(key)}(?![\w.])", markup));
         Assert.Contains("AppFonts.Mono", markup, StringComparison.Ordinal);
         Assert.Contains("AppFonts.Ui", markup, StringComparison.Ordinal);
         Assert.Contains("Typography.NumeralAlignment", markup, StringComparison.Ordinal);
     }
 
     /// <summary>Şeridin kendi ölçüleri tasarımın sayılarıdır (README §2.1: 12px ikon, hücre arası 14px, ikon/değer ve sayı/mod arası 5px) ve
-    /// Lucide ikonlarının 24'lük tasarım kutusu — her biri TEK yerde (<c>Tokens.xaml</c>) tanımlıdır.</summary>
+    /// şeridin üç ikonunun 24'lük (Lucide viewBox) Canvas kutusu — her biri TEK yerde (<c>Tokens.xaml</c>) tanımlıdır. Viewbox anahtarı şeride özeldir:
+    /// uygulamanın öbür 24'lük Canvas'ları (ConsoleHeader, GraphView, Settings …) literal 24 taşımaya devam eder, genel adlı bir token onlara da
+    /// ait görünürdü.</summary>
     [StaFact]
     public void The_strip_measure_tokens_are_the_design_numbers_each_defined_exactly_once()
     {
         var tokens = DsResources.Load("Tokens.xaml");
 
         Assert.Equal(12.0, (double)tokens["Size.ResourceStripIcon"]);
-        Assert.Equal(24.0, (double)tokens["Size.IconViewBox"]);
+        Assert.Equal(24.0, (double)tokens["Size.ResourceStripIconViewBox"]);
         Assert.Equal(new Thickness(14, 0, 0, 0), (Thickness)tokens["Thickness.ResourceStripCellGap"]);
         Assert.Equal(new Thickness(5, 0, 0, 0), (Thickness)tokens["Thickness.ResourceStripValueGap"]);
 
-        foreach (string key in new[] { "Size.ResourceStripIcon", "Size.IconViewBox", "Thickness.ResourceStripCellGap", "Thickness.ResourceStripValueGap" })
+        foreach (string key in new[] { "Size.ResourceStripIcon", "Size.ResourceStripIconViewBox", "Thickness.ResourceStripCellGap", "Thickness.ResourceStripValueGap" })
         {
             var definitions = RepoPaths.AppSourceFiles("*.xaml")
                 .Where(f => File.ReadAllText(f).Contains($"x:Key=\"{key}\"", StringComparison.Ordinal))

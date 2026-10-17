@@ -219,7 +219,12 @@ public class MainWindowRealizeTests
         var logo = window.TitleBarLogo;
         double logoCenter = logo.TranslatePoint(new Point(0, logo.ActualHeight / 2), inner).Y;
         double drift = InDevicePixels(logoCenter - inner.ActualHeight / 2, dpi);
-        double budget = AlignmentSteps(logo, inner) / 2.0;
+        // [kaynak şeridi] İç kutu artık DockPanel'i (ve ortadaki şeridi) saran Grid'dir. Hizalama adımları DockPanel'in kutusundan sayılır: Grid ile
+        // DockPanel AYNI kutudur (germe, offset 0) — arada fiziksel bir hizalama adımı, yani yeni bir yuvarlama kaynağı yoktur ve bütçe bir cihaz
+        // pikselinde KALIR (sarmalayıcıyı saymak bütçeyi sessizce yarım piksel gevşetirdi).
+        var dock = Assert.IsType<DockPanel>(((Grid)inner).Children[0]);
+        Assert.Equal(new Rect(0, 0, inner.ActualWidth, inner.ActualHeight), DsResources.BoundsIn(dock, inner)); // "aynı kutu" iddiasının kanıtı
+        double budget = AlignmentSteps(logo, dock) / 2.0;
         Assert.True(drift <= budget,
             $"logo iç kutuda ortalı DEĞİL: {drift} cihaz pikseli sapma (yuvarlama bütçesi {budget} piksel)");
         GC.KeepAlive(window);
@@ -241,11 +246,7 @@ public class MainWindowRealizeTests
     /// [A13/B0] <paramref name="child"/> ile <paramref name="ancestor"/> arasındaki hizalama adımı sayısı —
     /// yuvarlama bütçesinin çarpanı (adım × yarım cihaz pikseli). Elle YAZILMAZ, ağaçtan sayılır: araya bir
     /// sarmalayıcı girerse bütçe de gerçek fizikle birlikte büyür, iddia sessizce kırılmaz. Title bar logosu
-    /// için bugün 3 döner (BrandLogo → StackPanel → DockPanel) ⇒ bütçe BİR BUÇUK cihaz pikselidir.
-    /// <para><b>[DEĞİŞEN KURAL — kaynak şeridi, design v1.25.0]</b> Eski iddia: iç kutu <c>DockPanel</c>'in kendisiydi ve sayı 2
-    /// dönerdi (bütçe tam bir piksel). Şerit kümelerle AYNI hücrede ve tam ortada durmak zorunda olduğundan <c>DockPanel</c> artık bir
-    /// <c>Grid</c>'in içindedir ve iç kutu o <c>Grid</c>'dir; logo ile arasına bir adım girdi. Davranış değişmedi (logo hâlâ aynı yerde
-    /// ve hâlâ dikey ortalı); bütçe bu test sayıyı ağaçtan saydığı için kendiliğinden büyüdü.</para>
+    /// için bugün 2 döner (Viewbox → StackPanel → DockPanel) ⇒ bütçe TAM bir cihaz pikselidir.
     /// </summary>
     private static int AlignmentSteps(FrameworkElement child, FrameworkElement ancestor)
     {

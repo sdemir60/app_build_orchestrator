@@ -219,9 +219,10 @@
     <sys:Double x:Key="Size.ResourceStripIcon">12</sys:Double>
     <Thickness x:Key="Thickness.ResourceStripCellGap">14,0,0,0</Thickness>
     <Thickness x:Key="Thickness.ResourceStripValueGap">5,0,0,0</Thickness>
-    <!-- Icons.xaml'deki viewBox 0 0 24 24'lük (lucide) ikonların tasarım kutusu: ikon bir Viewbox içindeki 24×24'lük Canvas'a çizilir ve Viewbox
-         onu istenen punto kutusuna (ör. 12px) ölçekler — stroke da birlikte küçülür (Icons.xaml başlığı "ÖLÇEK"). -->
-    <sys:Double x:Key="Size.IconViewBox">24</sys:Double>
+    <!-- Şeridin üç ikonunun (Icons.xaml: viewBox 0 0 24 24'lük lucide çizimleri) tasarım kutusu: ikon bir Viewbox içindeki 24×24'lük Canvas'a çizilir ve
+         Viewbox onu 12px'e (Size.ResourceStripIcon) ölçekler — stroke da birlikte küçülür (Icons.xaml başlığı "ÖLÇEK"). Anahtar ŞERİDE ÖZELDİR:
+         uygulamanın öbür 24'lük Canvas'ları literal 24 taşımaya devam eder, genel adlı bir token onlara da ait görünürdü. -->
+    <sys:Double x:Key="Size.ResourceStripIconViewBox">24</sys:Double>
 
     <!-- ================================ Gölge (effects.css) ================================ -->
     <!-- DropShadowEffect'te spread parametresi YOKtur (feasibility §3.2/§5-2, A13.1-2) — CSS'in çift katmanlı

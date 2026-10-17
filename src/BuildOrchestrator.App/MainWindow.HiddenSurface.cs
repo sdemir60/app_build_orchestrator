@@ -19,9 +19,10 @@ namespace BuildOrchestrator.App;
 /// finali · grafa statü/faz/seçim itişleri ve filtre yenilemesi (<see cref="_graphStaleWhileHidden"/>) · konsol belgesi
 /// (batch'ler gizliyken yazılmaz; dönüşte <see cref="ResyncAfterShow"/> kurar) · proje listesi
 /// (<see cref="_listStaleWhileHidden"/>) · 200 ms'lik tikin gövdesi (<see cref="_tickStaleWhileHidden"/>; motor sessizlik
-/// bekçisi hariç — o gizliyken de koşar) · sticky şerit, Build menüsü, alt çubuğun sayaç chip'leri, proje satırları ve olay
-/// akışı satırları (her biri kendi bayrağıyla, kalıtsal sinyalin değişiminde <c>OnPropertyChanged</c> ile dönüşte tek geçişte
-/// yetişir) · işlem sonu bellek trimi (<see cref="RequestTrimWhenDue"/>: gizliyken pay beklenmez ve tepside biten koşu gösterge
+/// bekçisi hariç — o gizliyken de koşar) · sticky şerit, Build menüsü, alt çubuğun sayaç chip'leri, proje satırları, olay
+/// akışı satırları ve title bar kaynak şeridinin hücre/tooltip yazımı (her biri kendi bayrağıyla, kalıtsal sinyalin değişiminde
+/// <c>OnPropertyChanged</c> ile dönüşte tek geçişte yetişir; şeridin kapısı <c>ResourceStrip.xaml.cs</c>'te VM bildirimlerinin girişindedir)
+/// · işlem sonu bellek trimi (<see cref="RequestTrimWhenDue"/>: gizliyken pay beklenmez ve tepside biten koşu gösterge
 /// çıkışını bekler; görünürken bitiş finali ve pay beklenir) · title bar kaynak şeridinin CPU/RAM örnekleyicisi
 /// (<see cref="RefreshResourceSampler"/>: gizliyken zamanlayıcı durur, görününce hemen bir örnek alınır).</para>
 ///

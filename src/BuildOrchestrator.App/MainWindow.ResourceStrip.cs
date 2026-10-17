@@ -23,11 +23,13 @@ namespace BuildOrchestrator.App;
 /// izleyicisi her iki değişimi — OS kaynaklı da programatik de — yakalar ve başsız süitte sürülebilir. Abonelik güçlü referans tutar; tek ve uygulama
 /// ömrü boyunca yaşayan ana pencere için kabul edilir.</para>
 ///
-/// <para><b>R6 — caption iletimi.</b> Şerit <c>IsHitTestVisibleInChrome=True</c> taşır (tooltip için fare olayı almalı), bu yüzden o bölge artık
-/// caption değildir ve Windows'un caption davranışı oradan GİTMİŞTİR. Şeridin üstünde: sol basış pencereyi sürükler, çift tık büyütür/geri alır
-/// (<see cref="ToggleMaximizeRestore"/> — caption butonuyla AYNI yol), sağ tuş bırakışı sistem menüsünü açar. Şerit hover zemini almaz ve imleci
-/// değiştirmez; bu iletim kullanıcıya görünmez. Üç pencere eylemi birer test dikişinden geçer (<c>…ForTest</c>): gerçek <c>DragMove</c> ve sistem
-/// menüsü bir HWND ve fare ister, başsız süitte koşamaz.</para>
+/// <para><b>R6 — caption iletimi.</b> Şerit <c>IsHitTestVisibleInChrome=True</c> taşır (tooltip için HÜCRELER fare olayı almalı) ve WindowChrome bu
+/// bayrağı taşıyan öğenin altındaki her non-client noktayı client yapar; bu yüzden hücrelerin altında Windows'un caption davranışı GİTMİŞTİR.
+/// Şeridin kökünün zemini yoktur (<c>ResourceStrip.xaml</c>): hücre arası 14px'ler ile hücrelerin üstü/altı — Normal durumdaki 6px'lik üst
+/// boyutlandırma bandı dahil — yerel title bar'da kalır ve burada hiçbir şey iletilmez. Hücrelerin üstünde: sol basış pencereyi sürükler, çift tık
+/// büyütür/geri alır (<see cref="ToggleMaximizeRestore"/> — caption butonuyla AYNI yol), sağ tuş bırakışı sistem menüsünü açar. Şerit hover zemini
+/// almaz ve imleci değiştirmez; bu iletim kullanıcıya görünmez. Üç pencere eylemi birer test dikişinden geçer (<c>…ForTest</c>): gerçek
+/// <c>DragMove</c> ve sistem menüsü bir HWND ve fare ister, başsız süitte koşamaz.</para>
 /// </summary>
 public partial class MainWindow
 {

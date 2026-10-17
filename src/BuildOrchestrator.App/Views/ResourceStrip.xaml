@@ -9,9 +9,12 @@
      olurken hiçbir şey kaymaz.
 
      YALNIZ OKUR: tıklanmaz, hover zemini almaz, imleç değiştirmez, amber taşımaz, değer değişiminde animasyon/geçiş YOKTUR. Şerit
-     WindowChrome.IsHitTestVisibleInChrome=True taşır (MainWindow.xaml — tooltip için fare olayı almalıdır), bu yüzden o bölge artık caption
-     değildir; sürükleme, çift tık ve sistem menüsünü pencere iletir (MainWindow.ResourceStrip.cs). Kökün Transparent zemini bunun içindir: kutunun her
-     yeri (hücre arası ve dikey boşluklar dahil) tıklanabilir olmalı, aksi halde orası sessizce caption kalırdı.
+     WindowChrome.IsHitTestVisibleInChrome=True taşır (MainWindow.xaml) çünkü tooltip için HÜCRELER fare olayı almalıdır (prototip: şerit kökü
+     pointer-events none, hücre auto). WindowChrome, noktadaki öğe bu bayrağı (kalıtsal) taşıyorsa her non-client sonucu — Normal durumdaki 6px'lik
+     üst boyutlandırma bandı HTTOP dahil — client'a çevirir; bu yüzden kökün zemini YOKTUR ve yalnız üç hücre kendi Transparent zeminini taşır.
+     Hücre arası 14px'ler ile hücrelerin üstündeki/altındaki bantlar yerel title bar'da kalır (native sürükleme, çift tık, sistem menüsü; üst kenar
+     boyutlandırması şeridin üstünde de çalışır). Yalnız hücrelerin üstünde sürükleme, çift tık ve sistem menüsünü pencere iletir
+     (MainWindow.ResourceStrip.cs).
 
      TOOLTIP'LER aşağı açılır (AppTooltip.Side=Bottom); metinleri VM'den gelir ve ResourceStrip.xaml.cs'ten atanır (bir ToolTip ağacın parçası
      değildir ve DataContext'i miras ALMAZ — ölçüldü; ayrıntı orada).
@@ -25,7 +28,7 @@
              xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
              xmlns:diag="clr-namespace:BuildOrchestrator.Core.Diagnostics;assembly=BuildOrchestrator.Core"
              AutomationProperties.Name="{x:Static app:AccessibilityNames.ResourceUsage}"
-             Background="Transparent" Focusable="False" IsTabStop="False">
+             Focusable="False" IsTabStop="False">
   <UserControl.Resources>
     <!-- İkon kutusu: Viewbox 24'lük Canvas'ı 12px'e ölçekler (stroke da küçülür). -->
     <Style x:Key="Strip.IconBox" TargetType="Viewbox">
@@ -70,7 +73,7 @@
         <ToolTip controls:AppTooltip.Side="Bottom" />
       </StackPanel.ToolTip>
       <Viewbox Style="{StaticResource Strip.IconBox}">
-        <Canvas Width="{DynamicResource Size.IconViewBox}" Height="{DynamicResource Size.IconViewBox}">
+        <Canvas Width="{DynamicResource Size.ResourceStripIconViewBox}" Height="{DynamicResource Size.ResourceStripIconViewBox}">
           <Path x:Name="CpuIcon" Style="{StaticResource Strip.IconPath}" Data="{DynamicResource Icon.Cpu}"
                 StrokeThickness="{DynamicResource Icon.Cpu.StrokeThickness}" />
         </Canvas>
@@ -88,7 +91,7 @@
         <ToolTip controls:AppTooltip.Side="Bottom" />
       </StackPanel.ToolTip>
       <Viewbox Style="{StaticResource Strip.IconBox}">
-        <Canvas Width="{DynamicResource Size.IconViewBox}" Height="{DynamicResource Size.IconViewBox}">
+        <Canvas Width="{DynamicResource Size.ResourceStripIconViewBox}" Height="{DynamicResource Size.ResourceStripIconViewBox}">
           <Path x:Name="MemoryIcon" Style="{StaticResource Strip.IconPath}" Data="{DynamicResource Icon.MemoryStick}"
                 StrokeThickness="{DynamicResource Icon.MemoryStick.StrokeThickness}" />
         </Canvas>
@@ -107,7 +110,7 @@
         <ToolTip controls:AppTooltip.Side="Bottom" />
       </StackPanel.ToolTip>
       <Viewbox Style="{StaticResource Strip.IconBox}">
-        <Canvas Width="{DynamicResource Size.IconViewBox}" Height="{DynamicResource Size.IconViewBox}">
+        <Canvas Width="{DynamicResource Size.ResourceStripIconViewBox}" Height="{DynamicResource Size.ResourceStripIconViewBox}">
           <Path x:Name="ParallelIcon" Style="{StaticResource Strip.IconPath}" Data="{DynamicResource Icon.Parallel}"
                 StrokeThickness="{DynamicResource Icon.Parallel.StrokeThickness}" />
         </Canvas>

@@ -328,19 +328,112 @@ public class ResourceStripRealizeTests(ITestOutputHelper output)
         GC.KeepAlive(window);
     }
 
-    // ---------------------------------------------------------------- caption: sürükleme şeridin altında bozulmaz
+    // ---------------------------------------------------------------- caption: yalnız hücreler client, boşluklar ve bantlar yerel title bar'da
 
     [StaFact]
-    public void The_strip_is_hit_test_visible_chrome_while_the_logo_lock_stays_a_caption_area()
+    public void The_strip_carries_the_chrome_flag_and_only_its_cells_have_a_hit_testable_background()
     {
         using var temp = new TempDir();
         var (window, _, strip) = Realized(temp);
 
         Assert.True(WindowChrome.GetIsHitTestVisibleInChrome(strip));
-        Assert.False(WindowChrome.GetIsHitTestVisibleInChrome(window.TitleBarLogoLock));
+        Assert.False(WindowChrome.GetIsHitTestVisibleInChrome(window.TitleBarLogoLock)); // logo kilidi caption bölgesi olarak kalır
         Assert.True(strip.IsHitTestVisible);
-        // Şeridin kutusunun her yeri tıklanır (hücre arası ve dikey boşluklar dahil) — aksi halde oralar sessizce caption kalır.
-        Assert.NotNull(strip.Background);
+        // Şeridin KÖKÜNÜN zemini YOKTUR: zemin yalnız üç hücrededir (her biri kendi Transparent zeminini taşır). Kökün zemini olsaydı kutunun her
+        // yeri — hücre arası 14px'ler, hücrelerin üstü ve altı, 6px'lik üst boyutlandırma bandı dahil — IsHitTestVisibleInChrome bayrağının
+        // altında client olurdu (aşağıdaki pin).
+        Assert.Null(strip.Background);
+        Assert.All(new[] { strip.CpuCell, strip.MemoryCell, strip.ParallelCell }, cell => Assert.NotNull(cell.Background));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>WindowChrome'un <c>WM_NCHITTEST</c> kararının aynısı: noktadaki en üst öğe <c>IsHitTestVisibleInChrome</c> taşıyorsa (kalıtsal) HER non-client
+    /// sonuç — üst boyutlandırma bandı (HTTOP) dahil — CLIENT'a çevrilir; taşımıyorsa nokta caption/boyutlandırmada kalır. Başsız süitte
+    /// <c>Window.InputHitTest</c> çalışmaz: onun süzgeci <c>IsVisible</c>'a bakar ve HWND'siz ağaçta hiçbir öğe görünür sayılmaz. Bu yüzden aynı geometri
+    /// <see cref="VisualTreeHelper.HitTest(Visual, HitTestFilterCallback, HitTestResultCallback, HitTestParameters)"/> ile ve <c>InputHitTest</c>'in süzgeciyle
+    /// (görünmeyen — <c>Hidden</c>/<c>Collapsed</c> — ve <c>IsHitTestVisible=false</c> öğeler atlanır) sorulur; nokta <c>TitleBarRow</c> koordinatındadır.
+    /// <c>Hit</c>: noktadaki en üst görsel; <c>Client</c>: o öğe chrome'da client mı.</summary>
+    private static (DependencyObject? Hit, bool Client) HitAt(MainWindow window, double x, double y)
+    {
+        DependencyObject? hit = null;
+        VisualTreeHelper.HitTest(window.TitleBarRow,
+            node => node is UIElement { Visibility: not Visibility.Visible } or UIElement { IsHitTestVisible: false }
+                ? HitTestFilterBehavior.ContinueSkipSelfAndChildren
+                : HitTestFilterBehavior.Continue,
+            result =>
+            {
+                hit = result.VisualHit;
+                return HitTestResultBehavior.Stop; // en üstteki
+            },
+            new PointHitTestParameters(new Point(x, y)));
+        var element = hit is null ? null : DsResources.SelfAndAncestors(hit).OfType<UIElement>().FirstOrDefault();
+        return (hit, element is not null && WindowChrome.GetIsHitTestVisibleInChrome(element));
+    }
+
+    /// <summary>
+    /// <b>Tıklama alanı yalnız hücrelerdir</b> (prototip: şerit kökü <c>pointer-events: none</c>, hücre <c>auto</c>; spec: hit-test görünürlüğü "yalnız
+    /// tooltip için"). WindowChrome, noktadaki öğe <c>IsHitTestVisibleInChrome</c> taşıyorsa her non-client sonucu client'a çevirir; şeridin kökü bütün
+    /// kutusu boyunca hit-test edilebilir olsaydı (a) Normal durumda 6px'lik <b>üst kenar boyutlandırma bandı</b> şeridin ~235 dip'i boyunca ölürdü, (b)
+    /// hücre arası 14px'ler ile hücrelerin üstündeki/altındaki bantlar yerel title bar yerine iletilen DragMove yoluna düşerdi. Pin: hücrelerin
+    /// üstündeki ve altındaki bantta, üst boyutlandırma bandında ve 14px'lik boşluklarda en üst öğe chrome'da client DEĞİLDİR (caption/boyutlandırma
+    /// yerel kalır); bir hücrenin üstünde — glif olmayan noktalar dahil (ikon→değer boşluğu, hayalet alanı) — en üst öğe hücrenin kendisi/torunudur ve
+    /// client'tır (hücre üstünde basış yine sürükler: R6).
+    /// </summary>
+    [StaFact]
+    public void Only_the_cells_are_chrome_client_while_the_gaps_and_the_bands_around_them_stay_with_the_native_title_bar()
+    {
+        using var temp = new TempDir();
+        var (window, _, strip) = Realized(temp);
+        var chrome = WindowChrome.GetWindowChrome(window);
+
+        StackPanel[] cells = [strip.CpuCell, strip.MemoryCell, strip.ParallelCell];
+        var boxes = cells.Select(cell => Bounds(window, cell)).ToList();
+        double midY = boxes[0].Top + boxes[0].Height / 2;
+        Assert.All(boxes, box => Assert.True(box.Width > 0 && box.Height > 0, "hücre ölçülmemiş (vakum)"));
+
+        // (0) Şeridin kendi kutusu hücreler kadar yüksektir (MainWindow.xaml: VerticalAlignment=Center), bütün bandı kaplamaz: kökün zemini olmadığı için
+        // hit-test'e etkisi yoktur, ama UIA sınırı ("Resource usage" grubu) ve şeride sonradan eklenecek her zemin/efekt hücrelerin dışına taşmaz.
+        var stripBox = Bounds(window, strip);
+        Assert.True(stripBox.Height <= boxes.Max(box => box.Height) + OnePixel(window),
+            $"şeridin kutusu hücrelerden yüksek: şerit {stripBox.Height:0.##}, hücre {boxes.Max(box => box.Height):0.##} (bant {window.TitleBarRow.ActualHeight:0.##})");
+
+        // (1) Hücreler client: merkez; sağ uç (hayalet alanı — Hidden hayalet hit-test edilmez, yalnız hücrenin kendi zemini tutar); ikon→değer boşluğu.
+        for (int i = 0; i < cells.Length; i++)
+        {
+            var (centerHit, centerClient) = HitAt(window, boxes[i].Left + boxes[i].Width / 2, midY);
+            Assert.True(centerClient && centerHit is not null && DsResources.IsSelfOrDescendantOf(centerHit, cells[i]),
+                $"{cells[i].Name} merkezi client değil ya da hücrenin altında değil ({centerHit})");
+
+            var (edgeHit, edgeClient) = HitAt(window, boxes[i].Right - 1, midY);
+            Assert.True(edgeClient && ReferenceEquals(edgeHit, cells[i]), $"{cells[i].Name} sağ ucu hücrenin kendi zeminini vurmuyor ({edgeHit})");
+        }
+        var iconBox = Bounds(window, IconBox(strip.CpuIcon));
+        var valueArea = Bounds(window, (FrameworkElement)strip.CpuValue.Parent);
+        var (gapHit, gapClient) = HitAt(window, (iconBox.Right + valueArea.Left) / 2, midY);
+        Assert.True(gapClient && ReferenceEquals(gapHit, strip.CpuCell), $"ikon→değer boşluğu hücrenin kendi zeminini vurmuyor ({gapHit})");
+
+        // (2) Hücre arası 14px'ler: caption'da. (Kutu şeridin ÇEVRESİ içinde kalır ama hiçbir şeye vurmaz.)
+        for (int i = 0; i + 1 < boxes.Count; i++)
+        {
+            double x = (boxes[i].Right + boxes[i + 1].Left) / 2;
+            var (hit, client) = HitAt(window, x, midY);
+            Assert.False(client, $"{cells[i].Name} ile {cells[i + 1].Name} arasındaki boşluk (x={x:0.##}) client: {hit}");
+            Assert.False(hit is not null && DsResources.IsSelfOrDescendantOf(hit, strip), "boşluk şeridin bir öğesini vuruyor");
+        }
+
+        // (3) Hücrelerin üstündeki ve altındaki bantlar ve 6px'lik üst boyutlandırma bandı: yerel title bar'da.
+        double resizeBand = chrome.ResizeBorderThickness.Top;
+        Assert.Equal(6.0, resizeBand);
+        foreach (var box in boxes)
+        {
+            double x = box.Left + box.Width / 2;
+            Assert.True(box.Top - 3 > resizeBand && box.Bottom + 3 < chrome.CaptionHeight, "hücre bandın ortasında değil — ölçüm vakum");
+            foreach (var (name, y) in new[] { ("üst kenar boyutlandırma bandı", resizeBand / 2), ("hücrenin üstü", box.Top - 3), ("hücrenin altı", box.Bottom + 3) })
+            {
+                var (hit, client) = HitAt(window, x, y);
+                Assert.False(client, $"{name} (x={x:0.##}, y={y:0.##}) client: {hit}");
+            }
+        }
         GC.KeepAlive(window);
     }
 
