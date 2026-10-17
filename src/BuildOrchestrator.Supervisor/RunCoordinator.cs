@@ -227,12 +227,6 @@ public sealed class RunCoordinator(
     // [T20-b/P3] Bu run'da YÜRÜRLÜKTEKİ profil — copy-contention penceresi kapanınca cap buraya döner.
     // (_perfApplied false iken anlamsızdır; ikisi de run sınırında birlikte sıfırlanır.)
     private PerfProfile? _activePerf;
-    // [RESOLVE Faz 4 / karar 11] Bu run'ın perf DÖNÜŞÜMÜNÜN girdileri: koşu modu + Ayarlar'ın "Resolve cycles at full
-    // priority" anahtarı. Run başında, ilk ApplyPerfLocked'tan ÖNCE aynı kilit altında komuttan yazılır; canlı
-    // setPerfMode da onları okur (bkz. ApplyPerfLocked). _perfApplied false iken hiçbir yol okumaz, bu yüzden run
-    // sonunda ayrıca sıfırlanmaz — her run başı onları yeniden yazar.
-    private RunMode _perfRunMode;
-    private bool _perfResolveAtFullPriority;
     // [T20-b/P3] Şu an KAÇ worker copy-contention penceresinde. Ref-count zorunludur: paralel build'de birden
     // çok worker aynı anda MSB302x görebilir ve erken çıkan biri, diğeri hâlâ kopyalarken cap'i geri kısardı.
     private int _copyFloorDepth;
@@ -516,13 +510,10 @@ public sealed class RunCoordinator(
     /// </summary>
     private int? ApplyPerfLocked(PerfProfile profile, List<string> warnings)
     {
-        // [RESOLVE Faz 4 / karar 11] Run başı da canlı setPerfMode da profili AYNI Core dönüşümünden geçirir: Resolve
-        // cycles koşusunda (anahtar açıkken) yürürlükteki profil cap'siz + Normal'dir; işçi sayısı zaten run başında
-        // sabitlenmiştir. Copy penceresi ve drain kuralları dönüşmüş profile uygulanır — cap'siz profilde pencere hiç
-        // açılmaz (EnterCopyFloor), priority tabanı Normal'i aşağı çekmez (EffectivePriorityLocked yalnız yükseltir).
-        var active = PerfProfile.ForRun(_perfRunMode, profile, _perfResolveAtFullPriority);
-        _activePerf = active; // [P3] copy penceresi kapanınca buraya dönülür
-        return WritePerfLocked(active, warnings);
+        // Run başı da canlı setPerfMode da profili DÖNÜŞTÜRMEDEN uygular: yürürlükteki profil koşu modundan bağımsız çipin
+        // profilidir (Resolve cycles dahil). Copy penceresi ve drain kuralları o profile uygulanır.
+        _activePerf = profile; // [P3] copy penceresi kapanınca buraya dönülür
+        return WritePerfLocked(profile, warnings);
     }
 
     /// <summary>
@@ -1004,7 +995,7 @@ public sealed class RunCoordinator(
         // [koşu başı uyarıları görünür] Koşu başı uyarıları runStarted yazılmadan ÖNCE TEK listede toplanır: önce bayat obj
         // satırları, sonra ters katman satırları. Her satır burada decision.log'a yazılır ve AYNI metinle runStarted'la
         // (Warnings) App'e gider; kullanıcının konsol satırını ve event stream'in Warn satırını App yazar (tek projelik
-        // koşuda da). stderr'e (console) kopya YAZILMAZ: App stderr'i atar — işçi kırpma ve Resolve notlarıyla aynı
+        // koşuda da). stderr'e (console) kopya YAZILMAZ: App stderr'i atar — işçi kırpma notuyla aynı
         // sahiplik; stderr ileride yüzeye çıkarsa satır çiftlenmesin.
         // [T72/Task 14] SPIKE S2 — bayat-obj (yabancı-TFM restore artığı) teşhisi her koşuda tetiklenir: her proje kendi
         // varsayılan obj'inde derlenir. Dokunmaz, yalnız warn (StaleObjRunStartWarner ASLA fırlatmaz).
@@ -1026,7 +1017,7 @@ public sealed class RunCoordinator(
         // (tek sahip: PerfNoteText.WorkersReduced) burada decision.log'a yazılır; gerekçe runStarted'la
         // (WorkersReducedReason) App'e gider ve kullanıcının konsol + event stream satırını App AYNI metinle yazar
         // (tek projelik koşu hariç — orada işçi sayısı koşuyu tarif etmez).
-        // [kırpma notu görünür] stderr'e (console) kopya YAZILMAZ: App stderr'i atar — Resolve notuyla aynı sahiplik;
+        // [kırpma notu görünür] stderr'e (console) kopya YAZILMAZ: App stderr'i atar — koşu başı uyarılarıyla aynı sahiplik;
         // stderr ileride yüzeye çıkarsa satır çiftlenmesin.
         var (machineCores, machineFreeBytes) = _machine();
         var workerBudget = WorkerBudget.Clamp(cmd.Parallelism, machineCores, machineFreeBytes);
@@ -1048,8 +1039,6 @@ public sealed class RunCoordinator(
             // kullanıcının DAHA SONRAKİ sözüdür. Niyet burada TÜKETİLİR (bir sonraki run'a taşınmaz).
             perf = _pendingPerf ?? perf;
             _pendingPerf = null;
-            _perfRunMode = cmd.Mode;
-            _perfResolveAtFullPriority = cmd.ResolveAtFullPriority;
             if (perf is { } profile) { _perfApplied = true; appliedCap = ApplyPerfLocked(profile, perfWarnings); }
             if (_stopKind is not null) scheduler.RequestStop(); // plan kurulurken gelmiş Stop
         }
@@ -1131,15 +1120,6 @@ public sealed class RunCoordinator(
             "run {0} started: mode={1} projects={2} parallelism={3} configuration={4} cpuCap={5}",
             cmd.RunId, cmd.Mode, plan.Nodes.Count, parallelism, plan.Configuration,
             perf is null ? PerfNoteText.CapValueUnset : PerfNoteText.CapValue(appliedCap)));
-        // [RESOLVE Faz 4 / karar 11] Resolve cycles profilin önceliği/tavanı yerine tam öncelikte koşuyorsa bunu run
-        // başında söyleyen TEK satır (metin PerfNoteText'te, chip notunun ailesinde; işçi sayısı yukarıdaki bütçeden) —
-        // decision.log'a. Dönüşüm profili değiştirmediyse satır yoktur. [fix 1A — I1] Kullanıcının konsolundaki satırı App
-        // yazar (runStarted'ta, AYNI metin); stderr'e kopya YAZILMAZ — App stderr'i atar, ileride konsola taşınırsa satır
-        // çiftlenmesin.
-        if (perf is { } chosenPerf
-            && PerfNoteText.ResolveNote(cmd.Mode, chosenPerf with { Parallelism = parallelism }, cmd.ResolveAtFullPriority)
-                is { } resolveNote)
-            Decide(logs, resolveNote);
 
         // runStarted yazıldı: buradan SONRA hangi yoldan çıkılırsa çıkılsın (beklenmeyen exception dahil)
         // kapanış olayları TAM OLARAK BİR KEZ yazılır — aksi halde App'in run'ı sonsuza dek "koşuyor" kalırdı.

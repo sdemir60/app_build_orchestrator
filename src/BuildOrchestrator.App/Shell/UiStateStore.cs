@@ -107,12 +107,6 @@ public sealed class UiState
     /// sıfırlamasın); yok ⇒ kataloğun varsayılanı (<see cref="ViewModels.GeneralSettingsCatalog.DefaultOf"/>; MainWindow seed'i).</summary>
     public bool? StashOnBranchSwitch { get; set; }
 
-    /// <summary>[RESOLVE Faz 4 / karar 11] Settings → General → <c>Resolve cycles at full priority</c>.
-    /// <see cref="UpdateExternals"/> ile AYNI gerekçeyle NULLABLE; yok ⇒ kataloğun varsayılanı
-    /// (<see cref="ViewModels.GeneralSettingsCatalog.DefaultOf"/>; MainWindow seed'i) — anahtarı taşımayan eski bir dosya onaylanmış
-    /// varsayılanı alır.</summary>
-    public bool? ResolveAtFullPriority { get; set; }
-
     /// <summary>[idle-memory · dalga 2 / spec §6.5] Settings → General → CONSOLE → <c>Compact console</c>: konsol anlatısı
     /// proje çıktısını kompakt mı göstersin. <see cref="UpdateExternals"/> ile AYNI gerekçeyle NULLABLE; yok ⇒ kataloğun varsayılanı
     /// (<see cref="ViewModels.GeneralSettingsCatalog.DefaultOf"/>; MainWindow seed'i) — anahtarı taşımayan eski bir dosya varsayılanı alır.</summary>

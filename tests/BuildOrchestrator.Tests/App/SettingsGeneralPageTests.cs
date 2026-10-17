@@ -19,10 +19,10 @@ namespace BuildOrchestrator.Tests.App;
 /// gruplar ve tek <c>ToggleRow</c> şablonu; <c>Pull before build</c>'in buraya taşınması ve External projects sayfasının
 /// altındaki "nereye gitti" satırı.
 ///
-/// <para>Dokuz anahtarın hepsi gerçektir; her birinin zinciri (varsayılan, taslak, ayar dosyası, Save, kabuğun tohumu ve kalıcılığı)
+/// <para>Sekiz anahtarın hepsi gerçektir; her birinin zinciri (varsayılan, taslak, ayar dosyası, Save, kabuğun tohumu ve kalıcılığı)
 /// <see cref="GeneralSettingChainTests"/>'tedir. Ayara özgü davranış kendi sınıfındadır: <c>Pull before build</c>
-/// (<see cref="PullBeforeBuildTests"/>), <c>Resolve cycles at full priority</c> (<see cref="ResolveAtFullPrioritySettingsTests"/>),
-/// <c>Stash and switch branches</c> (<see cref="BranchCheckoutTests"/>), <c>Compact console</c> (<see cref="CompactConsoleTests"/>),
+/// (<see cref="PullBeforeBuildTests"/>), <c>Stash and switch branches</c> (<see cref="BranchCheckoutTests"/>),
+/// <c>Compact console</c> (<see cref="CompactConsoleTests"/>),
 /// <c>Stop the engine when idle</c> (<see cref="StopEngineWhenIdleSettingsTests"/>), <c>Start with Windows</c> ve <c>Start minimized to
 /// tray</c> (<see cref="StartWithWindowsTests"/>), <c>Close to tray</c> ve <c>Show notifications</c> (<see cref="CloseToTrayTests"/> ve
 /// tepsi balonu testleri).</para>
@@ -56,7 +56,10 @@ public class SettingsGeneralPageTests
     /// oldu: BUILD'in ardına dördüncü grup BRANCHES ve tek satırı <c>Stash and switch branches</c> eklendi.</para>
     /// <para><b>[DEĞİŞEN KURAL — RESOLVE Faz 4 / karar 11, kullanıcı onayı]</b> Eski iddia: BUILD grubunun tek satırı
     /// <c>Pull before build</c>'di. Resolve cycles'ın tam öncelik ayarı BUILD'e ikinci satır olarak eklendi (motora giden
-    /// bir build tercihi; ayrıntı <see cref="ResolveAtFullPrioritySettingsTests"/>).</para>
+    /// bir build tercihi).</para>
+    /// <para><b>[DEĞİŞEN KURAL — 2026-10-17]</b> Eski iddia: BUILD grubu iki satırdı (<c>Pull before build</c> ve <c>Resolve cycles at full
+    /// priority</c>). Ayar kalktı — Resolve cycles de her koşu gibi perf çipinin cap'ini ve priority'sini uygular (gerekçe ve ölçüm:
+    /// <see cref="ResolveFollowsProfileSettingsTests"/>); BUILD yine tek satırlı.</para>
     /// <para><b>[DEĞİŞEN KURAL — idle-memory dalga 2 / spec §6.5]</b> Eski iddia: katalog dört gruptu (STARTUP, BUILD,
     /// BRANCHES, NOTIFICATIONS) ve NOTIFICATIONS dördüncüydü. Kompakt konsol bir ayar oldu: BRANCHES ile NOTIFICATIONS
     /// arasına beşinci grup CONSOLE ve tek satırı <c>Compact console</c> girdi; NOTIFICATIONS beşinci sıraya kaydı
@@ -83,12 +86,8 @@ public class SettingsGeneralPageTests
             ("Close to tray", "Closing the window leaves the app running in the tray."),
         ], actual[0].Rows);
         Assert.Equal(
-        [
-            ("Pull before build", "Update every external working copy first — a fast-forward-only git pull, one per copy."),
-            ("Resolve cycles at full priority",
-                "Resolve cycles runs at normal priority with no CPU cap, whatever the performance mode — it finishes "
-                + "sooner on a busy machine, but other apps may slow down while it runs. Off: it follows the performance mode."),
-        ], actual[1].Rows);
+            [("Pull before build", "Update every external working copy first — a fast-forward-only git pull, one per copy.")],
+            actual[1].Rows);
         Assert.Equal(
             [("Stash and switch branches",
                 "When the working tree has uncommitted changes, stash them (including untracked files) and switch. "
@@ -177,7 +176,10 @@ public class SettingsGeneralPageTests
     /// CONSOLE ile NOTIFICATIONS arasına ENGINE ve tek satırı <c>Stop the engine when idle</c> girdi — dokuz satır, altı başlık;
     /// NOTIFICATIONS'ın satırı sekizinci indekse kaydı. Yeni satır aynı <c>ToggleRow</c> şablonuyla realize olur (XAML'e
     /// dokunulmaz) ve aralık kuralı yeni grubu da kapsar: CONSOLE'un satırından ENGINE başlığına 22, başlıktan satıra 5; ENGINE'in
-    /// satırından NOTIFICATIONS başlığına 22, başlıktan satıra 5.</para></summary>
+    /// satırından NOTIFICATIONS başlığına 22, başlıktan satıra 5.</para>
+    /// <para><b>[DEĞİŞEN KURAL — 2026-10-17]</b> Eski iddia: dokuz satır, BUILD'de iki satır (<c>Pull before build</c>,
+    /// <c>Resolve cycles at full priority</c>). Ayar kalktı (gerekçe ve ölçüm: <see cref="ResolveFollowsProfileSettingsTests"/>) — sekiz
+    /// satır, altı başlık; BRANCHES ve sonraki grupların satırları bir indeks geri kaydı, aralık kuralı aynıdır.</para></summary>
     [StaFact]
     public void The_general_page_realizes_its_groups_with_their_rows()
     {
@@ -198,11 +200,10 @@ public class SettingsGeneralPageTests
 
         var rows = Rows(dialog);
         Assert.Equal(["Start with Windows", "Start minimized to tray", "Close to tray", "Pull before build",
-                "Resolve cycles at full priority", "Stash and switch branches", "Compact console", "Stop the engine when idle",
-                "Show notifications"],
+                "Stash and switch branches", "Compact console", "Stop the engine when idle", "Show notifications"],
             rows.Select(r => DsResources.Descendants(r).OfType<TextBlock>().First().Text));
         Assert.Equal(["Start with Windows", "Start minimized to tray", "Close to tray",
-                AccessibilityNames.PullExternalsBeforeBuild, "Resolve cycles at full priority", "Stash and switch branches",
+                AccessibilityNames.PullExternalsBeforeBuild, "Stash and switch branches",
                 "Compact console", "Stop the engine when idle", "Show notifications"],
             rows.Select(r => AutomationProperties.GetName(SwitchOf(r))));
 
@@ -212,14 +213,14 @@ public class SettingsGeneralPageTests
         Assert.Equal(5.0, Top(rows[0]) - Bottom(headings[0]), precision: 1);
         Assert.Equal(5.0, Top(rows[3]) - Bottom(headings[1]), precision: 1);
         Assert.Equal(22.0, Top(headings[1]) - Bottom(rows[2]), precision: 1);
-        Assert.Equal(22.0, Top(headings[2]) - Bottom(rows[4]), precision: 1);
-        Assert.Equal(5.0, Top(rows[5]) - Bottom(headings[2]), precision: 1);
-        Assert.Equal(22.0, Top(headings[3]) - Bottom(rows[5]), precision: 1);
-        Assert.Equal(5.0, Top(rows[6]) - Bottom(headings[3]), precision: 1);
-        Assert.Equal(22.0, Top(headings[4]) - Bottom(rows[6]), precision: 1);
-        Assert.Equal(5.0, Top(rows[7]) - Bottom(headings[4]), precision: 1);
-        Assert.Equal(22.0, Top(headings[5]) - Bottom(rows[7]), precision: 1);
-        Assert.Equal(5.0, Top(rows[8]) - Bottom(headings[5]), precision: 1);
+        Assert.Equal(22.0, Top(headings[2]) - Bottom(rows[3]), precision: 1);
+        Assert.Equal(5.0, Top(rows[4]) - Bottom(headings[2]), precision: 1);
+        Assert.Equal(22.0, Top(headings[3]) - Bottom(rows[4]), precision: 1);
+        Assert.Equal(5.0, Top(rows[5]) - Bottom(headings[3]), precision: 1);
+        Assert.Equal(22.0, Top(headings[4]) - Bottom(rows[5]), precision: 1);
+        Assert.Equal(5.0, Top(rows[6]) - Bottom(headings[4]), precision: 1);
+        Assert.Equal(22.0, Top(headings[5]) - Bottom(rows[6]), precision: 1);
+        Assert.Equal(5.0, Top(rows[7]) - Bottom(headings[5]), precision: 1);
     }
 
     /// <summary>ToggleRow: padding <c>13 0</c>, satırlar arası 1px <c>border-subtle</c> (grubun ilk satırında yok);
@@ -237,9 +238,11 @@ public class SettingsGeneralPageTests
         // satırı (Compact console) kendi grubunun ilkidir — hairline taşımaz; Show notifications yine kendi grubunun ilkidir.
         // [DEĞİŞEN KURAL — idle-memory dalga 3 / spec §6.4] Eski: sekiz satır, son üç grup tek satırlıydı. ENGINE grubunun tek satırı
         // (Stop the engine when idle) de kendi grubunun ilkidir — hairline taşımaz; Show notifications sekizinci indekse kaydı.
+        // [DEĞİŞEN KURAL — 2026-10-17] Eski: dokuz satır; BUILD'in ikinci satırı hairline taşırdı. Ayar kalktı (gerekçe ve ölçüm:
+        // ResolveFollowsProfileSettingsTests): BUILD tek satırlı, hairline yalnız STARTUP'ın 2. ve 3. satırında kalır.
         // Satır sayısı da pinlenir: döngü yalnız gerçek satırlar kadar döner, bu yüzden dizi uzunluğuyla kıyaslanmadıkça
-        // eksik bir satır (ENGINE satırı yokken sekiz satır) dokuz uzunluklu dizide sessizce yeşil kalırdı.
-        var firstOfGroup = new[] { true, false, false, true, false, true, true, true, true };
+        // eksik bir satır (ENGINE satırı yokken yedi satır) sekiz uzunluklu dizide sessizce yeşil kalırdı.
+        var firstOfGroup = new[] { true, false, false, true, true, true, true, true };
         Assert.Equal(firstOfGroup.Length, rows.Count);
         for (int i = 0; i < rows.Count; i++)
         {
@@ -271,19 +274,22 @@ public class SettingsGeneralPageTests
         Assert.Equal(row.ActualWidth, toggle.TranslatePoint(new Point(toggle.ActualWidth, 0), row).X, precision: 1);
     }
 
-    /// <summary>Switch'lerin açılış değerleri: <c>off/off/on/on</c> + pull, Resolve tam öncelik, stash ve Compact console
-    /// canlı değerden. [DEĞİŞEN KURAL — RESOLVE Faz 4] Eski: altı switch; BUILD'e Resolve tam öncelik (varsayılan açık)
+    /// <summary>Switch'lerin açılış değerleri: <c>off/off/on/on</c> + pull, stash ve Compact console canlı değerden.
+    /// [DEĞİŞEN KURAL — RESOLVE Faz 4] Eski: altı switch; BUILD'e Resolve tam öncelik (varsayılan açık)
     /// eklendi. [DEĞİŞEN KURAL — idle-memory dalga 2 / spec §6.5] Eski: yedi switch; CONSOLE grubuna Compact console
     /// (varsayılan açık) eklendi — Show notifications yedinci indekse kaydı.
     /// <para><b>[DEĞİŞEN KURAL — idle-memory dalga 3 / spec §6.4]</b> Eski: sekiz switch; ENGINE grubuna Stop the engine when idle
-    /// (varsayılan açık) eklendi — Show notifications sekizinci indekse kaydı.</para></summary>
+    /// (varsayılan açık) eklendi — Show notifications sekizinci indekse kaydı.</para>
+    /// <para><b>[DEĞİŞEN KURAL — 2026-10-17]</b> Eski: dokuz switch; Resolve tam öncelik anahtarı kalktı (gerekçe ve ölçüm:
+    /// <see cref="ResolveFollowsProfileSettingsTests"/>) — sekiz switch; Stash and switch branches ile sonraki üç switch bir indeks
+    /// geri kaydı.</para></summary>
     [StaFact]
     public void The_switches_open_on_their_defaults()
     {
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(r => r.UpdateExternals = false);
         using var _scope = scope;
 
-        Assert.Equal([false, false, true, false, true, false, true, true, true],
+        Assert.Equal([false, false, true, false, false, true, true, true],
             Rows(dialog).Select(r => SwitchOf(r).IsChecked == true));
     }
 
@@ -325,7 +331,9 @@ public class SettingsGeneralPageTests
     /// <para><b>[DEĞİŞEN KURAL — idle-memory dalga 2 / spec §6.5]</b> Eski iddia: yeniden açılış yedi switch gösterirdi.
     /// CONSOLE grubu eklendi — Compact console (açık) canlı değerinde kalır, Show notifications yedinci indekse kaydı.</para>
     /// <para><b>[DEĞİŞEN KURAL — idle-memory dalga 3 / spec §6.4]</b> Eski iddia: yeniden açılış sekiz switch gösterirdi. ENGINE grubu
-    /// eklendi — Stop the engine when idle (açık) canlı değerinde kalır, Show notifications sekizinci indekse kaydı.</para></summary>
+    /// eklendi — Stop the engine when idle (açık) canlı değerinde kalır, Show notifications sekizinci indekse kaydı.</para>
+    /// <para><b>[DEĞİŞEN KURAL — 2026-10-17]</b> Eski iddia: yeniden açılış dokuz switch gösterirdi (Resolve tam öncelik de, açık, canlı
+    /// değerinde kalırdı). Anahtar kalktı (gerekçe ve ölçüm: <see cref="ResolveFollowsProfileSettingsTests"/>) — sekiz switch.</para></summary>
     [StaFact]
     public void The_four_shell_switches_are_saved_and_reopen_on_the_saved_value()
     {
@@ -339,9 +347,8 @@ public class SettingsGeneralPageTests
 
         dialog.Open(run, store, () => null);
         dialog.UpdateLayout();
-        // [RESOLVE Faz 4] Pull ve Resolve tam öncelik canlı (açık) değerlerinde kalır; [idle-memory dalga 2] Compact console da;
-        // [dalga 3] Stop the engine when idle da.
-        Assert.Equal([true, true, false, true, true, false, true, true, false], Rows(dialog).Select(r => SwitchOf(r).IsChecked == true));
+        // Pull canlı (açık) değerinde kalır; [idle-memory dalga 2] Compact console da; [dalga 3] Stop the engine when idle da.
+        Assert.Equal([true, true, false, true, false, true, true, false], Rows(dialog).Select(r => SwitchOf(r).IsChecked == true));
     }
 
     /// <summary>[P3] Close to tray ve Show notifications Save'de UiState'e yazılır ve yeniden açılışta KAYITLI değeri
@@ -382,7 +389,9 @@ public class SettingsGeneralPageTests
     /// gelir (switch'e tıklamanın bağladığı gerçek yol). [DEĞİŞEN KURAL — idle-memory dalga 2 / spec §6.5] Eski: yedi
     /// switch; CONSOLE grubundaki Compact console (açık) altıncı indekste eklendi.
     /// <para><b>[DEĞİŞEN KURAL — idle-memory dalga 3 / spec §6.4]</b> Eski: sekiz switch; ENGINE grubundaki Stop the engine when idle
-    /// (açık) yedinci indekste eklendi — Show notifications sekizinci indekse kaydı.</para></summary>
+    /// (açık) yedinci indekste eklendi — Show notifications sekizinci indekse kaydı.</para>
+    /// <para><b>[DEĞİŞEN KURAL — 2026-10-17]</b> Eski: dokuz switch; Resolve tam öncelik anahtarı kalktı (gerekçe ve ölçüm:
+    /// <see cref="ResolveFollowsProfileSettingsTests"/>) — sekiz switch.</para></summary>
     [StaFact]
     public void The_startup_switches_are_saved_and_reopen_on_the_saved_value()
     {
@@ -398,7 +407,7 @@ public class SettingsGeneralPageTests
 
         dialog.Open(run, store, () => null);
         dialog.UpdateLayout();
-        Assert.Equal([true, true, true, true, true, false, true, true, true], Rows(dialog).Select(r => SwitchOf(r).IsChecked == true));
+        Assert.Equal([true, true, true, true, false, true, true, true], Rows(dialog).Select(r => SwitchOf(r).IsChecked == true));
     }
 
     /// <summary>[P4] Uçtan uca: switch'e tıklayıp Save → diyaloğun servisi Windows'un başlangıç kaydını ANINDA yazar.</summary>

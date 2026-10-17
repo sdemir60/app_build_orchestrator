@@ -82,10 +82,9 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
 
     /// <summary>[design v1.19.0 §2.9] General sayfasının grupları ve satırları — <see cref="GeneralSettingsCatalog"/>'tan
     /// doğar (sıra/metin burada yeniden yazılmaz).
-    /// <para>Dokuz anahtarın hepsi gerçektir. <c>Pull before build</c> (<see cref="PullExternalsBeforeBuild"/>),
-    /// <c>Stash and switch branches</c> (<see cref="StashOnBranchSwitch"/>), <c>Resolve cycles at full priority</c>
-    /// (<see cref="ResolveAtFullPriority"/>), <c>Compact console</c> (<see cref="CompactConsole"/>) ve <c>Stop the engine when
-    /// idle</c> (<see cref="StopEngineWhenIdle"/>) canlı VM değerinin
+    /// <para>Sekiz anahtarın hepsi gerçektir. <c>Pull before build</c> (<see cref="PullExternalsBeforeBuild"/>),
+    /// <c>Stash and switch branches</c> (<see cref="StashOnBranchSwitch"/>), <c>Compact console</c> (<see cref="CompactConsole"/>) ve
+    /// <c>Stop the engine when idle</c> (<see cref="StopEngineWhenIdle"/>) canlı VM değerinin
     /// taslak kopyasıdır; dört kabuk anahtarı (<c>Start with Windows</c>, <c>Start minimized to tray</c>, <c>Close to
     /// tray</c>, <c>Show notifications</c>) <see cref="ShellSwitches"/> tablosu üzerinden KALICIDIR: ctor'un <c>saved</c> parametresi
     /// onları tohumlar, <see cref="CommitAsync"/> yazar, <see cref="ToFile"/>/<see cref="LoadFrom"/> taşır, değişen değer
@@ -135,17 +134,8 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         set => GeneralRow(GeneralSetting.StashOnBranchSwitch).IsOn = value;
     }
 
-    /// <summary>[RESOLVE Faz 4 / karar 11] General sayfasının BUILD grubundaki <c>Resolve cycles at full priority</c>
-    /// satırının KENDİSİ (<see cref="StashOnBranchSwitch"/> deseni). Varsayılanı kataloğun satırıdır (<see cref="GeneralSettingsCatalog.DefaultOf"/>);
-    /// Save'e kadar yalnız taslaktır.</summary>
-    public bool ResolveAtFullPriority
-    {
-        get => GeneralRow(GeneralSetting.ResolveAtFullPriority).IsOn;
-        set => GeneralRow(GeneralSetting.ResolveAtFullPriority).IsOn = value;
-    }
-
     /// <summary>[idle-memory · dalga 2 / spec §6.5] General sayfasının CONSOLE grubundaki <c>Compact console</c> satırının
-    /// KENDİSİ (<see cref="ResolveAtFullPriority"/> deseni). Varsayılanı kataloğun satırıdır (<see cref="GeneralSettingsCatalog.DefaultOf"/>); Save'e
+    /// KENDİSİ (<see cref="StashOnBranchSwitch"/> deseni). Varsayılanı kataloğun satırıdır (<see cref="GeneralSettingsCatalog.DefaultOf"/>); Save'e
     /// kadar yalnız taslaktır.</summary>
     public bool CompactConsole
     {
@@ -173,13 +163,11 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// <see cref="RunViewModel.LayerPatterns"/> ne UiState değişir.
     /// <paramref name="initialExternals"/> harici proje listesinin AYNI kuralla gelen taslağıdır (K5) — boşsa
     /// taslak da boş kalır.
-    /// <para>[B3 · karar 47a] Beş iş akışı tercihi <c>bool?</c>'dur: verilen değer canlı ayarın taslak kopyasıdır, <c>null</c> ⇒ satır
+    /// <para>[B3 · karar 47a] Dört iş akışı tercihi <c>bool?</c>'dur: verilen değer canlı ayarın taslak kopyasıdır, <c>null</c> ⇒ satır
     /// kataloğun varsayılanında kalır (<see cref="GeneralSettingRowViewModel"/> ctor'u) — varsayılanın TEK tanımı kataloğun satırıdır, burada
-    /// ikinci bir literal yazılmaz. Diyalog (<c>SettingsDialog.Open</c>) beşini de her zaman canlı değerden verir.</para></summary>
+    /// ikinci bir literal yazılmaz. Diyalog (<c>SettingsDialog.Open</c>) dördünü de her zaman canlı değerden verir.</para></summary>
     /// <param name="pullExternalsBeforeBuild">Canlı "Pull before build" bayrağının taslak kopyası; <c>null</c> ⇒ kataloğun varsayılanı.</param>
     /// <param name="stashOnBranchSwitch">Canlı stash ayarının taslak kopyası; <c>null</c> ⇒ kataloğun varsayılanı.</param>
-    /// <param name="resolveAtFullPriority">[RESOLVE Faz 4] Canlı Resolve tam öncelik ayarının taslak kopyası; <c>null</c> ⇒ kataloğun
-    /// varsayılanı.</param>
     /// <param name="compactConsole">[idle-memory · dalga 2] Canlı Compact console ayarının taslak kopyası; <c>null</c> ⇒ kataloğun
     /// varsayılanı.</param>
     /// <param name="stopEngineWhenIdle">[idle-memory · dalga 3] Canlı Stop the engine when idle ayarının taslak kopyası; <c>null</c> ⇒
@@ -193,14 +181,13 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     public SettingsDraftViewModel(IReadOnlyList<LayerPattern>? initial, string? repositoryRoot,
         IReadOnlyList<ExternalProject>? initialExternals = null, bool? pullExternalsBeforeBuild = null,
         bool? stashOnBranchSwitch = null, UiState? saved = null, AutostartService? autostart = null,
-        bool? resolveAtFullPriority = null, bool? compactConsole = null, bool? stopEngineWhenIdle = null)
+        bool? compactConsole = null, bool? stopEngineWhenIdle = null)
     {
         _repositoryRoot = repositoryRoot;
         _openedWithoutWorkspace = string.IsNullOrWhiteSpace(repositoryRoot);
         GeneralGroups = BuildGeneralGroups();
         if (pullExternalsBeforeBuild is { } pull) PullExternalsBeforeBuild = pull;
         if (stashOnBranchSwitch is { } stash) StashOnBranchSwitch = stash;
-        if (resolveAtFullPriority is { } fullPriority) ResolveAtFullPriority = fullPriority;
         if (compactConsole is { } compact) CompactConsole = compact;
         if (stopEngineWhenIdle is { } stopIdle) StopEngineWhenIdle = stopIdle;
         if (saved is not null)
@@ -284,7 +271,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     public SettingsFile ToFile()
     {
         var file = SettingsFile.From(RepositoryRoot, BuildPatterns(), BuildExternals(), PullExternalsBeforeBuild, StashOnBranchSwitch,
-            ResolveAtFullPriority, CompactConsole, StopEngineWhenIdle);
+            CompactConsole, StopEngineWhenIdle);
         foreach (var s in ShellSwitches.All) s.WriteFile(file, GeneralRow(s.Setting).IsOn);
         return file;
     }
@@ -315,8 +302,6 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         if (file.PullExternalBeforeBuild is { } pull) PullExternalsBeforeBuild = pull;
         // [spec 2026-09-18 §6.3] Stash ayarı AYNI kural: anahtar yoksa taslaktaki değer korunur.
         if (file.StashOnBranchSwitch is { } stash) StashOnBranchSwitch = stash;
-        // [RESOLVE Faz 4] Resolve tam öncelik AYNI kural: anahtar yoksa taslaktaki değer korunur.
-        if (file.ResolveAtFullPriority is { } resolve) ResolveAtFullPriority = resolve;
         // [idle-memory · dalga 2] Compact console AYNI kural: anahtar yoksa taslaktaki değer korunur.
         if (file.CompactConsole is { } compact) CompactConsole = compact;
         // [idle-memory · dalga 3] Stop the engine when idle AYNI kural: anahtar yoksa taslaktaki değer korunur.
@@ -381,7 +366,6 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         state.ExternalProjects = externals.ToList();
         state.UpdateExternals = PullExternalsBeforeBuild;
         state.StashOnBranchSwitch = StashOnBranchSwitch;
-        state.ResolveAtFullPriority = ResolveAtFullPriority;
         state.CompactConsole = CompactConsole;
         state.StopEngineWhenIdle = StopEngineWhenIdle;
         // [P4] Start with Windows YALNIZ diyaloğun açıldığı değerden farklıysa uygulanır: Windows kaydı anında yazılır
@@ -401,7 +385,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
             ? ShellSwitches.StartWithWindows(state) : GeneralRow(s).IsOn));
         store.Save(state);
         await run.ApplySettingsAsync(patterns, RepositoryRoot, externals, PullExternalsBeforeBuild, StashOnBranchSwitch, settingNotes,
-            ResolveAtFullPriority, CompactConsole, StopEngineWhenIdle);
+            CompactConsole, StopEngineWhenIdle);
     }
 
     /// <summary>Katalogdan satırları kurar; bağımlı satırın etkinliğini üst anahtara, pull satırını
@@ -430,10 +414,6 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         _generalRows[GeneralSetting.StashOnBranchSwitch].PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(GeneralSettingRowViewModel.IsOn)) OnPropertyChanged(nameof(StashOnBranchSwitch));
-        };
-        _generalRows[GeneralSetting.ResolveAtFullPriority].PropertyChanged += (_, e) =>
-        {
-            if (e.PropertyName == nameof(GeneralSettingRowViewModel.IsOn)) OnPropertyChanged(nameof(ResolveAtFullPriority));
         };
         _generalRows[GeneralSetting.CompactConsole].PropertyChanged += (_, e) =>
         {

@@ -206,11 +206,10 @@ re-runs a failed release's failed jobs once. Installed copies pick the release u
    picker, centred over the window.
 
    **General** holds switches in six groups — Startup, Build, Branches, Console, Engine and Notifications. *Pull
-   before build* (see step 4), *Resolve cycles at full priority* (see [Performance modes](#performance-modes)),
-   *Stash and switch branches* (see step 3), *Compact console* (on by default; see the console, further down), *Stop
-   the engine when idle* (on by default; see below), *Start with Windows*, *Start minimized to tray*, *Close to tray*
-   and *Show notifications* all work, and *Save* keeps them. *Close to tray* and *Show notifications* are on by
-   default; what they change is described with the tray, further down.
+   before build* (see step 4), *Stash and switch branches* (see step 3), *Compact console* (on by default; see the
+   console, further down), *Stop the engine when idle* (on by default; see below), *Start with Windows*, *Start
+   minimized to tray*, *Close to tray* and *Show notifications* all work, and *Save* keeps them. *Close to tray* and
+   *Show notifications* are on by default; what they change is described with the tray, further down.
 
    *Stop the engine when idle* lets the engine process exit after five minutes without work — with the window open
    or in the tray — so an idle app holds less memory. The next piece of work that needs it — a build, a Sync, a Clean
@@ -731,16 +730,7 @@ One chip in the UI cycles three fixed profiles (default: Balanced):
 Switching **while a run is in flight** writes a console note and sends the new profile to the engine; switching
 while idle changes only the chip, because the profile travels with the next run anyway. The note is a narrative
 line — `parallelism: 4 · cpu cap 70%` — whose text is exactly `parallelism: <n> · cpu cap <p>%`
-(`cpu cap off` for Full); during a *Resolve cycles* run at full priority, a switch to Balanced or Light writes the note
-below instead, which adds the priority.
-
-**Resolve cycles runs at full priority.** Whatever the profile, a *Resolve cycles* run keeps the profile's worker
-count but drops its CPU cap and runs at normal priority, so it finishes sooner on a busy machine — at the price that
-other applications may slow down while it runs. The console says so when the run starts, and a switch to Balanced or
-Light during the run writes the same kind of note: `parallelism: <n> · cpu cap off · priority normal (Resolve cycles)`.
-*Settings → General → Resolve cycles at full priority* (on by default) turns this off, and Resolve then follows the
-profile. Build, Rebuild and Clean always follow the profile — including the cycle rounds a *Build* runs for a
-dirty group.
+(`cpu cap off` for Full).
 
 The parallelism in the table is what a profile *asks for*. At the start of each run the engine fits the request to the
 machine: it never starts more workers than a fixed multiple of the logical processors, nor more than the free physical
@@ -752,7 +742,9 @@ use the count the engine actually started.
 
 If the whole machine freezes during a build, lower the profile. The limit is usually memory rather than CPU:
 every parallel project runs its own compiler, and with an IDE and browsers already open, Full can use up the
-physical memory and make Windows page other applications (ARCHITECTURE.md §11.1).
+physical memory and make Windows page other applications (ARCHITECTURE.md §11.1). Full also runs the compilers at
+the same priority as the app itself, so while other work keeps the cores busy the interface can stall for seconds
+during a run; Balanced, the default, runs them at a lower one.
 
 Three qualifications worth knowing:
 

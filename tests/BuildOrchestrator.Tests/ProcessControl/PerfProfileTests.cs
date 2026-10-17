@@ -1,4 +1,3 @@
-using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Core.ProcessControl;
 using Xunit;
 
@@ -50,76 +49,33 @@ public class PerfProfileTests
     public void Try_parse_returns_null_for_an_unknown_perf_mode_text(string text)
         => Assert.Null(PerfProfile.TryParse(text));
 
-    // ---------------------------------------------------------------- [RESOLVE Faz 4 / karar 11] koşu dönüşümü
+    // ---------------------------------------------------------------- chip notu: profilin tek biçimi
 
-    /// <summary>Resolve cycles + anahtar açık: cap YOK, priority Normal, işçi sayısı profilden (kullanıcı onayı). Beklenen
-    /// değerler LİTERAL anlamdır (null / Normal) — dönüşümün kendisinden türetilmez.</summary>
+    /// <summary>
+    /// Koşu içi chip notu (<see cref="PerfNoteText.Note(PerfProfile)"/>) her mod için profilin kendi notudur: işçi sayısı ve cap
+    /// (<c>parallelism: 4 · cpu cap 70%</c>), cap'siz Full'de <c>cpu cap off</c>. Koşu moduna göre değişen bir biçim ve Resolve cycles'a
+    /// özgü bir metin (priority terimi, koşu adı) yoktur. Metinler KOPYA METİN olduğundan bilerek literaldir — türetilseydi test kendini
+    /// doğrulardı.
+    /// <para><b>[DEĞİŞEN KURAL — 2026-10-17]</b> Eski iddia (<c>A_resolve_cycles_run_drops_the_cap_runs_at_normal_priority_and_keeps_the_profile_workers</c>,
+    /// <c>A_resolve_cycles_run_follows_the_profile_when_the_switch_is_off</c>, <c>Build_rebuild_and_clean_always_follow_the_profile</c>,
+    /// <c>Full_is_unchanged_by_the_resolve_transform</c>, <c>The_resolve_note_names_the_lifted_priority_and_other_runs_keep_the_profile_note</c>,
+    /// <c>The_priority_value_names_every_class_and_rejects_an_unknown_one</c>): Core'daki bir koşu dönüşümü (<c>PerfProfile.ForRun</c>), Resolve
+    /// cycles'ta ve Ayarlar'ın "Resolve cycles at full priority" anahtarı açıkken, profilin cap'ini ve priority'sini Full'ün satırından alırdı
+    /// (işçi sayısı profilden); not (<c>PerfNoteText.ResolveNote</c>) bunu <c>parallelism: 4 · cpu cap off · priority normal (Resolve cycles)</c>
+    /// diye anlatırdı ve priority'nin değer terimi (<c>PerfNoteText.PriorityValue</c>) her sınıf için açıkça yazılıydı. Dönüşüm, not, terim
+    /// sözlüğü ve anahtar kalktı: profilin tablosu koşu modundan bağımsız aynen uygulanır, not tek biçimdir (gerekçe ve ölçüm:
+    /// <see cref="BuildOrchestrator.Tests.App.ResolveFollowsProfileSettingsTests"/>). Terim sözlüğünü pinleyen test, sözlük kalktığı için
+    /// kalktı; Core'da priority'yi anlatan başka bir metin kalmadı.</para>
+    /// </summary>
     [Theory]
-    [InlineData(PerfMode.Balanced)]
-    [InlineData(PerfMode.Light)]
-    public void A_resolve_cycles_run_drops_the_cap_runs_at_normal_priority_and_keeps_the_profile_workers(PerfMode mode)
+    [InlineData(PerfMode.Full, "parallelism: 6 · cpu cap off")]
+    [InlineData(PerfMode.Balanced, "parallelism: 4 · cpu cap 70%")]
+    [InlineData(PerfMode.Light, "parallelism: 2 · cpu cap 40%")]
+    public void The_perf_note_is_the_profiles_own_note_for_every_mode(PerfMode mode, string expected)
     {
-        var profile = PerfProfile.For(mode);
+        string note = PerfNoteText.Note(PerfProfile.For(mode));
 
-        var run = PerfProfile.ForRun(RunMode.Cycles, profile, resolveAtFullPriority: true);
-
-        Assert.Null(run.CpuCapPercent);
-        Assert.Equal(ProcessPriorityClassKind.Normal, run.Priority);
-        Assert.Equal(profile.Parallelism, run.Parallelism);
-    }
-
-    /// <summary>Anahtar kapalıyken Resolve bugünkü gibi profilin önceliği/tavanıyla koşar.</summary>
-    [Theory]
-    [InlineData(PerfMode.Full)]
-    [InlineData(PerfMode.Balanced)]
-    [InlineData(PerfMode.Light)]
-    public void A_resolve_cycles_run_follows_the_profile_when_the_switch_is_off(PerfMode mode)
-        => Assert.Equal(PerfProfile.For(mode),
-            PerfProfile.ForRun(RunMode.Cycles, PerfProfile.For(mode), resolveAtFullPriority: false));
-
-    /// <summary>Build/Rebuild/Clean HİÇ etkilenmez — anahtar açık olsa bile.</summary>
-    [Theory]
-    [InlineData(RunMode.Build, PerfMode.Balanced)]
-    [InlineData(RunMode.Build, PerfMode.Light)]
-    [InlineData(RunMode.Rebuild, PerfMode.Balanced)]
-    [InlineData(RunMode.Rebuild, PerfMode.Light)]
-    [InlineData(RunMode.Clean, PerfMode.Balanced)]
-    [InlineData(RunMode.Clean, PerfMode.Light)]
-    public void Build_rebuild_and_clean_always_follow_the_profile(RunMode runMode, PerfMode mode)
-        => Assert.Equal(PerfProfile.For(mode),
-            PerfProfile.ForRun(runMode, PerfProfile.For(mode), resolveAtFullPriority: true));
-
-    /// <summary>Full zaten cap'siz + Normal: dönüşüm onu değiştirmez.</summary>
-    [Fact]
-    public void Full_is_unchanged_by_the_resolve_transform()
-        => Assert.Equal(PerfProfile.For(PerfMode.Full),
-            PerfProfile.ForRun(RunMode.Cycles, PerfProfile.For(PerfMode.Full), resolveAtFullPriority: true));
-
-    /// <summary>Konsol notu chip notunun ailesindedir: priority ve koşu adı eklenmiş tek satır (KOPYA METİN bilerek
-    /// literal). Dönüşüm profili değiştirmediyse not profilin kendi notudur ve run-başı satırı (ResolveNote) yoktur.</summary>
-    [Fact]
-    public void The_resolve_note_names_the_lifted_priority_and_other_runs_keep_the_profile_note()
-    {
-        var balanced = PerfProfile.For(PerfMode.Balanced);
-
-        Assert.Equal("parallelism: 4 · cpu cap off · priority normal (Resolve cycles)",
-            PerfNoteText.Note(RunMode.Cycles, balanced, resolveAtFullPriority: true));
-        Assert.Equal("parallelism: 4 · cpu cap off · priority normal (Resolve cycles)",
-            PerfNoteText.ResolveNote(RunMode.Cycles, balanced, resolveAtFullPriority: true));
-        Assert.Equal(PerfNoteText.Note(balanced), PerfNoteText.Note(RunMode.Build, balanced, resolveAtFullPriority: true));
-        Assert.Equal(PerfNoteText.Note(balanced), PerfNoteText.Note(RunMode.Cycles, balanced, resolveAtFullPriority: false));
-        Assert.Null(PerfNoteText.ResolveNote(RunMode.Cycles, PerfProfile.For(PerfMode.Full), resolveAtFullPriority: true));
-        Assert.Null(PerfNoteText.ResolveNote(RunMode.Build, balanced, resolveAtFullPriority: true));
-    }
-
-    /// <summary>[RESOLVE Faz 4 · fix 1B — M6] Priority'nin değer terimi her sınıf için AÇIKÇA yazılıdır (KOPYA METİN bilerek
-    /// literal); tanımsız bir değer — ileride eklenen bir enum üyesi — sessizce <c>"idle"</c> diye etiketlenmez, fırlatır.</summary>
-    [Fact]
-    public void The_priority_value_names_every_class_and_rejects_an_unknown_one()
-    {
-        Assert.Equal("normal", PerfNoteText.PriorityValue(ProcessPriorityClassKind.Normal));
-        Assert.Equal("below normal", PerfNoteText.PriorityValue(ProcessPriorityClassKind.BelowNormal));
-        Assert.Equal("idle", PerfNoteText.PriorityValue(ProcessPriorityClassKind.Idle));
-        Assert.Throws<ArgumentOutOfRangeException>(() => PerfNoteText.PriorityValue((ProcessPriorityClassKind)99));
+        Assert.Equal(expected, note);
+        Assert.DoesNotContain("priority", note, StringComparison.Ordinal);
     }
 }

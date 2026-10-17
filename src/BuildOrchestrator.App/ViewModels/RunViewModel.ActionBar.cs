@@ -193,33 +193,15 @@ public sealed partial class RunViewModel
     }
 
     /// <summary>
-    /// [RESOLVE Faz 4 / karar 11] Settings Save: "Resolve cycles at full priority" switch'ini uygular. Değer bir sonraki
-    /// <see cref="StartRunCommand"/> ile motora gider. Not yalnız değer GERÇEKTEN değiştiyse yazılır
-    /// (<see cref="ApplyStashOnBranchSwitch"/> deseni).
-    /// </summary>
-    private void ApplyResolveAtFullPriority(bool fullPriority)
-    {
-        if (fullPriority == ResolveAtFullPriority) return;
-        ResolveAtFullPriority = fullPriority;
-        // [fix 1A — M4] Etiket KATALOGDAN gelir (ShellSwitch.Note deseni): anahtarın adı burada literal yazılmaz.
-        // [fix 1A — M5] Sonek bir SONRAKİ Resolve koşusunu söyler: not koşu sürerken de yazılır, motor ise uçuştaki koşunun
-        // run başı anahtarını korur.
-        string label = GeneralSettingsCatalog.Definition(GeneralSetting.ResolveAtFullPriority).Label;
-        AppendRunLine(fullPriority
-            ? $"{label} on — the next Resolve cycles run runs at normal priority with no CPU cap"
-            : $"{label} off — the next Resolve cycles run follows the performance mode");
-    }
-
-    /// <summary>
     /// [idle-memory · dalga 2 / spec §6.5] Settings Save: "Compact console" switch'ini uygular. Değişiklik bir SONRAKİ
     /// işlemde geçerli olur (mevcut anlatı yeniden yazılmaz); not yalnız değer GERÇEKTEN değiştiyse yazılır
-    /// (<see cref="ApplyResolveAtFullPriority"/> deseni). Bayrak motora gitmez.
+    /// (<see cref="ApplyStashOnBranchSwitch"/> deseni). Bayrak motora gitmez.
     /// </summary>
     private void ApplyCompactConsole(bool compact)
     {
         if (compact == CompactConsole) return;
         CompactConsole = compact;
-        // Etiket KATALOGDAN gelir (ApplyResolveAtFullPriority deseni): anahtarın adı burada literal yazılmaz. Sonek "from the
+        // Etiket KATALOGDAN gelir (ShellSwitch.Note deseni): anahtarın adı burada literal yazılmaz. Sonek "from the
         // next run" der — not koşu sürerken de yazılır, değişiklik ise bir sonraki işlemde geçerli olur (spec §6.5).
         string label = GeneralSettingsCatalog.Definition(GeneralSetting.CompactConsole).Label;
         AppendRunLine(compact
@@ -282,7 +264,7 @@ public sealed partial class RunViewModel
     /// kök yine de uygulanır: ikisi de motora dokunmaz, kök kalıcı duruma yazılır (UiState.RepositoryRoot) ve
     /// motor geri geldiğinde ilk Sync onu taşır — motorun yokluğu bir kök seçimini YANLIŞ yapmaz.</para>
     ///
-    /// <para><b>[B3 · karar 47a] Beş General anahtarı <c>bool?</c>'dur; <c>null</c> ⇒ DOKUNULMAZ.</b> Settings'in Save'i her değeri her
+    /// <para><b>[B3 · karar 47a] Dört General anahtarı <c>bool?</c>'dur; <c>null</c> ⇒ DOKUNULMAZ.</b> Settings'in Save'i her değeri her
     /// zaman verir (<see cref="SettingsDraftViewModel.CommitAsync"/>); ayarı hiç anmayan bir çağıran onu kendiliğinden değiştirip konsola
     /// not düşmemeli. Varsayılanın TEK tanımı kataloğun satırıdır — bir argüman varsayılanı ikinci bir tanım olurdu. Değer verildiyse
     /// uygulanır ve yalnız GERÇEKTEN değiştiyse konsola not düşer.</para></summary>
@@ -296,12 +278,10 @@ public sealed partial class RunViewModel
     /// <param name="settingNotes">[P3 · P4] <see cref="BuildOrchestrator.App.Shell.ShellSwitches"/>'in <c>Commit</c>'inin
     /// ürettiği, DEĞİŞEN kabuk anahtarlarının (Start with Windows, Start minimized to tray, Close to tray, Show
     /// notifications) konsol notları —
-    /// <see cref="ApplyStopEngineWhenIdle"/>'dan HEMEN SONRA (sıra: Pull → Stash → Resolve → Compact → Stop engine → bu notlar), idle kapısından
+    /// <see cref="ApplyStopEngineWhenIdle"/>'dan HEMEN SONRA (sıra: Pull → Stash → Compact → Stop engine → bu notlar), idle kapısından
     /// ÖNCE <see cref="AppendRunLine"/> ile
     /// sırayla yazılır (bu yüzden motor/workspace durumundan ETKİLENMEZ — <see cref="ApplyPullExternals"/>/
     /// <see cref="ApplyStashOnBranchSwitch"/>'in kendi notlarıyla AYNI konum).</param>
-    /// <param name="resolveAtFullPriority">[RESOLVE Faz 4 / karar 11] General'ın "Resolve cycles at full priority"
-    /// switch'i; <c>null</c> ⇒ dokunulmaz.</param>
     /// <param name="compactConsole">[idle-memory · dalga 2 / spec §6.5] General'ın "Compact console" switch'i — App-içi
     /// tercih (motora gitmez); değer değiştiyse konsola not düşer, değişiklik bir sonraki işlemde geçerli olur. <c>null</c> ⇒
     /// dokunulmaz.</param>
@@ -309,7 +289,7 @@ public sealed partial class RunViewModel
     /// tercih (motora gitmez); değer değiştiyse konsola not düşer. <c>null</c> ⇒ dokunulmaz.</param>
     public async Task ApplySettingsAsync(IReadOnlyList<LayerPattern> patterns, string? repositoryRoot,
         IReadOnlyList<ExternalProject> externals, bool? pullExternalsBeforeBuild = null, bool? stashOnBranchSwitch = null,
-        IReadOnlyList<string>? settingNotes = null, bool? resolveAtFullPriority = null, bool? compactConsole = null,
+        IReadOnlyList<string>? settingNotes = null, bool? compactConsole = null,
         bool? stopEngineWhenIdle = null)
     {
         string root = RootOf(repositoryRoot);
@@ -319,7 +299,6 @@ public sealed partial class RunViewModel
         ApplyExternalProjects(externals);
         if (pullExternalsBeforeBuild is { } pull) ApplyPullExternals(pull);
         if (stashOnBranchSwitch is { } stash) ApplyStashOnBranchSwitch(stash);
-        if (resolveAtFullPriority is { } fullPriority) ApplyResolveAtFullPriority(fullPriority);
         if (compactConsole is { } compact) ApplyCompactConsole(compact);
         if (stopEngineWhenIdle is { } stopIdle) ApplyStopEngineWhenIdle(stopIdle);
         if (settingNotes is not null)

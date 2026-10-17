@@ -1,0 +1,45 @@
+/* Delta Build Orchestrator — color tokens
+   Kaynak: uploads/delta-tokens.css (birebir). Renk yalnızca STATÜ taşır; tek marka accent'i amber. */
+:root {
+  /* ---- Neutrals (near-black, hafif sıcak) ---- */
+  --black:#08080a; --neutral-1000:#0a0a0c; --neutral-950:#0e0e10; --neutral-900:#141417;
+  --neutral-850:#1a1a1e; --neutral-800:#202024; --neutral-700:#2a2a30; --neutral-600:#3a3a42;
+  --neutral-500:#54545c; --neutral-400:#76767e; --neutral-300:#a9a9b0; --neutral-200:#cdcdd2;
+  --neutral-100:#ededee; --white:#ffffff;
+
+  /* ---- Surfaces ---- */
+  --surface-sunken:var(--neutral-1000); --surface-base:var(--neutral-950); --surface:var(--neutral-900);
+  --surface-raised:var(--neutral-850);  --surface-overlay:var(--neutral-800); --console-bg:#060608;
+
+  /* ---- Interaction surfaces (türetilmiş: hover = bir üst surface adımı) ---- */
+  --surface-hover:var(--neutral-850); --surface-active:var(--neutral-800);
+  --scrim:rgba(4,4,6,0.60);
+
+  /* ---- Borders (hairline yapıyı taşır) ---- */
+  --border-subtle:#1c1c20; --border:#2a2a30; --border-strong:#3a3a42;
+
+  /* ---- Text ---- */
+  --text-primary:#ededee; --text-secondary:#a9a9b0; --text-dim:#76767e; --text-faint:#54545c;
+  --text-on-accent:#1c1304;
+
+  /* ---- Brand: amber (TEK marka rengi) ---- */
+  --amber:#eda10f; --amber-bright:#ffb52e; --amber-dim:#b87a0b; --amber-text:#f1ab2e;
+  --amber-soft:rgba(237,161,15,0.12); --amber-soft-hover:rgba(237,161,15,0.18); --amber-border:rgba(237,161,15,0.32);
+
+  /* ---- Status (renk + glyph + metin, hep birlikte) ---- */
+  --status-success:#43b16b; --status-success-text:#58cb80; --status-success-soft:rgba(67,177,107,0.12); --status-success-border:rgba(67,177,107,0.30);
+  --status-fail:#ee5a52;    --status-fail-text:#ff706a;    --status-fail-soft:rgba(238,90,82,0.12);     --status-fail-border:rgba(238,90,82,0.32);
+  --status-building:var(--amber); --status-building-text:var(--amber-text); --status-building-soft:var(--amber-soft); --status-building-border:var(--amber-border);
+  --status-skipped:#6a6a73; --status-skipped-text:#888890; --status-skipped-soft:rgba(120,120,128,0.10); --status-skipped-border:rgba(120,120,128,0.24);
+  --status-cycle:#df6f2b;   --status-cycle-text:#f0853f;   --status-cycle-soft:rgba(223,111,43,0.12);   --status-cycle-border:rgba(223,111,43,0.32);
+  --status-queued:#7c7c84;  --status-queued-text:#9a9aa2;  --status-queued-soft:rgba(124,124,132,0.10);
+
+  /* ---- Will-build noktası (accent'ten AYRI, ortogonal dot semantiği) ---- */
+  --dot-dirty:var(--amber);        /* değişmiş → derlenecek */
+  --dot-clean:var(--neutral-600);  /* güncel → atlanacak */
+  --dot-unknown:transparent;       /* Sync/state öncesi → hollow (yalnız ince halka) */
+  --dot-size:8px; --dot-outline-width:1px; --dot-outline-color:var(--border-subtle);
+
+  /* ---- Focus ---- */
+  --focus-ring:rgba(237,161,15,0.50); --focus-ring-width:2px;
+}
