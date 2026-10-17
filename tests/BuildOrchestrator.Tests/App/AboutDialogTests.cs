@@ -488,7 +488,7 @@ public class AboutDialogTests
 
     /// <summary>
     /// <b>[DEĞİŞEN KURAL — kaynak şeridi, karar K7]</b> Environment sekmesi App'in belleğini ÇİZMEZ: <c>App private</c> · <c>GC committed</c> ·
-    /// <c>Managed heap</c> satırları ne etiketiyle ne değeriyle, diyalogda görünür hiçbir yerde durmaz.
+    /// <c>Managed heap</c> satırları ne etiketiyle ne değeriyle, Environment sekmesi seçiliyken diyalogda görünen metinlerin hiçbirinde durmaz.
     /// <para><b>ESKİ İDDİA</b> (<c>The_runtime_group_shows_the_app_memory_in_megabytes_read_from_this_process</c>, idle-memory spec §6.6):
     /// RUNTIME grubu üç satırı MB olarak çizerdi — etiketleri çizili, değerleri bu sürecin gerçek okuması, pencere açılırken alınmış bir görüntü
     /// (canlı değil). <b>Değişme gerekçesi:</b> title bar'a kaynak şeridi geldi ve belleği gösterir (karar K7); aynı bellek iki yerde çizilmez.

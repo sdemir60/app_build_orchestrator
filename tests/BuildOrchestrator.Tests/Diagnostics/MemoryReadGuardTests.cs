@@ -8,7 +8,7 @@ namespace BuildOrchestrator.Tests.Diagnostics;
 /// [idle-memory · final review (Tasks 9-10) · kaynak şeridi R1] Süreç belleğinin TEK okuma yerinin kaynak-tarayan guard'ı:
 /// <c>GetProcessMemoryInfo</c> (özel baytlar), <c>GC.GetGCMemoryInfo</c> ve <c>GC.GetTotalMemory</c> çağrıları yalnız
 /// <c>Core/Diagnostics/MemoryLine.cs</c>'te yazılır (<c>MemoryLine.Read</c>, <c>PrivateBytesOf</c>, <c>CurrentPrivateBytes</c>). Motorun
-/// bellek satırı, App'in tanı satırları (About → Environment) ve kaynak şeridi o okumayı kullanır; ikinci bir okuma yüzeylerin sayılarını
+/// bellek satırı, App'in tanı satırları (About'un kopyalanan tanı metni) ve kaynak şeridi o okumayı kullanır; ikinci bir okuma yüzeylerin sayılarını
 /// sessizce ayrıştırır (hangi sayaç, toplamadan önce mi sonra mı, hangi birim).
 ///
 /// <para><b>Değişen kural (ölçüm, 2026-10-17):</b> eski iddia "özel baytlar <c>Process.PrivateMemorySize64</c> ile okunur, tek yeri

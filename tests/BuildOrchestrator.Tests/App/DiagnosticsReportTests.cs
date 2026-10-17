@@ -76,8 +76,9 @@ public class DiagnosticsReportTests
     /// <summary>
     /// [kaynak şeridi, karar K7] Yalnız-kopya grup: App private · GC committed · Managed heap, MB — hiçbir sekmede çizilmez, yalnız kopyalanan
     /// tanı metnine girer (hata bildirimi için). Satırlar motorun bellek satırının (<c>memory: private=… committed=… heap=…</c>) App'teki eşidir:
-    /// aynı okuma, aynı MB kuralı (<see cref="MemoryLine"/>); okuma ve değerler değişmedi, yalnız satırların nerede durduğu değişti. Etiketlerin
-    /// harfi harfine pini BURADADIR; öteki testler satırları bu gruptan okur.
+    /// aynı okuma, aynı MB kuralı (<see cref="MemoryLine"/>); okuma ve değerler değişmedi, yalnız satırların nerede durduğu değişti. MODELDEKİ
+    /// etiketlerin harfi harfine pini BURADADIR; kopyalanan metindeki aynı satırların sırası ve hizası ayrı bir testte pinlidir
+    /// (<see cref="The_clipboard_text_keeps_the_memory_rows_between_the_runtime_rows_and_the_paths"/>); öteki testler satırları bu gruptan okur.
     /// </summary>
     [Fact]
     public void The_copy_only_group_is_the_app_memory_in_megabytes()

@@ -18,7 +18,7 @@ namespace BuildOrchestrator.Tests.Diagnostics;
 /// ikinci bir kopya tutmaz, yalnız sözleşmeyi sabitler: alan sırası, birim, yuvarlama, kültürsüzlük, hata yutma.
 ///
 /// <para>[idle-memory · spec §6.6] Okuma (<see cref="MemoryLine.Read"/>) ve MB biçimi (<see cref="MemoryLine.Megabytes"/>) da
-/// tektir: satır ve App'in tanı satırları (About → Environment) ikisini de kullanır — iki yüzeyin sayıları aynı kuralla
+/// tektir: satır ve App'in tanı satırları (About'un kopyalanan tanı metni) ikisini de kullanır — iki yüzeyin sayıları aynı kuralla
 /// yazılır.</para>
 /// </summary>
 public class MemoryLineTests
@@ -54,8 +54,8 @@ public class MemoryLineTests
     public void Format_rounds_each_value_half_away_from_zero_without_digit_grouping(long bytes, string expected) =>
         Assert.Equal($"memory: private={expected} committed={expected} heap={expected}", MemoryLine.Format(bytes, bytes, bytes));
 
-    /// <summary>[idle-memory · spec §6.6] MB biçimi tek başına da satırınkiyle AYNI kuraldır: App'in tanı satırları (About →
-    /// Environment) sayıyı buradan alır, kendi yuvarlamasını yazmaz.</summary>
+    /// <summary>[idle-memory · spec §6.6] MB biçimi tek başına da satırınkiyle AYNI kuraldır: App'in tanı satırları (About'un
+    /// kopyalanan tanı metni) sayıyı buradan alır, kendi yuvarlamasını yazmaz.</summary>
     [Theory]
     [MemberData(nameof(Rounding))]
     public void Megabytes_rounds_half_away_from_zero_without_digit_grouping_like_the_line(long bytes, string expected) =>

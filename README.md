@@ -20,7 +20,8 @@ You point it at a git repository. **Sync** scans the working tree for `*.csproj`
 files as raw XML (MSBuild is never evaluated for this), builds the dependency graph, and compares the current
 source signature against the stored build state to mark each project as "will build" or "up to date". **Build**
 then runs the plan: each project is shelled out to a separate `MSBuild.exe` child process, ordered by the graph,
-N at a time. Progress streams back to a live project list, a dependency graph view and a console. A run can be
+N at a time. Progress streams back to a live project list, a dependency graph view and a console, and the middle of
+the title bar shows what the tool itself costs the machine while it works (see *Performance modes*). A run can be
 stopped (in-flight projects are allowed to finish their post-build copy); after a stop or a failure, *Build*
 picks up what is left, skipping everything that already finished green. There is one tree: every build
 compiles your working tree as it is, on whatever branch is checked out. Picking another branch on the branch
@@ -633,16 +634,17 @@ the tagline on the left; a *licensed to* block with the company logo on the righ
 
 - **About** — a short description of what the app does, then the application version, the engine version (or
   `not started`) and the copyright, and a *What's new in {version}* button that opens the release notes.
-- **Environment** — two groups: *Runtime* (engine PID, .NET runtime, OS, and the app's own memory — *App
-  private*, *GC committed* and *Managed heap*, in MB: a snapshot taken when the screen opens and once more when
-  `MSBuild.exe` resolves, not a live reading, and `—` when it cannot be read; the engine PID reads `asleep` while
-  the engine sleeps) and *Paths* (the resolved `MSBuild.exe` and its version, the repository root, and the state
-  and log paths).
+- **Environment** — two groups: *Runtime* (engine PID, which reads `asleep` while the engine sleeps, .NET runtime
+  and OS) and *Paths* (the resolved `MSBuild.exe` and its version, the repository root, and the state and log
+  paths). The app's own memory is not listed here: the title bar's resource strip shows it (see *Performance
+  modes*).
 - **Shortcuts** — the table above in three groups, *Global*, *Build* and *Application*, rendered from the same
   source the app binds its keys from, so a rebound key can never drift from what the screen claims.
 
-*Copy diagnostics* in the footer puts the product and version, the engine version and every Environment row on
-the clipboard as one aligned block, to paste into a support request.
+*Copy diagnostics* in the footer puts the product and version, the engine version, every Environment row and the
+app's own memory — *App private*, *GC committed* and *Managed heap*, in MB: a snapshot taken when the screen opens
+and once more when `MSBuild.exe` resolves, `—` when it cannot be read — on the clipboard as one aligned block, to
+paste into a support request.
 
 `MSBuild.exe` is located through `vswhere`, which costs a child process, so it resolves the first time the
 Environment tab is opened rather than when the screen appears.
@@ -745,6 +747,20 @@ every parallel project runs its own compiler, and with an IDE and browsers alrea
 physical memory and make Windows page other applications (ARCHITECTURE.md §11.1). Full also runs the compilers at
 the same priority as the app itself, so while other work keeps the cores busy the interface can stall for seconds
 during a run; Balanced, the default, runs them at a lower one.
+
+**What the tool costs, live.** The middle of the title bar shows it in three read-only cells; hover one for its
+meaning:
+
+- **CPU** — the share of the whole machine used by the app, the engine and the compilers together (`69%`).
+- **Memory** — their private bytes added up (`310 MB`, `4.8 GB`): what they have committed, which is not the figure
+  Task Manager's default memory column shows (the private working set), so the two can differ.
+- **Parallelism and mode** — the projects building now over the number the mode allows, then the mode: `0/4 Balanced`
+  while idle, `4/4 Balanced` when four projects build at once, `2/4 Balanced` when the engine cut the run to fit the
+  machine (the tooltip says why).
+
+The numbers refresh about every three seconds, and not at all while the window is in the tray or minimized. The strip
+only reads: the mode is changed on the chip. How it measures is in
+[`ARCHITECTURE.md` §11.5](ARCHITECTURE.md#115-resource-strip).
 
 Three qualifications worth knowing:
 
