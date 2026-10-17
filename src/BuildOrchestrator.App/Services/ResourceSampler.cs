@@ -195,6 +195,10 @@ internal sealed class ResourceSampler
     /// <summary>Şimdiye dek alınan örnek sayısı (testler ve "gizliyken örnek yok" kanıtı). Etkinleşmenin taban okuması örnek DEĞİLDİR.</summary>
     internal int SampleCount { get; private set; }
 
+    /// <summary>Örnekleme açık mı (<see cref="SetActive"/>'in son değeri). Kabuğun etkinlik kuralının (pencere yüklü, görünür, küçültülmemiş)
+    /// sonucunu gözleyen testler içindir; üretim kodu okumaz.</summary>
+    internal bool IsActive => _active;
+
     /// <summary>Üretimin saati: <see cref="Stopwatch"/> tabanlı, tek yönlü artan, ayırmaz.</summary>
     internal static TimeSpan MonotonicNow() => Stopwatch.GetElapsedTime(0);
 

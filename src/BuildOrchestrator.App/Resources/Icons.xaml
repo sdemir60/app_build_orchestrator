@@ -263,6 +263,26 @@
          tek Figures dizisinde ikinci figürün başı MUTLAK yazılır (göreli `m12 5` birincinin ucundan sayılırdı). -->
     <PathGeometry x:Key="Icon.ArrowRight" Figures="M5 12h14 M12 5l7 7-7 7" />
 
+    <!--
+      [design v1.25.0 §2.1] Title bar'ın KAYNAK ŞERİDİNİN üç ikonu (12px, tek renk text-faint, etiketsiz — anlamı taşıyan görsel bunlardır).
+      KAYNAK: .claude/outputs/2026-10-15-16-54-design-v1.25.0/prototype/app/BuildApp.jsx:125-127 (`I.cpu`, `I.memory`, `I.parallel`; viewBox 0 0 24 24).
+      Anahtar adı `Icon.MemoryStick`: tasarımın ikon adı `memory`, lucide'ınki memory-stick'tir; repoda `Memory` sözcüğü bellek satırlarına
+      (MemoryLine) ait olduğundan karışmasın diye lucide adı kullanıldı. `Icon.Parallel` lucide tally-3 geometrisidir (üç dik çizgi).
+    -->
+    <!-- BuildApp.jsx:125 cpu — 2x <rect rx/> (gövde 14×14 rx 2, çekirdek 5×5 rx 0.8) + sekiz bacak <path/>'i (hepsi mutlak `M` ile başlar) -->
+    <GeometryGroup x:Key="Icon.Cpu">
+        <RectangleGeometry Rect="5,5,14,14" RadiusX="2" RadiusY="2" />
+        <RectangleGeometry Rect="9.5,9.5,5,5" RadiusX="0.8" RadiusY="0.8" />
+        <PathGeometry Figures="M9 2.5V5 M15 2.5V5 M9 19v2.5 M15 19v2.5 M2.5 9H5 M2.5 15H5 M19 9h2.5 M19 15h2.5" />
+    </GeometryGroup>
+
+    <!-- BuildApp.jsx:126 memory — gövde (sağda ve solda birer çentik) + ayırıcı çizgi + üst üç, alt üç kontak (sekiz <path/>, hepsi mutlak `M` ile başlar) -->
+    <PathGeometry x:Key="Icon.MemoryStick"
+                  Figures="M3 7.5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2V12a1.8 1.8 0 0 0 0 3.4V17a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17v-1.6a1.8 1.8 0 0 0 0-3.4Z M3 14.5h18 M8 9v3 M12 9v3 M16 9v3 M7 18.5v-4 M12 18.5v-4 M17 18.5v-4" />
+
+    <!-- BuildApp.jsx:127 parallel — üç dik çizgi -->
+    <PathGeometry x:Key="Icon.Parallel" Figures="M6 5v14 M12 5v14 M18 5v14" />
+
     <!-- ================= statü glyph'leri + spinner (viewBox 0 0 16 16) ================= -->
     <!-- [T60] DS `StatusGlyph` çizimleri (_ds_bundle.js:1446-1524). Gövde ince bir HALKA + içine 1.5px'lik
          bir glyph'tir; `discovered` aynı halkanın KESİKLİSİDİR. `building` AYRI BİR ÇİZİM DEĞİLDİR — aynı
@@ -389,6 +409,11 @@
     <sys:Double x:Key="Icon.Brush.StrokeThickness">1.8</sys:Double>
     <!-- [design v1.23.0 §2.12] BuildApp.jsx:105 arrow-right (kartın sürüm geçişi) -->
     <sys:Double x:Key="Icon.ArrowRight.StrokeThickness">1.8</sys:Double>
+    <!-- [design v1.25.0 §2.1] kaynak şeridinin üç ikonu: README "stroke 1.8". Prototip `parallel`'i 1.9 yazar (BuildApp.jsx:127);
+         kaynaklar çelişince README kazanır, üçü de 1.8. -->
+    <sys:Double x:Key="Icon.Cpu.StrokeThickness">1.8</sys:Double>
+    <sys:Double x:Key="Icon.MemoryStick.StrokeThickness">1.8</sys:Double>
+    <sys:Double x:Key="Icon.Parallel.StrokeThickness">1.8</sys:Double>
 
     <!-- strokeWidth="1.9" (design-v1.11.0 BuildApp.jsx:81 rebuild — ailenin tek 1.9'u, kaynakta öyle) -->
     <sys:Double x:Key="Icon.Rebuild.StrokeThickness">1.9</sys:Double>

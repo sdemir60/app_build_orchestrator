@@ -53,6 +53,9 @@ public class IconGeometryTests
         // [design v1.23.0 §2.12] Güncelleme hapı ve kartı — hap: lucide circle-arrow-up, kartın sürüm geçişi: lucide
         // arrow-right (design-v1.24.0 prototype/app/BuildApp.jsx:104-105). Kartın rotate-cw'si Icon.Rebuild'dir.
         "Icon.UpdateReady", "Icon.ArrowRight",
+        // [design v1.25.0 §2.1] Title bar'ın kaynak şeridinin üç ikonu — lucide cpu · memory-stick ve üç dik çizgi (design-v1.25.0
+        // prototype/app/BuildApp.jsx:125-127). Şerit etiketsizdir: anlamı taşıyan görsel bu üç çizimdir.
+        "Icon.Cpu", "Icon.MemoryStick", "Icon.Parallel",
     ];
 
     /// <summary>[T60] Tasarımda <c>fill="currentColor" stroke="none"</c> ile verilen (DOLU) ikonlar —
@@ -162,6 +165,39 @@ public class IconGeometryTests
 
         Assert.Equal(1.7, Assert.IsType<double>(icons["Icon.UpdateReady.StrokeThickness"]));
         Assert.Equal(1.8, Assert.IsType<double>(icons["Icon.ArrowRight.StrokeThickness"]));
+    }
+
+    /// <summary>[design v1.25.0 §2.1] Kaynak şeridinin ikonları prototipin geometrisini BİREBİR taşır (BuildApp.jsx:125-127, viewBox
+    /// 24): cpu = iki <c>rect</c> (14×14 <c>rx=2</c> gövde, 5×5 <c>rx=0.8</c> çekirdek) + sekiz bacak çizgisi; memory-stick = gövde
+    /// (iki çentikli) + ayırıcı çizgi + üst üç, alt üç kontak (toplam sekiz figür); parallel = üç dik çizgi (x 6/12/18, y 5..19).
+    /// Üçü de 1.8 kalınlıkta konturludur: README §2.1 "stroke 1.8" der — prototipin <c>parallel</c> için yazdığı 1.9 README'ye göre
+    /// 1.8'dir (kaynaklar çelişince README kazanır). Sınırlar çizimin kendisini doğrular.</summary>
+    [StaFact]
+    public void The_resource_strip_icons_carry_the_prototype_geometry()
+    {
+        var icons = IconResources.Load();
+
+        var cpu = Assert.IsType<GeometryGroup>(icons["Icon.Cpu"]);
+        var rects = cpu.Children.OfType<RectangleGeometry>().ToList();
+        Assert.Equal(new[] { new Rect(5, 5, 14, 14), new Rect(9.5, 9.5, 5, 5) }, rects.Select(r => r.Rect));
+        Assert.Equal(new[] { 2.0, 0.8 }, rects.Select(r => r.RadiusX));
+        Assert.Equal(new[] { 2.0, 0.8 }, rects.Select(r => r.RadiusY));
+        Assert.Equal(8, Assert.Single(cpu.Children.OfType<PathGeometry>()).Figures.Count);
+        Assert.Equal(new Rect(2.5, 2.5, 19, 19), cpu.Bounds);
+
+        var memory = Assert.IsType<PathGeometry>(icons["Icon.MemoryStick"]);
+        Assert.Equal(8, memory.Figures.Count);
+        Assert.Equal(3, memory.Bounds.Left, 2);
+        Assert.Equal(5.5, memory.Bounds.Top, 2);
+        Assert.Equal(21, memory.Bounds.Right, 2);
+        Assert.Equal(18.5, memory.Bounds.Bottom, 2);
+
+        var parallel = Assert.IsType<PathGeometry>(icons["Icon.Parallel"]);
+        Assert.Equal(3, parallel.Figures.Count);
+        Assert.Equal(new Rect(6, 5, 12, 14), parallel.Bounds);
+
+        foreach (string key in new[] { "Icon.Cpu", "Icon.MemoryStick", "Icon.Parallel" })
+            Assert.Equal(1.8, Assert.IsType<double>(icons[key + ".StrokeThickness"]));
     }
 
     [StaFact]

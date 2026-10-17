@@ -151,9 +151,10 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
     /// (<c>EngineHostTests</c>). Üretimde hep null.</summary>
     internal Action? DebugStartWorkBegins;
 
-    /// <summary>[P3 · Task 5] Outer Job (test yüzeyi): gerçek motorla koşan testler ağacı — Supervisor ve onun
-    /// <c>MSBuild.exe</c>'leri — bu job'un IOCP'si üzerinden izler (<c>SafeExitProcessTests</c>). Üretim job'a
-    /// buradan dokunmaz; sahibi ve tek kapatanı <see cref="DisposeAsync"/>'tir.</summary>
+    /// <summary>[P3 · Task 5] Outer Job: gerçek motorla koşan testler ağacı — Supervisor ve onun <c>MSBuild.exe</c>'leri — bu job'un
+    /// IOCP'si üzerinden izler (<c>SafeExitProcessTests</c>). Üretim onu yalnız OKUR: title bar kaynak şeridi
+    /// (<c>JobResourceProbe</c>) job'un işlemci muhasebesini ve süreç listesini ister; yazmaz ve kapatmaz — sahibi ve tek kapatanı
+    /// <see cref="DisposeAsync"/>'tir.</summary>
     internal JobObject OuterJob => _outerJob;
 
     /// <summary>

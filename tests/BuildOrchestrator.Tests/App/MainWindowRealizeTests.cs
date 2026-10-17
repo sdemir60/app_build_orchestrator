@@ -133,7 +133,7 @@ public class MainWindowRealizeTests
     /// lens2 bağımsız ölçtü, kullanıcı kararıyla (2026-07-31) kapatıldı.
     ///
     /// <para>Otorite zemini ve alt çizgiyi TEK stil bloğunda aynı öğeye verdiği için üretimde de tek öğe taşır:
-    /// <c>TitleBarRow</c> artık bir <see cref="Border"/>'dır (tek çocuğu eski <c>DockPanel</c>). Renk eşitliği tek
+    /// <c>TitleBarRow</c> artık bir <see cref="Border"/>'dır (tek çocuğu, <c>DockPanel</c>'i ve ortadaki kaynak şeridini saran <c>Grid</c>). Renk eşitliği tek
     /// başına yetmez — fırçanın Tokens.xaml'deki nesnenin TA KENDİSİ olduğu (<see cref="Assert.Same"/>) ve
     /// kalınlığın <b>yalnız altta</b> 1px olduğu ayrı ayrı pinlenir.</para></summary>
     [StaFact]
@@ -241,7 +241,11 @@ public class MainWindowRealizeTests
     /// [A13/B0] <paramref name="child"/> ile <paramref name="ancestor"/> arasındaki hizalama adımı sayısı —
     /// yuvarlama bütçesinin çarpanı (adım × yarım cihaz pikseli). Elle YAZILMAZ, ağaçtan sayılır: araya bir
     /// sarmalayıcı girerse bütçe de gerçek fizikle birlikte büyür, iddia sessizce kırılmaz. Title bar logosu
-    /// için bugün 2 döner (Viewbox → StackPanel → DockPanel) ⇒ bütçe TAM bir cihaz pikselidir.
+    /// için bugün 3 döner (BrandLogo → StackPanel → DockPanel) ⇒ bütçe BİR BUÇUK cihaz pikselidir.
+    /// <para><b>[DEĞİŞEN KURAL — kaynak şeridi, design v1.25.0]</b> Eski iddia: iç kutu <c>DockPanel</c>'in kendisiydi ve sayı 2
+    /// dönerdi (bütçe tam bir piksel). Şerit kümelerle AYNI hücrede ve tam ortada durmak zorunda olduğundan <c>DockPanel</c> artık bir
+    /// <c>Grid</c>'in içindedir ve iç kutu o <c>Grid</c>'dir; logo ile arasına bir adım girdi. Davranış değişmedi (logo hâlâ aynı yerde
+    /// ve hâlâ dikey ortalı); bütçe bu test sayıyı ağaçtan saydığı için kendiliğinden büyüdü.</para>
     /// </summary>
     private static int AlignmentSteps(FrameworkElement child, FrameworkElement ancestor)
     {

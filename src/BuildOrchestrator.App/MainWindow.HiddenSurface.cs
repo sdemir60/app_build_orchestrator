@@ -22,7 +22,8 @@ namespace BuildOrchestrator.App;
 /// bekçisi hariç — o gizliyken de koşar) · sticky şerit, Build menüsü, alt çubuğun sayaç chip'leri, proje satırları ve olay
 /// akışı satırları (her biri kendi bayrağıyla, kalıtsal sinyalin değişiminde <c>OnPropertyChanged</c> ile dönüşte tek geçişte
 /// yetişir) · işlem sonu bellek trimi (<see cref="RequestTrimWhenDue"/>: gizliyken pay beklenmez ve tepside biten koşu gösterge
-/// çıkışını bekler; görünürken bitiş finali ve pay beklenir).</para>
+/// çıkışını bekler; görünürken bitiş finali ve pay beklenir) · title bar kaynak şeridinin CPU/RAM örnekleyicisi
+/// (<see cref="RefreshResourceSampler"/>: gizliyken zamanlayıcı durur, görününce hemen bir örnek alınır).</para>
 ///
 /// <para><b>Üretim kablajı:</b> <c>IsVisibleChanged</c> (ctor'da tek abonelik) ve <see cref="StartInTray"/>
 /// (pencere hiç gösterilmediği için olay ateşlenmez). Testler <see cref="SetSurfaceHidden"/>'ı doğrudan çağırır
@@ -72,6 +73,7 @@ public partial class MainWindow
     {
         if (IsSurfaceHidden == hidden) return;
         HiddenSurface.SetIsHidden(this, hidden);
+        RefreshResourceSampler(); // [kaynak şeridi] gizlenince örnekleme durur; görününce HEMEN bir örnek ve 3 sn ritmi (MainWindow.ResourceStrip.cs)
         if (!hidden)
         {
             Dispatcher.InvokeAsync(ResyncAfterShow, DispatcherPriority.Loaded);

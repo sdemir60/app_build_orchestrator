@@ -214,6 +214,15 @@
     <sys:Double x:Key="Size.WindowMinWidth">1240</sys:Double>
     <sys:Double x:Key="Size.WindowMinHeight">620</sys:Double>
 
+    <!-- Kaynak şeridi (design v1.25.0 §2.1, README): hücre = 12px ikon + 5px + değer; hücre arası 14px; sayıyla mod sözcüğü arası da 5px.
+         Views/ResourceStrip.xaml hiçbir ölçüyü literal yazmaz (kaynak guard'ı), hepsi buradan gelir. -->
+    <sys:Double x:Key="Size.ResourceStripIcon">12</sys:Double>
+    <Thickness x:Key="Thickness.ResourceStripCellGap">14,0,0,0</Thickness>
+    <Thickness x:Key="Thickness.ResourceStripValueGap">5,0,0,0</Thickness>
+    <!-- Icons.xaml'deki viewBox 0 0 24 24'lük (lucide) ikonların tasarım kutusu: ikon bir Viewbox içindeki 24×24'lük Canvas'a çizilir ve Viewbox
+         onu istenen punto kutusuna (ör. 12px) ölçekler — stroke da birlikte küçülür (Icons.xaml başlığı "ÖLÇEK"). -->
+    <sys:Double x:Key="Size.IconViewBox">24</sys:Double>
+
     <!-- ================================ Gölge (effects.css) ================================ -->
     <!-- DropShadowEffect'te spread parametresi YOKtur (feasibility §3.2/§5-2, A13.1-2) — CSS'in çift katmanlı
          gölgesi tek katmanla yakınsanır: Direction=270 (düz aşağı) + ShadowDepth=|Y| + BlurRadius=blur. -->

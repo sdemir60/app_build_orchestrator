@@ -469,6 +469,7 @@ public partial class MainWindow : Window
         SetupKeyboardShortcuts();
         SetupAboutButtonTooltip();
         SetupUpdatePill(); // [design v1.23.0 §2.12] title bar'ın güncelleme hapı (MainWindow.UpdatePill.cs)
+        SetupResourceStrip(); // [design v1.25.0 §2.1] title bar ortasındaki kaynak şeridi: örnekleyici + caption iletimi (MainWindow.ResourceStrip.cs)
         _ = RunConsolePumpAsync();
     }
 
@@ -1623,6 +1624,7 @@ public partial class MainWindow : Window
         _tray?.Dispose();
         _vm.DisableAutoSync(); // HEAD izleyicisi bırakılır
         _vm.GitOperationPollTimer?.Stop(); // git işlemi yoklaması kapanan pencereyi tıklatmasın
+        StopResourceStrip(); // [kaynak şeridi] örnekleyicinin zamanlayıcısı durur ve bir daha açılmaz
         // [tray indicator] Overlay AYRI bir top-level penceredir: kapatılmazsa uygulama kapanmaz.
         if (App.Motion is { } motion) motion.AnimationsEnabledChanged -= OnTrayIndicatorMotionChanged;
         _trayOverlay?.Close();
