@@ -5,7 +5,8 @@ namespace BuildOrchestrator.Core.ProcessControl;
 
 /// <summary>
 /// Win32 P/Invoke gövdesi — Job Object + IOCP + suspended-launch. Kanıtlanmış spike harness'ından
-/// (.claude/temp/spike/jobspike/Program.cs) birebir port edilmiştir.
+/// (.claude/temp/spike/jobspike/Program.cs) birebir port edilmiştir. [kaynak şeridi] Job muhasebesi, job PID listesi ve süreç özel
+/// baytı okumaları da buradadır (Core'un TEK P/Invoke dosyası); çağrıları <c>JobObject</c> ve <c>MemoryLine</c> yapar.
 /// </summary>
 internal static class NativeMethods
 {
@@ -29,6 +30,43 @@ internal static class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool GlobalMemoryStatusEx(ref MemoryStatusEx buffer);
 
+    // [kaynak şeridi / R1] Bir sürecin ÖZEL BAYTLARI (commit charge) için TEK okuma yolu (MemoryLine): Win32'nin
+    // PROCESS_MEMORY_COUNTERS_EX'i. SIZE_T alanları UIntPtr'dir (x86'da 4, x64'te 8 bayt); çağıran cb'yi yapının boyuyla doldurmak
+    // ZORUNDADIR. Process.PrivateMemorySize64'ün aksine makinedeki süreçleri taramaz (ölçüm: MemoryReadGuardTests).
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PROCESS_MEMORY_COUNTERS_EX
+    {
+        public uint cb;
+        public uint PageFaultCount;
+        public UIntPtr PeakWorkingSetSize;
+        public UIntPtr WorkingSetSize;
+        public UIntPtr QuotaPeakPagedPoolUsage;
+        public UIntPtr QuotaPagedPoolUsage;
+        public UIntPtr QuotaPeakNonPagedPoolUsage;
+        public UIntPtr QuotaNonPagedPoolUsage;
+        public UIntPtr PagefileUsage;
+        public UIntPtr PeakPagefileUsage;
+        public UIntPtr PrivateUsage;
+    }
+
+    /// <summary>Bir sürecin adını/durumunu sorgulamaya yeten, kısıtlı erişim hakkı — başkasının sürecini okumak için en az yetki.</summary>
+    public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+
+    /// <summary><c>GetExitCodeProcess</c>'in "süreç hâlâ çalışıyor" değeri (259).</summary>
+    public const uint STILL_ACTIVE = 259;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern nint OpenProcess(uint dwDesiredAccess, bool bInheritHandle, uint dwProcessId);
+
+    /// <summary>Bu sürecin SÖZDE tutamacı (-1): kapatılmaz, her sürecte geçerlidir, kendi sürecini okumak için OpenProcess gerekmez.</summary>
+    [DllImport("kernel32.dll")]
+    public static extern nint GetCurrentProcess();
+
+    // kernel32'nin dışa aktardığı ad K32'li olandır (psapi.dll'in aynı adlı eski girişi değil); C# adı Win32'ninkiyle aynı kalır ki
+    // MemoryReadGuardTests çağrıyı adıyla bulsun.
+    [DllImport("kernel32.dll", EntryPoint = "K32GetProcessMemoryInfo", SetLastError = true)]
+    public static extern bool GetProcessMemoryInfo(nint hProcess, ref PROCESS_MEMORY_COUNTERS_EX counters, uint cb);
+
     public const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
     // [T20-a/K11] Priority, KILL_ON_JOB_CLOSE ile AYNI struct'ta (JOBOBJECT_EXTENDED_LIMIT_INFORMATION) yaşar —
     // LimitFlags üzerine körlemesine yazan her çağrı §3 kaskat garantisini siler (bkz. JobObject.SetPriorityClass).
@@ -39,6 +77,9 @@ internal static class NativeMethods
     public const int JobObjectCpuRateControlInformation = 15;
     public const uint JOB_OBJECT_CPU_RATE_CONTROL_ENABLE = 0x1;
     public const uint JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP = 0x4;
+    // [kaynak şeridi] App'in outer job'unu OKUYAN iki info-class: muhasebe (toplam işlemci zamanı + canlı üye sayısı) ve üye PID listesi.
+    public const int JobObjectBasicAccountingInformation = 1;
+    public const int JobObjectBasicProcessIdList = 3;
 
     // Win32 priority class değerleri (CreateProcess dwCreationFlags ile aynı sabitler).
     public const uint NORMAL_PRIORITY_CLASS = 0x00000020;
@@ -54,6 +95,8 @@ internal static class NativeMethods
 
     public const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
     public const int ERROR_INSUFFICIENT_BUFFER = 122;
+    // QueryInformationJobObject(PID listesi) tampon üyelere yetmediğinde: tampon sığan kadarıyla DOLU döner — hata değil, kesilmiş okuma.
+    public const int ERROR_MORE_DATA = 234;
     public static readonly nint PROC_THREAD_ATTRIBUTE_HANDLE_LIST = new(0x00020002);
 
     public const uint JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO = 4;
@@ -111,6 +154,24 @@ internal static class NativeMethods
     {
         [FieldOffset(0)] public uint ControlFlags;
         [FieldOffset(4)] public uint CpuRate; // union yuvası: hard-cap modunda CpuRate
+    }
+
+    /// <summary>
+    /// [kaynak şeridi] <c>JOBOBJECT_BASIC_ACCOUNTING_INFORMATION</c> (48 bayt, x86'da da x64'te de aynı). Süreler 100 ns birimindedir
+    /// (<see cref="TimeSpan"/> tik'i). <c>TotalUserTime</c>/<c>TotalKernelTime</c> job'un ÖMRÜ boyunca birikir ve job'dan düşmüş (çıkmış)
+    /// süreçleri de içerir; <c>ThisPeriod*</c> son sıfırlamadan beri olandır ve kullanılmaz. <c>ActiveProcesses</c> o an canlı üye sayısıdır.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct JOBOBJECT_BASIC_ACCOUNTING_INFORMATION
+    {
+        public long TotalUserTime;
+        public long TotalKernelTime;
+        public long ThisPeriodTotalUserTime;
+        public long ThisPeriodTotalKernelTime;
+        public uint TotalPageFaultCount;
+        public uint TotalProcesses;
+        public uint ActiveProcesses;
+        public uint TotalTerminatedProcesses;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -171,6 +232,17 @@ internal static class NativeMethods
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool QueryInformationJobObject(nint hJob, int jobObjectInfoClass,
         ref JOBOBJECT_CPU_RATE_CONTROL_INFORMATION lpJobObjectInfo, int cbJobObjectInfoLength, out uint lpReturnLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool QueryInformationJobObject(nint hJob, int jobObjectInfoClass,
+        ref JOBOBJECT_BASIC_ACCOUNTING_INFORMATION lpJobObjectInfo, int cbJobObjectInfoLength, out uint lpReturnLength);
+
+    // [kaynak şeridi] PID listesi DEĞİŞKEN boyludur: JOBOBJECT_BASIC_PROCESS_ID_LIST = iki DWORD (atanmış sayısı, listedeki sayısı) +
+    // ULONG_PTR girdileri. Bu yüzden yapı yerine bayt tamponu geçer (JobObject.QueryProcessIds ayrıştırır). Bayt dizisi blittable'dır:
+    // çağrı boyunca sabitlenir ve YERİNDE yazılır, kopya/ayırma yok.
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool QueryInformationJobObject(nint hJob, int jobObjectInfoClass,
+        byte[] lpJobObjectInfo, int cbJobObjectInfoLength, out uint lpReturnLength);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool AssignProcessToJobObject(nint hJob, nint hProcess);

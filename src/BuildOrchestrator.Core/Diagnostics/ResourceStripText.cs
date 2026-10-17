@@ -70,10 +70,11 @@ public static class ResourceStripText
     /// RAM metni: 1 GB altında tam MB (<c>"310 MB"</c>), 1 GB ve üstünde tek ondalıklı GB (<c>"4.8 GB"</c>), ölçüm yoksa
     /// <see cref="Unreadable"/>.
     ///
-    /// <para>MB sayısı <see cref="MemoryLine.Megabytes"/>'tan gelir — motorun <c>memory:</c> satırı ve About'un tanı satırlarıyla AYNI
-    /// yuvarlama; şerit kendi MB yuvarlamasını yazmaz. GB'ye geçiş YUVARLANMIŞ MB 1024'e ulaşınca olur (1023,5 MiB bile
-    /// <c>"1.0 GB"</c> yazılır, hiçbir yerde <c>"1024 MB"</c> görünmez) ve GB değeri de aynı yuvarlanmış MB'den türer; 0,1 GB'ye yarımlar
-    /// sıfırdan uzağa yuvarlanır (1280 MB = 1,25 GB → <c>"1.3 GB"</c>). Ondalık ayracı her zaman noktadır.</para>
+    /// <para>MB sayısı <see cref="MemoryLine.RoundedMegabytes"/>'ten, yazısı <see cref="MemoryLine.Megabytes"/>'tan gelir — motorun
+    /// <c>memory:</c> satırı ve About'un tanı satırlarıyla AYNI yuvarlama; şerit kendi MB yuvarlamasını yazmaz ve yazıyı geri okumaz. GB'ye
+    /// geçiş YUVARLANMIŞ MB 1024'e ulaşınca olur (1023,5 MiB bile <c>"1.0 GB"</c> yazılır, hiçbir yerde <c>"1024 MB"</c> görünmez) ve GB
+    /// değeri de aynı yuvarlanmış MB'den türer; 0,1 GB'ye yarımlar sıfırdan uzağa yuvarlanır (1280 MB = 1,25 GB → <c>"1.3 GB"</c>).
+    /// Ondalık ayracı her zaman noktadır.</para>
     ///
     /// <para><c>ByteFormat.Size</c> kullanılmaz: o dosya boyutları içindir ve 10 GB üstünde ondalığı atar (<c>"12 GB"</c>); şerit hep tek
     /// ondalık yazar, hayaleti <see cref="MemoryGhost"/> <c>12.3 GB</c>'dir.</para>
@@ -85,9 +86,8 @@ public static class ResourceStripText
     {
         if (bytes is not { } value || value < 0) return Unreadable;
 
-        string megabytesText = MemoryLine.Megabytes(value);
-        long megabytes = long.Parse(megabytesText, CultureInfo.InvariantCulture);
-        if (megabytes < MegabytesPerGigabyte) return megabytesText + " MB";
+        long megabytes = MemoryLine.RoundedMegabytes(value);
+        if (megabytes < MegabytesPerGigabyte) return MemoryLine.Megabytes(value) + " MB";
 
         // 0,1 GB'ye AÇIKÇA yuvarla (tam sayı aritmetiği, yarımlar sıfırdan uzağa); metin yalnız gösterimdir. Kayan noktalı bölme ve
         // biçim dizgisinin örtük yuvarlaması kullanılmaz (DurationFormat ile aynı disiplin).
