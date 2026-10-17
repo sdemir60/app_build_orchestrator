@@ -2947,10 +2947,12 @@ When a run ends, whatever its outcome, and when a Sync, a Clean or an Optimize f
 engine trims its memory and then reports it. The trim is one aggressive, blocking, compacting garbage collection — the
 single definition `MemoryTrim.CollectAndRelease`, which the App's own trim uses too (§12.3) — and the report is one
 line on the engine's stderr: `memory: private=<MB> committed=<MB> heap=<MB>` — the process's private bytes, the
-managed heap's committed bytes as of the last collection, and the managed heap's current size. The line is written
-after the trim, so it carries what the trim left and not what the operation piled up. A checkout or a pull trims
-nothing and writes no line. stdout stays NDJSON; the App discards the engine's stderr (§4.3), so the line serves
-whoever reads that stream directly, such as a measurement harness.
+managed heap's committed bytes as of the last collection, and the managed heap's current size. A megabyte is
+1024 × 1024 bytes and a figure is rounded to the nearest whole megabyte, halves away from zero — one rule
+(`MemoryLine.RoundedMegabytes`) shared by this line, the application's diagnostics text (§13.3) and the resource strip
+(§11.5). The line is written after the trim, so it carries what the trim left and not what the operation piled up. A
+checkout or a pull trims nothing and writes no line. stdout stays NDJSON; the App discards the engine's stderr (§4.3),
+so the line serves whoever reads that stream directly, such as a measurement harness.
 
 **The private bytes have one read path.** `GetProcessMemoryInfo` is the only call that reads them (its
 `PrivateUsage`, the process's commit charge): `MemoryLine.CurrentPrivateBytes` reads this process and
@@ -2994,12 +2996,13 @@ the nominal interval, so a tick that arrives late still yields a true figure.
 
 **RAM** is the sum of three parts, each a process's private bytes (the commit charge, read as §11.4 describes), and the
 tooltip lists them apart: the App; the engine, the process `EngineHost.EnginePid` names; and the compilers, which are
-every other member of the outer job — `git` and `vswhere` during a Sync included. The compilers are summed from those
-members and never computed as a total minus the engine, so they cannot come out negative. While the engine sleeps
-(§4.7) it has no process and the job is empty: the engine and the compilers are a measured 0 and the figure is the App
-alone. Private bytes are not what Task Manager's default memory column shows, which is the private working set — only
-the private pages resident right now — so the two differ whenever some committed pages are not resident, and the
-strip's figure is the larger then.
+every other member of the outer job — `git` and `vswhere` during a Sync included, and the console hosts that belong to
+members, the engine's own `conhost.exe` among them, so an engine that is awake and idle already shows a small compilers
+figure and not 0 MB. The compilers are summed from those members and never computed as a total minus the engine, so
+they cannot come out negative. While the engine sleeps (§4.7) it has no process and the job is empty: the engine and
+the compilers are a measured 0 and the figure is the App alone. Private bytes are not what Task Manager's default
+memory column shows, which is the private working set — only the private pages resident right now — so the two differ
+whenever some committed pages are not resident, and the strip's figure is the larger then.
 
 **Parallelism** is not sampled: it is application state and follows it at once. The numerator is the number of
 projects building now, and `0` whenever no run is in flight — the row states of a run whose engine died can stay
@@ -3026,7 +3029,8 @@ still true, since it divides by the elapsed time actually measured.
 the CPU and RAM cells at `—` for that sample; the tooltip still gives the App's own share. The next good sample
 recovers, and its CPU is measured from the last reading the job did give. A member that ends between being listed and
 being opened counts as 0 and never blanks a cell. The member list is read into a buffer of 256 entries, so a job with
-more members would leave the surplus uncounted without saying so. A sample costs a few system calls plus one
+more members would leave the surplus out of the memory sum without saying so (their processor time is still in the
+job's accounting, which does not depend on the list). A sample costs a few system calls plus one
 open-read-close per member, microseconds each, and no managed allocation after warm-up (§17.3); nothing runs off the UI
 thread. With `BO_PROBE_STRIP=<file>` the sampler appends one line per sample, which is how the rule that sampling stops
 while the window is hidden is watched in a real run (§17.5).
@@ -3129,11 +3133,17 @@ is empty and what lets clicks fall through the same pixels. Consequences that ha
   cells are client, while the 14 px between them, the bands above and below them (the strip is vertically centred and
   as tall as its cells) and the top resize border stay the native title bar, with its drag, its double-click, its
   system menu and its resizing. What the caption would have done over a cell, the window does itself
-  (`MainWindow.ResourceStrip.cs`): a press of the left button starts `DragMove`, a double click (`ClickCount == 2`)
-  toggles maximize and restore through the method the caption button uses, and releasing the right button opens the
-  system menu at the cursor. `SystemCommands.ShowSystemMenu` takes a logical (DIP) screen point while `PointToScreen`
-  gives device pixels, so the anchor is divided by the window's scale (`SystemMenuAnchor`); undivided, the menu opens
-  away from the cursor on any scaled display. The left logo lock is not flagged and stays caption.
+  (`MainWindow.ResourceStrip.cs`). A press of the left button is handed to the native caption: after `ReleaseCapture`
+  the window sends itself `WM_NCLBUTTONDOWN` with `HTCAPTION` and the point of the press, and Windows runs its own
+  move loop — in every window state, so a maximized window is restored and carried along with the cursor, and one
+  dragged to an edge snaps, as it does from the left logo lock. WPF's `Window.DragMove` is deliberately not used: it
+  does nothing unless the window is in its normal state, and this window opens maximized. The loop swallows the
+  release of the button, so the window then gives WPF a `WM_LBUTTONUP`, which is what `DragMove` does too. A double
+  click (`ClickCount == 2`) is told apart before the drag is handed over and toggles maximize and restore through the
+  method the caption button uses, and releasing the right button opens the system menu at the cursor.
+  `SystemCommands.ShowSystemMenu` takes a logical (DIP) screen point while `PointToScreen` gives device pixels, so the
+  anchor is divided by the window's scale (`SystemMenuAnchor`); undivided, the menu opens away from the cursor on any
+  scaled display. The left logo lock is not flagged and stays caption.
 - The window opens **maximized**; `Width`/`Height` (1400 × 800) remain as the restore size. Minimum size
   1240 × 620. DPI awareness is PerMonitorV2 (px → DIP 1:1), with `UseLayoutRounding` at the root so hairlines
   stay hairlines.
@@ -3479,8 +3489,8 @@ the repository root. The run's own story — phase, counts, failures — stays i
 - **CPU** (*cpu*) — a whole percent: `1%`, `69%`.
 - **RAM** (*memory-stick*) — whole megabytes under 1 GB (`310 MB`), one decimal from 1 GB (`4.8 GB`). The switch
   happens when the rounded megabytes reach 1024, so `1024 MB` is never written; the megabyte count is the one rule of
-  §11.4, the decimal is rounded in integer arithmetic, and the separator is a point whatever the culture
-  (`ResourceStripText.Memory`).
+  §11.4 (`MemoryLine.RoundedMegabytes`), the decimal is rounded in integer arithmetic, and the separator is a point
+  whatever the culture (`ResourceStripText.Memory`).
 - **Parallelism and mode** (three vertical lines) — the projects building now, `/` and the number the mode allows in
   `text-faint`, then 5 px and the mode word in Geist 11 px `text-faint`: `0/4 Balanced` while idle, `4/4 Balanced` in a
   full run, `2/4 Balanced` where the engine fitted the run to the machine. The mode word only reads; the mode is
@@ -3496,10 +3506,11 @@ The tooltips are the only labels. They open below the cell and, as the applicati
 value; Full has none and adds nothing) — the cap is in the tooltip and never in the cell. RAM:
 `Memory used by <product> · app 310 MB · engine 85 MB · compilers 4.4 GB`, a sleeping engine reading
 `engine 0 MB · compilers 0 MB` and a part that could not be read `—`. Parallelism: while idle
-`Balanced — up to 4 projects build in parallel`; in a full run `3 of 4 projects building in parallel`, `0 of 4`
-included (the cell describes the run from its first moment); in a full run the engine reduced,
-`2 of 4 — reduced: <reason>` with the engine's reason word for word. The product name comes from `AppIdentity`, and
-the texts live in `ResourceStripText` and nowhere else.
+`Balanced — up to 4 projects build in parallel`; during a run `3 of 4 projects building in parallel`, `0 of 4`
+included (the cell describes the run from its first moment) — a run started from a single project's row reads the same
+way, `1 of 4 projects building in parallel`, with the denominator taken from the chip's current mode; in a full run
+the engine reduced, `2 of 4 — reduced: <reason>` with the engine's reason word for word. The product name comes from
+`AppIdentity`, and the texts live in `ResourceStripText` and nowhere else.
 
 The strip only reads. Nothing in it is clickable, no cell has a hover background, the cursor does not change, it
 carries no amber (§14.4), and a changing value plays no animation or transition; `2/4` is information, not a warning.
@@ -6067,11 +6078,12 @@ the title bar's 1.7 weight. Its ring is r = 9, as the design draws it — the de
 uses *arrow-right* (`Icon.ArrowRight`, 1.8), and its *Restart to update* button reuses `Icon.Rebuild`, the
 rotate-cw of the Build menu family, rather than a second copy of the same geometry.
 
-The resource strip (§13.2) draws three icons at 12 px in `text-faint`, each at stroke 1.8 in its 24-unit design box:
-Lucide *cpu* (`Icon.Cpu`), *memory-stick* (`Icon.MemoryStick` — the design's own name for it is *memory*, a word this
-code base uses for the memory line) and three vertical lines for parallelism (`Icon.Parallel`, Lucide's *tally-3*
-geometry). Like every icon each is a geometry in `Icons.xaml`; here it is drawn inside a `Viewbox` that scales the
-24-unit box down to 12 px, and the stroke scales with it.
+The resource strip (§13.2) draws three icons at 12 px in `text-faint`, each at stroke 1.8 in its 24-unit design box.
+They are drawn from the design prototype in Lucide's style: a processor (`Icon.Cpu`), a memory module
+(`Icon.MemoryStick` — the design's own name for it is *memory*, a word this code base uses for the memory line) and,
+for parallelism, three vertical lines at x = 6, 12 and 18 (`Icon.Parallel`). Like every icon each is a geometry in
+`Icons.xaml`; here it is drawn inside a `Viewbox` that scales the 24-unit box down to 12 px, and the stroke scales with
+it.
 
 **Two marks, one hierarchy.** The application carries its own brand — five pill strips and a gradient chevron —
 and the company logo sits behind it. Both are controls, not fragments of markup: `Controls/AppMark.xaml` draws
@@ -6528,7 +6540,7 @@ it, `SplitterHost`, `GraphTestView`), the MSBuild-shaped lines the console tests
 realistic warning as long as a real build line; `WarningLine`, `ErrorLine` and `CommandLine`, the inline lines of the
 compact console's tests; and `BudgetWarning`, the memory budget's fixed input), shared assertions (`FocusTrap`, the
 modal focus-trap proof both dialogs use), input synthesis (`MouseInput`, the shared place a real mouse press, release
-or wheel is raised — a press or release of either button, a press with the click count of a double click, and, for the
+or wheel is raised — a press or release of any button, a press with the click count of a double click, and, for the
 wheel (its only place), both halves of the gesture or the tunnel alone, the horizontal wheel
 included; `KeyInput`, its keyboard twin and the one place a key event is built, which takes the presentation source
 from outside for a window that is not
@@ -6654,8 +6666,8 @@ A category of tests that assert properties of the *source*, not of a run:
 | Automation roles (`AutomationRoleTests`) | every `UserControl` of the app declares its automation role through an override in the app assembly — never WPF's default custom type, which the post-layout peer walk re-enumerates on every pass (§15) |
 | One trim definition (`MemoryTrimGuardTests`) | `GC.Collect` is written exactly once in the source, in `Core/Diagnostics/MemoryTrim.cs`; and every `RunCoordinator` the tests construct — an explicit `new`, or a target-typed one — passes a trim seam (`memoryTrim:`, not `null`), so none falls back to the real blocking collection; the rules are shown to catch each form of the call and to ignore prose |
 | One memory read (`MemoryReadGuardTests`) | the process's memory is read in exactly one file, `Core/Diagnostics/MemoryLine.cs` (§11.4): `GetProcessMemoryInfo` (the private bytes; its P/Invoke declaration in `NativeMethods.cs` is the one exempt mention, and the exemption is pinned to still declare the call), `GetGCMemoryInfo` and `GC.GetTotalMemory` are called nowhere else; `Process.PrivateMemorySize64` is written nowhere at all, `MemoryLine` included, because it snapshots every process on the machine; and `GC.GetTotalMemory` is called only with the literal `false` — any other argument may be a hidden full collection, which the `GC.Collect` guard cannot see. The rules are shown to catch each form of the call and to ignore prose |
-| No machine-wide process scan (`NoProcessScanGuardTests`) | no production source calls `Process.GetProcesses`, `Process.GetProcessesByName` or the Win32 enumerators behind them (`EnumProcesses`, `CreateToolhelp32Snapshot`, `NtQuerySystemInformation`), so the resource strip (§11.5) cannot become a scan of the machine. The rule is shown to catch each form, a method group included, and to ignore a comment and the single-process lookups, and the scan is shown to cover all four production projects. A `using static`, a type alias, reflection and WMI are outside what a source scan sees |
-| Resource strip source (`ResourceStripGuardTests`) | the strip's markup carries no raw colour and no numeric measurement — every size is a token (§14.1) —, no animation, transition, trigger or clock in the markup or the code-behind, no pointer reaction, cursor, button or accent colour, and no `{Binding}`: its values are written from code under the hidden-surface gate (§13.2); its root declares no background and exactly its three cells a transparent one (§12.2); its ghost texts are the Core constants and are never retyped; the tokens, icons, fonts and colours it reads exist by key, and its four measurements are the design's numbers, each defined once. Every rule is shown against a planted violation |
+| No machine-wide process scan (`NoProcessScanGuardTests`) | no production source calls `Process.GetProcesses`, `Process.GetProcessesByName` or the Win32 enumerators behind them (`EnumProcesses`, `CreateToolhelp32Snapshot`, `NtQuerySystemInformation`), which keeps the known ways of scanning the machine out of the resource strip's read path (§11.5). The rule is shown to catch each form, a method group included, and to ignore a comment and the single-process lookups, and the scan is shown to cover all four production projects. A `using static`, a type alias, reflection and WMI are outside what a source scan sees, and so are the properties of a `Process` that fill themselves from a snapshot of the whole machine (`WorkingSet64` read from an arbitrary `Process`, say), which stay a matter for review |
+| Resource strip source (`ResourceStripGuardTests`) | the strip's markup carries no raw colour and no numeric measurement — every size is a token (§14.1) —, no animation, transition, trigger or clock in the markup or the code-behind, no pointer reaction, cursor, button or accent colour, and no `{Binding}`: its values are written from code under the hidden-surface gate (§13.2); its root declares no background and exactly its three cells a transparent one (§12.2); the window's code hands a drag to the native caption and never calls `Window.DragMove` (§12.2); its ghost texts are the Core constants and are never retyped; the tokens, icons, fonts and colours it reads are read by key, and its four measurements are the design's numbers, each defined once. Every rule is shown against a planted violation |
 | One engine gate (`EngineGateGuardTests`) | every request to the engine passes the gate of §4.7 and nothing walks around it: `SendWithFailureLineAsync(` is called only from the four methods that ask the gate first (`TrySendAsync`, `BeginRunAsync`, `SyncCoreAsync`, `LoadProjectLogAsync`); `SendToEngineAsync(` only from `SendWithFailureLineAsync`, and the host's `SendAsync(` — through any reference — only from `SendToEngineAsync`; a request is registered with the gate (`EngineGate.Enter`, whatever the receiver) only from `EnsureEngineAwakeAsync`, and every call of the gate holds its pass with `using`; the gate questions that `ReleaseAfterEngineLoss` asks are exactly the list of window-holding types the loss theory walks; and the branch inventory never asks the gate. The scans read code only — comments and string literals are skipped — and the call-form rules each have a proof test that catches their form of bypass. Two things stay for review: a send made inside an allowed method without asking the gate, and an allowed method bound to a delegate and called from elsewhere |
 | One infinite bottom request (`ConsoleBottomRequestGuardTests`) | the console asks for an infinite bottom (`ScrollToEnd(`) only in the mode switch's pin, `PinAfterModeSwitch`; the follow's and End's request is finite and vertical (§13.4). The scan reads code only, proves first that the pin still asks for it, and is shown to see a request outside the pin and to ignore a comment, a literal and a brace inside the pin |
 | No literal default (`GeneralSettingChainTests.No_workflow_setting_starts_from_a_literal_default`) | none of the four workflow preferences starts from a literal in the source: not the view model's field (written with `true` or `false`, or left unset), not the draft's or the apply call's parameter, not the window's seed from a key-less state (`?? true`); the catalog row is the one default (§13.3). The wire records of the contracts keep their own field defaults, which only say how a line without the field reads, and lie outside the rule. The rule is shown to catch each form, and to ignore a comment, a string and a field that reads the catalog |
@@ -6722,11 +6734,14 @@ Automation, and — through a model of `WindowChrome`'s hit test — only the ce
 bands around them stay with the native title bar. The hidden-surface rule is pinned on the strip itself and, for the
 whole realized tree, by `HiddenSurfaceTests`. `ResourceStripWiringTests` drives the window's sampling rule from its
 three signals (a table of loaded, hidden and minimized), the first real tick after loading, the stop at close and the
-forwarded caption gestures through three seams (`CaptionDragMoveForTest`, `CaptionToggleMaximizeForTest`,
-`CaptionSystemMenuForTest`): the decision to forward is tested, while the real `DragMove` and the real system menu need
-a window handle and a mouse and are checked by eye. `ResourceStripViewModelTests` pins the rules of the parallelism
-cell (§11.5): the chip while idle, the run's own mode through a change of the chip, the numerator, the tooltip of a
-reduced run, the single-project run, and every way a run can end handing the cell back to the chip.
+forwarded caption gestures through three seams (`CaptionDragForTest`, `CaptionToggleMaximizeForTest`,
+`CaptionSystemMenuForTest`). The drag seam sits on the native message itself — which message, which hit code and which
+point, with the window normal and with it maximized — so a drag that does nothing for a maximized window cannot pass
+it; a source guard keeps `Window.DragMove` out of the strip's code and the native call in it. The real move loop and
+the real system menu need a window handle and a mouse and are checked by eye. `ResourceStripViewModelTests` pins the
+rules of the parallelism cell (§11.5): the chip while idle, the run's own mode through a change of the chip, the
+numerator, the tooltip of a reduced run, the single-project run, and every way a run can end handing the cell back to
+the chip.
 
 ### 17.5 Acceptance
 
@@ -7401,7 +7416,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Update feed — GitHub Releases of this repository, `BO_UPDATE_SOURCE`, `BO_UPDATE_PRERELEASE` | `App/Services/Updates/UpdateFeed.cs` |
 | Update surface of the view model — the current offer, the Restart lock and its order, the Restart request and its gate | `App/ViewModels/RunViewModel.Update.cs`, texts `App/ViewModels/UpdateText.cs`; the lock's task bucket reads the workspace work from `RunViewModel.Workspace.cs` (`NonSyncWorkspaceBusy`, the list `WorkspaceBusy` also reads); re-evaluated from `RunViewModel.Workspace.cs` (`OnWorkspaceBusyChanged`) and `RunViewModel.Stream.cs` (`runStarted`) |
 | Title bar update pill — the first element of the right cluster, its shared hairline style, visibility, version and name from the offer, the entrance; the card's popup and its placement below the pill's left edge (custom, independent of the Windows handedness setting), its close paths (dialogs, the Esc popover layer, the Restart request) | `App/MainWindow.UpdatePill.cs` (`UpdateCardGap`), `App/Controls/PopoverPlacement.cs`, `App/MainWindow.xaml` (`UpdatePillSlot`, `UpdatePopup`, `TitleBarSeparator`), `App/MainWindow.xaml.cs` (`AnyPopoverOpen`, `CloseAllPopovers`), `App/Resources/Controls.xaml` (`Ds.UpdatePill`) |
-| The resource strip in the window — the sampler built over the outer job and the engine PID, the one rule that runs it (window loaded, surface not hidden, not minimized; re-asked from `Loaded`, the hidden-surface signal and `WindowState`), the stop at close, and the caption gestures the strip forwards (drag, double-click maximize and restore, the system menu and its DIP anchor) with their test seams | `App/MainWindow.ResourceStrip.cs` (`SetupResourceStrip`, `ShouldSampleResources`, `RefreshResourceSampler`, `StopResourceStrip`, `SystemMenuAnchor`), `App/MainWindow.HiddenSurface.cs` (`SetSurfaceHidden`), `App/MainWindow.xaml.cs` (`OnClosed`); the title bar `Grid` in `App/MainWindow.xaml` |
+| The resource strip in the window — the sampler built over the outer job and the engine PID, the one rule that runs it (window loaded, surface not hidden, not minimized; re-asked from `Loaded`, the hidden-surface signal and `WindowState`), the stop at close, and the caption gestures the strip forwards (drag, double-click maximize and restore, the system menu and its DIP anchor) with their test seams | `App/MainWindow.ResourceStrip.cs` (`SetupResourceStrip`, `ShouldSampleResources`, `RefreshResourceSampler`, `StopResourceStrip`, `SystemMenuAnchor`), `App/MainWindow.HiddenSurface.cs` (`SetSurfaceHidden`), `App/MainWindow.xaml.cs` (`OnClosed`), `App/Shell/Win32.cs` (the native caption press: `WM_NCLBUTTONDOWN`, `HTCAPTION`, `ReleaseCapture`, `SendMessage`, `GetMessagePos`); the title bar `Grid` in `App/MainWindow.xaml` |
 | Restart request → the update restart screen as the topmost layer; the safe full exit when its bar fills; keyboard and global hotkeys suspended while it shows | `App/MainWindow.UpdateRestart.cs` (`OnRestartToUpdateRequested`, `OnRestartScreenFilled`, `InputSuspended`, `OnPreviewKeyDown`), `App/MainWindow.xaml` (`UpdateRestartOverlay`), `App/MainWindow.xaml.cs` (`OnGlobalHotkey`, `RequestFullExit`) |
 | Popover trigger that reports expanded / collapsed to UI Automation | `App/Controls/PopupToggleButton.cs` |
 

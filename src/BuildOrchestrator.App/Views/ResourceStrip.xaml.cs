@@ -12,9 +12,8 @@ namespace BuildOrchestrator.App.Views;
 /// [design v1.25.0 §2.1] Title bar'ın tam ortasındaki <b>kaynak şeridi</b>: CPU · RAM · paralellik + mod, üç hücre, hepsi yalnız okur. Görünüm
 /// <c>ResourceStrip.xaml</c>'dedir (ölçüler, renkler, hayalet metinler, aşağı açılan tooltip'ler); değerler <c>RunViewModel</c>'in <c>Strip*</c>
 /// özelliklerinden buradan yazılır (örnekleme ve metin üretimi VM tarafında, örnekleyicinin kablajı <c>MainWindow.ResourceStrip.cs</c>'te). İş
-/// mantığı YOKTUR: ne zamanlayıcı, ne fare davranışı, ne animasyon — yalnız "VM'in metnini hücreye yaz". Hücrelerin üstündeki sürükleme/çift
-/// tık/sistem menüsü, hücrelerin <c>IsHitTestVisibleInChrome</c> altında olmasının bedelidir ve pencerede iletilir; kökün zemini yoktur, yani
-/// hücre arası boşluklar ve hücrelerin üstü/altı (üst boyutlandırma bandı dahil) yerel title bar'da kalır.
+/// mantığı YOKTUR: ne zamanlayıcı, ne fare davranışı, ne animasyon — yalnız "VM'in metnini hücreye yaz". Tıklama alanı ve hücrelerin üstündeki
+/// caption iletimi: <c>ResourceStrip.xaml</c> başlığı.
 ///
 /// <para><b>Neden XAML bağı değil, kod-tarafı yazım (perf Faz A):</b> pencere tepsideyken kimsenin görmediği ekran işi yapılmaz — bir metnin
 /// değişmesi ölçümü geçersizler ve koşu sürerken pay (derlenen proje sayısı) saniyede onlarca kez değişir. Bir <c>{Binding}</c> bu kapıyı

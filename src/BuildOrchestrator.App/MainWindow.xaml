@@ -265,11 +265,8 @@
           <!-- [design v1.25.0 §2.1 · kaynak şeridi] Title bar'ın TAM ORTASI: CPU · RAM · paralellik + mod. DockPanel ile AYNI hücrede, ondan
                SONRA bildirilir (üstte çizilir); HorizontalAlignment=Center ile yatayda, VerticalAlignment=Center ile dikeyde hücrenin ortasına oturur
                (kutusu yalnız hücreler kadar uzun — bandın üstünü/altını kaplamaz) — sol logo kilidi, sağ küme ve güncelleme hapı onu oynatmaz
-               (Grid hücresi bütün bant, kümeler DockPanel'in içinde). Şerit yalnız okur ama tooltip için HÜCRELERİ fare olayı almalıdır:
-               WindowChrome.IsHitTestVisibleInChrome=True. WindowChrome bu bayrağı taşıyan öğenin altındaki her non-client noktayı (6px'lik üst
-               boyutlandırma bandı dahil) client yaptığından şeridin KÖKÜNÜN zemini yoktur; yalnız hücreler (kendi Transparent zeminleriyle) client'tır:
-               hücre arası boşluklar ve hücrelerin üstü/altı yerel title bar'da kalır. Hücrelerin üstünde sürükleme, çift tık ve sağ tık sistem menüsünü
-               şerit kendisi iletir (MainWindow.ResourceStrip.cs). Sol logo kilidi caption bölgesi olarak kalır. -->
+               (Grid hücresi bütün bant, kümeler DockPanel'in içinde). WindowChrome.IsHitTestVisibleInChrome=True: tıklama alanı ve caption
+               kuralı Views/ResourceStrip.xaml başlığında. Sol logo kilidi caption bölgesi olarak kalır. -->
           <views:ResourceStrip x:Name="ResourceStripView" HorizontalAlignment="Center" VerticalAlignment="Center"
                                WindowChrome.IsHitTestVisibleInChrome="True" />
         </Grid>

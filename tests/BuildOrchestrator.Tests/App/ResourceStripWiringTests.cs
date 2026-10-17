@@ -4,7 +4,9 @@ using System.Windows;
 using System.Windows.Input;
 using BuildOrchestrator.App;
 using BuildOrchestrator.App.Services;
+using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Core.Diagnostics;
 
 namespace BuildOrchestrator.Tests.App;
@@ -18,10 +20,9 @@ namespace BuildOrchestrator.Tests.App;
 /// <c>WindowState</c> değişimi — sürülür. Örnekleyicinin ritmi ve tazelenme kuralları <see cref="ResourceSamplerTests"/>'tedir; burada yalnız
 /// kabuğun onu doğru anda açıp kapattığı sınanır. Hiçbir şey ayrıca zaman beklemez: örnekleyicinin zamanlayıcısı hiç pompalanmaz.</para>
 ///
-/// <para><b>R6</b> (plan): şeridin hücreleri <c>IsHitTestVisibleInChrome</c> altında olduğu için hücrelerin üstü artık caption değildir; sol basış
-/// sürüklemeyi, çift tık büyütme/geri almayı, sağ bırakış sistem menüsünü şerit KENDİ iletir. (Şeridin kökünün zemini yoktur: hücre arası boşluklar ve
-/// hücrelerin üstü/altı yerel title bar'da kalır — o pin <see cref="ResourceStripRealizeTests"/>'tedir.) Pencere eylemleri test dikişlerinden geçer
-/// (<see cref="MainWindow.CaptionDragMoveForTest"/> …): gerçek <c>DragMove</c> ve sistem menüsü bir HWND ve fare ister.</para>
+/// <para><b>R6</b> (plan): hücrelerin üstünde caption davranışını pencere iletir — kuralın nedeni <c>Views/ResourceStrip.xaml</c> başlığında, client
+/// alanı pini <see cref="ResourceStripRealizeTests"/>'tedir. Üç eylem test dikişlerinden geçer (<see cref="MainWindow.CaptionDragForTest"/> …):
+/// gerçek yerel basış ve sistem menüsü bir HWND ve fare ister.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class ResourceStripWiringTests
@@ -221,39 +222,76 @@ public class ResourceStripWiringTests
 
     // ---------------------------------------------------------------- R6: şerit caption davranışını kendisi iletir
 
-    private static (MainWindow window, List<string> calls) CaptionFixture(TempDir temp)
+    /// <summary>Üç caption eylemi de dikişlerden geçer: <c>calls</c> hangi eylemlerin hangi sırayla istendiğini, <c>presses</c> yerel caption
+    /// basışlarının mesajını (mesaj, isabet kodu, <c>lParam</c>) tutar.</summary>
+    private static (MainWindow window, List<string> calls, List<(uint Message, nint HitTest, nint LParam)> presses) CaptionFixture(TempDir temp)
     {
         var (window, _) = MainWindowHost.NewRealized(temp);
         var calls = new List<string>();
-        window.CaptionDragMoveForTest = () => calls.Add("drag");
+        var presses = new List<(uint Message, nint HitTest, nint LParam)>();
+        window.CaptionDragForTest = (message, hitTest, lParam) =>
+        {
+            calls.Add("drag");
+            presses.Add((message, hitTest, lParam));
+        };
         window.CaptionToggleMaximizeForTest = () => calls.Add("toggle");
         window.CaptionSystemMenuForTest = () => calls.Add("menu");
-        return (window, calls);
+        return (window, calls, presses);
     }
 
-    [StaFact]
-    public void A_left_press_on_the_strip_starts_a_window_drag_and_the_press_is_consumed()
+    /// <summary>Bir hücrenin her parçası: ikon, değer, mod sözcüğü ve hücrenin kendisi (şeridin kökü hit-test edilemez, ona hiçbir basış gelmez).</summary>
+    private static UIElement[] CellParts(ResourceStrip strip) => [strip.CpuValue, strip.MemoryIcon, strip.ModeValue, strip.ParallelCell];
+
+    /// <summary>
+    /// Hücrenin üstündeki tek sol basış pencerenin YEREL caption'ına devredilir: <c>WM_NCLBUTTONDOWN</c> + <c>HTCAPTION</c> ve basışın ekran
+    /// noktası; taşıma döngüsünü Windows çalıştırır (büyütülmüş pencereyi geri alıp taşır, kenarda snap). Devir pencere durumundan BAĞIMSIZDIR:
+    /// pencere doğuştan büyütülmüş açılır, yani şeridin en sık görülen durumu budur. Basış tüketilir.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kaynak şeridi, son düzeltme]</b> Eski iddia (<c>A_left_press_on_the_strip_starts_a_window_drag_and_the_press_is_consumed</c>):
+    /// sol basış pencerenin <c>DragMove</c>'unu başlatır. <b>Değişme gerekçesi (ölçüldü):</b> .NET 10.0.11'in <c>Window.DragMove</c>'u (IL) pencere
+    /// durumu Normal değilse hiçbir şey göndermeden döner; büyütülmüş pencerede hücreden sürükleme sessizce hiçbir şey yapmıyordu, oysa yerel caption'da
+    /// aynı hareket pencereyi geri alıp taşır. Eski test bunu göremezdi: dikişi <c>DragMove</c>'un yerine geçiyordu, yani onun durum kontrolü test
+    /// dışındaydı. Dikiş artık pencereye giden yerel mesajın üstündedir.</para>
+    ///
+    /// <para>Mesaj numaraları winuser.h'ten sabit yazılır (üretimin sabitlerine başvurulmaz — yanlış yazılmış bir sabit kendini doğrulardı).
+    /// <c>lParam</c> basışın ekran noktasıdır; üretim onu <c>GetMessagePos</c>'tan okur. Başsız testte iki okuma (işleyicinin ve testin) arasında
+    /// mesaj kuyruğundan bir şey alınmaz, bu yüzden ikisi aynı değeri verir; gerçek imleç konumu okunsaydı fare oynarken test titrerdi.</para>
+    /// </summary>
+    [StaTheory]
+    [InlineData(WindowState.Normal)]
+    [InlineData(WindowState.Maximized)]
+    public void A_left_press_on_a_cell_is_handed_to_the_native_caption_in_every_window_state(WindowState state)
     {
         using var temp = new TempDir();
-        var (window, calls) = CaptionFixture(temp);
+        var (window, calls, presses) = CaptionFixture(temp);
+        window.WindowState = state;
 
-        var args = MouseInput.PressLeft(window.ResourceStripView.CpuValue);
+        foreach (UIElement target in CellParts(window.ResourceStripView))
+        {
+            calls.Clear();
+            presses.Clear();
 
-        Assert.Equal(["drag"], calls);
-        Assert.True(args.Handled);
+            var args = MouseInput.PressLeft(target);
+
+            var press = Assert.Single(presses);
+            Assert.Equal(["drag"], calls);
+            Assert.Equal(0x00A1u, press.Message);                 // WM_NCLBUTTONDOWN
+            Assert.Equal(2, (int)press.HitTest);                  // HTCAPTION
+            Assert.Equal((nint)Win32.GetMessagePos(), press.LParam);
+            Assert.True(args.Handled);
+        }
         GC.KeepAlive(window);
     }
 
-    /// <summary>Çift tık büyütür/geri alır (mevcut maximize-restore yolu) — sürükleme BAŞLAMAZ. Bir hücrenin her parçasında: ikon, değer, mod sözcüğü
-    /// ve hücrenin kendisi (şeridin kökü hit-test edilemez, ona hiçbir basış gelmez).</summary>
+    /// <summary>Çift tık büyütür/geri alır (mevcut maximize-restore yolu) — sürükleme BAŞLAMAZ. Bir hücrenin her parçasında (<see cref="CellParts"/>).</summary>
     [StaFact]
     public void A_double_click_anywhere_on_a_cell_toggles_maximize_and_does_not_drag()
     {
         using var temp = new TempDir();
-        var (window, calls) = CaptionFixture(temp);
+        var (window, calls, _) = CaptionFixture(temp);
         var strip = window.ResourceStripView;
 
-        foreach (UIElement target in new UIElement[] { strip.CpuValue, strip.MemoryIcon, strip.ModeValue, strip.ParallelCell })
+        foreach (UIElement target in CellParts(strip))
         {
             calls.Clear();
             var args = MouseInput.Press(target, MouseButton.Left, clickCount: 2);
@@ -268,7 +306,7 @@ public class ResourceStripWiringTests
     public void A_right_button_release_on_the_strip_opens_the_system_menu_the_press_does_not()
     {
         using var temp = new TempDir();
-        var (window, calls) = CaptionFixture(temp);
+        var (window, calls, _) = CaptionFixture(temp);
         var strip = window.ResourceStripView;
 
         MouseInput.Press(strip.CpuCell, MouseButton.Right);
@@ -284,7 +322,7 @@ public class ResourceStripWiringTests
     public void Nothing_else_on_the_strip_is_forwarded_and_a_press_elsewhere_in_the_window_is_not_either()
     {
         using var temp = new TempDir();
-        var (window, calls) = CaptionFixture(temp);
+        var (window, calls, _) = CaptionFixture(temp);
         var strip = window.ResourceStripView;
 
         MouseInput.ReleaseLeft(strip.CpuValue);                    // sol bırakış

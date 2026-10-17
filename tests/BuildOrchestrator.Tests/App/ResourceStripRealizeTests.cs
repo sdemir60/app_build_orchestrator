@@ -339,9 +339,7 @@ public class ResourceStripRealizeTests(ITestOutputHelper output)
         Assert.True(WindowChrome.GetIsHitTestVisibleInChrome(strip));
         Assert.False(WindowChrome.GetIsHitTestVisibleInChrome(window.TitleBarLogoLock)); // logo kilidi caption bölgesi olarak kalır
         Assert.True(strip.IsHitTestVisible);
-        // Şeridin KÖKÜNÜN zemini YOKTUR: zemin yalnız üç hücrededir (her biri kendi Transparent zeminini taşır). Kökün zemini olsaydı kutunun her
-        // yeri — hücre arası 14px'ler, hücrelerin üstü ve altı, 6px'lik üst boyutlandırma bandı dahil — IsHitTestVisibleInChrome bayrağının
-        // altında client olurdu (aşağıdaki pin).
+        // Şeridin KÖKÜNÜN zemini YOKTUR: zemin yalnız üç hücrededir (her biri kendi Transparent zeminini taşır) — gerekçe ve pin: aşağıdaki test.
         Assert.Null(strip.Background);
         Assert.All(new[] { strip.CpuCell, strip.MemoryCell, strip.ParallelCell }, cell => Assert.NotNull(cell.Background));
         GC.KeepAlive(window);
@@ -371,13 +369,10 @@ public class ResourceStripRealizeTests(ITestOutputHelper output)
     }
 
     /// <summary>
-    /// <b>Tıklama alanı yalnız hücrelerdir</b> (prototip: şerit kökü <c>pointer-events: none</c>, hücre <c>auto</c>; spec: hit-test görünürlüğü "yalnız
-    /// tooltip için"). WindowChrome, noktadaki öğe <c>IsHitTestVisibleInChrome</c> taşıyorsa her non-client sonucu client'a çevirir; şeridin kökü bütün
-    /// kutusu boyunca hit-test edilebilir olsaydı (a) Normal durumda 6px'lik <b>üst kenar boyutlandırma bandı</b> şeridin ~235 dip'i boyunca ölürdü, (b)
-    /// hücre arası 14px'ler ile hücrelerin üstündeki/altındaki bantlar yerel title bar yerine iletilen DragMove yoluna düşerdi. Pin: hücrelerin
+    /// <b>Tıklama alanı yalnız hücrelerdir</b> — kuralın nedeni <c>Views/ResourceStrip.xaml</c> başlığında (tek otorite). Pin: hücrelerin
     /// üstündeki ve altındaki bantta, üst boyutlandırma bandında ve 14px'lik boşluklarda en üst öğe chrome'da client DEĞİLDİR (caption/boyutlandırma
     /// yerel kalır); bir hücrenin üstünde — glif olmayan noktalar dahil (ikon→değer boşluğu, hayalet alanı) — en üst öğe hücrenin kendisi/torunudur ve
-    /// client'tır (hücre üstünde basış yine sürükler: R6).
+    /// client'tır (hücre üstündeki basışı pencere iletir: R6).
     /// </summary>
     [StaFact]
     public void Only_the_cells_are_chrome_client_while_the_gaps_and_the_bands_around_them_stay_with_the_native_title_bar()

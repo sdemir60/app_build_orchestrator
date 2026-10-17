@@ -140,9 +140,8 @@ public class ResourceStripGuardTests
 
     // ---------------------------------------------------------------- tıklama alanı yalnız hücreler
 
-    /// <summary>Şeridin KÖKÜNÜN zemini yoktur; <c>Background="Transparent"</c> yalnız üç hücrededir. Kökün zemini şeridin bütün kutusunu
-    /// (hücre arası 14px'ler, hücrelerin üstü ve altı, 6px'lik üst boyutlandırma bandı dahil) <c>IsHitTestVisibleInChrome</c> altında client yapar
-    /// (davranış pini: <c>ResourceStripRealizeTests</c>); bu guard zeminin geri sızmasını kaynakta çitler.</summary>
+    /// <summary>Şeridin KÖKÜNÜN zemini yoktur; <c>Background="Transparent"</c> yalnız üç hücrededir (neden: <c>Views/ResourceStrip.xaml</c> başlığı;
+    /// davranış pini: <c>ResourceStripRealizeTests</c>). Bu guard zeminin geri sızmasını kaynakta çitler.</summary>
     [Fact]
     public void The_strip_root_declares_no_background_only_the_three_cells_carry_a_transparent_one()
     {
@@ -153,6 +152,34 @@ public class ResourceStripGuardTests
         Assert.DoesNotContain("Background", root.Value, StringComparison.Ordinal);
         Assert.Equal(3, Regex.Matches(markup, "Background=\"Transparent\"").Count);
         Assert.Equal(3, Regex.Matches(markup, @"x:Name=""(?:Cpu|Memory|Parallel)Cell""[^>]*Background=""Transparent""", RegexOptions.Singleline).Count);
+    }
+
+    // ---------------------------------------------------------------- sürükleme yerel caption'dan geçer, Window.DragMove'dan değil
+
+    private static readonly string WindowCodeRelative = "MainWindow.ResourceStrip.cs";
+
+    private static readonly Regex DragMoveCall = new(@"\bDragMove\b", RegexOptions.Compiled);
+
+    /// <summary>Şerit sürüklemeyi yerel caption'a devreder, <c>Window.DragMove</c>'a değil (neden: <c>MainWindow.ForwardCaptionDrag</c>'ın özeti).
+    /// Davranış pini bir dikişin üstündedir (<c>ResourceStripWiringTests</c>) ve dikiş üretimin gerçek yolunu — <c>ReleaseCapture</c> +
+    /// <c>SendMessage</c> — çalıştırmaz; bu guard o gerçek yolda <c>DragMove</c>'un geri sızmasını kaynakta çitler ve yerel çağrının hâlâ orada
+    /// olduğunu pinler.</summary>
+    [Fact]
+    public void The_strip_forwards_a_drag_to_the_native_caption_and_never_calls_DragMove()
+    {
+        string code = File.ReadAllText(Path.Combine(RepoPaths.AppSrcRoot, WindowCodeRelative));
+
+        Assert.Contains("class MainWindow", code, StringComparison.Ordinal); // dosya gerçekten okundu
+        Assert.Empty(SourceGuard.ScanText(WindowCodeRelative, code, DragMoveCall, skipCommentLines: true));
+        foreach (string native in new[] { "Win32.ReleaseCapture(", "Win32.SendMessage(", "Win32.WM_NCLBUTTONDOWN", "Win32.HTCAPTION" })
+            Assert.Contains(native, code, StringComparison.Ordinal);
+
+        // Guard'ın kanıtı: koddaki çağrı satır numarasıyla yakalanır, onu anlatan yorum yakalanmaz.
+        var hits = SourceGuard.ScanText("Fake.cs", """
+            // DragMove yalnız bir yorumda: bu satır yasağı ANLATIYOR
+            private void Drag() => DragMove();
+            """, DragMoveCall, skipCommentLines: true);
+        Assert.StartsWith("Fake.cs:2: ", Assert.Single(hits));
     }
 
     // ---------------------------------------------------------------- işaretçiye tepki vermez, amber taşımaz

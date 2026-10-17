@@ -748,20 +748,6 @@ physical memory and make Windows page other applications (ARCHITECTURE.md §11.1
 the same priority as the app itself, so while other work keeps the cores busy the interface can stall for seconds
 during a run; Balanced, the default, runs them at a lower one.
 
-**What the tool costs, live.** The middle of the title bar shows it in three read-only cells; hover one for its
-meaning:
-
-- **CPU** — the share of the whole machine used by the app, the engine and the compilers together (`69%`).
-- **Memory** — their private bytes added up (`310 MB`, `4.8 GB`): what they have committed, which is not the figure
-  Task Manager's default memory column shows (the private working set), so the two can differ.
-- **Parallelism and mode** — the projects building now over the number the mode allows, then the mode: `0/4 Balanced`
-  while idle, `4/4 Balanced` when four projects build at once, `2/4 Balanced` when the engine cut the run to fit the
-  machine (the tooltip says why).
-
-The numbers refresh about every three seconds, and not at all while the window is in the tray or minimized. The strip
-only reads: the mode is changed on the chip. How it measures is in
-[`ARCHITECTURE.md` §11.5](ARCHITECTURE.md#115-resource-strip).
-
 Three qualifications worth knowing:
 
 - **The cap only limits the build.** It is written to the inner Job Object, which holds `MSBuild.exe` children
@@ -774,6 +760,20 @@ Three qualifications worth knowing:
   the new parallelism takes effect on the next run.
 
 The reasoning behind all three is in [`ARCHITECTURE.md` §11](ARCHITECTURE.md#11-resource-governance).
+
+**What the tool costs, live.** The middle of the title bar shows it in three read-only cells; hover one for its
+meaning:
+
+- **CPU** — the share of the whole machine used by the app, the engine and the compilers together (`69%`).
+- **Memory** — their private bytes added up (`310 MB`, `4.8 GB`): what they have committed, which is not the figure
+  Task Manager's default memory column shows (the private working set), so the two can differ.
+- **Parallelism and mode** — the projects building now over the number the mode allows, then the mode: `0/4 Balanced`
+  while idle, `4/4 Balanced` when four projects build at once, `2/4 Balanced` when the engine cut the run to fit the
+  machine (the tooltip says why).
+
+CPU and memory refresh about every three seconds, and not at all while the window is in the tray or minimized; the
+parallelism cell follows the run at once. The strip only reads: the mode is changed on the chip. How it measures is in
+[`ARCHITECTURE.md` §11.5](ARCHITECTURE.md#115-resource-strip).
 
 ## Known limits (v1)
 

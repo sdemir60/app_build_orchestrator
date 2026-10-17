@@ -8,13 +8,20 @@
      üste taşır; değer sola hizalı. Hayaletler Core'un sabitleridir (ResourceStripText.*Ghost), burada yeniden yazılmaz. `1% → 100%`, `310 MB → 12.3 GB`
      olurken hiçbir şey kaymaz.
 
-     YALNIZ OKUR: tıklanmaz, hover zemini almaz, imleç değiştirmez, amber taşımaz, değer değişiminde animasyon/geçiş YOKTUR. Şerit
+     YALNIZ OKUR: tıklanmaz, hover zemini almaz, imleç değiştirmez, amber taşımaz, değer değişiminde animasyon/geçiş YOKTUR.
+
+     TIKLAMA ALANI VE CAPTION KURALI (şeridin hit-test'ine dair TEK otorite; öteki yerler buraya atıf yapar). Şerit
      WindowChrome.IsHitTestVisibleInChrome=True taşır (MainWindow.xaml) çünkü tooltip için HÜCRELER fare olayı almalıdır (prototip: şerit kökü
      pointer-events none, hücre auto). WindowChrome, noktadaki öğe bu bayrağı (kalıtsal) taşıyorsa her non-client sonucu — Normal durumdaki 6px'lik
-     üst boyutlandırma bandı HTTOP dahil — client'a çevirir; bu yüzden kökün zemini YOKTUR ve yalnız üç hücre kendi Transparent zeminini taşır.
-     Hücre arası 14px'ler ile hücrelerin üstündeki/altındaki bantlar yerel title bar'da kalır (native sürükleme, çift tık, sistem menüsü; üst kenar
-     boyutlandırması şeridin üstünde de çalışır). Yalnız hücrelerin üstünde sürükleme, çift tık ve sistem menüsünü pencere iletir
-     (MainWindow.ResourceStrip.cs).
+     üst boyutlandırma bandı HTTOP dahil — client'a çevirir. Bundan iki sonuç çıkar:
+       (1) Kökün zemini YOKTUR; yalnız üç hücre kendi Transparent zeminini taşır, yani client alanı yalnız hücrelerdir. Hücre arası 14px'ler ile
+           hücrelerin üstündeki/altındaki bantlar yerel title bar'da kalır: yerel sürükleme, çift tık, sistem menüsü ve üst kenar boyutlandırması
+           şeridin üstünde de çalışır.
+       (2) Hücrelerin altında Windows'un caption'ı gitmiştir; pencere onun yerine geçer (MainWindow.ResourceStrip.cs). Sol basış yerel caption'a
+           devredilir — taşıma döngüsünü Windows çalıştırır, pencere durumundan bağımsız (büyütülmüşken geri alıp taşır); neden Window.DragMove
+           değil: ForwardCaptionDrag'ın özeti —, çift tık büyütür/geri alır, sağ tuş bırakışı sistem menüsünü açar.
+     Pinler: ResourceStripRealizeTests (hangi nokta client), ResourceStripWiringTests (iletilen eylemler), ResourceStripGuardTests (kaynak). Dokümanda
+     aynı kural ARCHITECTURE.md §12.2'dedir.
 
      TOOLTIP'LER aşağı açılır (AppTooltip.Side=Bottom); metinleri VM'den gelir ve ResourceStrip.xaml.cs'ten atanır (bir ToolTip ağacın parçası
      değildir ve DataContext'i miras ALMAZ — ölçüldü; ayrıntı orada).

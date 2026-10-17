@@ -139,8 +139,12 @@ public class JobResourceQueryTests
         var pids = new int[16];
         Assert.Contains(child.Pid, pids[..inner.QueryProcessIds(pids)]);
         Assert.Contains(child.Pid, pids[..outer.QueryProcessIds(pids)]); // iç job'a girmek dış job'dan çıkarmadı
-        Assert.True(inner.QueryAccounting().ActiveProcesses >= 1);
-        Assert.True(outer.QueryAccounting().ActiveProcesses >= inner.QueryAccounting().ActiveProcesses);
+        // İç job ÖNCE okunur: gate'li çocuğun kendi doğurduğu süreçler (cmd'in `more`'u, konsol host'u) iki job'un da üyesidir ve bu testin çalıştığı
+        // sırada doğabilir. Bir doğum iki sayacı birlikte artırır; dış önce okunsaydı iki okuma arasındaki bir doğum iç sayıyı dışın üstüne çıkarırdı.
+        int innerActive = inner.QueryAccounting().ActiveProcesses;
+        int outerActive = outer.QueryAccounting().ActiveProcesses;
+        Assert.True(innerActive >= 1, $"the member that joined the nested job is active in it: {innerActive}");
+        Assert.True(outerActive >= innerActive, $"the outer job holds everything the nested one does: outer {outerActive}, nested {innerActive}");
 
         child.StandardInput!.Dispose();
         JobBirths.UntilEmpty(port, TimeSpan.FromSeconds(60), "the outer job never became empty");

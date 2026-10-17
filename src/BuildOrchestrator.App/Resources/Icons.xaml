@@ -267,7 +267,8 @@
       [design v1.25.0 §2.1] Title bar'ın KAYNAK ŞERİDİNİN üç ikonu (12px, tek renk text-faint, etiketsiz — anlamı taşıyan görsel bunlardır).
       KAYNAK: .claude/outputs/2026-10-15-16-54-design-v1.25.0/prototype/app/BuildApp.jsx:125-127 (`I.cpu`, `I.memory`, `I.parallel`; viewBox 0 0 24 24).
       Anahtar adı `Icon.MemoryStick`: tasarımın ikon adı `memory`, lucide'ınki memory-stick'tir; repoda `Memory` sözcüğü bellek satırlarına
-      (MemoryLine) ait olduğundan karışmasın diye lucide adı kullanıldı. `Icon.Parallel` lucide tally-3 geometrisidir (üç dik çizgi).
+      (MemoryLine) ait olduğundan karışmasın diye lucide adı kullanıldı. Üç ikon da prototipten, lucide üslubunda çizilmiştir; `Icon.Parallel`
+      prototipin üç dik çizgisidir (x = 6, 12, 18; y = 5-19).
     -->
     <!-- BuildApp.jsx:125 cpu — 2x <rect rx/> (gövde 14×14 rx 2, çekirdek 5×5 rx 0.8) + sekiz bacak <path/>'i (hepsi mutlak `M` ile başlar) -->
     <GeometryGroup x:Key="Icon.Cpu">

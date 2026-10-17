@@ -502,11 +502,13 @@ public class AboutDialogTests
         var (dialog, _, scope) = AboutDialogHost.OpenRealized();
         using (scope)
         {
-            var memory = dialog.Diagnostics!.CopyOnly;
-            Assert.Equal(3, memory.Count); // ön-koşul: yalnız-kopya grup dolu
-
             Select(dialog, EnvironmentTab);
             var texts = VisibleTexts(dialog);
+
+            // Seçimden SONRA okunur: Environment sekmesinin ilk seçimi tanı modelini yeniden kurar (RefreshDiagnostics; bellek satırları yeni bir okumadır).
+            // Seçimden önce okunan model eskiyebilir ve "değer çizilmiyor" iddiası güncel değerlere değil bayat olanlara bakardı.
+            var memory = dialog.Diagnostics!.CopyOnly;
+            Assert.Equal(3, memory.Count); // ön-koşul: yalnız-kopya grup dolu
 
             foreach (var line in memory)
             {

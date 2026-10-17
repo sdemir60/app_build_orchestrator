@@ -78,10 +78,6 @@ public class AppIdentityTests
     /// (<see cref="SourceGuard.ScanLiteralText"/>): yorumdaki ad ihlal değildir.</summary>
     private static readonly Regex EmbeddedNameRule = new(Regex.Escape(AppIdentity.Product));
 
-    /// <summary>Üretim projelerinin klasörleri (<c>src</c> altında).</summary>
-    private static readonly string[] ProductionProjects =
-        ["BuildOrchestrator.App", "BuildOrchestrator.Core", "BuildOrchestrator.Supervisor", "BuildOrchestrator.Contracts"];
-
     /// <summary>
     /// KAYNAK GUARD'ı: ürün adı hiçbir üretim dosyasında literal olarak YAZILMAZ. Title bar'daki başlık
     /// metni bunu ihlal ediyordu (<c>MainWindow.xaml</c>, <c>Text="Build Orchestrator"</c>) ve About hero'su
@@ -101,19 +97,17 @@ public class AppIdentityTests
         var offenders = SourceGuard.ScanSrc("*.cs", QuotedNameRule).Concat(SourceGuard.ScanSrc("*.xaml", QuotedNameRule)).ToList();
 
         Assert.Empty(offenders);
-
-        var scanned = SourceGuard.ScannedSrcFiles("*.cs");
-        foreach (string project in ProductionProjects)
-            Assert.Contains(scanned, f => f.StartsWith(project + Path.DirectorySeparatorChar, StringComparison.Ordinal));
+        SourceGuard.AssertScansEveryProductionProject("*.cs");
     }
 
     /// <summary>
-    /// Guard'ın KENDİ kanıtı (tırnaklı ad kuralı): tırnaklı tam ad Core yolunda bile satır numarasıyla raporlanır; cümleye gömülü ad bu
-    /// kuralın görüş alanı DIŞINDADIR — onu <see cref="The_name_free_surfaces_never_embed_the_product_name_in_a_literal"/> yakalar. İki
-    /// guard'ın iş bölümü budur.
+    /// Guard'ın KENDİ kanıtı (tırnaklı ad kuralı): tırnaklı tam ad satır numarasıyla raporlanır; cümleye gömülü ad bu kuralın görüş alanı
+    /// DIŞINDADIR — onu <see cref="The_name_free_surfaces_never_embed_the_product_name_in_a_literal"/> yakalar. İki guard'ın iş bölümü budur.
+    /// Kuralın hangi projeleri taradığı burada sınanmaz (yol yalnız bir rapor etiketidir): onu <see cref="No_source_file_writes_the_product_name_as_a_literal"/>
+    /// içindeki "her üretim projesi tarandı" iddiası pinler.
     /// </summary>
     [Fact]
-    public void The_quoted_name_rule_sees_a_planted_literal_in_core_but_not_a_name_inside_a_sentence()
+    public void The_quoted_name_rule_reports_a_planted_literal_with_its_line_but_not_a_name_inside_a_sentence()
     {
         const string fake = """
             internal static class Planted
@@ -124,7 +118,7 @@ public class AppIdentityTests
             """;
         string planted = fake.Replace("%PRODUCT%", AppIdentity.Product);
 
-        var hits = SourceGuard.ScanText(Path.Combine("BuildOrchestrator.Core", "Diagnostics", "Planted.cs"), planted, QuotedNameRule);
+        var hits = SourceGuard.ScanText("Planted.cs", planted, QuotedNameRule);
 
         string only = Assert.Single(hits);
         Assert.Contains("Planted.cs:3", only);

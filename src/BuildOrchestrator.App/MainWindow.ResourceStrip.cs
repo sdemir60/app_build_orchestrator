@@ -1,8 +1,10 @@
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using BuildOrchestrator.App.Services;
+using BuildOrchestrator.App.Shell;
 
 namespace BuildOrchestrator.App;
 
@@ -23,13 +25,10 @@ namespace BuildOrchestrator.App;
 /// izleyicisi her iki değişimi — OS kaynaklı da programatik de — yakalar ve başsız süitte sürülebilir. Abonelik güçlü referans tutar; tek ve uygulama
 /// ömrü boyunca yaşayan ana pencere için kabul edilir.</para>
 ///
-/// <para><b>R6 — caption iletimi.</b> Şerit <c>IsHitTestVisibleInChrome=True</c> taşır (tooltip için HÜCRELER fare olayı almalı) ve WindowChrome bu
-/// bayrağı taşıyan öğenin altındaki her non-client noktayı client yapar; bu yüzden hücrelerin altında Windows'un caption davranışı GİTMİŞTİR.
-/// Şeridin kökünün zemini yoktur (<c>ResourceStrip.xaml</c>): hücre arası 14px'ler ile hücrelerin üstü/altı — Normal durumdaki 6px'lik üst
-/// boyutlandırma bandı dahil — yerel title bar'da kalır ve burada hiçbir şey iletilmez. Hücrelerin üstünde: sol basış pencereyi sürükler, çift tık
-/// büyütür/geri alır (<see cref="ToggleMaximizeRestore"/> — caption butonuyla AYNI yol), sağ tuş bırakışı sistem menüsünü açar. Şerit hover zemini
-/// almaz ve imleci değiştirmez; bu iletim kullanıcıya görünmez. Üç pencere eylemi birer test dikişinden geçer (<c>…ForTest</c>): gerçek
-/// <c>DragMove</c> ve sistem menüsü bir HWND ve fare ister, başsız süitte koşamaz.</para>
+/// <para><b>R6 — caption iletimi.</b> Hücrelerin üstünde pencerenin caption davranışını bu dosya yürütür: sol basış yerel caption'a devredilir
+/// (<see cref="ForwardCaptionDrag"/>), çift tık büyütür/geri alır, sağ tuş bırakışı sistem menüsünü açar. Kuralın nedeni ve sınırı (tıklama
+/// alanı yalnız hücreler): <c>Views/ResourceStrip.xaml</c> başlığı — tek otorite. Üç eylem birer test dikişinden geçer (<c>…ForTest</c>): gerçek
+/// yerel basış ve sistem menüsü bir HWND ve fare ister, başsız süitte koşamaz.</para>
 /// </summary>
 public partial class MainWindow
 {
@@ -45,8 +44,10 @@ public partial class MainWindow
     /// <summary>[test yüzeyi] Örnekleyici: etkinlik (<see cref="ResourceSampler.IsActive"/>) ve örnek sayısı (<see cref="ResourceSampler.SampleCount"/>) gözlemi.</summary>
     internal ResourceSampler? StripSampler => _resourceSampler;
 
-    /// <summary>[test dikişi] Şeridin ilettiği sürükleme eylemi (<c>null</c> ⇒ üretim: sol tuş basılıyken <see cref="Window.DragMove"/>).</summary>
-    internal Action? CaptionDragMoveForTest { get; set; }
+    /// <summary>[test dikişi] Şeridin pencerenin yerel caption'ına gönderdiği basış — (mesaj, isabet kodu, <c>lParam</c>) (<c>null</c> ⇒ üretim: gerçek
+    /// <c>ReleaseCapture</c> + <c>SendMessage</c>, bkz. <see cref="ForwardCaptionDrag"/>). Dikiş çağrının KENDİSİNİN üstündedir, "bir sürükleme istendi"
+    /// bayrağının değil.</summary>
+    internal Action<uint, nint, nint>? CaptionDragForTest { get; set; }
 
     /// <summary>[test dikişi] Şeridin ilettiği çift tık eylemi (<c>null</c> ⇒ üretim: <see cref="ToggleMaximizeRestore"/>).</summary>
     internal Action? CaptionToggleMaximizeForTest { get; set; }
@@ -93,12 +94,13 @@ public partial class MainWindow
 
     // ==================================== R6: şerit caption davranışını kendisi iletir ====================================
 
-    /// <summary>Sol basış: çift tık (<c>ClickCount == 2</c>) büyütür/geri alır, tek basış sürüklemeyi başlatır. Windows'un caption'ında üçüncü art arda
-    /// tık yeni bir tık dizisini başlatır; <c>== 2</c> bunu birebir yansıtır. Basış tüketilir (pencerenin geri kalanına kabarmaz).</summary>
+    /// <summary>Sol basış: çift tık (<c>ClickCount == 2</c>) büyütür/geri alır, tek basış yerel caption sürüklemesine devredilir. Çift tık sürüklemeden
+    /// ÖNCE ayrılır: ikinci basış yerel taşıma döngüsüne hiç girmez. Windows'un caption'ında üçüncü art arda tık yeni bir tık dizisini başlatır;
+    /// <c>== 2</c> bunu birebir yansıtır. Basış tüketilir (pencerenin geri kalanına kabarmaz).</summary>
     private void OnResourceStripMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (e.ClickCount == 2) ForwardToggleMaximize();
-        else ForwardDragMove();
+        else ForwardCaptionDrag();
         e.Handled = true;
     }
 
@@ -109,10 +111,34 @@ public partial class MainWindow
         e.Handled = true;
     }
 
-    private void ForwardDragMove()
+    /// <summary>
+    /// Basışı pencerenin YEREL caption'ına devreder — Windows'un kendi title bar sürüklemesi: <c>ReleaseCapture</c>, sonra <c>WM_NCLBUTTONDOWN</c> +
+    /// <c>HTCAPTION</c> ve basışın ekran noktası. Çağrı sistemin taşıma döngüsü bitene (tuş bırakılana) dek döner; döngü büyütülmüş pencereyi önce
+    /// geri alır, kenara yaklaşınca snap eder — pencere durumu burada hiç sorulmaz.
+    ///
+    /// <para><b>Neden <c>Window.DragMove</c> değil:</b> o yalnız pencere durumu Normal iken bir şey gönderir (ölçüldü: .NET 10.0.11'in IL'i durum Normal
+    /// değilse hiçbir şey göndermeden döner); pencere ise doğuştan büyütülmüş açılır, yani hücreden sürükleme en sık durumda sessizce ölürdü.</para>
+    ///
+    /// <para>Döngü tuşun bırakılışını yutar. <c>Window.DragMove</c> da (aynı IL) ardından pencereye bir <c>WM_LBUTTONUP</c> verir; burada da aynısı
+    /// yapılır ki WPF'in fare durumu gerçeğe eşit kalsın. Sol tuş artık basılı değilse (basışla işleyici arasında bırakılmışsa) taşıma döngüsü
+    /// başlatılmaz. Ekran noktası <c>GetMessagePos</c>'tan gelir: işlenen fare mesajının imleç konumudur, <c>lParam</c>'ın istediği paketli biçimdedir ve
+    /// döngüden önce okunur (döngü kuyruğu tüketir).</para>
+    /// </summary>
+    private void ForwardCaptionDrag()
     {
-        if (CaptionDragMoveForTest is { } seam) seam();
-        else if (Mouse.LeftButton == MouseButtonState.Pressed) DragMove(); // tuş basılı değilse DragMove InvalidOperationException atar
+        nint lParam = (nint)Win32.GetMessagePos();
+        if (CaptionDragForTest is { } seam)
+        {
+            seam(Win32.WM_NCLBUTTONDOWN, Win32.HTCAPTION, lParam);
+            return;
+        }
+
+        nint hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd == 0 || Mouse.LeftButton != MouseButtonState.Pressed) return;
+
+        Win32.ReleaseCapture();
+        Win32.SendMessage(hwnd, Win32.WM_NCLBUTTONDOWN, Win32.HTCAPTION, lParam);
+        Win32.SendMessage(hwnd, Win32.WM_LBUTTONUP, 0, 0);
     }
 
     private void ForwardToggleMaximize()

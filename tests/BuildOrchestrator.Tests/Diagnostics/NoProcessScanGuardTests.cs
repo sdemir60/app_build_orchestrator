@@ -1,4 +1,3 @@
-using System.IO;
 using System.Text.RegularExpressions;
 using BuildOrchestrator.Tests.App;
 
@@ -18,8 +17,9 @@ namespace BuildOrchestrator.Tests.Diagnostics;
 /// serbesttir, o üretim yolu değildir.</para>
 ///
 /// <para><b>YAKALAYAMADIĞI (bilinçli sınır):</b> <c>using static System.Diagnostics.Process</c> ile adsız çağrı, tür takma adı
-/// (<c>using P = System.Diagnostics.Process</c>), yansıma ve WMI (<c>Win32_Process</c>). Guard çağrının BİÇİMİNE bakar; yeni bir
-/// numaralandırma yolunun gerekip gerekmediği review'ın işidir.</para>
+/// (<c>using P = System.Diagnostics.Process</c>), yansıma ve WMI (<c>Win32_Process</c>); ayrıca bir <c>Process</c> nesnesinin makinenin tüm
+/// süreçlerinin anlık görüntüsüyle kendini dolduran özellikleri (rastgele bir süreçte <c>WorkingSet64</c> gibi) — desen yalnız numaralandırıcı
+/// ADLARINA bakar. Guard çağrının BİÇİMİNE bakar; yeni bir numaralandırma yolunun gerekip gerekmediği review'ın işidir.</para>
 /// </summary>
 public sealed class NoProcessScanGuardTests
 {
@@ -44,19 +44,7 @@ public sealed class NoProcessScanGuardTests
 
     /// <summary>Tarama sessizce boş kalırsa yukarıdaki test yeşil olurdu: dört üretim projesinin de taramaya girdiği pinlenir.</summary>
     [Fact]
-    public void The_guard_scans_all_four_production_projects()
-    {
-        var projects = SourceGuard.ScannedSrcFiles("*.cs")
-            .Select(file => file.Split(Path.DirectorySeparatorChar)[0])
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-        Assert.Superset(
-            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            {
-                "BuildOrchestrator.App", "BuildOrchestrator.Core", "BuildOrchestrator.Supervisor", "BuildOrchestrator.Contracts",
-            },
-            projects);
-    }
+    public void The_guard_scans_all_four_production_projects() => SourceGuard.AssertScansEveryProductionProject("*.cs");
 
     /// <summary>
     /// Guard'ın KENDİ kanıtı: her tarama biçimi (düz, tam adlı, metot grubu, boşluklu, native numaralandırıcılar) satır numarasıyla
