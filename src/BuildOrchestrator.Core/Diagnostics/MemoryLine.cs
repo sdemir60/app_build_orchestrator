@@ -18,9 +18,10 @@ public readonly record struct MemoryReading(long PrivateBytes, long CommittedByt
 /// stdout YALNIZ NDJSON'dır. Koşu slotu boşsa satırdan önce <see cref="MemoryTrim"/> toplar, yani satır toplamanın bıraktığı
 /// değeri taşır. Satırın biçimi TEK yerdedir (kopya YASAK): onu okuyan test ya da ölçüm betiği <see cref="Prefix"/> ile tanır.
 ///
-/// <para>[idle-memory · spec §6.6] App de AYNI okumayı ve AYNI MB kuralını kullanır: About → Environment'ın RUNTIME grubundaki
-/// bellek satırları (<c>App private</c> · <c>GC committed</c> · <c>Managed heap</c>) <see cref="Read"/>'in değerleridir ve
-/// sayıları <see cref="Megabytes"/>'tan gelir — motorun satırıyla App'in satırları aynı kuralla yazılır.</para>
+/// <para>[idle-memory · spec §6.6] App de AYNI okumayı ve AYNI MB kuralını kullanır: About'tan kopyalanan tanı metnindeki bellek
+/// satırları (<c>App private</c> · <c>GC committed</c> · <c>Managed heap</c>; Environment sekmesinde çizilmezler, belleği title bar'ın
+/// kaynak şeridi gösterir) <see cref="Read"/>'in değerleridir ve sayıları <see cref="Megabytes"/>'tan gelir — motorun satırıyla App'in
+/// satırları aynı kuralla yazılır.</para>
 ///
 /// <para>Katmanlar bilerek ayrıdır: <see cref="Read"/> süreci okuyan TEK yerdir; <see cref="TryRead()"/> onu hata YUTAN bir korumayla
 /// sarar (App'in tanı ekranı okuyamazsa "bilinmiyor" gösterir); <see cref="Megabytes"/> TEK MB biçimidir;
@@ -67,7 +68,7 @@ public static class MemoryLine
 
     /// <summary>
     /// TEK MB biçimi: bayt → en yakın tam MB (<see cref="RoundedMegabytes"/>), kültürden bağımsız, binlik ayırıcısız — <c>"309"</c>.
-    /// Satır (<see cref="Format"/>) ve App'in tanı satırları (About → Environment; birim orada eklenir) sayıyı buradan alır.
+    /// Satır (<see cref="Format"/>) ve App'in tanı satırları (About'un kopyalanan metni; birim orada eklenir) sayıyı buradan alır.
     /// </summary>
     public static string Megabytes(long bytes) => RoundedMegabytes(bytes).ToString(CultureInfo.InvariantCulture);
 
@@ -127,7 +128,7 @@ public static class MemoryLine
 
     /// <summary>
     /// <see cref="Read"/>'in tanı için korumalı hâli: okuma patlarsa (süreç sorgusu reddedilir, süreç kapanıyor) <c>null</c> döner,
-    /// FIRLATMAZ. App'in tanı ekranı (About → Environment) belleği okuyamadı diye açılamaz — <see cref="Report"/> motorun satırı için
+    /// FIRLATMAZ. App'in tanı ekranı (About) belleği okuyamadı diye açılamaz — <see cref="Report"/> motorun satırı için
     /// aynı güvenceyi verir. Okuyamayan çağıran değeri "bilinmiyor" diye gösterir.
     /// </summary>
     public static MemoryReading? TryRead() => TryRead(Read);

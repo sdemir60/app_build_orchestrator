@@ -442,13 +442,16 @@ public class AboutDialogTests
     // ---------------------------------------------------------------- Environment sekmesi
 
     /// <summary>
-    /// [design v1.19.0 §2.10] İki caps grup: <b>RUNTIME</b> (Engine PID · .NET runtime · OS · App private · GC committed ·
-    /// Managed heap — bellek satırları idle-memory spec §6.6) ve <b>PATHS</b> (MSBuild · Repository root · State file · Logs);
-    /// her satırın etiketi ve değeri görünür.
+    /// [design v1.19.0 §2.10] İki caps grup: <b>RUNTIME</b> (Engine PID · .NET runtime · OS) ve <b>PATHS</b> (MSBuild · Repository root ·
+    /// State file · Logs); her satırın etiketi ve değeri görünür.
     ///
     /// <para><b>[DEĞİŞEN KURAL — design v1.19.0]</b> ESKİ İDDİA: sekme tek düz listeydi ve <c>App version</c> /
     /// <c>Engine version</c> satırlarıyla başlardı. Sürümler About sekmesine taşındı (tekrar yok) — yoklukları
-    /// da assert edilir.</para></summary>
+    /// da assert edilir.</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kaynak şeridi, karar K7]</b> ESKİ İDDİA (idle-memory spec §6.6): RUNTIME altı satırdı — bu üçü ve App private ·
+    /// GC committed · Managed heap. Title bar'a kaynak şeridi geldi; bellek satırları bu sekmeden çıktı (kopyalanan metinde kalırlar) — yoklukları
+    /// <see cref="The_environment_tab_draws_no_app_memory_rows"/>'ta pinli.</para></summary>
     [StaFact]
     public void The_environment_tab_draws_runtime_and_paths_groups_without_version_rows()
     {
@@ -484,30 +487,61 @@ public class AboutDialogTests
     }
 
     /// <summary>
-    /// [idle-memory · spec §6.6] RUNTIME grubu App'in belleğini taşır: <c>App private</c> · <c>GC committed</c> ·
-    /// <c>Managed heap</c>, MB. Değerler bu sürecin GERÇEK okumasıdır (<c>MemoryLine.TryRead</c>) — sahte ya da boş bir okuma
-    /// (0 MB) bağlantıyı kopuk bırakırdı: çalışan bir App en az bir MB özel bellek tutar. Okuma raporun kurulduğu anındır
-    /// (açılış ve MSBuild çözülünce), canlı değildir.
-    /// <para>Satırların RUNTIME grubunda durduğu (başlıkların arasında) <see cref="The_environment_tab_draws_runtime_and_paths_groups_without_version_rows"/>'da
-    /// her RUNTIME satırı için zaten sınanır; burada tekrar edilmez (aynı gezinti iki testte yazılırdı).</para>
+    /// <b>[DEĞİŞEN KURAL — kaynak şeridi, karar K7]</b> Environment sekmesi App'in belleğini ÇİZMEZ: <c>App private</c> · <c>GC committed</c> ·
+    /// <c>Managed heap</c> satırları ne etiketiyle ne değeriyle, diyalogda görünür hiçbir yerde durmaz.
+    /// <para><b>ESKİ İDDİA</b> (<c>The_runtime_group_shows_the_app_memory_in_megabytes_read_from_this_process</c>, idle-memory spec §6.6):
+    /// RUNTIME grubu üç satırı MB olarak çizerdi — etiketleri çizili, değerleri bu sürecin gerçek okuması, pencere açılırken alınmış bir görüntü
+    /// (canlı değil). <b>Değişme gerekçesi:</b> title bar'a kaynak şeridi geldi ve belleği gösterir (karar K7); aynı bellek iki yerde çizilmez.
+    /// Okuma ve değerler sürer — kopyalanan tanı metni için (<see cref="The_copied_text_carries_the_app_memory_rows_read_from_this_process"/>);
+    /// yalnız çizim kalktı.</para>
+    /// <para>"Çizilmiyor" iddiası boşa geçmesin diye çizilmeyen satırlar modelin yalnız-kopya grubundan alınır ve önce dolu olduğu sınanır.</para>
     /// </summary>
     [StaFact]
-    public void The_runtime_group_shows_the_app_memory_in_megabytes_read_from_this_process()
+    public void The_environment_tab_draws_no_app_memory_rows()
     {
         var (dialog, _, scope) = AboutDialogHost.OpenRealized();
         using (scope)
         {
+            var memory = dialog.Diagnostics!.CopyOnly;
+            Assert.Equal(3, memory.Count); // ön-koşul: yalnız-kopya grup dolu
+
             Select(dialog, EnvironmentTab);
             var texts = VisibleTexts(dialog);
 
-            foreach (string label in new[] { "App private", "GC committed", "Managed heap" })
+            foreach (var line in memory)
             {
-                var line = dialog.Diagnostics!.Runtime.Single(l => l.Label == label);
-                Assert.Matches(@"^\d+ MB$", line.Value);
-                Assert.Contains(line.Value, texts);
-                Assert.NotNull(VisibleText(dialog, label)); // etiket çizili: tek ve görünür
+                Assert.DoesNotContain(line.Label, texts);
+                Assert.DoesNotContain(line.Value, texts);
             }
-            string appPrivate = dialog.Diagnostics!.Runtime.Single(l => l.Label == "App private").Value;
+        }
+    }
+
+    /// <summary>
+    /// [kaynak şeridi, karar K7] Kopyalanan tanı metni App'in belleğini taşır: <c>App private</c> · <c>GC committed</c> · <c>Managed heap</c>, MB
+    /// — bir hata bildirimine yapıştırılır. Değerler bu sürecin GERÇEK okumasıdır (<c>MemoryLine.TryRead</c>) — sahte ya da boş bir okuma
+    /// (0 MB) bağlantıyı kopuk bırakırdı: çalışan bir App en az bir MB özel bellek tutar. Okuma raporun kurulduğu anındır (açılış ve MSBuild
+    /// çözülünce), canlı değildir. Satırlar Environment sekmesinde çizilmez (<see cref="The_environment_tab_draws_no_app_memory_rows"/>).
+    /// </summary>
+    [StaFact]
+    public void The_copied_text_carries_the_app_memory_rows_read_from_this_process()
+    {
+        string? written = null;
+        var (dialog, _, scope) = AboutDialogHost.OpenRealized();
+        using (scope)
+        {
+            dialog.ClipboardWriter = text => { written = text; return true; };
+            dialog.CopyDiagnostics();
+
+            var memory = dialog.Diagnostics!.CopyOnly;
+            Assert.Equal(3, memory.Count); // ön-koşul: yalnız-kopya grup dolu
+            var rows = written!.Split(Environment.NewLine);
+            foreach (var line in memory)
+            {
+                Assert.Matches(@"^\d+ MB$", line.Value);
+                Assert.Contains(rows, row => row.StartsWith(line.Label, StringComparison.Ordinal)
+                    && row.EndsWith(line.Value, StringComparison.Ordinal));
+            }
+            string appPrivate = memory.Single(l => l.Label == "App private").Value;
             Assert.True(long.Parse(appPrivate[..appPrivate.IndexOf(' ')]) >= 1,
                 $"App private bu sürecin okuması değil: {appPrivate}");
         }
@@ -688,11 +722,15 @@ public class AboutDialogTests
     // ---------------------------------------------------------------- footer / copy diagnostics
 
     /// <summary>[design v1.19.0 §2.10] Pano metni AYNI modelden (<see cref="DiagnosticsReport.ToText"/>):
-    /// <c>{ürün} {sürüm}</c> başlığı, ardından Engine + Runtime + Paths satırları.
+    /// <c>{ürün} {sürüm}</c> başlığı, ardından Engine + Runtime + (yalnız kopyada olan bellek satırları) + Paths satırları.
     ///
     /// <para><b>[DEĞİŞEN KURAL — design v1.19.0]</b> ESKİ İDDİA: başlığın altına Environment sekmesinin TÜM
     /// satırları (App version, Engine version dahil) gelirdi. Sürüm başlıkta zaten var; motor sürümü tek bir
-    /// <c>Engine</c> satırıdır.</para></summary>
+    /// <c>Engine</c> satırıdır.</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kaynak şeridi, karar K7]</b> Environment sekmesinin satırları artık metnin TÜMÜ değil, bir alt kümesidir: üç bellek
+    /// satırı yalnız metindedir (<see cref="The_copied_text_carries_the_app_memory_rows_read_from_this_process"/>). Tam metin eşitliği bu yüzden
+    /// asıl iddiadır; sekmenin çizdiği satırlar ayrıca metinde aranır.</para></summary>
     [StaFact]
     public void Copy_diagnostics_writes_the_report_from_the_same_model_and_shows_feedback()
     {

@@ -143,10 +143,12 @@ public partial class AboutDialog : Controls.ModalDialog
     // ---------------------------------------------------------------- tanı
 
     /// <summary>Tanı modelini TEK yerden (<see cref="DiagnosticsReport"/>) yeniden kurar ve üç satır listesini
-    /// ondan besler. Kimlik değerleri <see cref="AppIdentity"/>'den, motor değerleri motorun KENDİ bildiriminden
+    /// ondan besler: yalnız kimlik, <c>Runtime</c> ve <c>Paths</c> bağlanır — modelin yalnız-kopya grubu
+    /// (<see cref="DiagnosticsSnapshot.CopyOnly"/>, App'in üç bellek satırı) çizilmez, "Copy diagnostics" metnine girer
+    /// [kaynak şeridi · karar K7]. Kimlik değerleri <see cref="AppIdentity"/>'den, motor değerleri motorun KENDİ bildiriminden
     /// (<see cref="RunViewModel.EngineVersion"/>, <see cref="RunViewModel.EnginePid"/>), yol metinleri üretimin
-    /// kendi static'lerinden, App'in belleği motorun bellek satırını besleyen AYNI okumadan (<see cref="MemoryLine.TryRead()"/>:
-    /// <see cref="MemoryLine.Read"/>'in korumalı hâli) gelir — burada YENİDEN YAZILMAZ. Okuma patlarsa üç bellek satırı "—" gösterir,
+    /// kendi static'lerinden, App'in belleği (kopya için) motorun bellek satırını besleyen AYNI okumadan (<see cref="MemoryLine.TryRead()"/>:
+    /// <see cref="MemoryLine.Read"/>'in korumalı hâli) gelir — burada YENİDEN YAZILMAZ. Okuma patlarsa kopyadaki üç bellek satırı "—" yazar,
     /// diyalog açılır. Bellek satırları kurulum anının görüntüsüdür, canlı değildir: model açılışta ve MSBuild çözülünce
     /// (Environment sekmesinin ilk seçimi) kurulur.</summary>
     private void RefreshDiagnostics()
@@ -263,7 +265,7 @@ public partial class AboutDialog : Controls.ModalDialog
     }
 
     /// <summary>[design v1.19.0 §2.10] Panoya giden metin — biçimi <see cref="DiagnosticsReport.ToText"/>'indir
-    /// (başlık satırı + hizalı Engine/Runtime/Paths), girdisi ekrandaki AYNI modeldir.</summary>
+    /// (başlık satırı + hizalı Engine/Runtime/yalnız-kopya bellek/Paths), girdisi ekrandaki AYNI modeldir.</summary>
     internal string DiagnosticsText() => Diagnostics is { } d ? DiagnosticsReport.ToText(d) : "";
 
     private DispatcherTimer CreateRevertTimer()
