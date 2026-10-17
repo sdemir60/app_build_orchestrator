@@ -25,13 +25,22 @@ namespace BuildOrchestrator.Tests.App;
 internal static class MouseInput
 {
     /// <summary>Sol tuş basışı. Dönen <see cref="MouseButtonEventArgs"/> ile <c>Handled</c> sınanabilir.</summary>
-    public static MouseButtonEventArgs PressLeft(UIElement target)
+    public static MouseButtonEventArgs PressLeft(UIElement target) => Press(target, MouseButton.Left);
+
+    /// <summary>
+    /// Verilen tuşun basışı (<see cref="Mouse.MouseDownEvent"/> — gerekçe sınıf özetinde). <paramref name="clickCount"/>:
+    /// WPF'in art arda tık sayısı (2 = çift tık). <c>MouseButtonEventArgs.ClickCount</c>'ın setter'ı <c>internal</c>'dır — girdi
+    /// sistemi onu kendisi yazar; headless'ta yalnız yansımayla verilir. <c>0</c> = hiç yazılmaz (kurucunun varsayılanı).
+    /// </summary>
+    public static MouseButtonEventArgs Press(UIElement target, MouseButton button, int clickCount = 0)
     {
         ArgumentNullException.ThrowIfNull(target);
-        var args = new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
+        var args = new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, button)
         {
             RoutedEvent = Mouse.MouseDownEvent,
         };
+        if (clickCount != 0)
+            typeof(MouseButtonEventArgs).GetProperty(nameof(MouseButtonEventArgs.ClickCount))!.SetValue(args, clickCount);
         target.RaiseEvent(args);
         return args;
     }
@@ -58,10 +67,14 @@ internal static class MouseInput
 
     /// <summary>Sol tuş BIRAKMA. [quiet] Grafta "boş zemine tıklama" kararı artık bırakmaya aittir
     /// (basış bir sürüklemenin başı olabilir), dolayısıyla tam jesti sürmek için gerekir.</summary>
-    public static MouseButtonEventArgs ReleaseLeft(UIElement target)
+    public static MouseButtonEventArgs ReleaseLeft(UIElement target) => Release(target, MouseButton.Left);
+
+    /// <summary>Verilen tuşun BIRAKILMASI (<see cref="Mouse.MouseUpEvent"/>, bubbling) — sağ tuş bırakma, bağlam menüsü / sistem menüsü
+    /// jestlerinin tetikleyicisidir.</summary>
+    public static MouseButtonEventArgs Release(UIElement target, MouseButton button)
     {
         ArgumentNullException.ThrowIfNull(target);
-        var args = new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
+        var args = new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, button)
         {
             RoutedEvent = Mouse.MouseUpEvent,
         };

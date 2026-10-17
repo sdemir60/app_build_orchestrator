@@ -205,6 +205,26 @@ internal static class SourceGuard
         RepoPaths.TestSourceFiles(searchPattern)
                  .Select(f => Path.GetRelativePath(RepoPaths.TestsRoot, f)).ToList();
 
+    /// <summary>Üretim projelerinin klasör adları (<c>src</c> altında). Tüm-<c>src</c> taramalı bir guard'ın "gerçekten hepsine baktı mı"
+    /// iddiası (<see cref="AssertScansEveryProductionProject"/>) bu listeden okur; liste bir daha hiçbir testte yazılmaz.</summary>
+    public static IReadOnlyList<string> ProductionProjects { get; } =
+        ["BuildOrchestrator.App", "BuildOrchestrator.Core", "BuildOrchestrator.Supervisor", "BuildOrchestrator.Contracts"];
+
+    /// <summary>
+    /// Vakum kapatıcı meta-assert: <see cref="ScanSrc"/> ile AYNI desenle taranan kümede her üretim projesinden (<see cref="ProductionProjects"/>) en az
+    /// bir dosya var. Boş ya da yalnız App'e bakan bir tarama, ona dayanan her guard'ı sessizce yeşil bırakırdı.
+    /// </summary>
+    public static void AssertScansEveryProductionProject(string searchPattern)
+    {
+        var scanned = ScannedSrcFiles(searchPattern);
+        var unseen = ProductionProjects
+            .Where(project => !scanned.Any(file => file.StartsWith(project + Path.DirectorySeparatorChar, StringComparison.Ordinal)))
+            .ToList();
+
+        Assert.True(unseen.Count == 0,
+            $"the scan of src/**/{searchPattern} saw no file of: {string.Join(", ", unseen)} (scanned {scanned.Count} files)");
+    }
+
     // ================================================================================================
     // [Faz 3/Task 8] TANIMLAYICI TARAMASI — kuralı yorum ve string/char literalleri STRIPLENMİŞ koda
     // uygular. Strip işini <see cref="SourceLiterals.CodeOnly"/> yapar: o, <see cref="SourceLiterals.FromCSharp"/>

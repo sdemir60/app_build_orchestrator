@@ -1,0 +1,138 @@
+<!-- [design v1.25.0 §2.1 · §3.6] KAYNAK ŞERİDİ — title bar'ın tam ortasında, aracın makineye o anki maliyeti: CPU · RAM · paralellik + mod.
+     Üç hücre, hücre arası 14px; her hücre = 12px Lucide ikon (text-faint, stroke 1.8) + 5px + değer (Geist Mono 11px tabular text-dim).
+     Etiket yok — anlam tooltip'te (aşağı açılır). Paralellik hücresinde pay text-dim, "/N" text-faint mono, mod sözcüğü Geist 11px text-faint
+     5px sonra. Değerler VM'in Strip* özelliklerindendir (MainWindow'un DataContext'i RunViewModel; örnekleme ve metin üretimi orada) ve
+     ResourceStrip.xaml.cs'ten yazılır — XAML bağı DEĞİL: pencere tepsideyken hücrelere hiçbir şey yazılmaz (perf Faz A, HiddenSurface).
+
+     SABİT ÇERÇEVE: her hücre en geniş değerin GİZLİ hayaletini (Visibility=Hidden — alanı tutar, Collapsed değil) canlı değerle aynı hücrede üst
+     üste taşır; değer sola hizalı. Hayaletler Core'un sabitleridir (ResourceStripText.*Ghost), burada yeniden yazılmaz. `1% → 100%`, `310 MB → 12.3 GB`
+     olurken hiçbir şey kaymaz.
+
+     YALNIZ OKUR: tıklanmaz, hover zemini almaz, imleç değiştirmez, amber taşımaz, değer değişiminde animasyon/geçiş YOKTUR.
+
+     TIKLAMA ALANI VE CAPTION KURALI (şeridin hit-test'ine dair TEK otorite; öteki yerler buraya atıf yapar). Şerit
+     WindowChrome.IsHitTestVisibleInChrome=True taşır (MainWindow.xaml) çünkü tooltip için HÜCRELER fare olayı almalıdır (prototip: şerit kökü
+     pointer-events none, hücre auto). WindowChrome, noktadaki öğe bu bayrağı (kalıtsal) taşıyorsa her non-client sonucu — Normal durumdaki 6px'lik
+     üst boyutlandırma bandı HTTOP dahil — client'a çevirir. Bundan iki sonuç çıkar:
+       (1) Kökün zemini YOKTUR; yalnız üç hücre kendi Transparent zeminini taşır, yani client alanı yalnız hücrelerdir. Hücre arası 14px'ler ile
+           hücrelerin üstündeki/altındaki bantlar yerel title bar'da kalır: yerel sürükleme, çift tık, sistem menüsü ve üst kenar boyutlandırması
+           şeridin üstünde de çalışır.
+       (2) Hücrelerin altında Windows'un caption'ı gitmiştir; pencere onun yerine geçer (MainWindow.ResourceStrip.cs). Sol basış yerel caption'a
+           devredilir — taşıma döngüsünü Windows çalıştırır, pencere durumundan bağımsız (büyütülmüşken geri alıp taşır); neden Window.DragMove
+           değil: ForwardCaptionDrag'ın özeti —, çift tık büyütür/geri alır, sağ tuş bırakışı sistem menüsünü açar.
+     Pinler: ResourceStripRealizeTests (hangi nokta client), ResourceStripWiringTests (iletilen eylemler), ResourceStripGuardTests (kaynak). Dokümanda
+     aynı kural ARCHITECTURE.md §12.2'dedir.
+
+     TOOLTIP'LER aşağı açılır (AppTooltip.Side=Bottom); metinleri VM'den gelir ve ResourceStrip.xaml.cs'ten atanır (bir ToolTip ağacın parçası
+     değildir ve DataContext'i miras ALMAZ — ölçüldü; ayrıntı orada).
+
+     HİÇBİR ÖLÇÜ LİTERAL DEĞİL: ikon kutusu, boşluklar, punto — hepsi Tokens.xaml'den (kaynak guard'ı: ResourceStripGuardTests). Token'lar
+     DynamicResource'tur: pencere kaynak kapsamını kendi InitializeComponent'inden SONRA alır (MainWindow ctor'u). -->
+<UserControl x:Class="BuildOrchestrator.App.Views.ResourceStrip"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:app="clr-namespace:BuildOrchestrator.App"
+             xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
+             xmlns:diag="clr-namespace:BuildOrchestrator.Core.Diagnostics;assembly=BuildOrchestrator.Core"
+             AutomationProperties.Name="{x:Static app:AccessibilityNames.ResourceUsage}"
+             Focusable="False" IsTabStop="False">
+  <UserControl.Resources>
+    <!-- İkon kutusu: Viewbox 24'lük Canvas'ı 12px'e ölçekler (stroke da küçülür). -->
+    <Style x:Key="Strip.IconBox" TargetType="Viewbox">
+      <Setter Property="Width" Value="{DynamicResource Size.ResourceStripIcon}" />
+      <Setter Property="Height" Value="{DynamicResource Size.ResourceStripIcon}" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style x:Key="Strip.IconPath" TargetType="Path">
+      <Setter Property="Stroke" Value="{DynamicResource Brush.TextFaint}" />
+      <Setter Property="StrokeStartLineCap" Value="Round" />
+      <Setter Property="StrokeEndLineCap" Value="Round" />
+      <Setter Property="StrokeLineJoin" Value="Round" />
+    </Style>
+    <!-- Sayısal değer: Geist Mono 11px tabular, text-dim. -->
+    <Style x:Key="Strip.Value" TargetType="TextBlock">
+      <Setter Property="FontFamily" Value="{x:Static controls:AppFonts.Mono}" />
+      <Setter Property="FontSize" Value="{DynamicResource FontSize.2xs}" />
+      <Setter Property="FontWeight" Value="{DynamicResource FontWeight.Body}" />
+      <Setter Property="Typography.NumeralAlignment" Value="Tabular" />
+      <Setter Property="Foreground" Value="{DynamicResource Brush.TextDim}" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <!-- "/N": aynı mono yüz, bir ton soluk — renk yok, bilgi (2/4 bir uyarı değildir). -->
+    <Style x:Key="Strip.ValueFaint" TargetType="TextBlock" BasedOn="{StaticResource Strip.Value}">
+      <Setter Property="Foreground" Value="{DynamicResource Brush.TextFaint}" />
+    </Style>
+    <!-- Mod sözcüğü: Geist (pencere arayüz yazı tipini vermez — sistem varsayılanı Segoe UI, ölçüldü — o yüzden açıkça) 11px text-faint, sayıdan 5px sonra. -->
+    <Style x:Key="Strip.Mode" TargetType="TextBlock">
+      <Setter Property="FontFamily" Value="{x:Static controls:AppFonts.Ui}" />
+      <Setter Property="FontSize" Value="{DynamicResource FontSize.2xs}" />
+      <Setter Property="FontWeight" Value="{DynamicResource FontWeight.Body}" />
+      <Setter Property="Foreground" Value="{DynamicResource Brush.TextFaint}" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Margin" Value="{DynamicResource Thickness.ResourceStripValueGap}" />
+    </Style>
+  </UserControl.Resources>
+
+  <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+    <!-- (1) CPU — Lucide cpu. Bu aracın kullandığı CPU payı (uygulama + motor + derleyiciler), tam sayı yüzde. -->
+    <StackPanel x:Name="CpuCell" Orientation="Horizontal" Background="Transparent">
+      <StackPanel.ToolTip>
+        <ToolTip controls:AppTooltip.Side="Bottom" />
+      </StackPanel.ToolTip>
+      <Viewbox Style="{StaticResource Strip.IconBox}">
+        <Canvas Width="{DynamicResource Size.ResourceStripIconViewBox}" Height="{DynamicResource Size.ResourceStripIconViewBox}">
+          <Path x:Name="CpuIcon" Style="{StaticResource Strip.IconPath}" Data="{DynamicResource Icon.Cpu}"
+                StrokeThickness="{DynamicResource Icon.Cpu.StrokeThickness}" />
+        </Canvas>
+      </Viewbox>
+      <Grid Margin="{DynamicResource Thickness.ResourceStripValueGap}" VerticalAlignment="Center">
+        <TextBlock Style="{StaticResource Strip.Value}" Text="{x:Static diag:ResourceStripText.CpuGhost}" Visibility="Hidden" />
+        <TextBlock x:Name="CpuValue" Style="{StaticResource Strip.Value}" HorizontalAlignment="Left" />
+      </Grid>
+    </StackPanel>
+
+    <!-- (2) RAM — Lucide memory-stick. 1 GB altı tam MB, üstü bir ondalıklı GB (biçim Core'da). -->
+    <StackPanel x:Name="MemoryCell" Orientation="Horizontal" Background="Transparent"
+                Margin="{DynamicResource Thickness.ResourceStripCellGap}">
+      <StackPanel.ToolTip>
+        <ToolTip controls:AppTooltip.Side="Bottom" />
+      </StackPanel.ToolTip>
+      <Viewbox Style="{StaticResource Strip.IconBox}">
+        <Canvas Width="{DynamicResource Size.ResourceStripIconViewBox}" Height="{DynamicResource Size.ResourceStripIconViewBox}">
+          <Path x:Name="MemoryIcon" Style="{StaticResource Strip.IconPath}" Data="{DynamicResource Icon.MemoryStick}"
+                StrokeThickness="{DynamicResource Icon.MemoryStick.StrokeThickness}" />
+        </Canvas>
+      </Viewbox>
+      <Grid Margin="{DynamicResource Thickness.ResourceStripValueGap}" VerticalAlignment="Center">
+        <TextBlock Style="{StaticResource Strip.Value}" Text="{x:Static diag:ResourceStripText.MemoryGhost}" Visibility="Hidden" />
+        <TextBlock x:Name="MemoryValue" Style="{StaticResource Strip.Value}" HorizontalAlignment="Left" />
+      </Grid>
+    </StackPanel>
+
+    <!-- (3) Paralellik + mod — üç dik çizgi. Pay = o an gerçekten derlenen proje sayısı (CANLI), "/N" = modun izin verdiği, sonra mod sözcüğü.
+         Hayalet: "12/12" + "Balanced". Canlı kısım sola hizalı, mod sözcüğü sayıyı 5px aralıkla izler. -->
+    <StackPanel x:Name="ParallelCell" Orientation="Horizontal" Background="Transparent"
+                Margin="{DynamicResource Thickness.ResourceStripCellGap}">
+      <StackPanel.ToolTip>
+        <ToolTip controls:AppTooltip.Side="Bottom" />
+      </StackPanel.ToolTip>
+      <Viewbox Style="{StaticResource Strip.IconBox}">
+        <Canvas Width="{DynamicResource Size.ResourceStripIconViewBox}" Height="{DynamicResource Size.ResourceStripIconViewBox}">
+          <Path x:Name="ParallelIcon" Style="{StaticResource Strip.IconPath}" Data="{DynamicResource Icon.Parallel}"
+                StrokeThickness="{DynamicResource Icon.Parallel.StrokeThickness}" />
+        </Canvas>
+      </Viewbox>
+      <Grid Margin="{DynamicResource Thickness.ResourceStripValueGap}" VerticalAlignment="Center">
+        <StackPanel Orientation="Horizontal">
+          <TextBlock Style="{StaticResource Strip.Value}" Text="{x:Static diag:ResourceStripText.ParallelGhost}" Visibility="Hidden" />
+          <TextBlock Style="{StaticResource Strip.Mode}" Text="{x:Static diag:ResourceStripText.ModeGhost}" Visibility="Hidden" />
+        </StackPanel>
+        <StackPanel x:Name="ParallelLive" Orientation="Horizontal" HorizontalAlignment="Left">
+          <TextBlock x:Name="BuildingValue" Style="{StaticResource Strip.Value}" />
+          <TextBlock x:Name="AllowedValue" Style="{StaticResource Strip.ValueFaint}" />
+          <TextBlock x:Name="ModeValue" Style="{StaticResource Strip.Mode}" />
+        </StackPanel>
+      </Grid>
+    </StackPanel>
+  </StackPanel>
+</UserControl>

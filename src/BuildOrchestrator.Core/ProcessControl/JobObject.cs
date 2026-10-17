@@ -4,6 +4,13 @@ using System.Runtime.InteropServices;
 namespace BuildOrchestrator.Core.ProcessControl;
 
 /// <summary>
+/// [kaynak şeridi] Bir job'un muhasebesi — <see cref="JobObject.QueryAccounting"/>'in tek çıktısı. <see cref="TotalCpuTime"/> job'un
+/// ömrü boyunca harcanan TOPLAM işlemci zamanıdır (kullanıcı + çekirdek; ÇIKMIŞ süreçler dahil — job'dan düşen bir sürecin süresi
+/// kaybolmaz), <see cref="ActiveProcesses"/> o an job'da canlı olan süreç sayısıdır.
+/// </summary>
+public readonly record struct JobAccounting(TimeSpan TotalCpuTime, int ActiveProcesses);
+
+/// <summary>
 /// Nested-uyumlu Windows Job Object: KILL_ON_JOB_CLOSE ile son handle kapanışında tüm ağaç ölür.
 /// [T20-a/K11] CPU cap ve priority OPT-IN'dir: <see cref="CreateKillOnClose"/> App'in outer job'ı, Supervisor'ın
 /// inner job'ı ve testler tarafından ORTAK kullanıldığı için fabrikaya gömülmez — perf profilini uygulamak
@@ -11,8 +18,13 @@ namespace BuildOrchestrator.Core.ProcessControl;
 /// </summary>
 public sealed class JobObject : IDisposable, ICpuGovernor
 {
+    /// <summary><c>JOBOBJECT_BASIC_PROCESS_ID_LIST</c>'in başlığı: iki DWORD (atanmış süreç sayısı, listedeki PID sayısı); girdiler ondan sonra gelir.</summary>
+    private const int PidListHeaderBytes = 2 * sizeof(uint);
+
     private nint _handle;
     private bool _disposed;
+    private readonly object _pidListGate = new();
+    private byte[]? _pidListBuffer; // QueryProcessIds'in yeniden kullanılan tamponu — _pidListGate altında
 
     private JobObject(nint handle) => _handle = handle;
 
@@ -151,6 +163,65 @@ public sealed class JobObject : IDisposable, ICpuGovernor
             | NativeMethods.JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP;
         if ((info.ControlFlags & hardCap) != hardCap) return null;
         return (int)(info.CpuRate / 100);
+    }
+
+    /// <summary>
+    /// [kaynak şeridi] Job'un muhasebesi: ömrü boyunca harcadığı TOPLAM işlemci zamanı (<c>TotalUserTime + TotalKernelTime</c>; ÇIKMIŞ
+    /// süreçler dahil) ve o an canlı üye sayısı. Şeridin CPU yüzdesi bu toplamın iki örnek arasındaki farkından gelir; çıkmış bir
+    /// derleyicinin süresi toplamdan düşmez, yani fark eksiye sapmaz. Win32 hatasında (ör. tutamaç kapanmış)
+    /// <see cref="Win32Exception"/> fırlar (<see cref="QueryCpuRate"/> kalıbı) — yutmak çağıranın işidir. Isınma sonrası bayt ayırmaz.
+    /// </summary>
+    public JobAccounting QueryAccounting()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        var info = new NativeMethods.JOBOBJECT_BASIC_ACCOUNTING_INFORMATION();
+        int size = Marshal.SizeOf<NativeMethods.JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>();
+        if (!NativeMethods.QueryInformationJobObject(_handle, NativeMethods.JobObjectBasicAccountingInformation, ref info, size, out _))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+
+        // Süreler 100 ns birimindedir = TimeSpan tik'i.
+        return new JobAccounting(TimeSpan.FromTicks(info.TotalUserTime + info.TotalKernelTime), (int)info.ActiveProcesses);
+    }
+
+    /// <summary>
+    /// [kaynak şeridi] Job'un canlı üyelerinin PID'lerini <paramref name="destination"/>'a yazar ve yazılan sayıyı döner (en çok
+    /// <c>destination.Length</c>; sıra job'un kendi sırasıdır). Hedef üye sayısından küçükse sığan kadar yazılır: <c>ERROR_MORE_DATA</c> bir
+    /// hata DEĞİLDİR, kesilmiş bir okumadır (toplam üye sayısı için <see cref="QueryAccounting"/>'a bakılır). Win32'nin başlığı
+    /// iki DWORD'dür, girdiler <c>ULONG_PTR</c>'dir — girdi boyu <see cref="IntPtr.Size"/>'dır (x86'da 4, x64'te 8).
+    ///
+    /// <para>İç bayt tamponu ilk çağrıda hedefin boyuna göre BİR KEZ ayrılır ve kilit altında yeniden kullanılır (eşzamanlı çağrılar
+    /// birbirinin tamponunu bozmaz); yalnız daha büyük bir hedef verilirse büyür, küçülmez. Isınma sonrası, hedef aynı boydaysa, bayt
+    /// ayırmaz. Win32 hatasında (ör. tutamaç kapanmış) <see cref="Win32Exception"/> fırlar.</para>
+    /// </summary>
+    public int QueryProcessIds(int[] destination)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        // Win32 başlığın yanında EN AZ bir girdilik yer ister (yalnız başlık ERROR_BAD_LENGTH verir): boş hedef de bir yuva sorgular,
+        // hiçbirini yazmaz.
+        int size = PidListHeaderBytes + Math.Max(1, destination.Length) * IntPtr.Size;
+        lock (_pidListGate)
+        {
+            if (_pidListBuffer is null || _pidListBuffer.Length < size) _pidListBuffer = new byte[size];
+            byte[] buffer = _pidListBuffer;
+
+            if (!NativeMethods.QueryInformationJobObject(_handle, NativeMethods.JobObjectBasicProcessIdList, buffer, size, out _))
+            {
+                int error = Marshal.GetLastWin32Error();
+                if (error != NativeMethods.ERROR_MORE_DATA) throw new Win32Exception(error);
+            }
+
+            // Başlık: [0] NumberOfAssignedProcesses (toplam), [4] NumberOfProcessIdsInList (tampona yazılan). Girdiler 8. bayttan başlar.
+            int count = Math.Min(BitConverter.ToInt32(buffer, sizeof(uint)), destination.Length);
+            for (int i = 0; i < count; i++)
+            {
+                int offset = PidListHeaderBytes + i * IntPtr.Size;
+                ulong entry = IntPtr.Size == sizeof(ulong) ? BitConverter.ToUInt64(buffer, offset) : BitConverter.ToUInt32(buffer, offset);
+                destination[i] = unchecked((int)entry); // PID bir DWORD'dür
+            }
+            return count;
+        }
     }
 
     // [T20-b/K11] ICpuGovernor: yüzde-ya-da-null ikilisini mevcut iki metoda AÇIK implementasyonla bağlar —

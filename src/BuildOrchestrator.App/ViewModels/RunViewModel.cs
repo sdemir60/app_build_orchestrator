@@ -901,6 +901,7 @@ public sealed partial class RunViewModel : ObservableObject
         WakeEngine = () => engine.WakeAsync(); // [idle-memory · dalga 3 · Task 21] üretimin uyanması: konağın kendisi
         _osActions = osActions; // [E1/T67] null ise OS eylemleri güvenle no-op (test default'u); üretimde enjekte edilir
         _compact = new CompactNarrative(CompactConsole); // [O2] açılıştaki etkin kip ayarın kendisidir — ikinci bir literal yok
+        RefreshStrip(); // [kaynak şeridi] paralellik hücresi ve CPU tooltip'i ilk karede de çipi anlatır (RunViewModel.ResourceStrip.cs)
     }
 
     // ---------------------------------------------------------------- komutlar
@@ -1011,6 +1012,8 @@ public sealed partial class RunViewModel : ObservableObject
             var cmd = new StartRunCommand(runId, mode, RootPath, Configuration, Parallelism,
                 DependentMode.Safe, LayerPatterns, PerfMode,
                 ExternalProjectsForWire, UpdateExternals, scopeProjectId);
+            // [kaynak şeridi · R2] Tam koşunun perf modu, motora giden metin olarak, komutun kurulduğu yerde yakalanır; runStarted'ta koşu hücresine devredilir.
+            CaptureStripRunMode(cmd);
             if (await SendWithFailureLineAsync(cmd, SendFailedLine(RunModeLabel(mode)), pass)) return;
         }
         // Komut gitmedi (motor kapısı "gönderme" dedi ya da gönderim düştü): hiçbir engine event'i gelmeyecek — faz Starting'te asılı
@@ -1676,6 +1679,7 @@ public sealed partial class RunViewModel : ObservableObject
     {
         PropagateRunActive();
         PropagateRunLock();
+        OnStripRunStateChanged(value); // [kaynak şeridi · R2] koşu hücresi koşuyla başlar, koşuyla biter (her bitiş yolu buradan geçer)
     }
     partial void OnIsStartingChanged(bool value)
     {
@@ -1711,6 +1715,7 @@ public sealed partial class RunViewModel : ObservableObject
     {
         foreach (var row in Projects)
             row.IsRunTarget = value is not null && string.Equals(row.Id, value, StringComparison.OrdinalIgnoreCase);
+        RefreshStrip(); // [kaynak şeridi · R3] tek proje koşusu (hedef dolu) hücreyi çipe bağlar, tam koşu koşu başındaki moda
     }
 
     /// <summary>[T53/T54-UI] Proje listesini katman gruplarına böler — gruplama YALNIZ topolojiden
@@ -1759,8 +1764,14 @@ public sealed partial class RunViewModel : ObservableObject
     /// KULLANMAZ. Bu yüzden fallback dalı üretimden erişilemez, yalnız savunma amaçlıdır ve
     /// <c>internal</c>'dır: onu pinleyen test doğrudan çağırır.</para>
     /// </summary>
-    internal static PerfProfile ProfileFor(string perfMode) =>
-        PerfProfile.TryParse(perfMode) ?? PerfProfile.For(CorePerfMode.Balanced);
+    internal static PerfProfile ProfileFor(string perfMode) => PerfProfile.For(ModeFor(perfMode));
+
+    /// <summary>
+    /// [kaynak şeridi] Perf metninin MODU — <see cref="ProfileFor"/>'un fallback'iyle AYNI kural (tanınmayan metin → Balanced), tek yerde:
+    /// profil (paralellik/cap/priority) bu modun tablo satırıdır, kaynak şeridinin mod sözcüğü ve metinleri bu modun adından/satırından gelir
+    /// (<c>RunViewModel.ResourceStrip.cs</c>). Metin → mod eşlemesi <see cref="PerfProfile.TryParseMode"/>'dadır; burada ikinci bir tablo yoktur.
+    /// </summary>
+    internal static CorePerfMode ModeFor(string perfMode) => PerfProfile.TryParseMode(perfMode) ?? CorePerfMode.Balanced;
 
     /// <summary>
     /// [T43 · T20-b/K11] Perf chip: Full → Balanced → Light → Full döngüsü; paralelliği de günceller. Koşarken de
@@ -1948,6 +1959,8 @@ public sealed partial class RunViewModel : ObservableObject
         // gerçek kuyruğu doldurur. (Başlangıç modu burada DÜŞÜRÜLMEZ — design v1.20.0 §2.3: o yalnız kararın
         // yokluğudur ve önizlemenin kararıyla kalkar.)
         foreach (var row in Projects) row.InRunQueue = false;
+        // [kaynak şeridi · R2] Koşu hücresi IsRunning'den ÖNCE kurulur: IsRunning'in değişim kancası hücreyi koşu başındaki modla yazar.
+        BeginStripRun(e);
         IsRunning = true;
         Phase = AppPhase.Running; // [C2] Idle → Running
         IsStarting = false; // [Fix wave 1(It-3), Finding 3] planlama bitti — Stop artık IsRunning üzerinden erişilebilir

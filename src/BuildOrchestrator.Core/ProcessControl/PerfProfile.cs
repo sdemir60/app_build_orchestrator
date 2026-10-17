@@ -51,13 +51,18 @@ public readonly record struct PerfProfile(int Parallelism, int? CpuCapPercent, P
     /// </summary>
     public static ProcessPriorityClassKind CopyPhaseFloorPriority => For(PerfMode.Balanced).Priority;
 
-    /// <summary>App/IPC tarafındaki perf-mode string'i ile köprü. Eşleşme ORDINAL'dir (App her zaman
-    /// "Full"/"Balanced"/"Light" yazar); tanınmayan metin ⇒ <c>null</c>, çağıran kendi varsayılanına düşer.</summary>
-    public static PerfProfile? TryParse(string perfModeText) => perfModeText switch
+    /// <summary>App/IPC tarafındaki perf-mode string'i ile köprü, metinden MODA: "Full"/"Balanced"/"Light" eşlemesinin TEK tablosu burasıdır
+    /// (<see cref="TryParse"/> da bunu kullanır). Eşleşme ORDINAL'dir (App her zaman böyle yazar); tanınmayan metin ⇒ <c>null</c>, çağıran
+    /// kendi varsayılanına düşer.</summary>
+    public static PerfMode? TryParseMode(string perfModeText) => perfModeText switch
     {
-        "Full" => For(PerfMode.Full),
-        "Balanced" => For(PerfMode.Balanced),
-        "Light" => For(PerfMode.Light),
+        "Full" => PerfMode.Full,
+        "Balanced" => PerfMode.Balanced,
+        "Light" => PerfMode.Light,
         _ => null,
     };
+
+    /// <summary>App/IPC tarafındaki perf-mode string'i ile köprü, metinden PROFİLE: <see cref="TryParseMode"/>'un çözdüğü modun tablo satırı;
+    /// tanınmayan metin ⇒ <c>null</c>, çağıran kendi varsayılanına düşer.</summary>
+    public static PerfProfile? TryParse(string perfModeText) => TryParseMode(perfModeText) is { } mode ? For(mode) : null;
 }

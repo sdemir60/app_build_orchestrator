@@ -185,10 +185,7 @@ public class NoTurkishUserTextTests
         Assert.True(xamlFiles.Count >= 18, $"yalnız {xamlFiles.Count} .xaml dosyası tarandı.");
 
         // Her üretim projesi GERÇEKTEN kapsamda mı (guard yalnız App'e bakıyor olmasın).
-        Assert.Contains(Path.Combine("BuildOrchestrator.Core", "Git", "GitService.cs"), csFiles);
-        Assert.Contains(Path.Combine("BuildOrchestrator.Supervisor", "RunCoordinator.cs"), csFiles);
-        Assert.Contains(Path.Combine("BuildOrchestrator.Contracts", "Ipc", "IpcMessages.cs"), csFiles);
-        Assert.Contains(Path.Combine("BuildOrchestrator.App", "ViewModels", "RibbonText.cs"), csFiles);
+        SourceGuard.AssertScansEveryProductionProject("*.cs");
 
         int csLiterals = SourceGuard.CountSrcLiterals("*.cs");
         int xamlLiterals = SourceGuard.CountSrcLiterals("*.xaml");

@@ -133,7 +133,7 @@ public class MainWindowRealizeTests
     /// lens2 bağımsız ölçtü, kullanıcı kararıyla (2026-07-31) kapatıldı.
     ///
     /// <para>Otorite zemini ve alt çizgiyi TEK stil bloğunda aynı öğeye verdiği için üretimde de tek öğe taşır:
-    /// <c>TitleBarRow</c> artık bir <see cref="Border"/>'dır (tek çocuğu eski <c>DockPanel</c>). Renk eşitliği tek
+    /// <c>TitleBarRow</c> artık bir <see cref="Border"/>'dır (tek çocuğu, <c>DockPanel</c>'i ve ortadaki kaynak şeridini saran <c>Grid</c>). Renk eşitliği tek
     /// başına yetmez — fırçanın Tokens.xaml'deki nesnenin TA KENDİSİ olduğu (<see cref="Assert.Same"/>) ve
     /// kalınlığın <b>yalnız altta</b> 1px olduğu ayrı ayrı pinlenir.</para></summary>
     [StaFact]
@@ -219,7 +219,12 @@ public class MainWindowRealizeTests
         var logo = window.TitleBarLogo;
         double logoCenter = logo.TranslatePoint(new Point(0, logo.ActualHeight / 2), inner).Y;
         double drift = InDevicePixels(logoCenter - inner.ActualHeight / 2, dpi);
-        double budget = AlignmentSteps(logo, inner) / 2.0;
+        // [kaynak şeridi] İç kutu artık DockPanel'i (ve ortadaki şeridi) saran Grid'dir. Hizalama adımları DockPanel'in kutusundan sayılır: Grid ile
+        // DockPanel AYNI kutudur (germe, offset 0) — arada fiziksel bir hizalama adımı, yani yeni bir yuvarlama kaynağı yoktur ve bütçe bir cihaz
+        // pikselinde KALIR (sarmalayıcıyı saymak bütçeyi sessizce yarım piksel gevşetirdi).
+        var dock = Assert.IsType<DockPanel>(((Grid)inner).Children[0]);
+        Assert.Equal(new Rect(0, 0, inner.ActualWidth, inner.ActualHeight), DsResources.BoundsIn(dock, inner)); // "aynı kutu" iddiasının kanıtı
+        double budget = AlignmentSteps(logo, dock) / 2.0;
         Assert.True(drift <= budget,
             $"logo iç kutuda ortalı DEĞİL: {drift} cihaz pikseli sapma (yuvarlama bütçesi {budget} piksel)");
         GC.KeepAlive(window);

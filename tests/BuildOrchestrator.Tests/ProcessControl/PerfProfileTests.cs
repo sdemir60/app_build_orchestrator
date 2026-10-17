@@ -49,6 +49,31 @@ public class PerfProfileTests
     public void Try_parse_returns_null_for_an_unknown_perf_mode_text(string text)
         => Assert.Null(PerfProfile.TryParse(text));
 
+    /// <summary>
+    /// [kaynak şeridi] Metinden moda eşlemenin TEK tablosu <see cref="PerfProfile.TryParseMode"/>'dur (ordinal): şeridin metinleri modu
+    /// enum olarak ister, App ise modu <c>"Balanced"</c> gibi metin olarak taşır — köprü ikinci bir "Full/Balanced/Light" tablosu yazmaz.
+    /// </summary>
+    [Theory]
+    [InlineData("Full", PerfMode.Full)]
+    [InlineData("Balanced", PerfMode.Balanced)]
+    [InlineData("Light", PerfMode.Light)]
+    public void Try_parse_mode_resolves_the_three_perf_mode_strings_to_their_modes(string text, PerfMode expected)
+        => Assert.Equal(expected, PerfProfile.TryParseMode(text));
+
+    [Theory]
+    [InlineData("full")]   // eşleşme ordinal — App'in yazdığı string birebir gelir
+    [InlineData("")]
+    [InlineData("Turbo")]
+    [InlineData(" Full")]
+    public void Try_parse_mode_returns_null_for_an_unknown_perf_mode_text(string text)
+        => Assert.Null(PerfProfile.TryParseMode(text));
+
+    /// <summary>Şeridin gösterdiği mod sözcüğü (<c>mode.ToString()</c>) ile tel metni AYNI sözcüktür: hiçbir enum üyesi tablosuz kalmaz,
+    /// tablo da enum'da olmayan bir ad taşımaz.</summary>
+    [Fact]
+    public void Every_perf_mode_name_is_a_perf_mode_text_that_parses_back_to_the_mode()
+        => Assert.All(Enum.GetValues<PerfMode>(), mode => Assert.Equal(mode, PerfProfile.TryParseMode(mode.ToString())));
+
     // ---------------------------------------------------------------- chip notu: profilin tek biçimi
 
     /// <summary>

@@ -1,5 +1,7 @@
-using System.Diagnostics;
+using System.ComponentModel;
 using System.Globalization;
+using System.Runtime.InteropServices;
+using BuildOrchestrator.Core.ProcessControl;
 
 namespace BuildOrchestrator.Core.Diagnostics;
 
@@ -16,9 +18,10 @@ public readonly record struct MemoryReading(long PrivateBytes, long CommittedByt
 /// stdout YALNIZ NDJSON'dır. Koşu slotu boşsa satırdan önce <see cref="MemoryTrim"/> toplar, yani satır toplamanın bıraktığı
 /// değeri taşır. Satırın biçimi TEK yerdedir (kopya YASAK): onu okuyan test ya da ölçüm betiği <see cref="Prefix"/> ile tanır.
 ///
-/// <para>[idle-memory · spec §6.6] App de AYNI okumayı ve AYNI MB kuralını kullanır: About → Environment'ın RUNTIME grubundaki
-/// bellek satırları (<c>App private</c> · <c>GC committed</c> · <c>Managed heap</c>) <see cref="Read"/>'in değerleridir ve
-/// sayıları <see cref="Megabytes"/>'tan gelir — motorun satırıyla App'in satırları aynı kuralla yazılır.</para>
+/// <para>[idle-memory · spec §6.6] App de AYNI okumayı ve AYNI MB kuralını kullanır: About'tan kopyalanan tanı metnindeki bellek
+/// satırları (<c>App private</c> · <c>GC committed</c> · <c>Managed heap</c>; Environment sekmesinde çizilmezler, belleği title bar'ın
+/// kaynak şeridi gösterir) <see cref="Read"/>'in değerleridir ve sayıları <see cref="Megabytes"/>'tan gelir — motorun satırıyla App'in
+/// satırları aynı kuralla yazılır.</para>
 ///
 /// <para>Katmanlar bilerek ayrıdır: <see cref="Read"/> süreci okuyan TEK yerdir; <see cref="TryRead()"/> onu hata YUTAN bir korumayla
 /// sarar (App'in tanı ekranı okuyamazsa "bilinmiyor" gösterir); <see cref="Megabytes"/> TEK MB biçimidir;
@@ -32,6 +35,14 @@ public readonly record struct MemoryReading(long PrivateBytes, long CommittedByt
 /// <c>heap</c> yönetilen heap'in şu anki boyutudur (<see cref="GC.GetTotalMemory"/>, toplamadan: henüz toplanmamış
 /// çöp dahil). <c>private</c> − <c>committed</c> yönetilen heap'in DIŞINDAKİ belleği, <c>committed</c> − <c>heap</c>
 /// GC'nin işletim sistemine geri vermediği boşluğu gösterir.</para>
+///
+/// <para>[kaynak şeridi · R1] Özel baytların TEK okuma yolu <c>GetProcessMemoryInfo</c>'dur: <see cref="CurrentPrivateBytes"/> bu süreci,
+/// <see cref="PrivateBytesOf"/> PID'iyle başka bir süreci (motoru, bir derleyiciyi) okur; <see cref="Read"/> da <c>private</c>'ı aynı
+/// yoldan alır, yani motorun satırı, App'in tanı satırları ve title bar'ın kaynak şeridi AYNI sayıyı okur. <c>Process.PrivateMemorySize64</c>
+/// kullanılmaz: ölçüldü, o HER çağrıda makinedeki tüm süreçlerin anlık görüntüsünü alır (çağrı başına milisaniyeler ve birkaç KB) ve sayıya
+/// kendi anlık görüntü tamponunu da katar; şerit App, motor ve derleyicilerin özel baytlarını 3 sn'de bir okur ve makine çapında süreç
+/// taraması yasaktır. <c>GetProcessMemoryInfo</c> mikrosaniyeler sürer, bayt ayırmaz ve aynı ölçüyü verir. Satırın biçimi ve anlamı
+/// değişmez; yalnız <c>private</c>'ın nereden okunduğu değişti.</para>
 /// </summary>
 public static class MemoryLine
 {
@@ -48,24 +59,76 @@ public static class MemoryLine
         $"{Prefix} private={Megabytes(privateBytes)} committed={Megabytes(committedBytes)} heap={Megabytes(heapBytes)}";
 
     /// <summary>
-    /// TEK MB biçimi: bayt → en yakın tam MB (yarımlar sıfırdan uzağa), kültürden bağımsız, binlik ayırıcısız — <c>"309"</c>.
-    /// Satır (<see cref="Format"/>) ve App'in tanı satırları (About → Environment; birim orada eklenir) sayıyı buradan alır.
+    /// TEK MB yuvarlaması, SAYI olarak: bayt → en yakın tam MB (yarımlar sıfırdan uzağa, eksi tarafta da). <see cref="Megabytes"/> bunun
+    /// yazısıdır; GB'ye geçişi MB sayısına bakarak karar veren kaynak şeridi (<c>ResourceStripText.Memory</c>) yazıyı geri okumak yerine
+    /// sayıyı buradan alır — yuvarlama iki yerde yazılmaz.
     /// </summary>
-    public static string Megabytes(long bytes) =>
-        ((long)Math.Round(bytes / (double)BytesPerMb, MidpointRounding.AwayFromZero)).ToString(CultureInfo.InvariantCulture);
+    public static long RoundedMegabytes(long bytes) =>
+        (long)Math.Round(bytes / (double)BytesPerMb, MidpointRounding.AwayFromZero);
+
+    /// <summary>
+    /// TEK MB biçimi: bayt → en yakın tam MB (<see cref="RoundedMegabytes"/>), kültürden bağımsız, binlik ayırıcısız — <c>"309"</c>.
+    /// Satır (<see cref="Format"/>) ve App'in tanı satırları (About'un kopyalanan metni; birim orada eklenir) sayıyı buradan alır.
+    /// </summary>
+    public static string Megabytes(long bytes) => RoundedMegabytes(bytes).ToString(CultureInfo.InvariantCulture);
 
     /// <summary>Bu sürecin bellek okuması — süreç okuması BURADA ve yalnız burada: satır (<see cref="Current"/>) da App'in tanı
-    /// satırları da bunu kullanır (kaynak guard'ı: <c>MemoryReadGuardTests</c>). Okuma patlarsa fırlatır; tanı ekranları korumalı
-    /// hâlini (<see cref="TryRead()"/>) kullanır.</summary>
+    /// satırları da bunu kullanır (kaynak guard'ı: <c>MemoryReadGuardTests</c>). Özel baytlar <see cref="CurrentPrivateBytes"/>'tan gelir
+    /// (<c>GetProcessMemoryInfo</c>; sınıf özeti). Okuma patlarsa fırlatır; tanı ekranları korumalı hâlini (<see cref="TryRead()"/>)
+    /// kullanır.</summary>
     public static MemoryReading Read()
     {
-        using var process = Process.GetCurrentProcess();
-        return new(process.PrivateMemorySize64, GC.GetGCMemoryInfo().TotalCommittedBytes, GC.GetTotalMemory(false));
+        // Okunamayan özel bayt bugünkü gibi FIRLATIR (TryRead korumalı hâlidir). Win32 hatası burada hâlâ taze: CurrentPrivateBytes
+        // başarısız çağrıdan sonra başka bir P/Invoke yapmadan döner.
+        long privateBytes = CurrentPrivateBytes() ?? throw new Win32Exception(Marshal.GetLastWin32Error());
+        return new(privateBytes, GC.GetGCMemoryInfo().TotalCommittedBytes, GC.GetTotalMemory(false));
+    }
+
+    /// <summary>
+    /// [kaynak şeridi · R1] Bu sürecin özel baytları (<c>GetProcessMemoryInfo(...).PrivateUsage</c>, sözde tutamaçla); okunamazsa
+    /// <c>null</c> — fırlatmaz. <see cref="Read"/> bunun üstünde durur. Isınma sonrası bayt ayırmaz.
+    /// </summary>
+    public static long? CurrentPrivateBytes() => PrivateUsageOf(NativeMethods.GetCurrentProcess());
+
+    /// <summary>
+    /// [kaynak şeridi · R1] <paramref name="processId"/> numaralı sürecin özel baytları: <c>OpenProcess(QUERY_LIMITED)</c> +
+    /// <c>GetProcessMemoryInfo(...).PrivateUsage</c> + <c>CloseHandle</c>. Açılamayan (böyle bir süreç yok, erişim reddedildi),
+    /// ÇIKMIŞ ya da okunamayan süreç için <c>null</c> — fırlatmaz: bir PID'i listelemek ile onu açmak arasında sürecin çıkması
+    /// olağan bir durumdur (çıkan bir derleyici), hata değil; çağıran <c>null</c>'ı "bu sürecin belleği yok" diye ele alır. Isınma sonrası
+    /// bayt ayırmaz; makinedeki süreçleri taramaz, yalnız verilen PID'i açar.
+    ///
+    /// <para>Çıkış AYRICA sorulur (<c>GetExitCodeProcess</c>): ölçüldü, çıkmış bir sürecin nesnesi bir yerde (çağıranda, bir sistem bileşeninde,
+    /// bir izleyicide) tutamaçla açık kaldıkça <c>OpenProcess</c> BAŞARILIR — son görünür tutamaç kapandıktan sonra bile — ve
+    /// <c>GetProcessMemoryInfo</c> başarıyla ESKİ bir sayı verir (~76 KB); okuma
+    /// "açılamadı" diye düşmez. Çıkış kodu <c>STILL_ACTIVE</c>'ten (259) farklıysa süreç yoktur. 259 koduyla çıkmış bir süreç çalışıyor
+    /// görünür ve bu eski sayıyı verir — kabul edilen ve zararsız (MB'ye yuvarlanınca 0) tek sınır.</para>
+    /// </summary>
+    public static long? PrivateBytesOf(int processId)
+    {
+        // PID bir DWORD'dür: eksi bir numara hiçbir sürece ait olamaz ve OpenProcess onu (ERROR_INVALID_PARAMETER ile) reddeder.
+        nint handle = NativeMethods.OpenProcess(NativeMethods.PROCESS_QUERY_LIMITED_INFORMATION, false, unchecked((uint)processId));
+        if (handle == nint.Zero) return null;
+        try
+        {
+            if (!NativeMethods.GetExitCodeProcess(handle, out uint exitCode) || exitCode != NativeMethods.STILL_ACTIVE) return null;
+            return PrivateUsageOf(handle);
+        }
+        finally { NativeMethods.CloseHandle(handle); }
+    }
+
+    /// <summary>Verilen tutamaçtaki sürecin özel baytları (<c>PrivateUsage</c> = commit charge); okunamazsa <c>null</c>. Kaynak
+    /// guard'ının izin verdiği TEK <c>GetProcessMemoryInfo</c> çağrısı burasıdır.</summary>
+    private static long? PrivateUsageOf(nint processHandle)
+    {
+        var counters = new NativeMethods.PROCESS_MEMORY_COUNTERS_EX();
+        uint size = (uint)Marshal.SizeOf<NativeMethods.PROCESS_MEMORY_COUNTERS_EX>();
+        counters.cb = size;
+        return NativeMethods.GetProcessMemoryInfo(processHandle, ref counters, size) ? (long)counters.PrivateUsage.ToUInt64() : null;
     }
 
     /// <summary>
     /// <see cref="Read"/>'in tanı için korumalı hâli: okuma patlarsa (süreç sorgusu reddedilir, süreç kapanıyor) <c>null</c> döner,
-    /// FIRLATMAZ. App'in tanı ekranı (About → Environment) belleği okuyamadı diye açılamaz — <see cref="Report"/> motorun satırı için
+    /// FIRLATMAZ. App'in tanı ekranı (About) belleği okuyamadı diye açılamaz — <see cref="Report"/> motorun satırı için
     /// aynı güvenceyi verir. Okuyamayan çağıran değeri "bilinmiyor" diye gösterir.
     /// </summary>
     public static MemoryReading? TryRead() => TryRead(Read);

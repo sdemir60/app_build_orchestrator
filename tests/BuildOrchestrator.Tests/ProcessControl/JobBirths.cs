@@ -5,9 +5,9 @@ using BuildOrchestrator.Core.ProcessControl;
 namespace BuildOrchestrator.Tests.ProcessControl;
 
 /// <summary>
-/// Bir job'un IOCP'sinden DOĞUM bildirimlerini bekleyen TEK yardımcı. Eskiden her test aynı döngüyü satır içi kopyalıyordu
-/// (<c>WaitNext(...) ?? throw new TimeoutException(...)</c> + <c>JOB_OBJECT_MSG_NEW_PROCESS</c> süzgeci); döngü artık burada,
-/// testlerde yalnız "ne zaman yeter" kararı kalır.
+/// Bir job'un IOCP'sinden DOĞUM bildirimlerini (ve job'un BOŞALDIĞI bildirimini, <see cref="UntilEmpty"/>) bekleyen TEK yardımcı. Eskiden
+/// her test aynı döngüyü satır içi kopyalıyordu (<c>WaitNext(...) ?? throw new TimeoutException(...)</c> + <c>JOB_OBJECT_MSG_NEW_PROCESS</c>
+/// süzgeci); döngü artık burada (<c>Pump</c>), testlerde yalnız "ne zaman yeter" kararı kalır.
 /// <para><b>Davranış eski kopyalarla birebir:</b> bekleyiş IOCP'ye blokludur (sleep/poll yok — D8); zaman aşımı HER bildirim için
 /// ayrıdır — port o süre boyunca hiçbir şey göndermezse <see cref="TimeoutException"/> (<c>what</c> metniyle); doğum dışı bildirimler
 /// atlanır, yalnız çıkışları sayan bir test onları <c>onExit</c> ile alır.</para>
@@ -22,20 +22,31 @@ internal static class JobBirths
 {
     /// <summary>Doğan her PID'i <paramref name="done"/>'a verir; o true dönene dek bekler. <paramref name="onExit"/> verilirse
     /// çıkış bildirimleri (normal ve anormal) ona gider; verilmezse atlanır.</summary>
-    public static void Until(JobCompletionPort port, TimeSpan timeout, string what, Func<int, bool> done, Action<int>? onExit = null)
+    public static void Until(JobCompletionPort port, TimeSpan timeout, string what, Func<int, bool> done, Action<int>? onExit = null) =>
+        Pump(port, timeout, what, n =>
+        {
+            if (n.MessageId == NativeMethods.JOB_OBJECT_MSG_NEW_PROCESS) return done(n.Pid);
+            if (onExit is not null
+                && n.MessageId is NativeMethods.JOB_OBJECT_MSG_EXIT_PROCESS or NativeMethods.JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS)
+                onExit(n.Pid);
+            return false;
+        });
+
+    /// <summary>[kaynak şeridi] Job'un SON üyesi çıkana dek bekler: çekirdek, canlı üye sayısı sıfıra indiğinde
+    /// <c>JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO</c> gönderir. Doğumlar ve tek tek çıkışlar atlanır. Bu, bir çıkışın çekirdekteki karşılığıdır
+    /// (uyku/poll değil) ve dönüşte <c>ActiveProcesses</c> sıfırdır — bir çocuğun çıkışını beklemek bunu GARANTİ ETMEZ: onun
+    /// <c>conhost</c>'u birkaç ms daha yaşayabilir.</summary>
+    public static void UntilEmpty(JobCompletionPort port, TimeSpan timeout, string what) =>
+        Pump(port, timeout, what, n => n.MessageId == NativeMethods.JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO);
+
+    /// <summary>Tek bekleme döngüsü: her bildirim <paramref name="done"/>'a gider, o true dönünce biter; port zaman aşımı süresince hiçbir
+    /// şey göndermezse <see cref="TimeoutException"/> (<paramref name="what"/> metniyle).</summary>
+    private static void Pump(JobCompletionPort port, TimeSpan timeout, string what, Func<JobNotification, bool> done)
     {
         while (true)
         {
             var n = port.WaitNext(timeout) ?? throw new TimeoutException(what);
-            if (n.MessageId == NativeMethods.JOB_OBJECT_MSG_NEW_PROCESS)
-            {
-                if (done(n.Pid)) return;
-            }
-            else if (onExit is not null
-                     && n.MessageId is NativeMethods.JOB_OBJECT_MSG_EXIT_PROCESS or NativeMethods.JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS)
-            {
-                onExit(n.Pid);
-            }
+            if (done(n)) return;
         }
     }
 

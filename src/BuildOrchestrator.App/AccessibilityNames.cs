@@ -12,6 +12,11 @@ namespace BuildOrchestrator.App;
 /// </summary>
 public static class AccessibilityNames
 {
+    // ---- Title bar: kaynak şeridi (design v1.25.0 §2.1) ----
+    /// <summary>Şeridin grup adı (prototip: <c>aria-label="Resource usage"</c>). Hücrelerin etiketi YOKTUR (tasarım: anlam tooltip'te);
+    /// ekran okuyucu her hücrenin değerini kendi metninden duyar, bu ad üçünü tek grup olarak adlandırır.</summary>
+    public const string ResourceUsage = "Resource usage";
+
     // ---- Action bar: durum/filtre sayaç chip'leri (AYNI metin tooltip + UIA-adı) ----
     public const string FilterAll = "All projects — clear filters";
     /// <summary>Derleniyor chip'i — sözcük DURUM chip'leriyle aynı kaynaktan (<see cref="StateFilter"/>), satırın
