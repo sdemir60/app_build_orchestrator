@@ -3371,7 +3371,7 @@ public class RunCoordinatorTests
     /// <para><b>[DEĞİŞEN KURAL — 2026-10-17]</b> Eski iddia (Resolve aynası
     /// <c>A_perf_change_during_the_graceful_drain_of_a_resolve_run_keeps_it_at_full_priority</c>): anahtar açıkken Resolve cycles tam
     /// öncelikteydi (cap yok, Normal) — kaldırılacak cap olmadığından drain job'a hiç yazmaz, canlı Light de Normal'i ne Idle'a ne tabana
-    /// indirirdi (iz: Full, Full, Full, geri alma). Kural kalktı (gerekçe ve ölçüm:
+    /// indirirdi (iz: Full, Full, geri alma). Kural kalktı (gerekçe ve ölçüm:
     /// <see cref="BuildOrchestrator.Tests.App.ResolveFollowsProfileSettingsTests"/>); Balanced'ta koşan Resolve de Build'in izini verir.</para>
     /// </summary>
     [Theory]

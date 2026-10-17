@@ -2862,12 +2862,10 @@ wording of the cap from it too.
 
 **Resolve cycles follows the profile.** A `Cycles` run takes the chosen profile's cap and priority like any other run,
 and whoever wants Resolve to run faster picks Full. Running it uncapped at Normal priority whatever the profile does
-not pay for itself. Measured on the real workspace — Balanced's four workers, the same 25 projects each time — the
-uncapped run gained nothing on a quiet machine (56.5 s, against 52.4 s with Balanced's cap and priority) and about five
-percent on a machine kept busy by three busy loops and an IDE (143.8 s against 151.0 s). The price was the interface:
-it went without a frame for more than a quarter of a second 23 times, the longest wait 5.2 s, where the capped run did
-so twice, the longest 1.6 s. The chip alone sets the cap and the priority a run starts with; no run mode and no
-setting overrides them.
+not pay for itself: measured on the real workspace with Balanced's worker count, the uncapped run was no faster on a
+quiet machine and only a few percent faster on a machine kept busy by other work, and there it left the interface
+without a frame for seconds at a time, while under Balanced's cap and priority such gaps were rare and short. The chip
+alone sets the cap and the priority a run starts with; no run mode and no setting overrides them.
 
 The perf intent is also honoured during the planning window: a change made while a run is starting is held and
 applied when the run begins, rather than being silently dropped.
@@ -2898,16 +2896,16 @@ discards the engine's stderr (§4.3), so the line the user sees is the App's.
 multi-threaded compiler process for its project (`UseSharedCompilation=false`, §9.2, so nothing is shared
 between workers), and a large project's compiler holds on the order of a gigabyte while it runs. On a developer machine that already has an IDE, browsers and other tools
 open, Full can exhaust physical memory: the operating system then pages other applications out and back in,
-and the whole desktop stalls — not just this tool. Measured on such a machine with real compilers, the
-interface thread itself stayed responsive under every profile, while free physical memory under Full fell to
+and the whole desktop stalls — not just this tool. Measured on such a machine with real compilers as the only heavy
+work, the interface thread itself stayed responsive under every profile, while free physical memory under Full fell to
 a fraction of a gigabyte and committed memory passed the machine's limit; Balanced kept a working margin.
 That is why Balanced is the default, and why a build that freezes the machine is answered by a lower profile.
 The measurement is kept as an opt-in test (§17.5). The processor adds a reason of its own, and it shows in the
 interface rather than in the memory counters: under Full the compilers run at the same priority class as the
 interface and with no cap, so when other work keeps the cores busy they compete with it on equal terms. The Resolve
-measurement above — a run without a cap at Normal priority, on such a machine — left the interface with frame gaps of
-several seconds, where Balanced's cap and lower priority kept the gaps fewer and shorter. This is the CPU-side reason
-Balanced is the default. The interface shows no warning for Full.
+measurement above — a run without a cap at Normal priority, on a machine whose cores other work kept busy — left the
+interface with frame gaps of several seconds, where Balanced's cap and lower priority kept the gaps fewer and shorter.
+This is the CPU-side reason Balanced is the default. The interface shows no warning for Full.
 
 ### 11.2 What the cap does and does not cover
 
@@ -4456,7 +4454,8 @@ older file carries included (§10.4) — and an entry whose path is blank is ski
 same rule the repository root already followed; a file that carries the key — an empty array included —
 replaces the list outright, because the key's presence is itself a decision. The import feedback line reflects
 that: `Imported — N layers · M external · root set`, with the `M external` clause appearing only when the file
-carried the key at all.
+carried the key at all. A top-level key this version does not read — one an older version wrote — is ignored: the
+file is not rejected, and the rest of it is imported.
 
 The About dialog is the second modal on the shared shell; its identity block fills the head and the tab switch
 sits in the shell's tab strip. It is 620 px wide and its height follows its content around a **fixed** 284 px body:
