@@ -11,8 +11,8 @@ namespace BuildOrchestrator.Tests.ProcessControl;
 /// [kaynak şeridi · design v1.25.0] Title bar'ın kaynak şeridinin Core tarafındaki Win32 okumaları: App'in outer job'unun muhasebesi
 /// (<see cref="JobObject.QueryAccounting"/>), job'daki süreçlerin listesi (<see cref="JobObject.QueryProcessIds"/>) ve bir sürecin
 /// özel baytları (<see cref="MemoryLine.PrivateBytesOf"/>, <see cref="MemoryLine.CurrentPrivateBytes"/>). Şerit bunları 3 sn'de bir okur ve
-/// ısınmadan sonra örnek başına SIFIR bayt ayırır, makinedeki süreçleri taramaz — sınıf bu üç sözü pinler: değerler doğru, hata hâlleri
-/// bilinen, ayırma sıfır.
+/// ısınmadan sonra örnek başına SIFIR bayt ayırır, makinedeki süreçleri taramaz — sınıf bu sözleri pinler: değerler doğru (motorun iç job'unda
+/// yaşayan süreçler için de), hata hâlleri bilinen, ayırma sıfır.
 ///
 /// <para>[D8] Hiçbir testte sleep-poll yok. Canlı üye, stdin'i kapanana dek bekleyen bir çocuktur (<see cref="JobTestChildren.GatedBurnChildCmdLine"/>:
 /// boru üzerinde bloklu okuma); çıkış randevusu job'un IOCP'sindeki <c>ACTIVE_PROCESS_ZERO</c> bildirimidir.</para>
@@ -96,6 +96,38 @@ public class JobResourceQueryTests
         TimeSpan own = member.TotalProcessorTime;
         Assert.True(own > TimeSpan.Zero, $"the gated child burns cpu once released: {own}");
         Assert.True(after.TotalCpuTime >= own, $"job total {after.TotalCpuTime} must include the exited member's own {own}");
+    }
+
+    /// <summary>
+    /// Şeridin dayandığı iç içe job varsayımı: App'in outer job'unun içindeki motor, derleyicileri kendi INNER job'una koyar
+    /// (<c>JobProcessLauncher.Launch(innerJob, ...)</c>); bir süreç iç job'a girince dış job'dan ÇIKMAZ — dış job'un PID listesi ve
+    /// muhasebesi iç job'un üyesini ve harcadığı işlemci zamanını da görmeye devam eder. Burada motor rolünü dış job'un üyesi olan
+    /// çocuk oynar ve çalışırken iç bir job'a atanır (Supervisor'ın MSBuild'e yaptığının aynısı: dış job'daki bir sürecin yeni bir job'a girmesi).
+    /// </summary>
+    [Fact]
+    public void A_member_that_joins_a_nested_job_stays_in_the_outer_jobs_list_and_accounting()
+    {
+        using var outer = JobObject.CreateKillOnClose();
+        using var port = outer.AttachCompletionPort();
+        using var child = JobProcessLauncher.Launch(
+            outer, JobTestChildren.GatedBurnChildCmdLine(), new LaunchOptions(RedirectStdio: true));
+        using var inner = JobObject.CreateKillOnClose();
+        using var member = Process.GetProcessById(child.Pid);
+        inner.Assign(member.Handle); // dış job'un üyesi, iç içe ikinci bir job'a girer
+
+        var pids = new int[16];
+        Assert.Contains(child.Pid, pids[..inner.QueryProcessIds(pids)]);
+        Assert.Contains(child.Pid, pids[..outer.QueryProcessIds(pids)]); // iç job'a girmek dış job'dan çıkarmadı
+        Assert.True(inner.QueryAccounting().ActiveProcesses >= 1);
+        Assert.True(outer.QueryAccounting().ActiveProcesses >= inner.QueryAccounting().ActiveProcesses);
+
+        child.StandardInput!.Dispose();
+        WaitUntilJobIsEmpty(port, TimeSpan.FromSeconds(60));
+
+        TimeSpan own = member.TotalProcessorTime;
+        Assert.True(own > TimeSpan.Zero, $"the gated child burns cpu once released: {own}");
+        Assert.True(outer.QueryAccounting().TotalCpuTime >= own, $"outer {outer.QueryAccounting().TotalCpuTime} must include {own}");
+        Assert.True(inner.QueryAccounting().TotalCpuTime > TimeSpan.Zero, "the nested job accounts the member too");
     }
 
     /// <summary>
