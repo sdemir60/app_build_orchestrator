@@ -28,6 +28,12 @@ internal static class CommandPress
     public static void Invoke(Button button) =>
         ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)!).Invoke();
 
+    /// <summary>[kullanıcı kararı 2026-10-19] Bir radyo öğesine (Debug|Release segment'i) kullanıcı gibi basar: UI Automation Select
+    /// öğeyi SENKRON işaretler ve <c>Checked</c>'i yükseltir — tıkın yaptığının aynısı. Pasif bir öğede fırlatır (sönük öğeye
+    /// basılamaz).</summary>
+    public static void Select(RadioButton item) =>
+        ((ISelectionItemProvider)new RadioButtonAutomationPeer(item).GetPattern(PatternInterface.SelectionItem)!).Select();
+
     /// <summary>Bir düğmenin <c>Click</c> olayını SENKRON yükseltir — yalnız <c>Click</c> handler'ları koşar (bağlı bir
     /// komut ve bir <c>ToggleButton</c>'ın kendi işaret değişimi koşmaz). Pencere gösterilmeyen kabuk testleri içindir;
     /// orada <see cref="Invoke"/>'un dispatcher'a bıraktığı basış, bir popup'ı da gerçekten açtırırdı. Testlerde

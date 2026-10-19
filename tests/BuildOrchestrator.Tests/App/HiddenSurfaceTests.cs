@@ -1265,7 +1265,7 @@ public class HiddenSurfaceTests
         using var dir = new TempDir();
         string[] names = MainWindowHost.ProjectNames(5);
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, names);
-        WithLoadedActionBar(window, (host, bar) =>
+        MainWindowHost.WithLoadedActionBar(window, (host, bar) =>
         {
             var building = ActionBarTests.ChipValue(bar.BuildingChip);      // chip değeri ve spinner: ActionBarTests'in TEK okuma yolları
             var spinner = ActionBarTests.ChipSpinner(bar.BuildingChip);
@@ -1291,32 +1291,6 @@ public class HiddenSurfaceTests
             Assert.Equal(Visibility.Visible, spinner.Visibility);
         });
         GC.KeepAlive(window);
-    }
-
-    /// <summary>[perf Faz A · temizlik 2b] Kabuğun alt çubuğu: ağaçtaki TEK örnek. Chip'lerini <c>Loaded</c>'da kurduğu için headless
-    /// ağaçta chip'siz durur (bkz. <see cref="WithLoadedActionBar"/>).</summary>
-    private static ActionBar ActionBarOf(MainWindow window) => DsResources.Descendants(window.Shell).OfType<ActionBar>().Single();
-
-    /// <summary>
-    /// [perf Faz A · temizlik 2b] Alt çubuk testlerinin TEK girişi: kabuk içeriğini ekran dışı gerçek bir pencereye taşır
-    /// (<see cref="MainWindowHost.HostOffscreen"/>), çubuğun yüklenmesini bekler (chip'ler <c>Loaded</c>'da kurulur), gövdeyi çalıştırır ve
-    /// pencereyi — gövdedeki bir iddia patlasa da — kapatır. <c>Loaded</c> ÖNCESİNİ de sınayan test
-    /// (<see cref="An_action_bar_that_starts_hidden_builds_its_chips_once_from_the_current_counters_on_first_show"/>) çubuğu önce
-    /// <see cref="ActionBarOf"/> ile alır, gizli işaretler ve ancak sonra buraya girer; gövdeye gelen çubuk o örnektir.
-    /// </summary>
-    private static void WithLoadedActionBar(MainWindow window, Action<Window, ActionBar> body)
-    {
-        var host = MainWindowHost.HostOffscreen(window);
-        try
-        {
-            var bar = ActionBarOf(window);
-            DispatcherPump.PumpUntil(() => bar.IsLoaded, TimeSpan.FromSeconds(5)); // chip'ler Loaded'da kurulur
-            body(host, bar);
-        }
-        finally
-        {
-            host.Close();
-        }
     }
 
     /// <summary>
@@ -1558,7 +1532,7 @@ public class HiddenSurfaceTests
     {
         using var dir = new TempDir();
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, MainWindowHost.ProjectNames(5));
-        WithLoadedActionBar(window, (host, bar) =>
+        MainWindowHost.WithLoadedActionBar(window, (host, bar) =>
         {
             Assert.False(bar.BuildingChip.IsChecked);                              // ön-koşul: chip kurulu, filtre yok
             HiddenSurface.SetIsHidden(host, true);
@@ -1595,7 +1569,7 @@ public class HiddenSurfaceTests
         using var dir = new TempDir();
         string[] names = MainWindowHost.ProjectNames(5);
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, names);
-        var bar = ActionBarOf(window);
+        var bar = MainWindowHost.ActionBarOf(window);
         Assert.False(bar.IsLoaded);                                     // ön-koşul: headless ağaçta çubuk hiç yüklenmez
         Assert.Null(bar.BuildingChip);                                  // ön-koşul: chip'ler henüz kurulmadı (Loaded'da kurulurlar)
         window.SetSurfaceHidden(true);                                  // tepside başlama: içerik gizli işaretli ve yüklenmemiş
@@ -1604,7 +1578,7 @@ public class HiddenSurfaceTests
         MainWindowHost.StartProject(vm, names[0]);                      // gizliyken sayaç değişti: bildirim yalnız bayrağı kaldırdı
         Assert.Equal(1, vm.Counters.Building);                          // ön-koşul: model sayacı değişti
 
-        WithLoadedActionBar(window, (host, _) =>                        // ilk gösterim: gizli sinyal pencereden kalkar, Loaded chip'leri kurar
+        MainWindowHost.WithLoadedActionBar(window, (host, _) =>         // ilk gösterim: gizli sinyal pencereden kalkar, Loaded chip'leri kurar
         {
             Assert.NotNull(bar.BuildingChip);                           // Loaded chip'leri kurdu (yukarıda kurulu değildi)
             var building = ActionBarTests.ChipValue(bar.BuildingChip);

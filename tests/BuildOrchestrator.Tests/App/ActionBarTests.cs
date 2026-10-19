@@ -440,17 +440,21 @@ public partial class ActionBarTests
     private const string WindowReturnSha = "1111111111111111111111111111111111111111";
 
     /// <summary>
-    /// <b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-02]</b> Arka plandaki pencereye Build'e tıklayarak dönmek: tıklama önce
-    /// pencereyi etkinleştirir, etkinleşme kendiliğinden bir Sync ister, tıklama ANCAK SONRA işlenir. Önceki ad ve iddia
-    /// (<c>A_click_on_build_that_brings_the_window_back_is_kept_and_builds_after_the_automatic_sync</c>, kullanıcı bildirimi
-    /// 2026-09-29): o tık tutulur, düğme Stop olur ve Build Sync bitince koşar. Kuyruk kaldırıldı; ölçülen kusurun asıl koruması
-    /// kaldı ve burada pinlenir: Sync istendiği ANDA Build'in kapısı kapanır ve düğme bundan haberdar olur — sönük düğmeye
-    /// basılamaz (UI Automation Invoke fırlatır), tık iz bırakmadan yutulan "parlak ama ölü" bir düğmeye inmez. Hiçbir koşu
-    /// başlamaz, düğme Stop olmaz; Sync bitince düğme yeniden açılır. (Kapının kendisi her iş türü için
-    /// <c>RunRequestDuringWorkTests</c>'te pinlidir.)
+    /// <b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-19]</b> Pencereye Build'e tıklamadan dönmek (klavye, görev çubuğu, tepsi, başka bir
+    /// yere tık): etkinleşme kendiliğinden bir Sync ister ve Sync istendiği ANDA Build'in kapısı kapanır, düğme bundan haberdar olur —
+    /// sönük düğmeye basılamaz (UI Automation Invoke fırlatır), hiçbir koşu başlamaz, düğme Stop olmaz; Sync bitince düğme yeniden açılır.
+    /// (Kapının kendisi her iş türü için <c>RunRequestDuringWorkTests</c>'te pinlidir.)
+    /// <para>Önceki ad ve iddia (<c>A_click_on_build_that_brings_the_window_back_finds_the_button_already_closed_and_starts_nothing</c>,
+    /// kullanıcı kararı 2026-10-02): arka plandaki pencereyi Build'e TIKLAYARAK getirmek de bu yoldan geçer — tık, etkinleşmenin istediği
+    /// Sync'in kapattığı düğmeye iner. Değişme gerekçesi (kullanıcı bildirimi, iki monitör): düğme tıklandığı anda parlaktı, sönmesi tıkın
+    /// kendi sonucuydu; "sönük düğmeye basılamaz" o tık için doğru değildi ve Build yutuluyordu. Artık pencereyi Build'in (ya da
+    /// Debug|Release'in seçili olmayan öğesinin) üstünden öne getiren tık dönüşün Sync'ini istemez ve tık normal çalışır
+    /// (<c>WindowReturnClickTests</c>); bu test kuralın değişmeyen yarısını pinler. Daha önceki ad ve iddia (kullanıcı bildirimi 2026-09-29,
+    /// <c>A_click_on_build_that_brings_the_window_back_is_kept_and_builds_after_the_automatic_sync</c>): o tık tutulur ve Build Sync bitince
+    /// koşar — kuyruk 2026-10-02'de kalktı.</para>
     /// </summary>
     [StaFact]
-    public void A_click_on_build_that_brings_the_window_back_finds_the_button_already_closed_and_starts_nothing()
+    public void A_return_that_is_not_a_click_on_build_closes_build_at_once_and_starts_nothing()
     {
         long now = 1_000;
         var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1", () => now)
@@ -466,12 +470,12 @@ public partial class ActionBarTests
         Assert.True(primary.IsEnabled);                      // ön-koşul: pencere arkadayken Build açık
 
         now += 60_000;
-        vm.OnWindowActivated();                              // tıklama pencereyi etkinleştirdi…
+        vm.OnWindowActivated();                              // pencere Build'e tıklanmadan öne geldi…
         Assert.Single(sent.OfType<SyncWorkspaceCommand>());  // …kendiliğinden Sync istendi (ön-koşul)
 
         Assert.False(primary.IsEnabled);                     // Build o anda söndü: düğme bundan haberdar
         Assert.False(bar.Split.MenuToggle!.IsEnabled);
-        Assert.Throws<ElementNotEnabledException>(() => CommandPress.Invoke(primary)); // …tık kapalı düğmeye iner
+        Assert.Throws<ElementNotEnabledException>(() => CommandPress.Invoke(primary)); // …sonraki basış kapalı düğmeye iner
         Assert.False(vm.IsStarting);
         Assert.Equal(Visibility.Collapsed, bar.StopButton.Visibility);
         Assert.Empty(sent.OfType<StartRunCommand>());
@@ -486,11 +490,16 @@ public partial class ActionBarTests
         GC.KeepAlive(window);
     }
 
-    private static (ActionBar bar, Window window) Realize(RunViewModel vm)
+    /// <param name="atMinimumWindowWidth">[kullanıcı kararı 2026-10-19] Çubuk en dar pencerenin genişliğinde (<c>Size.WindowMinWidth</c>)
+    /// kurulur. Varsayılan realize dardır: sağ küme (Debug|Release, Build) görünür alanın dışına taşar ve isabet almaz — isabet ölçen test
+    /// gerçek genişliği ister.</param>
+    private static (ActionBar bar, Window window) Realize(RunViewModel vm, bool atMinimumWindowWidth = false)
     {
         var host = DsResources.NewHost();
         var bar = new ActionBar { DataContext = vm };
-        return (bar, DsResources.Realize(host, bar));
+        return (bar, atMinimumWindowWidth
+            ? DsResources.Realize(host, bar, (double)host.FindResource("Size.WindowMinWidth"))
+            : DsResources.Realize(host, bar));
     }
 
     private static (BuildMenu menu, Window window) RealizeMenu(RunViewModel vm)
@@ -656,6 +665,48 @@ public partial class ActionBarTests
     /// TEK yolu. <see cref="ChipValue"/> gibi <c>internal</c>: <c>HiddenSurfaceTests</c> de aynı okumayı kullanır.</summary>
     internal static BuildingSpinner ChipSpinner(ToggleButton buildingChip) =>
         Assert.IsType<BuildingSpinner>(Assert.IsType<Grid>(ChipIcon(buildingChip)).Children[1]);
+
+    /// <summary>[kullanıcı kararı 2026-10-19] Debug|Release segment'inin bir öğesi — içeriğinden. Segment'in öğesini bulmanın TEK yolu;
+    /// <c>internal</c>: <c>WindowReturnClickTests</c> de aynı öğeye basar.</summary>
+    internal static RadioButton ConfigurationItem(ActionBar bar, string configuration) =>
+        bar.Segment.Items.OfType<RadioButton>().Single(item => Equals(item.Content, configuration));
+
+    /// <summary>[kullanıcı kararı 2026-10-19] Bir öğenin ortası, çubuğa göre — tıkın indiği nokta. <c>internal</c>:
+    /// <c>WindowReturnClickTests</c> de pencereyi öne getiren tıkı buradan konumlar.</summary>
+    internal static Point CenterIn(ActionBar bar, FrameworkElement element) =>
+        element.TranslatePoint(new Point(element.ActualWidth / 2, element.ActualHeight / 2), bar);
+
+    /// <summary>
+    /// [kullanıcı kararı 2026-10-19] Kendi tazelemesini yapan komutlar (<see cref="ActionBar.StartsOwnRefreshAt"/>): AÇIK Build ve
+    /// Debug|Release'in seçili OLMAYAN öğesi. Pencereyi arka plandan öne getiren tık bunlara iniyorsa pencere dönüşün Sync'ini istemez
+    /// (<c>WindowReturnClickTests</c>). Seçili öğe (geçiş no-op), Sync düğmesi ve bir sayaç chip'i sayılmaz; bir Sync sürerken kapalı
+    /// olan Build ve segment de sayılmaz — kapalı bir öğe isabet almaz, tık hiçbir şey başlatmaz.
+    /// </summary>
+    [StaFact]
+    public void Only_an_open_build_and_the_configuration_not_selected_start_their_own_refresh()
+    {
+        var vm = NewVm();
+        VmTopology.Seed(vm);
+        var (bar, window) = Realize(vm, atMinimumWindowWidth: true);
+        var build = (Button)bar.Split.PrimaryHalf!;
+        var debug = ConfigurationItem(bar, "Debug");
+        var release = ConfigurationItem(bar, "Release");
+        Assert.True(build.IsEnabled);                                       // ön-koşul: Build açık
+        Assert.True(debug.IsChecked);                                       // ön-koşul: Debug seçili
+
+        Assert.True(bar.StartsOwnRefreshAt(CenterIn(bar, build)));
+        Assert.True(bar.StartsOwnRefreshAt(CenterIn(bar, release)));
+        Assert.False(bar.StartsOwnRefreshAt(CenterIn(bar, debug)));
+        Assert.False(bar.StartsOwnRefreshAt(CenterIn(bar, bar.SyncButton)));
+        Assert.False(bar.StartsOwnRefreshAt(CenterIn(bar, bar.SigmaChip)));
+
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));               // bir Sync sürüyor: ikisi de kapalı
+        Assert.False(build.IsEnabled);                                      // ön-koşul
+        Assert.False(bar.Segment.IsEnabled);
+        Assert.False(bar.StartsOwnRefreshAt(CenterIn(bar, build)));
+        Assert.False(bar.StartsOwnRefreshAt(CenterIn(bar, release)));
+        GC.KeepAlive(window);
+    }
 
     /// <summary>[design v1.20.0 §2.7] ✓ · ✗ rozetleri DURUM kovalarını okur (<see cref="RunCounters.Current"/> ·
     /// <see cref="RunCounters.Broken"/>) — koşu tablosunun succeeded/failed/skipped kovalarını DEĞİL (onlar
@@ -1152,10 +1203,11 @@ public partial class ActionBarTests
     }
 
     /// <summary>[kullanıcı kararı 2026-09-29] Segment Sync'in İSTEK anında kilitlenir, motorun cevabını
-    /// (<c>syncStarted</c>) beklemez. Gerçek sıra: arkadaki pencerede segment'e tıklamak önce pencereyi etkinleştirir
-    /// ve pencereye dönüşün sessiz Sync'i o anda yola çıkar; tıklama ondan SONRA işlenir. Kilit istek anında inmezse
-    /// tıklama radyo düğmesini çevirir ama VM geçişi reddeder — segment "Release" gösterirken configuration Debug
-    /// kalırdı. Sessiz Sync fazı değiştirmediği için kilidi yalnız Sync komutunun kapı bildirimi taşır.</summary>
+    /// (<c>syncStarted</c>) beklemez. Kendiliğinden bir Sync (bir commit, pencereye klavyeyle ya da başka bir yere tıklayarak dönüş)
+    /// istendiği anda segment'e basılırsa: kilit istek anında inmezse tıklama radyo düğmesini çevirir ama VM geçişi reddeder — segment
+    /// "Release" gösterirken configuration Debug kalırdı. Sessiz Sync fazı değiştirmediği için kilidi yalnız Sync komutunun kapı
+    /// bildirimi taşır. [kullanıcı kararı 2026-10-19] Eskiden örnek, arkadaki pencereyi segment'e tıklayarak getirmekti; o tık artık
+    /// dönüşün Sync'ini hiç istemez ve geçişi yapar (<c>WindowReturnClickTests</c>).</summary>
     [StaFact]
     public async Task The_configuration_segment_locks_the_moment_a_sync_is_requested()
     {

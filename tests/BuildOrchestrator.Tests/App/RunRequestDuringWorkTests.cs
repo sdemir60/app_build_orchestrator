@@ -28,7 +28,7 @@ namespace BuildOrchestrator.Tests.App;
 /// satırın hedefi kaybolunca geri alma, tam çıkışın ve branch değişiminin isteği geri alması, beklerken gelen Sync
 /// hatasının atfı ve isteğin konsol satırı. Aynı ailenin başka dosyalardaki testleri de silindi: checkout düşünce bekleyen Build'in geri alınması ve checkout'un Sync'inden
 /// sonra başlaması (<c>BranchCheckoutTests</c>), Sync sürerken basılan koşunun beklemesi (<c>RunViewModelStateTests</c>) ve
-/// bekleyen Build'in pill'i canlandırmaması (<c>StickyRibbonTests</c>). Arka plandaki pencereye Build tıklamasıyla dönüş testi (<c>ActionBarTests</c>) ise silinmedi, yeni kurala göre yeniden yazıldı: tık Build'in zaten kapalı düğmesine iner. Bunların yerine kapının işin tüm türlerinde kapalı, iş bitince açık olduğu
+/// bekleyen Build'in pill'i canlandırmaması (<c>StickyRibbonTests</c>). Arka plandaki pencereye Build tıklamasıyla dönüş testi (<c>ActionBarTests</c>) ise silinmedi, yeni kurala göre yeniden yazıldı: tık Build'in zaten kapalı düğmesine iniyordu. [kullanıcı kararı 2026-10-19] O tık artık dönüşün Sync'ini istemez ve Build'i başlatır (<c>WindowReturnClickTests</c>); <c>ActionBarTests</c>'teki test Build'e tıklanmadan yapılan dönüşü pinler. Bunların yerine kapının işin tüm türlerinde kapalı, iş bitince açık olduğu
 /// aşağıda pinlenir; <c>CancelPendingRun</c> yalnız açılış koreografisi penceresi için kalır (kendi testleri
 /// <c>GraphFilterRunSuspendTests</c>'te).</para>
 ///
