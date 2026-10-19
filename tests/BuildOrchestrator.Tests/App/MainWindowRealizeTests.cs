@@ -172,7 +172,7 @@ public class MainWindowRealizeTests
     /// cihaz pikseli ızgarasına oturtur; dolayısıyla dip değerleri ekran ölçeğiyle kayar — hairline 1 dip
     /// yazıldığı hâlde 150%'de 2 piksel (1,333 dip) yer kaplar ve iç kutuyu <c>38,667</c>'ye, 125%'te 1 piksel
     /// (0,8 dip) kaplar ve iç kutuyu <c>39,2</c>'ye indirir. Bu yüzden iddialar farkın KENDİSİ üzerinden ve
-    /// <b>cihaz pikseli cinsinden</b> kurulur (bkz. <see cref="InDevicePixels"/>).</para>
+    /// <b>cihaz pikseli cinsinden</b> kurulur (bkz. <see cref="DsResources.InDevicePixels"/>).</para>
     ///
     /// <para><b>Merkez iddiası neden ±0 olamaz — B0'ın kırmızısı:</b> iddia
     /// <c>Assert.Equal(inner.ActualHeight / 2, logoCenter, precision: 1)</c> idi, yani tolerans ±0,05 dip:
@@ -210,7 +210,7 @@ public class MainWindowRealizeTests
         var inner = (FrameworkElement)titleBar.Child;
         Assert.True(inner.ActualHeight < titleBar.ActualHeight,
             $"hairline iç kutuyu hiç daraltmadı (iç {inner.ActualHeight}, bant {titleBar.ActualHeight}) — çizgi kayıp olabilir");
-        double shrink = InDevicePixels(titleBar.ActualHeight - inner.ActualHeight, dpi);
+        double shrink = DsResources.InDevicePixels(titleBar.ActualHeight - inner.ActualHeight, dpi.DpiScaleY);
         Assert.True(shrink <= Math.Ceiling(dpi.DpiScaleY),
             $"iç kutu bir kenarlıktan FAZLA daraldı: {shrink} cihaz pikseli (bir kenarlık en çok {Math.Ceiling(dpi.DpiScaleY)})");
 
@@ -218,7 +218,7 @@ public class MainWindowRealizeTests
         // adımı merkezi en çok YARIM cihaz pikseli kaydırır (bugün 2 adım → TAM bir cihaz pikseli).
         var logo = window.TitleBarLogo;
         double logoCenter = logo.TranslatePoint(new Point(0, logo.ActualHeight / 2), inner).Y;
-        double drift = InDevicePixels(logoCenter - inner.ActualHeight / 2, dpi);
+        double drift = DsResources.InDevicePixels(logoCenter - inner.ActualHeight / 2, dpi.DpiScaleY);
         // [kaynak şeridi] İç kutu artık DockPanel'i (ve ortadaki şeridi) saran Grid'dir. Hizalama adımları DockPanel'in kutusundan sayılır: Grid ile
         // DockPanel AYNI kutudur (germe, offset 0) — arada fiziksel bir hizalama adımı, yani yeni bir yuvarlama kaynağı yoktur ve bütçe bir cihaz
         // pikselinde KALIR (sarmalayıcıyı saymak bütçeyi sessizce yarım piksel gevşetirdi).
@@ -229,18 +229,6 @@ public class MainWindowRealizeTests
             $"logo iç kutuda ortalı DEĞİL: {drift} cihaz pikseli sapma (yuvarlama bütçesi {budget} piksel)");
         GC.KeepAlive(window);
     }
-
-    /// <summary>
-    /// [A13/B0] Bir dip farkını CİHAZ PİKSELİNE çevirir ve yarım-piksel ızgarasına oturtur.
-    ///
-    /// <para><c>UseLayoutRounding</c> altında her boy ve her hizalama offset'i tam piksele oturduğundan, iki
-    /// geometri değerinin farkı TAM ARİTMETİKTE yarım cihaz pikselinin katıdır; ölçülende görülen artık
-    /// (<c>20,4 − 19,6 = 0,7999999999999972</c>) yalnız double gösteriminden gelir. Sınır iddiaları — fark tam
-    /// bütçe kadar olduğunda — bu artık yüzünden yazı-turaya döner, bu yüzden ızgaraya oturtmak ZORUNLUDUR.
-    /// Gevşetme değildir: ara değerler zaten oluşamaz.</para>
-    /// </summary>
-    private static double InDevicePixels(double dips, DpiScale dpi) =>
-        Math.Round(Math.Abs(dips) * dpi.DpiScaleY * 2) / 2;
 
     /// <summary>
     /// [A13/B0] <paramref name="child"/> ile <paramref name="ancestor"/> arasındaki hizalama adımı sayısı —

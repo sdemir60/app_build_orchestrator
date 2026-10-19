@@ -43,6 +43,10 @@ public class UpdatePillTests
     private static FrameworkElement[] ExistingButtons(MainWindow window) =>
         [window.LayQuadButton, window.LayListButton, window.LayFocusButton, window.GearButton, window.NotesButton, window.InfoButton];
 
+    /// <summary>Ölçüm testlerinin koştuğu ekran ölçekleri (Windows'un %100–%200 adımları): kabuk her birinde ölçülür
+    /// (<see cref="MainWindowHost.NewRealizedWithOffer"/>), makinenin kendi ölçeği sonucu değiştirmez.</summary>
+    public static TheoryData<double> DisplayScales => [1.0, 1.25, 1.5, 1.75, 2.0];
+
     // ---------------------------------------------------------------- yer
 
     /// <summary>Hap kümenin İLK öğesidir, ardından ayracı gelir; mevcut altı buton aynı sırada arkasında durur.</summary>
@@ -65,20 +69,32 @@ public class UpdatePillTests
     }
 
     /// <summary>Kas hafızası: mevcut ikonların pencerenin sağ kenarına göre konumu, hap görünürken de gizliyken de
-    /// AYNIDIR — hap boş alana (sola) doğru büyür.</summary>
-    [StaFact]
-    public void The_existing_title_bar_buttons_do_not_move_when_the_pill_appears()
+    /// AYNIDIR — hap boş alana (sola) doğru büyür. Her ekran ölçeğinde (<see cref="DisplayScales"/>), aynı pencerede ölçülür.
+    /// <para><b>[DEĞİŞEN ÖLÇÜM — temizlik madde 1]</b> Eski iddia iki listenin double eşitliğiydi (<c>Assert.Equal(withoutPill, withPill)</c>)
+    /// ve yalnız makinenin ölçeğinde koşardı: %125/%150 ekranlarda her tam süitte kırmızı, CI'da (%100) yeşil. Ölçüm (zorlanan ölçek, pencere
+    /// Maximized, 1400 dip): 125%'te LayFocus'un sağ boşluğu hapla <c>231,99999999999977</c>, hapsız <c>232</c>; 150%'de gear · What's new ·
+    /// About <c>197,33333333333326</c> ↔ <c>197,33333333333348</c>. Fark 1e-13 mertebesindedir: konumlar cihaz pikseli ızgarasındadır ve iki
+    /// ayrı toplamın double artığı kayma değildir. Konumlar artık ızgarada karşılaştırılır (<see cref="DsResources.InDevicePixels"/>): gerçek
+    /// bir kayma en az bir cihaz pikselidir ve yakalanır (mutasyon: hap görünürken sağ kümeye 1 dip sağ boşluk — her ölçekte kırmızı).</para></summary>
+    [StaTheory]
+    [MemberData(nameof(DisplayScales))]
+    public void The_existing_title_bar_buttons_do_not_move_when_the_pill_appears(double scale)
     {
         using var temp = new TempDir();
-        var (window, _) = MainWindowHost.NewRealizedWithOffer(temp);
+        var (window, _) = MainWindowHost.NewRealizedWithOffer(temp, new DpiScale(scale, scale));
         Assert.Equal(Visibility.Visible, window.UpdatePillSlot.Visibility); // ön-koşul: hap görünür
+        Assert.Equal(scale, VisualTreeHelper.GetDpi(window.InfoButton).DpiScaleX); // ön-koşul: ölçek düğmelere indi
         var withPill = ExistingButtons(window).Select(b => RightInset(window, b)).ToList();
 
         window.UpdatePillSlot.Visibility = Visibility.Collapsed;
         window.RootShell.UpdateLayout();
         var withoutPill = ExistingButtons(window).Select(b => RightInset(window, b)).ToList();
 
-        Assert.Equal(withoutPill, withPill);
+        var moved = ExistingButtons(window)
+            .Select((button, i) => (button.Name, Pixels: DsResources.InDevicePixels(withPill[i] - withoutPill[i], scale)))
+            .Where(m => m.Pixels != 0)
+            .ToList();
+        Assert.True(moved.Count == 0, $"hap gelince kayan düğmeler (ölçek {scale}, cihaz pikseli): {string.Join(", ", moved)}");
         Assert.True(window.UpdatePill.ActualWidth > 0, "hap hiç yer kaplamadı — ölçüm vakum");
         GC.KeepAlive(window);
     }
@@ -105,14 +121,30 @@ public class UpdatePillTests
 
     // ---------------------------------------------------------------- ölçü ve renk
 
-    [StaFact]
-    public void The_pill_is_drawn_to_the_design_numbers()
+    /// <summary>Hap tasarımın sayılarıyla çizilir — 22 yükseklik, ikon → etiket → sürüm arası 6 — her ekran ölçeğinde (<see cref="DisplayScales"/>).
+    /// <para><b>[DEĞİŞEN ÖLÇÜM — temizlik madde 1]</b> Eski iddialar ölçülen sayıları dip cinsinden ±0,0005 ile beklerdi
+    /// (<c>Assert.Equal(22.0, pill.ActualHeight, precision: 3)</c>, boşluklar metnin kenarından kenarına) ve yalnız makinenin ölçeğinde koşardı:
+    /// %125/%150 ekranlarda kırmızı, CI'da (%100) yeşil. <c>UseLayoutRounding</c> her boyu ve ofseti cihaz pikseline oturtur; ölçüm (zorlanan
+    /// ölçek; yükseklik · ikon→etiket · etiket→sürüm, dip):</para>
+    /// <list type="bullet">
+    /// <item>100% · 150% · 200%: 22 · 6 · 6 — ölçek tasarım sayılarını tam piksele çevirir.</item>
+    /// <item>125%: 22,4 (27,5 → 28 px) · 6,4 · 6,4.</item>
+    /// <item>175%: 21,714 (38,5 → 38 px) · 6,286 · 5,143 — etiket→sürüm kenardan kenara 9 px: WPF etiketin 6'lık sol boşluğunu ölçümde 10,
+    /// yerleşimde 11 px sayar ve metin kendi yerleşim yuvasından 1 px taşar.</item>
+    /// </list>
+    /// <para>Yeni ölçüm: her sayı TEK yuvarlama adımıyla ölçülür ve tasarım sayısından en çok YARIM cihaz pikseli sapabilir — pay sabit bir dip
+    /// değil, ölçekten gelir (<see cref="DsResources.InDevicePixels"/>). Boşluk, sonraki öğenin sol kenarından ÖNCEKİ öğenin yerleşim yuvasının
+    /// sağına ölçülür (StackPanel yuvaları bitişiktir); metnin kendi kenarına ölçmek yukarıdaki taşmayı katardı. 1 dip'lik gerçek bir sapma bu
+    /// payı her ölçekte aşar (100%'de 1 piksel, üstünde en az ölçek − 0,5 piksel) — mutasyonla doğrulandı: yükseklik 23, etiketin ya da sürümün
+    /// boşluğu 7, sol padding 7 her ölçekte kırmızı. Özellik iddiaları (padding, kenar, radius, renk, yazı) ölçekten bağımsızdır, aynen kalır.</para></summary>
+    [StaTheory]
+    [MemberData(nameof(DisplayScales))]
+    public void The_pill_is_drawn_to_the_design_numbers(double scale)
     {
         using var temp = new TempDir();
-        var (window, vm) = MainWindowHost.NewRealizedWithOffer(temp);
+        var (window, vm) = MainWindowHost.NewRealizedWithOffer(temp, new DpiScale(scale, scale));
         var pill = window.UpdatePill;
 
-        Assert.Equal(22.0, pill.ActualHeight, precision: 3);
         Assert.Equal(new Thickness(6, 0, 8, 0), pill.Padding);
         Assert.Equal(new Thickness(1), pill.BorderThickness);
         Assert.Equal((CornerRadius)window.FindResource("Radius.Sm"), DsChrome.GetCornerRadius(pill));
@@ -140,11 +172,19 @@ public class UpdatePillTests
         Assert.Equal(FontNumeralAlignment.Tabular, Typography.GetNumeralAlignment(version));
         Assert.Equal(DsResources.TokenColor(window, "Brush.TextDim"), DsResources.ColorOf(version.Foreground));
 
-        // gap 6: ikon → etiket → sürüm
-        double IconRight() => icon.TranslatePoint(new Point(icon.ActualWidth, 0), pill).X;
-        Assert.Equal(6.0, label.TranslatePoint(new Point(0, 0), pill).X - IconRight(), precision: 3);
-        Assert.Equal(6.0, version.TranslatePoint(new Point(0, 0), pill).X
-                          - label.TranslatePoint(new Point(label.ActualWidth, 0), pill).X, precision: 3);
+        // Ölçülen sayılar: tek yuvarlama adımı, yarım cihaz pikseli pay (özetteki ölçüm). Ön-koşul: ölçek şablondan doğan etikete de indi.
+        Assert.Equal(scale, VisualTreeHelper.GetDpi(label).DpiScaleX);
+        var row = (Panel)VisualTreeHelper.GetParent(label);
+        double GapAfter(FrameworkElement previous, FrameworkElement next) =>
+            next.TranslatePoint(new Point(0, 0), row).X - LayoutInformation.GetLayoutSlot(previous).Right;
+        void AssertDesignNumber(double design, double measured, string what)
+        {
+            double off = DsResources.InDevicePixels(measured - design, scale);
+            Assert.True(off <= 0.5, $"{what}: {measured:0.###} dip, tasarım {design} — {off} cihaz pikseli sapma (ölçek {scale}, pay 0,5)");
+        }
+        AssertDesignNumber(22, pill.ActualHeight, "hap yüksekliği");
+        AssertDesignNumber(6, GapAfter(icon, label), "ikon → etiket");
+        AssertDesignNumber(6, GapAfter(label, version), "etiket → sürüm");
         Assert.Empty(DsResources.DynamicResourceTypeMismatches(pill));
         GC.KeepAlive(window);
     }

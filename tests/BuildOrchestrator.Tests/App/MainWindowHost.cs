@@ -151,13 +151,31 @@ internal static class MainWindowHost
 
     /// <summary>[motor · Task 8] <see cref="NewRealized"/> + kuruluma hazır bir teklif (<see cref="UpdateOffers.Sample"/>):
     /// hap görünür, kartın içeriği dolu. Uygulama teklifsiz açılır; hapı/kartı sınayan kabuk testleri teklifi burada,
-    /// kurulumdan SONRA alır (üretimdeki gibi teklif sonradan gelir) ve görünür olan hap bir layout turuyla ölçülür.</summary>
-    public static (MainWindow window, RunViewModel vm) NewRealizedWithOffer(TempDir uiStateDir)
+    /// kurulumdan SONRA alır (üretimdeki gibi teklif sonradan gelir) ve görünür olan hap bir layout turuyla ölçülür.
+    /// <para>[temizlik · madde 1] <paramref name="dpi"/> verilirse kabuk o ekran ölçeğinde ölçülür (makinenin ölçeği ne olursa olsun):
+    /// pencerenin kendi ölçeği realize'dan ÖNCE (MaximizeFix çerçeve dolgusunu ondan okur), içeriğinki SONRA verilir
+    /// (<see cref="RelayoutAt"/>). <c>null</c> ⇒ sistemin ölçeği, davranış birebir eskisi gibi.</para></summary>
+    public static (MainWindow window, RunViewModel vm) NewRealizedWithOffer(TempDir uiStateDir, DpiScale? dpi = null)
     {
-        var (window, vm) = NewRealized(uiStateDir);
+        var (window, vm) = New(uiStateDir);
+        if (dpi is { } windowScale) VisualTreeHelper.SetRootDpi(window, windowScale);
+        var content = Realize(window);
         vm.AvailableUpdate = UpdateOffers.Sample();
-        ((FrameworkElement)window.Content).UpdateLayout();
+        content.UpdateLayout();
+        if (dpi is { } contentScale) RelayoutAt(content, contentScale);
         return (window, vm);
+    }
+
+    /// <summary>[temizlik · madde 1] Realize edilmiş içeriği <paramref name="dpi"/> ölçeğinde yeniden yerleştirir. Başsız süitte içerik kökü
+    /// pencerenin görsel çocuğu DEĞİLDİR (pencerenin ContentPresenter'ı onu yalnız gerçek bir ölçüm turunda alır — <see cref="Realize"/>),
+    /// yani pencereye verilen ölçek içeriğe inmez; içerik kökü kendi ölçeğini ayrıca alır. <c>SetRootDpi</c> ölçeği yalnız O AN ağaçta olan
+    /// görsellere yazar — sonradan şablondan doğan çocuk almaz (ölçüldü: realize'dan önce verilince hapın etiketi ve ikonu 1.0'da kaldı).
+    /// Bu yüzden realize'dan SONRA verilir ve yerleşim yuvarlaması yeni ölçekle baştan koşsun diye her öğenin ölçümü geçersizlenir.</summary>
+    private static void RelayoutAt(FrameworkElement content, DpiScale dpi)
+    {
+        VisualTreeHelper.SetRootDpi(content, dpi);
+        foreach (var element in DsResources.RealizedObjects(content).OfType<UIElement>()) element.InvalidateMeasure();
+        content.UpdateLayout();
     }
 
     /// <summary>[P3 · final review O5] Bir testin geçici kalıcı durum dosyası — <see cref="New"/>'ün pencereye verdiği
