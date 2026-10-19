@@ -177,10 +177,14 @@ internal sealed class AutoSyncCoordinator : IDisposable
     /// <summary>Pencereye dönüş (UI thread'inde) — spec karar 11. [review M4] Kurulamamış izleyici (ör. henüz reflog'u
     /// olmayan depo: <c>logs</c> ilk commit'le doğar) burada yeniden denenir; ucuzdur (bir klasör kontrolü) ve
     /// "unavailable" satırı kök başına yine BİR kez kalır.</summary>
-    public Task WindowActivatedAsync()
+    /// <param name="clickRefreshes">[kullanıcı kararı 2026-10-19] Pencereyi öne getiren tık kendi tazelemesini yapan bir komuta iniyor
+    /// (Build diski baştan planlar; Debug|Release kendi Sync'ini başlatır). Windows tıkı pencereyi etkinleştirdikten SONRA teslim eder;
+    /// dönüşün Sync'i o anda istenseydi tıkın indiği düğmeyi altından kapatırdı. Tazelemeyi tık kendisi yapar: dönüş değerlendirilmez,
+    /// tetik saklanmaz.</param>
+    public Task WindowActivatedAsync(bool clickRefreshes = false)
     {
         if (!_disposed && _watcher is null && _gitDir is not null) Attach(_root);
-        return EvaluateAsync(new Trigger(null));
+        return clickRefreshes ? Task.CompletedTask : EvaluateAsync(new Trigger(null));
     }
 
     /// <summary>
