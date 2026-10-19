@@ -122,8 +122,8 @@ public class DiscoveryBlockTests
 
     /// <summary>[§2.3 · §9 v1.24.0 · plan A6] Graf bloğu: zemin <c>surface-base</c>; Lucide network 28px (stroke 1.4,
     /// <c>text-faint</c>, opaklık 0.7) · 10 · <c>Graph appears once projects are discovered</c> 12px <c>text-faint</c>.
-    /// Kesikli Sync-öncesi kutu, düğüm yüzeyi ve başlığın <c>N projects · N dependencies</c> sayacı keşif boyunca
-    /// gizlidir (plan K7).</summary>
+    /// Boş görünüm, düğüm yüzeyi ve başlığın <c>N projects · N dependencies</c> sayacı keşif boyunca gizlidir (plan K7).
+    /// [2026-10-19] Blok grafın boş görünümüyle AYNI öğedir (<c>StateBlock</c>); keşifte metni keşif metnidir.</summary>
     [StaFact]
     public async Task The_graph_block_is_drawn_to_the_design_numbers_and_hides_the_rest_of_the_panel()
     {
@@ -138,7 +138,7 @@ public class DiscoveryBlockTests
         Assert.False(graph.IsViewportVisible);
         Assert.Equal(Visibility.Collapsed, graph.CountsText.Visibility);
 
-        var block = graph.DiscoveryState;
+        var block = graph.StateBlock;
         Assert.Equal(Token(graph, "Brush.SurfaceBase"), ColorOf(block.Background));
         var icon = Assert.Single(DsResources.Descendants(block).OfType<Viewbox>());
         Assert.Equal((28.0, 28.0), (icon.Width, icon.Height));
@@ -173,15 +173,18 @@ public class DiscoveryBlockTests
         Assert.True(graph.IsDiscoveryStateVisible);                   // ön-koşul
 
         Assert.Equal(AppFonts.Ui, TextIn(window.Shell.PART_Discovering, InteractionText.DiscoveringProjects).FontFamily);
-        Assert.Equal(AppFonts.Ui, TextIn(graph.DiscoveryState, InteractionText.GraphDiscovering).FontFamily);
+        Assert.Equal(AppFonts.Ui, TextIn(graph.StateBlock, InteractionText.GraphDiscovering).FontFamily);
         Assert.Equal(AppFonts.Mono, window.Shell.PART_DiscoveryCount.FontFamily);
         GC.KeepAlive(window);
     }
 
-    /// <summary>[§9 v1.24.0] First run (workspace yok) DEĞİŞMEDİ: listede kurulum daveti, grafta kesikli
-    /// <c>Graph appears after Sync</c> kutusu — keşif blokları çıkmaz.</summary>
+    /// <summary>[§9 v1.24.0] First run'da (workspace yok) keşif blokları çıkmaz: listede kurulum daveti, grafta boş
+    /// görünüm.
+    /// <para><b>[DEĞİŞEN KURAL — 2026-10-19]</b> Eski adı <c>The_first_run_screen_is_unchanged</c>'di; graf burada kesikli
+    /// <c>Graph appears after Sync</c> kutusunu gösterirdi. Boş graf artık her durumda ağ ikonu + <c>No graph</c> der
+    /// (<c>EmptyPanelViewTests</c>).</para></summary>
     [StaFact]
-    public void The_first_run_screen_is_unchanged()
+    public void The_first_run_screen_shows_no_discovery_blocks()
     {
         using var temp = new TempDir();
         var (window, _) = MainWindowHost.NewRealized(temp);
@@ -235,9 +238,11 @@ public class DiscoveryBlockTests
     /// [kullanıcı gözlemi 2026-09-29 · design v1.24.0] Tasarımın doğduğu senaryo — Clean'e basılır, iş biter, devrettiği
     /// Sync keşfeder, topoloji gelir. Her adımda ekranda ne olduğu ölçülür:
     /// <list type="number">
-    /// <item>Clean'in KENDİ penceresi (plan K2) değişmedi: keşif bloğu yok, grafta kesikli Sync-öncesi kutu.</item>
-    /// <item>Devredilen Sync istendiği anda iki panel keşif bloğunu gösterir; harici tanım olduğu için sayaç kırılımlı
-    /// başlar (<c>0 found · 0 repository · 0 external</c>); başlık araçları ve graf sayacı gizlidir.</item>
+    /// <item>Clean'in KENDİ penceresi (plan K2) keşif değildir: keşif bloğu yok, iki panel boş görünümündedir
+    /// (<c>EmptyPanelViewTests</c>; eskiden liste bomboş, grafta kesikli Sync-öncesi kutu).</item>
+    /// <item>Devredilen Sync istendiği anda iki panel keşif bloğunu gösterir — boş görünüm kalkar; harici tanım olduğu
+    /// için sayaç kırılımlı başlar (<c>0 found · 0 repository · 0 external</c>); başlık araçları ve graf sayacı
+    /// gizlidir.</item>
     /// <item>Motorun kümülatif raporları sayacı ilerletir (önce ana repo, sonra harici kök — plan K3).</item>
     /// <item>Topoloji gelince bloklar kalkar; satırlar, graf düğümleri, graf sayacı ve başlık araçları döner.</item>
     /// </list>
@@ -269,6 +274,7 @@ public class DiscoveryBlockTests
         Assert.Contains("0 found · 0 repository · 0 external", texts);
         Assert.Contains(InteractionText.GraphDiscovering, texts);
         Assert.False(graph.IsEmptyStateVisible);
+        Assert.False(IsShown(shell.NoProjectsOverlay, window));
         Assert.Equal(Visibility.Collapsed, graph.CountsText.Visibility);
         Assert.Equal(Visibility.Collapsed, tools.Visibility);
         Assert.Equal(Visibility.Collapsed, shell.ProjectFilterBox.Visibility);

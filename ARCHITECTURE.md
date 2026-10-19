@@ -2560,8 +2560,8 @@ in place.** A Manual, BranchChange or ConfigurationChange Sync (`SyncModeRules.R
 project list and the graph at the request, in the same moment as the console and the event stream. Only the
 screen starts over: the rows, their decisions and the topology stay in the view model, so the phase does not
 drop to `Boot`. Until the topology arrives the list and the graph show their discovery blocks (below) — never
-the no-projects message, a filter's no-match line or the graph's *appears after Sync* box — and the graph header
-counts nothing rather than zero projects. A ConfigurationChange Sync is the one kind that lets go of the decisions
+their empty views (*No projects*, *No graph*) or a filter's no-match line — and the graph header counts nothing
+rather than zero projects. A ConfigurationChange Sync is the one kind that lets go of the decisions
 too (`SyncModeRules.DropsDecisions`): the configuration is part of every signature, so the decisions in hand
 belong to the configuration selected before, and when the engine starts that Sync every row returns to the start
 mode (§14.3) until the new configuration's preview colours it. It happens then and not at the click, because the
@@ -2584,7 +2584,7 @@ block that names what is happening, and the list counts the projects found so fa
 reports (§13.2). A silent Sync never opens it — it leaves no trace on the screen — and neither does an Appended
 Sync that keeps its rows (a pull, a Save that changed only the external roots or the layers): those rows stay and
 are reconciled in place. The work of Clean or Optimize before its Sync is not discovery either: until the chained
-Sync is requested the list stays empty and the graph keeps its *appears after Sync* box. The state closes when the
+Sync is requested both panels show their empty views (*No projects*, *No graph*; §13.2). The state closes when the
 topology arrives — before the surface is rebuilt, so the reveal plays on a visible surface — and on every path
 that ends a Sync without one (the send failed, planning failed, the engine was lost, it completed without a
 topology), all of which run through one place (`EndSyncMode`). Reports are read only while the state is open, and
@@ -3575,8 +3575,8 @@ Automation the strip is a named group, *Resource usage*, and its values are read
 
 **No workspace.** Without a repository root — on first run, or after a Save closed the workspace (§13.3) — the
 window is the first-run screen: the project list carries the setup invitation (`Configure the workspace`, a
-checklist of the root and the layer count, *Open settings* and *Import settings…*), the graph its dashed
-*Graph appears after Sync* box, the console's prompt line `Waiting for a workspace` (§13.5), the ribbon
+checklist of the root and the layer count, *Open settings* and *Import settings…*), the graph its empty view
+(`No graph`, below), the console's prompt line `Waiting for a workspace` (§13.5), the ribbon
 `Not configured — repository root not set`. The panel headers carry no counts — no `N projects · N
 dependencies`, `N lines` or `N events`, nor the console's `compact` tag — and the PROJECTS header neither the
 `build-order` label nor the filter box: there is nothing to count or filter. Sync, Build, the maintenance box and
@@ -3585,19 +3585,34 @@ the action bar's chips are disabled. One switch drives the panel side of this fr
 
 **While a Sync discovers the project set** (§10.2), neither left panel sits empty. The graph's body is a centred
 block on `surface-base` — Lucide *network* at 28 px, 1.4 stroke, `text-faint` at 70 % opacity, and 10 px below it
-`Graph appears once projects are discovered` in 12 px `text-faint`; the dashed *appears after Sync* box, the node
-surface and the header's `N projects · N dependencies` count are hidden for the duration (`GraphView.ApplyBodyState`,
-the one gate for the header count and the three body layers). The project list shows its own block, also on
+`Graph appears once projects are discovered` in 12 px `text-faint`; the empty view, the node surface and the
+header's `N projects · N dependencies` count are hidden for the duration (`GraphView.ApplyBodyState`, the one gate for
+the header count and the two body layers — the discovery block and the empty view are one block with two texts). The
+project list shows its own block, also on
 `surface-base` with 24 px side padding: Lucide *list* in the same icon look, `Discovering projects` in 13 px/500
 `text-secondary`, and a mono 11 px tabular line that never wraps — `29 found`, or with an external root registered
 `31 found · 29 repository · 2 external`; the total is one step brighter (`text-dim`), the rest `text-faint`. There
 is no denominator and no source name, because how many solutions or roots remain is not known until the scan ends,
 and nothing moves — no spinner, no pulse; only the numbers change. The block is a list state like the others:
-`ListInvite.Resolve` puts it after the setup invitation and before *No projects found* and *No projects match this
+`ListInvite.Resolve` puts it after the setup invitation and before the empty view and *No projects match this
 filter*, so a filter that matches nothing cannot cover it. The PROJECTS header hides its filter box, `build-order`
 label and filter chip meanwhile, through the same gate as the no-workspace look (`ShellRoot.ApplyListTools`); the
 filter itself survives the Sync and comes back with its chip. The counter is a polite live region (§15). The
 first-run screen does not change: without a workspace there is no Sync and no discovery.
+
+**An empty panel says so.** Whenever the project list has no rows and none of the states above applies — a Clean or
+an Optimize is running, a job or a Sync ended without bringing a plan back, the engine is not ready yet, a Sync found
+no projects — the list shows its empty view: the same Lucide *list* in the discovery look and, 10 px below it,
+`No projects` in 12 px `text-faint`. The graph does the same whenever it has no nodes, first run included: its
+*network* icon and `No graph`, in the one body block the discovery state also uses. Each panel therefore has one
+picture, whether it is waiting for a scan or has nothing to show. The text is deliberately general: it does not claim
+why the panel is empty, so it is true whichever operation emptied it, and the ribbon tells what is going on —
+`Waiting for Sync` while the project states are unknown, `Ready — nothing to build` after a Sync that found no
+projects. The decision does not read the phase: `ListInvite.Resolve` takes the setup invitation first, then
+discovery, then the empty view, then the filter line. Three states keep their own look because they say something
+else — the setup invitation asks for settings, the discovery blocks are busy and count, and the filter line says
+that projects exist but the filter hides them; *No projects* there would send the user looking for missing projects
+instead of clearing the filter.
 
 **Sticky ribbon.** On the left a **persistent operation pill** — `SYNC` · `BUILD` · `REBUILD` · `CLEAN` ·
 `DEEP CLEAN` · `OPTIMIZE` · `RESOLVE` — mono, caps, 19 px, one-pixel border. `CLEAN` is a `-t:Clean` run —
@@ -4181,15 +4196,15 @@ behaves identically**, and for the reason that generalises the rule: an operatio
 plan takes the old one down with the click, not with the reply — and an Optimize ends in a Sync. A Sync on its
 own does not take the plan down: it replaces decisions, not the plan's structure (§10.2).
 The phase moves
-to `Boot` for the duration, which is what makes an empty list honest — the list invite reads an empty list in
-`Idle` as "no projects under this folder", which would be a lie — and the graph shows its own *appears after
-Sync* empty state. That is the job's own stretch, before any Sync: the moment the chained Sync is requested, both
+to `Boot` for the duration — the project states are no longer known, and the ribbon reads `Waiting for Sync` — and
+both panels show their empty views (*No projects*, *No graph*; §13.2). That is the job's own stretch, before any
+Sync: the moment the chained Sync is requested, both
 panels switch to their discovery blocks and the list counts the projects as they are found, until the topology
 fills them in (§10.2). A repository change does exactly this for the same reason; a branch change does not — its
 rows and decisions stay in the plan, only the screen starts over until its Sync's topology brings them back
 (§10.2). Because the emptying happens at the
-click, a command that fails to send, or one the Supervisor rejects, leaves the list empty until the user runs a
-Sync; that is the accepted cost of acting on the click rather than on the engine's acceptance.
+click, a command that fails to send, or one the Supervisor rejects, leaves the list empty — showing its empty view —
+until the user runs a Sync; that is the accepted cost of acting on the click rather than on the engine's acceptance.
 
 This costs no extra waiting in practice. No run starts for the whole of a Sync, a Clean or an Optimize — or of a
 checkout or a pull, the same busy question (`WorkspaceBusy`): the run commands are closed for that stretch
@@ -6158,10 +6173,11 @@ for the same reason, and so is the *Exit* button's Lucide *power* at the end of 
 buttons read as one family. The power icon's stem stands on x = 12, which in its 13 px box falls on a pixel centre at
 100 % rather than splitting across two half-lit columns.
 
-The two discovery blocks (§13.2) are the one place an icon is drawn large: Lucide *network* for the graph and
-*list* for the project list, 28 px, a 1.4 stroke, `text-faint` at 70 % opacity — an empty-state picture, not a
-control. The look is one shared style (`Ds.DiscoveryIcon` with its `.Path` twin); geometry and weight stay in the
-dictionary like every other icon. The list icon is keyed `Icon.ListLines`, so it cannot be mistaken for the layout
+The discovery blocks and the empty views (§13.2) are the one place an icon is drawn large, and each panel has one
+picture for both: Lucide *network* for the graph and *list* for the project list, 28 px, a 1.4 stroke, `text-faint`
+at 70 % opacity — an empty-state picture, not a control. The look is one shared style (`Ds.DiscoveryIcon` with its
+`.Path` twin, and `Ds.DiscoveryCaption` for the 12 px line under it); geometry and weight stay in the dictionary like
+every other icon. The list icon is keyed `Icon.ListLines`, so it cannot be mistaken for the layout
 selector's `Icon.LayList`.
 
 The update pill (§12.4) draws Lucide *circle-arrow-up* (`Icon.UpdateReady`) at 13 px in the pill's text colour and
@@ -7778,7 +7794,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Emptying rows, graph and the will-build surface at a Clean or Optimize click, on a real repository change and when a Save closes the workspace | `App/ViewModels/RunViewModel.ActionBar.cs` (`ClearPlanSurface`) |
 | Closing the workspace on a Save with an empty root (root, phase, plan and git surface, selection, filter, a new console page) | `App/ViewModels/RunViewModel.ActionBar.cs` (`CloseWorkspace`, `RootOf`), `RunViewModel.Workspace.cs` (`ForgetGitSurface`) |
 | No-workspace look of the panels (header counts, PROJECTS list tools, the console's waiting prompt) | `App/ShellRoot.xaml.cs` (`SetHasWorkspace`; the list tools' one gate `ApplyListTools` is shared with discovery), driven from `HasWorkspace` in `App/MainWindow.xaml.cs` |
-| Discovery blocks: the list's (a list state, the counter and its live region) and the graph's (body layers and header count behind one gate); their shared icon look and their centred column in the interface font | `App/ShellRoot.xaml(.cs)` (`PART_Discovering`, `SetDiscovering`, `SetDiscoveryCount`), `App/Graph/GraphView.xaml(.cs)` (`DiscoveryState`, `SetDiscovering`, `ApplyBodyState`), `App/Resources/Controls.xaml` (`Ds.DiscoveryIcon`, `Ds.DiscoveryBlock`), wired from the view model in `App/MainWindow.xaml.cs` (`ApplyDiscovery`) |
+| Discovery blocks and empty views: the list's (list states — the discovery block with the counter and its live region, the empty view) and the graph's (one body block with two texts; body layers and header count behind one gate); their shared icon look, caption and centred column in the interface font | `App/ShellRoot.xaml(.cs)` (`PART_Discovering`, `PART_NoProjects`, `SetDiscovering`, `SetDiscoveryCount`, `SetListInvite`), `App/Graph/GraphView.xaml(.cs)` (`StateBlock`, `SetDiscovering`, `ApplyBodyState`), `App/Resources/Controls.xaml` (`Ds.DiscoveryIcon`, `Ds.DiscoveryBlock`, `Ds.DiscoveryCaption`), wired from the view model in `App/MainWindow.xaml.cs` (`ApplyDiscovery`, `RefreshListInvite`) |
 | Import shortcut's wait before the file picker, and the picker centred over the window | `App/Views/SettingsDialog.xaml.cs` (`OpenForImportAsync`, `ImportPickerDelayMs`), `App/Shell/CenteredDialog.cs`, `App/Shell/DialogPlacement.cs`, `App/Shell/Win32.cs` |
 | Step hold between an operation and the next (dispatcher timer, zero under reduced motion and while the window is hidden) | `App/Services/StepHold.cs`, `App/ViewModels/RunViewModel.cs` (`OperationHold`) |
 | Branch popover and its base (shared with the update and exit cards) | `App/Views/BranchPopover.xaml(.cs)`, `PopoverBase.cs` |

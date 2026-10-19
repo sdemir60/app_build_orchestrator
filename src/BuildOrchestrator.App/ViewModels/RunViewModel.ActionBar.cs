@@ -407,8 +407,8 @@ public sealed partial class RunViewModel
     /// yüzeyi (<c>wb</c>/<c>fin</c>/<c>allClean</c>).
     ///
     /// <para><b>Liste BOŞALTILMAZ, kararları boşaltılır.</b> Satırların varlığı topolojidendir ve bu reset'i
-    /// tetikleyen olayların hiçbiri topolojiyi geçersizleştirmez; koleksiyon gerçekten boşalsa panel
-    /// "<c>No projects found under this folder.</c>" derdi ve bu YANLIŞ olurdu.</para>
+    /// tetikleyen olayların hiçbiri topolojiyi geçersizleştirmez; koleksiyon gerçekten boşalsa panel boş görünümünü
+    /// ("<c>No projects</c>") gösterirdi ve bu YANLIŞ olurdu — projeler orada.</para>
     ///
     /// <para>İki çağıranı vardır ve ikisinde de elimizdeki kararlar artık geçerli değildir: repo değişimi
     /// (<see cref="ApplyRepositoryRoot"/> — kararlar eski köke aittir) ve configuration geçişinin Sync'inin başlangıcı
@@ -443,10 +443,11 @@ public sealed partial class RunViewModel
     /// §1-13); Sync düğmesi ve branch değişimi yalnız EKRANI baştan başlatır (<see cref="BeginPlanSurfaceRestart"/>).
     /// Liste yeniden Sync'in yayınladığı topolojiyle — imza unutulduğu için reveal'le — dolar.
     ///
-    /// <para><b>Faz <see cref="AppPhase.Boot"/>'a alınır</b> ve bu kozmetik değildir: davet kararı
-    /// (<c>ListInvite.Resolve</c>) boş listeyi <c>Idle</c> fazında "klasörde proje yok" diye okur ve bu YANLIŞ
-    /// olurdu. Boot, "henüz bilinmiyor" demenin mevcut yoludur. Ardından gelen Sync fazı zaten
-    /// <c>Syncing</c>'e taşır. [kullanıcı kararı 2026-09-29] Workspace yokken (<see cref="CloseWorkspace"/> kökü
+    /// <para><b>Faz <see cref="AppPhase.Boot"/>'a alınır:</b> proje durumları artık bilinmiyor — Boot "henüz bilinmiyor"
+    /// demenin mevcut yoludur ve şerit (hata yoksa) "Waiting for Sync" der. Ardından gelen Sync fazı zaten
+    /// <c>Syncing</c>'e taşır. Liste ve graf fazdan bağımsız olarak boş görünümlerini gösterir ([kullanıcı kararı
+    /// 2026-10-19]; eskiden boş listenin Idle'da "klasörde proje yok" demesini önleyen de bu fazdı ve liste o sürede
+    /// hiçbir şey göstermezdi). [kullanıcı kararı 2026-09-29] Workspace yokken (<see cref="CloseWorkspace"/> kökü
     /// önce boşaltır) faz <see cref="AppPhase.Empty"/>'de kalır — onu <see cref="OnRootPathChanged"/> kurar.</para>
     ///
     /// <para><see cref="TopologyChanged"/> AÇIKÇA ateşlenir: grafı kuran tek sinyal odur, yoksa liste boşalırken
@@ -476,7 +477,7 @@ public sealed partial class RunViewModel
     /// yalnız <see cref="BeginPlanSurfaceRestart"/> (kurar) ve <see cref="ReplayPlanSurface"/> (bırakır).
     ///
     /// <para><b>Neden <see cref="ClearPlanSurface"/> DEĞİL:</b> o VM'i boşaltır (satırlar, topoloji, faz
-    /// <see cref="AppPhase.Boot"/>) ve boş liste davetini, grafın "Sync'ten sonra" etiketini getirir; burada ise
+    /// <see cref="AppPhase.Boot"/>) ve iki panelin boş görünümünü getirir; burada ise
     /// yalnız EKRAN boşalır — satırlar, kararları, filtre ve topoloji VM'de durur. Sync düşerse geri getirilecek
     /// yüzey budur ve ekran hiçbir yolda boş kalmaz.</para>
     /// </summary>
