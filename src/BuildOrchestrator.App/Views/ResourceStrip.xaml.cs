@@ -50,11 +50,12 @@ public partial class ResourceStrip : UserControl
         Refresh();
     }
 
-    /// <summary>Şeridin izlediği sekiz VM özelliği: üç hücrenin beş değeri ve üç tooltip. Başka her bildirim (koşu sırasında yüzlercesi) burada elenir.</summary>
+    /// <summary>Şeridin izlediği dokuz VM özelliği: üç hücrenin altı değeri ve üç tooltip. Başka her bildirim (koşu sırasında yüzlercesi) burada elenir.</summary>
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName is not (nameof(RunViewModel.StripCpuText) or nameof(RunViewModel.StripMemoryText)
-            or nameof(RunViewModel.StripBuildingText) or nameof(RunViewModel.StripAllowedText) or nameof(RunViewModel.StripModeText)
+            or nameof(RunViewModel.StripBuildingText) or nameof(RunViewModel.StripRunParallelismText)
+            or nameof(RunViewModel.StripAllowedText) or nameof(RunViewModel.StripModeText)
             or nameof(RunViewModel.StripCpuTooltip) or nameof(RunViewModel.StripMemoryTooltip) or nameof(RunViewModel.StripParallelTooltip)))
             return;
 
@@ -80,6 +81,7 @@ public partial class ResourceStrip : UserControl
         CpuValue.Text = vm.StripCpuText;
         MemoryValue.Text = vm.StripMemoryText;
         BuildingValue.Text = vm.StripBuildingText;
+        RunParallelismValue.Text = vm.StripRunParallelismText;
         AllowedValue.Text = vm.StripAllowedText;
         ModeValue.Text = vm.StripModeText;
         ((ToolTip)CpuCell.ToolTip).Content = vm.StripCpuTooltip;

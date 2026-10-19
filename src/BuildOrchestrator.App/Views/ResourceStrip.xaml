@@ -1,7 +1,7 @@
 <!-- [design v1.25.0 §2.1 · §3.6] KAYNAK ŞERİDİ — title bar'ın tam ortasında, aracın makineye o anki maliyeti: CPU · RAM · paralellik + mod.
      Üç hücre, hücre arası 14px; her hücre = 12px Lucide ikon (text-faint, stroke 1.8) + 5px + değer (Geist Mono 11px tabular text-dim).
-     Etiket yok — anlam tooltip'te (aşağı açılır). Paralellik hücresinde pay text-dim, "/N" text-faint mono, mod sözcüğü Geist 11px text-faint
-     5px sonra. Değerler VM'in Strip* özelliklerindendir (MainWindow'un DataContext'i RunViewModel; örnekleme ve metin üretimi orada) ve
+     Etiket yok — anlam tooltip'te (aşağı açılır). Paralellik hücresi `3/4/4 Balanced`: pay ve koşunun paralelliği text-dim, sınır "/N" text-faint
+     mono, mod sözcüğü Geist 11px text-faint 5px sonra. Değerler VM'in Strip* özelliklerindendir (MainWindow'un DataContext'i RunViewModel; örnekleme ve metin üretimi orada) ve
      ResourceStrip.xaml.cs'ten yazılır — XAML bağı DEĞİL: pencere tepsideyken hücrelere hiçbir şey yazılmaz (perf Faz A, HiddenSurface).
 
      SABİT ÇERÇEVE: her hücre en geniş değerin GİZLİ hayaletini (Visibility=Hidden — alanı tutar, Collapsed değil) canlı değerle aynı hücrede üst
@@ -58,7 +58,7 @@
       <Setter Property="Foreground" Value="{DynamicResource Brush.TextDim}" />
       <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
-    <!-- "/N": aynı mono yüz, bir ton soluk — renk yok, bilgi (2/4 bir uyarı değildir). -->
+    <!-- Sınır "/N": aynı mono yüz, bir ton soluk — renk yok, bilgi (2/2/4 bir uyarı değildir). -->
     <Style x:Key="Strip.ValueFaint" TargetType="TextBlock" BasedOn="{StaticResource Strip.Value}">
       <Setter Property="Foreground" Value="{DynamicResource Brush.TextFaint}" />
     </Style>
@@ -109,8 +109,9 @@
       </Grid>
     </StackPanel>
 
-    <!-- (3) Paralellik + mod — üç dik çizgi. Pay = o an gerçekten derlenen proje sayısı (CANLI), "/N" = modun izin verdiği, sonra mod sözcüğü.
-         Hayalet: "12/12" + "Balanced". Canlı kısım sola hizalı, mod sözcüğü sayıyı 5px aralıkla izler. -->
+    <!-- (3) Paralellik + mod — üç dik çizgi. Pay = o an gerçekten derlenen proje sayısı (CANLI), ortadaki sayı = motorun koşu başında
+         belirlediği paralellik (koşu yokken "/—"), "/N" = modun sınırı, sonra mod sözcüğü. Pay ve ortadaki sayı bu koşunun gerçeğidir (text-dim),
+         sınır ve mod modun tanımı (text-faint). Hayalet: "12/12/12" + "Balanced". Canlı kısım sola hizalı, mod sözcüğü sayıyı 5px aralıkla izler. -->
     <StackPanel x:Name="ParallelCell" Orientation="Horizontal" Background="Transparent"
                 Margin="{DynamicResource Thickness.ResourceStripCellGap}">
       <StackPanel.ToolTip>
@@ -129,6 +130,7 @@
         </StackPanel>
         <StackPanel x:Name="ParallelLive" Orientation="Horizontal" HorizontalAlignment="Left">
           <TextBlock x:Name="BuildingValue" Style="{StaticResource Strip.Value}" />
+          <TextBlock x:Name="RunParallelismValue" Style="{StaticResource Strip.Value}" />
           <TextBlock x:Name="AllowedValue" Style="{StaticResource Strip.ValueFaint}" />
           <TextBlock x:Name="ModeValue" Style="{StaticResource Strip.Mode}" />
         </StackPanel>

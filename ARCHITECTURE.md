@@ -2893,9 +2893,10 @@ one line, `workers reduced to <n> (<reason>)` (`PerfNoteText.WorkersReduced`), r
 text: the engine writes it to `decision.log`, and the App writes it to the console when the run starts and to the
 event stream right after the run's opening line. A single-project run (§8.1) is the exception on the App side: its
 worker count does not describe it, and the stream's opening line for it says nothing of parallelism either, so the App
-writes neither line and `decision.log` alone keeps it as a diagnostic. The reason alone, without the line around
-it, reaches one more place: the tooltip of the resource strip's parallelism cell, for as long as a full run lasts
-(§11.5, §13.2) — a single-project run shows none there either. The engine keeps no stderr copy: the App
+writes neither line and `decision.log` alone keeps it as a diagnostic. The count and the reason, without the line
+around them, reach one more place: the resource strip's parallelism cell, for as long as a run lasts — the count as its
+middle number, the reason in its tooltip (§11.5, §13.2). There a single-project run is no exception: the cell shows the
+count the engine answered for every run, so it explains a reduced one as well. The engine keeps no stderr copy: the App
 discards the engine's stderr (§4.3), so the line the user sees is the App's.
 
 **Memory, not cores, is usually the first limit.** Each worker is an `MSBuild.exe` that starts a fresh,
@@ -3006,16 +3007,20 @@ the compilers are a measured 0 and the figure is the App alone. Private bytes ar
 memory column shows, which is the private working set — only the private pages resident right now — so the two differ
 whenever some committed pages are not resident, and the strip's figure is the larger then.
 
-**Parallelism** is not sampled: it is application state and follows it at once. The numerator is the number of
-projects building now, and `0` whenever no run is in flight — the row states of a run whose engine died can stay
-*started*, so the raw counter is not trusted outside a run. The denominator is what the mode asks for (`/4`, the table
-of §11.1), not what the engine fitted to the machine, so a run the engine cut to two workers reads `2/4` and its
-tooltip says why. The mode word is the cell's mode, and which mode that is depends on the run. While a **full run** is
-in flight the cell describes the run: the mode it started with — the one its start command carried — and that mode's
-table value, until the run ends. A mid-run switch of the chip moves the cap and the priority at once (§11.1), but
-neither the cell nor the CPU tooltip's cap; the console note announces the switch. With no run in flight, and during a
-**single-project run** (§8.1), the cell follows the chip live, and a single-project run never says *reduced*. The
-reduction reason of §11.1 is the second half of the tooltip of a reduced full run (§13.2).
+**Parallelism** is not sampled: it is application state and follows it at once. The cell holds three numbers and the
+mode word, `3/4/4 Balanced`. The first is the number of projects building now, and `0` whenever no run is in flight —
+the row states of a run whose engine died can stay *started*, so the raw counter is not trusted outside a run. The
+middle one is the run's own count, `runStarted.Parallelism`: what the engine fitted to the machine when the run started
+(§11.1) — the mode's number unless the machine was short of memory or processors — fixed for the run. With no run in
+flight there is no such count, and the cell writes the missing-value mark in its place (`0/—/4`); nothing is sampled
+or queried for it outside a run. The last one is what the mode asks for (`/4`, the table of §11.1). A run the engine
+cut to two workers therefore reads `2/2/4`, told apart at a glance from a full-width run that has only two projects
+ready at the moment (`2/4/4`), and its tooltip says why. The mode word is the cell's mode, and which mode that is
+depends on the run. While a run is in flight — a full run and a **single-project run** (§8.1) alike — the cell
+describes the run: the mode it started with (the one its start command carried), its own count and that mode's table
+value, until the run ends. A mid-run switch of the chip moves the cap and the priority at once (§11.1), but neither the
+cell nor the CPU tooltip's cap; the console note announces the switch. With no run in flight the cell follows the chip
+live. The reduction reason of §11.1 is the second half of the tooltip of a reduced run (§13.2).
 
 **Rhythm.** The sampler (`ResourceSampler`) is given its probe, its timer and its clock, and the suite drives it by
 hand (§17.3). The first time the window is loaded, visible and not minimized, it reads once as the baseline and takes
@@ -3494,13 +3499,14 @@ it looks and behaves.
   happens when the rounded megabytes reach 1024, so `1024 MB` is never written; the megabyte count is the one rule of
   §11.4 (`MemoryLine.RoundedMegabytes`), the decimal is rounded in integer arithmetic, and the separator is a point
   whatever the culture (`ResourceStripText.Memory`).
-- **Parallelism and mode** (three vertical lines) — the projects building now, `/` and the number the mode allows in
-  `text-faint`, then 5 px and the mode word in Geist 11 px `text-faint`: `0/4 Balanced` while idle, `4/4 Balanced` in a
-  full run, `2/4 Balanced` where the engine fitted the run to the machine. The mode word only reads; the mode is
-  changed on the perf chip of the action bar.
+- **Parallelism and mode** (three vertical lines) — what this run does, then what the mode is: the projects building
+  now and, after a `/`, the run's own count, both `text-dim`; then `/` and the number the mode allows in `text-faint`,
+  and 5 px later the mode word in Geist 11 px `text-faint`. `0/—/4 Balanced` while idle, `4/4/4 Balanced` when four
+  projects build at once, `2/2/4 Balanced` where the engine fitted the run to the machine. The mode word only reads;
+  the mode is changed on the perf chip of the action bar.
 
 An unreadable value is `—`. Each cell reserves the width of its widest value with hidden ghost texts taken from Core
-constants (`100%`, `12.3 GB`, and `12/12` followed by `Balanced`), the live value left-aligned beside the icon, so
+constants (`100%`, `12.3 GB`, and `12/12/12` followed by `Balanced`), the live value left-aligned beside the icon, so
 `1%` becoming `69%` or `310 MB` becoming `4.8 GB` moves nothing and the strip is as wide in every state as in the
 widest.
 
@@ -3509,14 +3515,14 @@ The tooltips are the only labels. They open below the cell and, as the applicati
 value; Full has none and adds nothing) — the cap is in the tooltip and never in the cell. RAM:
 `Memory used by <product> · app 310 MB · engine 85 MB · compilers 4.4 GB`, a sleeping engine reading
 `engine 0 MB · compilers 0 MB` and a part that could not be read `—`. Parallelism: while idle
-`Balanced — up to 4 projects build in parallel`; during a run `3 of 4 projects building in parallel`, `0 of 4`
-included (the cell describes the run from its first moment) — a run started from a single project's row reads the same
-way, `1 of 4 projects building in parallel`, with the denominator taken from the chip's current mode; in a full run
-the engine reduced, `2 of 4 — reduced: <reason>` with the engine's reason word for word. The product name comes from
+`Balanced — up to 4 projects build in parallel`; during a run `3 of 4 projects building in parallel`, where the `4` is
+the run's own count, `0 of 4` included (the cell describes the run from its first moment), and a run started from a
+single project's row reads the same way; in a run the engine reduced, `2 of 2 — reduced: <reason>` with the engine's
+reason word for word. The product name comes from
 `AppIdentity`, and the texts live in `ResourceStripText` and nowhere else.
 
 The strip only reads. Nothing in it is clickable, no cell has a hover background, the cursor does not change, it
-carries no amber (§14.4), and a changing value plays no animation or transition; `2/4` is information, not a warning.
+carries no amber (§14.4), and a changing value plays no animation or transition; `2/2/4` is information, not a warning.
 
 **Position and hit testing.** The title bar row holds a `Grid` with the `DockPanel` of the two clusters and, declared
 after it so that it draws on top, the strip with `HorizontalAlignment="Center"`: it is centred on the bar and not on
@@ -3527,8 +3533,8 @@ cell does is §12.2.
 
 **Writing the values.** The texts of the cells and the three tooltips are written from code, not bound in XAML.
 `ResourceStrip` listens to the view model's strip properties (`RunViewModel.ResourceStrip.cs`) and, while the surface
-is hidden (§12.3), writes nothing — a changed text invalidates measurement, and during a run the numerator changes
-many times a second — and notes only that it is behind; when the surface shows, it catches up in one pass. A
+is hidden (§12.3), writes nothing — a changed text invalidates measurement, and during a run the count of projects
+building changes many times a second — and notes only that it is behind; when the surface shows, it catches up in one pass. A
 `{Binding}` would not know that gate, and a tooltip is not part of the tree and inherits no data context in the first
 place, so its content is assigned the same way. A source guard keeps bindings out of the markup (§17.2). To UI
 Automation the strip is a named group, *Resource usage*, and its values are read from their own text.
@@ -5836,7 +5842,8 @@ of its markup (§17.2): `Size.ResourceStripIcon` 12 (the icon box), `Thickness.R
 the second and third cell), `Thickness.ResourceStripValueGap` 5 (from the icon to the value and from the number to
 the mode word) and `Size.ResourceStripIconViewBox` 24 (the design box its three icons are drawn in; the key is the
 strip's own because the application's other 24 px canvases write the literal). Its text is `FontSize.2xs` (11); the
-values and the numerator are `Brush.TextDim`, the icons, the `/N` and the mode word `Brush.TextFaint`.
+values and the parallelism cell's first two numbers are `Brush.TextDim`, the icons, the mode's `/N` and the mode word
+`Brush.TextFaint`.
 
 ### 14.2 Typography and fonts
 
@@ -6776,9 +6783,10 @@ forwarded caption gestures through three seams (`CaptionDragForTest`, `CaptionTo
 point, with the window normal and with it maximized — so a drag that does nothing for a maximized window cannot pass
 it; a source guard keeps `Window.DragMove` out of the strip's code and the native call in it. The real move loop and
 the real system menu need a window handle and a mouse and are checked by eye. `ResourceStripViewModelTests` pins the
-rules of the parallelism cell (§11.5): the chip while idle, the run's own mode through a change of the chip, the
-numerator, the tooltip of a reduced run, the single-project run, and every way a run can end handing the cell back to
-the chip.
+rules of the parallelism cell (§11.5): the chip and the missing-value mark while idle, the run's own mode and count
+through a change of the chip, the count of projects building, a reduced run whose three numbers differ, the
+single-project run described like a full run, a change of the run target that moves nothing, and every way a run can
+end handing the cell back to the chip.
 
 ### 17.5 Acceptance
 
@@ -7620,7 +7628,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Job object: creation, assignment, CPU rate, priority, terminate — and, read-only, its processor accounting and its member list (`QueryAccounting`, `QueryProcessIds`, whose buffer is reused under a lock) | `Core/ProcessControl/JobObject.cs`, `NativeMethods.cs` |
-| Resource strip arithmetic and texts: the CPU percent, the memory text (megabytes below 1 GB, one-decimal gigabytes above), the CPU and memory tooltips, the parallelism denominator and tooltips, the ghost widths | `Core/Diagnostics/ResourceStripText.cs` (mode text → mode: `Core/ProcessControl/PerfProfile.cs`, `TryParseMode`) |
+| Resource strip arithmetic and texts: the CPU percent, the memory text (megabytes below 1 GB, one-decimal gigabytes above), the CPU and memory tooltips, the parallelism cell's run count and limit and its tooltips, the ghost widths | `Core/Diagnostics/ResourceStripText.cs` (mode text → mode: `Core/ProcessControl/PerfProfile.cs`, `TryParseMode`) |
 | Resource strip sampling: the probe over the outer job and the App (`JobResourceProbe` — accounting, member list, the private bytes of each member, the engine told from the compilers), the sampler's rhythm and CPU baseline (`ResourceSampler` — baseline, first sample, three-second beat, pause, the immediate sample on return) and the `BO_PROBE_STRIP` recorder (`StripSampleProbe`) | `App/Services/ResourceSampler.cs`; `OuterJob` and `EnginePid` in `App/Services/EngineHost.cs` |
 | Suspended launch + handle-list inheritance | `Core/ProcessControl/JobProcessLauncher.cs`, `ProcThreadAttributeList.cs`, `JobChildProcess.cs` |
 | Job completion port notifications | `Core/ProcessControl/JobCompletionPort.cs` |
@@ -7634,7 +7642,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Run state, rows, counters, commands | `App/ViewModels/RunViewModel*.cs` |
-| The resource strip's state: the CPU and RAM texts and tooltips from a sample (`ApplyResourceSample`); the parallelism cell and the CPU tooltip from the chip, the counter and the run (`RefreshStrip`), with the mode a full run started with (`CaptureStripRunMode` when the start command is built, `BeginStripRun` at `runStarted`, handed back when `IsRunning` falls) and the reduction reason; the one text → mode fallback (`ModeFor`) | `App/ViewModels/RunViewModel.ResourceStrip.cs`; `ModeFor` in `RunViewModel.cs` |
+| The resource strip's state: the CPU and RAM texts and tooltips from a sample (`ApplyResourceSample`); the parallelism cell and the CPU tooltip from the chip, the counter and the run (`RefreshStrip`), with the mode a run started with (`CaptureStripRunMode` when the start command is built, `BeginStripRun` at `runStarted`, handed back when `IsRunning` falls), the run's count and the reduction reason; the one text → mode fallback (`ModeFor`) | `App/ViewModels/RunViewModel.ResourceStrip.cs`; `ModeFor` in `RunViewModel.cs` |
 | Ribbon phase lines and ETA display, with the texts that pre-empt them in their order — the engine-starting line included | `App/ViewModels/RibbonText.cs` |
 | The Stop button's three stages and their labels, shared by the action bar, the tray item and the row icon | `App/ViewModels/StopText.cs` |
 | Event stream composition and wording | `App/ViewModels/StreamComposer.cs`, `StreamText.cs`, `StreamEventViewModel.cs` |

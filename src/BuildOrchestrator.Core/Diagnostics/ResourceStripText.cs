@@ -11,8 +11,9 @@ namespace BuildOrchestrator.Core.Diagnostics;
 /// XAML'dedir; burası yalnız "örnekler arası fark → yüzde" ve "sayı → metin" kurallarının TEK yeridir (kopya YASAK).
 ///
 /// <para>Sayı biçimi kültürden bağımsızdır: ondalık ayracı her zaman noktadır, Türkçe Windows'ta <c>4,8 GB</c> çıkmaz. Mod adı
-/// <see cref="PerfMode"/>'un adıdır (<c>mode.ToString()</c>); paralellik ve cap <see cref="PerfProfile.For"/> tablosundan okunur —
-/// burada ikinci bir "Full/Balanced/Light" ya da 6/4/2 tablosu YOKTUR.</para>
+/// <see cref="PerfMode"/>'un adıdır (<c>mode.ToString()</c>); modun paralelliği (hücrenin sınırı) ve cap <see cref="PerfProfile.For"/>
+/// tablosundan okunur — burada ikinci bir "Full/Balanced/Light" ya da 6/4/2 tablosu YOKTUR. Koşunun paralelliği motorun cevabıdır
+/// (<c>runStarted.Parallelism</c>) ve parametre olarak gelir.</para>
 ///
 /// <para>Hayalet sabitleri (<see cref="CpuGhost"/> ...) şeridin sabit çerçevesinin ölçüsüdür: her hücre, o an görünen metin ne
 /// olursa olsun en geniş değer kadar yer ayırır, değer değişince hiçbir şey kaymaz.</para>
@@ -36,8 +37,8 @@ public static class ResourceStripText
     /// <summary>RAM hücresinin hayaleti: en geniş değer (iki haneli GB, bir ondalık).</summary>
     public const string MemoryGhost = "12.3 GB";
 
-    /// <summary>Paralellik hücresinin sayı hayaleti: pay ve payda iki haneli (<c>koşan/izin verilen</c>).</summary>
-    public const string ParallelGhost = "12/12";
+    /// <summary>Paralellik hücresinin sayı hayaleti: üç sayı iki haneli (<c>koşan/koşunun paralelliği/sınır</c>).</summary>
+    public const string ParallelGhost = "12/12/12";
 
     /// <summary>Paralellik hücresinin mod sözcüğü hayaleti: en uzun mod adı. Değeri enum üyesinin adından gelir — mod adı
     /// ikinci kez yazılmaz.</summary>
@@ -119,29 +120,36 @@ public static class ResourceStripText
     public static string MemoryTooltip(string product, long? app, long? engine, long? compilers) =>
         $"Memory used by {product} · app {Memory(app)} · engine {Memory(engine)} · compilers {Memory(compilers)}";
 
-    /// <summary>Paralellik hücresinin paydası: <c>"/4"</c> — modun tablo paralelliği (<c>PerfProfile.For(mode).Parallelism</c>). Pay (o an
-    /// derlenen proje sayısı) ayrı bir metindir ve burada değil view model'dedir.</summary>
+    /// <summary>Paralellik hücresinin sınırı (sondaki soluk sayı): <c>"/4"</c> — modun tablo paralelliği (<c>PerfProfile.For(mode).Parallelism</c>).
+    /// Pay (o an derlenen proje sayısı) ayrı bir metindir ve burada değil view model'dedir; ortadaki sayı <see cref="ParallelRun"/>.</summary>
     public static string ParallelAllowed(PerfMode mode) =>
         string.Create(CultureInfo.InvariantCulture, $"/{PerfProfile.For(mode).Parallelism}");
 
+    /// <summary>Paralellik hücresinin ortadaki sayısı: <c>"/4"</c> — motorun koşu başında belirlediği paralellik (<c>runStarted.Parallelism</c>:
+    /// modun sayısı, makineye göre kırpılmış olabilir). Koşu yokken sayı yoktur: <c>"/—"</c> (<see cref="MissingValue.Mark"/> — değerin
+    /// yokluğu; <c>0</c> yazılmaz, sıfır bir ölçümdür).</summary>
+    public static string ParallelRun(int? runParallelism) =>
+        runParallelism is { } value ? string.Create(CultureInfo.InvariantCulture, $"/{value}") : "/" + MissingValue.Mark;
+
     /// <summary>
-    /// Paralellik hücresinin tooltip'i, üç hâl. BOŞTA (<paramref name="running"/> false): <c>"Balanced — up to 4 projects build in
-    /// parallel"</c> — mod sözcüğü ve modun tablo paralelliği; <paramref name="building"/> ve <paramref name="reducedReason"/> boşta söze
-    /// karışmaz. KOŞUDA: <c>"3 of 4 projects building in parallel"</c> — pay 0 iken de koşu metnidir, boşta metnine dönmez (hücre
-    /// koşuyu anlatır). KOŞUDA VE KISILMIŞ (<paramref name="reducedReason"/> dolu): <c>"2 of 4 — reduced: 3 GB free memory"</c>.
+    /// Paralellik hücresinin tooltip'i, üç hâl. BOŞTA (<paramref name="runParallelism"/> <c>null</c> — koşu yok): <c>"Balanced — up to 4
+    /// projects build in parallel"</c> — mod sözcüğü ve modun tablo paralelliği; <paramref name="building"/> ve <paramref name="reducedReason"/>
+    /// boşta söze karışmaz. KOŞUDA: <c>"3 of 4 projects building in parallel"</c> — <c>of N</c> koşunun paralelliğidir
+    /// (<paramref name="runParallelism"/>, motorun koşu başında belirlediği sayı), pay 0 iken de koşu metnidir, boşta metnine dönmez (hücre
+    /// koşuyu anlatır). KOŞUDA VE KISILMIŞ (<paramref name="reducedReason"/> dolu): <c>"2 of 2 — reduced: 3 GB free memory"</c>.
     ///
     /// <para>Gerekçe motorun yazdığı metindir (<see cref="PerfNoteText.FreeMemoryLimit"/>, <see cref="PerfNoteText.LogicalProcessorsLimit"/>)
     /// ve AYNEN geçer: çevrilmez, kısaltılmaz. Boş ya da yalnız boşluk olan gerekçe "kısılmadı" demektir.
     /// <paramref name="mode"/> hücrenin modudur (koşuda koşu başındaki mod; hangisinin verileceği çağıranın işidir).</para>
     /// </summary>
-    public static string ParallelTooltip(PerfMode mode, int building, bool running, string? reducedReason)
+    public static string ParallelTooltip(PerfMode mode, int building, int? runParallelism, string? reducedReason)
     {
-        int allowed = PerfProfile.For(mode).Parallelism;
-        if (!running)
-            return string.Create(CultureInfo.InvariantCulture, $"{mode.ToString()} — up to {allowed} projects build in parallel");
+        if (runParallelism is not { } parallelism)
+            return string.Create(CultureInfo.InvariantCulture,
+                $"{mode.ToString()} — up to {PerfProfile.For(mode).Parallelism} projects build in parallel");
 
         return string.IsNullOrWhiteSpace(reducedReason)
-            ? string.Create(CultureInfo.InvariantCulture, $"{building} of {allowed} projects building in parallel")
-            : string.Create(CultureInfo.InvariantCulture, $"{building} of {allowed} — reduced: {reducedReason}");
+            ? string.Create(CultureInfo.InvariantCulture, $"{building} of {parallelism} projects building in parallel")
+            : string.Create(CultureInfo.InvariantCulture, $"{building} of {parallelism} — reduced: {reducedReason}");
     }
 }
