@@ -232,6 +232,23 @@
                   </Canvas>
                 </Viewbox>
               </Button>
+              <!-- [Exit] Kümenin SONU: kendi ayracıyla (mevcut ayraçlarla AYNI stil) ve uygulamayı tamamen kapatan Exit butonu.
+                   Pencere kontrolleri (— □ ×) ondan sonra gelir. Davranış MainWindow.Exit.cs'te: uçuşta iş yoksa hemen kapatır, varsa
+                   onay kartını açar. Kart açıkken buton surface-overlay + text-primary'dedir ve tooltip'i kapalıdır (Ds.IconButton.Open —
+                   amber YOK). Tooltip metni ELLE yazılmaz — ShortcutCatalog'dan gelir (About'un deseni). -->
+              <Rectangle x:Name="ExitSeparator" Style="{StaticResource TitleBarSeparator}" />
+              <Grid x:Name="ExitSlot" VerticalAlignment="Center">
+                <Button x:Name="ExitButton" Style="{DynamicResource Ds.IconButton.Open}" Click="OnExitButtonClick"
+                        AutomationProperties.Name="{x:Static local:AccessibilityNames.Exit}">
+                  <!-- Lucide power 13px, kalınlık 1.7 (ⓘ ile aynı); kontur butonun Foreground'u. -->
+                  <Viewbox Width="13" Height="13">
+                    <Canvas Width="24" Height="24">
+                      <Path Style="{StaticResource TitleBarIcon}" Data="{DynamicResource Icon.Power}"
+                            StrokeThickness="{DynamicResource Icon.Power.StrokeThickness}" />
+                    </Canvas>
+                  </Viewbox>
+                </Button>
+              </Grid>
             </StackPanel>
 
             <!-- [design-v1.2.1 §2.1] LOGO KİLİDİ (sürükleme alanı — hit-test-visible DEĞİL):

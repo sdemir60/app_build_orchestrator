@@ -263,6 +263,11 @@
          tek Figures dizisinde ikinci figürün başı MUTLAK yazılır (göreli `m12 5` birincinin ucundan sayılırdı). -->
     <PathGeometry x:Key="Icon.ArrowRight" Figures="M5 12h14 M12 5l7 7-7 7" />
 
+    <!-- [Exit] lucide power — title bar'ın Exit butonu (13px) ve onay kartının "Stop and exit"i (12px). Kaynakta iki ayrı <path>'tir
+         (gövde, üstü açık halka); tek Figures dizisinde ikinci figürün başı MUTLAK yazılır. Gövde x=12'de: 13px kutuda 6,5 — %100
+         ekranda piksel ORTASI. -->
+    <PathGeometry x:Key="Icon.Power" Figures="M12 2v10 M18.4 6.6a9 9 0 1 1-12.77.04" />
+
     <!--
       [design v1.25.0 §2.1] Title bar'ın KAYNAK ŞERİDİNİN üç ikonu (12px, tek renk text-faint, etiketsiz — anlamı taşıyan görsel bunlardır).
       KAYNAK: .claude/outputs/2026-10-15-16-54-design-v1.25.0/prototype/app/BuildApp.jsx:125-127 (`I.cpu`, `I.memory`, `I.parallel`; viewBox 0 0 24 24).
@@ -433,6 +438,8 @@
     <sys:Double x:Key="Icon.WhatsNew.StrokeThickness">1.7</sys:Double>
     <!-- [design v1.23.0 §2.12] BuildApp.jsx:104 güncelleme hapı — title bar ikonlarıyla AYNI 1.7. -->
     <sys:Double x:Key="Icon.UpdateReady.StrokeThickness">1.7</sys:Double>
+    <!-- [Exit] title bar'ın Exit butonu — tasarım: "stroke 1.7 (ⓘ ile aynı)". -->
+    <sys:Double x:Key="Icon.Power.StrokeThickness">1.7</sys:Double>
 
     <!-- strokeWidth="1.6" (_ds_bundle.js:1633 DependencyGraphNode paket ikonu) -->
     <sys:Double x:Key="Icon.Package.StrokeThickness">1.6</sys:Double>

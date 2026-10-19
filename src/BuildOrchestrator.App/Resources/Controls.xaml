@@ -527,6 +527,20 @@
     </Style.Triggers>
   </Style>
 
+  <!-- [Exit] Bir onay kartı açan ikon butonu (title bar'ın Exit'i). Kart açıkken (DsChrome.IsActive — Button'ın IsChecked karşılığı,
+       kabuk kartın IsOpen'ına bağlar) zemin surface-overlay, renk text-primary ve tooltip kapalı. DS'in amber `active` hâli BİLEREK
+       kullanılmaz: title bar'da logo dışında amber yoktur (güncelleme hapının kuralıyla aynı). Tetikleyici hover'dan SONRA gelir: açık hâl
+       hover'da da açık okunur. Gövde ve diğer her şey Ds.IconButton'ındır. -->
+  <Style x:Key="Ds.IconButton.Open" TargetType="Button" BasedOn="{StaticResource Ds.IconButton}">
+    <Style.Triggers>
+      <Trigger Property="controls:DsChrome.IsActive" Value="True">
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.SurfaceOverlay}" />
+        <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.TextPrimary}" />
+        <Setter Property="ToolTipService.IsEnabled" Value="False" />
+      </Trigger>
+    </Style.Triggers>
+  </Style>
+
   <!-- DS `active` (aria-pressed, :247-249) AÇIK/KAPALI bir durumdur → ToggleButton. Gövde AYNI şablondur;
        ayrı bir anahtar olmasının TEK nedeni WPF'te bir Style'ın tek bir TargetType'a bağlı olmasıdır. -->
   <Style x:Key="Ds.IconButton.Toggle" TargetType="ToggleButton" BasedOn="{StaticResource Ds.Button.Base}">

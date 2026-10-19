@@ -18,6 +18,8 @@ public enum ShortcutId
     ShowHideWindow,
     /// <summary>[kullanıcı kararı 2026-09-29] Global: pencere gelmeden Build.</summary>
     BuildInBackground,
+    /// <summary>[Exit] Ctrl+Q — title bar'ın Exit butonu. Cümle AYNI ZAMANDA butonun tooltip'idir.</summary>
+    Exit,
 }
 
 /// <summary>[design v1.19.0 §2.10] About'un Shortcuts sekmesindeki caps grubu. Sıra ve başlık metni
@@ -94,6 +96,9 @@ public static class ShortcutCatalog
         new(ShortcutId.Escape, GesturesFor(WindowIntent.Escape),
             "Close the topmost layer: dialog → popover/menu → selection; otherwise stop the running build",
             ShortcutGroup.Application),
+        // [Exit] Bu cümle AYNI ZAMANDA title bar'daki Exit butonunun tooltip'idir (MainWindow.Exit.cs) — iki yerde yazılmaz.
+        new(ShortcutId.Exit, GesturesFor(WindowIntent.Exit),
+            "Exit — quit and end every process", ShortcutGroup.Application),
     ];
 
     /// <summary>[design v1.19.0 §2.10] Grupların gösterim sırası. [kullanıcı kararı 2026-09-29] GLOBAL ilk sıradadır —

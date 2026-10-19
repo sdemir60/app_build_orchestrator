@@ -54,6 +54,9 @@ public enum WindowIntent
     ShowAbout,
     /// <summary>Esc → EN ÜST açık katmanı kapat (bkz. <see cref="KeyboardShortcuts.ResolveEsc"/>).</summary>
     Escape,
+    /// <summary>[Exit] Ctrl+Q → title bar'ın Exit butonu: uçuşta iş yoksa hemen kapatır, varsa onay kartını açar ya da açıksa
+    /// kapatır (<c>MainWindow.OnExitRequested</c> — butonla AYNI yol).</summary>
+    Exit,
 }
 
 /// <summary>[E5/T46 · Fix Wave 1] Bir pencere kısayolu satırı: (tuş + modifier) → niyet. <see cref="KeyboardShortcuts.WindowBindings"/>
@@ -83,6 +86,7 @@ public static class KeyboardShortcuts
         new(Key.F, ModifierKeys.Control, WindowIntent.FocusFilter),    // Ctrl+F → proje filtre odağı
         new(Key.F1, ModifierKeys.None, WindowIntent.ShowAbout),        // F1     → About (Windows Help geleneği)
         new(Key.Escape, ModifierKeys.None, WindowIntent.Escape),       // Esc    → EN ÜST açık katman
+        new(Key.Q, ModifierKeys.Control, WindowIntent.Exit),           // Ctrl+Q → Exit (title bar butonu)
     ];
 
     /// <summary>Esc zinciri: EN ÜST açık katmanı kapatır (dialog &gt; popover/menü &gt; seçim), diğerine sızmaz

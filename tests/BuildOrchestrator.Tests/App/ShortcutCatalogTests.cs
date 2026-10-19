@@ -97,7 +97,8 @@ public class ShortcutCatalogTests
             ShortcutCatalog.All.Where(e => e.Group == ShortcutGroup.Global).Select(e => e.Id));
         Assert.Equal([ShortcutId.Build, ShortcutId.Rebuild, ShortcutId.Clean],
             ShortcutCatalog.All.Where(e => e.Group == ShortcutGroup.Build).Select(e => e.Id));
-        Assert.Equal([ShortcutId.FocusFilter, ShortcutId.About, ShortcutId.Escape],
+        // [Exit] Ctrl+Q uygulama grubunun SONUNDADIR — en seyrek basılan; title bar'da da butonu kümenin sonundadır.
+        Assert.Equal([ShortcutId.FocusFilter, ShortcutId.About, ShortcutId.Escape, ShortcutId.Exit],
             ShortcutCatalog.All.Where(e => e.Group == ShortcutGroup.Application).Select(e => e.Id));
         Assert.Equal("Global", ShortcutCatalog.GroupTitle(ShortcutGroup.Global));
         Assert.Equal("Build", ShortcutCatalog.GroupTitle(ShortcutGroup.Build));

@@ -468,6 +468,7 @@ public partial class MainWindow : Window
 
         SetupKeyboardShortcuts();
         SetupAboutButtonTooltip();
+        SetupExitButton(); // [Exit] title bar'ın Exit butonu ve onay kartı (MainWindow.Exit.cs)
         SetupUpdatePill(); // [design v1.23.0 §2.12] title bar'ın güncelleme hapı (MainWindow.UpdatePill.cs)
         SetupResourceStrip(); // [design v1.25.0 §2.1] title bar ortasındaki kaynak şeridi: örnekleyici + caption iletimi (MainWindow.ResourceStrip.cs)
         _ = RunConsolePumpAsync();
@@ -491,6 +492,7 @@ public partial class MainWindow : Window
             [WindowIntent.FocusFilter] = new RelayCommand(() => Shell.FocusProjectFilter()),
             [WindowIntent.ShowAbout] = new RelayCommand(OnAboutRequested),   // F1 → About (About sekmesinde)
             [WindowIntent.Escape] = new RelayCommand(OnEscapePressed),
+            [WindowIntent.Exit] = new RelayCommand(OnExitRequested),  // Ctrl+Q → title bar'ın Exit butonu (MainWindow.Exit.cs)
         };
         foreach (var b in KeyboardShortcuts.WindowBindings)
             InputBindings.Add(new KeyBinding(commandForIntent[b.Intent], b.Key, b.Modifiers));
@@ -505,19 +507,17 @@ public partial class MainWindow : Window
     /// sürüm varsa cümle "About — what's new in {sürüm}"e dönerdi. Okunmadı mekanizması sparkle butonuna
     /// taşındığı için (bkz. <see cref="SetupNotesButtonTooltip"/>) ⓘ'nin cümlesi artık HER ZAMAN sabit katalog
     /// cümlesidir — koşullu dal DÜŞTÜ.</para></summary>
-    private void SetupAboutButtonTooltip()
+    private void SetupAboutButtonTooltip() => InfoButton.ToolTip = CatalogTooltip(ShortcutId.About);
+
+    /// <summary>Bir title bar butonunun kısayol kataloğundan kurulan tooltip'i — ⓘ (F1) ve [Exit] Exit (Ctrl+Q) aynı kalıbı okur.
+    /// [design-v1.2.1 §2.1] Tooltip cümlenin SONUNA jesti ekler: "… (F1)". Cümle de jest de katalogdan gelir — ikisi de burada elle
+    /// yazılmaz. Yerleşim gear'ınkiyle AYNI olmalı (hepsi title bar'da, aşağı açılır) — değer ORADAN okunur, ikinci kez yazılmaz.</summary>
+    private System.Windows.Controls.ToolTip CatalogTooltip(ShortcutId id)
     {
-        // [design-v1.2.1 §2.1] Tooltip cümlenin SONUNA jesti ekler: "… (F1)". Cümle de jest de katalogdan
-        // gelir — ikisi de burada elle yazılmaz.
-        var about = ShortcutCatalog.Get(ShortcutId.About);
-        var tooltip = new System.Windows.Controls.ToolTip
-        {
-            Content = $"{about.Description} ({about.Gestures[0]})",
-        };
-        // Yerleşim gear'ınkiyle AYNI olmalı (ikisi de title bar'da, aşağı açılır) — değer ORADAN okunur,
-        // ikinci kez yazılmaz.
+        var entry = ShortcutCatalog.Get(id);
+        var tooltip = new System.Windows.Controls.ToolTip { Content = $"{entry.Description} ({entry.Gestures[0]})" };
         AppTooltip.SetSide(tooltip, AppTooltip.GetSide((System.Windows.Controls.ToolTip)GearButton.ToolTip));
-        InfoButton.ToolTip = tooltip;
+        return tooltip;
     }
 
     /// <summary>[design v1.13.0/v1.13.1 §2.1/§2.11] What's new butonunun tooltip'i — About'un eski

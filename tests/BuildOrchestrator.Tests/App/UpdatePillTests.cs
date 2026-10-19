@@ -100,7 +100,8 @@ public class UpdatePillTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>Hapın ayracı mevcut ayraçla TEK stildir (literal ikinci kez yazılmaz): 1×14, <c>border</c>, yatay 5px.</summary>
+    /// <summary>Hapın ayracı mevcut ayraçla TEK stildir (literal ikinci kez yazılmaz): 1×14, <c>border</c>, yatay 5px. [Exit] Exit
+    /// butonunun önündeki ayraç da aynı stildir — kümenin üç ayracı (hap · layout | gear · About | Exit).</summary>
     [StaFact]
     public void The_pill_separator_shares_the_one_title_bar_separator_style()
     {
@@ -109,7 +110,7 @@ public class UpdatePillTests
 
         var style = (Style)window.FindResource("TitleBarSeparator");
         var separators = RightCluster(window).Children.OfType<Rectangle>().Append(window.UpdatePillSeparator).ToList();
-        Assert.Equal(2, separators.Count);
+        Assert.Equal(3, separators.Count);
         Assert.All(separators, s =>
         {
             Assert.Same(style, s.Style);
