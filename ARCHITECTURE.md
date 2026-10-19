@@ -217,20 +217,21 @@ measured bound is under two seconds with no orphan.
 
 ### 4.5 Stop semantics
 
-**Graceful stop** is what the first press of the Stop button or of `Esc` requests, and what a full exit of the application requests
-for a run still in flight (§12.3). Nothing new is dispatched; the in-flight `MSBuild.exe` children finish,
+**Graceful stop** is what the first press of the Stop button or of `Esc` requests. Nothing new is dispatched; the in-flight
+`MSBuild.exe` children finish,
 *including their post-build copy events*. A compiler server living *outside* the job would break this
 promise: its emit would run where a stop cannot see it, and a DLL could be caught mid-write. The
 shared-compilation flags stay off today for a different reason — the measured gain does not pay for the
 server's memory (§9.2) — but if they are ever turned on, the server has to be born inside the job for exactly
 this guarantee.
 
-**Hard stop** terminates the inner job outright. The App sends it in exactly one situation: the user presses the Stop
-button, or `Esc`, while a stop is already draining — one the user asked for, or the interrupt a branch switch sends. The
-first press of a run is the polite request; a press during a drain says the user would rather not wait, and it is
-honoured. It goes out once: after it the Stop button is disabled and a further press or `Esc` does nothing. A full exit
-of the application never escalates — closing the window while a stop drains waits for the drain like any other exit
-(§12.3).
+**Hard stop** terminates the inner job outright. The App sends it in two situations. The user presses the Stop button,
+or `Esc`, while a stop is already draining — one the user asked for, or the interrupt a branch switch sends: the first
+press of a run is the polite request, and a press during a drain says the user would rather not wait, which is
+honoured. And the user confirms a full exit of the application while a run is in flight (§12.3): someone who is leaving
+does not wait for a drain, so the exit sends the hard stop itself — at once, or over a drain already under way. It goes
+out once: after it the Stop button is disabled, a further press or `Esc` does nothing, and an exit that finds it already
+sent sends nothing more.
 
 The choice between them is not about the wait — it is about how much work a stop throws away. A drained
 project *succeeds*, so its `BuildState` is persisted and the next Build skips it as up to date. A terminated
@@ -1857,6 +1858,9 @@ in-flight ledger closes that hole.
   refreshes the rows with a silent Sync (§4.7, §10.2) — the selection and an open project page stay — so the
   recovered decisions reach the screen. The count rides on `engineReady` (§5.3) and the App prints `previous run was
   interrupted; N projects will rebuild`.
+- **A confirmed exit leans on the same ledger.** *Stop and exit* terminates the compiles in flight and waits for the
+  engine's answer only briefly (§12.3); whatever it did not hear about is still listed in the file when the engine is
+  killed, and the next start invalidates it like any other interruption.
 - **Failure to recover never blocks the engine.** A file whose content cannot be parsed is not trusted — nobody
   knows who was in flight — so it is deleted and nothing is invented. A file that cannot be *read* (a lock, a
   permission) is a different case: a warning goes to stderr, the file stays, and the next engine start tries
@@ -3170,32 +3174,46 @@ switch from `ui-state.json` itself, since it never builds a window or a view mod
 by default. `X`, `Alt+F4` and the system menu's *Close* all arrive at the window's one `Closing` handler, and a
 pure rule (`WindowCloseRule`) decides; the window only applies the answer. With the switch on, the close is
 cancelled and the window hides to the tray; the first time this happens, an **OS tray balloon** explains it,
-once — in-app toasts are prohibited by the design. With the switch off, the close becomes a full exit. No shell
+once — in-app toasts are prohibited by the design. With the switch off, the close is the title bar's *Exit* (below). No shell
 switch is copied anywhere: whatever acts on one reads it from `ui-state.json` at the moment it acts — this one on
 every close — so a value saved in Settings applies to the very next close.
 
-**A full exit waits for the work in flight.** The tray menu's *Exit* always asks for one, whatever the switch
-says; `X` asks for one when the switch is off, and both take the same shell path. With nothing in flight the
-application closes at once — from the tray, without showing the window first. Otherwise the exit lets the work
-finish. A run is stopped gracefully (§4.5) — or, still in its opening choreography or waiting for its engine to wake
-with nothing sent, withdrawn (§14.5) — so its in-flight projects finish, post-build copy included. A Clean,
-Optimize, checkout or pull has no cancel and runs to its end, since cutting one off could leave the tree half-changed;
-a Sync has no cancel either, and a fetching one writes git refs, so it too is let finish. No Sync starts once the exit
-has been asked for — neither the automatic one (§10.3), nor the one a Clean, Optimize, checkout or pull chains on
-completion, nor one that finds nothing in flight and so lets the exit close at once: each would be new work started
-after the request, only to refresh a window that is closing, and the next start syncs anyway. Requests waiting at the
-gate of a sleeping engine (§4.7) are withdrawn the same way: none is sent and no wake starts, and a waiting Sync that
-does not go is released by its own roll-back. A project-log load waiting there is not work the exit waits for. The
-job's own end releases the exit. While the exit waits, the ribbon reads the Stopping line whatever the phase (§13.2)
-and the console records `exit requested — the app closes when the work in flight finishes` once. The window stays and
-comes forward — out of the tray, or restored if it was closed while minimized — because an exit waiting behind a
-hidden window would look like nothing happening; a later `X` neither hides it nor asks again, and a second request
-sends no second stop and writes no second line. The wait is not endless — if the engine falls silent (§4.6) or dies,
-the exit goes ahead, and the application's shutdown closes the engine and whatever it left through the outer job
-(§4.4); an engine that is only quiet — a long git write, a build step that prints nothing — is cut off the same way
-(§20). The view model decides only *when* (`RequestExit`, then `ExitReady` once); the shell does the closing, and from
-that moment every `Closing` really closes. A Windows session that ends closes the application at once, with neither
-the wait nor the tray — Windows does not wait either.
+**A full exit stops the work in flight — once the user confirms it.** Four requests ask for one and all four take the same
+decision: the title bar's *Exit* button and `Ctrl+Q` (§13.3), the tray menu's *Exit* whatever the switch says, and `X`
+when the switch is off. With nothing in flight the application closes at once — from the tray without showing the window
+first. With work in flight nothing is stopped yet: the exit's confirmation card opens under the *Exit* button and says what
+will stop and what will stay (§13.3). From `X` and from the tray the window first comes forward — out of the tray, or
+restored if it was closed while minimized — because the card cannot show on a hidden window. That happens on a dispatcher
+turn of its own, since WPF refuses `Show` while a close is in progress, and the turn asks again: if the work ended
+meanwhile the application closes without the card, and if an exit is already under way it does nothing. *Work in flight*
+is the workspace's one question (`WorkspaceIdle`): a run — its planning and opening choreography included — a Sync (the
+silent one included), a Deep Clean, an Optimize, a checkout or a pull; `RunViewModel.ExitWork` names which one, for the
+card.
+
+*Stop and exit* on the card is what stops it, and how depends on the work. A run is stopped hard (§4.5) — or, still in
+its opening choreography or waiting for its engine to wake with nothing sent, withdrawn (§14.5) — so its in-flight
+compiles are terminated rather than drained; the engine reports them `failed("stopped")`, and whatever it did not get to
+report is invalidated at the next start by the in-flight ledger (§8.7). Either way the next Build compiles them again,
+and finished projects keep their results. The exit waits for the engine's `runStopped` for at most three seconds
+(`ExitStopWaitMs`) and then goes ahead regardless. A Sync, a Deep Clean and an Optimize have no cancel and are not waited
+for: the shutdown ends them with the engine. Cutting them off is safe — a Deep Clean removes the state before the folders
+(§5.2), a restore cut short is completed by the next Optimize, and the next start syncs anyway (§20 has the one residue an
+interrupted fetch can leave). A checkout and a pull are waited for: git is writing the working tree and `.git/index`, and
+cutting it off would leave a half-switched tree behind a stale `index.lock`. No Sync starts once the exit has been asked
+for — neither the automatic one (§10.3), nor the one a checkout or pull chains on completion: each would be new work
+started after the request, only to refresh a window that is closing, and the next start syncs anyway. Requests waiting
+at the gate of a sleeping engine (§4.7) are withdrawn the same way: none is sent and no wake starts, and a waiting Sync
+that does not go is released by its own roll-back. A project-log load waiting there is not work the exit waits for.
+
+While the exit stops the work, the closing screen covers the window (§13.3); underneath, the ribbon reads the Stopping
+line whatever the phase (§13.2) and the console records `exit requested — ending the work in flight, then closing` once,
+followed for a run by the hard stop's own line. A later `X` neither hides the window nor asks again, and a second request
+sends no second stop and writes no second line. The wait for a git write is not endless — if the engine falls silent
+(§4.6) or dies, the exit goes ahead, and the application's shutdown closes the engine and whatever it left through the
+outer job (§4.4); a git write that is only slow is cut off the same way (§20). The view model decides only *when*
+(`RequestExit`, then `ExitReady` once); the shell does the closing — after the closing screen's bar has filled — and from
+that moment every `Closing` really closes. A Windows session that ends closes the application at once, with neither the
+card, the screen nor the tray — Windows does not wait either.
 
 **A build that runs while the window is away is not invisible.** When the main window is hidden *and* a build is
 in flight (`Starting` / `Running` / `Stopping` — `Syncing` is deliberately out of scope), the product mark
@@ -3378,7 +3396,8 @@ bar below says it once, with the workspace name and the branch chip. The middle 
 group, nor the pill's coming and going moves it. The other end, ahead of the caption
 buttons, opens with the **update pill** and a hairline of its own (§13.3), then carries the window's application
 commands in decreasing order of use: the three view-mode toggles, a hairline, then the gear (Settings), the
-sparkle (What's new) and the `i` (About). Both hairlines are one style. The cluster is docked right, so the pill
+sparkle (What's new) and the `i` (About), and last, behind a hairline of its own, the *Exit* power button that quits
+the application (§12.3, §13.3). All three hairlines are one style. The cluster is docked right, so the pill
 grows into the empty space on its left: the icons keep their distance from the window's right edge whether the
 pill is there or not. The pill shows only while a downloaded update is ready to install (§12.5); the application
 starts with no offer, so it is absent until one arrives. It is neutral (no amber, the title bar's rule), and it
@@ -3454,7 +3473,7 @@ the GitHub feed is used: a broken variable of a development gate must not keep t
 ### 13.1 MVVM
 
 `RunViewModel` is the single run-facing view model, split across partial files by surface — the run core, the
-action bar, the event stream, the workspace, the automatic Sync, the git operation in progress, the safe exit,
+action bar, the event stream, the workspace, the automatic Sync, the git operation in progress, the full exit,
 Esc's run layer, the discovery state, the update offer and the resource strip. It owns the project rows, the counters,
 the phase, the selection, the filter and the command set. Rows are `ProjectRowViewModel` — observable state only;
 every visual decision (colour, glyph, badge) is made in XAML from that state.
@@ -3469,7 +3488,7 @@ wording would be a second source of truth.
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
 │ TITLE BAR 40px — mark · title · logo · resource strip (centred) ·    │
-│                  Update v │ ⊞ ≡ ▣ │ ⚙ ✦ i  — □ ×                     │
+│                  Update v │ ⊞ ≡ ▣ │ ⚙ ✦ i │ ⏻  — □ ×                 │
 ├──────────────────────────────────────────────────────────────────────┤
 │ STICKY RIBBON 32px — operation pill · phase · building chips ·        │
 │                      failure chips        · global progress 2px      │
@@ -4308,8 +4327,8 @@ shadow, and a 140 ms pop-in (4 px up, scale .985 → 1). Outside click, Esc, or 
 that opened them closes them. That last one needs saying because WPF does not give it for free: a popup that
 closes on outside clicks drops its `IsOpen` while the press is still travelling, and the same press then
 re-checks the trigger and reopens it — the gesture cancels itself out and the popover cannot be closed by
-the control that opened it. One gate (`PopoverToggle`) closes that window for all five popovers — branch, the
-Build chevron, the row menu, the Open-in-VS chooser and the update card. Rows inside them are 28 px. The branch popover is
+the control that opened it. One gate (`PopoverToggle`) closes that window for all six popovers — branch, the
+Build chevron, the row menu, the Open-in-VS chooser, the update card and the exit card. Rows inside them are 28 px. The branch popover is
 272 px wide and carries a search box; picking a row is a checkout (§10.3), picking the active branch does
 nothing, and the remote `origin/HEAD` pointer is not listed.
 
@@ -4364,11 +4383,13 @@ empty band. The card's root carries the pill's screen-reader name, `Update to <v
 
 *Restart to update* raises a request on the view model, and the command itself is the gate: a call that bypasses
 the button's `CanExecute` still raises nothing while the restart is locked or there is no offer. The shell answers
-by closing the card and playing **the restart screen** (`UpdateRestartScreen`), the window's topmost layer — above
-the modals and over the title bar, taking clicks in the caption band too, so neither dragging nor the window
-buttons reach through it. On `surface-base` it centres a 232 px column: the product mark at 30 px,
-`Updating <product>` at 13 px/600, the version change in 11 px mono (installed in `text-dim`, an 11 px arrow,
-incoming in `text-secondary`), a 2 px amber progress bar and a step line in 11 px `text-faint`. There is one step,
+by closing the card and playing **the closing screen** (`ClosingScreen`) in its restart mode. The closing screen is the
+window's topmost layer — above the modals and over the title bar, taking clicks in the caption band too, so neither
+dragging nor the window buttons reach through it — and it has two modes that share it, this one and the exit's (below);
+only one ever plays. On `surface-base` it centres a 232 px column: the product mark at 30 px, a heading at 13 px/600, a
+middle line in 11 px mono, a 2 px amber progress bar and a step line in 11 px `text-faint`. In the restart mode the
+heading is `Updating <product>` and the middle line the version change (installed in `text-dim`, an 11 px arrow,
+incoming in `text-secondary`). There is one step,
 `Closing <product>…`, and the bar fills linearly over its 800 ms. Closing is the only step the application's own
 window can truthfully show: Windows does not let a running program's files be replaced, so the installation
 happens after the application has closed, in `Update.exe` with no window, and the new version then opens like any
@@ -4376,15 +4397,55 @@ start (§12.5). The numbers live in a pure core (`UpdateRestartTimeline`); the s
 frame timer against an injected clock, so tests step through it frame by frame without waiting. The step line is a
 polite live region, announced once per step rather than per frame.
 
-When the bar is full the timer stops, the screen raises `BarFilled`, and the shell sends the application down the
-safe full exit that tray → *Exit* takes (§12.3) — which also waits for any work that started meanwhile. The exit is
-asked for only then on purpose: requested in the same turn as the screen, the shutdown runs at the dispatcher's
+When the bar is full the timer stops, the screen raises `BarFilled`, and the shell asks for the full exit of §12.3
+without a card — the user has just confirmed the restart, and any work that started meanwhile ends by the exit's own
+rules. The exit is asked for only then on purpose: requested in the same turn as the screen, the shutdown runs at the dispatcher's
 Normal priority, ahead of the Render-priority pass that first draws the screen, and the window would close before
 the screen was ever seen. The screen has no exit motion; it stays, bar full, until the window closes. The new
 version opens with the amber dot on the sparkle button, since the version last read in What's new is no longer
-the running one (below). While the screen shows, the window ignores the keyboard — every key is consumed
+the running one (below). While the screen shows, in either mode, the window ignores the keyboard — every key is consumed
 at the window's tunnelling key event, before any shortcut binding sees it — and the global hotkeys do nothing
 (§13.9).
+
+**The exit card** is the title bar's second popover (`ExitCard`, on the same base as the update card), opened by the
+*Exit* button or `Ctrl+Q` while work is in flight (§12.3); with nothing in flight both close the application at once
+and no card appears. The button ends the right cluster: a small icon button (22 px, radius 4) drawing Lucide *power*
+at 13 px and 1.7, `text-secondary` at rest and `surface-raised` with `text-primary` on hover. While the card is open it
+sits on `surface-overlay` in `text-primary` — not the icon button's amber active state: the title bar carries no amber
+besides the mark — and its tooltip is off; otherwise the tooltip is `Exit — quit and end every process (Ctrl+Q)`, the
+shortcut catalog's sentence and gesture, opening below. The card hangs 9 px below the button with its *right* edge on
+the button's (`PopoverPlacement.BelowRightEdge`), in a 320 px `Ds.Popover` shell without padding, and drops in from 4 px
+above, scaling from its top-right corner (§14.5). Being a popup — a window of its own — it sits above everything, the
+modals included, and unlike the update card a dialog opening does not close it. It closes on *Cancel*, a second press on
+the button or `Ctrl+Q`, an outside click and Esc, and Esc closes it before anything else, an open dialog included
+(§13.7). Opening puts keyboard focus on *Cancel*. The open state lives on the button (`DsChrome.IsActive`, two-way with
+the popup's `IsOpen`), the way the update pill's `IsChecked` carries its card.
+
+The card is three blocks separated by `border` hairlines. The **status** block names the work as a caps label in 11 px
+`text-faint` — `BUILD IN PROGRESS`, likewise for a Rebuild, Resolve, Clean, Deep clean, Optimize, Sync, branch switch or
+pull — with the run's progress in mono on the right (`14/38`: the ribbon's own two counters, absent before the run has a
+plan), and under it one 13 px/500 sentence in `text-primary`: `Exit stops the build, then quits.`, or, for the checkout
+and pull the exit waits for, `Exit waits for the branch switch, then quits.` The **ends on exit** block lists what the
+exit will end: the outer job's processes counted by name (`JobProcessCensus` — each PID is named on its own through
+`ProcessImage`, nothing scans the machine), in 11 px mono with the name in `text-secondary` and `×N` in `text-dim` on
+the right, the largest count first. The engine itself and the console hosts are not listed — they belong to the
+application, not to the work — so the block disappears when nothing else is there. The list is counted only while the
+card is open, once a second. The **decision** block says in one 12 px `text-dim` line what stays — for a run `4 projects
+in flight stay unbuilt. Finished projects keep their results; the next Build picks up the rest.`, and for each other job
+what its cut leaves — over a right-aligned *Cancel* (secondary) and *Stop and exit* (danger, with a 12 px power icon;
+*Wait and exit* for a git write). The card follows the view model (`ExitWork`): when the work ends while it is open it
+turns into `EXIT` and `Nothing is running. Exit quits right away.` with an *Exit* button, and the progress, the process
+block and the outcome line go. Every text lives in one class (`ExitText`), and what the button does is decided when it
+is pressed, from the work in flight at that moment.
+
+*Stop and exit* closes the card and plays the closing screen in its **exit mode**: `Closing <product>` as the heading,
+the work and its progress as the middle line in `text-dim` (`Build · 14/38`), and two steps — `Stopping build…` (or
+`Finishing branch switch…`), then `Ending 5 processes…`, the number being the processes the card counted. The first step
+fills half the bar over at least 500 ms and holds there until the view model says the exit is ready (`ExitReady`: the
+engine's `runStopped`, the stop wait running out, or at once for a job that is cut off); the second fills the rest over
+500 ms, and only when the bar is full does the shell close the application — so both lines can be read and the screen is
+drawn before the window goes. The numbers live in a pure core (`ExitClosingTimeline`), read on every frame like the
+restart's.
 
 **The three modals — Settings, About and What's new — share one shell** (`ModalDialog`, with its look in the
 `Ds.ModalDialog` template). It owns everything that is not content: a full-bleed scrim, the `Ds.Dialog` frame
@@ -5628,8 +5689,9 @@ panel header switches to its project-log half with the `Back` button. Clicking t
 `Back`, or Esc, clears it and follow-mode resumes. Text selection inside the console never clears the project
 selection.
 
-Esc is a chain and only ever closes the topmost layer: dialog → popover/menu (the action bar's popovers and the
-title bar's update card) → selection → the running build. With nothing else open, Esc stops a Build, Rebuild or
+Esc is a chain and only ever closes the topmost layer: the exit card (§13.3), which sits above even the dialogs →
+dialog → popover/menu (the action bar's popovers and the title bar's update card) → selection → the running build.
+With nothing else open, Esc stops a Build, Rebuild or
 Clean gracefully (§4.5) — so a selection made mid-run is dropped by the first Esc and the build stopped by the
 second. While a stop drains — the user's own or a branch switch's — Esc is the hard stop, the same step pressing
 *Stop now* takes (§4.5), and after that Esc does nothing. A Sync, a Deep Clean, an Optimize, a checkout or a pull
@@ -5733,19 +5795,20 @@ Three pieces of shared machinery keep the copies from multiplying:
   frame, which also keeps the pill a true capsule at both widths (a fixed radius would be clipped
   horizontally but not vertically, turning the ends into ellipses).
 - **`PopIn`** is the one entrance body: the 140 ms popover pop-in (the branch popover, the Build menu, the row
-  menu and the Open-in-VS chooser), the modal entrance, the update pill's entrance, the update card's drop-in and
-  the update restart screen's fade-in differ only in duration, direction, scale and scale origin (§14.5). It has no
-  exit animation, and no overlay has one of its own: overlays hide immediately, and the restart screen does not
+  menu and the Open-in-VS chooser), the modal entrance, the update pill's entrance, the update and exit cards'
+  drop-ins and the closing screen's fade-in differ only in duration, direction, scale and scale origin (§14.5). It has
+  no exit animation, and no overlay has one of its own: overlays hide immediately, and the closing screen does not
   leave at all — the window closes under it.
 - **`RevealStagger`** owns the hero acquisition, generation stamping and guarded release of the opening
   reveal, and the one motion both surfaces share: 300 ms, settling from 5 px above. The *cadence* is
   deliberately not shared — the graph staggers node by node in build order, with the whole wave capped
   (§13.6); the list row by row, 10 ms apart, each row's delay capped at 380 ms (§13.2).
 
-The branch popover and the update card derive from a common base that owns the open state, the
+The branch popover, the update card and the exit card derive from a common base that owns the open state, the
 refresh-then-animate-then-focus sequence, the Esc handling (a popover is a separate HWND, so the window-level Esc
-chain does not reach it) and outside click; what each adds is its own — the branch search filter; the card's
-drop-in and its *Later*, which asks to close exactly the way Esc does. The width belongs to
+chain does not reach it) and outside click; what each adds is its own — the branch search filter; the update card's
+drop-in and its *Later*, which asks to close exactly the way Esc does; the exit card's drop-in from the right, its focus
+on *Cancel* (which asks to close the same way) and its action request. The width belongs to
 the shell `Border` alone — each body stretches into whatever the shell's padding leaves rather than restating a
 number, since a restated width silently drops the shell's border thickness and WPF then clips the overflowing
 edge of the body.
@@ -5768,13 +5831,14 @@ active set appears as a removable chip in the panel header.
 | `Ctrl+F` | window | Focus the project filter |
 | `F1` | window | About — version, shortcuts and diagnostics (toggle) |
 | `Esc` | window | Close the topmost layer; with none open, stop the running build (§13.7) |
+| `Ctrl+Q` | window | Exit — quit at once with nothing in flight; otherwise open the confirmation card, or close it if open (§12.3) |
 
 These are the only shortcuts. `F5` does not branch on state: in Visual Studio `F5` never stops what is running,
 and a key that both starts and stops starts a new build when it is pressed to stop one that has just finished.
 `Shift+F5` is deliberately unbound — it is Visual Studio's *Stop Debugging*, and pressed out of habit it used to
-start a Rebuild here. What's new has no key (§13.3). While the update restart screen shows (§13.3) — from the
-*Restart to update* click until the window closes — none of these keys, window or global, does anything; one
-shell property answers that question for both paths.
+start a Rebuild here. What's new has no key (§13.3). While the closing screen shows (§13.3) — from the
+*Restart to update* or *Stop and exit* click until the window closes — none of these keys, window or global, does
+anything; one shell property answers that question for both paths.
 
 The key → intent table is a pure, tested structure that `MainWindow` merely wires into `InputBinding`s; `F5`,
 `F6` and `F7` bind straight to the view model's Build, Rebuild and CleanAll commands, and every dispatch
@@ -6075,7 +6139,9 @@ drawn on the same grid and at the same stroke weight as the neighbour they sit n
 `Icon.Gear`'s 1.7 px so the two buttons carry equal optical weight. The What's new icon between them (a
 four-point star, keyed `Icon.WhatsNew` rather than the design's own name for it — that name collides with an
 unrelated source guard protecting the event stream's own celebration vocabulary) is drawn at the same 1.7 px
-for the same reason; all three title-bar icon buttons read as one family.
+for the same reason, and so is the *Exit* button's Lucide *power* at the end of the cluster; all four title-bar icon
+buttons read as one family. The power icon's stem stands on x = 12, which in its 13 px box falls on a pixel centre at
+100 % rather than splitting across two half-lit columns.
 
 The two discovery blocks (§13.2) are the one place an icon is drawn large: Lucide *network* for the graph and
 *list* for the project list, 28 px, a 1.4 stroke, `text-faint` at 70 % opacity — an empty-state picture, not a
@@ -6197,11 +6263,11 @@ glides, which step a `ScrollViewer`'s or the console editor's offset each frame 
 Build menu rise 4 px from below at scale .985 over 140 ms; the modals rise 6 px over `Duration.Base` without
 scaling; the title bar's update pill drops 4 px from above over `Duration.Slow` without scaling, together with its
 hairline; the update card drops 4 px from above at scale .985 over 140 ms, scaling from its top-left corner
-because it hangs from the pill; the update restart screen only fades in, over `Duration.Base` — it covers the
-whole window and has no edge to travel, so no transform is set up at all. All ease out and all snap to their end
-state under reduced motion. None of them has an exit motion, the restart screen included: it stays, bar full,
-until the window closes (§13.3). Its progress bar is information rather than decoration and advances whatever the
-motion setting. The pill's entrance is the one that is conditional: it plays when an offer arrives — the
+because it hangs from the pill, and the exit card does the same from its top-right corner because it hangs from the
+right edge of its button; the closing screen only fades in, over `Duration.Base` — it covers the whole window and has
+no edge to travel, so no transform is set up at all. All ease out and all snap to their end state under reduced motion.
+None of them has an exit motion, the closing screen included: it stays, bar full, until the window closes (§13.3). Its
+progress bar is information rather than decoration and advances whatever the motion setting. The pill's entrance is the one that is conditional: it plays when an offer arrives — the
 application starts without one (§12.5), so that is the moment an update becomes ready, never the first frame — and
 a later offer while the pill is showing only changes its text. Its hover is the design system's 120 ms colour transition (`Duration.Fast`); the design's text
 says 80 ms, but its own measurements and prototype use the standard one.
@@ -6435,7 +6501,8 @@ set from one central name table so the same element cannot be named two ways. Th
 phase text, assertive and announced when the phase changes and when the engine-starting line (§13.2) appears or
 goes; the discovery counter (§13.2), polite and announced once when the count changes — its automation name is
 written with the text, because a block built from two runs reports an empty `Text` once the runs are rewritten; and
-the update restart screen's step line (§13.3), polite and announced once per step rather than per frame. Each region
+the closing screen's step line (§13.3), in either of its modes, polite and announced once per step rather than per
+frame. Each region
 decides when it speaks; how it speaks is one helper (`LiveRegion`), which finds or creates the element's automation
 peer and raises the live-region event, so no region raises it on its own. Contrast is asserted by test for every text
 token, including the dim ones.
@@ -6715,9 +6782,9 @@ test is about it: the one that pins it on a window (`RunBufferReleaseTests`), th
 
 Process-control tests are deterministic by contract: they wait on handles and completion ports, never on
 elapsed time. The cascade-kill bound is measured, not assumed, and so is the full exit of §12.3: against a real
-engine and real `MSBuild.exe` children, an exit asked for mid-build lets the in-flight projects succeed and leaves
-no Supervisor or MSBuild process behind (`SafeExitProcessTests`). Scheduler tests assert dispatch *sequences*, not
-just outcomes.
+engine and real `MSBuild.exe` children, an exit confirmed mid-build terminates the in-flight projects, hears the
+engine's answer well inside the exit's stop wait and leaves no Supervisor or MSBuild process behind
+(`SafeExitProcessTests`). Scheduler tests assert dispatch *sequences*, not just outcomes.
 
 The resource strip's measurement (§11.5) is tested the same way. The Win32 reads run against real jobs and real
 children (`JobResourceQueryTests`): a member is a child blocked on its stdin, so it is alive when asked about and ends
@@ -7261,11 +7328,14 @@ do, and how the interface works around each — useful to know before attempting
   deliberately does not add one. The keyboard route to any project is the projects list, which is fully
   traversable and drives the same selection everywhere (§13.7); the graph reflects that selection rather than
   being a second way to reach it.
-- **A full exit's wait ends on engine silence.** The exit waits for the work in flight (§12.3), but the silence
-  watchdog (§4.6) releases it once the engine has sent nothing for the threshold, and silence cannot tell a wedged
-  engine from one that is busy without a word. A checkout or pull whose git write runs longer than that, or a
-  build step that prints nothing for that long while a stop drains, is then cut off by the application's
-  shutdown. An engine heartbeat inside those waits — the one a package restore already has — would close it.
+- **A full exit's wait for a git write ends on engine silence.** The exit waits for a checkout or a pull (§12.3), but
+  the silence watchdog (§4.6) releases it once the engine has sent nothing for the threshold, and silence cannot tell a
+  wedged engine from one that is busy without a word. A git write that runs longer than that is then cut off by the
+  application's shutdown. An engine heartbeat inside those waits — the one a package restore already has — would close
+  it.
+- **An exit can cut a fetch mid-write.** A Sync is not waited for (§12.3). If its `git fetch` is killed between taking a
+  ref's lock and renaming it into place, a `.lock` file stays behind in `.git` and the next fetch of that ref fails
+  until the file is removed. The window is short, and the risk was accepted for an exit that does not wait.
 - **An engine that dies just as it is put to sleep counts as asleep.** The sleep and the death race for one claim on
   the engine's generation (§4.6); when the sleep wins, the death is part of the stop, so no death is reported and the
   next request that needs the engine wakes a fresh one. Nothing is lost — a sleep only begins when nothing is in
@@ -7428,9 +7498,11 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Maximize overflow fix · DWM corners/border · caption glyphs | `App/Shell/MaximizeFix.cs`, `Dwm.cs`, `CaptionGlyphs.cs` |
 | Single instance, tray icon, global hotkeys (table, show/hide decision), shutdown | `App/Shell/SingleInstance.cs`, `AppTrayIcon.cs`, `Hotkey.cs`, `App/Shell/AppShutdown.cs` |
 | Start with Windows — the `Run` value, Task Manager's disabled mark, the state the switch shows, the save-time write, the removal at uninstall (`RemoveForUninstall`) | `App/Services/AutostartService.cs` |
-| Window close decision — `X`, `Alt+F4`, system-menu *Close*: close, stay, hide to the tray or ask for a full exit — and whether a waiting exit brings the window forward | `App/Shell/WindowCloseRule.cs`; applied in `App/MainWindow.xaml.cs` (`OnClosing`) |
-| Safe full exit: the wait for work in flight, the graceful stop, the release on engine silence or death, `ExitReady` | `App/ViewModels/RunViewModel.Exit.cs`; no Sync once the exit is asked for, and nothing leaves the engine gate: `RunViewModel.cs` (`SyncCoreAsync`), `RunViewModel.Engine.cs` (`EnsureEngineAwakeAsync`) — both read the one flag, `_exitRequested` |
-| …its shell side: the one path tray *Exit* and `X` share, bringing the waiting window forward, the shutdown | `App/MainWindow.xaml.cs` (`RequestFullExit`, `ExitNow`) |
+| Window close decision — `X`, `Alt+F4`, system-menu *Close*: close, stay, hide to the tray or ask for a full exit | `App/Shell/WindowCloseRule.cs`; applied in `App/MainWindow.xaml.cs` (`OnClosing`) |
+| Full exit: what is in flight (`ExitWork`), the hard stop of a run and the stop wait (`ExitStopWaitMs`), the jobs cut off and the git writes waited for, the release on engine silence or death, `ExitReady`; the run's progress for the card (`ExitProgress`) | `App/ViewModels/RunViewModel.Exit.cs`; the hard stop shared with *Stop now*: `RunViewModel.cs` (`SendHardStopAsync`); no Sync once the exit is asked for, and nothing leaves the engine gate: `RunViewModel.cs` (`SyncCoreAsync`), `RunViewModel.Engine.cs` (`EnsureEngineAwakeAsync`) — both read the one flag, `_exitRequested` |
+| …its shell side: the *Exit* button and `Ctrl+Q`, the confirmation card's open state, placement, close paths and once-a-second process count, *Stop and exit* playing the closing screen, `ExitReady` moving it on, the one decision tray *Exit* and `X` share and the deferred bring-forward, the shutdown | `App/MainWindow.Exit.cs` (`OnExitRequested`, `RequestExitFromUser`, `RequestExitFromOutside`, `ConfirmExitInFront`, `ConfirmExitInFrontNow`, `StopAndExit`, `OnExitReady`, `ExitCardGap`), `App/MainWindow.UpdateRestart.cs` (`OnClosingScreenFilled`), `App/MainWindow.xaml` (`ExitSeparator`, `ExitButton`, `ExitPopup`), `App/MainWindow.xaml.cs` (`ExitNow`, `CatalogTooltip`), `App/Resources/Controls.xaml` (`Ds.IconButton.Open`) |
+| Exit card (status, ends on exit, decision; the drop-in from the right; focus on *Cancel*) and its texts | `App/Views/ExitCard.xaml(.cs)`, texts `App/ViewModels/ExitText.cs` |
+| Process names for the card — the outer job's members counted by name, the engine and console hosts left out; one PID to its image name | `App/Services/JobProcessCensus.cs`, `Core/ProcessControl/ProcessImage.cs` |
 | *Show notifications* on the four balloons (first close, run result, second instance, ignored Build hotkey) | `App/Shell/UiStateStore.cs` (`FirstCloseBalloonGate`), `App/Services/TrayBuildIndicatorController.cs`, `App/Shell/SecondInstanceGate.cs`, `App/MainWindow.xaml.cs` (`OnGlobalHotkey`) |
 | The ignored Build hotkey's balloon: shown only with the window hidden and *Show notifications* on; the reason is the run gate's own answer | `App/MainWindow.xaml.cs` (`OnGlobalHotkey`, `TrayNotifierForTest`), `App/ViewModels/RunViewModel.cs` (`WhyRunCannotStart`), `App/ViewModels/RunGateText.cs` (the reason sentences), `App/Shell/AppTrayIcon.cs` (`ShowBuildIgnored`, `BuildIgnoredBody`) |
 | Tray build indicator — when it shows, exit choreography, one balloon, then the exit notice (`ExitCompleted`, carrying the run the exit began for) | `App/Services/TrayBuildIndicatorController.cs` |
@@ -7462,7 +7534,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Update surface of the view model — the current offer, the Restart lock and its order, the Restart request and its gate | `App/ViewModels/RunViewModel.Update.cs`, texts `App/ViewModels/UpdateText.cs`; the lock's task bucket reads the workspace work from `RunViewModel.Workspace.cs` (`NonSyncWorkspaceBusy`, the list `WorkspaceBusy` also reads); re-evaluated from `RunViewModel.Workspace.cs` (`OnWorkspaceBusyChanged`) and `RunViewModel.Stream.cs` (`runStarted`) |
 | Title bar update pill — the first element of the right cluster, its shared hairline style, visibility, version and name from the offer, the entrance; the card's popup and its placement below the pill's left edge (custom, independent of the Windows handedness setting), its close paths (dialogs, the Esc popover layer, the Restart request) | `App/MainWindow.UpdatePill.cs` (`UpdateCardGap`), `App/Controls/PopoverPlacement.cs`, `App/MainWindow.xaml` (`UpdatePillSlot`, `UpdatePopup`, `TitleBarSeparator`), `App/MainWindow.xaml.cs` (`AnyPopoverOpen`, `CloseAllPopovers`), `App/Resources/Controls.xaml` (`Ds.UpdatePill`) |
 | The resource strip in the window — the sampler built over the outer job and the engine PID, the one rule that runs it (window loaded, surface not hidden, not minimized; re-asked from `Loaded`, the hidden-surface signal and `WindowState`), the stop at close, and the caption gestures the strip forwards (drag, double-click maximize and restore, the system menu and its DIP anchor) with their test seams | `App/MainWindow.ResourceStrip.cs` (`SetupResourceStrip`, `ShouldSampleResources`, `RefreshResourceSampler`, `StopResourceStrip`, `SystemMenuAnchor`), `App/MainWindow.HiddenSurface.cs` (`SetSurfaceHidden`), `App/MainWindow.xaml.cs` (`OnClosed`), `App/Shell/Win32.cs` (the native caption press: `WM_NCLBUTTONDOWN`, `HTCAPTION`, `ReleaseCapture`, `SendMessage`, `GetMessagePos`); the title bar `Grid` in `App/MainWindow.xaml` |
-| Restart request → the update restart screen as the topmost layer; the safe full exit when its bar fills; keyboard and global hotkeys suspended while it shows | `App/MainWindow.UpdateRestart.cs` (`OnRestartToUpdateRequested`, `OnRestartScreenFilled`, `InputSuspended`, `OnPreviewKeyDown`), `App/MainWindow.xaml` (`UpdateRestartOverlay`), `App/MainWindow.xaml.cs` (`OnGlobalHotkey`, `RequestFullExit`) |
+| Restart request → the closing screen's restart mode as the topmost layer; the full exit when its bar fills; keyboard and global hotkeys suspended while the closing screen shows | `App/MainWindow.UpdateRestart.cs` (`OnRestartToUpdateRequested`, `OnClosingScreenFilled`, `InputSuspended`, `OnPreviewKeyDown`), `App/MainWindow.xaml` (`ClosingOverlay`), `App/MainWindow.xaml.cs` (`OnGlobalHotkey`) |
 | Popover trigger that reports expanded / collapsed to UI Automation | `App/Controls/PopupToggleButton.cs` |
 
 **Engine and IPC**
@@ -7690,9 +7762,9 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Discovery blocks: the list's (a list state, the counter and its live region) and the graph's (body layers and header count behind one gate); their shared icon look and their centred column in the interface font | `App/ShellRoot.xaml(.cs)` (`PART_Discovering`, `SetDiscovering`, `SetDiscoveryCount`), `App/Graph/GraphView.xaml(.cs)` (`DiscoveryState`, `SetDiscovering`, `ApplyBodyState`), `App/Resources/Controls.xaml` (`Ds.DiscoveryIcon`, `Ds.DiscoveryBlock`), wired from the view model in `App/MainWindow.xaml.cs` (`ApplyDiscovery`) |
 | Import shortcut's wait before the file picker, and the picker centred over the window | `App/Views/SettingsDialog.xaml.cs` (`OpenForImportAsync`, `ImportPickerDelayMs`), `App/Shell/CenteredDialog.cs`, `App/Shell/DialogPlacement.cs`, `App/Shell/Win32.cs` |
 | Step hold between an operation and the next (dispatcher timer, zero under reduced motion and while the window is hidden) | `App/Services/StepHold.cs`, `App/ViewModels/RunViewModel.cs` (`OperationHold`) |
-| Branch popover and its base (shared with the update card) | `App/Views/BranchPopover.xaml(.cs)`, `PopoverBase.cs` |
+| Branch popover and its base (shared with the update and exit cards) | `App/Views/BranchPopover.xaml(.cs)`, `PopoverBase.cs` |
 | Update card (identity, highlights, decision; the drop-in; *Later*) | `App/Views/UpdateCard.xaml(.cs)` |
-| Update restart screen — the 232 px column, the frame timer and clock, the fade-in, the once-per-step announcement, `BarFilled` when the bar is full; its one step, duration and percentage | `App/Views/UpdateRestartScreen.xaml(.cs)`; timeline `App/ViewModels/UpdateRestartTimeline.cs`, texts `App/ViewModels/UpdateText.cs` |
+| Closing screen — the 232 px column, the two modes (restart: version change; exit: work and progress), the frame timer and clock, the fade-in, the once-per-step announcement, the exit mode's hold until the exit is ready (`MarkStopped`), `BarFilled` when the bar is full | `App/Views/ClosingScreen.xaml(.cs)`; restart timeline `App/ViewModels/UpdateRestartTimeline.cs` and texts `App/ViewModels/UpdateText.cs`; exit timeline `App/ViewModels/ExitClosingTimeline.cs` and texts `App/ViewModels/ExitText.cs` |
 | Release-note category blocks — one drawing for What's new and the update card, measures per surface | `App/Views/ReleaseNoteBlocks.cs` |
 | Branch popover row (virtualized item container) | `App/Views/BranchRow.cs` |
 | Settings dialog (section rail + pages), layer/external-project drag-reorder | `App/Views/SettingsDialog.xaml(.cs)`, `App/Controls/DragReorderBehavior.cs` |

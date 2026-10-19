@@ -575,13 +575,18 @@ result, not the one-time *still running in the tray* note, not the note a Build 
 keeps it from starting, not the warning a second copy of the app gives when it cannot bring the window forward;
 the corner mark is not a notification and still appears.
 
-To quit, choose *Exit* from the tray icon's menu — or, with *Close to tray* off, just close the window.
-Quitting waits for the work in flight: with nothing running the app closes at once; otherwise a running build is
-stopped the way *Stop* stops it — its in-flight projects finish — and a Sync, Clean, Optimize, branch switch or
-pull is left to finish. Meanwhile the window stays on screen and comes forward (out of the tray, or restored if
-you closed it while minimized), the ribbon reads *▸ Stopping — …* and closing again changes nothing. Only an
-engine that stops answering, or dies, does not hold the exit up: the app then closes and takes the engine with
-it, even if a long branch switch, pull or build step was only quiet.
+To quit, click the power button at the right end of the title bar (or press `Ctrl+Q`), choose *Exit* from the tray
+icon's menu, or — with *Close to tray* off — just close the window. With nothing running the app closes at once.
+Otherwise it asks first: a card under the power button says what is running, which processes will end and what
+stays. *Cancel*, Esc or a click elsewhere leaves everything running. *Stop and exit* stops the work and closes the
+app: a running build is stopped at once — the projects still compiling are terminated and the next Build compiles
+them again, while finished projects keep their results — and a Sync, Deep Clean or Optimize is cut off. A branch
+switch or a pull is let finish first (the button reads *Wait and exit*), because cutting git off mid-write could leave
+the working tree half-switched. A closing screen covers the window until the work has stopped, then the app closes and
+takes the engine and everything under it along. From the tray, or when you close a minimized window, the window comes
+forward to show the card; if the work ends while the card is open, it says so and *Exit* quits right away. Only an
+engine that stops answering, or dies, does not hold up a branch switch or pull the exit waits for: the app then
+closes anyway.
 
 If the engine ever stops answering — no event at all while a run start, a stop, a Sync, a Clean, an Optimize, a
 branch switch or a pull is still waiting for its answer — the ribbon says so in amber and offers *Restart
@@ -603,6 +608,7 @@ arrives, says so in red — *Engine stopped unexpectedly (idle shutdown failed)*
 | `Ctrl+F` | window | Focus the project filter |
 | `F1` | window | About — version, shortcuts and diagnostics |
 | `Esc` | window | Close the topmost open layer: dialog → popover/menu → selection; with none open, stop the running build |
+| `Ctrl+Q` | window | Exit — quit; with work running, open the confirmation card first (press again to close it) |
 
 The two global hotkeys work whether the window is in front, behind Visual Studio or in the tray. `Shift+Space`
 hides the window only when it is in front; from the tray, minimized or behind another window it brings it
@@ -627,7 +633,8 @@ layer first, so a lower one (an unsaved Settings draft, say) survives underneath
 
 ### About
 
-The `i` button sits at the right end of the title bar's command group, and `F1` toggles the same screen. Its
+The `i` button sits at the end of the title bar's command group, just before the power button, and `F1` toggles the
+same screen. Its
 heading holds both marks in one composition — the product mark, the product name with a small version chip and
 the tagline on the left; a *licensed to* block with the company logo on the right. Three tabs follow, and
 ⓘ/`F1` always land on the first one:
@@ -684,11 +691,11 @@ for a build, `Esc stops it now` once a stop is already draining (the next Esc is
 hard stop has gone; it comes back on its own when the work ends. *Later*, a second click on the pill, a click elsewhere,
 Esc or opening a dialog closes the card; the pill stays.
 
-*Restart to update* closes the card and covers the whole window, title bar included, with the restart screen:
+*Restart to update* closes the card and covers the whole window, title bar included, with the closing screen:
 the product mark, `Updating Build Orchestrator`, the version change, a progress bar and
-`Closing Build Orchestrator…`. When the bar fills, the app exits the way tray → *Exit* does; the installer then
-replaces the files without a window of its own, and the new version opens — with the dot on What's new's star.
-While the restart screen shows, keys and the global hotkeys do nothing.
+`Closing Build Orchestrator…`. When the bar fills, the app quits — without asking, since you just confirmed the
+restart; the installer then replaces the files without a window of its own, and the new version opens — with the dot
+on What's new's star. While the closing screen shows, keys and the global hotkeys do nothing.
 
 Not restarting is fine too: after *Later*, or with the pill simply left alone, the downloaded version installs
 silently when the app exits, and the next start is the new version. A copy that is not installed — run from
