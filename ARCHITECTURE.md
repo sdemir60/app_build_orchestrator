@@ -2649,7 +2649,16 @@ alone (a fetch, a new branch or tag) adds no entry and triggers nothing, and nei
 commit, when there is no reflog yet. `--no-show-signature` keeps a machine that has `log.showSignature` on from mixing
 signature checks into the entries. A return to the window is the second trigger: when more
 than five seconds have passed since the last Sync started or ended, it runs a silent Sync even when HEAD has not
-moved, because files may have been edited elsewhere.
+moved, because files may have been edited elsewhere. The one return that runs nothing is a click that lands on a
+command doing that refresh itself: an enabled *Build*, which plans from disk with the same scan and decisions as a
+Sync, or the Debug/Release item that is not selected, which starts its own Sync (§13.2). Windows activates a window
+in the background before it delivers the click that activated it, so a Sync requested at the activation would close
+that very control under the click and the click would do nothing. The window therefore notes a left press in its
+client area that activates it (`WM_MOUSEACTIVATE`), asks the action bar what lies under that press, and leaves the
+return alone when the answer is one of the two; the click then runs as it would on an active window. A return by
+keyboard, the taskbar or the tray, a click anywhere else and a click on the configuration already selected run the
+silent Sync as above. A press dragged off the button before its release builds nothing and refreshes nothing; the
+next return does.
 
 Each trigger is weighed against the HEAD of the last Sync (§5.3, `syncCompleted`), read from the git directory —
 or, in a reftable repository, from git (§10.1):
@@ -4067,12 +4076,12 @@ the event stream clear, the list and the graph start over, the new section's fir
 `Configuration → Release`, and nothing goes to the network. The segment is therefore enabled exactly when a Sync
 could start (`CanSwitchConfiguration`): a workspace is open, no run is in flight or being planned, no workspace
 operation (Sync, Clean, Optimize, a checkout, a pull) is in flight and the engine is available. It follows the
-Sync command's own gate, so it locks the moment a Sync is requested, not when the engine answers — which is what
-a return to the window needs: clicking the segment of a window in the background activates the window first, the
-activation can request a silent Sync (§10.3), and only then is the click processed; the segment is locked by
-that time, so that click is swallowed and the next one switches. A switch accepted while a Sync was in flight
-would let that Sync's answer, computed for the old configuration, colour the rows of the new one. A git
-operation left half-way does not lock it, exactly as it does not lock the Sync button.
+Sync command's own gate, so it locks the moment a Sync is requested, not when the engine answers: a switch accepted
+while a Sync was in flight would let that Sync's answer, computed for the old configuration, colour the rows of the
+new one. A click on the item not selected that brings the window back from the background is the one case that lock
+would get wrong — Windows activates the window before it delivers the click, and a Sync requested at the activation
+would lock the segment under it — so the return to the window starts no Sync for that click (§10.3) and the click
+switches. A git operation left half-way does not lock it, exactly as it does not lock the Sync button.
 
 **The maintenance box.** Three icon buttons in one chip-weight box — *Clean* (eraser), *Optimize* (gauge) and
 *Resolve cycles* (unlink) — 24px tall, `surface-raised`, one hairline border, `radius-xs`, clipped, with a
@@ -6554,7 +6563,9 @@ pump never ticks (`NeverTickingBatcher`) and the one a test drains (`DrainableBa
 window key binding (`KeyBindingOf`, `PressKeyBinding`), the console-line counter (`Occurrences`), the engine host the
 fixture built (`EngineOf`), the title bar's inner grid and the dock of its two clusters (`TitleBarGrid`,
 `TitleBarDock`), the shell realized at a forced display scale, with or without an update offer (the `dpi` of
-`NewRealized` and `NewRealizedWithOffer`, §17.4) and
+`NewRealized` and `NewRealizedWithOffer`, §17.4), the shell's action bar loaded in a real window off screen
+(`WithLoadedActionBar` — the bar builds its chips and binds Build's command on `Loaded`, which a headless tree never
+raises) and
 `NeutralizeExitSeams`, which makes the shell's two exit seams no-ops so that a test
 asking for a full exit closes nothing —, `SettingsDialogHost` — with `GeneralSwitch` and `CatalogRow`, the lookups of
 a General switch and of its catalog row —, `AboutDialogHost`, which takes the clock that puts an engine to sleep under
@@ -6566,7 +6577,8 @@ or wheel is raised — a press or release of any button, a press with the click 
 wheel (its only place), both halves of the gesture or the tunnel alone, the horizontal wheel
 included; `KeyInput`, its keyboard twin and the one place a key event is built, which takes the presentation source
 from outside for a window that is not
-shown; `CommandPress`, whose `Click` is the one place a button's click event is raised; and `UserScrollGesture`, which
+shown; `CommandPress`, whose `Click` is the one place a button's click event is raised and whose `Select` presses a
+radio item the way a click does; and `UserScrollGesture`, which
 drags the vertical or the horizontal bar of a scroll host), dispatcher pumping and animation hosting
 (`DispatcherPump`, `AnimationHost`, `MotionScope`; `ScrollAnimation`, which reads the scroll animation applied to a
 panel; and `ActiveClockInspector`, which lists the timing tree's root clocks with their owners, reads the clock
@@ -7587,7 +7599,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | The HEAD watcher on `logs/HEAD` (in a reftable repository on `reftable/tables.list`, with HEAD's reflog taken from git) and its 1.5 s settle window | `Core/Git/HeadWatcher.cs`, `Core/Git/SettleDebouncer.cs` |
 | Revision text shortening (only a full 40-hex sha is cut to 7) | `Core/Git/RevisionText.cs` |
 | The `N behind` chip's command handler (main repository fast-forward) | `Supervisor/SupervisorHost.cs` |
-| Automatic Sync decision: triggers (HEAD watcher, window activation, end of run), the one pending trigger, the double-Sync check, the interrupt request | `App/Services/AutoSyncCoordinator.cs` |
+| Automatic Sync decision: triggers (HEAD watcher, window activation, end of run), the one pending trigger, the double-Sync check, the interrupt request, the return that a self-refreshing click makes unnecessary | `App/Services/AutoSyncCoordinator.cs` |
+| The click that brings the window back: the activating left press (`WM_MOUSEACTIVATE`), what lies under it (an enabled Build, the configuration not selected) | `App/MainWindow.xaml.cs` (`OnActivated`), `App/Views/ActionBar.xaml.cs` (`StartsOwnRefreshAt`) |
 | The view model's side of it: the port, the interrupted run's summary | `App/ViewModels/RunViewModel.AutoSync.cs` |
 | Git-operation gate: the chip's dot and tooltip, the checkout and pull locks, the 2 s poll, the stuck-lock line | `App/ViewModels/RunViewModel.GitOperation.cs`, `App/Services/IPollTimer.cs` |
 | Sync kinds and their rules (clearing, fetch, transcript, visibility, restarting the plan surface, dropping the decisions) | `App/ViewModels/SyncMode.cs` |
