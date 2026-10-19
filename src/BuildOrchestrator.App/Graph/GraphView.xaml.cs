@@ -706,9 +706,9 @@ public partial class GraphView : UserControl
 
     /// <summary>Topolojiyi (düğüm + kenar) kurar: yerleşim, görseller ve ilk açılış dalgası. Yalnız topoloji
     /// DEĞİŞTİĞİNDE çağrılır — statü güncellemeleri için <see cref="UpdateStatuses"/> kullanılır.</summary>
-    /// <param name="showEmptyState">Boş bir graf Sync-öncesi etiketini ("Graph appears after Sync") göstersin mi.
-    /// [task 3] <c>false</c> yalnız ekranı baştan başlatan Sync'in boşaltmasıdır: orada Sync zaten sürüyor ve
-    /// panel yalnız boş/sakin durur.</param>
+    /// <param name="showEmptyState">Boş bir graf boş görünümünü (ağ ikonu + "No graph") göstersin mi.
+    /// [task 3] <c>false</c> yalnız ekranı baştan başlatan Sync'in boşaltmasıdır: orada Sync zaten sürüyor ve gövdeyi
+    /// keşif bloğu tutar.</param>
     public void SetGraph(IReadOnlyList<GraphNode> nodes, IReadOnlyList<GraphEdge> edges, bool showEmptyState = true)
     {
         ArgumentNullException.ThrowIfNull(nodes);
@@ -1976,7 +1976,7 @@ public partial class GraphView : UserControl
     }
 
     /// <summary>[design v1.24.0 §2.3 · plan K7] Sync proje kümesini keşfediyor mu: açıkken gövde keşif bloğudur —
-    /// kesikli Sync-öncesi kutu, düğüm yüzeyi ve başlık sayacı gizlenir. Kabuk bunu <c>RunViewModel.IsDiscovering</c>'ten
+    /// boş görünüm, düğüm yüzeyi ve başlık sayacı gizlenir. Kabuk bunu <c>RunViewModel.IsDiscovering</c>'ten
     /// sürer (<c>ShellRoot.SetDiscovering</c>). VM keşfi topolojinin grafı yeniden kurmasından ÖNCE kapatır, yani reveal
     /// her zaman görünür bir yüzeye oynar.</summary>
     public void SetDiscovering(bool discovering)
@@ -1991,14 +1991,18 @@ public partial class GraphView : UserControl
         ApplyBodyState();
     }
 
-    /// <summary>Başlık sayacı ve gövde katmanlarının (keşif bloğu · kesikli kutu · düğüm yüzeyi) TEK kapısı — üç girdi:
-    /// workspace var mı, keşif sürüyor mu, boş graf Sync-öncesi kutusunu istiyor mu. Keşif kutuyu ve yüzeyi örter; kutu
-    /// yüzeyi örter. Başlangıç değerleri XAML'deki ilk görünümle aynıdır (sayaç görünür, kutu kurucuda istenir).</summary>
+    /// <summary>Başlık sayacı ve gövde katmanlarının (durum bloğu · düğüm yüzeyi) TEK kapısı — üç girdi: workspace var mı,
+    /// keşif sürüyor mu, graf boş görünümünü istiyor mu. Blok açıkken yüzeyi örter ve iki hâlinden birini gösterir: keşif
+    /// boş görünümün önüne geçer. Metin yalnız burada seçilir. Başlangıç değerleri XAML'deki ilk görünümle aynıdır (sayaç
+    /// görünür, boş görünüm kurucuda istenir).
+    /// <para>[kullanıcı kararı 2026-10-19] Boş graf eskiden ayrı, kesikli bir kutuydu ("Graph appears after Sync"); artık
+    /// keşif bloğuyla aynı ikonu taşır, yalnız metni farklıdır — panelin tek simgesi vardır.</para></summary>
     private void ApplyBodyState()
     {
-        DiscoveryState.Visibility = _discovering ? Visibility.Visible : Visibility.Collapsed;
-        EmptyState.Visibility = !_discovering && _emptyState ? Visibility.Visible : Visibility.Collapsed;
-        Viewport.Visibility = !_discovering && !_emptyState ? Visibility.Visible : Visibility.Collapsed;
+        bool block = _discovering || _emptyState;
+        StateBlock.Visibility = block ? Visibility.Visible : Visibility.Collapsed;
+        StateLabel.Text = _discovering ? ViewModels.InteractionText.GraphDiscovering : ViewModels.InteractionText.GraphEmpty;
+        Viewport.Visibility = block ? Visibility.Collapsed : Visibility.Visible;
         CountsText.Visibility = _hasWorkspace && !_discovering ? Visibility.Visible : Visibility.Collapsed;
     }
 
@@ -2028,10 +2032,17 @@ public partial class GraphView : UserControl
     internal bool LastCameraAnimated { get; private set; }
     internal string HeaderCountsText => CountsText.Text;
     internal FontFamily HeaderCountsFontFamily => CountsText.FontFamily;
-    internal bool IsEmptyStateVisible => EmptyState.Visibility == Visibility.Visible;
-    internal bool IsDiscoveryStateVisible => DiscoveryState.Visibility == Visibility.Visible;
+    /// <summary>Durum bloğu boş görünümü mü (ağ ikonu + "No graph") gösteriyor. EKRANDA çizilenden okunur — blok görünür ve
+    /// metni boş görünümünkü — kararın girdisinden (<c>_discovering</c>) değil: aynı girdiyi okusaydı kararı kopyalar ve
+    /// <c>ApplyBodyState</c> yanlış metin yazsa da doğru derdi.</summary>
+    internal bool IsEmptyStateVisible =>
+        StateBlock.Visibility == Visibility.Visible && StateLabel.Text == ViewModels.InteractionText.GraphEmpty;
+    /// <summary>Durum bloğu keşif hâlini mi gösteriyor — aynı ölçü.</summary>
+    internal bool IsDiscoveryStateVisible =>
+        StateBlock.Visibility == Visibility.Visible && StateLabel.Text == ViewModels.InteractionText.GraphDiscovering;
     internal bool IsViewportVisible => Viewport.Visibility == Visibility.Visible;
-    internal string EmptyStateText => EmptyStateLabel.Text;
+    /// <summary>Durum bloğunun o anki metni: keşifte keşif metni, boşken "No graph".</summary>
+    internal string StateText => StateLabel.Text;
     internal Size ViewportSize => new(Ground.ActualWidth, Ground.ActualHeight);
     /// <summary>Düğümün İÇERİK koordinatlarındaki merkezi.</summary>
     internal Point NodeCenter(string name) => _slots[name].Center;

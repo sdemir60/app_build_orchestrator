@@ -527,13 +527,18 @@ public class GraphRenderTests
         Assert.Equal(28.0, header.Height); // override kalktı — üretim değeri geri geldi
     }
 
+    /// <summary>[kullanıcı kararı 2026-10-19] Düğümsüz graf boş görünümünü gösterir (ağ ikonu + <c>No graph</c>), düğümler
+    /// gelince kalkar. Görünümün çizimi ve iki paneldeki senaryoları <c>EmptyPanelViewTests</c>'tedir.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eski ad <c>Before_sync_the_ground_shows_the_dashed_empty_state_box</c>: kesikli kutu ve
+    /// <c>Graph appears after Sync</c>. Metin Sync'in hiç proje bulamadığı durumda yanlıştı; kullanıcı iki panelde tek ikon
+    /// ve genel bir ifade seçti.</para></summary>
     [StaFact]
-    public void Before_sync_the_ground_shows_the_dashed_empty_state_box()
+    public void An_empty_graph_shows_its_empty_view_until_nodes_arrive()
     {
         var view = NewView(false);
 
         Assert.True(view.IsEmptyStateVisible);
-        Assert.Equal("Graph appears after Sync", view.EmptyStateText);
+        Assert.Equal(BuildOrchestrator.App.ViewModels.InteractionText.GraphEmpty, view.StateText);
 
         view.SetGraph(Nodes(), Edges());
         Assert.False(view.IsEmptyStateVisible);

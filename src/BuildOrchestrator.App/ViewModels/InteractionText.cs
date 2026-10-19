@@ -52,22 +52,28 @@ public static class InteractionText
     public const string ImportSettingsNote =
         "Import fills the form from a settings file — nothing is applied until you save.";
 
-    // ---- Proje listesi: repo var ama proje yok (0-proje) ----
-    /// <summary>Repo Sync'lendi ama altında hiç proje bulunamadı.</summary>
-    public const string NoProjectsFound = "No projects found under this folder.";
+    // ---- [kullanıcı kararı 2026-10-19] Boş paneller: her panelde tek ikon, genel ifade ----
+    /// <summary>Proje listesinde satır yokken liste ikonunun altındaki metin — hangi işlem boşaltmış olursa olsun: Clean ya
+    /// da Optimize sürerken, iş ya da Sync düşünce, açılışta motor hazır olmadan, Sync hiç proje bulamayınca. Nedeni iddia
+    /// etmez, bu yüzden her durumda doğrudur.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eski adı <c>NoProjectsFound</c>, metni <c>No projects found under this folder.</c>'tı ve
+    /// yalnız Sync'in bittiği fazda görünürdü; liste öbür boş durumlarda hiçbir şey göstermiyordu.</para></summary>
+    public const string ListEmpty = "No projects";
 
     // ---- [A13/T2 · 2.4] Proje listesi: projeler VAR ama filtre hiçbirini eşleştirmiyor ----
     /// <summary>Aktif filtre/sorgu altında görünür satır kalmadı — design-v1 §2.4 (BuildApp.jsx:511).
-    /// <see cref="NoProjectsFound"/>'dan AYRI: orada veri YOKTUR, burada veri var ama SÜZÜLMÜŞTÜR.</summary>
+    /// <see cref="ListEmpty"/>'dan AYRI: orada veri YOKTUR, burada veri var ama SÜZÜLMÜŞTÜR.</summary>
     public const string NoProjectsMatchFilter = "No projects match this filter.";
 
-    // ---- Graf / event stream Sync-öncesi boş-durum ----
-    /// <summary>Graf paneli Sync öncesi boş-durum etiketi (GraphView).</summary>
-    public const string GraphEmpty = "Graph appears after Sync";
+    /// <summary>Grafta düğüm yokken ağ ikonunun altındaki metin (GraphView) — <see cref="ListEmpty"/>'nin eşi, aynı kural:
+    /// ilk açılışta da, bakım işleri sürerken de, Sync hiç proje bulamayınca da.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eskiden kesikli bir kutuda <c>Graph appears after Sync</c> yazardı; Sync'in hiç proje
+    /// bulamadığı durumda yanlıştı — Sync zaten koşmuştu.</para></summary>
+    public const string GraphEmpty = "No graph";
 
     // ---- [design v1.24.0 §2.3 · §2.4 · §9] Sync keşfi sürerken iki panel boş kalmaz ----
-    /// <summary>Graf paneli keşif bloğunun etiketi. First run'ın <see cref="GraphEmpty"/>'inden AYRIDIR: orada
-    /// workspace yoktur, burada Sync proje kümesini keşfediyor.</summary>
+    /// <summary>Graf paneli keşif bloğunun etiketi. Boş grafın <see cref="GraphEmpty"/>'inden AYRIDIR: o "yok" der, bu
+    /// "arıyorum" — Sync proje kümesini keşfediyor.</summary>
     public const string GraphDiscovering = "Graph appears once projects are discovered";
 
     /// <summary>Proje listesi keşif bloğunun başlığı.</summary>
@@ -103,12 +109,14 @@ public static class InteractionText
 /// Görünürlük/metin seçimi kontrolde kopyalanmaz (tek eşleme yeri).</summary>
 public enum ListInviteState
 {
-    /// <summary>Liste dolu (satır var) ya da keşfin dışında kalan bir bekleyiş (Clean/Optimize'ın kendi penceresi,
-    /// Sync'siz biten bir istek) — hiçbir davet gösterilmez.</summary>
+    /// <summary>Listede görünür satır var — hiçbir davet gösterilmez. [2026-10-19] Boş bir liste bu durumu artık hiçbir
+    /// yolda almaz; eskiden Clean/Optimize'ın kendi penceresi ve Sync'siz biten bir bekleyiş buraya düşer, liste bomboş
+    /// kalırdı.</summary>
     None,
     /// <summary>[design v1.8.0 §2.4] Repo seçilmemiş → "Configure the workspace" kurulum daveti.</summary>
     PickRepository,
-    /// <summary>Repo Sync'lendi (Idle) ama 0 proje → "No projects found under this folder."</summary>
+    /// <summary>[kullanıcı kararı 2026-10-19] Listede hiç satır yok ve keşif sürmüyor → boş görünüm (liste ikonu +
+    /// <see cref="InteractionText.ListEmpty"/>) — faz ne olursa olsun.</summary>
     NoProjects,
     /// <summary>[A13/T2 · 2.4] Projeler VAR ama aktif filtre/sorgu hiçbirini eşleştirmiyor →
     /// "No projects match this filter." <see cref="NoProjects"/>'ten AYRI durumdur.</summary>
@@ -122,25 +130,28 @@ public enum ListInviteState
 public static class ListInvite
 {
     /// <summary>
-    /// Repo yoksa PickRepository; [design v1.24.0] keşif sürüyorsa Discovering; repo Sync'lendiyse (Idle) ve hiç
-    /// proje yoksa NoProjects; projeler VARKEN filtre hiçbirini geçirmiyorsa NoFilterMatch; aksi None (dolu liste, ya
-    /// da keşfin dışında kalan Boot/Syncing bekleyişi — o zaman davet gösterme, boş liste bırak).
+    /// Repo yoksa PickRepository; [design v1.24.0] keşif sürüyorsa Discovering; hiç satır yoksa NoProjects; satırlar
+    /// VARKEN filtre hiçbirini geçirmiyorsa NoFilterMatch; aksi None (görünür satır var).
+    /// <para><b>[kullanıcı kararı 2026-10-19] Faz karara girmez.</b> Eskiden "proje yok" yalnız <c>Idle</c>'da
+    /// söylenirdi: metni "klasörde proje yok" diyordu ve Boot'ta yalan olurdu. Bedeli boş bir listeydi — Clean ve
+    /// Optimize'ın kendi penceresinde, bu işlerin hata yollarında ve bir koşudan sonra projeleri sıfırlayan sessiz bir
+    /// Sync'te liste hiçbir şey göstermiyordu. Boş görünümün metni nedeni iddia etmediği için her fazda doğrudur.</para>
     /// </summary>
     /// <param name="discovering">[design v1.24.0 · plan K6] Keşif bloğu açık mı (<see cref="RunViewModel.IsDiscovering"/>).
     /// Kurulum davetinden SONRA, "proje yok" ve "filtre eşleşmedi" kararlarından ÖNCE gelir: proje kümesi henüz
-    /// bilinmiyorken ne klasör boş denebilir ne de filtre suçlanabilir (Sync düğmesi ekranı baştan başlattığında VM'de
+    /// bilinmiyorken ne liste boş denebilir ne de filtre suçlanabilir (Sync düğmesi ekranı baştan başlattığında VM'de
     /// satırlar ve filtre durur).</param>
     /// <param name="projectCount">TOPLAM satır sayısı (filtresiz) — "veri var mı" sorusu.</param>
     /// <param name="visibleCount">[A13/T2 · 2.4] Aktif filtre/sorgu altında GÖRÜNEN satır sayısı — "veri
     /// süzüldü mü" sorusu. Sıra önemlidir: "hiç proje yok" (veri yok) kararı, "filtre eşleşmedi" (veri var ama
     /// gizli) kararından ÖNCE gelir — 0 projeli bir workspace'te açık bir filtre varsa kullanıcıya filtreyi
     /// suçlamak YANLIŞ olurdu.</param>
-    public static ListInviteState Resolve(bool hasWorkspace, bool discovering, AppPhase phase, int projectCount, int visibleCount)
+    public static ListInviteState Resolve(bool hasWorkspace, bool discovering, int projectCount, int visibleCount)
     {
         if (!hasWorkspace) return ListInviteState.PickRepository;
         if (discovering) return ListInviteState.Discovering;
-        if (projectCount == 0 && phase == AppPhase.Idle) return ListInviteState.NoProjects;
-        if (projectCount > 0 && visibleCount == 0) return ListInviteState.NoFilterMatch;
+        if (projectCount == 0) return ListInviteState.NoProjects;
+        if (visibleCount == 0) return ListInviteState.NoFilterMatch;
         return ListInviteState.None;
     }
 }

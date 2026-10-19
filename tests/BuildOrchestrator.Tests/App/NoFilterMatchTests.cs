@@ -94,7 +94,7 @@ public class NoFilterMatchTests
         window.Shell.UpdateLayout();
 
         var texts = VisibleTexts(window);
-        Assert.Contains(InteractionText.NoProjectsFound, texts);
+        Assert.Contains(InteractionText.ListEmpty, texts);
         Assert.DoesNotContain(Copy, texts);
         GC.KeepAlive(window);
     }

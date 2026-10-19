@@ -145,7 +145,7 @@ public class SettingsWithoutRootTests
     }
 
     /// <summary>Kabukta kapanış ilk açılış ekranını geri getirir: liste boşalır ve kurulum daveti görünür (kart: kök
-    /// <c>Not set</c>, katman <c>Optional</c>), graf Sync-öncesi kutusunu gösterir, şerit <c>Not configured</c> der
+    /// <c>Not set</c>, katman <c>Optional</c>), graf boş görünümünü (<c>No graph</c>) gösterir, şerit <c>Not configured</c> der
     /// ve boş kök kalıcı duruma yazılır — bir sonraki açılış da davetle başlar.</summary>
     [StaFact]
     public async Task Saving_an_empty_root_brings_back_the_first_run_screen()

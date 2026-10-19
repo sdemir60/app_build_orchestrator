@@ -1191,7 +1191,8 @@
   <!-- [design v1.24.0 §2.3 · §2.4] Keşif bloklarının ikon kimliği (BuildApp.jsx:856-866): 28×28 (viewBox 24'ten
        ölçeklenir), opaklık 0.7, kontur text-faint, yuvarlak uç ve birleşim; hareket YOK. Graf (Icon.Network) ve liste
        (Icon.ListLines) AYNI kimliği paylaşır — geometri ve kalınlık (Icon.X / Icon.X.StrokeThickness) ile yerleşim
-       (Margin) ÇAĞIRANDA kalır. -->
+       (Margin) ÇAĞIRANDA kalır. [kullanıcı kararı 2026-10-19] İki panelin boş görünümü de bu kimliği taşır: her panelin
+       tek simgesi vardır, Sync tararken de boşken de aynı ikon. -->
   <Style x:Key="Ds.DiscoveryIcon" TargetType="Viewbox">
     <Setter Property="Width" Value="28" />
     <Setter Property="Height" Value="28" />
@@ -1212,6 +1213,17 @@
     <Setter Property="HorizontalAlignment" Value="Center" />
     <Setter Property="VerticalAlignment" Value="Center" />
     <Setter Property="TextElement.FontFamily" Value="{x:Static controls:AppFonts.Ui}" />
+  </Style>
+  <!-- [design v1.24.0 §2.3 · kullanıcı kararı 2026-10-19] İkonun altındaki tek satırlık sakin metin: ikonun 10 altında,
+       12px text-faint, satır kırmaz. Grafın gövde etiketi (keşifte "Graph appears once projects are discovered", boşken
+       "No graph") ve listenin boş görünümü ("No projects") AYNI kimliği paylaşır. Listenin keşif başlığı ayrıdır
+       (13px/500 text-secondary + sayaç). -->
+  <Style x:Key="Ds.DiscoveryCaption" TargetType="TextBlock">
+    <Setter Property="Margin" Value="0,10,0,0" />
+    <Setter Property="HorizontalAlignment" Value="Center" />
+    <Setter Property="TextWrapping" Value="NoWrap" />
+    <Setter Property="FontSize" Value="{DynamicResource FontSize.Xs}" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.TextFaint}" />
   </Style>
 
   <!-- [design v1.19.0 §2.9 · prototip PaneHead] Her sayfanın başı: başlık (Ds.Heading.Md) + 5px altında TEK satırlık

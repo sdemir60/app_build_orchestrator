@@ -250,8 +250,8 @@ public partial class MainWindow : Window
         RebuildGraph();
 
         // [design v1.8.0 §2.4] Proje listesi boş-durum davetleri: repo yok → KURULUM DAVETİ (Open settings /
-        // Import settings…); repo Sync'lendi ama 0 proje → "No projects found under this folder." Karar SAF
-        // (ListInvite.Resolve); burada yalnız tetik + uygulama.
+        // Import settings…); [kullanıcı kararı 2026-10-19] satır yok → boş görünüm ("No projects"), faz ne olursa olsun.
+        // Karar SAF (ListInvite.Resolve); burada yalnız tetik + uygulama.
         // [DEĞİŞEN KURAL] Davetin düğmesi eskiden doğrudan bir klasör seçici açıyordu; v1.8.0 onu Settings'e
         // yönlendirdi — başlamak için gereken ayar sayısı arttı (kök + katmanlar) ve kök Settings'in parçası oldu.
         Shell.OpenSettingsButton.Click += OnSettings;
@@ -259,8 +259,8 @@ public partial class MainWindow : Window
         _vm.PropertyChanged += (_, e) =>
         {
             // [kullanıcı kararı 2026-09-29] Katmanlar kök olmadan da kaydedilir — kurulum kartının Layers satırı
-            // katman tanımı değişince de tazelenir.
-            if (e.PropertyName is nameof(RunViewModel.Phase) or nameof(RunViewModel.HasWorkspace)
+            // katman tanımı değişince de tazelenir. [2026-10-19] Faz karara girmez — tetik de değildir.
+            if (e.PropertyName is nameof(RunViewModel.HasWorkspace)
                 or nameof(RunViewModel.RootPath) or nameof(RunViewModel.LayerPatterns)) RefreshListInvite();
         };
         _vm.Projects.CollectionChanged += (_, _) => RefreshListInvite();
@@ -833,12 +833,12 @@ public partial class MainWindow : Window
     }
 
     /// <summary>[task 3 · kullanıcı kararı 2026-09-19] Liste ve grafı EKRANDA boşaltır (VM'e dokunmaz — bkz.
-    /// <see cref="RunViewModel.PlanSurfaceRestarting"/>). Graf etiketsiz boşalır: Sync-öncesi etiketini ("appears after
-    /// Sync") ve sahte bir "0 projects" başlığını göstermez, Sync zaten sürüyor.
+    /// <see cref="RunViewModel.PlanSurfaceRestarting"/>). Graf etiketsiz boşalır: boş görünümünü ("No graph") ve sahte bir
+    /// "0 projects" başlığını göstermez, Sync zaten sürüyor.
     /// <para>[design v1.24.0] Boşluk ekranda kalmaz: aynı Sync isteği keşfi de açar (baştan başlayan yüzey, bkz.
     /// <c>RunViewModel.OpensDiscovery</c>) ve topoloji gelene dek graf ile liste keşif bloklarını gösterir
-    /// (<see cref="ApplyDiscovery"/>). Listenin "proje yok" ve "filtre eşleşmedi" davetleri o sırada çıkmaz: keşif,
-    /// davet kararında onlardan önce gelir (<see cref="ListInvite.Resolve"/>).</para></summary>
+    /// (<see cref="ApplyDiscovery"/>). Listenin boş görünümü ve "filtre eşleşmedi" satırı o sırada çıkmaz: keşif, davet
+    /// kararında onlardan önce gelir (<see cref="ListInvite.Resolve"/>).</para></summary>
     private void BlankPlanSurface()
     {
         // [perf Faz A · A5] Liste şimdi BOŞ yazıldı: gizlilikten kalma "liste bayat" bayrağı düşer — yoksa bekleyen dönüş
@@ -1293,7 +1293,7 @@ public partial class MainWindow : Window
     /// <summary>[E2/T10] Liste boş-durum davetinin görünürlüğünü tazeler — karar SAF <see cref="ListInvite.Resolve"/>'te.</summary>
     private void RefreshListInvite()
     {
-        Shell.SetListInvite(ListInvite.Resolve(_vm.HasWorkspace, _vm.IsDiscovering, _vm.Phase, _vm.Projects.Count,
+        Shell.SetListInvite(ListInvite.Resolve(_vm.HasWorkspace, _vm.IsDiscovering, _vm.Projects.Count,
             _vm.VisibleProjects.Count));
         // [design v1.8.0 §2.4] Kurulum listesi davetle AYNI sinyalden tazelenir: kök ve katman sayısı.
         Shell.SetSetupChecklist(_vm.RootPath, _vm.LayerPatterns?.Count ?? 0);

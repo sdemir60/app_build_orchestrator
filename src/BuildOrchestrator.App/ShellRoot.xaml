@@ -172,10 +172,20 @@
                          Foreground="{DynamicResource Brush.TextFaint}" />
             </StackPanel>
 
-            <TextBlock x:Name="PART_NoProjects" Text="{x:Static vm:InteractionText.NoProjectsFound}"
-                       Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center"
-                       TextAlignment="Center" TextWrapping="Wrap" MaxWidth="280"
-                       FontSize="{DynamicResource FontSize.Xs}" Foreground="{DynamicResource Brush.TextFaint}" />
+            <!-- [kullanıcı kararı 2026-10-19] Boş görünüm: listede satır yokken — hangi işlem boşaltmış olursa olsun —
+                 ortalı liste ikonu · 10 · "No projects". Keşif bloğunun ikon kimliğini ve grafın boş görünümüyle aynı metin
+                 kimliğini taşır (Ds.DiscoveryIcon, Ds.DiscoveryCaption); motion YOK. Görünürlük ListInvite.Resolve'dan
+                 (NoProjects). [DEĞİŞEN KURAL] Eskiden ortalı düz metindi ("No projects found under this folder.") ve
+                 yalnız Sync'in bittiği fazda çıkardı. -->
+            <StackPanel x:Name="PART_NoProjects" Visibility="Collapsed" Style="{DynamicResource Ds.DiscoveryBlock}">
+              <Viewbox Style="{DynamicResource Ds.DiscoveryIcon}">
+                <Canvas Width="24" Height="24">
+                  <Path Style="{DynamicResource Ds.DiscoveryIcon.Path}" Data="{DynamicResource Icon.ListLines}"
+                        StrokeThickness="{DynamicResource Icon.ListLines.StrokeThickness}" />
+                </Canvas>
+              </Viewbox>
+              <TextBlock Text="{x:Static vm:InteractionText.ListEmpty}" Style="{DynamicResource Ds.DiscoveryCaption}" />
+            </StackPanel>
 
             <!-- [A13/T2 · 2.4] Projeler VAR ama filtre hiçbirini eşleştirmiyor (design-v1 §2.4,
                  BuildApp.jsx:511). "Hiç proje yok"tan (PART_NoProjects) AYRI bir durumdur ve prototipteki gibi
