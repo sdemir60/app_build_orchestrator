@@ -3485,8 +3485,9 @@ action bar, and the one remaining fact, *which workspace is open*, sits next to 
 the repository root. The run's own story — phase, counts, failures — stays in the ribbon.
 
 **Resource strip.** Three read-only cells in the exact middle of the bar, 14 px apart and without a label: each is a
-12 px Lucide icon (`text-faint`, stroke 1.8), 5 px of air, then its value in Geist Mono 11 px with tabular figures
-(`text-dim`). What each value means and how it is measured is §11.5; this is how it looks and behaves.
+12 px Lucide icon (`text-faint`, stroke 1.8 — 1.9 for the parallelism lines, §14.4), 5 px of air, then its value in
+Geist Mono 11 px with tabular figures (`text-dim`). What each value means and how it is measured is §11.5; this is how
+it looks and behaves.
 
 - **CPU** (*cpu*) — a whole percent: `1%`, `69%`.
 - **RAM** (*memory-stick*) — whole megabytes under 1 GB (`310 MB`), one decimal from 1 GB (`4.8 GB`). The switch
@@ -6081,10 +6082,15 @@ the title bar's 1.7 weight. Its ring is r = 9, as the design draws it — the de
 uses *arrow-right* (`Icon.ArrowRight`, 1.8), and its *Restart to update* button reuses `Icon.Rebuild`, the
 rotate-cw of the Build menu family, rather than a second copy of the same geometry.
 
-The resource strip (§13.2) draws three icons at 12 px in `text-faint`, each at stroke 1.8 in its 24-unit design box.
-They are drawn from the design prototype in Lucide's style: a processor (`Icon.Cpu`), a memory module
-(`Icon.MemoryStick` — the design's own name for it is *memory*, a word this code base uses for the memory line) and,
-for parallelism, three vertical lines at x = 6, 12 and 18 (`Icon.Parallel`). Like every icon each is a geometry in
+The resource strip (§13.2) draws three icons at 12 px in `text-faint` in a 24-unit design box. They are drawn from the
+design prototype in Lucide's style: a processor (`Icon.Cpu`), a memory module (`Icon.MemoryStick` — the design's own
+name for it is *memory*, a word this code base uses for the memory line) and, for parallelism, three vertical lines at
+x = 7, 13 and 19 (`Icon.Parallel`). The processor and the module are stroked at 1.8 and the three lines at 1.9, the
+prototype's own values: at the same colour three thin lines carry about half the ink of the other two marks and read
+fainter at an equal weight. The lines' positions are *derived*: the prototype draws them at 6, 12 and 18, but in a 12 px
+box a unit is half a pixel, so on a 100 % display an even coordinate falls on a pixel edge and each line is drawn as two
+half-bright columns; one unit to the right puts them on pixel centres, where the processor's own lines already sit.
+Like every icon each is a geometry in
 `Icons.xaml`; here it is drawn inside a `Viewbox` that scales the 24-unit box down to 12 px, and the stroke scales with
 it.
 

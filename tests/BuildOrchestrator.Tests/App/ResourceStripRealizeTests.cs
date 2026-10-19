@@ -100,12 +100,15 @@ public class ResourceStripRealizeTests(ITestOutputHelper output)
         Path[] icons = [strip.CpuIcon, strip.MemoryIcon, strip.ParallelIcon];
         Assert.All(icons, p =>
         {
-            Assert.Equal(1.8, p.StrokeThickness); // README §2.1: stroke 1.8
             Assert.Equal(Token(window, "Brush.TextFaint"), DsResources.ColorOf(p.Stroke));
             Assert.Null(p.Fill);
             Assert.Equal((PenLineCap.Round, PenLineCap.Round, PenLineJoin.Round), (p.StrokeStartLineCap, p.StrokeEndLineCap, p.StrokeLineJoin));
         });
-        Assert.Equal(1.8, (double)window.FindResource("Icon.Parallel.StrokeThickness")); // prototipin 1.9'u README'ye göre 1.8
+        // Her ikon KENDİ sözlük kalınlığıyla çizilir; değerlerin tek pini IconGeometryTests'tedir (prototipin ikon başına kalınlığı).
+        // [DEĞİŞEN KURAL — 2026-10-19] ESKİ: burada da üç ikonun 1.8 olduğu literal pinlenirdi; parallel 1.9'a çıkınca aynı sayının
+        // ikinci kopyası olmasın diye bağ yapısal doğrulanır.
+        Assert.Equal(new[] { "Icon.Cpu", "Icon.MemoryStick", "Icon.Parallel" }.Select(key => (double)window.FindResource(key + ".StrokeThickness")),
+            icons.Select(p => p.StrokeThickness));
 
         // Etiket yok: ağaçtaki GÖRÜNÜR metinler yalnız değerler (ghost'lar gizlidir).
         var shown = DsResources.ShownTexts(strip);
