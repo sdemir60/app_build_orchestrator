@@ -1,4 +1,5 @@
 using System.Globalization;
+using BuildOrchestrator.Core.Formatting;
 using BuildOrchestrator.Core.ProcessControl;
 
 namespace BuildOrchestrator.Core.Diagnostics;
@@ -24,9 +25,10 @@ public static class ResourceStripText
 {
     /// <summary>
     /// Okunamayan değer: bir hücrede ya da tooltip parçasında ölçüm yoksa yazılan TEK işaret (U+2014). <c>0</c> DEĞİLDİR —
-    /// uyuyan motorun <c>0 MB</c>'ı gerçek bir ölçümdür, <c>—</c> ölçümün yokluğudur.
+    /// uyuyan motorun <c>0 MB</c>'ı gerçek bir ölçümdür, <c>—</c> ölçümün yokluğudur. Değer <see cref="MissingValue.Mark"/>'tır: süre ve
+    /// About'un olmayan değeriyle aynı işaret, tek tanım.
     /// </summary>
-    public const string Unreadable = "—";
+    public const string Unreadable = MissingValue.Mark;
 
     /// <summary>CPU hücresinin hayaleti: en geniş değer (tavan %100).</summary>
     public const string CpuGhost = "100%";
