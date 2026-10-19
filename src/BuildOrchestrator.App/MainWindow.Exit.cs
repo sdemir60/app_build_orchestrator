@@ -115,10 +115,26 @@ public partial class MainWindow
     private void RecountExitProcesses() =>
         ExitCardView.Processes = _vm.ExitWork == ExitWork.None ? [] : TakeProcessCensus();
 
-    /// <summary>Kartın birincil düğmesi: kart kapanır ve çıkış istenir — uçuşta iş varsa VM onu durdurur, yoksa uygulama hemen kapanır.</summary>
+    /// <summary>Kartın birincil düğmesi: kart kapanır ve çıkış istenir. Uçuşta iş varsa kapanış ekranı açılır — işin adı ve ilerlemesi,
+    /// "Stopping …" adımı ve ikinci adımda kartın saydığı süreçler — ve VM işi durdurur; yoksa uygulama ekransız, hemen kapanır. Ekran çıkış
+    /// isteğinden ÖNCE açılır: kesilen bir işte <c>ExitReady</c> isteğin içinden gelir ve ekranı bulmalıdır (<see cref="OnExitReady"/>).</summary>
     private void StopAndExit()
     {
+        var work = _vm.ExitWork;
+        int processes = ExitCardView.Processes.Sum(p => p.Count);
         CloseExitCard(returnFocusToButton: false);
+        if (work != ExitWork.None)
+            ClosingOverlay.PlayExit(ExitText.StoppingStep(work), ExitText.ClosingContext(work, _vm.ExitProgress),
+                ExitText.EndingStep(processes));
         _vm.RequestExit();
+    }
+
+    /// <summary>VM çıkışın hazır olduğunu söyledi (<see cref="RunViewModel.ExitReady"/>, bir kez): Exit'in kapanış ekranı oynuyorsa ikinci
+    /// adımına geçer ve uygulamayı çubuğu dolunca kapatır (<see cref="OnClosingScreenFilled"/>); oynamıyorsa — uçuşta iş yoktu, restart
+    /// ekranının çubuğu dolmuştu, ya da × / tepsi yolu — uygulama hemen kapanır.</summary>
+    private void OnExitReady()
+    {
+        if (ClosingOverlay.IsPlayingExit) ClosingOverlay.MarkStopped();
+        else ExitNow();
     }
 }

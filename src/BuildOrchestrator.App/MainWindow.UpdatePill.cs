@@ -37,10 +37,9 @@ public partial class MainWindow
         UpdateCardView.CloseRequested += () => CloseUpdateCard(returnFocusToPill: true);
         foreach (var dialog in new ModalDialog[] { SettingsOverlay, AboutOverlay, NotesOverlay })
             dialog.Opened += (_, _) => CloseUpdateCard(returnFocusToPill: false);
-        // Restart isteği kartı kapatır ve restart ekranını oynatır; ekranın çubuğu dolunca güvenli tam çıkış
-        // (MainWindow.UpdateRestart.cs).
+        // Restart isteği kartı kapatır ve restart ekranını oynatır; ekranın çubuğu dolunca tam çıkış (MainWindow.UpdateRestart.cs —
+        // çubuğun yönlendirmesi ctor'dadır: ekran Exit'le ortaktır).
         _vm.RestartToUpdateRequested += (_, _) => OnRestartToUpdateRequested();
-        UpdateRestartOverlay.BarFilled += OnRestartScreenFilled;
 
         ApplyUpdateOffer(entrance: false);
         _vm.PropertyChanged += (_, e) =>

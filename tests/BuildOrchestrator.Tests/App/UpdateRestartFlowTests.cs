@@ -18,7 +18,7 @@ namespace BuildOrchestrator.Tests.App;
 ///
 /// <para>Harness: pencere GÖSTERİLMEZ (<see cref="MainWindowHost"/>); uygulamayı kapatan çağrı
 /// (<c>MainWindow.ShutdownApplication</c>) sayaçlı bir sahteyle değiştirilir — uygulama kapanmaz. Ekranın zamanı
-/// sahtedir (<see cref="RestartScreenTime"/>), gerçek bir saat kurulmaz.</para>
+/// sahtedir (<see cref="ClosingScreenTime"/>), gerçek bir saat kurulmaz.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class UpdateRestartFlowTests
@@ -36,15 +36,15 @@ public class UpdateRestartFlowTests
     {
         using var temp = new TempDir();
         var (window, vm) = MainWindowHost.NewRealized(temp);
-        var time = new RestartScreenTime(window.UpdateRestartOverlay);
+        var time = new ClosingScreenTime(window.ClosingOverlay);
         int shutdowns = 0;
         window.ShutdownApplication = () => shutdowns++;
         vm.AvailableUpdate = UpdateOffers.Sample("9.9.0");
 
         vm.RestartToUpdateCommand.Execute(null);
 
-        Assert.True(window.UpdateRestartOverlay.IsShowing);
-        Assert.Equal(UpdateText.RestartStepLabel(UpdateRestartStep.Closing), window.UpdateRestartOverlay.PART_Step.Text);
+        Assert.True(window.ClosingOverlay.IsShowing);
+        Assert.Equal(UpdateText.RestartStepLabel(UpdateRestartStep.Closing), window.ClosingOverlay.PART_Step.Text);
         Assert.Equal(0, shutdowns); // ekran önce çizilir — çıkış onunla aynı turda istenmez
         time.FrameAt(UpdateRestartTimeline.TotalMs - 1);
         Assert.Equal(0, shutdowns); // çubuk dolmadan çıkış yok
@@ -53,7 +53,7 @@ public class UpdateRestartFlowTests
 
         Assert.Equal(1, shutdowns); // iş yok → çubuk dolunca çıkış hemen
         Assert.False(vm.ExitPending);
-        Assert.True(window.UpdateRestartOverlay.IsShowing);
+        Assert.True(window.ClosingOverlay.IsShowing);
         time.FrameAt(UpdateRestartTimeline.TotalMs + 5000);
         Assert.Equal(1, shutdowns); // tek atım
         GC.KeepAlive(window);
@@ -66,7 +66,7 @@ public class UpdateRestartFlowTests
     {
         using var temp = new TempDir();
         var (window, vm) = MainWindowHost.NewRealized(temp);
-        var time = new RestartScreenTime(window.UpdateRestartOverlay);
+        var time = new ClosingScreenTime(window.ClosingOverlay);
         int shutdowns = 0;
         window.ShutdownApplication = () => shutdowns++;
         vm.AvailableUpdate = UpdateOffers.Sample();
@@ -76,7 +76,7 @@ public class UpdateRestartFlowTests
         vm.RestartToUpdateCommand.Execute(null);
         time.FrameAt(UpdateRestartTimeline.TotalMs);
 
-        Assert.False(window.UpdateRestartOverlay.IsShowing);
+        Assert.False(window.ClosingOverlay.IsShowing);
         Assert.Equal(0, shutdowns);
         Assert.False(vm.ExitPending);
         GC.KeepAlive(window);

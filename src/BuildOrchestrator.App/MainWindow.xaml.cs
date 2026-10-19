@@ -464,7 +464,10 @@ public partial class MainWindow : Window
         {
             if (WindowCloseRule.ShouldBringForward(_exiting, _vm.ExitPending)) ShowFromTray();
         });
-        _vm.ExitReady += (_, _) => ExitNow();
+        // [Exit] Exit'in kapanış ekranı oynarken çıkışın hazır olması ekranı ikinci adıma geçirir; uygulamayı ekranın çubuğu kapatır
+        // (OnClosingScreenFilled — restart ekranı da aynı kontroldür).
+        _vm.ExitReady += (_, _) => OnExitReady();
+        ClosingOverlay.BarFilled += OnClosingScreenFilled;
 
         SetupKeyboardShortcuts();
         SetupAboutButtonTooltip();
