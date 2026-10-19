@@ -17,23 +17,34 @@ using Microsoft.Win32.SafeHandles;
 namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
-/// [P3 · Task 5] Güvenli tam çıkıştan (<see cref="RunViewModel.RequestExit"/>) sonra HİÇBİR Supervisor ya da
-/// <c>MSBuild.exe</c> process'i kalmaz ve koşan derleme öldürülmeden BİTER. <see cref="SafeExitTests"/> sırayı VM
+/// [P3 · Task 5 · Exit] Tam çıkıştan (<see cref="RunViewModel.RequestExit"/>) sonra HİÇBİR Supervisor ya da
+/// <c>MSBuild.exe</c> process'i kalmaz ve koşan derleme BEKLENMEDEN sonlandırılır. <see cref="SafeExitTests"/> sırayı VM
 /// düzeyinde motorsuz pinler; bu test aynı sıranın gerçek Supervisor ve gerçek MSBuild ağacında tuttuğunu ölçer.
 ///
 /// <para><b>Sıra üretimdekidir:</b> motor hazır → açılışın Sync'i → Build → <c>MSBuild.exe</c>'ler uçuşta →
-/// <see cref="RunViewModel.RequestExit"/> → graceful <c>stopRun</c> → drain → <see cref="RunViewModel.ExitReady"/> →
-/// <c>App.OnExit</c>'in yaptığı <see cref="AppShutdown.WaitForAsyncDisposal"/>. Kabuğun payını (MainWindow'un
-/// ExitReady → Shutdown → OnExit zinciri) test gövdesi oynar; OnExit'in bekleyişinin kilitlenmediğini
-/// <see cref="AppShutdownTests"/> pinler — burada ölçülen Supervisor ve MSBuild tarafıdır.</para>
+/// <see cref="RunViewModel.RequestExit"/> → hard <c>stopRun</c> → inner job sonlandırılır → <c>runStopped</c> →
+/// <see cref="RunViewModel.ExitReady"/> → <c>App.OnExit</c>'in yaptığı <see cref="AppShutdown.WaitForAsyncDisposal"/>. Kabuğun
+/// payını (MainWindow'un ExitReady → kapanış ekranı → Shutdown → OnExit zinciri) test gövdesi oynar; OnExit'in bekleyişinin
+/// kilitlenmediğini <see cref="AppShutdownTests"/> pinler — burada ölçülen Supervisor ve MSBuild tarafıdır.</para>
 ///
-/// <para><b>İddialar, bu sırayla:</b> (1) TEK graceful <c>stopRun</c> gider — drain boyunca da tek kalır — ve ne
-/// gittiği anda ne de <see cref="RunViewModel.RequestExit"/> dönerken <c>ExitReady</c> vardır; (2) <c>ExitReady</c>
-/// geldiğinde koşuda görülen her <c>MSBuild.exe</c> ÇOKTAN çıkmıştır (kendiliğinden bitti — henüz hiçbir şey
-/// öldürülmedi) ve stop anında uçuşta olan her proje <c>projectSucceeded</c> raporlamıştır; (3) disposal kendi
-/// tavanı (<see cref="AppShutdown.DisposalTimeout"/>) içinde biter ve döndükten sonra Supervisor ile job'da görülen
-/// her üye <see cref="TestPaths.OrphanBudget"/> içinde çıkmıştır (0 orphan — <see cref="ProcessTree"/>). Drain'i
-/// beklemeden kapanan ya da uçuştakileri öldüren bir çıkış (1)'i ya da (2)'yi kırar.</para>
+/// <para><b>İddialar, bu sırayla:</b> (1) TEK hard <c>stopRun</c> gider ve ne gittiği anda ne de
+/// <see cref="RunViewModel.RequestExit"/> dönerken <c>ExitReady</c> vardır — çıkış motorun durdurma cevabını bekler; (2)
+/// <c>ExitReady</c> motorun cevabıyla (<c>runStopped</c>) gelir; o anda koşuda görülen her <c>MSBuild.exe</c> ÇOKTAN çıkmıştır ve stop
+/// anında uçuşta olan her proje
+/// <c>failed("stopped")</c> raporlamıştır — hiçbiri kendi başarısıyla bitmedi (fixture'ın ~3 sn'lik adımı bunu imkânsız kılar);
+/// (3) disposal kendi tavanı (<see cref="AppShutdown.DisposalTimeout"/>) içinde biter ve döndükten sonra Supervisor ile job'da
+/// görülen her üye <see cref="TestPaths.OrphanBudget"/> içinde çıkmıştır (0 orphan — <see cref="ProcessTree"/>).</para>
+///
+/// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-19 · Exit]</b> ESKİ İDDİA: TEK graceful <c>stopRun</c> gider, <c>ExitReady</c>
+/// anında uçuştaki her proje <c>projectSucceeded</c> raporlamıştır — drain kesilmez. Gerekçe <see cref="SafeExitTests"/>'in
+/// özetinde; yarıda kalan projelerin güvencesi motorun in-flight defteridir (ARCHITECTURE §8.7).</para>
+///
+/// <para><b>Süre iddiası yoktur — bilerek.</b> Bir ara "cevap çıkışın süresi (<see cref="RunViewModel.ExitStopWaitMs"/>) dolmadan gelir"
+/// iddiası da vardı; tam süitin paralel yükü altında motor + dispatcher gecikmesi 3003 ms ve 11457 ms ölçüldü (tek başına ~anında) ve
+/// iddia ölçtüğü şeyi değil yükü raporladı. Kullanıcıya verilen söz motorun hızı değil, çıkışın kendi süresidir: cevap gelmese de çıkış
+/// <see cref="RunViewModel.ExitStopWaitMs"/>'te gider — <c>SafeExitTests.An_unanswered_stop_holds_the_exit_only_for_the_stop_wait</c>
+/// bunu sahte saatle, deterministik pinler. Bu test tick almaz; süre burada hiç dolamaz. İlk ölçümün (3003 ms) gösterdiği motor yarışı
+/// ise kapandı ve deterministik pinlidir (<c>RunCoordinatorTests.A_hard_stop_cancels_the_invoke_in_flight</c>).</para>
 ///
 /// <para><b>Harness:</b> VM thread-safe değildir, üretimde her çağrısı UI dispatcher'ında koşar. Burada da TEK
 /// thread'i vardır: <see cref="DispatcherSynchronizationContext"/> kurulu bir STA thread'i (<see cref="StaThread"/>);
@@ -133,7 +144,8 @@ public sealed class SafeExitProcessTests
         {
             readyCount++;
             atReady ??= new ExitMoment([.. members.MsBuilds.Where(p => !p.HasExited).Select(p => p.Id)],
-                new HashSet<string>(succeeded, succeeded.Comparer), new HashSet<string>(failed, failed.Comparer));
+                new HashSet<string>(succeeded, succeeded.Comparer), new HashSet<string>(failed, failed.Comparer),
+                RunSettled: !vm.IsMidRunLocked);
         };
 
         // Açılış — MainWindow.StartEngineAsync'in yolu: motor hazır olunca açılışın Sync'i gider.
@@ -158,28 +170,29 @@ public sealed class SafeExitProcessTests
         var inFlight = vm.Projects.Where(r => r.State == ProjectRowState.Started).Select(r => r.Id).ToList();
         Assert.True(inFlight.Count > 0 && members.LiveMsBuildCount > 0, "no real MSBuild.exe was seen building");
 
-        // Güvenli çıkış — Close to tray kapalıyken × ya da tepsi → Exit.
+        // Tam çıkış — onay kartının "Stop and exit"i (ya da tepsi → Exit, × — iş varken hepsi karttan geçer).
         vm.RequestExit();
 
-        // (1) TEK graceful stopRun gitti; ExitReady ne o gittiği anda ne de RequestExit dönerken vardı — çıkış drain'i
-        // bekliyor. Drain bitince yeniden sayılır: bekleyiş ikinci bir stopRun da üretmedi.
+        // (1) TEK hard stopRun gitti; ExitReady ne o gittiği anda ne de RequestExit dönerken vardı — çıkış motorun durdurma
+        // cevabını bekliyor. Cevap gelince yeniden sayılır: bekleyiş ikinci bir stopRun da üretmedi.
         var stop = Assert.Single(sent.OfType<StopRunCommand>());
-        Assert.Equal(StopKind.Graceful, stop.Kind);
+        Assert.Equal(StopKind.Hard, stop.Kind);
         Assert.True(readyAtStop == 0, "ExitReady fired before the stop was sent");
-        Assert.True(readyCount == 0, "ExitReady fired before the drain — RequestExit did not wait for the work in flight");
+        Assert.True(readyCount == 0, "ExitReady fired before the engine answered the stop");
         DispatcherPump.PumpUntil(() => atReady is not null, TestPaths.WideRunTimeout);
-        Assert.True(atReady is not null, "ExitReady never fired — the drain did not end");
+        Assert.True(atReady is not null, "ExitReady never fired — the stop was not answered");
         Assert.True(sent.OfType<StopRunCommand>().Count() == 1, "a second stopRun was sent while the exit waited");
 
-        // (2) ExitReady anında koşuda görülen her MSBuild.exe kendiliğinden çıkmıştı — henüz hiçbir şey öldürülmedi —
-        // ve stop anında uçuştaki her proje başarıyla bitti: drain kesilmedi.
+        // (2) ExitReady motorun cevabıyla geldi (bu VM tick almaz: çıkışın kendi süresi burada hiç dolamaz); o anda koşuda görülen her
+        // MSBuild.exe çıkmıştı ve stop anında uçuştaki her proje sonlandırıldı (failed "stopped") — hiçbiri drain'de kendi başarısıyla
+        // bitmedi.
+        Assert.True(atReady.RunSettled, "ExitReady fired while the run was still locked");
         Assert.True(atReady.LiveMsBuilds.Count == 0,
-            $"MSBuild.exe still running when ExitReady fired (pid {string.Join(", ", atReady.LiveMsBuilds)}) "
-            + "— the exit did not wait for the drain");
-        var notSucceeded = inFlight.Where(id => !atReady.Succeeded.Contains(id)).ToList();
-        Assert.True(notSucceeded.Count == 0 && atReady.Failed.Count == 0,
-            $"in flight at the stop but not succeeded: [{string.Join(", ", notSucceeded.Select(Path.GetFileName))}], "
-            + $"failed: [{string.Join(", ", atReady.Failed.Select(Path.GetFileName))}] — the drain was cut short");
+            $"MSBuild.exe still running when ExitReady fired (pid {string.Join(", ", atReady.LiveMsBuilds)})");
+        var notTerminated = inFlight.Where(id => !atReady.Failed.Contains(id)).ToList();
+        Assert.True(notTerminated.Count == 0 && inFlight.All(id => !atReady.Succeeded.Contains(id)),
+            $"in flight at the stop but not terminated: [{string.Join(", ", notTerminated.Select(Path.GetFileName))}] — "
+            + "the exit waited for a drain");
 
         // (3)'ün girdisi — OnExit'in yaptığı disposal bekleyişi. Üye kümesi ondan ÖNCE kesinleşir: kapanışta doğan
         // bir üye beklenmez, olsa da KILL_ON_JOB_CLOSE onu da toplar.
@@ -188,10 +201,10 @@ public sealed class SafeExitProcessTests
         return new ExitOutcome(observed, ready.Pid, Stopwatch.StartNew(), disposed);
     }
 
-    /// <summary>(2)'nin ölçüsü — <see cref="RunViewModel.ExitReady"/> atıldığı ANDA hâlâ canlı <c>MSBuild.exe</c>'ler
-    /// ve o ana kadar raporlanan proje sonuçları.</summary>
+    /// <summary>(2)'nin ölçüsü — <see cref="RunViewModel.ExitReady"/> atıldığı ANDA hâlâ canlı <c>MSBuild.exe</c>'ler, o ana
+    /// kadar raporlanan proje sonuçları ve koşu kilidinin düşüp düşmediği (motorun <c>runStopped</c>'ı).</summary>
     private sealed record ExitMoment(IReadOnlyList<int> LiveMsBuilds, IReadOnlySet<string> Succeeded,
-        IReadOnlySet<string> Failed);
+        IReadOnlySet<string> Failed, bool RunSettled);
 
     /// <summary>(3)'ün girdisi: job'da görülen üyeler, Supervisor'ın PID'i, uygulamanın öldüğü andan (OnExit'in
     /// disposal bekleyişi döndü) beri geçen süre ve bekleyişin süresi içinde bitip bitmediği.</summary>

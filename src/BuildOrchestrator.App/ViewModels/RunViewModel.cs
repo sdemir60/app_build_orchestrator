@@ -1170,8 +1170,8 @@ public sealed partial class RunViewModel : ObservableObject
     /// akardı; bir silme de MSBuild'in yazdığı bin/obj ile yarışırdı. Basış kuyruğa alınmaz: komut çalışmaz, konsola satır
     /// düşmez, düğme Stop olmaz — ekran süren işindir (Sync düğmesi meşgul hâlini gösterir, sessiz Sync dahil). İş bitince
     /// kapıyı <see cref="NotifySyncGatedCommands"/> yeniden sorar.</para>
-    /// <para>Tam çıkış beklerken (<see cref="ExitPending"/>) de kapalıdır: bekleyiş iş bitince kapanmak içindir — o sırada
-    /// başlayan bir koşu çıkışı bir tam derleme boyunca bekletirdi.</para>
+    /// <para>Tam çıkış işi durdururken (<see cref="ExitPending"/>) de kapalıdır: uygulama kapanmak üzeredir — o sırada başlayan bir
+    /// koşu kapanışın ortasında yeni bir iş açardı.</para>
     /// <para>Koşulların TEK yeri <see cref="WhyRunCannotStart"/>'tır: kapı onun <c>null</c> dönmesidir, yani kapı ile kapalı
     /// olma nedeni ayrışamaz.</para>
     /// </summary>
@@ -1505,7 +1505,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// olur — ve BİR KEZ gider (<see cref="HardStopRequested"/>); konsola <see cref="StopNowRequestedLine"/> düşer, bitişte
     /// <see cref="HardStoppedLine"/> (yalnız bir şey sonlandırıldıysa). Basışın ne göndereceğini TEK durum seçer
     /// (<see cref="StopStage"/>: Stop → Stop now → Terminating…); Stop düğmesi, tepsi maddesi ve satırdaki ikon da aynı durumu
-    /// okur. Kullanıcının çıkış isteği hard stop'a TIRMANMAZ (<see cref="RequestExit"/>).</para>
+    /// okur. Tam çıkış (<see cref="RequestExit"/>) drain'i beklemez, doğrudan hard stop'tur (kullanıcı kararı 2026-10-19).</para>
     /// <para>Drain, uçuştaki en yavaş projenin kalan süresi kadar sürebilir; uygulamanın tıklamayı ALDIĞINI o
     /// pencerede göstermesi bu yüzden davranışın kendisi kadar önemlidir.</para>
     /// <para><b>Faz gönderimden ÖNCE yazılır:</b> yavaş/tıkalı bir engine'de gönderimin dönmesini beklemek
@@ -1532,18 +1532,25 @@ public sealed partial class RunViewModel : ObservableObject
             case StopStage.Terminating:
                 return;
             case StopStage.StopNow:
-                _hardTerminated = 0;
-                HardStopRequested = true;
-                AppendRunLine(StopNowRequestedLine);
-                // Gönderim senkron düşerse (engine hazır değil / pipe koptu) istek geri alınır — graceful'daki hata yolunun
-                // deseni: "Terminating…" yanlış bilgi vermesin, kapı yeniden açılsın ve kullanıcı tekrar deneyebilsin.
-                if (!await SendStopAsync(_currentRunId, StopKind.Hard)) HardStopRequested = false;
+                await SendHardStopAsync(_currentRunId);
                 return;
             default:
                 AppendRunLine(StopRequestedLine(Counters.Building));
                 await SendStopAsync(_currentRunId, StopKind.Graceful);
                 return;
         }
+    }
+
+    /// <summary>[Stop now] Hard stop'un TEK yolu — Stopping'deki Stop basışı/Esc (<see cref="StopAsync"/>) ve tam çıkış
+    /// (<see cref="RequestExit"/>) buradan geçer: bayrak, konsol satırı ve gönderim birlikte. Gönderim senkron düşerse (engine
+    /// hazır değil / pipe koptu) istek geri alınır — graceful'daki hata yolunun deseni: "Terminating…" yanlış bilgi vermesin,
+    /// kapı yeniden açılsın ve kullanıcı tekrar deneyebilsin.</summary>
+    private async Task SendHardStopAsync(string runId)
+    {
+        _hardTerminated = 0;
+        HardStopRequested = true;
+        AppendRunLine(StopNowRequestedLine);
+        if (!await SendStopAsync(runId, StopKind.Hard)) HardStopRequested = false;
     }
 
     /// <summary>Stop'un gönderimi — kullanıcının Stop'u (graceful ve hard) ve branch kesmesi
@@ -1870,6 +1877,7 @@ public sealed partial class RunViewModel : ObservableObject
         }
         EvaluateEngineSilence();
         EvaluateEngineIdle();
+        EvaluateExit(); // [Exit] durdurma cevabının süresi (ExitStopWaitMs) saatle dolar — olay gelmeden
     }
 
     // ---------------------------------------------------------------- event → durum

@@ -115,9 +115,9 @@ public static class RibbonText
         if (engineOverdue is { Length: > 0 })
             return new RibbonLine(engineOverdue, "Brush.AmberText", null);
 
-        // [P3 · Task 2] Kullanıcı uygulamayı kapattı ve çıkış uçuştaki işi bekliyor: şerit, HANGİ fazda olursa
-        // olsun (çıkış bir Sync'i, Clean'i ya da pull'u da bekleyebilir — onlar fazı Stopping'e çekmez) Stopping der,
-        // yoksa kapatma tıklaması kaybolmuş görünürdü. Motor ölümü ve sessizliği ÜSTTE kalır: bekleyişi kesen onlardır.
+        // [P3 · Task 2 · Exit] Kullanıcı çıkışı onayladı ve çıkış uçuştaki işi durduruyor: şerit, HANGİ fazda olursa
+        // olsun (çıkış bir checkout'u ya da pull'u bekleyebilir — onlar fazı Stopping'e çekmez) Stopping der. Pencereyi
+        // kapanış ekranı örter; satır onun altındaki kayıttır. Motor ölümü ve sessizliği ÜSTTE kalır: bekleyişi kesen onlardır.
         // Uçuştaki sayı yalnız bir derleme drain'deyken anlamlıdır (faz Stopping); aksi hâlde "wrapping up".
         if (exitPending)
             return StoppingLine(phase == AppPhase.Stopping ? c.Building : 0, finishedOfWillBuild, willBuild);
@@ -279,7 +279,7 @@ public static class RibbonText
     }
 
     /// <summary>
-    /// [Stopping · P3 · Task 2] Stopping satırının TEK yeri — faz dalı (<see cref="AppPhase.Stopping"/>) ve güvenli çıkışın
+    /// [Stopping · P3 · Task 2] Stopping satırının TEK yeri — faz dalı (<see cref="AppPhase.Stopping"/>) ve tam çıkışın
     /// bekleyişi (<c>exitPending</c>) aynı metni okur. ETA eki BİLEREK yok: yeni dispatch olmadığı için kuyruk
     /// tahmini gerçeğe karşılık gelmez; bu pencerede tek anlamlı sayı kaç projenin hâlâ uçuşta olduğudur. Renk
     /// Running ile AYNI (<c>Brush.TextSecondary</c>): iş hâlâ etkin, Stopped'ın dim'i henüz hak edilmedi; glyph yok.

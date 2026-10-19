@@ -42,8 +42,8 @@ public sealed partial class RunViewModel
     private string? _announcedRestartBlockedReason;
 
     /// <summary>Kullanıcı <c>Restart to update</c>'e bastı. VM build motoruna (Supervisor) hiçbir komut göndermez, yalnız
-    /// isteği yayar; yanıtı iki abone verir: kabuk (<c>MainWindow</c>) kartı kapatır, restart ekranını oynatır ve çubuk
-    /// dolunca güvenli tam çıkışı ister; <c>App.xaml.cs</c> olayı <c>UpdateService.RequestRestart</c>'a bağlar — çıkışta
+    /// isteği yayar; yanıtı iki abone verir: kabuk (<c>MainWindow</c>) kartı kapatır, kapanış ekranını restart kipinde oynatır ve
+    /// çubuk dolunca tam çıkışı ister; <c>App.xaml.cs</c> olayı <c>UpdateService.RequestRestart</c>'a bağlar — çıkışta
     /// kurulum yeniden açmayı da söyler.</summary>
     public event EventHandler? RestartToUpdateRequested;
 

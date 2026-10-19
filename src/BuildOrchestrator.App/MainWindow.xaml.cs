@@ -458,17 +458,17 @@ public partial class MainWindow : Window
         // VM'in abone sözleşmesi (RunViewModel.Exit.cs) ExitReady'yi bir durum geçişinin ya da × yolunda bir Closing
         // handler'ının ORTASINDA senkron atabilir ve abonenin ne yaptığına dayanmaz: kabuk kapanış işini o çağrı
         // yığınının içinde değil, kendi dispatcher turunda yapar. (Application.Shutdown işini zaten kuyruğa bırakır;
-        // erteleme yine de kabuğun kendi sözüdür, WPF'in iç sırasına dayanmaz.) Öne getirme de ertelenir — gerekçesi
-        // BringForward'da. İki çağrı da test dikişidir.
+        // erteleme yine de kabuğun kendi sözüdür, WPF'in iç sırasına dayanmaz.) Test dikişidir. [Exit] Onay için pencereyi öne getiren
+        // ikinci dikiş (ConfirmExitInFront) MainWindow.Exit.cs'te kurulur.
         ShutdownApplication = () => Dispatcher.BeginInvoke(() => Application.Current?.Shutdown());
-        BringForward = () => Dispatcher.BeginInvoke(() =>
-        {
-            if (WindowCloseRule.ShouldBringForward(_exiting, _vm.ExitPending)) ShowFromTray();
-        });
-        _vm.ExitReady += (_, _) => ExitNow();
+        // [Exit] Exit'in kapanış ekranı oynarken çıkışın hazır olması ekranı ikinci adıma geçirir; uygulamayı ekranın çubuğu kapatır
+        // (OnClosingScreenFilled — restart ekranı da aynı kontroldür).
+        _vm.ExitReady += (_, _) => OnExitReady();
+        ClosingOverlay.BarFilled += OnClosingScreenFilled;
 
         SetupKeyboardShortcuts();
         SetupAboutButtonTooltip();
+        SetupExitButton(); // [Exit] title bar'ın Exit butonu ve onay kartı (MainWindow.Exit.cs)
         SetupUpdatePill(); // [design v1.23.0 §2.12] title bar'ın güncelleme hapı (MainWindow.UpdatePill.cs)
         SetupResourceStrip(); // [design v1.25.0 §2.1] title bar ortasındaki kaynak şeridi: örnekleyici + caption iletimi (MainWindow.ResourceStrip.cs)
         _ = RunConsolePumpAsync();
@@ -492,6 +492,7 @@ public partial class MainWindow : Window
             [WindowIntent.FocusFilter] = new RelayCommand(() => Shell.FocusProjectFilter()),
             [WindowIntent.ShowAbout] = new RelayCommand(OnAboutRequested),   // F1 → About (About sekmesinde)
             [WindowIntent.Escape] = new RelayCommand(OnEscapePressed),
+            [WindowIntent.Exit] = new RelayCommand(OnExitRequested),  // Ctrl+Q → title bar'ın Exit butonu (MainWindow.Exit.cs)
         };
         foreach (var b in KeyboardShortcuts.WindowBindings)
             InputBindings.Add(new KeyBinding(commandForIntent[b.Intent], b.Key, b.Modifiers));
@@ -506,19 +507,17 @@ public partial class MainWindow : Window
     /// sürüm varsa cümle "About — what's new in {sürüm}"e dönerdi. Okunmadı mekanizması sparkle butonuna
     /// taşındığı için (bkz. <see cref="SetupNotesButtonTooltip"/>) ⓘ'nin cümlesi artık HER ZAMAN sabit katalog
     /// cümlesidir — koşullu dal DÜŞTÜ.</para></summary>
-    private void SetupAboutButtonTooltip()
+    private void SetupAboutButtonTooltip() => InfoButton.ToolTip = CatalogTooltip(ShortcutId.About);
+
+    /// <summary>Bir title bar butonunun kısayol kataloğundan kurulan tooltip'i — ⓘ (F1) ve [Exit] Exit (Ctrl+Q) aynı kalıbı okur.
+    /// [design-v1.2.1 §2.1] Tooltip cümlenin SONUNA jesti ekler: "… (F1)". Cümle de jest de katalogdan gelir — ikisi de burada elle
+    /// yazılmaz. Yerleşim gear'ınkiyle AYNI olmalı (hepsi title bar'da, aşağı açılır) — değer ORADAN okunur, ikinci kez yazılmaz.</summary>
+    private System.Windows.Controls.ToolTip CatalogTooltip(ShortcutId id)
     {
-        // [design-v1.2.1 §2.1] Tooltip cümlenin SONUNA jesti ekler: "… (F1)". Cümle de jest de katalogdan
-        // gelir — ikisi de burada elle yazılmaz.
-        var about = ShortcutCatalog.Get(ShortcutId.About);
-        var tooltip = new System.Windows.Controls.ToolTip
-        {
-            Content = $"{about.Description} ({about.Gestures[0]})",
-        };
-        // Yerleşim gear'ınkiyle AYNI olmalı (ikisi de title bar'da, aşağı açılır) — değer ORADAN okunur,
-        // ikinci kez yazılmaz.
+        var entry = ShortcutCatalog.Get(id);
+        var tooltip = new System.Windows.Controls.ToolTip { Content = $"{entry.Description} ({entry.Gestures[0]})" };
         AppTooltip.SetSide(tooltip, AppTooltip.GetSide((System.Windows.Controls.ToolTip)GearButton.ToolTip));
-        InfoButton.ToolTip = tooltip;
+        return tooltip;
     }
 
     /// <summary>[design v1.13.0/v1.13.1 §2.1/§2.11] What's new butonunun tooltip'i — About'un eski
@@ -590,14 +589,15 @@ public partial class MainWindow : Window
     /// <summary>[E5/T46 · design v1.23.0 §2.12] Esc zincirinin POPOVER katmanı: alt bardaki popover/menüler
     /// (<see cref="ShellRoot.AnyPopoverOpen"/>) ve title bar'daki güncelleme kartı (prototip: <c>branchPop || buildMenu
     /// || updPop</c>). Kartın İÇİNDEKİ Esc'i kartın kendisi yakalar; bu katman odak pencerede kalmışken devreye girer.</summary>
-    private bool AnyPopoverOpen => Shell.AnyPopoverOpen || IsUpdateCardOpen;
+    private bool AnyPopoverOpen => Shell.AnyPopoverOpen || IsUpdateCardOpen; // [Exit] kart zincire ayrı girer: exitCardOpen (dialogdan önce)
 
     /// <summary>Popover katmanını kapatır — hepsini birden (prototipte olduğu gibi): alt barınkiler
-    /// (<see cref="ShellRoot.CloseAllPopovers"/>) ve güncelleme kartı; odak açık olanın tetikleyicisine döner.</summary>
+    /// (<see cref="ShellRoot.CloseAllPopovers"/>), güncelleme kartı ve [Exit] Exit'in onay kartı; odak açık olanın tetikleyicisine döner.</summary>
     private void CloseAllPopovers()
     {
         Shell.CloseAllPopovers();
         CloseUpdateCard(returnFocusToPill: true);
+        CloseExitCard(returnFocusToButton: true);
     }
 
     /// <summary>[design v1.13.0 §2.11] Esc zincirinin dialog dalı: <b>What's new → About → Settings</b> — üst üste
@@ -610,7 +610,7 @@ public partial class MainWindow : Window
     private void OnEscapePressed()
     {
         switch (KeyboardShortcuts.ResolveEsc(AnyDialogOpen, AnyPopoverOpen, _vm.SelectedProjectId is not null,
-                    _vm.EscRunState))
+                    _vm.EscRunState, exitCardOpen: IsExitCardOpen))
         {
             case EscAction.CloseDialog:
                 if (NotesOverlay.Visibility == Visibility.Visible) NotesOverlay.CloseDialog();
@@ -1356,8 +1356,8 @@ public partial class MainWindow : Window
         Dwm.DwmSetWindowAttribute(hwnd, Dwm.DWMWA_WINDOW_CORNER_PREFERENCE, ref round, sizeof(int));
         Dwm.DwmSetWindowAttribute(hwnd, Dwm.DWMWA_BORDER_COLOR, ref border, sizeof(int));
 
-        // [T62] Tepsi: Close to tray açıkken × pencereyi buraya gizler (K5) → uygulama tepsiden yönetilir. [P3 · Task 3]
-        // Exit güvenli tam çıkıştır — uçuştaki iş beklenir (ExitFromTray).
+        // [T62] Tepsi: Close to tray açıkken × pencereyi buraya gizler (K5) → uygulama tepsiden yönetilir. [P3 · Task 3 · Exit]
+        // Exit title bar'ın Exit butonuyla aynı karardır — uçuşta iş varsa pencere öne gelir ve onay kartı açılır (ExitFromTray).
         _tray = new AppTrayIcon(_vm.StopCommand, _vm);
         _tray.RestoreRequested += ShowFromTray;
         _tray.ExitRequested += ExitFromTray;
@@ -1581,14 +1581,6 @@ public partial class MainWindow : Window
     /// Testler sayaçlı bir sahteyle değiştirir; uygulama kapanmaz.</summary>
     internal Action ShutdownApplication { get; set; }
 
-    /// <summary>[P3 · Task 3] Çıkış beklerken pencereyi öne getiren çağrı (test dikişi). Üretim değeri
-    /// <see cref="ShowFromTray"/>'i kendi dispatcher turuna ERTELER: × yolunda çağrı <see cref="OnClosing"/>'in
-    /// içinden gelir ve WPF, kapanış sürerken <c>Show</c>'u InvalidOperationException ile reddeder. Ertelenen gösterim
-    /// kuralı (<see cref="WindowCloseRule.ShouldBringForward"/>) kendi anında yeniden sorar: arada çıkış başladıysa
-    /// kapanmakta olan pencere bir kare için öne gelmez. Testler pencere GÖSTERMEZ, sayaçlı bir sahteyle
-    /// değiştirir.</summary>
-    internal Action BringForward { get; set; }
-
     /// <summary>[P3 · Task 3] Çıkış hazır (<see cref="RunViewModel.ExitReady"/>): bundan sonra her Closing pencereyi
     /// gerçekten kapatır ve uygulama KOŞULSUZ kapanır. Kaskat: App.Shutdown → App.OnExit → EngineHost.DisposeAsync →
     /// outer Job (KILL_ON_JOB_CLOSE) — bekleyişten sonra geride kalanı (Supervisor, susmuş bir motorun child'ları)
@@ -1597,21 +1589,6 @@ public partial class MainWindow : Window
     {
         _exiting = true;
         ShutdownApplication();
-    }
-
-    /// <summary>[P3 · Task 3] Tepsi → Exit: HER ZAMAN güvenli tam çıkış — Close to tray'e bakılmaz, menüdeki Exit'in
-    /// anlamı zaten "tamamen kapat"tır. × ile AYNI yol (<see cref="RequestFullExit"/>).</summary>
-    internal void ExitFromTray() => RequestFullExit();
-
-    /// <summary>[P3 · final review F7] Güvenli tam çıkışı iste — tepsi → Exit'in ve Close to tray kapalıyken ×'ın TEK
-    /// kabuk yolu. Uçuşta iş varsa çıkış onu bekler ve pencere ÖNE gelir: gizli (tepsideki) ya da küçültülmüş (görev
-    /// çubuğundan kapatılan) bir pencerede bekleyen çıkış "hiçbir şey olmuyor" gibi görünürdü. İş yoksa uygulama
-    /// pencere gösterilmeden kapanır. Öne getirme kararı (gerçek kapanış > bekleyen çıkış) TEK yerdedir:
-    /// <see cref="WindowCloseRule.ShouldBringForward"/>.</summary>
-    private void RequestFullExit()
-    {
-        _vm.RequestExit(); // uçuşta iş yoksa ExitReady → ExitNow bu çağrının içinden gelir
-        if (WindowCloseRule.ShouldBringForward(_exiting, _vm.ExitPending)) BringForward();
     }
 
     /// <summary>[M-3 fix wave] Oturum kapanışı GERÇEK bir çıkıştır — tray/balloon YASAK. <c>e.Cancel</c>'a
@@ -1638,7 +1615,7 @@ public partial class MainWindow : Window
                 MinimizeToTray();
                 break;
             case CloseAction.RequestExit:
-                RequestFullExit(); // tepsi → Exit ile AYNI yol: bekleyişte pencere öne gelir
+                RequestExitFromOutside(); // [Exit] tepsi → Exit ile AYNI yol: iş varsa pencere öne gelir, onay kartı açılır
                 break;
             case CloseAction.Stay: // çıkış zaten bekliyor: pencere görünür kalır, ikinci bir durdurma gitmez
                 break;

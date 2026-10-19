@@ -32,24 +32,24 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class UpdateRestartScreenTests
 {
-    /// <summary>Oynatmanın başladığı an (sahte saat, ms) — <see cref="RestartScreenTime"/>'ın.</summary>
-    private const long StartMs = RestartScreenTime.StartMs;
+    /// <summary>Oynatmanın başladığı an (sahte saat, ms) — <see cref="ClosingScreenTime"/>'ın.</summary>
+    private const long StartMs = ClosingScreenTime.StartMs;
 
-    private sealed record Rig(UpdateRestartScreen Screen, RestartScreenTime Time, Window Window);
+    private sealed record Rig(ClosingScreen Screen, ClosingScreenTime Time, Window Window);
 
     /// <summary>Ekranı ekran dışı gerçek bir pencerede, sahte zamanlayıcı ve saatle kurar (henüz oynamaz).</summary>
     private static Rig NewRig(double width = 800, double height = 600)
     {
         var host = DsResources.NewHost();
-        var screen = new UpdateRestartScreen();
-        var time = new RestartScreenTime(screen);
+        var screen = new ClosingScreen();
+        var time = new ClosingScreenTime(screen);
         var window = DsResources.Realize(host, screen, width, height);
         return new Rig(screen, time, window);
     }
 
     private static void Play(Rig rig, string incoming = "1.8.0")
     {
-        rig.Screen.Play(AppIdentity.Version, incoming);
+        rig.Screen.PlayRestart(AppIdentity.Version, incoming);
         rig.Screen.UpdateLayout();
     }
 
@@ -169,7 +169,7 @@ public class UpdateRestartScreenTests
 
     // ================================================================ zaman çizelgesi (sahte zamanlayıcı)
 
-    /// <summary>Oynatma tek bir kare zamanlayıcısıyla sürülür (aralığı <see cref="UpdateRestartScreen.FrameMs"/>); her
+    /// <summary>Oynatma tek bir kare zamanlayıcısıyla sürülür (aralığı <see cref="ClosingScreen.FrameMs"/>); her
     /// karede saat okunur, etiket ve çubuk <see cref="UpdateRestartTimeline"/>'a göre yazılır: tek adım, çubuk 0 → 100.
     /// <para>Eski iddia: üç adım, adım sınırlarında etiket değişirdi (Closing → Installing → Starting) — K6 ile tek adım
     /// kaldı.</para></summary>
@@ -183,7 +183,7 @@ public class UpdateRestartScreenTests
         Assert.True(screen.IsShowing);
         Assert.Equal(Visibility.Visible, screen.Visibility);
         Assert.True(timer.IsRunning);
-        Assert.Equal(TimeSpan.FromMilliseconds(UpdateRestartScreen.FrameMs), timer.Interval);
+        Assert.Equal(TimeSpan.FromMilliseconds(ClosingScreen.FrameMs), timer.Interval);
         AssertFrame(0);
 
         rig.Time.FrameAt(200);
@@ -230,7 +230,7 @@ public class UpdateRestartScreenTests
         GC.KeepAlive(rig.Window);
     }
 
-    /// <summary>[motor · Task 11 · fix-1] Çubuk dolduğu kare ekran bunu BİR kez bildirir (<see cref="UpdateRestartScreen.BarFilled"/>
+    /// <summary>[motor · Task 11 · fix-1] Çubuk dolduğu kare ekran bunu BİR kez bildirir (<see cref="ClosingScreen.BarFilled"/>
     /// — kabuk o anda güvenli tam çıkışı ister, <see cref="UpdateRestartFlowTests"/>): dolmadan önce hiç, dolduktan
     /// sonraki karelerde ve çubuk doluyken gelen ikinci bir oynatma isteğinde bir daha değil.</summary>
     [StaFact]
@@ -263,7 +263,7 @@ public class UpdateRestartScreenTests
         rig.Time.FrameAt(400);
 
         rig.Time.Now = StartMs + 450;
-        rig.Screen.Play(AppIdentity.Version, "9.9.0");
+        rig.Screen.PlayRestart(AppIdentity.Version, "9.9.0");
         rig.Time.FrameAt(400);
 
         Assert.Equal(50.0, rig.Screen.PART_Progress.Value, precision: 6);
@@ -348,9 +348,9 @@ public class UpdateRestartScreenTests
     /// <summary>Realize edilmiş kabuk + iki projeli, boşta bir workspace ve kuruluma hazır bir teklif
     /// (<see cref="UpdateOffers.Sample"/> — uygulama teklifsiz açılır); motora giden komutlar yakalanır, restart
     /// ekranının zamanı sahtedir.</summary>
-    private sealed record ShellRig(MainWindow Window, RunViewModel Vm, RestartScreenTime Time, List<IpcCommand> Sent)
+    private sealed record ShellRig(MainWindow Window, RunViewModel Vm, ClosingScreenTime Time, List<IpcCommand> Sent)
     {
-        public UpdateRestartScreen Screen => Window.UpdateRestartOverlay;
+        public ClosingScreen Screen => Window.ClosingOverlay;
 
         /// <summary>Kartın <c>Restart to update</c>'ine kullanıcı gibi basar (kapıdan geçer).</summary>
         public void PressRestart() => Assert.True(CommandPress.Press(Vm.RestartToUpdateCommand));
@@ -365,7 +365,7 @@ public class UpdateRestartScreenTests
         MainWindowHost.AcceptSends(vm);
         var sent = new List<IpcCommand>();
         vm.DebugOnCommandSent = sent.Add;
-        return new ShellRig(window, vm, new RestartScreenTime(window.UpdateRestartOverlay), sent);
+        return new ShellRig(window, vm, new ClosingScreenTime(window.ClosingOverlay), sent);
     }
 
     /// <summary>Ekran pencerenin EN ÜST katmanıdır (modalların da üstünde, XAML'de son), iki satırı da örter (title bar
@@ -377,7 +377,7 @@ public class UpdateRestartScreenTests
     {
         using var temp = new TempDir();
         var (window, _) = MainWindowHost.NewRealized(temp);
-        var screen = window.UpdateRestartOverlay;
+        var screen = window.ClosingOverlay;
 
         var layers = (Grid)window.RootShell.Child;
         Assert.Same(screen, layers.Children[^1]);

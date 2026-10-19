@@ -206,6 +206,11 @@ public sealed class RunCoordinator(
     private bool _finishing;            // sonuç olayları yazılmaya başladı → Stop artık sahiplenilemez
     private Task _runTask = Task.CompletedTask;
     private StopKind? _stopKind;        // null = stop istenmedi; Hard, Graceful'u EZER (geri alınmaz)
+    // [Exit · motor yarışı] Koşunun hard stop'u — her invoke bunu dinler (InvokeOnceAsync). Koşu başında taze kurulur, Hard'da iptal
+    // edilir. Neden: proje "derleniyor" ilan edilip slot alındıktan SONRA MSBuild.exe başlar; hard stop tam o aralıkta gelirse inner job'u
+    // boşken sonlandırır ve ardından başlayan derleme sonlandırılmış job'a girip sonuna kadar koşardı. İptal edilmiş token'la başlayan
+    // invoke süreci hemen öldürür, çalışan invoke'u da öldürür.
+    private CancellationTokenSource? _hardStop;
     private bool _stopAcked;            // runStopped yazıldı mı — TryRequestStop true dedi ise ACK BORCU vardır
     // [spec 2026-09-18 §6.1 · karar 10] Koşu branch değişimiyle kesildi mi (StopKind.Interrupt). _stopKind'dan
     // AYRI tutulur: kesme bir durdurma TÜRÜ değil, sonuçların güvenilirliği hakkında bir olgudur — Hard sonradan
@@ -339,6 +344,8 @@ public sealed class RunCoordinator(
                 _runActive = true;
                 _finishing = false;
                 _stopKind = null;
+                _hardStop?.Dispose(); // önceki koşunun invoke'ları bitti — koşu yalnız tüm worker'lar join olunca biter
+                _hardStop = new CancellationTokenSource();
                 _stopAcked = false;
                 _interrupted = false;
                 _runTask = Task.Run(() => ExecuteRunAsync(cmd, ct), CancellationToken.None);
@@ -420,6 +427,7 @@ public sealed class RunCoordinator(
     {
         var warnings = new List<string>(); // [minor 1] konsol yazımı KİLİT DIŞINDA
         bool owned = false;
+        CancellationTokenSource? hardStop = null;
         lock (_gate)
         {
             if (_runActive && !_finishing)
@@ -428,12 +436,17 @@ public sealed class RunCoordinator(
                 // Interrupt, _stopKind'a Graceful olarak girer (dispatch ve drain kuralı aynı); farkı _interrupted'dadır.
                 _stopKind = kind == StopKind.Hard ? StopKind.Hard : _stopKind ?? StopKind.Graceful; // Hard geri alınmaz
                 if (kind == StopKind.Interrupt) _interrupted = true;
-                if (kind == StopKind.Hard) innerJob.Terminate();
+                if (kind == StopKind.Hard)
+                {
+                    innerJob.Terminate();
+                    hardStop = _hardStop; // [Exit · motor yarışı] iptal KİLİT DIŞINDA: kaydedilmiş öldürmeler _gate'i tutarak koşmasın
+                }
                 else if (_stopKind == StopKind.Graceful) DrainCapLocked(warnings); // [P3] Hard'dan SONRA gelen graceful'da anlamsız
                 _scheduler?.RequestStop(); // null ise plan hâlâ kuruluyor — kurulur kurulmaz _stopKind okunup uygulanır
                 _wake?.WakeAll();          // parked worker'lar IsDone'ı yeniden değerlendirsin
             }
         }
+        hardStop?.Cancel(); // uçuştaki ve henüz başlamamış her invoke: süreci öldür ya da hiç koşturma
         Warn(warnings);
         return owned;
     }
@@ -2635,11 +2648,24 @@ public sealed class RunCoordinator(
             Emit(run, projectId, log, warnLine);
         // Slot çağıranın elindedir ve timeout saati başlamadan ÖNCE alınmıştır (PerProjectTimeout invoker'ın
         // içinde kurulur) — sıra beklemek bir projenin süresine ya da zaman aşımına sayılmaz.
-        var invoke = await run.Invoker.InvokeAsync(request, line =>
+        // [Exit · motor yarışı] Invoke koşunun hard stop'unu da dinler (bkz. _hardStop): sonlandırılmış job'a sonradan giren bir derleme
+        // kaçmaz. Copy-contention geri çekilmesinin ortasında gelen hard stop bekleyişi iptalle keser — o bir hata değil, durdurmadır.
+        CancellationToken hardStop;
+        lock (_gate) hardStop = _hardStop?.Token ?? CancellationToken.None;
+        using var invokeCt = CancellationTokenSource.CreateLinkedTokenSource(ct, hardStop);
+        MsBuildInvokeResult invoke;
+        try
         {
-            Emit(run, projectId, log, line);
-            observeLine?.Invoke(line);
-        }, ct);
+            invoke = await run.Invoker.InvokeAsync(request, line =>
+            {
+                Emit(run, projectId, log, line);
+                observeLine?.Invoke(line);
+            }, invokeCt.Token);
+        }
+        catch (OperationCanceledException) when (hardStop.IsCancellationRequested && !ct.IsCancellationRequested)
+        {
+            return new InvokeOutcome(BuildResult.Failed, 0, FailureReasons.Stopped);
+        }
 
         return invoke.ExitCode == 0 && !invoke.TimedOut && !invoke.Killed
             ? new InvokeOutcome(BuildResult.Succeeded, invoke.DurationMs, null)

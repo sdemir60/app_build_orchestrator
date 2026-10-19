@@ -232,6 +232,36 @@
                   </Canvas>
                 </Viewbox>
               </Button>
+              <!-- [Exit] Kümenin SONU: kendi ayracıyla (mevcut ayraçlarla AYNI stil) ve uygulamayı tamamen kapatan Exit butonu.
+                   Pencere kontrolleri (— □ ×) ondan sonra gelir. Davranış MainWindow.Exit.cs'te: uçuşta iş yoksa hemen kapatır, varsa
+                   onay kartını açar. Kart açıkken buton surface-overlay + text-primary'dedir ve tooltip'i kapalıdır (Ds.IconButton.Open —
+                   amber YOK). Tooltip metni ELLE yazılmaz — ShortcutCatalog'dan gelir (About'un deseni). -->
+              <Rectangle x:Name="ExitSeparator" Style="{StaticResource TitleBarSeparator}" />
+              <Grid x:Name="ExitSlot" VerticalAlignment="Center">
+                <Button x:Name="ExitButton" Style="{DynamicResource Ds.IconButton.Open}" Click="OnExitButtonClick"
+                        AutomationProperties.Name="{x:Static local:AccessibilityNames.Exit}">
+                  <!-- Lucide power 13px, kalınlık 1.7 (ⓘ ile aynı); kontur butonun Foreground'u. -->
+                  <Viewbox Width="13" Height="13">
+                    <Canvas Width="24" Height="24">
+                      <Path Style="{StaticResource TitleBarIcon}" Data="{DynamicResource Icon.Power}"
+                            StrokeThickness="{DynamicResource Icon.Power.StrokeThickness}" />
+                    </Canvas>
+                  </Viewbox>
+                </Button>
+                <!-- [Exit] Onay kartı = mevcut popover altyapısı: butonun 9px ALTINDA, SAĞ kenarı butonla hizalı (kümenin sonundaki
+                     butondan sola sarkar), 320px Ds.Popover kabuğu, dolgu 0. Yerleşim Custom: geri çağrı ve boşluk MainWindow.Exit.cs'te.
+                     Açık/kapalı durumunun kaynağı butonun DsChrome.IsActive'idir (iki yönlü — dışarı tıkla kapanan popup butonu da
+                     söndürür; gösterilmeyen pencerede IsOpen zorla false kalır, durum butonda okunur). Dışarı tık kapatır
+                     (StaysOpen=False); butona ikinci basış PopoverToggle ile kapatır. Popup ayrı bir HWND'dir: açık dialogların da üstünde
+                     durur — güncelleme kartının aksine dialog açılınca kapanmaz. -->
+                <Popup x:Name="ExitPopup" Placement="Custom" PlacementTarget="{Binding ElementName=ExitButton}"
+                       StaysOpen="False" AllowsTransparency="True" PopupAnimation="None"
+                       IsOpen="{Binding Path=(controls:DsChrome.IsActive), ElementName=ExitButton, Mode=TwoWay}">
+                  <Border Style="{DynamicResource Ds.Popover}" Width="320" Padding="0">
+                    <views:ExitCard x:Name="ExitCardView" IsOpen="{Binding IsOpen, ElementName=ExitPopup, Mode=OneWay}" />
+                  </Border>
+                </Popup>
+              </Grid>
             </StackPanel>
 
             <!-- [design-v1.2.1 §2.1] LOGO KİLİDİ (sürükleme alanı — hit-test-visible DEĞİL):
@@ -294,13 +324,13 @@
       <views:NotesDialog x:Name="NotesOverlay" Grid.Row="0" Grid.RowSpan="2"
                          WindowChrome.IsHitTestVisibleInChrome="True" />
 
-      <!-- [design v1.23.0 §2.12 · plan U4] RESTART EKRANI — modalların da ÜSTÜNDE, pencerenin EN ÜST katmanı: title bar
+      <!-- [design v1.23.0 §2.12 · plan U4 · Exit] KAPANIŞ EKRANI — modalların da ÜSTÜNDE, pencerenin EN ÜST katmanı: title bar
            dahil her şeyi örter (prototip zIndex 300) ve caption bandında da tıklamayı kendisi alır (sürükleme ve pencere
-           düğmeleri altında kalır). Varsayılan Collapsed; Restart to update onu oynatır, görünürken pencere klavyeyi ve
-           global kısayolları yok sayar (MainWindow.UpdateRestart.cs). Pencere kapanana dek kalır — çubuğu dolunca uygulama
-           güvenli tam çıkışa girer, kurulumu Update.exe yapar. -->
-      <views:UpdateRestartScreen x:Name="UpdateRestartOverlay" Grid.Row="0" Grid.RowSpan="2"
-                                 WindowChrome.IsHitTestVisibleInChrome="True" />
+           düğmeleri altında kalır). Varsayılan Collapsed; iki kipi vardır: Restart to update (MainWindow.UpdateRestart.cs — çubuğu
+           dolunca tam çıkış, kurulumu Update.exe yapar) ve Exit'in "Stop and exit"i (MainWindow.Exit.cs — iş durunca ikinci adım,
+           çubuğu dolunca kapanış). Görünürken pencere klavyeyi ve global kısayolları yok sayar; pencere kapanana dek kalır. -->
+      <views:ClosingScreen x:Name="ClosingOverlay" Grid.Row="0" Grid.RowSpan="2"
+                           WindowChrome.IsHitTestVisibleInChrome="True" />
     </Grid>
   </Border>
 </Window>

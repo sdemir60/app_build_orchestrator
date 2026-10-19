@@ -200,7 +200,8 @@ public class RunCoordinatorTests
             Func<string, string?>? apiSurface = null,
             string? customBeforeTargetsPath = null,
             bool productionMachine = false,
-            Action? memoryTrim = null)
+            Action? memoryTrim = null,
+            Func<TimeSpan, CancellationToken, Task>? retryDelay = null)
         {
             _out = output ?? new MemoryStream(); // [Fix round 2] testler pump'ı duraklatan bir stdout verebilir
             Sut = new RunCoordinator(
@@ -221,7 +222,8 @@ public class RunCoordinatorTests
                 cpuGovernor: cpuGovernor, // [T20-b] null ⇒ gerçek inner Job (mevcut testlerin davranışı)
                 // [P3/D8] Copy-contention retry'ının backoff'u testte GERÇEK ZAMAN beklemez: üretimde
                 // Task.Delay olan seam burada anında tamamlanır — istenen süre yalnız KAYDEDİLİR.
-                retryDelay: (wait, _) => { lock (RetryDelays) RetryDelays.Add(wait); return Task.CompletedTask; },
+                // [Exit] Geri çekilmenin ortasında gelen iptali sınayan test kendi gecikmesini verir (token'ı dinleyen bir bekleyiş).
+                retryDelay: retryDelay ?? ((wait, _) => { lock (RetryDelays) RetryDelays.Add(wait); return Task.CompletedTask; }),
                 inFlight: inFlight,
                 // [API kısa devresi] null ⇒ üretimdeki ApiSurfaceHash.OfFile — sahte planların yolları diskte
                 // olmadığından her dosya "absent" okunur; hash-mode testleri kendi sahte diskini enjekte eder.
@@ -708,6 +710,70 @@ public class RunCoordinatorTests
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         Assert.Equal("stopped", Assert.Single(h.Events.OfType<ProjectFailedEvent>()).Reason);
+        Assert.Equal("runStopped:hard", Describe(h.Events[^2]));
+    }
+
+    /// <summary>
+    /// [Exit · motor yarışı] Hard stop yalnız inner job'u sonlandırmaz, uçuştaki her invoke'un token'ını da iptal eder. Neden: koordinatör
+    /// projeyi "derleniyor" ilan edip slotu ALDIKTAN sonra <c>MSBuild.exe</c>'yi başlatır; hard stop tam o aralıkta gelirse inner job'u
+    /// boşken sonlandırır ve ardından başlayan derleme sonlandırılmış job'a girip SONUNA KADAR koşardı — "Stop now" ve Exit'in "Stop and
+    /// exit"i bir projeyi kaçırırdı. Token iptal edilince invoker süreci başlar başlamaz öldürür (önceden iptal edilmiş token) ya da
+    /// çalışanı öldürür; sonuç <c>failed("stopped")</c>'tır. Sahte invoker gerçek bir süreç başlatmaz — job'un sonlandırması ona ulaşmaz,
+    /// yani yarıştan kaçan derlemenin ta kendisidir.
+    /// <para>KIRMIZI (düzeltmeden önce): token hiç iptal edilmiyordu — invoke sonsuza dek sürer, koşu bitmezdi. Ölçüm: gerçek MSBuild'li
+    /// <c>SafeExitProcessTests</c> yük altında motorun cevabını 3003 ms'de aldı — fixture'ın ~3 sn'lik adımı kadar.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_hard_stop_cancels_the_invoke_in_flight()
+    {
+        var plan = PlanOf(Node("A"));
+        var inFlight = Signal();
+        var invoker = new FakeInvoker(async (_, _, ct) =>
+        {
+            var killed = new TaskCompletionSource<MsBuildInvokeResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var registration = ct.Register(() => killed.TrySetResult(new MsBuildInvokeResult(-1, 9, TimedOut: false, Killed: true)));
+            inFlight.TrySetResult();
+            return await killed.Task;
+        });
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await inFlight.Task.WaitAsync(Limit);
+        Assert.True(h.Sut.TryRequestStop(StopKind.Hard));
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal("stopped", Assert.Single(h.Events.OfType<ProjectFailedEvent>()).Reason);
+        Assert.Equal("runStopped:hard", Describe(h.Events[^2]));
+    }
+
+    /// <summary>[Exit · motor yarışı] Copy-contention geri çekilmesinin ortasında gelen hard stop: bekleyiş iptalle kesilir ve proje
+    /// <c>failed("stopped")</c> raporlanır — iptal bir istisna olarak worker'ı düşürmez, koşu asılı kalmaz ve tek <c>runStopped</c> gelir.
+    /// <para>KIRMIZI (düzeltmeden önce): bekleyiş hard stop'u duymaz, koşu bitmezdi.</para></summary>
+    [Fact]
+    public async Task A_hard_stop_during_a_retry_backoff_reports_the_project_stopped()
+    {
+        var plan = PlanOf(Node("A"));
+        var inBackoff = Signal();
+        var invoker = new FakeInvoker((_, onLine, _) =>
+        {
+            onLine(ContentionLine);
+            return Task.FromResult(Exit(1));
+        });
+        using var h = new Harness(plan, invoker, retryDelay: async (_, ct) =>
+        {
+            var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var registration = ct.Register(() => cancelled.TrySetCanceled(ct));
+            inBackoff.TrySetResult();
+            await cancelled.Task;
+        });
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await inBackoff.Task.WaitAsync(Limit);
+        Assert.True(h.Sut.TryRequestStop(StopKind.Hard));
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal("stopped", Assert.Single(h.Events.OfType<ProjectFailedEvent>()).Reason);
+        Assert.Single(h.Events.OfType<RunStoppedEvent>());
         Assert.Equal("runStopped:hard", Describe(h.Events[^2]));
     }
 

@@ -58,6 +58,11 @@ internal static class NativeMethods
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern nint OpenProcess(uint dwDesiredAccess, bool bInheritHandle, uint dwProcessId);
 
+    /// <summary>[Exit] Sürecin image dosyasının tam yolu (Win32 biçimi — bayrak 0). <paramref name="size"/> girişte tamponun karakter
+    /// sayısı, çıkışta yazılan karakter sayısıdır (sonlandırıcı hariç).</summary>
+    [DllImport("kernel32.dll", EntryPoint = "QueryFullProcessImageNameW", SetLastError = true, CharSet = CharSet.Unicode)]
+    public static extern bool QueryFullProcessImageName(nint hProcess, uint flags, char[] exeName, ref uint size);
+
     /// <summary>Bu sürecin SÖZDE tutamacı (-1): kapatılmaz, her sürecte geçerlidir, kendi sürecini okumak için OpenProcess gerekmez.</summary>
     [DllImport("kernel32.dll")]
     public static extern nint GetCurrentProcess();

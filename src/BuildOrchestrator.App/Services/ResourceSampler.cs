@@ -57,19 +57,16 @@ internal interface IResourceProbe
 /// P/Invoke'lardır (<c>JobObject.QueryProcessIds</c> tamponu yeniden kullanır; <c>ResourceSamplerTests</c> pinler).</item>
 /// </list>
 ///
-/// <para>Yalnız UI thread'inden çağrılır (örnekleyicinin tik'i). PID listesi <see cref="ProcessIdCapacity"/> girdiyle sınırlıdır
-/// (<c>QueryProcessIds</c> hedef küçükse sessizce keser): bir koşunun job'u onlarca süreçtir, 256 geniş bir paydır.</para>
+/// <para>Yalnız UI thread'inden çağrılır (örnekleyicinin tik'i). Job'un PID listesini okuma iskeleti Exit kartının sayımıyla ortaktır
+/// (<see cref="OuterJobMembers"/> — tampon, sınır, düşen sorgunun yutulması).</para>
 /// </summary>
 internal sealed class JobResourceProbe : IResourceProbe
 {
-    /// <summary>PID tamponunun boyu. <see cref="JobObject.QueryProcessIds"/> hedefe sığmayanı sessizce keser; tampon bu yüzden cömert tutulur.</summary>
-    internal const int ProcessIdCapacity = 256;
-
     private readonly JobObject _outerJob;
     private readonly Func<int?> _enginePid;
     private readonly Func<int, long?> _privateBytesOf;
     private readonly Process _self = Process.GetCurrentProcess();
-    private readonly int[] _processIds = new int[ProcessIdCapacity];
+    private readonly OuterJobMembers _members;
 
     /// <param name="outerJob">App'in outer job'u (<c>EngineHost.OuterJob</c>) — yalnız OKUNUR, şerit job'a dokunmaz.</param>
     /// <param name="enginePid">Motor sürecinin PID'i (<c>EngineHost.EnginePid</c>); motor uyuyorsa/yoksa <c>null</c>. Her okumada sorulur.</param>
@@ -84,6 +81,7 @@ internal sealed class JobResourceProbe : IResourceProbe
         ArgumentNullException.ThrowIfNull(enginePid);
         ArgumentNullException.ThrowIfNull(privateBytesOf);
         _outerJob = outerJob;
+        _members = new OuterJobMembers(outerJob);
         _enginePid = enginePid;
         _privateBytesOf = privateBytesOf;
     }
@@ -92,26 +90,29 @@ internal sealed class JobResourceProbe : IResourceProbe
     {
         TimeSpan appCpu = _self.TotalProcessorTime;
         long? appBytes = MemoryLine.CurrentPrivateBytes();
+        TimeSpan jobCpu;
         try
         {
-            TimeSpan jobCpu = _outerJob.QueryAccounting().TotalCpuTime;
-            int count = _outerJob.QueryProcessIds(_processIds);
-            int? enginePid = _enginePid();
-            long engineBytes = 0, compilersBytes = 0;
-            for (int i = 0; i < count; i++)
-            {
-                int pid = _processIds[i];
-                long bytes = _privateBytesOf(pid) ?? 0; // çıkmış/açılamayan süreç 0 sayılır, hata değil
-                if (pid == enginePid) engineBytes += bytes;
-                else compilersBytes += bytes;
-            }
-
-            return new ResourceReading(appCpu, appBytes, jobCpu, engineBytes, compilersBytes);
+            jobCpu = _outerJob.QueryAccounting().TotalCpuTime;
         }
         catch (Exception ex) when (ex is Win32Exception or ObjectDisposedException)
         {
-            return new ResourceReading(appCpu, appBytes, null, null, null);
+            return WithoutJob();
         }
+        if (!_members.TryRead(out var processIds)) return WithoutJob();
+
+        int? enginePid = _enginePid();
+        long engineBytes = 0, compilersBytes = 0;
+        foreach (int pid in processIds)
+        {
+            long bytes = _privateBytesOf(pid) ?? 0; // çıkmış/açılamayan süreç 0 sayılır, hata değil
+            if (pid == enginePid) engineBytes += bytes;
+            else compilersBytes += bytes;
+        }
+        return new ResourceReading(appCpu, appBytes, jobCpu, engineBytes, compilersBytes);
+
+        // Job okunamadı: job'dan türeyen üç alan okunamamıştır; App'in kendi alanları etkilenmez.
+        ResourceReading WithoutJob() => new(appCpu, appBytes, null, null, null);
     }
 }
 

@@ -56,6 +56,8 @@ public class IconGeometryTests
         // [design v1.25.0 §2.1] Title bar'ın kaynak şeridinin üç ikonu — lucide cpu · memory-stick ve üç dik çizgi (design-v1.25.0
         // prototype/app/BuildApp.jsx:125-127). Şerit etiketsizdir: anlamı taşıyan görsel bu üç çizimdir.
         "Icon.Cpu", "Icon.MemoryStick", "Icon.Parallel",
+        // [Exit] Title bar'ın Exit butonu ve kartın "Stop and exit"i — lucide power.
+        "Icon.Power",
     ];
 
     /// <summary>[T60] Tasarımda <c>fill="currentColor" stroke="none"</c> ile verilen (DOLU) ikonlar —
@@ -165,6 +167,25 @@ public class IconGeometryTests
 
         Assert.Equal(1.7, Assert.IsType<double>(icons["Icon.UpdateReady.StrokeThickness"]));
         Assert.Equal(1.8, Assert.IsType<double>(icons["Icon.ArrowRight.StrokeThickness"]));
+    }
+
+    /// <summary>[Exit] Exit'in ikonu lucide power'dır (viewBox 24): dikey gövde <c>M12 2v10</c> + üstü açık halka
+    /// <c>M18.4 6.6a9 9 0 1 1-12.77.04</c> — iki figür. Sınırlar çizimi doğrular: halka x 3..21, alt ucu ~22; gövde y=2'den başlar.
+    /// Kalınlık title bar ikonlarınınkidir: 1.7 (ⓘ ile aynı). Gövde x=12'dedir: 13 px kutuda 6,5 — %100 ekranda piksel ORTASI
+    /// (kaynak şeridinin paralel ikonundaki piksel sınırı dersi).</summary>
+    [StaFact]
+    public void The_power_icon_carries_lucides_geometry()
+    {
+        var icons = IconResources.Load();
+
+        var power = Assert.IsType<PathGeometry>(icons["Icon.Power"]);
+        Assert.Equal(2, power.Figures.Count);
+        Assert.Equal(new Point(12, 2), power.Figures[0].StartPoint);
+        Assert.Equal(3, power.Bounds.Left, 1);
+        Assert.Equal(2, power.Bounds.Top, 1);
+        Assert.Equal(21, power.Bounds.Right, 1);
+        Assert.Equal(22, power.Bounds.Bottom, 0);
+        Assert.Equal(1.7, Assert.IsType<double>(icons["Icon.Power.StrokeThickness"]));
     }
 
     /// <summary>[design v1.25.0 §2.1] Kaynak şeridinin ikonları prototipin geometrisini BİREBİR taşır (BuildApp.jsx:125-127, viewBox
