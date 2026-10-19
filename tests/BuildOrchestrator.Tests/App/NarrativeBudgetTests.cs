@@ -3,6 +3,7 @@ using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.ViewModels;
 using Xunit.Abstractions;
 using static BuildOrchestrator.Tests.App.MsBuildLines;
+using static BuildOrchestrator.Tests.ByteUnits;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -54,7 +55,7 @@ public sealed class NarrativeBudgetTests(ITestOutputHelper output)
     private const int Lines = 100_000;
 
     /// <summary>[spec §6.6 · dalga 2] Spool'lu koşudan sonra yönetilen yığının en çok büyümesi: 8 MB — metinden bağımsız sabit tavan.</summary>
-    private const long BudgetBytes = 8L * 1024 * 1024;
+    private const long BudgetBytes = 8 * Mb;
 
     /// <summary>Ölçümde pompanın kaç satırda bir tick ettiği: kanal hiçbir an koşunun tamamını tutmaz (üretimde pompa ~50 ms'de
     /// bir boşaltır).</summary>
@@ -64,7 +65,7 @@ public sealed class NarrativeBudgetTests(ITestOutputHelper output)
     /// önler (koşul sağlanınca hemen çıkılır).</summary>
     private static readonly TimeSpan DeliveryTimeout = TimeSpan.FromSeconds(30);
 
-    private const double BytesPerMb = 1024 * 1024;
+    private const double BytesPerMb = Mb; // raporun MB'ı ondalıklı bölünür; birim ByteUnits'ten
 
     /// <summary>[final review "Tasks 9-10" hijyeni] Satır sayısı koşunun başlangıcından SONRAKİ taban üstüne sayılır: başlangıç bir
     /// anlatı satırı yazsa da iddia "her <c>projectLog</c> satırı store'da bir kez"dir.

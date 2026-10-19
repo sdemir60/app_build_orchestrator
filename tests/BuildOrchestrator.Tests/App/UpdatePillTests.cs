@@ -72,8 +72,9 @@ public class UpdatePillTests
     /// AYNIDIR — hap boş alana (sola) doğru büyür. Her ekran ölçeğinde (<see cref="DisplayScales"/>), aynı pencerede ölçülür.
     /// <para><b>[DEĞİŞEN ÖLÇÜM — temizlik madde 1]</b> Eski iddia iki listenin double eşitliğiydi (<c>Assert.Equal(withoutPill, withPill)</c>)
     /// ve yalnız makinenin ölçeğinde koşardı: %125/%150 ekranlarda her tam süitte kırmızı, CI'da (%100) yeşil. Ölçüm (zorlanan ölçek, pencere
-    /// Maximized, 1400 dip): 125%'te LayFocus'un sağ boşluğu hapla <c>231,99999999999977</c>, hapsız <c>232</c>; 150%'de gear · What's new ·
-    /// About <c>197,33333333333326</c> ↔ <c>197,33333333333348</c>. Fark 1e-13 mertebesindedir: konumlar cihaz pikseli ızgarasındadır ve iki
+    /// Maximized, 1400 dip): 125%'te LayFocus'un sağ boşluğu hapla <c>231,99999999999977</c>, hapsız <c>232</c>; 150%'de gear, What's new ve
+    /// About'unki hapla <c>197,33333333333326</c> · <c>175,33333333333326</c> · <c>153,33333333333326</c>, hapsız aynı sayıların <c>…348</c> ile
+    /// biten hâli. Fark 1e-13 mertebesindedir: konumlar cihaz pikseli ızgarasındadır ve iki
     /// ayrı toplamın double artığı kayma değildir. Konumlar artık ızgarada karşılaştırılır (<see cref="DsResources.InDevicePixels"/>): gerçek
     /// bir kayma en az bir cihaz pikselidir ve yakalanır (mutasyon: hap görünürken sağ kümeye 1 dip sağ boşluk — her ölçekte kırmızı).</para></summary>
     [StaTheory]
@@ -136,7 +137,11 @@ public class UpdatePillTests
     /// değil, ölçekten gelir (<see cref="DsResources.InDevicePixels"/>). Boşluk, sonraki öğenin sol kenarından ÖNCEKİ öğenin yerleşim yuvasının
     /// sağına ölçülür (StackPanel yuvaları bitişiktir); metnin kendi kenarına ölçmek yukarıdaki taşmayı katardı. 1 dip'lik gerçek bir sapma bu
     /// payı her ölçekte aşar (100%'de 1 piksel, üstünde en az ölçek − 0,5 piksel) — mutasyonla doğrulandı: yükseklik 23, etiketin ya da sürümün
-    /// boşluğu 7, sol padding 7 her ölçekte kırmızı. Özellik iddiaları (padding, kenar, radius, renk, yazı) ölçekten bağımsızdır, aynen kalır.</para></summary>
+    /// boşluğu 7, sol padding 7 her ölçekte kırmızı. Özellik iddiaları (padding, kenar, radius, renk, yazı) ölçekten bağımsızdır, aynen kalır.</para>
+    /// <para>Yuvadan ölçülen boşluk yalnız SONRAKİ öğenin sol boşluğunu görür; önceki öğenin SAĞ boşluğu yuvanın içinde kalır ve ölçüme girmez
+    /// (bütün-dal incelemesi: ikona <c>0,0,1,0</c> verilince test yeşil kalıyordu). Bu yüzden üç öğenin Margin'i ayrıca tam değeriyle pinlenir —
+    /// <c>ResourceStripRealizeTests</c>'teki "tasarım sayıları kendileri + ölçülen boşluk" deseni; ikonun ya da etiketin sağına 1 eklemek her
+    /// ölçekte kırmızı.</para></summary>
     [StaTheory]
     [MemberData(nameof(DisplayScales))]
     public void The_pill_is_drawn_to_the_design_numbers(double scale)
@@ -172,9 +177,17 @@ public class UpdatePillTests
         Assert.Equal(FontNumeralAlignment.Tabular, Typography.GetNumeralAlignment(version));
         Assert.Equal(DsResources.TokenColor(window, "Brush.TextDim"), DsResources.ColorOf(version.Foreground));
 
-        // Ölçülen sayılar: tek yuvarlama adımı, yarım cihaz pikseli pay (özetteki ölçüm). Ön-koşul: ölçek şablondan doğan etikete de indi.
-        Assert.Equal(scale, VisualTreeHelper.GetDpi(label).DpiScaleX);
+        // Tasarım sayıları KENDİLERİ (yuvarlamasız, ölçekten bağımsız): ölçülen boşluk önceki öğenin sağ boşluğunu görmez (özet).
+        Assert.Equal(new Thickness(0), icon.Margin);
+        Assert.Equal(new Thickness(6, 0, 0, 0), label.Margin);
+        Assert.Equal(new Thickness(6, 0, 0, 0), version.Margin);
+
+        // Ölçülen sayılar: tek yuvarlama adımı, yarım cihaz pikseli pay (özetteki ölçüm). Ön-koşullar: ölçek hapın bütün görsellerine —
+        // şablondan sonradan doğanlar dahil — indi ve üç öğe aynı satırın çocuğudur (yuva o satırın koordinatındadır).
+        Assert.All(DsResources.Descendants(pill).OfType<Visual>(), v => Assert.Equal(scale, VisualTreeHelper.GetDpi(v).DpiScaleX));
         var row = (Panel)VisualTreeHelper.GetParent(label);
+        Assert.Same(row, VisualTreeHelper.GetParent(icon));
+        Assert.Same(row, VisualTreeHelper.GetParent(version));
         double GapAfter(FrameworkElement previous, FrameworkElement next) =>
             next.TranslatePoint(new Point(0, 0), row).X - LayoutInformation.GetLayoutSlot(previous).Right;
         void AssertDesignNumber(double design, double measured, string what)

@@ -40,7 +40,7 @@ public class MissingValueTests
     [Fact]
     public void The_mark_is_written_as_a_literal_only_where_it_is_declared()
     {
-        var hits = SourceGuard.ScanSrcLiterals("*.cs", StandaloneMark).Concat(SourceGuard.ScanSrcLiterals("*.xaml", StandaloneMark)).ToList();
+        var hits = SourceGuard.ScanSrcCodeAndMarkupLiterals(StandaloneMark);
 
         Assert.StartsWith(Declaration + ":", Assert.Single(hits));
         SourceGuard.AssertScansEveryProductionProject("*.cs");

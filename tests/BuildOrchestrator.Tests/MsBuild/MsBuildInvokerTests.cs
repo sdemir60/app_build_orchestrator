@@ -106,6 +106,8 @@ public class MsBuildInvokerTests
 
         // İlk NEW_PROCESS bildirimi = doğan MSBuild.exe child (NeedsRestore:false → tek child). Doğar doğmaz iptal et. Port boş job'a
         // Launch'tan ÖNCE bağlandığı için ilk bildirim zaten bir doğumdur (doğmamış üye çıkamaz).
+        // [temizlik madde 4] Eski kod ilk bildirimin NEW_PROCESS olduğunu ayrıca assert ederdi; JobBirths.Until doğum dışı bir bildirimi
+        // atlar. Bu kurulumda o iddia koşulsuz doğruydu (yukarıdaki gerekçe), bu yüzden düşürüldü — sınanan davranıştan bir şey eksilmedi.
         int pid = 0;
         JobBirths.Until(iocp, TimeSpan.FromSeconds(30), "child doğum bildirimi gelmedi", born =>
         {

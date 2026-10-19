@@ -117,6 +117,12 @@ internal static class SourceGuard
         IReadOnlyCollection<string>? allowedFiles = null, IReadOnlyCollection<string>? ignoredCallers = null)
         => ScanLiterals(RepoPaths.SrcSourceFiles(searchPattern), RepoPaths.SrcRoot, rule, allowedFiles, ignoredCallers);
 
+    /// <summary>[temizlik madde 4] Üretim projelerinin KOD ve MARKUP literalleri birlikte (<c>*.cs</c>, sonra <c>*.xaml</c>) — kullanıcıya ulaşan
+    /// metnin iki kaynağını tarayan guard'ların TEK çağrısı (iki <see cref="ScanSrcLiterals"/> çağrısının birleşimi beş yerde ayrı ayrı yazılıyordu).</summary>
+    public static IReadOnlyList<string> ScanSrcCodeAndMarkupLiterals(
+        Regex rule, IReadOnlyCollection<string>? allowedFiles = null, IReadOnlyCollection<string>? ignoredCallers = null)
+        => [.. ScanSrcLiterals("*.cs", rule, allowedFiles, ignoredCallers), .. ScanSrcLiterals("*.xaml", rule, allowedFiles, ignoredCallers)];
+
     /// <summary>TÜM repo ağacının literallerini tarar — <c>src/</c> DIŞINDA yaşayan kullanıcıya görünür
     /// metinler için (ör. <c>scripts/verify-publish.ps1</c> çıktı satırları).
     /// <para><paramref name="excludedRootFolders"/> repo köküne göre İLK yol parçasıyla eşleşir (ör.

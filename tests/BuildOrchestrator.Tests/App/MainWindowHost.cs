@@ -141,29 +141,32 @@ internal static class MainWindowHost
     /// realize edilmiş kabuk ve VM'i, veri akmadan. Böyle bir kabukla başlayan testlerin TEK kurulumu —
     /// <c>UpdatePillTests.Realized</c> ile <c>UpdateCardTests.Shell</c> aynı iki satırı ayrı ayrı yazmıştı;
     /// <see cref="NewWithProjects"/> da buradan başlar. <paramref name="console"/> ve
-    /// <paramref name="productionMemoryCollector"/>: <see cref="New"/>'ünküler.</summary>
+    /// <paramref name="productionMemoryCollector"/>: <see cref="New"/>'ünküler.
+    /// <para>[temizlik · madde 1] <paramref name="dpi"/> verilirse kabuk o ekran ölçeğinde realize edilir (makinenin ölçeği ne olursa olsun):
+    /// pencerenin kendi ölçeği realize'dan ÖNCE (MaximizeFix çerçeve dolgusunu ondan okur), içeriğinki SONRA verilir
+    /// (<see cref="RelayoutAt"/>). <c>null</c> ⇒ sistemin ölçeği, davranış birebir eskisi gibi.</para></summary>
     public static (MainWindow window, RunViewModel vm) NewRealized(TempDir uiStateDir, Func<long>? nowMs = null,
-        ConsoleBatcher? console = null, bool productionMemoryCollector = false)
+        ConsoleBatcher? console = null, bool productionMemoryCollector = false, DpiScale? dpi = null)
     {
         var (window, vm) = New(uiStateDir, nowMs: nowMs, productionMemoryCollector: productionMemoryCollector, console: console);
-        Realize(window);
+        if (dpi is { } windowScale) VisualTreeHelper.SetRootDpi(window, windowScale);
+        var content = Realize(window);
+        if (dpi is { } contentScale) RelayoutAt(content, contentScale);
         return (window, vm);
     }
 
     /// <summary>[motor · Task 8] <see cref="NewRealized"/> + kuruluma hazır bir teklif (<see cref="UpdateOffers.Sample"/>):
     /// hap görünür, kartın içeriği dolu. Uygulama teklifsiz açılır; hapı/kartı sınayan kabuk testleri teklifi burada,
     /// kurulumdan SONRA alır (üretimdeki gibi teklif sonradan gelir) ve görünür olan hap bir layout turuyla ölçülür.
-    /// <para>[temizlik · madde 1] <paramref name="dpi"/> verilirse kabuk o ekran ölçeğinde ölçülür (makinenin ölçeği ne olursa olsun):
-    /// pencerenin kendi ölçeği realize'dan ÖNCE (MaximizeFix çerçeve dolgusunu ondan okur), içeriğinki SONRA verilir
-    /// (<see cref="RelayoutAt"/>). <c>null</c> ⇒ sistemin ölçeği, davranış birebir eskisi gibi.</para></summary>
+    /// <para>[temizlik · madde 1] <paramref name="dpi"/>: <see cref="NewRealized"/>'ınki. Teklif hapın şablonunu realize'dan SONRA doğurur ve
+    /// sonradan doğan görsel ölçeği almaz (<see cref="RelayoutAt"/>), bu yüzden teklif geldikten sonra ölçek içeriğe yeniden verilir.</para></summary>
     public static (MainWindow window, RunViewModel vm) NewRealizedWithOffer(TempDir uiStateDir, DpiScale? dpi = null)
     {
-        var (window, vm) = New(uiStateDir);
-        if (dpi is { } windowScale) VisualTreeHelper.SetRootDpi(window, windowScale);
-        var content = Realize(window);
+        var (window, vm) = NewRealized(uiStateDir, dpi: dpi);
         vm.AvailableUpdate = UpdateOffers.Sample();
+        var content = (FrameworkElement)window.Content;
         content.UpdateLayout();
-        if (dpi is { } contentScale) RelayoutAt(content, contentScale);
+        if (dpi is { } scale) RelayoutAt(content, scale);
         return (window, vm);
     }
 

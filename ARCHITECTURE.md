@@ -6540,7 +6540,8 @@ Shared test infrastructure lives in one place per concern rather than being copi
 pump never ticks (`NeverTickingBatcher`) and the one a test drains (`DrainableBatcher`), the lookup and the press of a
 window key binding (`KeyBindingOf`, `PressKeyBinding`), the console-line counter (`Occurrences`), the engine host the
 fixture built (`EngineOf`), the title bar's inner grid and the dock of its two clusters (`TitleBarGrid`,
-`TitleBarDock`), the shell realized with an update offer at a forced display scale (`NewRealizedWithOffer`, §17.4) and
+`TitleBarDock`), the shell realized at a forced display scale, with or without an update offer (the `dpi` of
+`NewRealized` and `NewRealizedWithOffer`, §17.4) and
 `NeutralizeExitSeams`, which makes the shell's two exit seams no-ops so that a test
 asking for a full exit closes nothing —, `SettingsDialogHost` — with `GeneralSwitch` and `CatalogRow`, the lookups of
 a General switch and of its catalog row —, `AboutDialogHost`, which takes the clock that puts an engine to sleep under
@@ -6683,10 +6684,10 @@ A category of tests that assert properties of the *source*, not of a run:
 | One infinite bottom request (`ConsoleBottomRequestGuardTests`) | the console asks for an infinite bottom (`ScrollToEnd(`) only in the mode switch's pin, `PinAfterModeSwitch`; the follow's and End's request is finite and vertical (§13.4). The scan reads code only, proves first that the pin still asks for it, and is shown to see a request outside the pin and to ignore a comment, a literal and a brace inside the pin |
 | No literal default (`GeneralSettingChainTests.No_workflow_setting_starts_from_a_literal_default`) | none of the four workflow preferences starts from a literal in the source: not the view model's field (written with `true` or `false`, or left unset), not the draft's or the apply call's parameter, not the window's seed from a key-less state (`?? true`); the catalog row is the one default (§13.3). The wire records of the contracts keep their own field defaults, which only say how a line without the field reads, and lie outside the rule. The rule is shown to catch each form, and to ignore a comment, a string and a field that reads the catalog |
 
-**A guard's coverage claim has its own proof.** Every whole-`src` guard asserts that its scan saw a file of each production
-project (`SourceGuard.AssertScansEveryProductionProject`). The real tree always passes that check, so its failure path is
-pinned on its pure core with planted lists (`SourceGuardTests`): a project with no scanned file is named, and a folder that
-merely shares the project's prefix does not stand in for it.
+**A guard's coverage claim has its own proof.** A whole-`src` guard that claims to read every production project asserts
+that its scan saw a file of each (`SourceGuard.AssertScansEveryProductionProject`). The real tree always passes that check, so
+its failure path is pinned on its pure core with planted lists (`SourceGuardTests`): a project with no scanned file is named,
+and a folder that merely shares the project's prefix does not stand in for it.
 
 **Tests never run the real collection.** The operation-end trim (§11.4, §12.3) is a blocking, compacting collection of
 the whole process; paid at the end of every operation of every window and coordinator test, it would stall the suite
@@ -6741,16 +6742,19 @@ Animation behaviour is measured the same way: the harness can drive the live win
 `PrintWindow(PW_RENDERFULLCONTENT)`, read state through UI Automation and diff pixels between frames — so
 "an animation plays" is a testable claim, not a visual impression.
 
-**Measured layout is asserted on the device-pixel grid.** `UseLayoutRounding` snaps every size and offset to whole
-device pixels, so a measurement in DIPs moves with the display scale: at 125 % the update pill's 22 is drawn 28 px
-tall, 22.4 DIPs, and two sums that land on the same pixel can still differ by a floating-point residue. Such tests
-compare positions on the grid (`DsResources.InDevicePixels`) — a real shift is at least one device pixel — and let a
-design number differ from its measurement by at most half a device pixel, measured across a single rounding step: a
-gap is read from the previous element's layout slot, not from its text, whose width WPF rounds once more. The update
-pill's measurement tests run at five forced scales, 100 % to 200 %, whatever the machine's own:
-`MainWindowHost.NewRealizedWithOffer` gives the window its scale before realization and the content root its scale
-after, then re-measures the whole tree — headless, the content is not a visual child of the window, and a template
-child born after the scale was set would otherwise keep the system's.
+**Measured layout is asserted in device pixels.** `UseLayoutRounding` snaps every size and offset to whole device
+pixels, so a measurement in DIPs moves with the display scale: at 125 % the update pill's 22 is drawn 28 px tall,
+22.4 DIPs, and two sums that land on the same pixel can still differ by a floating-point residue. A layout test takes
+its tolerance from the scale, never as a fixed DIP — the resource strip's realization allows an edge-to-edge gap two
+device pixels (below). The update pill's tests are the strictest. They compare positions on the grid
+(`DsResources.InDevicePixels`) — a real shift is at least one device pixel — and let a design number differ from its
+measurement by at most half a device pixel across a single rounding step. A gap is therefore read from the previous
+element's layout slot: WPF rounds a margin once when it measures and again when it arranges, and at 175 % that puts the
+pill's label a pixel past its slot. A gap read that way cannot see the previous element's right margin, so the three
+margins are pinned as values as well. These tests run at five forced scales, 100 % to 200 %, whatever the machine's
+own: `MainWindowHost.NewRealized` gives the window its scale before realization and the content root its scale after,
+then re-measures the whole tree — headless, the content is not a visual child of the window, and a visual born after
+the scale was set keeps the system's, so `NewRealizedWithOffer` gives the scale again once the offer has built the pill.
 
 The resource strip is realized in the real window at the minimum width with the update pill showing
 (`ResourceStripRealizeTests`, on `window.Content`), and what it asserts is measured: the strip's centre is the bar's

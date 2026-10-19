@@ -131,18 +131,17 @@ public class AppIdentityTests
     /// çağırandan parametre gelir (Core'daki şerit tooltip'leri gibi).
     /// <list type="bullet">
     /// <item><c>Core/MsBuild/WpfTemporaryAssemblyTargets.cs</c>: motorun kendi önbelleğine (<c>%LOCALAPPDATA%\…\msbuild\</c>) yazdığı MSBuild
-    /// dosyasındaki bir XML YORUMU — dosyayı kimin yazdığını söyler, hiçbir yüzeyde görünmez. Core App'in kimliğini göremez; ad oraya taşınsa
-    /// dosyanın içeriği değişir ve her makinede bir kez yeniden yazılırdı (davranış değişikliği, kazanç yok).</item>
+    /// dosyasındaki bir XML YORUMU — dosyayı kimin yazdığını söyler, hiçbir yüzeyde görünmez. Core App'in kimliğini görmez; adı bu yorum için
+    /// kendi assembly'sinin özniteliğinden okumak, sabit bir dosya içeriğini bir çalışma zamanı okumasına bağlardı — kullanıcıya hiçbir kazancı
+    /// yok.</item>
     /// </list>
+    /// Muafiyet dosyaya değil oradaki TEK literale aittir: aynı dosyaya eklenen ikinci bir ad yakalanır
+    /// (<see cref="The_exemptions_are_exactly_the_files_that_still_embed_the_name"/>).
     /// </summary>
     private static readonly string[] EmbeddedNameExemptions =
     [
         Path.Combine("BuildOrchestrator.Core", "MsBuild", "WpfTemporaryAssemblyTargets.cs"),
     ];
-
-    /// <summary>Gömülü-ad kuralının bütün <c>src</c> taraması (.cs + .xaml); <paramref name="exemptions"/> dışındaki her dosya taranır.</summary>
-    private static List<string> EmbeddedNameHits(IReadOnlyCollection<string>? exemptions) =>
-        [.. SourceGuard.ScanSrcLiterals("*.cs", EmbeddedNameRule, exemptions), .. SourceGuard.ScanSrcLiterals("*.xaml", EmbeddedNameRule, exemptions)];
 
     /// <summary>
     /// [design v1.23.0 §2.12] KAYNAK GUARD'ı: ürün adı hiçbir üretim dosyasında bir literalin PARÇASI değildir. Tırnaklı-ad guard'ı yalnız TAM
@@ -158,21 +157,24 @@ public class AppIdentityTests
     [Fact]
     public void No_source_file_embeds_the_product_name_in_a_literal()
     {
-        Assert.Empty(EmbeddedNameHits(EmbeddedNameExemptions));
+        Assert.Empty(SourceGuard.ScanSrcCodeAndMarkupLiterals(EmbeddedNameRule, EmbeddedNameExemptions));
         SourceGuard.AssertScansEveryProductionProject("*.cs");
     }
 
     /// <summary>
-    /// Guard'ın KENDİ kanıtı (istisnalar): istisnasız tarama TAM OLARAK istisna listesindeki dosyaları raporlar. İki şeyi birden pinler: tarama
-    /// istisna dosyasını gerçekten görür (muafiyet olmasa yakalardı) ve listede bayat bir istisna kalmaz — adı artık taşımayan bir dosya listeden
-    /// düşmelidir, yoksa oraya ileride yazılan ad sessizce muaf kalırdı.
+    /// Guard'ın KENDİ kanıtı (istisnalar): istisnasız tarama TAM OLARAK istisna listesindeki dosyaları raporlar, her birinde TEK literal. Üç şeyi
+    /// birden pinler: tarama istisna dosyasını gerçekten görür (muafiyet olmasa yakalardı); listede bayat bir istisna kalmaz — adı artık taşımayan bir
+    /// dosya listeden düşmelidir, yoksa oraya ileride yazılan ad sessizce muaf kalırdı; ve muafiyet o tek literalle sınırlıdır — aynı dosyaya
+    /// eklenen ikinci bir ad kırmızı verir (bütün-dal incelemesi: dosya düzeyindeki karşılaştırma onu görmüyordu).
     /// </summary>
     [Fact]
     public void The_exemptions_are_exactly_the_files_that_still_embed_the_name()
     {
-        var files = EmbeddedNameHits(exemptions: null).Select(hit => hit[..hit.IndexOf(':')]).Distinct(StringComparer.OrdinalIgnoreCase);
+        var hits = SourceGuard.ScanSrcCodeAndMarkupLiterals(EmbeddedNameRule);
+        var files = hits.Select(hit => hit[..hit.IndexOf(':')]).Distinct(StringComparer.OrdinalIgnoreCase);
 
         Assert.Equal(EmbeddedNameExemptions.Order(StringComparer.OrdinalIgnoreCase), files.Order(StringComparer.OrdinalIgnoreCase));
+        Assert.Equal(EmbeddedNameExemptions.Length, hits.Count);
     }
 
     /// <summary>
