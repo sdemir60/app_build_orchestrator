@@ -457,13 +457,9 @@ public partial class MainWindow : Window
         // VM'in abone sözleşmesi (RunViewModel.Exit.cs) ExitReady'yi bir durum geçişinin ya da × yolunda bir Closing
         // handler'ının ORTASINDA senkron atabilir ve abonenin ne yaptığına dayanmaz: kabuk kapanış işini o çağrı
         // yığınının içinde değil, kendi dispatcher turunda yapar. (Application.Shutdown işini zaten kuyruğa bırakır;
-        // erteleme yine de kabuğun kendi sözüdür, WPF'in iç sırasına dayanmaz.) Öne getirme de ertelenir — gerekçesi
-        // BringForward'da. İki çağrı da test dikişidir.
+        // erteleme yine de kabuğun kendi sözüdür, WPF'in iç sırasına dayanmaz.) Test dikişidir. [Exit] Onay için pencereyi öne getiren
+        // ikinci dikiş (ConfirmExitInFront) MainWindow.Exit.cs'te kurulur.
         ShutdownApplication = () => Dispatcher.BeginInvoke(() => Application.Current?.Shutdown());
-        BringForward = () => Dispatcher.BeginInvoke(() =>
-        {
-            if (WindowCloseRule.ShouldBringForward(_exiting, _vm.ExitPending)) ShowFromTray();
-        });
         // [Exit] Exit'in kapanış ekranı oynarken çıkışın hazır olması ekranı ikinci adıma geçirir; uygulamayı ekranın çubuğu kapatır
         // (OnClosingScreenFilled — restart ekranı da aynı kontroldür).
         _vm.ExitReady += (_, _) => OnExitReady();
@@ -1359,8 +1355,8 @@ public partial class MainWindow : Window
         Dwm.DwmSetWindowAttribute(hwnd, Dwm.DWMWA_WINDOW_CORNER_PREFERENCE, ref round, sizeof(int));
         Dwm.DwmSetWindowAttribute(hwnd, Dwm.DWMWA_BORDER_COLOR, ref border, sizeof(int));
 
-        // [T62] Tepsi: Close to tray açıkken × pencereyi buraya gizler (K5) → uygulama tepsiden yönetilir. [P3 · Task 3]
-        // Exit güvenli tam çıkıştır — uçuştaki iş beklenir (ExitFromTray).
+        // [T62] Tepsi: Close to tray açıkken × pencereyi buraya gizler (K5) → uygulama tepsiden yönetilir. [P3 · Task 3 · Exit]
+        // Exit title bar'ın Exit butonuyla aynı karardır — uçuşta iş varsa pencere öne gelir ve onay kartı açılır (ExitFromTray).
         _tray = new AppTrayIcon(_vm.StopCommand, _vm);
         _tray.RestoreRequested += ShowFromTray;
         _tray.ExitRequested += ExitFromTray;
@@ -1548,14 +1544,6 @@ public partial class MainWindow : Window
     /// Testler sayaçlı bir sahteyle değiştirir; uygulama kapanmaz.</summary>
     internal Action ShutdownApplication { get; set; }
 
-    /// <summary>[P3 · Task 3] Çıkış beklerken pencereyi öne getiren çağrı (test dikişi). Üretim değeri
-    /// <see cref="ShowFromTray"/>'i kendi dispatcher turuna ERTELER: × yolunda çağrı <see cref="OnClosing"/>'in
-    /// içinden gelir ve WPF, kapanış sürerken <c>Show</c>'u InvalidOperationException ile reddeder. Ertelenen gösterim
-    /// kuralı (<see cref="WindowCloseRule.ShouldBringForward"/>) kendi anında yeniden sorar: arada çıkış başladıysa
-    /// kapanmakta olan pencere bir kare için öne gelmez. Testler pencere GÖSTERMEZ, sayaçlı bir sahteyle
-    /// değiştirir.</summary>
-    internal Action BringForward { get; set; }
-
     /// <summary>[P3 · Task 3] Çıkış hazır (<see cref="RunViewModel.ExitReady"/>): bundan sonra her Closing pencereyi
     /// gerçekten kapatır ve uygulama KOŞULSUZ kapanır. Kaskat: App.Shutdown → App.OnExit → EngineHost.DisposeAsync →
     /// outer Job (KILL_ON_JOB_CLOSE) — bekleyişten sonra geride kalanı (Supervisor, susmuş bir motorun child'ları)
@@ -1564,21 +1552,6 @@ public partial class MainWindow : Window
     {
         _exiting = true;
         ShutdownApplication();
-    }
-
-    /// <summary>[P3 · Task 3] Tepsi → Exit: HER ZAMAN güvenli tam çıkış — Close to tray'e bakılmaz, menüdeki Exit'in
-    /// anlamı zaten "tamamen kapat"tır. × ile AYNI yol (<see cref="RequestFullExit"/>).</summary>
-    internal void ExitFromTray() => RequestFullExit();
-
-    /// <summary>[P3 · final review F7] Güvenli tam çıkışı iste — tepsi → Exit'in ve Close to tray kapalıyken ×'ın TEK
-    /// kabuk yolu. Uçuşta iş varsa çıkış onu bekler ve pencere ÖNE gelir: gizli (tepsideki) ya da küçültülmüş (görev
-    /// çubuğundan kapatılan) bir pencerede bekleyen çıkış "hiçbir şey olmuyor" gibi görünürdü. İş yoksa uygulama
-    /// pencere gösterilmeden kapanır. Öne getirme kararı (gerçek kapanış > bekleyen çıkış) TEK yerdedir:
-    /// <see cref="WindowCloseRule.ShouldBringForward"/>.</summary>
-    private void RequestFullExit()
-    {
-        _vm.RequestExit(); // uçuşta iş yoksa ExitReady → ExitNow bu çağrının içinden gelir
-        if (WindowCloseRule.ShouldBringForward(_exiting, _vm.ExitPending)) BringForward();
     }
 
     /// <summary>[M-3 fix wave] Oturum kapanışı GERÇEK bir çıkıştır — tray/balloon YASAK. <c>e.Cancel</c>'a
@@ -1605,7 +1578,7 @@ public partial class MainWindow : Window
                 MinimizeToTray();
                 break;
             case CloseAction.RequestExit:
-                RequestFullExit(); // tepsi → Exit ile AYNI yol: bekleyişte pencere öne gelir
+                RequestExitFromOutside(); // [Exit] tepsi → Exit ile AYNI yol: iş varsa pencere öne gelir, onay kartı açılır
                 break;
             case CloseAction.Stay: // çıkış zaten bekliyor: pencere görünür kalır, ikinci bir durdurma gitmez
                 break;

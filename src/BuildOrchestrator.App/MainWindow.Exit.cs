@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Threading;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
@@ -53,6 +54,51 @@ public partial class MainWindow
         ExitCardView.ActionRequested += StopAndExit;
         ExitCardTimer = new DispatcherPollTimer(Dispatcher);
         TakeProcessCensus = new JobProcessCensus(_engine.OuterJob, () => _engine.EnginePid).Take;
+        ConfirmExitInFront = () => Dispatcher.BeginInvoke(ConfirmExitInFrontNow);
+    }
+
+    /// <summary>[test dikişi] × (Close to tray kapalıyken) ya da tepsi → Exit, iş varken: onay için pencereyi öne getirip kartı açan
+    /// çağrı. Üretim değeri işini kendi dispatcher turuna ERTELER (<see cref="ConfirmExitInFrontNow"/>): × yolunda çağrı
+    /// <see cref="OnClosing"/>'in içinden gelir ve WPF, kapanış sürerken <c>Show</c>'u InvalidOperationException ile reddeder; kartın
+    /// popup'ı da yerleşmiş, görünür bir hedef ister. Testler pencere GÖSTERMEZ, sayaçlı bir sahteyle değiştirir.</summary>
+    internal Action ConfirmExitInFront { get; set; } = null!;
+
+    /// <summary>[P3 · Task 3 · Exit] Tepsi → Exit: Close to tray'e bakılmaz — menüdeki Exit'in anlamı zaten "tamamen kapat"tır. × ile
+    /// AYNI yol (<see cref="RequestExitFromOutside"/>).</summary>
+    internal void ExitFromTray() => RequestExitFromOutside();
+
+    /// <summary>[Exit] Pencerenin dışından gelen tam çıkış isteği — tepsi → Exit ve Close to tray kapalıyken ×: Exit butonunun kararı.
+    /// Uçuşta iş yoksa uygulama pencere gösterilmeden kapanır; varsa hiçbir şey durdurulmaz, pencere öne gelir ve onay kartı açılır
+    /// (<see cref="ConfirmExitInFront"/>) — gizli (tepsideki) ya da küçültülmüş (görev çubuğundan kapatılan) bir pencere kartı
+    /// gösteremezdi. Çıkış zaten durduruyorsa (kartın "Stop and exit"i) ikinci istek hiçbir şey yapmaz.</summary>
+    private void RequestExitFromOutside()
+    {
+        if (_vm.ExitPending) return;
+        if (_vm.ExitWork == ExitWork.None)
+        {
+            _vm.RequestExit(); // uçuşta iş yok: ExitReady → ExitNow bu çağrının içinden gelir
+            return;
+        }
+        ConfirmExitInFront();
+    }
+
+    /// <summary>[Exit] <see cref="ConfirmExitInFront"/>'in ertelenen gövdesi — kararı kendi anında yeniden sorar: arada gerçek kapanış
+    /// ya da çıkış başladıysa hiçbir şey yapmaz (kapanmakta olan pencere bir kare için öne gelmez); iş arada bittiyse Exit butonunun
+    /// kuralı geçerlidir — uygulama kartsız, pencere gösterilmeden kapanır; aksi hâlde pencere öne gelir ve kart, pencere yerleştikten
+    /// sonra açılır. internal: test yüzeyi — ertelenen tur sahte dikişle hiç koşmaz.</summary>
+    internal void ConfirmExitInFrontNow()
+    {
+        if (_exiting || _vm.ExitPending) return;
+        if (_vm.ExitWork == ExitWork.None)
+        {
+            _vm.RequestExit();
+            return;
+        }
+        ShowFromTray();
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
+        {
+            if (!_exiting && !_vm.ExitPending && !IsExitCardOpen) RequestExitFromUser();
+        });
     }
 
     /// <summary>Kart açık mı — durumun kaynağı butonun <see cref="DsChrome.IsActiveProperty"/>'sidir (popup'a iki yönlü bağlı).</summary>

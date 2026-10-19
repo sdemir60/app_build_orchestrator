@@ -6,7 +6,12 @@ namespace BuildOrchestrator.Tests.App;
 /// [P3 · Task 3] Pencere kapanış kararı (<see cref="WindowCloseRule.Decide"/>) — saf, WPF'siz; <c>MainWindow.OnClosing</c>
 /// yalnız uygular (kabuk tarafı <see cref="CloseToTrayTests"/>'te). Dört dal ve aralarındaki öncelik kararın
 /// kendisidir: gerçek kapanış her şeyi geçer, bekleyen çıkış pencereyi yerinde tutar, ancak ikisi de yoksa Close to
-/// tray söz alır — açık → tepsiye, kapalı → güvenli tam çıkış.
+/// tray söz alır — açık → tepsiye, kapalı → Exit butonunun kararı (iş yoksa kapanır, varsa onay kartı).
+///
+/// <para><b>[DEĞİŞEN KURAL — Exit, 2026-10-19]</b> ESKİ: burada bir de <c>WindowCloseRule.ShouldBringForward</c> pinlenirdi — tam çıkış
+/// uçuştaki işi beklerken pencere öne gelir, gerçek kapanış başladıysa gelmez. Çıkış artık iş varken beklemeye girmez, önce onay
+/// ister; pencere kartı göstermek için öne gelir ve o kararı kabuk, ertelenen kendi turunda yeniden sorar
+/// (<c>MainWindow.ConfirmExitInFrontNow</c> — <see cref="CloseToTrayTests"/>). Saf kural kalktı, iki testi oraya taşındı.</para>
 /// </summary>
 public sealed class WindowCloseRuleTests
 {
@@ -35,25 +40,8 @@ public sealed class WindowCloseRuleTests
     public void With_close_to_tray_on_the_window_hides_to_the_tray() =>
         Assert.Equal(CloseAction.HideToTray, WindowCloseRule.Decide(exiting: false, exitPending: false, closeToTray: true));
 
-    /// <summary>Close to tray kapalı: × güvenli tam çıkışı ister (uçuştaki iş beklenir; yoksa hemen kapanır).</summary>
+    /// <summary>Close to tray kapalı: × tam çıkışı ister — Exit butonuyla aynı karar (iş yoksa hemen kapanır, varsa onay kartı).</summary>
     [Fact]
     public void With_close_to_tray_off_the_window_asks_for_the_safe_exit() =>
         Assert.Equal(CloseAction.RequestExit, WindowCloseRule.Decide(exiting: false, exitPending: false, closeToTray: false));
-
-    // ---------------------------------------------------------------- öne getirme (final review F7)
-
-    /// <summary>Tam çıkış uçuştaki işi bekliyorsa ve gerçek kapanış başlamadıysa pencere öne gelir — tepsi → Exit de
-    /// × da: gizli ya da küçültülmüş bir pencerede bekleyen çıkış "hiçbir şey olmuyor" gibi görünürdü.</summary>
-    [Fact]
-    public void A_waiting_exit_brings_the_window_forward() =>
-        Assert.True(WindowCloseRule.ShouldBringForward(exiting: false, exitPending: true));
-
-    /// <summary>Gerçek kapanış başladıysa (bekleyiş istekle AYNI çağrıda bittiyse dahil — bayrak geri dönmez) pencere öne
-    /// gelmez: kapanmakta olan pencere bir kare görünürdü. Bekleyen bir çıkış yoksa da gelmez.</summary>
-    [Theory]
-    [InlineData(true, true)]
-    [InlineData(true, false)]
-    [InlineData(false, false)]
-    public void Otherwise_the_window_is_not_brought_forward(bool exiting, bool exitPending) =>
-        Assert.False(WindowCloseRule.ShouldBringForward(exiting, exitPending));
 }

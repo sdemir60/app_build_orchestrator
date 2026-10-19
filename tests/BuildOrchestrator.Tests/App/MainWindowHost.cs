@@ -335,7 +335,7 @@ internal static class MainWindowHost
     {
         ArgumentNullException.ThrowIfNull(window);
         window.ShutdownApplication = () => { };
-        window.BringForward = () => { };
+        window.ConfirmExitInFront = () => { };
     }
 
     /// <summary>[perf Faz B · B3] Stop/Esc testlerinin ortak kurulumu: <see cref="New"/> (ya da <paramref name="projectNames"/>
