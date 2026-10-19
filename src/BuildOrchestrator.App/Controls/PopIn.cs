@@ -55,12 +55,21 @@ internal static class PopIn
     /// hapla hizalıdır (CSS <c>transformOrigin: '0 0'</c>).</summary>
     private static readonly Point TopLeftOrigin = new(0, 0);
 
+    /// <summary>[Exit] Exit kartının ölçek merkezi: kart butonun altından SARKAR, SAĞ üst köşesi butonla hizalıdır.</summary>
+    private static readonly Point TopRightOrigin = new(1, 0);
+
     /// <summary>[design v1.23.0 §2.12 · §9] Güncelleme kartının girişi (<c>bo-drop-in</c>, BuildApp.jsx:47): pop-in'in
     /// 140ms'i ve .985 ölçeği, ama 4px YUKARIDAN iner ve sol üst köşeden büyür.</summary>
-    public static void PlayDropIn(FrameworkElement element)
+    public static void PlayDropIn(FrameworkElement element) => DropIn(element, TopLeftOrigin);
+
+    /// <summary>[Exit] Exit kartının girişi: güncelleme kartının drop-in'i (140ms, 4px yukarıdan, .985), sağ üst köşeden büyür.</summary>
+    public static void PlayDropInFromRight(FrameworkElement element) => DropIn(element, TopRightOrigin);
+
+    /// <summary>İki drop-in'in ortak gövdesi — fark yalnız ölçek merkezidir.</summary>
+    private static void DropIn(FrameworkElement element, Point origin)
     {
         ArgumentNullException.ThrowIfNull(element);
-        Play(element, TimeSpan.FromMilliseconds(DurationMs), EntranceRiseFromPx, ScaleFrom, TopLeftOrigin);
+        Play(element, TimeSpan.FromMilliseconds(DurationMs), EntranceRiseFromPx, ScaleFrom, origin);
     }
 
     /// <summary>[design v1.23.0 §2.12] Restart ekranının giriş süresi — <c>Duration.Base</c> token'ından taze çözülür

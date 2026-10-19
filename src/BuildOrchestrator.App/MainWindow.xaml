@@ -248,6 +248,19 @@
                     </Canvas>
                   </Viewbox>
                 </Button>
+                <!-- [Exit] Onay kartı = mevcut popover altyapısı: butonun 9px ALTINDA, SAĞ kenarı butonla hizalı (kümenin sonundaki
+                     butondan sola sarkar), 320px Ds.Popover kabuğu, dolgu 0. Yerleşim Custom: geri çağrı ve boşluk MainWindow.Exit.cs'te.
+                     Açık/kapalı durumunun kaynağı butonun DsChrome.IsActive'idir (iki yönlü — dışarı tıkla kapanan popup butonu da
+                     söndürür; gösterilmeyen pencerede IsOpen zorla false kalır, durum butonda okunur). Dışarı tık kapatır
+                     (StaysOpen=False); butona ikinci basış PopoverToggle ile kapatır. Popup ayrı bir HWND'dir: açık dialogların da üstünde
+                     durur — güncelleme kartının aksine dialog açılınca kapanmaz. -->
+                <Popup x:Name="ExitPopup" Placement="Custom" PlacementTarget="{Binding ElementName=ExitButton}"
+                       StaysOpen="False" AllowsTransparency="True" PopupAnimation="None"
+                       IsOpen="{Binding Path=(controls:DsChrome.IsActive), ElementName=ExitButton, Mode=TwoWay}">
+                  <Border Style="{DynamicResource Ds.Popover}" Width="320" Padding="0">
+                    <views:ExitCard x:Name="ExitCardView" IsOpen="{Binding IsOpen, ElementName=ExitPopup, Mode=OneWay}" />
+                  </Border>
+                </Popup>
               </Grid>
             </StackPanel>
 

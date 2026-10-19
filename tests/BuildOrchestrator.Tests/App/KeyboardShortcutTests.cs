@@ -52,6 +52,13 @@ public class KeyboardShortcutTests
         => Assert.Equal(EscAction.CloseDialog,
             KeyboardShortcuts.ResolveEsc(dialogOpen: true, popoverOrMenuOpen: true, hasSelection: true, EscRunState.Stoppable));
 
+    /// <summary>[Exit] Exit'in onay kartı dialogların da ÜSTÜNDEDİR: Esc önce onu kapatır (popover katmanı), dialog ikinci Esc'e kalır.</summary>
+    [Fact]
+    public void Esc_closes_the_exit_card_before_an_open_dialog()
+        => Assert.Equal(EscAction.ClosePopovers,
+            KeyboardShortcuts.ResolveEsc(dialogOpen: true, popoverOrMenuOpen: true, hasSelection: true, EscRunState.Stoppable,
+                exitCardOpen: true));
+
     [Fact]
     public void Esc_closes_popovers_before_clearing_selection()
         => Assert.Equal(EscAction.ClosePopovers,

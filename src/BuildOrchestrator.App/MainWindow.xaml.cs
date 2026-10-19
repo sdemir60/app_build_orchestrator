@@ -589,14 +589,15 @@ public partial class MainWindow : Window
     /// <summary>[E5/T46 · design v1.23.0 §2.12] Esc zincirinin POPOVER katmanı: alt bardaki popover/menüler
     /// (<see cref="ShellRoot.AnyPopoverOpen"/>) ve title bar'daki güncelleme kartı (prototip: <c>branchPop || buildMenu
     /// || updPop</c>). Kartın İÇİNDEKİ Esc'i kartın kendisi yakalar; bu katman odak pencerede kalmışken devreye girer.</summary>
-    private bool AnyPopoverOpen => Shell.AnyPopoverOpen || IsUpdateCardOpen;
+    private bool AnyPopoverOpen => Shell.AnyPopoverOpen || IsUpdateCardOpen || IsExitCardOpen;
 
     /// <summary>Popover katmanını kapatır — hepsini birden (prototipte olduğu gibi): alt barınkiler
-    /// (<see cref="ShellRoot.CloseAllPopovers"/>) ve güncelleme kartı; odak açık olanın tetikleyicisine döner.</summary>
+    /// (<see cref="ShellRoot.CloseAllPopovers"/>), güncelleme kartı ve [Exit] Exit'in onay kartı; odak açık olanın tetikleyicisine döner.</summary>
     private void CloseAllPopovers()
     {
         Shell.CloseAllPopovers();
         CloseUpdateCard(returnFocusToPill: true);
+        CloseExitCard(returnFocusToButton: true);
     }
 
     /// <summary>[design v1.13.0 §2.11] Esc zincirinin dialog dalı: <b>What's new → About → Settings</b> — üst üste
@@ -609,7 +610,7 @@ public partial class MainWindow : Window
     private void OnEscapePressed()
     {
         switch (KeyboardShortcuts.ResolveEsc(AnyDialogOpen, AnyPopoverOpen, _vm.SelectedProjectId is not null,
-                    _vm.EscRunState))
+                    _vm.EscRunState, exitCardOpen: IsExitCardOpen))
         {
             case EscAction.CloseDialog:
                 if (NotesOverlay.Visibility == Visibility.Visible) NotesOverlay.CloseDialog();

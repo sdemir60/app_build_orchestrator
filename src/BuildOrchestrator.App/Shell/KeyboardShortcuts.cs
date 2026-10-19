@@ -100,9 +100,15 @@ public static class KeyboardShortcuts
     /// bir stop GÖNDERMEZ, şerit "duyuldu" der. GEREKÇE: drain en yavaş projenin kalan süresi kadar sürebilir;
     /// durdurma sürerken (kullanıcı ya da branch kesmesi istemiş olsun) Esc beklemek istemediğini söyler ve hard
     /// stop'tur (<see cref="EscAction.StopNow"/> — uçuştakiler öldürülür, sonraki Build onları baştan derler).
-    /// Hard gittikten sonraki Esc'i komutun kapısı yutar.</para></summary>
-    public static EscAction ResolveEsc(bool dialogOpen, bool popoverOrMenuOpen, bool hasSelection, EscRunState run)
+    /// Hard gittikten sonraki Esc'i komutun kapısı yutar.</para>
+    ///
+    /// <para>[Exit] Exit'in onay kartı (<paramref name="exitCardOpen"/>) zincirin EN ÜSTÜDÜR — dialogların da üstünde durur, Esc önce
+    /// onu kapatır (popover katmanının kapanışıyla: kart o katmandadır). Kartın İÇİNDEKİ Esc'i kartın kendisi yakalar; bu dal odak
+    /// pencerede kalmışken devreye girer.</para></summary>
+    public static EscAction ResolveEsc(bool dialogOpen, bool popoverOrMenuOpen, bool hasSelection, EscRunState run,
+        bool exitCardOpen = false)
     {
+        if (exitCardOpen) return EscAction.ClosePopovers;
         if (dialogOpen) return EscAction.CloseDialog;
         if (popoverOrMenuOpen) return EscAction.ClosePopovers;
         if (hasSelection) return EscAction.ClearSelection;
