@@ -104,10 +104,16 @@ public class MsBuildInvokerTests
             new MsBuildInvokeRequest(csproj, "Debug", dir, NeedsRestore: false),
             _ => { }, cts.Token);
 
-        // İlk NEW_PROCESS bildirimi = doğan MSBuild.exe child (NeedsRestore:false → tek child). Doğar doğmaz iptal et.
-        var born = iocp.WaitNext(TimeSpan.FromSeconds(30)) ?? throw new TimeoutException("child doğum bildirimi gelmedi");
-        Assert.Equal(NativeMethods.JOB_OBJECT_MSG_NEW_PROCESS, born.MessageId);
-        int pid = born.Pid;
+        // İlk NEW_PROCESS bildirimi = doğan MSBuild.exe child (NeedsRestore:false → tek child). Doğar doğmaz iptal et. Port boş job'a
+        // Launch'tan ÖNCE bağlandığı için ilk bildirim zaten bir doğumdur (doğmamış üye çıkamaz).
+        // [temizlik madde 4] Eski kod ilk bildirimin NEW_PROCESS olduğunu ayrıca assert ederdi; JobBirths.Until doğum dışı bir bildirimi
+        // atlar. Bu kurulumda o iddia koşulsuz doğruydu (yukarıdaki gerekçe), bu yüzden düşürüldü — sınanan davranıştan bir şey eksilmedi.
+        int pid = 0;
+        JobBirths.Until(iocp, TimeSpan.FromSeconds(30), "child doğum bildirimi gelmedi", born =>
+        {
+            pid = born;
+            return true;
+        });
         cts.Cancel();
 
         var result = await invokeTask.WaitAsync(TimeSpan.FromSeconds(30));
@@ -115,13 +121,7 @@ public class MsBuildInvokerTests
         Assert.False(result.TimedOut); // caller iptali — PerProjectTimeout değil
 
         // pid'in job'dan çıktığını IOCP bildirimiyle doğrula (sleep-poll YOK — bloklu bekleme).
-        while (true)
-        {
-            var n = iocp.WaitNext(TimeSpan.FromSeconds(10)) ?? throw new TimeoutException("exit bildirimi gelmedi");
-            if (n.Pid == pid && n.MessageId is NativeMethods.JOB_OBJECT_MSG_EXIT_PROCESS
-                                             or NativeMethods.JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS)
-                break;
-        }
+        JobBirths.UntilExit(iocp, pid, TimeSpan.FromSeconds(10), "exit bildirimi gelmedi");
         Assert.Throws<ArgumentException>(() => Process.GetProcessById(pid));
     }
 
@@ -252,13 +252,7 @@ public class MsBuildInvokerTests
 
         // grandchild'ın GERÇEKTEN çıktığını (son satırı yazıp pipe'ı kapattığı an) IOCP bildirimiyle bloklu
         // bekle — MSBuild.exe'nin kendi exit bildirimi de gelebilir, o pid'i ATLA, yalnız writerPid'i eşleştir.
-        while (true)
-        {
-            var n = iocp.WaitNext(TimeSpan.FromSeconds(30)) ?? throw new TimeoutException("grandchild exit bildirimi gelmedi");
-            if (n.Pid == writerPid && n.MessageId is NativeMethods.JOB_OBJECT_MSG_EXIT_PROCESS
-                                                   or NativeMethods.JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS)
-                break;
-        }
+        JobBirths.UntilExit(iocp, writerPid, TimeSpan.FromSeconds(30), "grandchild exit bildirimi gelmedi");
 
         bool anyLateLine;
         lock (recordedLock) anyLateLine = recorded.Any(r => r.AfterReturn);

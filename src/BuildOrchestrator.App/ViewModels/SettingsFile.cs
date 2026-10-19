@@ -24,8 +24,8 @@ public sealed class SettingsFile
     /// <summary>Dışa aktarılan dosyanın varsayılan adı (§2.9).</summary>
     public const string FileName = "build-orchestrator-settings.json";
 
-    /// <summary>Dosya seçicinin filtresi — tek biçim, tek uzantı.</summary>
-    public const string FileFilter = "Build Orchestrator settings (*.json)|*.json";
+    /// <summary>Dosya seçicinin filtresi — tek biçim, tek uzantı. Ürün adı literal DEĞİL: <see cref="AppIdentity.Product"/>'tan (kopya YASAK).</summary>
+    public static string FileFilter { get; } = AppIdentity.Product + " settings (*.json)|*.json";
 
     /// <summary>Ürün kimliği — dosyanın hangi araca ait olduğunu söyler. Literal DEĞİL: tek kaynak
     /// <see cref="AppIdentity.Product"/> (kopya YASAK).</summary>

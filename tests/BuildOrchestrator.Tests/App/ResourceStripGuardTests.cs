@@ -163,7 +163,8 @@ public class ResourceStripGuardTests
     /// <summary>Şerit sürüklemeyi yerel caption'a devreder, <c>Window.DragMove</c>'a değil (neden: <c>MainWindow.ForwardCaptionDrag</c>'ın özeti).
     /// Davranış pini bir dikişin üstündedir (<c>ResourceStripWiringTests</c>) ve dikiş üretimin gerçek yolunu — <c>ReleaseCapture</c> +
     /// <c>SendMessage</c> — çalıştırmaz; bu guard o gerçek yolda <c>DragMove</c>'un geri sızmasını kaynakta çitler ve yerel çağrının hâlâ orada
-    /// olduğunu pinler.</summary>
+    /// olduğunu pinler — kapanış mesajı dahil: taşıma döngüsünün yuttuğu tuş bırakılışını WPF'e geri veren <c>WM_LBUTTONUP</c> (o satır düşerse
+    /// WPF farenin hâlâ basılı olduğunu sanır; dikiş bunu göremez). [temizlik madde 4: liste <c>WM_LBUTTONUP</c>'u içermiyordu.]</summary>
     [Fact]
     public void The_strip_forwards_a_drag_to_the_native_caption_and_never_calls_DragMove()
     {
@@ -171,7 +172,7 @@ public class ResourceStripGuardTests
 
         Assert.Contains("class MainWindow", code, StringComparison.Ordinal); // dosya gerçekten okundu
         Assert.Empty(SourceGuard.ScanText(WindowCodeRelative, code, DragMoveCall, skipCommentLines: true));
-        foreach (string native in new[] { "Win32.ReleaseCapture(", "Win32.SendMessage(", "Win32.WM_NCLBUTTONDOWN", "Win32.HTCAPTION" })
+        foreach (string native in new[] { "Win32.ReleaseCapture(", "Win32.SendMessage(", "Win32.WM_NCLBUTTONDOWN", "Win32.HTCAPTION", "Win32.WM_LBUTTONUP" })
             Assert.Contains(native, code, StringComparison.Ordinal);
 
         // Guard'ın kanıtı: koddaki çağrı satır numarasıyla yakalanır, onu anlatan yorum yakalanmaz.

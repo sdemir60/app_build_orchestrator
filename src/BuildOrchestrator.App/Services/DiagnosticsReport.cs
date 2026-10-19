@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using BuildOrchestrator.Core.Diagnostics;
+using BuildOrchestrator.Core.Formatting;
 
 namespace BuildOrchestrator.App.Services;
 
@@ -78,8 +79,8 @@ public static class DiagnosticsReport
 {
     /// <summary>Motor henüz doğmadı.</summary>
     public const string NotStarted = "not started";
-    /// <summary>Değer bu koşulda YOK (ör. motor doğmadığı için PID).</summary>
-    public const string Unknown = "—";
+    /// <summary>Değer bu koşulda YOK (ör. motor doğmadığı için PID). İşaret Core'un tek tanımıdır (<see cref="MissingValue.Mark"/>).</summary>
+    public const string Unknown = MissingValue.Mark;
     /// <summary>Henüz bir repo kökü seçilmemiş.</summary>
     public const string NoRepository = "no repository";
     /// <summary>MSBuild çözümü sürüyor (vswhere child process'i).</summary>

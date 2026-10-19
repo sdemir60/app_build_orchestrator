@@ -2,6 +2,7 @@ using System.IO;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using BuildOrchestrator.App;
@@ -140,25 +141,59 @@ internal static class MainWindowHost
     /// realize edilmiş kabuk ve VM'i, veri akmadan. Böyle bir kabukla başlayan testlerin TEK kurulumu —
     /// <c>UpdatePillTests.Realized</c> ile <c>UpdateCardTests.Shell</c> aynı iki satırı ayrı ayrı yazmıştı;
     /// <see cref="NewWithProjects"/> da buradan başlar. <paramref name="console"/> ve
-    /// <paramref name="productionMemoryCollector"/>: <see cref="New"/>'ünküler.</summary>
+    /// <paramref name="productionMemoryCollector"/>: <see cref="New"/>'ünküler.
+    /// <para>[temizlik · madde 1] <paramref name="dpi"/> verilirse kabuk o ekran ölçeğinde realize edilir (makinenin ölçeği ne olursa olsun):
+    /// pencerenin kendi ölçeği realize'dan ÖNCE (MaximizeFix çerçeve dolgusunu ondan okur), içeriğinki SONRA verilir
+    /// (<see cref="RelayoutAt"/>). <c>null</c> ⇒ sistemin ölçeği, davranış birebir eskisi gibi.</para></summary>
     public static (MainWindow window, RunViewModel vm) NewRealized(TempDir uiStateDir, Func<long>? nowMs = null,
-        ConsoleBatcher? console = null, bool productionMemoryCollector = false)
+        ConsoleBatcher? console = null, bool productionMemoryCollector = false, DpiScale? dpi = null)
     {
         var (window, vm) = New(uiStateDir, nowMs: nowMs, productionMemoryCollector: productionMemoryCollector, console: console);
-        Realize(window);
+        if (dpi is { } windowScale) VisualTreeHelper.SetRootDpi(window, windowScale);
+        var content = Realize(window);
+        if (dpi is { } contentScale) RelayoutAt(content, contentScale);
         return (window, vm);
     }
 
     /// <summary>[motor · Task 8] <see cref="NewRealized"/> + kuruluma hazır bir teklif (<see cref="UpdateOffers.Sample"/>):
     /// hap görünür, kartın içeriği dolu. Uygulama teklifsiz açılır; hapı/kartı sınayan kabuk testleri teklifi burada,
-    /// kurulumdan SONRA alır (üretimdeki gibi teklif sonradan gelir) ve görünür olan hap bir layout turuyla ölçülür.</summary>
-    public static (MainWindow window, RunViewModel vm) NewRealizedWithOffer(TempDir uiStateDir)
+    /// kurulumdan SONRA alır (üretimdeki gibi teklif sonradan gelir) ve görünür olan hap bir layout turuyla ölçülür.
+    /// <para>[temizlik · madde 1] <paramref name="dpi"/>: <see cref="NewRealized"/>'ınki. Teklif hapın şablonunu realize'dan SONRA doğurur ve
+    /// sonradan doğan görsel ölçeği almaz (<see cref="RelayoutAt"/>), bu yüzden teklif geldikten sonra ölçek içeriğe yeniden verilir.</para></summary>
+    public static (MainWindow window, RunViewModel vm) NewRealizedWithOffer(TempDir uiStateDir, DpiScale? dpi = null)
     {
-        var (window, vm) = NewRealized(uiStateDir);
+        var (window, vm) = NewRealized(uiStateDir, dpi: dpi);
         vm.AvailableUpdate = UpdateOffers.Sample();
-        ((FrameworkElement)window.Content).UpdateLayout();
+        var content = (FrameworkElement)window.Content;
+        content.UpdateLayout();
+        if (dpi is { } scale) RelayoutAt(content, scale);
         return (window, vm);
     }
+
+    /// <summary>[temizlik · madde 1] Realize edilmiş içeriği <paramref name="dpi"/> ölçeğinde yeniden yerleştirir. Başsız süitte içerik kökü
+    /// pencerenin görsel çocuğu DEĞİLDİR (pencerenin ContentPresenter'ı onu yalnız gerçek bir ölçüm turunda alır — <see cref="Realize"/>),
+    /// yani pencereye verilen ölçek içeriğe inmez; içerik kökü kendi ölçeğini ayrıca alır. <c>SetRootDpi</c> ölçeği yalnız O AN ağaçta olan
+    /// görsellere yazar — sonradan şablondan doğan çocuk almaz (ölçüldü: realize'dan önce verilince hapın etiketi ve ikonu 1.0'da kaldı).
+    /// Bu yüzden realize'dan SONRA verilir ve yerleşim yuvarlaması yeni ölçekle baştan koşsun diye her öğenin ölçümü geçersizlenir.</summary>
+    private static void RelayoutAt(FrameworkElement content, DpiScale dpi)
+    {
+        VisualTreeHelper.SetRootDpi(content, dpi);
+        foreach (var element in DsResources.RealizedObjects(content).OfType<UIElement>()) element.InvalidateMeasure();
+        content.UpdateLayout();
+    }
+
+    /// <summary>[temizlik madde 4] Title bar'ın İÇ kutusu: <c>TitleBarRow</c>'un (40'lık bant + alt hairline) çocuğu olan Grid — kümeleri taşıyan
+    /// DockPanel ile ortadaki kaynak şeridinin ORTAK hücresi, hairline'dan sonra kalan alan. "Bant → Grid → ilk çocuk DockPanel" yapısını bilen
+    /// TEK yer (<see cref="TitleBarDock"/> ile): <c>MainWindowRealizeTests</c> ve <c>ResourceStripRealizeTests</c> onu üç kez ayrı ayrı yazıyordu.</summary>
+    public static Grid TitleBarGrid(MainWindow window)
+    {
+        ArgumentNullException.ThrowIfNull(window);
+        return Assert.IsType<Grid>(window.TitleBarRow.Child);
+    }
+
+    /// <summary>[temizlik madde 4] Title bar'ın iki kümesini (sol logo kilidi, sağ küme + caption butonları) taşıyan DockPanel —
+    /// <see cref="TitleBarGrid"/>'in İLK çocuğu; kaynak şeridi aynı Grid'in son çocuğudur.</summary>
+    public static DockPanel TitleBarDock(MainWindow window) => Assert.IsType<DockPanel>(TitleBarGrid(window).Children[0]);
 
     /// <summary>[P3 · final review O5] Bir testin geçici kalıcı durum dosyası — <see cref="New"/>'ün pencereye verdiği
     /// store'un yolu. TEK tanım: pencerenin okuduğu dosyayı tohumlayan ya da sonradan okuyan her test yolu buradan

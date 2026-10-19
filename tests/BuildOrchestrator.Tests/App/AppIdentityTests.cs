@@ -71,7 +71,8 @@ public class AppIdentityTests
     }
 
     /// <summary>Tırnaklı TAM ürün adı (tırnaklarıyla). Ham metin kuralıdır: adın bir cümleye gömülü hâlini YAKALAMAZ — onu
-    /// <see cref="EmbeddedNameRule"/> ile <see cref="NameFreeSurfaceFiles"/> tarar. Ad testte de yazılmaz, kimlikten okunur.</summary>
+    /// <see cref="EmbeddedNameRule"/> tarar (<see cref="No_source_file_embeds_the_product_name_in_a_literal"/>). Ad testte de yazılmaz, kimlikten
+    /// okunur.</summary>
     private static readonly Regex QuotedNameRule = new(Regex.Escape("\"" + AppIdentity.Product + "\""));
 
     /// <summary>Ürün adının kendisi — bir literalin HERHANGİ bir yerinde. Kaynak literalleri üzerinde çalışır
@@ -102,7 +103,7 @@ public class AppIdentityTests
 
     /// <summary>
     /// Guard'ın KENDİ kanıtı (tırnaklı ad kuralı): tırnaklı tam ad satır numarasıyla raporlanır; cümleye gömülü ad bu kuralın görüş alanı
-    /// DIŞINDADIR — onu <see cref="The_name_free_surfaces_never_embed_the_product_name_in_a_literal"/> yakalar. İki guard'ın iş bölümü budur.
+    /// DIŞINDADIR — onu <see cref="No_source_file_embeds_the_product_name_in_a_literal"/> yakalar. İki guard'ın iş bölümü budur.
     /// Kuralın hangi projeleri taradığı burada sınanmaz (yol yalnız bir rapor etiketidir): onu <see cref="No_source_file_writes_the_product_name_as_a_literal"/>
     /// içindeki "her üretim projesi tarandı" iddiası pinler.
     /// </summary>
@@ -125,62 +126,66 @@ public class AppIdentityTests
     }
 
     /// <summary>
-    /// Ürün adını bir literalin PARÇASI olarak taşıyamayan yüzeylerin kaynak dosyaları — <c>src</c> köküne göre. Bunların cümleleri ürün
-    /// adını İÇERİR; ad ya <see cref="AppIdentity.Product"/>'tan okunur ya da çağırandan parametre gelir:
+    /// Ürün adının bir literalin PARÇASI olarak yazılabildiği TEK yerler — <c>src</c> köküne göre, her biri gerekçesiyle. Geri kalan her üretim
+    /// dosyasında (sonradan eklenenler dahil) ad hiçbir literalin parçası olamaz: cümle <see cref="AppIdentity.Product"/> ile kurulur ya da ad
+    /// çağırandan parametre gelir (Core'daki şerit tooltip'leri gibi).
     /// <list type="bullet">
-    /// <item>Güncelleme yüzeyi (hap, kart, restart ekranı): <c>Updating …</c>, <c>Closing …</c> cümleleri.</item>
-    /// <item>Kaynak şeridinin metinleri (Core): tooltip'ler (<c>CPU used by …</c>, <c>Memory used by …</c>) adı parametre alır; Core'da
-    /// ad hiçbir literalin parçası değildir.</item>
+    /// <item><c>Core/MsBuild/WpfTemporaryAssemblyTargets.cs</c>: motorun kendi önbelleğine (<c>%LOCALAPPDATA%\…\msbuild\</c>) yazdığı MSBuild
+    /// dosyasındaki bir XML YORUMU — dosyayı kimin yazdığını söyler, hiçbir yüzeyde görünmez. Core App'in kimliğini görmez; adı bu yorum için
+    /// kendi assembly'sinin özniteliğinden okumak, sabit bir dosya içeriğini bir çalışma zamanı okumasına bağlardı — kullanıcıya hiçbir kazancı
+    /// yok.</item>
     /// </list>
-    /// Liste bilerek AÇIK ve dardır: adı cümleye gömen eski yerler de var (ör. ayar dosyası filtresi, notlar penceresinin alt başlığı),
-    /// bu yüzden aynı kural tüm <c>src</c>'ye uygulanamaz — bir yüzey buraya, adı kimlikten okur hâle getirildiğinde eklenir.
+    /// Muafiyet dosyaya değil oradaki TEK literale aittir: aynı dosyaya eklenen ikinci bir ad yakalanır
+    /// (<see cref="The_exemptions_are_exactly_the_files_that_still_embed_the_name"/>).
     /// </summary>
-    private static readonly string[] NameFreeSurfaceFiles =
+    private static readonly string[] EmbeddedNameExemptions =
     [
-        Path.Combine("BuildOrchestrator.App", "ViewModels", "UpdateText.cs"),
-        Path.Combine("BuildOrchestrator.App", "ViewModels", "UpdateRestartTimeline.cs"),
-        Path.Combine("BuildOrchestrator.App", "Views", "UpdateRestartScreen.xaml"),
-        Path.Combine("BuildOrchestrator.App", "Views", "UpdateRestartScreen.xaml.cs"),
-        Path.Combine("BuildOrchestrator.Core", "Diagnostics", "ResourceStripText.cs"),
+        Path.Combine("BuildOrchestrator.Core", "MsBuild", "WpfTemporaryAssemblyTargets.cs"),
     ];
 
     /// <summary>
-    /// [design v1.23.0 §2.12] KAYNAK GUARD'ı: restart ekranının cümleleri ürün adını İÇERİR (<c>Updating &lt;ürün&gt;</c>,
-    /// <c>Closing &lt;ürün&gt;…</c>) ve tırnaklı-ad guard'ı yalnız TAM tırnaklı adı yakalar — cümleye gömülmüş ad ondan kaçar.
-    /// <see cref="NameFreeSurfaceFiles"/> dosyalarında ad hiçbir literalin PARÇASI olamaz; cümle <see cref="AppIdentity.Product"/> ile
-    /// kurulur (ya da ad parametre gelir). Ad testte de yazılmaz, kimlikten okunur.
-    /// <para><b>[DEĞİŞEN KAPSAM — kaynak şeridi, fix 1]</b> Eski iddia: yalnız güncelleme yüzeyi
-    /// (<c>The_update_surface_never_embeds_the_product_name_in_a_literal</c>, App'e göreli liste). Kaynak şeridinin Core'daki tooltip
-    /// metinleri de ürün adını içeren kullanıcı metnidir ve ilk yazımda adı literalin içine gömmüştü (review I-1: <c>"CPU used by …"</c>
-    /// sabiti ve <c>$"Memory used by … · app {…}"</c>) — tırnaklı-ad guard'ı bunu göremezdi. Liste artık <c>src</c> köküne göreli ve
-    /// <c>ResourceStripText.cs</c>'i de içerir; güncelleme yüzeyi iddiası aynen sürer.</para>
+    /// [design v1.23.0 §2.12] KAYNAK GUARD'ı: ürün adı hiçbir üretim dosyasında bir literalin PARÇASI değildir. Tırnaklı-ad guard'ı yalnız TAM
+    /// tırnaklı adı yakalar; cümleye gömülmüş ad (<c>Updating &lt;ürün&gt;</c>, <c>CPU used by &lt;ürün&gt; — …</c>, <c>Release notes for
+    /// &lt;ürün&gt;.</c>) ondan kaçar. Tarama bütün <c>src</c>'dir, muaf olan yalnız <see cref="EmbeddedNameExemptions"/>. Ad testte de yazılmaz,
+    /// kimlikten okunur.
+    /// <para><b>[DEĞİŞEN KAPSAM — temizlik madde 2]</b> Eski iddia opt-in bir listeydi (<c>NameFreeSurfaceFiles</c>: güncelleme yüzeyinin dört
+    /// dosyası ve <c>ResourceStripText.cs</c>; test <c>The_name_free_surfaces_never_embed_the_product_name_in_a_literal</c>). Adı cümleye gömen YENİ
+    /// bir dosya görünmezdi ve dört eski kullanım listenin dışında borç olarak duruyordu: ayar dosyası filtresi (<c>SettingsFile.FileFilter</c>),
+    /// What's new alt başlığı (<c>NotesDialog.xaml</c>), font spike'ının örnek satırı ve MSBuild yorumu. İlk üçü artık adı kimlikten okur,
+    /// dördüncüsü gerekçeli istisnadır; güncelleme yüzeyi ve şerit metni iddiası bütün <c>src</c>'nin parçası olarak sürer.</para>
     /// </summary>
     [Fact]
-    public void The_name_free_surfaces_never_embed_the_product_name_in_a_literal()
+    public void No_source_file_embeds_the_product_name_in_a_literal()
     {
-        var offenders = NameFreeSurfaceFiles
-            .SelectMany(f => SourceGuard.ScanLiteralText(
-                f, File.ReadAllText(Path.Combine(RepoPaths.SrcRoot, f)), Path.GetExtension(f), EmbeddedNameRule))
-            .ToList();
-
-        Assert.Empty(offenders);
+        Assert.Empty(SourceGuard.ScanSrcCodeAndMarkupLiterals(EmbeddedNameRule, EmbeddedNameExemptions));
+        SourceGuard.AssertScansEveryProductionProject("*.cs");
     }
 
     /// <summary>
-    /// Guard'ın KENDİ kanıtı (şerit metni kapsamı): dosya listede, diskte ve tokenizer ondan literal çıkarıyor (boş bir tarama sessizce
-    /// yeşil kalırdı); gerçek dosya temiz; AYNI dosyaya eklenen — adı bir cümleye gömen düz ve interpolated — literaller satır
-    /// numaralarıyla yakalanır, yorumdaki ad yakalanmaz. Eklenen iki satır ilk yazımdaki şerit metninin tam biçimidir.
+    /// Guard'ın KENDİ kanıtı (istisnalar): istisnasız tarama TAM OLARAK istisna listesindeki dosyaları raporlar, her birinde TEK literal. Üç şeyi
+    /// birden pinler: tarama istisna dosyasını gerçekten görür (muafiyet olmasa yakalardı); listede bayat bir istisna kalmaz — adı artık taşımayan bir
+    /// dosya listeden düşmelidir, yoksa oraya ileride yazılan ad sessizce muaf kalırdı; ve muafiyet o tek literalle sınırlıdır — aynı dosyaya
+    /// eklenen ikinci bir ad kırmızı verir (bütün-dal incelemesi: dosya düzeyindeki karşılaştırma onu görmüyordu).
     /// </summary>
     [Fact]
-    public void The_name_free_guard_sees_a_planted_literal_in_the_strip_text_scope()
+    public void The_exemptions_are_exactly_the_files_that_still_embed_the_name()
     {
-        string relative = Path.Combine("BuildOrchestrator.Core", "Diagnostics", "ResourceStripText.cs");
-        Assert.Contains(relative, NameFreeSurfaceFiles);
-        string real = File.ReadAllText(Path.Combine(RepoPaths.SrcRoot, relative));
-        Assert.NotEmpty(SourceLiterals.From(real, ".cs"));
-        Assert.Empty(SourceGuard.ScanLiteralText(relative, real, ".cs", EmbeddedNameRule));
+        var hits = SourceGuard.ScanSrcCodeAndMarkupLiterals(EmbeddedNameRule);
+        var files = hits.Select(hit => hit[..hit.IndexOf(':')]).Distinct(StringComparer.OrdinalIgnoreCase);
 
-        const string fake = """
+        Assert.Equal(EmbeddedNameExemptions.Order(StringComparer.OrdinalIgnoreCase), files.Order(StringComparer.OrdinalIgnoreCase));
+        Assert.Equal(EmbeddedNameExemptions.Length, hits.Count);
+    }
+
+    /// <summary>
+    /// Guard'ın KENDİ kanıtı (kural): hiçbir listede adı geçmeyen YENİ bir dosyaya gömülen ad — düz ve interpolated C# literalinde ve bir XAML
+    /// özniteliğinde — satır numarasıyla yakalanır; yorumdaki ad yakalanmaz. Hangi dosyaların tarandığı burada sınanmaz: onu guard'ın kendisi ("her
+    /// üretim projesi tarandı") ve istisna testi pinler. Eklenen satırlar şerit metninin ilk yazımındaki ve What's new alt başlığının eski biçimidir.
+    /// </summary>
+    [Fact]
+    public void The_embedded_name_rule_catches_a_name_planted_in_a_new_file_but_not_in_a_comment()
+    {
+        const string code = """
             // %PRODUCT% yalnız bir yorumda: guard literalleri tarar, yorum ihlal değildir.
             internal static class Planted
             {
@@ -188,15 +193,20 @@ public class AppIdentityTests
                 public static string Memory(string app) => $"Memory used by %PRODUCT% · app {app}";
             }
             """;
-        string planted = real + "\n" + fake.Replace("%PRODUCT%", AppIdentity.Product) + "\n";
+        const string markup = """
+            <!-- %PRODUCT% yalnız bir yorumda -->
+            <TextBlock Text="Release notes for %PRODUCT%." />
+            """;
+        string newFile = Path.Combine("BuildOrchestrator.App", "Views", "PlantedSurface");
+        Assert.DoesNotContain(EmbeddedNameExemptions, exemption => exemption.StartsWith(newFile, StringComparison.OrdinalIgnoreCase));
 
-        var hits = SourceGuard.ScanLiteralText(relative, planted, ".cs", EmbeddedNameRule);
+        var codeHits = SourceGuard.ScanLiteralText(newFile + ".xaml.cs", code.Replace("%PRODUCT%", AppIdentity.Product), ".cs", EmbeddedNameRule);
+        var markupHits = SourceGuard.ScanLiteralText(newFile + ".xaml", markup.Replace("%PRODUCT%", AppIdentity.Product), ".xaml", EmbeddedNameRule);
 
-        Assert.Equal(2, hits.Count);
-        Assert.Contains("CPU used by", hits[0]);
-        Assert.Contains("Memory used by", hits[1]);
-        int realLines = real.Count(c => c == '\n');
-        Assert.All(hits, hit => Assert.True(int.Parse(hit.Split(':')[1]) > realLines, $"planted line expected after the real file: {hit}"));
+        Assert.Equal(2, codeHits.Count); // C# literali tırnaklarıyla raporlanır, XAML özniteliğinin değeri tırnaksız
+        Assert.StartsWith(newFile + ".xaml.cs:4: \"CPU used by", codeHits[0]);
+        Assert.StartsWith(newFile + ".xaml.cs:5: $\"Memory used by", codeHits[1]);
+        Assert.StartsWith(newFile + ".xaml:2: Release notes for", Assert.Single(markupHits));
     }
 
     /// <summary>

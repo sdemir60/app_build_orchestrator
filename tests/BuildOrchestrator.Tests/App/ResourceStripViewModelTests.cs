@@ -4,6 +4,7 @@ using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Core.Diagnostics;
 using BuildOrchestrator.Tests.Supervisor;
 using static BuildOrchestrator.Tests.App.MainWindowHost;
+using static BuildOrchestrator.Tests.ByteUnits;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -20,8 +21,6 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 public class ResourceStripViewModelTests
 {
-    private const long Mb = 1024 * 1024;
-
     private static readonly string[] ProjectNames = ["A", "B", "C"];
 
     /// <summary>Üç projeli, çipi <paramref name="perfMode"/> olan VM. Komutlar motora "gider" (cevabı test verir).</summary>

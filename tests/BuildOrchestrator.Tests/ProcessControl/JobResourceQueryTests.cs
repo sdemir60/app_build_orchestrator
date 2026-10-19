@@ -5,6 +5,7 @@ using System.Reflection;
 using BuildOrchestrator.Core.Diagnostics;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Tests.App;
+using static BuildOrchestrator.Tests.ByteUnits;
 
 namespace BuildOrchestrator.Tests.ProcessControl;
 
@@ -21,8 +22,6 @@ namespace BuildOrchestrator.Tests.ProcessControl;
 [Trait("Category", "ProcessControl")]
 public class JobResourceQueryTests
 {
-    private const long Mb = 1024 * 1024;
-
     /// <summary>Eski sayacı BU süreçte okurken kabul edilen fark: 1 MiB olağan kayma + eski sayacın kendi anlık görüntü tamponu için 4 MiB
     /// (görüntünün 1,5 katı; bu makinede 1 MiB + 8 KiB ölçüldü, 4 MiB ≈ 2,7 MiB'lık bir süreç listesi). Gerekçe:
     /// <see cref="The_private_bytes_reader_reads_what_the_old_counter_read"/>.</summary>
@@ -289,13 +288,8 @@ public class JobResourceQueryTests
     [Fact]
     public void A_foreign_process_reads_what_the_old_counter_read_too()
     {
-        using var job = JobObject.CreateKillOnClose();
-        using var port = job.AttachCompletionPort();
-        using var child = JobProcessLauncher.Launch(
-            job, JobTestChildren.GatedBurnChildCmdLine(), new LaunchOptions(RedirectStdio: true));
-        // .NET yalnız ".exe" uzantısını atar: more.com'un ProcessName'i "more.com"dur.
-        using var more = JobBirths.WaitForProcess(port, TimeSpan.FromSeconds(30), "the waiting process was never born",
-            process => process.ProcessName.StartsWith("more", StringComparison.OrdinalIgnoreCase));
+        using var live = GatedMemberJob.Start();
+        var more = live.More;
 
         AssertSameMeasure("a foreign process", 256 * 1024, () =>
         {

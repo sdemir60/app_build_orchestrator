@@ -237,7 +237,7 @@ public class RunCoordinatorTests
         }
 
         /// <summary>Bol işlemci ve bellek: işçi bütçesi hiçbir istek için devreye girmez.</summary>
-        public static readonly (int Cores, long FreeBytes) AmpleMachine = (Cores: 64, FreeBytes: 256L * 1024 * 1024 * 1024);
+        public static readonly (int Cores, long FreeBytes) AmpleMachine = (Cores: 64, FreeBytes: 256 * ByteUnits.Gb);
 
         /// <summary>Koşunun başında motorun okuduğu makine görüntüsü; testler koşuyu başlatmadan ÖNCE değiştirebilir.</summary>
         public (int Cores, long FreeBytes) Machine { get; set; } = AmpleMachine;

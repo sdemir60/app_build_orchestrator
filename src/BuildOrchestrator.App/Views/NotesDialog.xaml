@@ -29,9 +29,10 @@
                      FontSize="{DynamicResource FontSize.Xs}"
                      Foreground="{DynamicResource Brush.TextSecondary}" />
         </Border>
+        <!-- Açıklamadaki ürün adı literal DEĞİL: AppIdentity.Product'tan (kopya YASAK). -->
         <StackPanel VerticalAlignment="Center">
           <TextBlock Text="What's new" Style="{DynamicResource Ds.Heading.Md}" />
-          <TextBlock Text="Release notes for Build Orchestrator." Margin="0,3,0,0"
+          <TextBlock Text="{Binding Source={x:Static services:AppIdentity.Product}, StringFormat='Release notes for {0}.'}" Margin="0,3,0,0"
                      FontSize="{DynamicResource FontSize.Xs}"
                      Foreground="{DynamicResource Brush.TextDim}" />
         </StackPanel>

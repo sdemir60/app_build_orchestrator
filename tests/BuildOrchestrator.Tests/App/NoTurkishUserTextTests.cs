@@ -119,18 +119,14 @@ public class NoTurkishUserTextTests
     [Fact] // eksen (a) — src ağacı: C# + XAML
     public void No_Turkish_characters_reach_the_user_from_the_src_tree()
     {
-        var offenders = SourceGuard.ScanSrcLiterals("*.cs", TurkishCharacters, ExceptedFiles, IgnoredCallers)
-            .Concat(SourceGuard.ScanSrcLiterals("*.xaml", TurkishCharacters, ExceptedFiles, IgnoredCallers))
-            .ToList();
+        var offenders = SourceGuard.ScanSrcCodeAndMarkupLiterals(TurkishCharacters, ExceptedFiles, IgnoredCallers);
         Assert.True(offenders.Count == 0, Report("Türkçe KARAKTER", offenders));
     }
 
     [Fact] // eksen (b) — src ağacı: C# + XAML
     public void No_Turkish_words_reach_the_user_from_the_src_tree()
     {
-        var offenders = SourceGuard.ScanSrcLiterals("*.cs", TurkishWords, ExceptedFiles, IgnoredCallers)
-            .Concat(SourceGuard.ScanSrcLiterals("*.xaml", TurkishWords, ExceptedFiles, IgnoredCallers))
-            .ToList();
+        var offenders = SourceGuard.ScanSrcCodeAndMarkupLiterals(TurkishWords, ExceptedFiles, IgnoredCallers);
         Assert.True(offenders.Count == 0, Report("Türkçe KELİME", offenders));
     }
 
@@ -247,8 +243,7 @@ public class NoTurkishUserTextTests
             var hits = RepoScanSurfaces
                 .SelectMany(s => SourceGuard.ScanRepoLiterals(s.Pattern, TurkishCharacters, ignoredCallers: IgnoredCallers,
                     excludedRootFolders: ExcludedRepoRoots))
-                .Concat(SourceGuard.ScanSrcLiterals("*.cs", TurkishCharacters, ExceptedFiles, IgnoredCallers))
-                .Concat(SourceGuard.ScanSrcLiterals("*.xaml", TurkishCharacters, ExceptedFiles, IgnoredCallers))
+                .Concat(SourceGuard.ScanSrcCodeAndMarkupLiterals(TurkishCharacters, ExceptedFiles, IgnoredCallers))
                 .Count(o => o.Contains(name, StringComparison.Ordinal));
             Assert.True(hits > 0, $"istisna ARTIK GEREKSİZ, kaldır: {name} ({reason})");
         }

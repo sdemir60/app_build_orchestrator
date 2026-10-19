@@ -117,6 +117,12 @@ internal static class SourceGuard
         IReadOnlyCollection<string>? allowedFiles = null, IReadOnlyCollection<string>? ignoredCallers = null)
         => ScanLiterals(RepoPaths.SrcSourceFiles(searchPattern), RepoPaths.SrcRoot, rule, allowedFiles, ignoredCallers);
 
+    /// <summary>[temizlik madde 4] Üretim projelerinin KOD ve MARKUP literalleri birlikte (<c>*.cs</c>, sonra <c>*.xaml</c>) — kullanıcıya ulaşan
+    /// metnin iki kaynağını tarayan guard'ların TEK çağrısı (iki <see cref="ScanSrcLiterals"/> çağrısının birleşimi beş yerde ayrı ayrı yazılıyordu).</summary>
+    public static IReadOnlyList<string> ScanSrcCodeAndMarkupLiterals(
+        Regex rule, IReadOnlyCollection<string>? allowedFiles = null, IReadOnlyCollection<string>? ignoredCallers = null)
+        => [.. ScanSrcLiterals("*.cs", rule, allowedFiles, ignoredCallers), .. ScanSrcLiterals("*.xaml", rule, allowedFiles, ignoredCallers)];
+
     /// <summary>TÜM repo ağacının literallerini tarar — <c>src/</c> DIŞINDA yaşayan kullanıcıya görünür
     /// metinler için (ör. <c>scripts/verify-publish.ps1</c> çıktı satırları).
     /// <para><paramref name="excludedRootFolders"/> repo köküne göre İLK yol parçasıyla eşleşir (ör.
@@ -217,12 +223,22 @@ internal static class SourceGuard
     public static void AssertScansEveryProductionProject(string searchPattern)
     {
         var scanned = ScannedSrcFiles(searchPattern);
-        var unseen = ProductionProjects
-            .Where(project => !scanned.Any(file => file.StartsWith(project + Path.DirectorySeparatorChar, StringComparison.Ordinal)))
-            .ToList();
+        var unseen = UnseenProductionProjects(scanned);
 
         Assert.True(unseen.Count == 0,
             $"the scan of src/**/{searchPattern} saw no file of: {string.Join(", ", unseen)} (scanned {scanned.Count} files)");
+    }
+
+    /// <summary>[temizlik madde 4] <see cref="AssertScansEveryProductionProject"/>'in SAF çekirdeği: <paramref name="scannedFiles"/>'ta (<c>src</c>
+    /// köküne göreli yollar) hiç dosyası görülmeyen üretim projeleri, <see cref="ProductionProjects"/> sırasıyla. Bir dosya projeyi ancak onun
+    /// klasörünün İÇİNDEYSE sayar — ad öneki yetmez (<c>BuildOrchestrator.ContractsTools\…</c> Contracts değildir). Diske bakmaz: kanıt testi
+    /// (<c>SourceGuardTests</c>) başarısızlık yolunu sahte bir listeyle sınar.</summary>
+    public static IReadOnlyList<string> UnseenProductionProjects(IEnumerable<string> scannedFiles)
+    {
+        var files = scannedFiles.ToList();
+        return ProductionProjects
+            .Where(project => !files.Any(file => file.StartsWith(project + Path.DirectorySeparatorChar, StringComparison.Ordinal)))
+            .ToList();
     }
 
     // ================================================================================================

@@ -3,6 +3,7 @@ using System.Windows.Threading;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Tests.ProcessControl;
+using static BuildOrchestrator.Tests.ByteUnits;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -14,12 +15,11 @@ namespace BuildOrchestrator.Tests.App;
 /// <para>[D8] Sleep/poll yok: zamanlayıcı elle tıklatılan <see cref="FakePollTimer"/>, saat elle sürülen bir <see cref="TimeSpan"/>'dir; ölçülen
 /// şey tikin nominal aralığı değil saatin FARKIDIR (CPU yüzdesi duvar saatiyle bölünür). Tek istisna gerçek <c>DispatcherTimer</c> testidir:
 /// aralıklar milisaniyelere kısaltılır ve dispatcher bir KOŞULA kadar pompalanır (üst sınır yalnız güvenlik). Gerçek probe testleri canlı üyeyi
-/// stdin'i kapanana dek bekleyen bir çocukla kurar (<see cref="JobTestChildren.GatedBurnChildCmdLine"/>), doğumunu job'un IOCP'si bildirir.</para>
+/// stdin'i kapanana dek bekleyen bir çocukla kurar (<see cref="JobTestChildren.GatedBurnChildCmdLine"/>), doğumunu job'un IOCP'si bildirir —
+/// kurulumun tek yeri <see cref="GatedMemberJob"/>.</para>
 /// </summary>
 public class ResourceSamplerTests
 {
-    private const long Mb = 1024 * 1024;
-
     private static TimeSpan Seconds(double seconds) => TimeSpan.FromSeconds(seconds);
 
     /// <summary>Başarılı bir okuma: App ve job işlemci zamanı (sn) ve baytlar. Varsayılan baytlar uyuyan motorun okumasıdır — job boş,
@@ -408,16 +408,11 @@ public class ResourceSamplerTests
     [Fact]
     public void The_engine_process_counts_as_the_engine_and_every_other_member_as_compilers()
     {
-        using var job = JobObject.CreateKillOnClose();
-        using var port = job.AttachCompletionPort();
-        using var child = JobProcessLauncher.Launch(
-            job, JobTestChildren.GatedBurnChildCmdLine(), new LaunchOptions(RedirectStdio: true));
-        using var more = JobBirths.WaitForProcess(port, TimeSpan.FromSeconds(30), "the waiting process was never born",
-            process => process.ProcessName.StartsWith("more", StringComparison.OrdinalIgnoreCase));
-        int enginePid = child.Pid;
+        using var live = GatedMemberJob.Start();
+        int enginePid = live.Child.Pid;
 
-        var asEngine = new JobResourceProbe(job, () => enginePid).Read();
-        var noEngine = new JobResourceProbe(job, () => null).Read();
+        var asEngine = new JobResourceProbe(live.Job, () => enginePid).Read();
+        var noEngine = new JobResourceProbe(live.Job, () => null).Read();
 
         Assert.True(asEngine.EngineBytes > 0, $"the engine is a live member: {asEngine.EngineBytes}");
         Assert.True(asEngine.CompilersBytes > 0, $"the other members are compilers: {asEngine.CompilersBytes}");
@@ -434,15 +429,10 @@ public class ResourceSamplerTests
     [Fact]
     public void The_compilers_are_the_other_members_alone_and_the_engine_is_not_counted_twice()
     {
-        using var job = JobObject.CreateKillOnClose();
-        using var port = job.AttachCompletionPort();
-        using var child = JobProcessLauncher.Launch(
-            job, JobTestChildren.GatedBurnChildCmdLine(), new LaunchOptions(RedirectStdio: true));
-        using var more = JobBirths.WaitForProcess(port, TimeSpan.FromSeconds(30), "the waiting process was never born",
-            process => process.ProcessName.StartsWith("more", StringComparison.OrdinalIgnoreCase));
-        int enginePid = child.Pid;
+        using var live = GatedMemberJob.Start();
+        int enginePid = live.Child.Pid;
         const long engineBytes = 7 * Mb;
-        var probe = new JobResourceProbe(job, () => enginePid, privateBytesOf: pid => pid == enginePid ? engineBytes : 1_000);
+        var probe = new JobResourceProbe(live.Job, () => enginePid, privateBytesOf: pid => pid == enginePid ? engineBytes : 1_000);
 
         var reading = probe.Read();
 
@@ -458,14 +448,9 @@ public class ResourceSamplerTests
     [Fact]
     public void A_listed_process_that_is_gone_before_it_can_be_opened_counts_as_zero_and_never_blanks_the_cells()
     {
-        using var job = JobObject.CreateKillOnClose();
-        using var port = job.AttachCompletionPort();
-        using var child = JobProcessLauncher.Launch(
-            job, JobTestChildren.GatedBurnChildCmdLine(), new LaunchOptions(RedirectStdio: true));
-        using var more = JobBirths.WaitForProcess(port, TimeSpan.FromSeconds(30), "the waiting process was never born",
-            process => process.ProcessName.StartsWith("more", StringComparison.OrdinalIgnoreCase));
-        int gonePid = child.Pid;
-        var probe = new JobResourceProbe(job, () => gonePid, privateBytesOf: pid => pid == gonePid ? null : 1_000);
+        using var live = GatedMemberJob.Start();
+        int gonePid = live.Child.Pid;
+        var probe = new JobResourceProbe(live.Job, () => gonePid, privateBytesOf: pid => pid == gonePid ? null : 1_000);
 
         var reading = probe.Read();
 

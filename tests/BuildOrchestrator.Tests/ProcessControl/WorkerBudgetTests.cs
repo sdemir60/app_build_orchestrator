@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using BuildOrchestrator.Core.ProcessControl;
 using Xunit;
+using static BuildOrchestrator.Tests.ByteUnits;
 
 namespace BuildOrchestrator.Tests.ProcessControl;
 
@@ -25,9 +26,6 @@ namespace BuildOrchestrator.Tests.ProcessControl;
 /// </summary>
 public class WorkerBudgetTests
 {
-    private const long Gb = 1024L * 1024 * 1024;
-    private const long Mb = 1024L * 1024;
-
     [Theory]
     [InlineData(4, 2, 16)]   // Balanced, iki işlemci: plan hipotezi 1'e kırpıyordu; ölçümde 2x kazandırdığı için KIRPILMAZ
     [InlineData(6, 4, 32)]   // Full, dört işlemci

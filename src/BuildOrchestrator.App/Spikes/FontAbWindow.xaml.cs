@@ -1,6 +1,8 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using BuildOrchestrator.App.Services;
+using BuildOrchestrator.Core.Formatting;
 
 namespace BuildOrchestrator.App.Spikes;
 
@@ -77,12 +79,12 @@ public partial class FontAbWindow : Window
 
         // ---- Örnek 2: 13px proje satırları (ProjectRow: ad 13/500, sln 12/faint, süre mono 12 tabular) ----
         panel.Children.Add(ProjectRow("OSYS.Sales.Core", "Osys.Sales.sln", "4.2s", dim: false));
-        panel.Children.Add(ProjectRow("OSYS.Domain.Parts", "Osys.Parts.sln", "—", dim: true));
+        panel.Children.Add(ProjectRow("OSYS.Domain.Parts", "Osys.Parts.sln", MissingValue.Mark, dim: true));
 
         // 13px SemiBold ayrışma örneği + 12px mono tabular metrik satırı.
         panel.Children.Add(new TextBlock
         {
-            Text = "Build Orchestrator — OSYS workspace",
+            Text = AppIdentity.Product + " — OSYS workspace",
             FontFamily = Sans,
             FontSize = 13,
             FontWeight = FontWeights.SemiBold,
