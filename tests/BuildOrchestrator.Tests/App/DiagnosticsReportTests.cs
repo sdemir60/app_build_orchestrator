@@ -1,5 +1,6 @@
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.Core.Diagnostics;
+using static BuildOrchestrator.Tests.ByteUnits;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -23,8 +24,6 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 public class DiagnosticsReportTests
 {
-    private const long Mb = 1024 * 1024;
-
     private static DiagnosticsInput Full() => new(
         Product: "Build Orchestrator",
         Version: "1.0.0+it5",

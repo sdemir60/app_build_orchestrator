@@ -207,7 +207,7 @@ public class MainWindowRealizeTests
 
         // İÇ kutu hairline kadar daraldı — hairline bandın İÇİNDEN yer alır. Üst sınır DPI'dan türer: 1 dip'lik
         // bir çizgi ızgarada en çok Ceiling(ölçek) piksel kaplayabilir (125%'te 2, 100%'de 1).
-        var inner = (FrameworkElement)titleBar.Child;
+        var inner = MainWindowHost.TitleBarGrid(window);
         Assert.True(inner.ActualHeight < titleBar.ActualHeight,
             $"hairline iç kutuyu hiç daraltmadı (iç {inner.ActualHeight}, bant {titleBar.ActualHeight}) — çizgi kayıp olabilir");
         double shrink = DsResources.InDevicePixels(titleBar.ActualHeight - inner.ActualHeight, dpi.DpiScaleY);
@@ -222,7 +222,7 @@ public class MainWindowRealizeTests
         // [kaynak şeridi] İç kutu artık DockPanel'i (ve ortadaki şeridi) saran Grid'dir. Hizalama adımları DockPanel'in kutusundan sayılır: Grid ile
         // DockPanel AYNI kutudur (germe, offset 0) — arada fiziksel bir hizalama adımı, yani yeni bir yuvarlama kaynağı yoktur ve bütçe bir cihaz
         // pikselinde KALIR (sarmalayıcıyı saymak bütçeyi sessizce yarım piksel gevşetirdi).
-        var dock = Assert.IsType<DockPanel>(((Grid)inner).Children[0]);
+        var dock = MainWindowHost.TitleBarDock(window);
         Assert.Equal(new Rect(0, 0, inner.ActualWidth, inner.ActualHeight), DsResources.BoundsIn(dock, inner)); // "aynı kutu" iddiasının kanıtı
         double budget = AlignmentSteps(logo, dock) / 2.0;
         Assert.True(drift <= budget,

@@ -2,6 +2,7 @@ using System.IO;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using BuildOrchestrator.App;
@@ -177,6 +178,19 @@ internal static class MainWindowHost
         foreach (var element in DsResources.RealizedObjects(content).OfType<UIElement>()) element.InvalidateMeasure();
         content.UpdateLayout();
     }
+
+    /// <summary>[temizlik madde 4] Title bar'ın İÇ kutusu: <c>TitleBarRow</c>'un (40'lık bant + alt hairline) çocuğu olan Grid — kümeleri taşıyan
+    /// DockPanel ile ortadaki kaynak şeridinin ORTAK hücresi, hairline'dan sonra kalan alan. "Bant → Grid → ilk çocuk DockPanel" yapısını bilen
+    /// TEK yer (<see cref="TitleBarDock"/> ile): <c>MainWindowRealizeTests</c> ve <c>ResourceStripRealizeTests</c> onu üç kez ayrı ayrı yazıyordu.</summary>
+    public static Grid TitleBarGrid(MainWindow window)
+    {
+        ArgumentNullException.ThrowIfNull(window);
+        return Assert.IsType<Grid>(window.TitleBarRow.Child);
+    }
+
+    /// <summary>[temizlik madde 4] Title bar'ın iki kümesini (sol logo kilidi, sağ küme + caption butonları) taşıyan DockPanel —
+    /// <see cref="TitleBarGrid"/>'in İLK çocuğu; kaynak şeridi aynı Grid'in son çocuğudur.</summary>
+    public static DockPanel TitleBarDock(MainWindow window) => Assert.IsType<DockPanel>(TitleBarGrid(window).Children[0]);
 
     /// <summary>[P3 · final review O5] Bir testin geçici kalıcı durum dosyası — <see cref="New"/>'ün pencereye verdiği
     /// store'un yolu. TEK tanım: pencerenin okuduğu dosyayı tohumlayan ya da sonradan okuyan her test yolu buradan

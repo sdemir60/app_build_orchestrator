@@ -10,6 +10,7 @@ using BuildOrchestrator.Supervisor;
 using BuildOrchestrator.Tests.App;
 using BuildOrchestrator.Tests.Git;
 using BuildOrchestrator.Tests.Supervisor;
+using static BuildOrchestrator.Tests.ByteUnits;
 
 namespace BuildOrchestrator.Tests.Diagnostics;
 
@@ -23,8 +24,6 @@ namespace BuildOrchestrator.Tests.Diagnostics;
 /// </summary>
 public class MemoryLineTests
 {
-    private const long Mb = 1024 * 1024;
-
     /// <summary>Yuvarlama tablosu — satır ve MB biçimi AYNI tabloyla sınanır (tablo tek yerde).</summary>
     public static TheoryData<long, string> Rounding => new()
     {

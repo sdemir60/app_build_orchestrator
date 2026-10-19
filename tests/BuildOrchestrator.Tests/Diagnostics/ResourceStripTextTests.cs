@@ -1,6 +1,7 @@
 using System.Globalization;
 using BuildOrchestrator.Core.Diagnostics;
 using BuildOrchestrator.Core.ProcessControl;
+using static BuildOrchestrator.Tests.ByteUnits;
 
 namespace BuildOrchestrator.Tests.Diagnostics;
 
@@ -12,10 +13,6 @@ namespace BuildOrchestrator.Tests.Diagnostics;
 /// </summary>
 public class ResourceStripTextTests
 {
-    private const long Kb = 1024;
-    private const long Mb = 1024 * Kb;
-    private const long Gb = 1024 * Mb;
-
     // ---------------------------------------------------------------- CPU yüzdesi
 
     /// <summary>

@@ -14,6 +14,7 @@ using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Core.Diagnostics;
 using Xunit.Abstractions;
+using static BuildOrchestrator.Tests.ByteUnits;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -34,8 +35,6 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class ResourceStripRealizeTests(ITestOutputHelper output)
 {
-    private const long Mb = 1024 * 1024;
-
     /// <summary>Güncelleme hapı görünür, pencere Normal durumda, içerik <paramref name="width"/> × 620'de ölçülü.</summary>
     private static (MainWindow window, RunViewModel vm, ResourceStrip strip) Realized(TempDir temp, double width = 1240)
     {
@@ -180,7 +179,7 @@ public class ResourceStripRealizeTests(ITestOutputHelper output)
         using var temp = new TempDir();
         var (window, _, strip) = Realized(temp);
 
-        var inner = (FrameworkElement)window.TitleBarRow.Child; // hairline'dan sonra kalan iç kutu
+        var inner = MainWindowHost.TitleBarGrid(window); // hairline'dan sonra kalan iç kutu
         double barCenter = inner.ActualHeight / 2;
         foreach (FrameworkElement cell in new FrameworkElement[] { strip.CpuCell, strip.MemoryCell, strip.ParallelCell })
         {
@@ -244,11 +243,11 @@ public class ResourceStripRealizeTests(ITestOutputHelper output)
         using var temp = new TempDir();
         var (window, _, strip) = Realized(temp);
 
-        var grid = Assert.IsType<Grid>(window.TitleBarRow.Child);
+        var grid = MainWindowHost.TitleBarGrid(window);
         Assert.Same(grid, VisualTreeHelper.GetParent(strip));
         Assert.Equal(HorizontalAlignment.Center, strip.HorizontalAlignment);
         Assert.Equal(grid.Children.Count - 1, grid.Children.IndexOf(strip)); // son çocuk = en üstte çizilir
-        var dock = Assert.IsType<DockPanel>(grid.Children[0]);               // kümeler hâlâ dock'ta, şerit onları oynatmaz
+        var dock = MainWindowHost.TitleBarDock(window);                       // kümeler hâlâ dock'ta, şerit onları oynatmaz
         Assert.True(dock.Children.Count > 0);
         Assert.Equal(Panel.GetZIndex(dock), Panel.GetZIndex(strip));         // z-sırası yalnız çocuk sırasından gelir
         GC.KeepAlive(window);

@@ -217,12 +217,22 @@ internal static class SourceGuard
     public static void AssertScansEveryProductionProject(string searchPattern)
     {
         var scanned = ScannedSrcFiles(searchPattern);
-        var unseen = ProductionProjects
-            .Where(project => !scanned.Any(file => file.StartsWith(project + Path.DirectorySeparatorChar, StringComparison.Ordinal)))
-            .ToList();
+        var unseen = UnseenProductionProjects(scanned);
 
         Assert.True(unseen.Count == 0,
             $"the scan of src/**/{searchPattern} saw no file of: {string.Join(", ", unseen)} (scanned {scanned.Count} files)");
+    }
+
+    /// <summary>[temizlik madde 4] <see cref="AssertScansEveryProductionProject"/>'in SAF çekirdeği: <paramref name="scannedFiles"/>'ta (<c>src</c>
+    /// köküne göreli yollar) hiç dosyası görülmeyen üretim projeleri, <see cref="ProductionProjects"/> sırasıyla. Bir dosya projeyi ancak onun
+    /// klasörünün İÇİNDEYSE sayar — ad öneki yetmez (<c>BuildOrchestrator.ContractsTools\…</c> Contracts değildir). Diske bakmaz: kanıt testi
+    /// (<c>SourceGuardTests</c>) başarısızlık yolunu sahte bir listeyle sınar.</summary>
+    public static IReadOnlyList<string> UnseenProductionProjects(IEnumerable<string> scannedFiles)
+    {
+        var files = scannedFiles.ToList();
+        return ProductionProjects
+            .Where(project => !files.Any(file => file.StartsWith(project + Path.DirectorySeparatorChar, StringComparison.Ordinal)))
+            .ToList();
     }
 
     // ================================================================================================

@@ -5,7 +5,8 @@ using BuildOrchestrator.Core.ProcessControl;
 namespace BuildOrchestrator.Tests.ProcessControl;
 
 /// <summary>
-/// Bir job'un IOCP'sinden DOĞUM bildirimlerini (ve job'un BOŞALDIĞI bildirimini, <see cref="UntilEmpty"/>) bekleyen TEK yardımcı. Eskiden
+/// Bir job'un IOCP'sinden DOĞUM bildirimlerini (ve job'un BOŞALDIĞI bildirimini, <see cref="UntilEmpty"/>; bir sürecin ÇIKIŞINI,
+/// <see cref="UntilExit"/>) bekleyen TEK yardımcı. Eskiden
 /// her test aynı döngüyü satır içi kopyalıyordu (<c>WaitNext(...) ?? throw new TimeoutException(...)</c> + <c>JOB_OBJECT_MSG_NEW_PROCESS</c>
 /// süzgeci); döngü artık burada (<c>Pump</c>), testlerde yalnız "ne zaman yeter" kararı kalır.
 /// <para><b>Davranış eski kopyalarla birebir:</b> bekleyiş IOCP'ye blokludur (sleep/poll yok — D8); zaman aşımı HER bildirim için
@@ -38,6 +39,13 @@ internal static class JobBirths
     /// <c>conhost</c>'u birkaç ms daha yaşayabilir.</summary>
     public static void UntilEmpty(JobCompletionPort port, TimeSpan timeout, string what) =>
         Pump(port, timeout, what, n => n.MessageId == NativeMethods.JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO);
+
+    /// <summary>[temizlik madde 4] <paramref name="pid"/>'in çıkış bildirimine (normal ya da anormal) dek bekler; diğer her bildirim — başka
+    /// süreçlerin çıkışı dahil — atlanır. Bir sürecin job'dan çıktığını çekirdeğin kendi bildirimiyle doğrulayan testlerin döngüsü:
+    /// <c>MsBuildInvokerTests</c> bunu iki kez satır içi yazıyordu.</summary>
+    public static void UntilExit(JobCompletionPort port, int pid, TimeSpan timeout, string what) =>
+        Pump(port, timeout, what, n => n.Pid == pid
+            && n.MessageId is NativeMethods.JOB_OBJECT_MSG_EXIT_PROCESS or NativeMethods.JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS);
 
     /// <summary>Tek bekleme döngüsü: her bildirim <paramref name="done"/>'a gider, o true dönünce biter; port zaman aşımı süresince hiçbir
     /// şey göndermezse <see cref="TimeoutException"/> (<paramref name="what"/> metniyle).</summary>
