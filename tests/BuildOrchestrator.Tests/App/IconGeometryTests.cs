@@ -169,8 +169,14 @@ public class IconGeometryTests
 
     /// <summary>[design v1.25.0 §2.1] Kaynak şeridinin ikonları prototipin geometrisini BİREBİR taşır (BuildApp.jsx:125-127, viewBox
     /// 24): cpu = iki <c>rect</c> (14×14 <c>rx=2</c> gövde, 5×5 <c>rx=0.8</c> çekirdek) + sekiz bacak çizgisi; memory-stick = gövde
-    /// (iki çentikli) + ayırıcı çizgi + üst üç, alt üç kontak (toplam sekiz figür); parallel = üç dik çizgi (x 6/12/18, y 5..19).
-    /// Kalınlıklar prototipin ikon başına değerleridir: cpu ve memory 1.8, parallel 1.9. Sınırlar çizimin kendisini doğrular.
+    /// (iki çentikli) + ayırıcı çizgi + üst üç, alt üç kontak (toplam sekiz figür); parallel = üç dik çizgi (x 7/13/19, y 5..19 —
+    /// prototipin 6/12/18'inden TÜRETİLMİŞ, aşağıya bak). Kalınlıklar prototipin ikon başına değerleridir: cpu ve memory 1.8, parallel
+    /// 1.9. Sınırlar çizimin kendisini doğrular.
+    /// <para><b>[DEĞİŞEN KURAL — 2026-10-19, piksel hizası]</b> ESKİ İDDİA: parallel prototipin x 6/12/18'ini birebir taşır. 12 px'lik
+    /// kutuda birim yarım pikseldir; çift koordinat %100 ölçekli ekranda piksel SINIRINA düşer ve her çizgi iki komşu sütuna yarım
+    /// parlaklıkta bölünür — canlı ölçüm (4K, %100): CPU ikonunun sütunları 91'e çıkarken paralel ikonun her çizgisi iki sütunda 54'te
+    /// kaldı ve kullanıcı "soluk" gördü. Tek koordinat (7/13/19) piksel ORTASINA düşer; cpu'nun gövde ve bacak çizgileri de zaten tek
+    /// koordinattadır (5, 9, 15, 19).</para>
     /// <para><b>[DEĞİŞEN KURAL — 2026-10-19]</b> ESKİ İDDİA: üçü de 1.8 — README §2.1'in genel "stroke 1.8" cümlesi prototipin
     /// <c>parallel</c> için yazdığı 1.9'u eziyordu. Gerekçe: aynı renkte üç ince çizgi diğer iki ikonun yarısı kadar mürekkep taşır ve
     /// 1.8'de daha soluk okunur (canlı ekran görüntüsünde, %150: paralel ikon 48, CPU ve RAM ikonları 90'ar piksel boyuyordu; kullanıcı
@@ -197,7 +203,7 @@ public class IconGeometryTests
 
         var parallel = Assert.IsType<PathGeometry>(icons["Icon.Parallel"]);
         Assert.Equal(3, parallel.Figures.Count);
-        Assert.Equal(new Rect(6, 5, 12, 14), parallel.Bounds);
+        Assert.Equal(new Rect(7, 5, 12, 14), parallel.Bounds);
 
         Assert.Equal((1.8, 1.8, 1.9), (Assert.IsType<double>(icons["Icon.Cpu.StrokeThickness"]),
             Assert.IsType<double>(icons["Icon.MemoryStick.StrokeThickness"]), Assert.IsType<double>(icons["Icon.Parallel.StrokeThickness"])));

@@ -6085,9 +6085,12 @@ rotate-cw of the Build menu family, rather than a second copy of the same geomet
 The resource strip (§13.2) draws three icons at 12 px in `text-faint` in a 24-unit design box. They are drawn from the
 design prototype in Lucide's style: a processor (`Icon.Cpu`), a memory module (`Icon.MemoryStick` — the design's own
 name for it is *memory*, a word this code base uses for the memory line) and, for parallelism, three vertical lines at
-x = 6, 12 and 18 (`Icon.Parallel`). The processor and the module are stroked at 1.8 and the three lines at 1.9, the
+x = 7, 13 and 19 (`Icon.Parallel`). The processor and the module are stroked at 1.8 and the three lines at 1.9, the
 prototype's own values: at the same colour three thin lines carry about half the ink of the other two marks and read
-fainter at an equal weight. Like every icon each is a geometry in
+fainter at an equal weight. The lines' positions are *derived*: the prototype draws them at 6, 12 and 18, but in a 12 px
+box a unit is half a pixel, so on a 100 % display an even coordinate falls on a pixel edge and each line is drawn as two
+half-bright columns; one unit to the right puts them on pixel centres, where the processor's own lines already sit.
+Like every icon each is a geometry in
 `Icons.xaml`; here it is drawn inside a `Viewbox` that scales the 24-unit box down to 12 px, and the stroke scales with
 it.
 
