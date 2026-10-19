@@ -207,7 +207,7 @@ public class ResourceStripGuardTests
 
         foreach (string constant in new[] { nameof(ResourceStripText.CpuGhost), nameof(ResourceStripText.MemoryGhost), nameof(ResourceStripText.ParallelGhost), nameof(ResourceStripText.ModeGhost) })
             Assert.Contains($"ResourceStripText.{constant}", markup, StringComparison.Ordinal);
-        Assert.Empty(SourceGuard.ScanText(XamlRelative, markup, new Regex("[\"'>]\\s*(?:100%|12\\.3 GB|12/12|Balanced)\\s*[\"'<]")));
+        Assert.Empty(SourceGuard.ScanText(XamlRelative, markup, new Regex("[\"'>]\\s*(?:100%|12\\.3 GB|12/12/12|Balanced)\\s*[\"'<]")));
     }
 
     [Fact]

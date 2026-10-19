@@ -7,7 +7,8 @@ namespace BuildOrchestrator.Tests.Diagnostics;
 
 /// <summary>
 /// [kaynak şeridi · design v1.25.0 §2.1 · karar K3-K6] Şeridin SAF hesabı ve metinleri (<see cref="ResourceStripText"/>): CPU
-/// yüzdesi, RAM'in MB/GB metni, üç tooltip, paralellik paydası. Çıktı metinleri KOPYA METİN olduğundan bilerek literaldir — kuraldan
+/// yüzdesi, RAM'in MB/GB metni, üç tooltip, paralellik hücresinin ortadaki sayısı (koşunun paralelliği) ve sınırı (modun sayısı).
+/// Çıktı metinleri KOPYA METİN olduğundan bilerek literaldir — kuraldan
 /// türetilseydi test kendini doğrulardı; yalnız "her mod" testleri tabloyu (<see cref="PerfProfile.For"/>) okur ki yeni bir mod
 /// metinsiz unutulamasın. Hiçbir test süreç, saat ya da UI okumaz.
 /// </summary>
@@ -115,10 +116,11 @@ public class ResourceStripTextTests
             Assert.Equal("1.3 GB", ResourceStripText.Memory(1280 * Mb));
             Assert.Equal("69%", ResourceStripText.Cpu(69));
             Assert.Equal("/4", ResourceStripText.ParallelAllowed(PerfMode.Balanced));
+            Assert.Equal("/3", ResourceStripText.ParallelRun(3));
             Assert.Equal("Memory used by Acme · app 310 MB · engine 85 MB · compilers 4.4 GB",
                 ResourceStripText.MemoryTooltip("Acme", 310 * Mb, 85 * Mb, 4506 * Mb));
-            Assert.Equal("3 of 4 projects building in parallel",
-                ResourceStripText.ParallelTooltip(PerfMode.Balanced, 3, running: true, reducedReason: null));
+            Assert.Equal("2 of 3 projects building in parallel",
+                ResourceStripText.ParallelTooltip(PerfMode.Balanced, 2, runParallelism: 3, reducedReason: null));
         }
         finally { CultureInfo.CurrentCulture = previous; }
     }
@@ -172,6 +174,7 @@ public class ResourceStripTextTests
 
     // ---------------------------------------------------------------- paralellik
 
+    /// <summary>Sınır: modun tablo paralelliği, bölü işaretinden sonra — hücrenin sondaki soluk sayısı.</summary>
     [Theory]
     [InlineData(PerfMode.Full, "/6")]
     [InlineData(PerfMode.Balanced, "/4")]
@@ -179,51 +182,74 @@ public class ResourceStripTextTests
     public void ParallelAllowed_is_the_workers_of_the_mode_after_a_slash(PerfMode mode, string expected) =>
         Assert.Equal(expected, ResourceStripText.ParallelAllowed(mode));
 
+    /// <summary>Ortadaki sayı: motorun koşu başında belirlediği paralellik (<c>runStarted.Parallelism</c> — modun sayısı, makineye göre
+    /// kırpılmış olabilir), bölü işaretinden sonra; koşu yokken sayı yoktur ve değerin yokluğu yazılır (<c>/—</c>, uzun tire
+    /// <see cref="BuildOrchestrator.Core.Formatting.MissingValue.Mark"/>'tır). <c>0</c> yazılmaz: sıfır bir ölçümdür, koşu yokken ölçülen bir şey
+    /// yoktur.</summary>
+    [Theory]
+    [InlineData(null, "/—")]
+    [InlineData(1, "/1")]
+    [InlineData(2, "/2")]
+    [InlineData(4, "/4")]
+    [InlineData(6, "/6")]
+    [InlineData(12, "/12")]
+    public void ParallelRun_is_the_parallelism_the_engine_set_at_the_start_of_the_run_or_the_missing_mark_without_a_run(
+        int? runParallelism, string expected) =>
+        Assert.Equal(expected, ResourceStripText.ParallelRun(runParallelism));
+
     /// <summary>
-    /// Üç hâl: BOŞTA (koşu yok) mod sözcüğü ve modun tablo paralelliği; KOŞUDA koşan sayısı — pay 0 iken de koşu metni, boşta metnine
-    /// dönmez; KOŞUDA VE KISILMIŞ <c>pay of payda — reduced: gerekçe</c>. Boşta metni payı ve gerekçeyi dinlemez. Boş ya da yalnız
-    /// boşluk olan gerekçe kısılma yok demektir.
+    /// Üç hâl: BOŞTA (koşu yok — <c>runParallelism</c> <c>null</c>) mod sözcüğü ve modun tablo paralelliği; KOŞUDA koşan sayısı ve koşunun
+    /// paralelliği — pay 0 iken de koşu metni, boşta metnine dönmez; KOŞUDA VE KISILMIŞ <c>pay of koşunun paralelliği — reduced: gerekçe</c>.
+    /// Boşta metni payı ve gerekçeyi dinlemez. Boş ya da yalnız boşluk olan gerekçe kısılma yok demektir.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-19]</b> ESKİ: koşu metninin <c>of N</c>'i modun TABLO değeriydi
+    /// (<c>PerfProfile.For(mode).Parallelism</c>); kırpılmış Balanced koşusu <c>2 of 4 — reduced: 3 GB free memory</c> derdi. YENİ: <c>of N</c>
+    /// motorun koşu başında makineye göre belirlediği sayıdır (<c>runStarted.Parallelism</c>): aynı koşu <c>2 of 2 — reduced: …</c> der.
+    /// Gerekçe: şeridin amacı koşu başında belirlenen sayıyı göstermekti; <c>2 of 4</c> "makine 2'ye kırptı" ile "o an derlenmeye hazır yalnız
+    /// 2 proje vardı"yı ayırt edemiyordu ve kırpılmış sayının kendisi şeritte hiçbir yerde yazmıyordu. Son üç satır kırpılmış koşulardır ve
+    /// koşunun sayısı modunkinden farklıdır — tablo değerini yazan bir metin onları geçemez.</para>
     /// </summary>
-    public static TheoryData<PerfMode, int, bool, string?, string> ParallelTooltipCases => new()
+    public static TheoryData<PerfMode, int, int?, string?, string> ParallelTooltipCases => new()
     {
-        { PerfMode.Full, 0, false, null, "Full — up to 6 projects build in parallel" },
-        { PerfMode.Balanced, 0, false, null, "Balanced — up to 4 projects build in parallel" },
-        { PerfMode.Light, 0, false, null, "Light — up to 2 projects build in parallel" },
-        { PerfMode.Balanced, 3, false, "3 GB free memory", "Balanced — up to 4 projects build in parallel" },
-        { PerfMode.Balanced, 0, true, null, "0 of 4 projects building in parallel" },
-        { PerfMode.Balanced, 3, true, null, "3 of 4 projects building in parallel" },
-        { PerfMode.Full, 6, true, null, "6 of 6 projects building in parallel" },
-        { PerfMode.Light, 1, true, null, "1 of 2 projects building in parallel" },
-        { PerfMode.Balanced, 3, true, "", "3 of 4 projects building in parallel" },
-        { PerfMode.Balanced, 3, true, "   ", "3 of 4 projects building in parallel" },
-        { PerfMode.Balanced, 2, true, "3 GB free memory", "2 of 4 — reduced: 3 GB free memory" },
-        { PerfMode.Balanced, 0, true, "3 GB free memory", "0 of 4 — reduced: 3 GB free memory" },
-        { PerfMode.Full, 2, true, "2 logical processors", "2 of 6 — reduced: 2 logical processors" },
+        { PerfMode.Full, 0, null, null, "Full — up to 6 projects build in parallel" },
+        { PerfMode.Balanced, 0, null, null, "Balanced — up to 4 projects build in parallel" },
+        { PerfMode.Light, 0, null, null, "Light — up to 2 projects build in parallel" },
+        { PerfMode.Balanced, 3, null, "3 GB free memory", "Balanced — up to 4 projects build in parallel" },
+        { PerfMode.Balanced, 0, 4, null, "0 of 4 projects building in parallel" },
+        { PerfMode.Balanced, 3, 4, null, "3 of 4 projects building in parallel" },
+        { PerfMode.Full, 6, 6, null, "6 of 6 projects building in parallel" },
+        { PerfMode.Light, 1, 2, null, "1 of 2 projects building in parallel" },
+        { PerfMode.Balanced, 3, 4, "", "3 of 4 projects building in parallel" },
+        { PerfMode.Balanced, 3, 4, "   ", "3 of 4 projects building in parallel" },
+        { PerfMode.Balanced, 2, 2, "3 GB free memory", "2 of 2 — reduced: 3 GB free memory" },
+        { PerfMode.Balanced, 0, 3, "3 GB free memory", "0 of 3 — reduced: 3 GB free memory" },
+        { PerfMode.Full, 2, 4, "2 logical processors", "2 of 4 — reduced: 2 logical processors" },
     };
 
     [Theory]
     [MemberData(nameof(ParallelTooltipCases))]
     public void ParallelTooltip_tells_the_idle_the_running_and_the_reduced_story(
-        PerfMode mode, int building, bool running, string? reducedReason, string expected) =>
-        Assert.Equal(expected, ResourceStripText.ParallelTooltip(mode, building, running, reducedReason));
+        PerfMode mode, int building, int? runParallelism, string? reducedReason, string expected) =>
+        Assert.Equal(expected, ResourceStripText.ParallelTooltip(mode, building, runParallelism, reducedReason));
 
     /// <summary>Gerekçe motorun metnidir (<see cref="PerfNoteText"/>) ve değişmeden geçer: çevrilmez, kısaltılmaz, büyük/küçük harfi ve
     /// noktalaması olduğu gibi kalır.</summary>
     [Fact]
     public void ParallelTooltip_passes_the_reason_the_engine_wrote_through_verbatim()
     {
-        Assert.Equal("2 of 4 — reduced: 3 GB free memory",
-            ResourceStripText.ParallelTooltip(PerfMode.Balanced, 2, running: true, PerfNoteText.FreeMemoryLimit(3)));
-        Assert.Equal("1 of 4 — reduced: 1 logical processor",
-            ResourceStripText.ParallelTooltip(PerfMode.Balanced, 1, running: true, PerfNoteText.LogicalProcessorsLimit(1)));
-        Assert.Equal("2 of 4 — reduced: LOW  memory, 3GB!",
-            ResourceStripText.ParallelTooltip(PerfMode.Balanced, 2, running: true, "LOW  memory, 3GB!"));
+        Assert.Equal("2 of 2 — reduced: 3 GB free memory",
+            ResourceStripText.ParallelTooltip(PerfMode.Balanced, 2, runParallelism: 2, PerfNoteText.FreeMemoryLimit(3)));
+        Assert.Equal("1 of 2 — reduced: 1 logical processor",
+            ResourceStripText.ParallelTooltip(PerfMode.Balanced, 1, runParallelism: 2, PerfNoteText.LogicalProcessorsLimit(1)));
+        Assert.Equal("2 of 2 — reduced: LOW  memory, 3GB!",
+            ResourceStripText.ParallelTooltip(PerfMode.Balanced, 2, runParallelism: 2, "LOW  memory, 3GB!"));
     }
 
     // ---------------------------------------------------------------- tablo ve sabitler
 
-    /// <summary>Payda, cap ve mod sözcüğü TABLODAN ve enum'dan gelir — her mod için: yeni bir mod eklenirse bu test onu da sınar, şerit
-    /// ikinci bir 6/4/2 ya da Full/Balanced/Light tablosu tutmaz.</summary>
+    /// <summary>Sınır, cap ve mod sözcüğü TABLODAN ve enum'dan gelir — her mod için: yeni bir mod eklenirse bu test onu da sınar, şerit
+    /// ikinci bir 6/4/2 ya da Full/Balanced/Light tablosu tutmaz. Kırpılmamış bir koşunun paralelliği modun sayısıdır (motor istenen sayıyı
+    /// olduğu gibi verir), metni de o sayıyı yazar.</summary>
     [Fact]
     public void Every_mode_takes_its_workers_cap_and_name_from_the_profile_table_and_the_enum()
     {
@@ -233,10 +259,11 @@ public class ResourceStripTextTests
             string workers = profile.Parallelism.ToString(CultureInfo.InvariantCulture);
 
             Assert.Equal("/" + workers, ResourceStripText.ParallelAllowed(mode));
+            Assert.Equal("/" + workers, ResourceStripText.ParallelRun(profile.Parallelism));
             Assert.Equal($"{mode.ToString()} — up to {workers} projects build in parallel",
-                ResourceStripText.ParallelTooltip(mode, 0, running: false, reducedReason: null));
+                ResourceStripText.ParallelTooltip(mode, 0, runParallelism: null, reducedReason: null));
             Assert.Equal($"1 of {workers} projects building in parallel",
-                ResourceStripText.ParallelTooltip(mode, 1, running: true, reducedReason: null));
+                ResourceStripText.ParallelTooltip(mode, 1, runParallelism: profile.Parallelism, reducedReason: null));
 
             string cpuTooltip = ResourceStripText.CpuTooltip("Acme", mode);
             if (profile.CpuCapPercent is { } cap)
@@ -252,14 +279,16 @@ public class ResourceStripTextTests
         Assert.Equal("—", ResourceStripText.Unreadable);
         Assert.Equal("100%", ResourceStripText.CpuGhost);
         Assert.Equal("12.3 GB", ResourceStripText.MemoryGhost);
-        Assert.Equal("12/12", ResourceStripText.ParallelGhost);
+        Assert.Equal("12/12/12", ResourceStripText.ParallelGhost);
         Assert.Equal("Balanced", ResourceStripText.ModeGhost);
     }
 
     /// <summary>
     /// Sabit çerçeve: hayalet, hücrenin gösterebileceği EN GENİŞ metin kadar yer ayırır (değer yazısı mono, genişlik karakter sayısıdır).
-    /// CPU'nun en geniş metni tavandır; RAM'inki <c>1023 MB</c> ya da iki haneli GB; paralellikte pay hanesi + payda en geniş mod için,
-    /// mod sözcüğü de en uzun mod adı kadardır — bir mod ya da tablo büyürse hayalet onu da kapsamak zorundadır.
+    /// CPU'nun en geniş metni tavandır; RAM'inki <c>1023 MB</c> ya da iki haneli GB; paralellikte pay hanesi + koşunun paralelliği + sınır
+    /// en geniş mod için (koşunun paralelliği modun sayısını aşmaz; boştaki <c>/—</c> da sığar), mod sözcüğü de en uzun mod adı kadardır — bir
+    /// mod ya da tablo büyürse hayalet onu da kapsamak zorundadır.
+    /// <para>[DEĞİŞEN KURAL — 2026-10-19] ESKİ hayalet <c>12/12</c>'ydi (pay + payda); hücreye ortadaki sayı girince üç sayı kadar yer ayırır.</para>
     /// </summary>
     [Fact]
     public void The_ghosts_reserve_the_width_of_the_widest_text_each_cell_can_show()
@@ -272,8 +301,11 @@ public class ResourceStripTextTests
         foreach (PerfMode mode in Enum.GetValues<PerfMode>())
         {
             widestModeName = Math.Max(widestModeName, mode.ToString().Length);
-            int workersDigits = PerfProfile.For(mode).Parallelism.ToString(CultureInfo.InvariantCulture).Length;
-            widestNumbers = Math.Max(widestNumbers, workersDigits + ResourceStripText.ParallelAllowed(mode).Length);
+            int workers = PerfProfile.For(mode).Parallelism;
+            int workersDigits = workers.ToString(CultureInfo.InvariantCulture).Length;
+            string limit = ResourceStripText.ParallelAllowed(mode);
+            widestNumbers = Math.Max(widestNumbers, workersDigits + ResourceStripText.ParallelRun(workers).Length + limit.Length); // koşuda
+            widestNumbers = Math.Max(widestNumbers, 1 + ResourceStripText.ParallelRun(null).Length + limit.Length);              // boşta: 0/—/N
         }
         Assert.Equal(widestModeName, ResourceStripText.ModeGhost.Length);
         Assert.True(widestNumbers <= ResourceStripText.ParallelGhost.Length);

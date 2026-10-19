@@ -1012,7 +1012,7 @@ public sealed partial class RunViewModel : ObservableObject
             var cmd = new StartRunCommand(runId, mode, RootPath, Configuration, Parallelism,
                 DependentMode.Safe, LayerPatterns, PerfMode,
                 ExternalProjectsForWire, UpdateExternals, scopeProjectId);
-            // [kaynak şeridi · R2] Tam koşunun perf modu, motora giden metin olarak, komutun kurulduğu yerde yakalanır; runStarted'ta koşu hücresine devredilir.
+            // [kaynak şeridi · R2] Koşunun perf modu, motora giden metin olarak, komutun kurulduğu yerde yakalanır; runStarted'ta koşu hücresine devredilir.
             CaptureStripRunMode(cmd);
             if (await SendWithFailureLineAsync(cmd, SendFailedLine(RunModeLabel(mode)), pass)) return;
         }
@@ -1715,7 +1715,6 @@ public sealed partial class RunViewModel : ObservableObject
     {
         foreach (var row in Projects)
             row.IsRunTarget = value is not null && string.Equals(row.Id, value, StringComparison.OrdinalIgnoreCase);
-        RefreshStrip(); // [kaynak şeridi · R3] tek proje koşusu (hedef dolu) hücreyi çipe bağlar, tam koşu koşu başındaki moda
     }
 
     /// <summary>[T53/T54-UI] Proje listesini katman gruplarına böler — gruplama YALNIZ topolojiden
