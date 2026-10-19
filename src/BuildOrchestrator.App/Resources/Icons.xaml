@@ -414,7 +414,9 @@
          kaynaklar çelişince README kazanır, üçü de 1.8. -->
     <sys:Double x:Key="Icon.Cpu.StrokeThickness">1.8</sys:Double>
     <sys:Double x:Key="Icon.MemoryStick.StrokeThickness">1.8</sys:Double>
-    <sys:Double x:Key="Icon.Parallel.StrokeThickness">1.8</sys:Double>
+    <!-- strokeWidth="1.9" (BuildApp.jsx:127 parallel) — prototipin optik telafisi: aynı renkte üç ince çizgi cpu ve memory'nin
+         yarısı kadar mürekkep taşır ve 1.8'de daha soluk okunur (canlı ölçüm %150: 48 piksele karşı 90). -->
+    <sys:Double x:Key="Icon.Parallel.StrokeThickness">1.9</sys:Double>
 
     <!-- strokeWidth="1.9" (design-v1.11.0 BuildApp.jsx:81 rebuild — ailenin tek 1.9'u, kaynakta öyle) -->
     <sys:Double x:Key="Icon.Rebuild.StrokeThickness">1.9</sys:Double>
