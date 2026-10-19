@@ -138,7 +138,7 @@ public sealed class CloseToTrayTests
 
         h.Window.Close();
 
-        Assert.Equal(new StopRunCommand("r1", StopKind.Graceful), Assert.Single(h.Sent));
+        Assert.Equal(new StopRunCommand("r1", StopKind.Hard), Assert.Single(h.Sent));
         Assert.True(h.Vm.ExitPending);
         Assert.Equal(0, h.Shutdowns);
         Assert.False(h.Closed);
@@ -151,7 +151,7 @@ public sealed class CloseToTrayTests
         Assert.False(h.Closed);
         Assert.NotEqual(Visibility.Hidden, h.Window.Visibility);
 
-        h.Vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
+        h.Vm.OnEvent(new RunStoppedEvent("r1", WasHard: true));
         h.PumpUntilShutdown();
 
         Assert.Equal(1, h.Shutdowns);
@@ -193,9 +193,9 @@ public sealed class CloseToTrayTests
 
         Assert.Equal(1, h.BroughtForward);
         Assert.Equal(0, h.Shutdowns);
-        Assert.Equal(new StopRunCommand("r1", StopKind.Graceful), Assert.Single(h.Sent));
+        Assert.Equal(new StopRunCommand("r1", StopKind.Hard), Assert.Single(h.Sent));
 
-        h.Vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
+        h.Vm.OnEvent(new RunStoppedEvent("r1", WasHard: true));
         h.PumpUntilShutdown();
 
         Assert.Equal(1, h.Shutdowns);

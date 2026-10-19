@@ -8,12 +8,20 @@ using BuildOrchestrator.Tests.Supervisor;
 namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
-/// [P3 · Task 2] Güvenli tam çıkış (<see cref="RunViewModel.RequestExit"/>) arkada yarım iş BIRAKMAZ: uçuşta iş yoksa
-/// çıkış HEMEN hazırdır; bir derleme koşuyorsa graceful durdurulur (yeni proje başlamaz, uçuştakiler post-build copy
-/// dahil biter) ve çıkış drain'i bekler; Sync/Clean/Optimize/checkout/pull beklenir, bitişlerine zincirlenen Sync ise
-/// bekleyişte başlamaz.
+/// [P3 · Task 2 · Exit] Tam çıkış (<see cref="RunViewModel.RequestExit"/>) <b>uçuştaki işi durdurur ve kapanır</b>: uçuşta iş
+/// yoksa çıkış HEMEN hazırdır; bir derleme koşuyorsa hard stop gider (uçuştaki derlemeler sonlandırılır) ve çıkış motorun
+/// <c>runStopped</c>'ını en çok <see cref="RunViewModel.ExitStopWaitMs"/> bekler; Sync/Deep Clean/Optimize beklenmez (iptalleri yok,
+/// kapanış motoru ve çocuklarını outer job'la bitirir); git'in çalışma ağacına yazdığı checkout/pull beklenir, bitişlerine
+/// zincirlenen Sync ise bekleyişte başlamaz.
 /// Bekleyiş sonsuz DEĞİLDİR: motor susarsa (sessizlik bekçisi) ya da ölürse çıkış serbest kalır. İkinci istek ikinci
 /// bir durdurma ya da satır üretmez; bekleyişte kendiliğinden Sync başlamaz.
+///
+/// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-19 · Exit butonu]</b> ESKİ İDDİA: tam çıkış uçuştaki işi BEKLER — derleme
+/// graceful durdurulur ve drain beklenir, Sync/Clean/Optimize/checkout/pull sonuna kadar koşar; çıkış hard stop'a asla
+/// tırmanmaz. GEREKÇE: kullanıcı "Exit dediğimde her şey kill olacak" dedi; tasarımın onay kartı "4 projects in flight stay
+/// unbuilt" der. Kesilen derlemenin güvencesi motorun in-flight defteridir (ARCHITECTURE §8.7): yarıda kalan proje bir sonraki
+/// açılışta kanıtsız hata sayılır ve sonraki Build onu baştan derler. Bekleyişin kaldığı tek yer git yazımıdır (checkout/pull —
+/// kullanıcı kararı aynı gün): yarıda kesilen bir checkout ağacı yarı değiştirilmiş ve <c>index.lock</c>'lu bırakırdı.</para>
 ///
 /// <para>Harness VM düzeyidir: motor başlatılmaz, gönderim <see cref="MainWindowHost.AcceptSends"/> ile kabul edilir,
 /// giden komutlar <c>DebugOnCommandSent</c> ile izlenir ve motorun cevabı <c>vm.OnEvent(...)</c> ile verilir. D8:
@@ -87,11 +95,14 @@ public sealed class SafeExitTests
 
     // ---------------------------------------------------------------- derleme
 
-    /// <summary>Koşan bir derleme graceful durdurulur (TEK <see cref="StopRunCommand"/>, <see cref="StopKind.Graceful"/>)
-    /// ve çıkış drain'i bekler: uçuştaki proje bitene, motor <c>runStopped</c> yazana kadar <c>ExitReady</c> yoktur.
-    /// Ardından gelen <c>runCompleted</c> ikinci bir atım üretmez.</summary>
+    /// <summary>Koşan bir derleme beklenmez, SONLANDIRILIR: çıkış TEK <see cref="StopRunCommand"/> gönderir ve o
+    /// <see cref="StopKind.Hard"/>'tır (Stop'un "Stop now"ı — konsola onun satırı da düşer). Motor uçuştakileri raporlayıp
+    /// <c>runStopped</c> yazana kadar <c>ExitReady</c> yoktur — durdurma motorun kendi kaydıyla biter. Ardından gelen
+    /// <c>runCompleted</c> ikinci bir atım üretmez.
+    /// <para><b>[DEĞİŞEN KURAL]</b> ESKİ: graceful stop gider, uçuştaki proje drain'de biter (bkz. tip özeti). KIRMIZI
+    /// (değişiklikten önce): giden durdurma <see cref="StopKind.Graceful"/>'dı.</para></summary>
     [Fact]
-    public void An_exit_during_a_build_stops_it_gracefully_and_waits_for_the_drain()
+    public void An_exit_during_a_build_terminates_it_and_waits_for_the_engine_to_report_the_stop()
     {
         var h = new Harness();
         MainWindowHost.StartBuild(h.Vm);
@@ -99,20 +110,84 @@ public sealed class SafeExitTests
 
         h.Vm.RequestExit();
 
-        Assert.Equal(new StopRunCommand("r1", StopKind.Graceful), Assert.Single(h.Sent));
+        Assert.Equal(new StopRunCommand("r1", StopKind.Hard), Assert.Single(h.Sent));
         Assert.Equal(AppPhase.Stopping, h.Vm.Phase);
+        Assert.True(h.Vm.HardStopRequested);
         Assert.True(h.Vm.ExitPending);
         Assert.Equal(1, h.ExitLines);
+        Assert.Contains(RunViewModel.StopNowRequestedLine, h.Vm.GetRunDocumentText());
         Assert.Equal(0, h.Ready);
 
-        h.Vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 1200)); // uçuştaki proje drain'de bitti
+        h.Vm.OnEvent(new ProjectFailedEvent("r1", @"C:\p\a.csproj", 300, FailureReasons.Stopped)); // sonlandırıldı
         Assert.Equal(0, h.Ready); // motor koşuyu henüz kapatmadı
 
-        h.Vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
+        h.Vm.OnEvent(new RunStoppedEvent("r1", WasHard: true));
         Assert.Equal(1, h.Ready);
 
-        h.Vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 1, 0, 0, 1, 1500));
+        h.Vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 1, 0, 1, 400));
         Assert.Equal(1, h.Ready); // TEK atım
+    }
+
+    /// <summary>Kullanıcının kendi Stop'u drain'i beklerken istenen çıkış drain'i beklemez: hard stop'a TIRMANIR — ikinci
+    /// <see cref="StopRunCommand"/> <see cref="StopKind.Hard"/>'tır.
+    /// <para><b>[DEĞİŞEN KURAL]</b> ESKİ: çıkış hard stop'a asla tırmanmaz, drain'i bekler. KIRMIZI (değişiklikten önce):
+    /// ikinci bir durdurma gitmiyordu.</para></summary>
+    [Fact]
+    public async Task An_exit_during_the_users_drain_escalates_to_a_hard_stop()
+    {
+        var h = new Harness();
+        MainWindowHost.StartBuild(h.Vm);
+        await h.Vm.StopCommand.ExecuteAsync(null);
+        Assert.Equal(new StopRunCommand("r1", StopKind.Graceful), Assert.Single(h.Sent)); // ön-koşul: kullanıcının Stop'u
+
+        h.Vm.RequestExit();
+
+        Assert.Equal(
+            [new StopRunCommand("r1", StopKind.Graceful), new StopRunCommand("r1", StopKind.Hard)],
+            h.Sent.OfType<StopRunCommand>());
+        Assert.Equal(0, h.Ready);
+
+        h.Vm.OnEvent(new RunStoppedEvent("r1", WasHard: true));
+        Assert.Equal(1, h.Ready);
+    }
+
+    /// <summary>Hard stop zaten gitmişse (Terminating…) çıkış ikinci bir durdurma göndermez; motorun cevabını bekler.</summary>
+    [Fact]
+    public async Task An_exit_after_the_users_hard_stop_sends_nothing_more()
+    {
+        var h = new Harness();
+        MainWindowHost.StartBuild(h.Vm);
+        await h.Vm.StopCommand.ExecuteAsync(null);
+        await h.Vm.StopCommand.ExecuteAsync(null); // Stop now
+        Assert.Equal(StopStage.Terminating, h.Vm.StopStage); // ön-koşul
+
+        h.Vm.RequestExit();
+
+        Assert.Equal(2, h.Sent.OfType<StopRunCommand>().Count());
+        Assert.Equal(0, h.Ready);
+    }
+
+    /// <summary>Motor hard stop'a cevap vermezse (planlamada takılı, ya da cevap yolda) çıkış sessizlik eşiğini (90 sn) BEKLEMEZ:
+    /// <see cref="RunViewModel.ExitStopWaitMs"/> dolunca gider — kapanış motoru ve kalan her şeyi outer job'la bitirir, yarıda kalan
+    /// projeleri motorun in-flight defteri bir sonraki açılışta geçersizler. Sürenin altı beklenir.
+    /// KIRMIZI (değişiklikten önce): sürenin bir sınırı yoktu, yalnız sessizlik eşiği bırakıyordu.</summary>
+    [Fact]
+    public void An_unanswered_stop_holds_the_exit_only_for_the_stop_wait()
+    {
+        long now = 1_000;
+        var h = new Harness(nowMs: () => now);
+        MainWindowHost.StartBuild(h.Vm);
+        h.Vm.RequestExit();
+        Assert.Equal(0, h.Ready); // ön-koşul: cevap bekleniyor
+
+        now += RunViewModel.ExitStopWaitMs - 1;
+        h.Vm.TickElapsed();
+        Assert.Equal(0, h.Ready);
+
+        now += 1;
+        h.Vm.TickElapsed();
+        Assert.Equal(1, h.Ready);
+        Assert.Null(h.Vm.EngineOverdueMessage); // serbest bırakan bekçi değil, çıkışın kendi süresi
     }
 
     /// <summary>İkinci istek (ikinci ×, tepsi → Exit) tam no-op'tur: ikinci bir <c>stopRun</c> ya da ikinci bir konsol
@@ -184,24 +259,46 @@ public sealed class SafeExitTests
     };
 
     /// <summary>
-    /// Workspace işi durdurulmaz (iptali yoktur) — çıkış onu BEKLER: iş sürerken <c>ExitReady</c> yoktur, iş bitince
-    /// bir kez gelir. Motora durdurma gitmez; işin kendisi bir Sync değilse hiç Sync de gitmez ve konsol temizlenmez
-    /// (bekleyişin satırı yerinde kalır).
-    ///
-    /// <para><b>[DEĞİŞEN KURAL — final review I2, kontrolcü kararı]</b> Eski iddia: Clean/Optimize/checkout/pull'un
-    /// bitişine zincirlenen Sync de beklenirdi — <c>ExitReady</c> zincirin <c>syncCompleted</c>'ında gelirdi ve tek
-    /// <c>SyncWorkspaceCommand</c> zincirin kendisiydi. Değişme gerekçesi: bekleyiş yeni iş BAŞLATMAMALIDIR. Zincirlenen
-    /// Sync çıkış isteğinden SONRA açılan yeni bir işti ve yalnız kapanmakta olan bir ekranı tazeliyordu; bir sonraki
-    /// açılış zaten Sync'ler — kendiliğinden Sync'in bekleyişte kapalı olmasıyla AYNI gerekçe. Artık bekleyişte hiçbir
-    /// Sync başlamaz (<c>SyncCoreAsync</c>'in kapısı) ve zincir işin yüzeyini doğrudan bırakır.</para>
+    /// İptali olmayan, git'in çalışma ağacına yazmadığı workspace işi (Sync, Deep Clean, Optimize) BEKLENMEZ: çıkış aynı
+    /// çağrıda hazırdır; motora durdurma gitmez — işi kapanışın kendisi (motor + outer job) bitirir. Bekleyiş yine de açılır
+    /// ve konsola satır düşer: uçuşta bir iş VARDI ve kesildi, kayıt bunu söyler.
+    /// <para><b>[DEĞİŞEN KURAL]</b> ESKİ: çıkış bu işleri de sonuna kadar bekliyordu (bkz. tip özeti). Gerekçeler: Sync'in
+    /// fetch'i yarıda kesilirse en kötü ihtimalle bir ref kilidi kalır ve sonraki açılış zaten Sync'ler; Deep Clean önce durumu
+    /// sonra klasörleri siler (en kötü sonuç fazladan bir derleme, ARCHITECTURE §5.2); Optimize'ın yarıda kalan restore'u bir
+    /// sonraki Optimize'da tamamlanır. KIRMIZI (değişiklikten önce): <c>ExitReady</c> işin bitişini bekliyordu.</para>
     /// </summary>
     [Theory]
     [InlineData(WorkspaceJob.Sync)]
     [InlineData(WorkspaceJob.Clean)]
     [InlineData(WorkspaceJob.Optimize)]
+    public async Task An_exit_does_not_wait_for_a_job_it_can_cut_off(WorkspaceJob job)
+    {
+        var h = new Harness();
+        await StartAsync(h.Vm, job);
+
+        h.Vm.RequestExit();
+
+        Assert.True(h.Vm.ExitPending);
+        Assert.Equal(1, h.Ready);
+        Assert.Equal(1, h.ExitLines);
+        Assert.Empty(h.Sent.OfType<StopRunCommand>());
+    }
+
+    /// <summary>
+    /// Git'in çalışma ağacına yazdığı iş (checkout, pull) durdurulmaz ve kesilmez — çıkış onu BEKLER: iş sürerken
+    /// <c>ExitReady</c> yoktur, iş bitince bir kez gelir. Motora durdurma gitmez; bitişine zincirlenen Sync de gitmez ve konsol
+    /// temizlenmez (bekleyişin satırı yerinde kalır). Kesilseydi ağaç yarı değiştirilmiş ve <c>.git/index.lock</c>'lu kalırdı
+    /// (kullanıcı kararı 2026-10-19).
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — final review I2, kontrolcü kararı]</b> Eski iddia: checkout/pull'un bitişine zincirlenen
+    /// Sync de beklenirdi — <c>ExitReady</c> zincirin <c>syncCompleted</c>'ında gelirdi. Değişme gerekçesi: bekleyiş yeni iş
+    /// BAŞLATMAMALIDIR; bekleyişte hiçbir Sync başlamaz (<c>SyncCoreAsync</c>'in kapısı) ve zincir işin yüzeyini doğrudan
+    /// bırakır.</para>
+    /// </summary>
+    [Theory]
     [InlineData(WorkspaceJob.Checkout)]
     [InlineData(WorkspaceJob.Pull)]
-    public async Task An_exit_waits_for_a_workspace_job_to_finish(WorkspaceJob job)
+    public async Task An_exit_waits_for_a_git_write_to_finish(WorkspaceJob job)
     {
         var h = new Harness();
         await StartAsync(h.Vm, job);
@@ -215,23 +312,25 @@ public sealed class SafeExitTests
 
         Assert.Equal(1, h.Ready);
         Assert.Empty(h.Sent.OfType<StopRunCommand>());
-        Assert.Equal(job == WorkspaceJob.Sync ? 1 : 0, h.Sent.OfType<SyncWorkspaceCommand>().Count()); // yalnız işin kendisi
+        Assert.Empty(h.Sent.OfType<SyncWorkspaceCommand>()); // zincirlenen Sync gitmez
         Assert.Equal(1, h.ExitLines); // zincirin konsol temizliği de yok
     }
 
     // ---------------------------------------------------------------- bekleyiş sonsuz değil
 
-    /// <summary>Motor susarsa (sessizlik bekçisi — <see cref="RunViewModel.EngineSilenceThresholdMs"/>) çıkış drain'i
-    /// sonsuza dek beklemez. Eşiğin altı meşru bir drain'dir ve beklenir. Kilit açılmaz: çıkışı serbest bırakan
-    /// bekçinin uyarısıdır, motorun cevabı değil.</summary>
+    /// <summary>Motor bir git yazımı sırasında susarsa (sessizlik bekçisi — <see cref="RunViewModel.EngineSilenceThresholdMs"/>)
+    /// çıkış onu sonsuza dek beklemez. Eşiğin altı meşru bir bekleyiştir ve beklenir. Kilit açılmaz: çıkışı serbest bırakan
+    /// bekçinin uyarısıdır, motorun cevabı değil.
+    /// <para><b>[DEĞİŞEN KURAL]</b> ESKİ: senaryo bir derlemenin drain'iydi; derleme artık beklenmiyor
+    /// (<see cref="An_unanswered_stop_holds_the_exit_only_for_the_stop_wait"/>) — bekçinin çıkışı bıraktığı yer git yazımıdır.</para></summary>
     [Fact]
-    public void A_silent_engine_does_not_hold_the_exit()
+    public async Task A_silent_engine_does_not_hold_the_exit()
     {
         long now = 1_000;
         var h = new Harness(nowMs: () => now);
-        MainWindowHost.StartBuild(h.Vm);
+        await StartAsync(h.Vm, WorkspaceJob.Checkout);
         h.Vm.RequestExit();
-        Assert.Equal(AppPhase.Stopping, h.Vm.Phase); // ön-koşul: drain bekleniyor — bekçinin penceresi
+        Assert.True(h.Vm.CheckoutBusy); // ön-koşul: checkout bekleniyor — bekçinin penceresi
 
         now += RunViewModel.EngineSilenceThresholdMs - 1;
         h.Vm.TickElapsed();
@@ -241,14 +340,15 @@ public sealed class SafeExitTests
         h.Vm.TickElapsed();
 
         Assert.Equal(1, h.Ready);
-        Assert.True(h.Vm.IsRunning);
+        Assert.True(h.Vm.CheckoutBusy);
     }
 
     /// <summary>[final review · F1] Motor çıkış İSTENMEDEN ÖNCE sustuysa — kullanıcının Stop'u drain'i bekliyor ve
     /// bekçinin uyarısı çoktan şeritte — çıkış onu da beklemez: <see cref="RunViewModel.RequestExit"/> koşulu isteğin
     /// İÇİNDE yeniden değerlendirir ve <c>ExitReady</c> hemen gelir. Uyarı zaten açık olduğu için bekçi bir daha
-    /// değişmez; o değerlendirme olmasaydı çıkış, susmuş bir motorun asla göndermeyeceği cevabı sonsuza dek beklerdi.
-    /// Stop zaten istendiği için ikinci bir <c>stopRun</c> gitmez.</summary>
+    /// değişmez; o değerlendirme olmasaydı çıkış, susmuş bir motorun asla göndermeyeceği cevabı beklerdi.
+    /// <para><b>[DEĞİŞEN KURAL]</b> ESKİ: Stop zaten istendiği için ikinci bir <c>stopRun</c> gitmiyordu; çıkış artık drain'i
+    /// hard stop'a tırmandırır (<see cref="An_exit_during_the_users_drain_escalates_to_a_hard_stop"/>) — susmuş motorda da.</para></summary>
     [Fact]
     public async Task An_engine_already_silent_while_stopping_does_not_hold_the_exit()
     {
@@ -265,13 +365,13 @@ public sealed class SafeExitTests
         h.Vm.RequestExit();
 
         Assert.Equal(1, h.Ready);
-        Assert.Single(h.Sent.OfType<StopRunCommand>()); // yalnız kullanıcının Stop'u — çıkış ikincisini göndermez
+        Assert.Equal(StopKind.Hard, h.Sent.OfType<StopRunCommand>().Last().Kind);
     }
 
     /// <summary>[final review · F1] Koşu istendi ama <c>runStarted</c> hiç gelmedi (Starting) ve motor bu arada sustu.
     /// Çıkışın kendi Stop'u fazı Stopping'e çeker ve bu, bekçinin saatini YENİDEN kurar: bir sonraki tık amber satırı
-    /// kaldırır ve çıkış bir eşik süresi daha beklerdi. Serbest bırakan, isteğin içindeki değerlendirmedir —
-    /// <c>ExitReady</c> AYNI çağrıda gelir, araya hiçbir tık giremeden.</summary>
+    /// kaldırır. Serbest bırakan, isteğin içindeki değerlendirmedir — <c>ExitReady</c> AYNI çağrıda gelir, araya hiçbir
+    /// tık giremeden. Giden durdurma hard'dır.</summary>
     [Fact]
     public async Task An_engine_silent_before_the_run_started_does_not_hold_the_exit()
     {
@@ -289,7 +389,7 @@ public sealed class SafeExitTests
 
         Assert.Equal(AppPhase.Stopping, h.Vm.Phase); // çıkışın Stop'u gitti — bekçinin saati yeniden kuruldu
         Assert.Equal(1, h.Ready);                    // yine de AYNI çağrıda
-        Assert.Single(h.Sent.OfType<StopRunCommand>());
+        Assert.Equal(StopKind.Hard, Assert.Single(h.Sent.OfType<StopRunCommand>()).Kind);
     }
 
     /// <summary>Bekleyiş sırasında motor ölürse beklenecek bir cevap kalmaz: çıkış serbest kalır.</summary>
