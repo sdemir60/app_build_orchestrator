@@ -1,9 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Media;
 using System.Windows.Shapes;
 using BuildOrchestrator.App;
-using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
 
@@ -226,43 +224,51 @@ public class EmptyPanelViewTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>Ters yön: boş görünüm, satırlar gelince kalkar — keşif açılmadan dolan bir listede de (sessiz Sync klasörde
+    /// yeni projeler buldu). Boş görünümün dolu listenin üstünde asılı kalması burada yakalanır.</summary>
+    [StaFact]
+    public async Task The_empty_views_give_way_when_a_silent_sync_brings_projects()
+    {
+        using var temp = new TempDir();
+        var (window, vm, list) = MainWindowHost.NewWithProjects(temp); // Sync bitti, 0 proje: iki panel boş
+        MainWindowHost.AcceptSends(vm);
+        AssertBothPanelsSayEmpty(window); // ön-koşul
+
+        await MainWindowHost.StartSync(vm, SyncMode.Silent);
+        Assert.False(vm.IsDiscovering); // ön-koşul: sessiz Sync keşif açmaz
+        MainWindowHost.ReplySync(vm, ("Alpha", null), ("Beta", null));
+
+        var shell = window.Shell;
+        Assert.Equal(2, list.RowFlow.Items.OfType<ProjectRowViewModel>().Count());
+        Assert.False(DsResources.IsShownWithin(shell.NoProjectsOverlay, shell), "boş görünüm dolu listenin üstünde kaldı");
+        Assert.Equal(2, shell.GraphHost.NodeCount);
+        Assert.False(shell.GraphHost.IsEmptyStateVisible);
+        Assert.True(shell.GraphHost.IsViewportVisible);
+        var texts = DsResources.ShownTexts(shell);
+        Assert.DoesNotContain(InteractionText.ListEmpty, texts);
+        Assert.DoesNotContain(InteractionText.GraphEmpty, texts);
+        GC.KeepAlive(window);
+    }
+
     // ---------------------------------------------------------------- görünüm
 
-    /// <summary>İki boş görünüm keşif bloklarının ikon kimliğiyle çizilir (ARCHITECTURE §14.4): ikon 28px, opaklık 0.7,
-    /// kontur 1.4 <c>text-faint</c>, yuvarlak uç; 10 altında 12px <c>text-faint</c> metin, arayüz yazı tipiyle. Liste liste
-    /// ikonunu, graf ağ ikonunu taşır. Token bağlarının tipi de doğrulanır.</summary>
+    /// <summary>Listenin boş görünümü panel durum bloklarının kimliğiyle çizilir (ARCHITECTURE §14.4,
+    /// <see cref="PanelStateLook"/>): liste ikonu ve altında <c>No projects</c>. Token bağlarının tipi de doğrulanır.
+    /// Grafın boş görünümü keşif bloğuyla AYNI öğedir (<c>StateBlock</c>); çizimi <c>DiscoveryBlockTests</c>'te pinlidir,
+    /// burada ikinci kez sayılmaz.</summary>
     [StaFact]
-    public void Both_empty_views_are_drawn_with_the_discovery_icon_look()
+    public void The_list_empty_view_is_drawn_with_the_panel_state_look()
     {
         using var temp = new TempDir();
         var (window, _, _) = MainWindowHost.NewWithProjects(temp); // Sync bitti, 0 proje: iki panel boş
         var shell = window.Shell;
         shell.UpdateLayout();
+        var view = shell.NoProjectsOverlay;
 
-        AssertIconView(shell, shell.NoProjectsOverlay, "Icon.ListLines", InteractionText.ListEmpty);
-        AssertIconView(shell, shell.GraphHost, "Icon.Network", InteractionText.GraphEmpty);
+        PanelStateLook.AssertIcon(shell, Assert.Single(DsResources.Descendants(view).OfType<Viewbox>()), "Icon.ListLines");
+        PanelStateLook.AssertCaption(shell, Assert.Single(DsResources.Descendants(view).OfType<TextBlock>(),
+            t => DsResources.DisplayedText(t) == InteractionText.ListEmpty));
         Assert.Empty(DsResources.DynamicResourceTypeMismatches((DependencyObject)window.Content));
         GC.KeepAlive(window);
-    }
-
-    /// <summary>Bir boş görünümün çizimi: <paramref name="within"/> altında görünür TEK ikon ve altındaki metin.</summary>
-    private static void AssertIconView(ShellRoot shell, DependencyObject within, string iconKey, string caption)
-    {
-        var icon = Assert.Single(DsResources.Descendants(within).OfType<Viewbox>(),
-            v => DsResources.IsShownWithin(v, shell));
-        Assert.Equal((28.0, 28.0), (icon.Width, icon.Height));
-        Assert.Equal(0.7, icon.Opacity, 3);
-        var path = Assert.Single(DsResources.Descendants(icon).OfType<Path>());
-        Assert.Same(shell.FindResource(iconKey), path.Data);
-        Assert.Equal(1.4, path.StrokeThickness, 3);
-        Assert.Equal(DsResources.TokenColor(shell, "Brush.TextFaint"), DsResources.ColorOf(path.Stroke));
-        Assert.Equal(PenLineCap.Round, path.StrokeStartLineCap);
-
-        var text = Assert.Single(DsResources.Descendants(within).OfType<TextBlock>(),
-            t => DsResources.IsShownWithin(t, shell) && DsResources.DisplayedText(t) == caption);
-        Assert.Equal(12.0, text.FontSize);
-        Assert.Equal(DsResources.TokenColor(shell, "Brush.TextFaint"), DsResources.ColorOf(text.Foreground));
-        Assert.Equal(new Thickness(0, 10, 0, 0), text.Margin);
-        Assert.Equal(AppFonts.Ui, text.FontFamily);
     }
 }

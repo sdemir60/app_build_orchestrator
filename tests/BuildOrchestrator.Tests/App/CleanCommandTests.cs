@@ -352,8 +352,8 @@ public class CleanCommandTests
         Assert.Equal(1, topologyChanges);
         Assert.Equal(0, vm.WillBuildCount);
         Assert.True(vm.AllClean);
-        // Boş liste boş olduğunu söyler — Boot fazında da (yukarıdaki DEĞİŞEN KURAL 3). Faz yine Boot'tur: şerit
-        // "Waiting for Sync" der. [design v1.24.0 · plan K2] Clean'in kendi penceresi keşif DEĞİLDİR (Sync yok) — keşif
+        // Boş liste boş olduğunu söyler — Boot fazında da (yukarıdaki DEĞİŞEN KURAL 3). Faz yine Boot'tur: proje
+        // durumları bilinmiyor. [design v1.24.0 · plan K2] Clean'in kendi penceresi keşif DEĞİLDİR (Sync yok) — keşif
         // bloğu çıkmaz.
         Assert.Equal(AppPhase.Boot, vm.Phase);
         Assert.False(vm.IsDiscovering);

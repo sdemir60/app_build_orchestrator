@@ -3,7 +3,6 @@ using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Media;
-using System.Windows.Shapes;
 using BuildOrchestrator.App;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.ViewModels;
@@ -65,14 +64,8 @@ public class DiscoveryBlockTests
         Assert.Equal(new Thickness(24, 0, 24, 0), block.Padding);
 
         var icon = Assert.Single(DsResources.Descendants(block).OfType<Viewbox>());
-        Assert.Equal((28.0, 28.0), (icon.Width, icon.Height));
-        Assert.Equal(0.7, icon.Opacity, 3);
+        PanelStateLook.AssertIcon(window.Shell, icon, "Icon.ListLines");
         Assert.Equal(new Thickness(0, 0, 0, 2), icon.Margin);
-        var path = Assert.Single(DsResources.Descendants(icon).OfType<Path>());
-        Assert.Same(window.Shell.FindResource("Icon.ListLines"), path.Data);
-        Assert.Equal(1.4, path.StrokeThickness, 3);
-        Assert.Equal(Token(window.Shell, "Brush.TextFaint"), ColorOf(path.Stroke));
-        Assert.Equal(PenLineCap.Round, path.StrokeStartLineCap);
 
         var title = TextIn(block, InteractionText.DiscoveringProjects);
         Assert.Equal(13.0, title.FontSize);
@@ -140,18 +133,8 @@ public class DiscoveryBlockTests
 
         var block = graph.StateBlock;
         Assert.Equal(Token(graph, "Brush.SurfaceBase"), ColorOf(block.Background));
-        var icon = Assert.Single(DsResources.Descendants(block).OfType<Viewbox>());
-        Assert.Equal((28.0, 28.0), (icon.Width, icon.Height));
-        Assert.Equal(0.7, icon.Opacity, 3);
-        var path = Assert.Single(DsResources.Descendants(icon).OfType<Path>());
-        Assert.Same(graph.FindResource("Icon.Network"), path.Data);
-        Assert.Equal(1.4, path.StrokeThickness, 3);
-        Assert.Equal(Token(graph, "Brush.TextFaint"), ColorOf(path.Stroke));
-
-        var label = TextIn(block, InteractionText.GraphDiscovering);
-        Assert.Equal(12.0, label.FontSize);
-        Assert.Equal(Token(graph, "Brush.TextFaint"), ColorOf(label.Foreground));
-        Assert.Equal(new Thickness(0, 10, 0, 0), label.Margin);
+        PanelStateLook.AssertIcon(graph, Assert.Single(DsResources.Descendants(block).OfType<Viewbox>()), "Icon.Network");
+        PanelStateLook.AssertCaption(graph, TextIn(block, InteractionText.GraphDiscovering));
         GC.KeepAlive(window);
     }
 
@@ -191,7 +174,7 @@ public class DiscoveryBlockTests
         var graph = window.Shell.GraphHost;
 
         Assert.True(graph.IsEmptyStateVisible);
-        Assert.Equal(InteractionText.GraphEmpty, graph.EmptyStateText);
+        Assert.Equal(InteractionText.GraphEmpty, graph.StateText);
         Assert.False(graph.IsDiscoveryStateVisible);
         Assert.True(IsShown(window.Shell.ListInviteOverlay, window));
         Assert.False(IsShown(window.Shell.PART_Discovering, window));

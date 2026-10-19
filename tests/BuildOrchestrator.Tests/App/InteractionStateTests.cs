@@ -131,6 +131,10 @@ public class InteractionStateTests
     /// satırlarıyla gösterdi; artık hiçbir faz boş listeyi susturamaz ve bu imzayla güvencededir. Yalnız Idle'ı soran
     /// <c>Synced_workspace_with_no_projects_resolves_to_the_no_projects_message</c> da bu teorinin <c>false</c> satırına
     /// katıldı.</para>
+    /// <para>[A13/T2 · 2.4] <c>false</c> satırı "veri yok" kararının "veri süzüldü"den ÖNCE geldiğini de pinler
+    /// (<c>visibleCount</c> 0 iken sonuç <see cref="ListInviteState.NoFilterMatch"/> DEĞİL): 0 projeli workspace'te filtreyi
+    /// suçlamak yanlıştır. Bunu ayrıca soran <c>An_empty_workspace_is_never_blamed_on_the_filter</c>, faz parametresi kalkınca
+    /// bu satırla birebir aynı çağrı oldu ve buraya katıldı.</para>
     /// </summary>
     [Theory]
     [InlineData(true, ListInviteState.Discovering)]
@@ -164,13 +168,6 @@ public class InteractionStateTests
     {
         Assert.Equal(ListInviteState.NoFilterMatch,
             ListInvite.Resolve(hasWorkspace: true, discovering: false, projectCount: 5, visibleCount: 0));
-    }
-
-    [Fact] // "Veri yok" kararı "veri süzüldü"den ÖNCE gelir — 0 projeli workspace'te filtreyi suçlamak yanlıştır.
-    public void An_empty_workspace_is_never_blamed_on_the_filter()
-    {
-        Assert.Equal(ListInviteState.NoProjects,
-            ListInvite.Resolve(hasWorkspace: true, discovering: false, projectCount: 0, visibleCount: 0));
     }
 
     [Theory] // Repo yokken davet KAZANIR (filtre mesajı ya da keşif bloğu oraya sızmaz).

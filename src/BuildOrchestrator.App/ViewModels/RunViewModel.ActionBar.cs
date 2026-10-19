@@ -444,7 +444,8 @@ public sealed partial class RunViewModel
     /// Liste yeniden Sync'in yayınladığı topolojiyle — imza unutulduğu için reveal'le — dolar.
     ///
     /// <para><b>Faz <see cref="AppPhase.Boot"/>'a alınır:</b> proje durumları artık bilinmiyor — Boot "henüz bilinmiyor"
-    /// demenin mevcut yoludur ve şerit (hata yoksa) "Waiting for Sync" der. Ardından gelen Sync fazı zaten
+    /// demenin mevcut yoludur ve şerit (hata yoksa) "▸ Waiting for Sync — project states appear after Sync" der. Ardından
+    /// gelen Sync fazı zaten
     /// <c>Syncing</c>'e taşır. Liste ve graf fazdan bağımsız olarak boş görünümlerini gösterir ([kullanıcı kararı
     /// 2026-10-19]; eskiden boş listenin Idle'da "klasörde proje yok" demesini önleyen de bu fazdı ve liste o sürede
     /// hiçbir şey göstermezdi). [kullanıcı kararı 2026-09-29] Workspace yokken (<see cref="CloseWorkspace"/> kökü

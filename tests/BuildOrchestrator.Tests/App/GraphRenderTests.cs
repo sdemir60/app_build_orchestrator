@@ -538,7 +538,7 @@ public class GraphRenderTests
         var view = NewView(false);
 
         Assert.True(view.IsEmptyStateVisible);
-        Assert.Equal(BuildOrchestrator.App.ViewModels.InteractionText.GraphEmpty, view.EmptyStateText);
+        Assert.Equal(BuildOrchestrator.App.ViewModels.InteractionText.GraphEmpty, view.StateText);
 
         view.SetGraph(Nodes(), Edges());
         Assert.False(view.IsEmptyStateVisible);

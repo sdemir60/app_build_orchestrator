@@ -707,8 +707,8 @@ public partial class GraphView : UserControl
     /// <summary>Topolojiyi (düğüm + kenar) kurar: yerleşim, görseller ve ilk açılış dalgası. Yalnız topoloji
     /// DEĞİŞTİĞİNDE çağrılır — statü güncellemeleri için <see cref="UpdateStatuses"/> kullanılır.</summary>
     /// <param name="showEmptyState">Boş bir graf boş görünümünü (ağ ikonu + "No graph") göstersin mi.
-    /// [task 3] <c>false</c> yalnız ekranı baştan başlatan Sync'in boşaltmasıdır: orada Sync zaten sürüyor ve
-    /// panel yalnız boş/sakin durur.</param>
+    /// [task 3] <c>false</c> yalnız ekranı baştan başlatan Sync'in boşaltmasıdır: orada Sync zaten sürüyor ve gövdeyi
+    /// keşif bloğu tutar.</param>
     public void SetGraph(IReadOnlyList<GraphNode> nodes, IReadOnlyList<GraphEdge> edges, bool showEmptyState = true)
     {
         ArgumentNullException.ThrowIfNull(nodes);
@@ -2032,13 +2032,17 @@ public partial class GraphView : UserControl
     internal bool LastCameraAnimated { get; private set; }
     internal string HeaderCountsText => CountsText.Text;
     internal FontFamily HeaderCountsFontFamily => CountsText.FontFamily;
-    /// <summary>Durum bloğu boş görünümü mü (ağ ikonu + "No graph") gösteriyor — keşif hâli DEĞİL.</summary>
-    internal bool IsEmptyStateVisible => StateBlock.Visibility == Visibility.Visible && !_discovering;
-    /// <summary>Durum bloğu keşif hâlini mi gösteriyor.</summary>
-    internal bool IsDiscoveryStateVisible => StateBlock.Visibility == Visibility.Visible && _discovering;
+    /// <summary>Durum bloğu boş görünümü mü (ağ ikonu + "No graph") gösteriyor. EKRANDA çizilenden okunur — blok görünür ve
+    /// metni boş görünümünkü — kararın girdisinden (<c>_discovering</c>) değil: aynı girdiyi okusaydı kararı kopyalar ve
+    /// <c>ApplyBodyState</c> yanlış metin yazsa da doğru derdi.</summary>
+    internal bool IsEmptyStateVisible =>
+        StateBlock.Visibility == Visibility.Visible && StateLabel.Text == ViewModels.InteractionText.GraphEmpty;
+    /// <summary>Durum bloğu keşif hâlini mi gösteriyor — aynı ölçü.</summary>
+    internal bool IsDiscoveryStateVisible =>
+        StateBlock.Visibility == Visibility.Visible && StateLabel.Text == ViewModels.InteractionText.GraphDiscovering;
     internal bool IsViewportVisible => Viewport.Visibility == Visibility.Visible;
-    /// <summary>Durum bloğunun o anki metni.</summary>
-    internal string EmptyStateText => StateLabel.Text;
+    /// <summary>Durum bloğunun o anki metni: keşifte keşif metni, boşken "No graph".</summary>
+    internal string StateText => StateLabel.Text;
     internal Size ViewportSize => new(Ground.ActualWidth, Ground.ActualHeight);
     /// <summary>Düğümün İÇERİK koordinatlarındaki merkezi.</summary>
     internal Point NodeCenter(string name) => _slots[name].Center;

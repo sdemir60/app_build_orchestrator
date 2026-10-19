@@ -1293,8 +1293,8 @@ public sealed partial class RunViewModel : ObservableObject
     /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-19 · task 3]</b> Yukarıdaki "yerinde" kuralı artık yalnız
     /// Silent ve Appended kiplerde geçerlidir. Sync düğmesi (Manual) ve branch değişimi (BranchChange) ekranı baştan
     /// başlatır (<see cref="SyncModeRules.RestartsPlanSurface"/>): konsol ve akışla AYNI ANDA liste ve graf da
-    /// ekranda boşalır (<see cref="BeginPlanSurfaceRestart"/> — VM'e dokunmaz; ClearPlanSurface'in faz Boot'u,
-    /// boş-durum daveti ve grafın "Sync'ten sonra" etiketi YOK), topoloji gelince yapı aynı olsa da reveal'le ve
+    /// ekranda boşalır (<see cref="BeginPlanSurfaceRestart"/> — VM'e dokunmaz; ClearPlanSurface'in faz Boot'u ve iki
+    /// panelin boş görünümü YOK, ekranı keşif blokları tutar), topoloji gelince yapı aynı olsa da reveal'le ve
     /// graf fit hâlde geri gelir. Gerekçe: kullanıcı bu iki eylemi "baştan başla" olarak okuyor; ekranın yerinde
     /// kalması Sync'in bir şey yapıp yapmadığını belirsiz bırakıyordu. Sync topoloji getirmezse (gönderim
     /// düştü, <c>planFailed</c>, motor kaybı) önceki yüzey geri gelir (<see cref="EndPlanSurfaceRestart"/>).</para>

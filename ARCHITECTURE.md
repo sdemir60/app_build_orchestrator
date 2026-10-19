@@ -3597,8 +3597,8 @@ and nothing moves — no spinner, no pulse; only the numbers change. The block i
 `ListInvite.Resolve` puts it after the setup invitation and before the empty view and *No projects match this
 filter*, so a filter that matches nothing cannot cover it. The PROJECTS header hides its filter box, `build-order`
 label and filter chip meanwhile, through the same gate as the no-workspace look (`ShellRoot.ApplyListTools`); the
-filter itself survives the Sync and comes back with its chip. The counter is a polite live region (§15). The
-first-run screen does not change: without a workspace there is no Sync and no discovery.
+filter itself survives the Sync and comes back with its chip. The counter is a polite live region (§15).
+Discovery never reaches the first-run screen: without a workspace there is no Sync.
 
 **An empty panel says so.** Whenever the project list has no rows and none of the states above applies — a Clean or
 an Optimize is running, a job or a Sync ended without bringing a plan back, the engine is not ready yet, a Sync found
@@ -3606,9 +3606,8 @@ no projects — the list shows its empty view: the same Lucide *list* in the dis
 `No projects` in 12 px `text-faint`. The graph does the same whenever it has no nodes, first run included: its
 *network* icon and `No graph`, in the one body block the discovery state also uses. Each panel therefore has one
 picture, whether it is waiting for a scan or has nothing to show. The text is deliberately general: it does not claim
-why the panel is empty, so it is true whichever operation emptied it, and the ribbon tells what is going on —
-`Waiting for Sync` while the project states are unknown, `Ready — nothing to build` after a Sync that found no
-projects. The decision does not read the phase: `ListInvite.Resolve` takes the setup invitation first, then
+why the panel is empty, so it is true whichever operation emptied it. The decision does not read the phase:
+`ListInvite.Resolve` takes the setup invitation first, then
 discovery, then the empty view, then the filter line. Three states keep their own look because they say something
 else — the setup invitation asks for settings, the discovery blocks are busy and count, and the filter line says
 that projects exist but the filter hides them; *No projects* there would send the user looking for missing projects
@@ -4196,8 +4195,8 @@ behaves identically**, and for the reason that generalises the rule: an operatio
 plan takes the old one down with the click, not with the reply — and an Optimize ends in a Sync. A Sync on its
 own does not take the plan down: it replaces decisions, not the plan's structure (§10.2).
 The phase moves
-to `Boot` for the duration — the project states are no longer known, and the ribbon reads `Waiting for Sync` — and
-both panels show their empty views (*No projects*, *No graph*; §13.2). That is the job's own stretch, before any
+to `Boot` for the duration — the project states are no longer known, and the ribbon's phase line says it is waiting
+for a Sync — and both panels show their empty views (*No projects*, *No graph*; §13.2). That is the job's own stretch, before any
 Sync: the moment the chained Sync is requested, both
 panels switch to their discovery blocks and the list counts the projects as they are found, until the topology
 fills them in (§10.2). A repository change does exactly this for the same reason; a branch change does not — its

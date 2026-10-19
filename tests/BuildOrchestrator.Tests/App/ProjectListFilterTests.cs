@@ -368,8 +368,8 @@ public class ProjectListFilterTests
 
     /// <summary>
     /// [task 3 · kullanıcı kararı 2026-09-19] <b>Sync düğmesi ve branch değişimi ekranı baştan başlatır:</b>
-    /// tıklama anında konsol ve akışla BİRLİKTE liste ve graf da boşalır. Ekran yalnız boş/sakin durur: liste
-    /// daveti ("No projects found…") ve grafın Sync-öncesi etiketi ("Graph appears after Sync") görünmez, faz
+    /// tıklama anında konsol ve akışla BİRLİKTE liste ve graf da boşalır. İki panelin boş görünümü ("No projects" /
+    /// "No graph") görünmez — Sync zaten sürüyor ve ekranı keşif blokları tutar (<c>DiscoveryBlockTests</c>); faz
     /// Boot'a düşmez (Clean'in <c>ClearPlanSurface</c>'inden farkı budur).
     /// <para>[kullanıcı kararı 2026-09-29] Debug|Release geçişi de aynı süreci işletir ("tıklar tıklamaz temizlensin").</para>
     /// </summary>
@@ -391,7 +391,7 @@ public class ProjectListFilterTests
 
         Assert.Empty(VisibleRowNames(list));
         Assert.Equal(0, graph.NodeCount);
-        Assert.False(graph.IsEmptyStateVisible, "graf Sync-öncesi etiketini göstermemeli — ekran yalnız boş durur");
+        Assert.False(graph.IsEmptyStateVisible, "graf boş görünümünü göstermemeli — Sync zaten sürüyor");
         // [fix round 1] Başlık sahte bir sayı ("0 projects · 0 dependencies") söylemez — boş durur, reveal yeniden yazar.
         Assert.Equal("", graph.HeaderCountsText);
         Assert.Equal(System.Windows.Visibility.Collapsed, window.Shell.PART_NoProjects.Visibility);
