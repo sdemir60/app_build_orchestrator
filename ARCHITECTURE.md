@@ -114,11 +114,13 @@ exactly the declared version, and that version is not the SDK's default `1.0.0`.
 
 That identity is also what the UI displays. `Services/AppIdentity` reads the product name, informational
 version and copyright back off the App assembly, and the window title, the title bar caption, the tray tooltip,
-the tray balloons and the About dialog all draw from it — a guard forbids the product name written as a literal in
-any source file, and a second one forbids it inside any literal of the files whose sentences carry the name: the
-update surface and the resource strip's texts (§17.2). Core does not know the identity of the App that hosts it, so
-the two strip tooltips that name the product take the name as a parameter. The copyright is read as one string
-rather than composed from a year and a company, because a copyright year is not a runtime value.
+the tray balloons, the About dialog, What's new's subtitle and the file filter of the settings import and export
+dialogs all draw from it — a guard forbids the product name written as a literal in any source file, and a second one
+forbids it inside any literal at all, quoted or embedded in a sentence. That second scan reads every production file
+and exempts only a short list kept with its reasons — today one comment in the MSBuild file the engine writes to its
+own cache, which no surface shows (§17.2). Core does not know the identity of the App that hosts it, so the two strip
+tooltips that name the product take the name as a parameter. The copyright is read as one string rather than composed
+from a year and a company, because a copyright year is not a runtime value.
 
 Windows reads the same name off the executable: the App's `.csproj` sets `AssemblyTitle` to `$(Product)`, so the
 file description — the name Task Manager shows for the process and for the startup entry of §12.3 — is the
@@ -5795,7 +5797,8 @@ whole (§13.5).
 This section is the design system. There is no external style sheet, no runtime theming and no second
 authority: the values below are declared once in `Resources/Tokens.xaml` and `Resources/Motion.xaml` so the
 application can consume them, and component-specific measurements sit as named constants on the control that
-draws them. Section §13 gives those per-component values in context.
+draws them. The resource strip is the exception: a guard keeps numeric measurements out of its markup, so its four
+measurements are tokens named for it in `Tokens.xaml` (§14.1). Section §13 gives those per-component values in context.
 
 ### 14.1 Tokens
 
@@ -6103,7 +6106,9 @@ The chevron is the one gradient in the application, and it too is a single share
 rule and a guard enforces it, with a single file-scoped exemption for the mark's dictionary: flattening a logo
 would mean redrawing it, and source artwork is transferred verbatim. The chevron is amber — the same accent the
 interface uses — which is deliberate: the brand speaks the interface's palette. The cost is that the mark
-carries accent weight in the title bar, so no other amber element belongs in that region.
+carries accent weight in the title bar, so no other amber element belongs in that region but one: the 5 px dot on the
+What's new button that marks an unread version (`UnseenNotesDot`, §13.3) — a status mark rather than decoration, gone
+once the notes are opened.
 
 The mark's palette comes from the neutral ramp and the amber family, except a few intermediate tones that exist
 only in the artwork; those are declared in `Tokens.xaml` beside the rest, with their reasoning, exactly like
@@ -6530,10 +6535,13 @@ guards. It targets `net10.0-windows` with `UseWPF` because a meaningful portion 
 STA thread.
 
 Shared test infrastructure lives in one place per concern rather than being copied: resource realization
-(`DsResources`, `IconResources`), window and dialog hosts (`MainWindowHost` — which holds the one console batcher whose
+(`DsResources` — which also holds the device-pixel grid realized layout is measured on, `InDevicePixels` (§17.4) —,
+`IconResources`), window and dialog hosts (`MainWindowHost` — which holds the one console batcher whose
 pump never ticks (`NeverTickingBatcher`) and the one a test drains (`DrainableBatcher`), the lookup and the press of a
 window key binding (`KeyBindingOf`, `PressKeyBinding`), the console-line counter (`Occurrences`), the engine host the
-fixture built (`EngineOf`) and `NeutralizeExitSeams`, which makes the shell's two exit seams no-ops so that a test
+fixture built (`EngineOf`), the title bar's inner grid and the dock of its two clusters (`TitleBarGrid`,
+`TitleBarDock`), the shell realized with an update offer at a forced display scale (`NewRealizedWithOffer`, §17.4) and
+`NeutralizeExitSeams`, which makes the shell's two exit seams no-ops so that a test
 asking for a full exit closes nothing —, `SettingsDialogHost` — with `GeneralSwitch` and `CatalogRow`, the lookups of
 a General switch and of its catalog row —, `AboutDialogHost`, which takes the clock that puts an engine to sleep under
 it, `SplitterHost`, `GraphTestView`), the MSBuild-shaped lines the console tests feed (`MsBuildLines`: `Warning`, a
@@ -6561,7 +6569,9 @@ folder goes, and `SpoolScope`, that same close for a folder the test does not ow
 (`SentCommands`, thread-safe, because a real engine completes a send on another thread), the General settings' chains
 (`GeneralSettingChains`, one table row per catalog row, walked by one theory class, `GeneralSettingChainTests`: a new
 setting is a catalog row and a table row, and a test fails until it has both), fixtures (`GitTestRepo`, `LegacyFixture`,
-`SyntheticGraph`, `JobTestChildren`, `VmTopology`, `FakeMotionSignal`, `FakeMotionSettings`) and measurement
+`SyntheticGraph`, `JobTestChildren`, `GatedMemberJob` — a job with a live member, a child that waits until its stdin
+closes, its grandchild's birth caught on the job's port —, `VmTopology`, `FakeMotionSignal`, `FakeMotionSettings`), the byte units the memory tests
+count in (`ByteUnits`) and measurement
 (`PerfMeasure` — timings, the bytes an action allocates on the test thread and the UI thread's CPU in cycles
 (`ThreadCycles`, `CyclesPerMs`), the one counter of the two measurement tests that read it). Tests that cannot run
 concurrently declare it explicitly through serial collections — the CPU-saturating job tests, the console UI tests and
@@ -6648,7 +6658,8 @@ A category of tests that assert properties of the *source*, not of a run:
 | Anti-slop | the prohibited visual patterns of §14.7 |
 | Design token scale | duplicated size tokens stay equal to their single authority |
 | Shortcut literals | no gesture text (`"F5"`, `"F6"`, …) is written outside the shortcut catalog, and the file the guard exempts still exists |
-| Product name literal (`AppIdentityTests`) | the quoted product name appears in no `.cs` or `.xaml` file of the four production projects; and in an explicit list of files whose sentences carry the name — the update surface and `Core/Diagnostics/ResourceStripText.cs` — it appears in no literal at all, quoted or embedded in a sentence: the name is read from the assembly, or arrives as a parameter. Each rule is shown to catch a planted literal, and the scan is shown to cover every production project |
+| Product name literal (`AppIdentityTests`) | the quoted product name appears in no `.cs` or `.xaml` file of the four production projects; and no literal in them carries the name at all, quoted or embedded in a sentence: the name is read from the assembly, or arrives as a parameter. The second scan reads every production file — a file is covered the day it is added — and exempts only a list kept with its reasons (today the comment in the MSBuild file the engine writes to its cache, §3.3), which must equal the files that still carry the name, so an exemption cannot outlive its reason. Each rule is shown to catch a planted literal — the embedded one in a C# file and a XAML attribute that no list names, never in a comment — and the scan is shown to cover every production project |
+| One missing-value mark (`MissingValueTests`) | the em dash that stands for a missing value — an unknown duration, an unreadable strip value, an absent About value — is declared once (`Core/Formatting/MissingValue.cs`) and written as a whole literal nowhere else in the `.cs` and `.xaml` of the production projects; the other names bind to it. A dash inside a sentence is outside the rule. The rule is shown to catch a planted literal in C# and in XAML and to ignore a sentence and a comment |
 | Brand marks | the product mark's and the company wordmark's path data each live in exactly one source file |
 | Gradient prohibition | no XAML declares a gradient except the product mark — and that exemption still points at a file that really carries one |
 | App icon provenance | the multi-size ICO is rendered from the product mark, not the company icon |
@@ -6667,10 +6678,15 @@ A category of tests that assert properties of the *source*, not of a run:
 | One trim definition (`MemoryTrimGuardTests`) | `GC.Collect` is written exactly once in the source, in `Core/Diagnostics/MemoryTrim.cs`; and every `RunCoordinator` the tests construct — an explicit `new`, or a target-typed one — passes a trim seam (`memoryTrim:`, not `null`), so none falls back to the real blocking collection; the rules are shown to catch each form of the call and to ignore prose |
 | One memory read (`MemoryReadGuardTests`) | the process's memory is read in exactly one file, `Core/Diagnostics/MemoryLine.cs` (§11.4): `GetProcessMemoryInfo` (the private bytes; its P/Invoke declaration in `NativeMethods.cs` is the one exempt mention, and the exemption is pinned to still declare the call), `GetGCMemoryInfo` and `GC.GetTotalMemory` are called nowhere else; `Process.PrivateMemorySize64` is written nowhere at all, `MemoryLine` included, because it snapshots every process on the machine; and `GC.GetTotalMemory` is called only with the literal `false` — any other argument may be a hidden full collection, which the `GC.Collect` guard cannot see. The rules are shown to catch each form of the call and to ignore prose |
 | No machine-wide process scan (`NoProcessScanGuardTests`) | no production source calls `Process.GetProcesses`, `Process.GetProcessesByName` or the Win32 enumerators behind them (`EnumProcesses`, `CreateToolhelp32Snapshot`, `NtQuerySystemInformation`), which keeps the known ways of scanning the machine out of the resource strip's read path (§11.5). The rule is shown to catch each form, a method group included, and to ignore a comment and the single-process lookups, and the scan is shown to cover all four production projects. A `using static`, a type alias, reflection and WMI are outside what a source scan sees, and so are the properties of a `Process` that fill themselves from a snapshot of the whole machine (`WorkingSet64` read from an arbitrary `Process`, say), which stay a matter for review |
-| Resource strip source (`ResourceStripGuardTests`) | the strip's markup carries no raw colour and no numeric measurement — every size is a token (§14.1) —, no animation, transition, trigger or clock in the markup or the code-behind, no pointer reaction, cursor, button or accent colour, and no `{Binding}`: its values are written from code under the hidden-surface gate (§13.2); its root declares no background and exactly its three cells a transparent one (§12.2); the window's code hands a drag to the native caption and never calls `Window.DragMove` (§12.2); its ghost texts are the Core constants and are never retyped; the tokens, icons, fonts and colours it reads are read by key, and its four measurements are the design's numbers, each defined once. Every rule is shown against a planted violation |
+| Resource strip source (`ResourceStripGuardTests`) | the strip's markup carries no raw colour and no numeric measurement — every size is a token (§14.1) —, no animation, transition, trigger or clock in the markup or the code-behind, no pointer reaction, cursor, button or accent colour, and no `{Binding}`: its values are written from code under the hidden-surface gate (§13.2); its root declares no background and exactly its three cells a transparent one (§12.2); the window's code hands a drag to the native caption — its native calls, the closing `WM_LBUTTONUP` included, are pinned to still be there — and never calls `Window.DragMove` (§12.2); its ghost texts are the Core constants and are never retyped; the tokens, icons, fonts and colours it reads are read by key, and its four measurements are the design's numbers, each defined once. Every rule is shown against a planted violation |
 | One engine gate (`EngineGateGuardTests`) | every request to the engine passes the gate of §4.7 and nothing walks around it: `SendWithFailureLineAsync(` is called only from the four methods that ask the gate first (`TrySendAsync`, `BeginRunAsync`, `SyncCoreAsync`, `LoadProjectLogAsync`); `SendToEngineAsync(` only from `SendWithFailureLineAsync`, and the host's `SendAsync(` — through any reference — only from `SendToEngineAsync`; a request is registered with the gate (`EngineGate.Enter`, whatever the receiver) only from `EnsureEngineAwakeAsync`, and every call of the gate holds its pass with `using`; the gate questions that `ReleaseAfterEngineLoss` asks are exactly the list of window-holding types the loss theory walks; and the branch inventory never asks the gate. The scans read code only — comments and string literals are skipped — and the call-form rules each have a proof test that catches their form of bypass. Two things stay for review: a send made inside an allowed method without asking the gate, and an allowed method bound to a delegate and called from elsewhere |
 | One infinite bottom request (`ConsoleBottomRequestGuardTests`) | the console asks for an infinite bottom (`ScrollToEnd(`) only in the mode switch's pin, `PinAfterModeSwitch`; the follow's and End's request is finite and vertical (§13.4). The scan reads code only, proves first that the pin still asks for it, and is shown to see a request outside the pin and to ignore a comment, a literal and a brace inside the pin |
 | No literal default (`GeneralSettingChainTests.No_workflow_setting_starts_from_a_literal_default`) | none of the four workflow preferences starts from a literal in the source: not the view model's field (written with `true` or `false`, or left unset), not the draft's or the apply call's parameter, not the window's seed from a key-less state (`?? true`); the catalog row is the one default (§13.3). The wire records of the contracts keep their own field defaults, which only say how a line without the field reads, and lie outside the rule. The rule is shown to catch each form, and to ignore a comment, a string and a field that reads the catalog |
+
+**A guard's coverage claim has its own proof.** Every whole-`src` guard asserts that its scan saw a file of each production
+project (`SourceGuard.AssertScansEveryProductionProject`). The real tree always passes that check, so its failure path is
+pinned on its pure core with planted lists (`SourceGuardTests`): a project with no scanned file is named, and a folder that
+merely shares the project's prefix does not stand in for it.
 
 **Tests never run the real collection.** The operation-end trim (§11.4, §12.3) is a blocking, compacting collection of
 the whole process; paid at the end of every operation of every window and coordinator test, it would stall the suite
@@ -6724,6 +6740,17 @@ out of that: **any task adding a new XAML root or template also adds a realizati
 Animation behaviour is measured the same way: the harness can drive the live window, take frames through
 `PrintWindow(PW_RENDERFULLCONTENT)`, read state through UI Automation and diff pixels between frames — so
 "an animation plays" is a testable claim, not a visual impression.
+
+**Measured layout is asserted on the device-pixel grid.** `UseLayoutRounding` snaps every size and offset to whole
+device pixels, so a measurement in DIPs moves with the display scale: at 125 % the update pill's 22 is drawn 28 px
+tall, 22.4 DIPs, and two sums that land on the same pixel can still differ by a floating-point residue. Such tests
+compare positions on the grid (`DsResources.InDevicePixels`) — a real shift is at least one device pixel — and let a
+design number differ from its measurement by at most half a device pixel, measured across a single rounding step: a
+gap is read from the previous element's layout slot, not from its text, whose width WPF rounds once more. The update
+pill's measurement tests run at five forced scales, 100 % to 200 %, whatever the machine's own:
+`MainWindowHost.NewRealizedWithOffer` gives the window its scale before realization and the content root its scale
+after, then re-measures the whole tree — headless, the content is not a visual child of the window, and a template
+child born after the scale was set would otherwise keep the system's.
 
 The resource strip is realized in the real window at the minimum width with the update pill showing
 (`ResourceStripRealizeTests`, on `window.Content`), and what it asserts is measured: the strip's centre is the bar's
@@ -7561,6 +7588,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Root normalization and the `C:\repo` / `C:\repo2` prefix trap — one gate for both the reset and the prune | `Core/Paths/RootScope.cs` |
 | Orphaned atomic-write `.tmp` sweep (per-target pattern, age threshold) | `Core/Paths/TempFileSweeper.cs`, the three ledgers' `SweepOrphanTempFiles` |
 | Human-readable byte sizes (console summaries and the stream) | `Core/Formatting/ByteFormat.cs` |
+| The one missing-value mark (`—`): an unknown duration, an unreadable strip value, an absent About value | `Core/Formatting/MissingValue.cs` |
 | `cleanWorkspace` handler and its run-active rejection | `Supervisor/SupervisorHost.cs` (`CleanWorkspaceAsync`), `Supervisor/RunCoordinator.cs` (`IsRunActive`) |
 | `optimizeWorkspace` handler: run-active rejection, event bridge, the catch-all that keeps exceptions off the wire | `Supervisor/SupervisorHost.cs` (`OptimizeWorkspaceAsync`) |
 | Root-scoped Core service factories, including Optimize's lazily resolved MSBuild toolset | `Supervisor/SupervisorHost.cs` (`WorkspaceServices`) |
