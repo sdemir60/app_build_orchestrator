@@ -73,6 +73,49 @@ public sealed partial class RunViewModel
     /// <summary>Durdurma süresinin dolduğu an (<see cref="_nowMs"/>); bekleyiş bir koşuyla açılmadıysa <c>null</c>.</summary>
     private long? _exitStopDeadlineMs;
 
+    /// <summary>
+    /// [Exit] Çıkışın şu an durduracağı (ya da bekleyeceği) iş — onay kartı ve kapanış ekranı bunu anlatır. <see cref="ExitWork.None"/>
+    /// ancak ve ancak <see cref="WorkspaceIdle"/>'dır: kabuk o zaman kartsız kapanır. Koşu kilit sürdükçe kendi moduyla okunur; mod
+    /// pill etiketinden gelir (<see cref="CurrentOperation"/> — tıklamada <see cref="OperationLabel.ForRunMode"/> ile yazılır ve kilit
+    /// boyunca koşunundur: kilit varken başka işlem başlayamaz), çünkü <c>runStarted</c>'a kadar motorun modu henüz yoktur. Workspace
+    /// işleri kendi bayraklarıyla okunur (pill sessiz Sync'i ve pull'u ayrı göstermez); git yazımı önce sorulur.
+    /// </summary>
+    public ExitWork ExitWork =>
+        IsMidRunLocked ? CurrentOperation switch
+        {
+            OperationLabel.Rebuild => ExitWork.Rebuild,
+            OperationLabel.Resolve => ExitWork.Resolve,
+            OperationLabel.Clean => ExitWork.Clean,
+            _ => ExitWork.Build,
+        }
+        : CheckoutBusy ? ExitWork.BranchSwitch
+        : PullBusy ? ExitWork.Pull
+        : CleanBusy ? ExitWork.DeepClean
+        : OptimizeBusy ? ExitWork.Optimize
+        : SyncBusy ? ExitWork.Sync
+        : ExitWork.None;
+
+    /// <summary>Son duyurulan <see cref="ExitWork"/> — bildirim yalnız değişimde gider (<see cref="NotifyExitWork"/>).</summary>
+    private ExitWork _announcedExitWork;
+
+    /// <summary>[Exit] <see cref="ExitWork"/>'ü yeniden sorar, değiştiyse duyurur — açık kart iş bitince "Nothing is running." hâline
+    /// kendiliğinden geçer. Çağıran meşguliyet bildiriminin tek noktasıdır (<see cref="OnWorkspaceBusyChanged"/>): her iş bayrağı ve koşu
+    /// kilidi geçişi oraya iner.</summary>
+    private void NotifyExitWork()
+    {
+        var work = ExitWork;
+        if (work == _announcedExitWork) return;
+        _announcedExitWork = work;
+        OnPropertyChanged(nameof(ExitWork));
+    }
+
+    /// <summary>[Exit] Koşunun ilerlemesi (<c>14/38</c>) — kartın durum satırı ve kapanış ekranının bağlamı. Şeridin okuduğu iki sayaçtır
+    /// (<see cref="FinishedOfWillBuild"/> / <see cref="WillBuildCount"/>); koşu planlanmadan (<c>runStarted</c> ya da önizleme gelmeden) ve
+    /// koşu dışında yoktur — şeridin "0/0 uydurma olurdu" kuralı.</summary>
+    public string? ExitProgress => IsRunning && WillBuildCount > 0
+        ? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{FinishedOfWillBuild}/{WillBuildCount}")
+        : null;
+
     /// <summary>Git'in çalışma ağacına yazdığı iş uçuşta — çıkış bunu kesmez, bekler.</summary>
     private bool GitWriteBusy => CheckoutBusy || PullBusy;
 

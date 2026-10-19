@@ -629,6 +629,7 @@ public sealed partial class RunViewModel
         EvaluateExit();
         ResetEscNoteWhenIdle();
         NotifyUpdateRestartGate();
+        NotifyExitWork();
         NotifyOperationInFlight();
     }
 

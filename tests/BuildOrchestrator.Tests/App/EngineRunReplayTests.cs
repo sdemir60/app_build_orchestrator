@@ -142,9 +142,11 @@ public class EngineRunReplayTests
 
         var rest = ReplayThroughPreview(vm, events);
         Assert.StartsWith("▸ Building 0/3", vm.RibbonLine.Text, StringComparison.Ordinal);
+        Assert.Equal("0/3", vm.ExitProgress); // [Exit] kart ve kapanış ekranı şeridin sayılarını okur
         ReplayThroughFirstSuccess(vm, rest);
 
         Assert.StartsWith("▸ Building 1/3", vm.RibbonLine.Text, StringComparison.Ordinal);
+        Assert.Equal("1/3", vm.ExitProgress);
         Assert.Equal(100.0 / 3, RibbonText.Progress(vm.Phase, vm.AllClean, vm.Counters, vm.WillBuildCount,
             vm.FinishedOfWillBuild, vm.Counters.Total), precision: 3);
     }
