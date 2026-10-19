@@ -52,7 +52,7 @@ public sealed class ExitTextTests
     [InlineData(ExitWork.Pull, "Exit waits for the pull, then quits.")]
     public void A_git_write_is_waited_for_and_the_card_says_so(ExitWork work, string sentence)
     {
-        Assert.True(ExitText.Waits(work));
+        Assert.True(work.Waits());
         Assert.Equal(sentence, ExitText.Sentence(work));
         Assert.Equal("Wait and exit", ExitText.Action(work));
         Assert.StartsWith("Finishing ", ExitText.StoppingStep(work), StringComparison.Ordinal);
@@ -68,7 +68,7 @@ public sealed class ExitTextTests
     [InlineData(ExitWork.Sync, "Sync in progress", "Exit stops the sync, then quits.")]
     public void Work_that_is_cut_off_is_stopped(ExitWork work, string heading, string sentence)
     {
-        Assert.False(ExitText.Waits(work));
+        Assert.False(work.Waits());
         Assert.Equal(heading, ExitText.Heading(work));
         Assert.Equal(sentence, ExitText.Sentence(work));
         Assert.Equal("Stop and exit", ExitText.Action(work));

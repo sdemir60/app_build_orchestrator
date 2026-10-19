@@ -15,22 +15,18 @@ public static class ProcessImage
 
     /// <summary>
     /// <paramref name="processId"/> numaralı sürecin image dosya adı (yolsuz, uzantılı: <c>MSBuild.exe</c>); süreç çıktıysa ya da
-    /// açılamıyorsa <c>null</c>. Tutamacı başka biri (başlatıcı, bir izleyici) açık tuttukça çıkmış bir sürecin <c>OpenProcess</c>'i de
-    /// başarır — bu yüzden çıkış kodu ayrıca sorulur, <c>MemoryLine</c>'ın kuralı.
+    /// açılamıyorsa <c>null</c>. Açma ve çıkış sorusu <see cref="LiveProcess.Read"/>'tedir (bellek okumasıyla ortak iskelet).
     /// </summary>
-    public static string? NameOf(int processId)
+    public static string? NameOf(int processId) =>
+        LiveProcess.Read(processId, static handle => ImageNameOf(handle), gone: (string?)null);
+
+    /// <summary>Verilen tutamaçtaki sürecin image dosya adı; okunamazsa <c>null</c>.</summary>
+    private static string? ImageNameOf(nint processHandle)
     {
-        // PID bir DWORD'dür: eksi bir numara hiçbir sürece ait olamaz ve OpenProcess onu (ERROR_INVALID_PARAMETER ile) reddeder.
-        nint handle = NativeMethods.OpenProcess(NativeMethods.PROCESS_QUERY_LIMITED_INFORMATION, false, unchecked((uint)processId));
-        if (handle == nint.Zero) return null;
-        try
-        {
-            if (!NativeMethods.GetExitCodeProcess(handle, out uint exitCode) || exitCode != NativeMethods.STILL_ACTIVE) return null;
-            var buffer = new char[PathCapacity];
-            uint size = (uint)buffer.Length;
-            if (!NativeMethods.QueryFullProcessImageName(handle, 0, buffer, ref size)) return null;
-            return Path.GetFileName(new string(buffer, 0, (int)size));
-        }
-        finally { NativeMethods.CloseHandle(handle); }
+        var buffer = new char[PathCapacity];
+        uint size = (uint)buffer.Length;
+        return NativeMethods.QueryFullProcessImageName(processHandle, 0, buffer, ref size)
+            ? Path.GetFileName(new string(buffer, 0, (int)size))
+            : null;
     }
 }

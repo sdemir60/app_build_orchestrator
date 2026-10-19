@@ -75,12 +75,20 @@ public sealed partial class RunViewModel
 
     /// <summary>
     /// [Exit] Çıkışın şu an durduracağı (ya da bekleyeceği) iş — onay kartı ve kapanış ekranı bunu anlatır. <see cref="ExitWork.None"/>
-    /// ancak ve ancak <see cref="WorkspaceIdle"/>'dır: kabuk o zaman kartsız kapanır. Koşu kilit sürdükçe kendi moduyla okunur; mod
-    /// pill etiketinden gelir (<see cref="CurrentOperation"/> — tıklamada <see cref="OperationLabel.ForRunMode"/> ile yazılır ve kilit
-    /// boyunca koşunundur: kilit varken başka işlem başlayamaz), çünkü <c>runStarted</c>'a kadar motorun modu henüz yoktur. Workspace
-    /// işleri kendi bayraklarıyla okunur (pill sessiz Sync'i ve pull'u ayrı göstermez); git yazımı önce sorulur.
+    /// "uçuşta iş yok"un tek tanımından gelir (<see cref="WorkspaceIdle"/>): kabuk o zaman kartsız kapanır. İş varsa
+    /// <see cref="WorkInFlight"/> onu adlandırır.
+    /// <para>[inceleme Ö2] Eskiden <c>None</c> adlandırma zincirinin sonundan düşüyordu — meşguliyet listesine eklenen ama zincire eklenmeyen
+    /// bir iş <c>None</c> okunur ve kabuk "iş yok" deyip onaysız kapanırdı. Liste tek yerdedir (<see cref="WorkspaceBusy"/>,
+    /// <see cref="NonSyncWorkspaceBusy"/>); her üyesinin adlandırıldığını kaynak guard'ı pinler (<c>ExitWorkGuardTests</c>).</para>
     /// </summary>
-    public ExitWork ExitWork =>
+    public ExitWork ExitWork => WorkspaceIdle ? ExitWork.None : WorkInFlight;
+
+    /// <summary>Uçuştaki işin adı — yalnız <see cref="WorkspaceIdle"/> değilken sorulur. Koşu kilit sürdükçe kendi moduyla okunur; mod pill
+    /// etiketinden gelir (<see cref="CurrentOperation"/> — tıklamada <see cref="OperationLabel.ForRunMode"/> ile yazılır ve kilit boyunca
+    /// koşunundur: kilit varken başka işlem başlayamaz), çünkü <c>runStarted</c>'a kadar motorun modu henüz yoktur. Workspace işleri kendi
+    /// bayraklarıyla okunur (pill sessiz Sync'i ve pull'u ayrı göstermez); git yazımı önce sorulur. Hiçbiri değilse liste ile zincir
+    /// ayrışmıştır: sessiz bir "iş yok" yerine yüksek sesle düşer.</summary>
+    private ExitWork WorkInFlight =>
         IsMidRunLocked ? CurrentOperation switch
         {
             OperationLabel.Rebuild => ExitWork.Rebuild,
@@ -93,7 +101,7 @@ public sealed partial class RunViewModel
         : CleanBusy ? ExitWork.DeepClean
         : OptimizeBusy ? ExitWork.Optimize
         : SyncBusy ? ExitWork.Sync
-        : ExitWork.None;
+        : throw new System.Diagnostics.UnreachableException("a workspace job in WorkspaceBusy has no ExitWork name");
 
     /// <summary>Son duyurulan <see cref="ExitWork"/> — bildirim yalnız değişimde gider (<see cref="NotifyExitWork"/>).</summary>
     private ExitWork _announcedExitWork;
@@ -116,8 +124,8 @@ public sealed partial class RunViewModel
         ? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{FinishedOfWillBuild}/{WillBuildCount}")
         : null;
 
-    /// <summary>Git'in çalışma ağacına yazdığı iş uçuşta — çıkış bunu kesmez, bekler.</summary>
-    private bool GitWriteBusy => CheckoutBusy || PullBusy;
+    /// <summary>Uçuştaki iş çıkışın beklediği türden — kural tek yerdedir (<see cref="ExitWorkRules.Waits"/>): git yazımı.</summary>
+    private bool GitWriteBusy => ExitWork.Waits();
 
     /// <summary>
     /// Tam çıkış iste. Sıra: (1) ikinci istek hiçbir şey yapmaz; (2) kendiliğinden Sync kapanır; (3) uçuşta iş yoksa
@@ -152,7 +160,9 @@ public sealed partial class RunViewModel
             CancelPendingRun();
             return;
         }
-        if (_currentRunId is { } runId && StopCommand.CanExecute(null)) _ = SendHardStopAsync(runId);
+        // [inceleme K2] Stop'un kendi kuralı (CanStop) — komutun kapısı değil: AsyncRelayCommand kullanıcının graceful gönderimi sürerken
+        // kapısını kapalı gösterir ve çıkış o pencerede hard'ı hiç göndermezdi.
+        if (_currentRunId is { } runId && CanStop()) _ = SendHardStopAsync(runId);
     }
 
     /// <summary>Bekleyiş sürüyor ve ya beklenecek iş kalmadı (koşu bitti ya da durdurma süresi doldu, git yazımı yok) ya da

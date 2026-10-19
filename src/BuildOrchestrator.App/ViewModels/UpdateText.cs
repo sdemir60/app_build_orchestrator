@@ -86,5 +86,5 @@ public static class UpdateText
     /// <summary>Restart ekranının adım etiketi — sürerken yazıldığı için sonunda üç nokta (U+2026) taşır. [motor · Task 11
     /// · K6] Tek adım kapanıştır (<see cref="UpdateRestartStep"/>); kurulum ve açılış pencere kapandıktan sonra
     /// Update.exe'de olur, etiketleri yoktur.</summary>
-    public static string RestartStepLabel(UpdateRestartStep step) => "Closing " + AppIdentity.Product + "…";
+    public static string RestartStepLabel(UpdateRestartStep step) => ExitText.ClosingHeading + "…"; // [Exit · O3] "Closing <ürün>" tek yerde
 }

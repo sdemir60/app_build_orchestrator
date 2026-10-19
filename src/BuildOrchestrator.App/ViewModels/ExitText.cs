@@ -4,29 +4,6 @@ using BuildOrchestrator.App.Services;
 namespace BuildOrchestrator.App.ViewModels;
 
 /// <summary>
-/// [Exit] Exit'in durduracağı (ya da bekleyeceği) iş — <see cref="RunViewModel.ExitWork"/>'ün cevabı, onay kartının ve kapanış
-/// ekranının konusu. <see cref="None"/> uçuşta iş yok demektir: Exit kartsız, hemen kapatır.
-/// </summary>
-public enum ExitWork
-{
-    None,
-    Build,
-    Rebuild,
-    /// <summary>Bakım kutusunun <c>Resolve cycles</c> koşusu (<c>RunMode.Cycles</c>).</summary>
-    Resolve,
-    /// <summary>Build menüsünün ya da satır menüsünün <c>-t:Clean</c> koşusu.</summary>
-    Clean,
-    /// <summary>Bakım kutusunun Clean'i — workspace sıfırlaması.</summary>
-    DeepClean,
-    Optimize,
-    Sync,
-    /// <summary>Branch chip'inden checkout — git çalışma ağacına yazar, beklenir.</summary>
-    BranchSwitch,
-    /// <summary><c>N behind</c> chip'inin pull'u — git çalışma ağacına yazar, beklenir.</summary>
-    Pull,
-}
-
-/// <summary>
 /// [Exit] Exit butonunun, onay kartının ve kapanış ekranının metinlerinin TEK kaynağı — XAML, kabuk ve testler aynı sabiti okur
 /// (<see cref="UpdateText"/>'in deseni). Tasarımın verdiği cümleler birebirdir: "Exit stops the build, then quits.", "4 projects in
 /// flight stay unbuilt. Finished projects keep their results; the next Build picks up the rest.", "Nothing is running. Exit quits
@@ -78,16 +55,13 @@ public static class ExitText
     /// <summary>Cümle içindeki adı ("the build", "the deep clean").</summary>
     private static string InSentence(ExitWork work) => WorkName(work).ToLowerInvariant();
 
-    /// <summary>Çıkış bu işi kesmez, BEKLER — git çalışma ağacına yazıyor (<c>RunViewModel.Exit.cs</c>).</summary>
-    public static bool Waits(ExitWork work) => work is ExitWork.BranchSwitch or ExitWork.Pull;
-
     /// <summary>Kartın caps durum etiketi (<c>BUILD IN PROGRESS</c> olarak çizilir); uçuşta iş yokken <c>EXIT</c>.</summary>
     public static string Heading(ExitWork work) => work == ExitWork.None ? ExitLabel : WorkName(work) + " in progress";
 
     /// <summary>Kartın tek cümlesi (13px/500).</summary>
     public static string Sentence(ExitWork work) =>
         work == ExitWork.None ? NothingRunning
-        : Waits(work) ? $"Exit waits for the {InSentence(work)}, then quits."
+        : work.Waits() ? $"Exit waits for the {InSentence(work)}, then quits."
         : $"Exit stops the {InSentence(work)}, then quits.";
 
     /// <summary>Kartın karar bloğundaki sonuç satırı (12px text-dim) — işin yarıda kalınca ne bıraktığı; uçuşta iş yokken satır yoktur
@@ -114,7 +88,7 @@ public static class ExitText
     /// <summary>Kartın birincil düğmesi: uçuşta iş yokken <c>Exit</c>, git yazımında <see cref="WaitAndExit"/>, aksi hâlde
     /// <see cref="StopAndExit"/>.</summary>
     public static string Action(ExitWork work) =>
-        work == ExitWork.None ? ExitLabel : Waits(work) ? WaitAndExit : StopAndExit;
+        work == ExitWork.None ? ExitLabel : work.Waits() ? WaitAndExit : StopAndExit;
 
     /// <summary>Kapanacak süreç satırının sağındaki sayı (mono 11px text-dim).</summary>
     public static string ProcessCount(int count) => string.Create(CultureInfo.InvariantCulture, $"×{count}");
@@ -125,7 +99,7 @@ public static class ExitText
 
     /// <summary>Kapanış ekranının ilk adımı — sürerken yazıldığı için sonunda üç nokta (U+2026) taşır.</summary>
     public static string StoppingStep(ExitWork work) =>
-        (Waits(work) ? "Finishing " : "Stopping ") + InSentence(work) + "…";
+        (work.Waits() ? "Finishing " : "Stopping ") + InSentence(work) + "…";
 
     /// <summary>Kapanış ekranının ikinci adımı: kartın listelediği süreçlerin sayısı; liste boşsa yalnız kapanış.</summary>
     public static string EndingStep(int processes) => processes switch

@@ -26,7 +26,7 @@ public enum GeneralSetting
     /// pencere mi tepside mi. <see cref="StartWithWindows"/> kapalıyken etkisizdir.</summary>
     StartMinimizedToTray,
     /// <summary>[P3] Kalıcı kabuk anahtarı (<see cref="ShellSwitches.CloseToTray"/>) — pencere kapanışını sürer:
-    /// açık ⇒ × tepsiye gizler, kapalı ⇒ güvenli tam çıkış.</summary>
+    /// açık ⇒ × tepsiye gizler, kapalı ⇒ × title bar'ın Exit'i gibi davranır (iş varsa onay kartı).</summary>
     CloseToTray,
     /// <summary>Gerçek bayrak: <see cref="SettingsDraftViewModel.PullExternalsBeforeBuild"/>.</summary>
     PullBeforeBuild,

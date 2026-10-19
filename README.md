@@ -607,7 +607,7 @@ arrives, says so in red — *Engine stopped unexpectedly (idle shutdown failed)*
 | `F7` | window | Clean — the Build menu's Clean, not the maintenance box's Deep Clean |
 | `Ctrl+F` | window | Focus the project filter |
 | `F1` | window | About — version, shortcuts and diagnostics |
-| `Esc` | window | Close the topmost open layer: dialog → popover/menu → selection; with none open, stop the running build |
+| `Esc` | window | Close the topmost open layer: exit card → dialog → popover/menu → selection; with none open, stop the running build |
 | `Ctrl+Q` | window | Exit — quit; with work running, open the confirmation card first (press again to close it) |
 
 The two global hotkeys work whether the window is in front, behind Visual Studio or in the tray. `Shift+Space`

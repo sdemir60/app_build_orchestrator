@@ -20,22 +20,19 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class ExitClosingFlowTests
 {
-    private static readonly IReadOnlyList<ProcessTally> FiveProcesses = [new("MSBuild.exe", 4), new("VBCSCompiler.exe", 1)];
-
     private sealed class Rig
     {
         public MainWindow Window { get; }
         public RunViewModel Vm { get; }
         public ClosingScreenTime Time { get; }
         public List<IpcCommand> Sent { get; } = [];
-        public int Shutdowns { get; private set; }
+        public ExitSeamFakes Fakes { get; }
+        public int Shutdowns => Fakes.Shutdowns;
 
         public Rig(TempDir temp)
         {
             (Window, Vm, _) = MainWindowHost.NewWithProjects(temp, ("A", null), ("B", null));
-            Window.ShutdownApplication = () => Shutdowns++;
-            Window.ExitCardTimer = new FakePollTimer();
-            Window.TakeProcessCensus = () => FiveProcesses;
+            Fakes = new ExitSeamFakes(Window); // kartın sayımı: 4 + 1 = 5 süreç
             Time = new ClosingScreenTime(Window.ClosingOverlay);
             MainWindowHost.AcceptSends(Vm);
             Vm.DebugOnCommandSent = Sent.Add;

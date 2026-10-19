@@ -2,7 +2,7 @@ using BuildOrchestrator.App.Views;
 
 namespace BuildOrchestrator.Tests.App;
 
-/// <summary>[design v1.23/v1.24 review C13] Restart ekranının (<see cref="ClosingScreen"/>) sahte zamanı — ekranı
+/// <summary>[design v1.23/v1.24 review C13 · Exit] Kapanış ekranının (<see cref="ClosingScreen"/>, iki kipi de) sahte zamanı — ekranı
 /// süren her rig'in (tek başına ekran, kabuk, akış testi) TEK zaman dikişi: kurulurken ekrana takılır (zamanlayıcı +
 /// <c>NowMs</c>), <see cref="FrameAt"/> saati ilerletip bir kare atar. Gerçek zaman beklenmez (D8).</summary>
 internal sealed class ClosingScreenTime

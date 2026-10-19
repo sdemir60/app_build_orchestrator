@@ -588,7 +588,7 @@ public partial class MainWindow : Window
     /// <summary>[E5/T46 · design v1.23.0 §2.12] Esc zincirinin POPOVER katmanı: alt bardaki popover/menüler
     /// (<see cref="ShellRoot.AnyPopoverOpen"/>) ve title bar'daki güncelleme kartı (prototip: <c>branchPop || buildMenu
     /// || updPop</c>). Kartın İÇİNDEKİ Esc'i kartın kendisi yakalar; bu katman odak pencerede kalmışken devreye girer.</summary>
-    private bool AnyPopoverOpen => Shell.AnyPopoverOpen || IsUpdateCardOpen || IsExitCardOpen;
+    private bool AnyPopoverOpen => Shell.AnyPopoverOpen || IsUpdateCardOpen; // [Exit] kart zincire ayrı girer: exitCardOpen (dialogdan önce)
 
     /// <summary>Popover katmanını kapatır — hepsini birden (prototipte olduğu gibi): alt barınkiler
     /// (<see cref="ShellRoot.CloseAllPopovers"/>), güncelleme kartı ve [Exit] Exit'in onay kartı; odak açık olanın tetikleyicisine döner.</summary>

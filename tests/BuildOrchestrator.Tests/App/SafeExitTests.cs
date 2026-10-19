@@ -151,6 +151,30 @@ public sealed class SafeExitTests
         Assert.Equal(1, h.Ready);
     }
 
+    /// <summary>[inceleme K2] Kullanıcının graceful Stop'unun gönderimi henüz DÖNMEMİŞKEN istenen çıkış da hard stop'a tırmanır: karar Stop'un
+    /// kendi kuralından okunur, komutun kapısından değil — <c>AsyncRelayCommand</c> önceki yürütmesi sürerken kapısını kapalı gösterir ve
+    /// çıkış o pencerede hard'ı hiç göndermez, yalnız süresinin dolmasını beklerdi.
+    /// <para>KIRMIZI (düzeltmeden önce): ikinci <c>stopRun</c> gitmiyordu.</para></summary>
+    [Fact]
+    public async Task An_exit_while_the_users_stop_is_still_being_sent_escalates_too()
+    {
+        var h = new Harness();
+        MainWindowHost.StartBuild(h.Vm);
+        var sending = new TaskCompletionSource();
+        h.Vm.DebugSendOverride = _ => sending.Task;
+        var stop = h.Vm.StopCommand.ExecuteAsync(null);
+        Assert.False(stop.IsCompleted); // ön-koşul: graceful'un gönderimi askıda
+        h.Vm.DebugSendOverride = _ => Task.CompletedTask;
+
+        h.Vm.RequestExit();
+
+        Assert.Equal(
+            [new StopRunCommand("r1", StopKind.Graceful), new StopRunCommand("r1", StopKind.Hard)],
+            h.Sent.OfType<StopRunCommand>());
+        sending.SetResult();
+        await stop;
+    }
+
     /// <summary>Hard stop zaten gitmişse (Terminating…) çıkış ikinci bir durdurma göndermez; motorun cevabını bekler.</summary>
     [Fact]
     public async Task An_exit_after_the_users_hard_stop_sends_nothing_more()

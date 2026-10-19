@@ -1170,8 +1170,8 @@ public sealed partial class RunViewModel : ObservableObject
     /// akardı; bir silme de MSBuild'in yazdığı bin/obj ile yarışırdı. Basış kuyruğa alınmaz: komut çalışmaz, konsola satır
     /// düşmez, düğme Stop olmaz — ekran süren işindir (Sync düğmesi meşgul hâlini gösterir, sessiz Sync dahil). İş bitince
     /// kapıyı <see cref="NotifySyncGatedCommands"/> yeniden sorar.</para>
-    /// <para>Tam çıkış beklerken (<see cref="ExitPending"/>) de kapalıdır: bekleyiş iş bitince kapanmak içindir — o sırada
-    /// başlayan bir koşu çıkışı bir tam derleme boyunca bekletirdi.</para>
+    /// <para>Tam çıkış işi durdururken (<see cref="ExitPending"/>) de kapalıdır: uygulama kapanmak üzeredir — o sırada başlayan bir
+    /// koşu kapanışın ortasında yeni bir iş açardı.</para>
     /// <para>Koşulların TEK yeri <see cref="WhyRunCannotStart"/>'tır: kapı onun <c>null</c> dönmesidir, yani kapı ile kapalı
     /// olma nedeni ayrışamaz.</para>
     /// </summary>

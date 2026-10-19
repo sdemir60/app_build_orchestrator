@@ -39,9 +39,6 @@ public class ExitCardTests
     /// <summary>Tasarımın kart genişliği.</summary>
     private const double CardWidth = 320;
 
-    private static readonly IReadOnlyList<ProcessTally> TwoProcesses =
-        [new("MSBuild.exe", 4), new("VBCSCompiler.exe", 1)];
-
     private static Color Token(FrameworkElement host, string key) => DsResources.TokenColor(host, key);
 
     private static RunViewModel NewVm()
@@ -88,7 +85,7 @@ public class ExitCardTests
     [StaFact]
     public void The_status_block_reads_the_work_its_progress_and_one_sentence()
     {
-        var (card, window) = OpenRealized(BuildingVm(), TwoProcesses);
+        var (card, window) = OpenRealized(BuildingVm(), ExitSeamFakes.SampleProcesses);
         var status = card.PART_Status;
 
         Assert.Equal(new Thickness(16, 13, 16, 14), status.Padding);
@@ -121,7 +118,7 @@ public class ExitCardTests
     [StaFact]
     public void The_ends_on_exit_block_lists_each_process_in_mono_with_its_count()
     {
-        var (card, window) = OpenRealized(BuildingVm(), TwoProcesses);
+        var (card, window) = OpenRealized(BuildingVm(), ExitSeamFakes.SampleProcesses);
         var block = card.PART_ProcessesBlock;
 
         Assert.Equal(Visibility.Visible, block.Visibility);
@@ -165,7 +162,7 @@ public class ExitCardTests
     [StaFact]
     public void The_decision_block_says_what_stays_and_offers_cancel_and_stop_and_exit()
     {
-        var (card, window) = OpenRealized(BuildingVm(), TwoProcesses);
+        var (card, window) = OpenRealized(BuildingVm(), ExitSeamFakes.SampleProcesses);
         var decision = card.PART_Decision;
 
         Assert.Equal(new Thickness(16, 12, 16, 14), decision.Padding);
@@ -200,7 +197,7 @@ public class ExitCardTests
     public void When_the_work_ends_the_open_card_says_nothing_is_running()
     {
         var vm = BuildingVm();
-        var (card, window) = OpenRealized(vm, TwoProcesses);
+        var (card, window) = OpenRealized(vm, ExitSeamFakes.SampleProcesses);
 
         vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 0, 0, 1, 400));
@@ -219,7 +216,7 @@ public class ExitCardTests
     [StaFact]
     public void Cancel_asks_the_card_to_close_and_the_action_asks_to_exit()
     {
-        var (card, window) = OpenRealized(BuildingVm(), TwoProcesses);
+        var (card, window) = OpenRealized(BuildingVm(), ExitSeamFakes.SampleProcesses);
         int closes = 0, exits = 0;
         card.CloseRequested += () => closes++;
         card.ActionRequested += () => exits++;
@@ -235,7 +232,7 @@ public class ExitCardTests
     [StaFact]
     public void Opening_puts_the_keyboard_focus_on_cancel()
     {
-        var (card, window) = OpenRealized(BuildingVm(), TwoProcesses);
+        var (card, window) = OpenRealized(BuildingVm(), ExitSeamFakes.SampleProcesses);
 
         DispatcherPump.DrainToIdle();
 
@@ -273,21 +270,16 @@ public class ExitCardTests
         public MainWindow Window { get; }
         public RunViewModel Vm { get; }
         public List<IpcCommand> Sent { get; } = [];
-        public FakePollTimer Timer { get; } = new();
-        public int Shutdowns { get; private set; }
-        public int Census { get; private set; }
-        public IReadOnlyList<ProcessTally> Processes { get; set; } = TwoProcesses;
+        public ExitSeamFakes Fakes { get; }
+        public FakePollTimer Timer => Fakes.CardTimer;
+        public int Shutdowns => Fakes.Shutdowns;
+        public int Census => Fakes.Censuses;
+        public IReadOnlyList<ProcessTally> Processes { get => Fakes.Processes; set => Fakes.Processes = value; }
 
         public Rig(TempDir temp, bool busy = true)
         {
             (Window, Vm) = MainWindowHost.NewRealized(temp);
-            Window.ShutdownApplication = () => Shutdowns++;
-            Window.ExitCardTimer = Timer;
-            Window.TakeProcessCensus = () =>
-            {
-                Census++;
-                return Processes;
-            };
+            Fakes = new ExitSeamFakes(Window);
             MainWindowHost.AcceptSends(Vm);
             Vm.DebugOnCommandSent = Sent.Add;
             if (busy) MainWindowHost.StartBuild(Vm);
@@ -308,7 +300,7 @@ public class ExitCardTests
         Assert.Equal(0, s.Shutdowns);
         Assert.False(s.Vm.ExitPending);
         Assert.Empty(s.Sent);
-        Assert.Equal(TwoProcesses, s.Window.ExitCardView.Processes); // süreçler açılışta sayıldı
+        Assert.Equal(ExitSeamFakes.SampleProcesses, s.Window.ExitCardView.Processes); // süreçler açılışta sayıldı
         GC.KeepAlive(s.Window);
     }
 
@@ -400,6 +392,42 @@ public class ExitCardTests
 
         MainWindowHost.PressEscape(s.Window);
         Assert.NotEqual(Visibility.Visible, s.Window.AboutOverlay.Visibility);
+        GC.KeepAlive(s.Window);
+    }
+
+    /// <summary>[inceleme K1] Dialog açıkken kapanan kart odağı Exit butonuna DÖNDÜRMEZ: buton scrim'in altındadır — odak oraya giderse Tab
+    /// dialogun dışında dolaşır, Space kartı yeniden açardı. Dialog yokken odak butona döner (popover deseni). Pencere gösterilmediği için
+    /// klavye odağı kurulamaz; WPF'in mantıksal odak yedeği gözlenir: odak kapsamında odaklı öğe yokken <c>Focus()</c> onu mantıksal odak
+    /// yapar.</summary>
+    [StaFact]
+    public void Closing_the_card_over_an_open_dialog_leaves_the_focus_alone()
+    {
+        using var temp = new TempDir();
+        var s = new Rig(temp);
+        CommandPress.Click(s.Window.InfoButton);
+        Assert.Equal(Visibility.Visible, s.Window.AboutOverlay.Visibility); // ön-koşul: About açık
+        MainWindowHost.PressKeyBinding(s.Window, Key.Q, ModifierKeys.Control);
+        Assert.True(s.CardOpen); // ön-koşul
+        FocusManager.SetFocusedElement(s.Window, null);
+
+        MainWindowHost.PressEscape(s.Window);
+
+        Assert.False(s.CardOpen);
+        Assert.NotSame(s.Window.ExitButton, FocusManager.GetFocusedElement(s.Window));
+        GC.KeepAlive(s.Window);
+    }
+
+    [StaFact]
+    public void Closing_the_card_without_a_dialog_returns_the_focus_to_the_button()
+    {
+        using var temp = new TempDir();
+        var s = new Rig(temp);
+        MainWindowHost.PressKeyBinding(s.Window, Key.Q, ModifierKeys.Control);
+        FocusManager.SetFocusedElement(s.Window, null);
+
+        MainWindowHost.PressEscape(s.Window);
+
+        Assert.Same(s.Window.ExitButton, FocusManager.GetFocusedElement(s.Window));
         GC.KeepAlive(s.Window);
     }
 

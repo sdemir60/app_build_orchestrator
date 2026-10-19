@@ -44,8 +44,10 @@ public sealed class CloseToTrayTests
         public MainWindow Window { get; }
         public RunViewModel Vm { get; }
         public List<IpcCommand> Sent { get; } = [];
-        public int Shutdowns { get; private set; }
+        public int Shutdowns => _fakes.Shutdowns;
+        private readonly ExitSeamFakes _fakes;
         public int Confirmations { get; private set; }
+        public int BroughtForward { get; private set; }
 
         /// <summary>Pencere GERÇEKTEN kapandı (<c>Closed</c>) — iptal edilen bir kapanış bunu yazmaz.</summary>
         public bool Closed { get; private set; }
@@ -54,10 +56,9 @@ public sealed class CloseToTrayTests
         {
             Window = window;
             Vm = vm;
-            window.ShutdownApplication = () => Shutdowns++;
+            _fakes = new ExitSeamFakes(window);
             window.ConfirmExitInFront = () => Confirmations++;
-            window.ExitCardTimer = new FakePollTimer();
-            window.TakeProcessCensus = () => [];
+            window.BringForwardForExit = () => BroughtForward++;
             window.ClosingOverlay.Timer = new FakePollTimer();
             window.Closed += (_, _) => Closed = true;
             MainWindowHost.AcceptSends(vm);
@@ -293,7 +294,29 @@ public sealed class CloseToTrayTests
         h.PumpUntilShutdown();
 
         Assert.Equal(1, h.Shutdowns);
-        Assert.Equal(Visibility.Collapsed, h.Window.Visibility); // pencere gösterilmedi
+        Assert.Equal(0, h.BroughtForward); // pencere öne getirilmedi
+    }
+
+    /// <summary>[inceleme Ö1] Ertelenen turun ANA dalı: iş hâlâ sürüyorsa pencere öne gelir (bir kez) ve kart, pencere yerleştikten sonra
+    /// açılır — hiçbir şey durdurulmaz, çıkış başlamaz. Öne getirme sayaçlı bir sahtedir (pencere gösterilmez); kartın açılışı gerçek yoldur.
+    /// Mutasyonla doğrulandı: kartı açan ertelenmiş çağrı kaldırılınca kırmızı.</summary>
+    [StaFact]
+    public void The_deferred_confirmation_brings_the_window_forward_and_opens_the_card()
+    {
+        using var temp = new TempDir();
+        var h = Harness.New(temp);
+        MainWindowHost.StartBuild(h.Vm);
+        h.Window.ExitFromTray();
+        Assert.Equal(1, h.Confirmations); // ön-koşul: onay istendi, tur ertelendi
+
+        h.Window.ConfirmExitInFrontNow();
+        DispatcherPump.DrainToIdle();
+
+        Assert.Equal(1, h.BroughtForward);
+        Assert.True(DsChrome.GetIsActive(h.Window.ExitButton));
+        Assert.False(h.Vm.ExitPending);
+        Assert.Empty(h.Sent);
+        Assert.Equal(0, h.Shutdowns);
     }
 
     /// <summary>Çıkış arada başladıysa (kartın "Stop and exit"i) ertelenen tur hiçbir şey yapmaz: pencere öne getirilmez, kart açılmaz.</summary>
@@ -307,7 +330,7 @@ public sealed class CloseToTrayTests
 
         h.Window.ConfirmExitInFrontNow();
 
-        Assert.Equal(Visibility.Collapsed, h.Window.Visibility);
+        Assert.Equal(0, h.BroughtForward);
         Assert.False(DsChrome.GetIsActive(h.Window.ExitButton));
         Assert.Single(h.Sent.OfType<StopRunCommand>());
     }

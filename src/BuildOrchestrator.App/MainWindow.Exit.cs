@@ -55,6 +55,7 @@ public partial class MainWindow
         ExitCardTimer = new DispatcherPollTimer(Dispatcher);
         TakeProcessCensus = new JobProcessCensus(_engine.OuterJob, () => _engine.EnginePid).Take;
         ConfirmExitInFront = () => Dispatcher.BeginInvoke(ConfirmExitInFrontNow);
+        BringForwardForExit = ShowFromTray;
     }
 
     /// <summary>[test dikişi] × (Close to tray kapalıyken) ya da tepsi → Exit, iş varken: onay için pencereyi öne getirip kartı açan
@@ -62,6 +63,11 @@ public partial class MainWindow
     /// <see cref="OnClosing"/>'in içinden gelir ve WPF, kapanış sürerken <c>Show</c>'u InvalidOperationException ile reddeder; kartın
     /// popup'ı da yerleşmiş, görünür bir hedef ister. Testler pencere GÖSTERMEZ, sayaçlı bir sahteyle değiştirir.</summary>
     internal Action ConfirmExitInFront { get; set; } = null!;
+
+    /// <summary>[test dikişi · inceleme Ö1] Onay için pencereyi öne getiren adım — üretimde <see cref="ShowFromTray"/> (gizliyse gösterir,
+    /// küçültülmüşse geri getirir, etkinleştirir). Testler pencere GÖSTERMEZ: sayaçlı bir sahteyle değiştirir ve ertelenen turun geri
+    /// kalanını (kartın açılışı) gerçek yoldan sürer.</summary>
+    internal Action BringForwardForExit { get; set; } = null!;
 
     /// <summary>[P3 · Task 3 · Exit] Tepsi → Exit: Close to tray'e bakılmaz — menüdeki Exit'in anlamı zaten "tamamen kapat"tır. × ile
     /// AYNI yol (<see cref="RequestExitFromOutside"/>).</summary>
@@ -94,7 +100,7 @@ public partial class MainWindow
             _vm.RequestExit();
             return;
         }
-        ShowFromTray();
+        BringForwardForExit();
         Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
         {
             if (!_exiting && !_vm.ExitPending && !IsExitCardOpen) RequestExitFromUser();
@@ -137,13 +143,15 @@ public partial class MainWindow
     }
 
     /// <summary>Kartı kapatır (açık değilse yalnız sayımı durdurur). Kullanıcının kartta başlattığı kapanışta odak butona döner (popover
-    /// deseni: return-to-trigger).</summary>
+    /// deseni: return-to-trigger) — açık bir dialog yoksa.</summary>
     private void CloseExitCard(bool returnFocusToButton)
     {
         ExitCardTimer.Stop();
         if (!IsExitCardOpen) return;
         DsChrome.SetIsActive(ExitButton, false);
-        if (returnFocusToButton) ExitButton.Focus();
+        // [inceleme K1] Açık bir dialog varsa buton scrim'in altındadır: odak oraya dönerse Tab dialogun dışında dolaşır, Space kartı
+        // yeniden açardı — odak dialogundur, dokunulmaz.
+        if (returnFocusToButton && !AnyDialogOpen) ExitButton.Focus();
     }
 
     /// <summary>Sayımın tıkı: kart başka bir yoldan kapandıysa (dışarı tık) sayım durur; açıksa süreçler yeniden sayılır.</summary>

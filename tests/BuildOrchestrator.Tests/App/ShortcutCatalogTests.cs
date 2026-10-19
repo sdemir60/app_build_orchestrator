@@ -105,6 +105,16 @@ public class ShortcutCatalogTests
         Assert.Equal("Application", ShortcutCatalog.GroupTitle(ShortcutGroup.Application));
     }
 
+    /// <summary>[Exit · inceleme K3] Esc'in cümlesi zincirin gerçek sırasını söyler: Exit'in onay kartı dialogların da üstündedir ve önce o
+    /// kapanır (<see cref="KeyboardShortcuts.ResolveEsc"/>). About → Shortcuts bu cümleyi gösterir.
+    /// <para>KIRMIZI (düzeltmeden önce): cümle "dialog → popover/menu → selection" diyordu.</para></summary>
+    [Fact]
+    public void The_escape_sentence_names_the_exit_card_first()
+    {
+        Assert.Equal("Close the topmost layer: exit card → dialog → popover/menu → selection; otherwise stop the running build",
+            ShortcutCatalog.Get(ShortcutId.Escape).Description);
+    }
+
     [Fact]
     public void Get_returns_exactly_one_entry_per_id()
     {

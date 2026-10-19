@@ -103,18 +103,8 @@ public static class MemoryLine
     /// "açılamadı" diye düşmez. Çıkış kodu <c>STILL_ACTIVE</c>'ten (259) farklıysa süreç yoktur. 259 koduyla çıkmış bir süreç çalışıyor
     /// görünür ve bu eski sayıyı verir — kabul edilen ve zararsız (MB'ye yuvarlanınca 0) tek sınır.</para>
     /// </summary>
-    public static long? PrivateBytesOf(int processId)
-    {
-        // PID bir DWORD'dür: eksi bir numara hiçbir sürece ait olamaz ve OpenProcess onu (ERROR_INVALID_PARAMETER ile) reddeder.
-        nint handle = NativeMethods.OpenProcess(NativeMethods.PROCESS_QUERY_LIMITED_INFORMATION, false, unchecked((uint)processId));
-        if (handle == nint.Zero) return null;
-        try
-        {
-            if (!NativeMethods.GetExitCodeProcess(handle, out uint exitCode) || exitCode != NativeMethods.STILL_ACTIVE) return null;
-            return PrivateUsageOf(handle);
-        }
-        finally { NativeMethods.CloseHandle(handle); }
-    }
+    public static long? PrivateBytesOf(int processId) =>
+        LiveProcess.Read(processId, static handle => PrivateUsageOf(handle), gone: (long?)null); // açma + çıkış sorusu tek yerde
 
     /// <summary>Verilen tutamaçtaki sürecin özel baytları (<c>PrivateUsage</c> = commit charge); okunamazsa <c>null</c>. Kaynak
     /// guard'ının izin verdiği TEK <c>GetProcessMemoryInfo</c> çağrısı burasıdır.</summary>

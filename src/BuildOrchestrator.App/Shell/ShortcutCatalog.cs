@@ -94,7 +94,7 @@ public static class ShortcutCatalog
         new(ShortcutId.About, GesturesFor(WindowIntent.ShowAbout),
             "About — version, shortcuts and diagnostics", ShortcutGroup.Application),
         new(ShortcutId.Escape, GesturesFor(WindowIntent.Escape),
-            "Close the topmost layer: dialog → popover/menu → selection; otherwise stop the running build",
+            "Close the topmost layer: exit card → dialog → popover/menu → selection; otherwise stop the running build",
             ShortcutGroup.Application),
         // [Exit] Bu cümle AYNI ZAMANDA title bar'daki Exit butonunun tooltip'idir (MainWindow.Exit.cs) — iki yerde yazılmaz.
         new(ShortcutId.Exit, GesturesFor(WindowIntent.Exit),
