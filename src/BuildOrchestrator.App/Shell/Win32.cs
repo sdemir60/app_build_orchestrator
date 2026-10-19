@@ -11,6 +11,17 @@ internal static class Win32
     // --- pencere mesajları (WndProc hook'unun tanıdıkları)
     public const int WM_HOTKEY = 0x0312;
 
+    /// <summary>[kullanıcı kararı 2026-10-19] Etkin olmayan pencereye fareyle basıldı — Windows bunu pencereyi etkinleştirmeden ÖNCE
+    /// gönderir, tıkı en son teslim eder. <c>lParam</c>: düşük söz isabet kodu (<see cref="HTCLIENT"/>), yüksek söz basışın fare mesajı
+    /// (<see cref="WM_LBUTTONDOWN"/> — sol el ayarında da mantıksal sol tuş).</summary>
+    public const int WM_MOUSEACTIVATE = 0x0021;
+
+    /// <summary>İsabet kodu: istemci alanı (title bar değil).</summary>
+    public const int HTCLIENT = 1;
+
+    /// <summary>Sol tuş basıldı (istemci alanı).</summary>
+    public const int WM_LBUTTONDOWN = 0x0201;
+
     /// <summary>Yatay tekerlek / precision touchpad'in iki parmakla yatay kaydırması. WPF bu mesajı HİÇ
     /// dağıtmaz (yalnız <c>WM_MOUSEWHEEL</c> bir routed event'e çevrilir), bu yüzden yatay kaydırma
     /// uygulamanın kendi hook'undan geçer — bkz. <see cref="Controls.HorizontalWheelScroll"/>.</summary>

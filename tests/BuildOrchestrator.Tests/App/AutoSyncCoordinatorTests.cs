@@ -247,6 +247,20 @@ public sealed class AutoSyncCoordinatorTests
         Assert.Empty(h.Port.BranchChanges);
     }
 
+    /// <summary>[kullanıcı kararı 2026-10-19] Pencereyi öne getiren tık kendi tazelemesini yapan bir komuta indiyse (Build diski baştan
+    /// planlar; Debug|Release kendi Sync'ini başlatır) dönüş eşik geçmiş olsa da Sync'lemez ve tetik saklanmaz — tazelemeyi tık kendisi
+    /// yapar. Windows tıkı pencereyi etkinleştirdikten SONRA teslim eder; dönüşün Sync'i tıkın indiği düğmeyi altından kapatırdı.</summary>
+    [Fact]
+    public async Task Activation_by_a_click_that_refreshes_on_its_own_does_not_sync()
+    {
+        var h = Harness.SyncedOnMain();
+
+        await h.Coordinator.WindowActivatedAsync(clickRefreshes: true);
+
+        Assert.Equal(0, h.Port.SyncCount);
+        Assert.Null(h.Coordinator.PendingTrigger);
+    }
+
     /// <summary>Aracın kendi checkout'u: checkout + onun BranchChange Sync'i uçuştayken izleyici de tetikler; Sync
     /// yeni HEAD'i ölçer ve bekleyen tetik atlanır — tek Sync (spec §6.1 "çift Sync yok").</summary>
     [Fact]

@@ -11,6 +11,7 @@ using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 
@@ -553,5 +554,38 @@ internal static class MainWindowHost
         if (VisualTreeHelper.GetParent(content) is FrameworkElement presenter) presenter.Measure(new Size(width, height));
         content.DataContext = context;
         return DsResources.Realize(DsResources.NewHost(), content, width, height);
+    }
+
+    /// <summary>[perf Faz A · temizlik 2b] Kabuğun alt çubuğu: ağaçtaki TEK örnek. Chip'lerini <c>Loaded</c>'da kurduğu için headless
+    /// ağaçta chip'siz durur (bkz. <see cref="WithLoadedActionBar"/>).</summary>
+    public static ActionBar ActionBarOf(MainWindow window)
+    {
+        ArgumentNullException.ThrowIfNull(window);
+        return DsResources.Descendants(window.Shell).OfType<ActionBar>().Single();
+    }
+
+    /// <summary>
+    /// [perf Faz A · temizlik 2b] Alt çubuk testlerinin TEK girişi: kabuk içeriğini ekran dışı gerçek bir pencereye taşır
+    /// (<see cref="HostOffscreen"/>), çubuğun yüklenmesini bekler (chip'ler ve Build düğmesinin komutu <c>Loaded</c>'da kurulur), gövdeyi
+    /// çalıştırır ve pencereyi — gövdedeki bir iddia patlasa da — kapatır. <c>Loaded</c> ÖNCESİNİ de sınayan test
+    /// (<see cref="HiddenSurfaceTests.An_action_bar_that_starts_hidden_builds_its_chips_once_from_the_current_counters_on_first_show"/>)
+    /// çubuğu önce <see cref="ActionBarOf"/> ile alır, gizli işaretler ve ancak sonra buraya girer; gövdeye gelen çubuk o örnektir.
+    /// [kullanıcı kararı 2026-10-19] <c>HiddenSurfaceTests</c>'ten buraya taşındı: pencereye tıkla dönüş testleri
+    /// (<c>WindowReturnClickTests</c>) de yüklenmiş çubuk ister.
+    /// </summary>
+    public static void WithLoadedActionBar(MainWindow window, Action<Window, ActionBar> body)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+        var host = HostOffscreen(window);
+        try
+        {
+            var bar = ActionBarOf(window);
+            DispatcherPump.PumpUntil(() => bar.IsLoaded, TimeSpan.FromSeconds(5)); // chip'ler Loaded'da kurulur
+            body(host, bar);
+        }
+        finally
+        {
+            host.Close();
+        }
     }
 }
