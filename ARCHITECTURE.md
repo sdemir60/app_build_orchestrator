@@ -6800,8 +6800,8 @@ test is about it: the one that pins it on a window (`RunBufferReleaseTests`), th
 
 Process-control tests are deterministic by contract: they wait on handles and completion ports, never on
 elapsed time. The cascade-kill bound is measured, not assumed, and so is the full exit of §12.3: against a real
-engine and real `MSBuild.exe` children, an exit confirmed mid-build terminates the in-flight projects, hears the
-engine's answer well inside the exit's stop wait and leaves no Supervisor or MSBuild process behind
+engine and real `MSBuild.exe` children, an exit confirmed mid-build terminates the in-flight projects, closes on the
+engine's own answer and leaves no Supervisor or MSBuild process behind
 (`SafeExitProcessTests`). Scheduler tests assert dispatch *sequences*, not just outcomes.
 
 The resource strip's measurement (§11.5) is tested the same way. The Win32 reads run against real jobs and real
