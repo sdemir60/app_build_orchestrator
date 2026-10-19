@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using BuildOrchestrator.App.Services;
 
 namespace BuildOrchestrator.App.Spikes;
 
@@ -82,7 +83,7 @@ public partial class FontAbWindow : Window
         // 13px SemiBold ayrışma örneği + 12px mono tabular metrik satırı.
         panel.Children.Add(new TextBlock
         {
-            Text = "Build Orchestrator — OSYS workspace",
+            Text = AppIdentity.Product + " — OSYS workspace",
             FontFamily = Sans,
             FontSize = 13,
             FontWeight = FontWeights.SemiBold,

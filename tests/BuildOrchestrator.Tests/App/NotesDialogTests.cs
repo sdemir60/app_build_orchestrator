@@ -141,11 +141,11 @@ public class NotesDialogTests
         {
             var texts = VisibleTexts(dialog);
             Assert.Contains("What's new", texts);
-            Assert.Contains("Release notes for Build Orchestrator.", texts);
+            string subtitleText = $"Release notes for {AppIdentity.Product}."; // ad testte de yazılmaz, kimlikten (AppIdentityTests)
+            Assert.Contains(subtitleText, texts);
 
             var title = DsResources.Descendants(dialog).OfType<TextBlock>().Single(t => t.Text == "What's new");
-            var subtitle = DsResources.Descendants(dialog).OfType<TextBlock>()
-                .Single(t => t.Text == "Release notes for Build Orchestrator.");
+            var subtitle = DsResources.Descendants(dialog).OfType<TextBlock>().Single(t => t.Text == subtitleText);
             Assert.Equal(3.0, subtitle.Margin.Top);
             Assert.Same(dialog.FindResource("Ds.Heading.Md"), title.Style); // başlık kimliği ortak stildir (kopya YASAK)
 
