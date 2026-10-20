@@ -6,7 +6,8 @@ namespace BuildOrchestrator.Tests.App;
 /// <summary>Kullanıcı dokümanları iki dillidir: İngilizce esas, Türkçe aynası aynı klasörde <c>.tr.md</c> ekiyle durur
 /// (README, docs/FEATURES, docs/WHY). Ayna sessizce geri kalmasın diye bölüm sayıları eşit tutulur; WHY, FEATURES'ın
 /// kazanım olan maddelerini aynı başlık ve aynı sırayla taşır; dokümanlar arası göreli linkler var olan dosyaya gider.
-/// <para>Bölüm = kod bloğu dışındaki <c>## </c> satırı. FEATURES ve WHY'da her bölüm bir maddedir.</para></summary>
+/// <para>Bölüm = kod bloğu dışındaki <c>## </c> satırı. FEATURES ve WHY'da her bölüm bir maddedir.</para>
+/// <para>Repo herkese açıktır: dokümanlar aracın ilk yazıldığı iç ürünün adını taşımaz, örnekler nötrdür (Acme).</para></summary>
 public class DocumentationTests
 {
     public static TheoryData<string, string> MirroredPairs => new()
@@ -16,14 +17,34 @@ public class DocumentationTests
         { "docs/WHY.md", "docs/WHY.tr.md" },
     };
 
-    /// <summary>Göreli linkleri denetlenen dokümanlar: iki dilli çiftler + yalnız İngilizce kılavuz.</summary>
-    public static TheoryData<string> LinkedDocuments => new()
-    {
+    /// <summary>Kullanıcı dokümanları: iki dilli çiftler + yalnız İngilizce kılavuz.</summary>
+    private static readonly string[] UserDocuments =
+    [
         "README.md", "README.tr.md",
         "docs/FEATURES.md", "docs/FEATURES.tr.md",
         "docs/WHY.md", "docs/WHY.tr.md",
         "docs/USER-GUIDE.md",
-    };
+    ];
+
+    /// <summary>Göreli linkleri denetlenen dokümanlar.</summary>
+    public static TheoryData<string> LinkedDocuments => Data(UserDocuments);
+
+    /// <summary>Repo'da herkese açık duran bütün dokümanlar: kullanıcı dokümanları + teknik referans, sürüm notları
+    /// (uygulamaya da gömülür) ve çalışma kuralları. <c>.claude/</c> kayıtları tarihseldir, burada değildir.</summary>
+    public static TheoryData<string> PublicDocuments => Data([.. UserDocuments, "ARCHITECTURE.md", "CHANGELOG.md", "CLAUDE.md"]);
+
+    /// <summary>Herkese açık dokümanlarda iç ürünün adı geçmez; örnek gerekiyorsa nötr bir ad kullanılır. Desen, kodu
+    /// bağlayan guard'ınkiyle aynıdır (<see cref="NoProductNameInCodeTests.ProductNameInIdentifier"/>).</summary>
+    [Theory, MemberData(nameof(PublicDocuments))]
+    public void Public_documents_do_not_name_the_internal_product(string document)
+    {
+        var hits = Read(document).Split('\n')
+            .Select((line, index) => (line: line.TrimEnd('\r'), number: index + 1))
+            .Where(x => NoProductNameInCodeTests.ProductNameInIdentifier.IsMatch(x.line))
+            .Select(x => $"{document}:{x.number}: {x.line.Trim()}")
+            .ToList();
+        Assert.Empty(hits);
+    }
 
     [Theory, MemberData(nameof(MirroredPairs))]
     public void The_Turkish_mirror_has_as_many_sections_as_the_English_document(string english, string turkish)
@@ -63,6 +84,13 @@ public class DocumentationTests
             .Where(target => !File.Exists(Path.Combine(folder, target)) && !Directory.Exists(Path.Combine(folder, target)))
             .ToList();
         Assert.Empty(broken);
+    }
+
+    private static TheoryData<string> Data(IEnumerable<string> documents)
+    {
+        var data = new TheoryData<string>();
+        foreach (string document in documents) data.Add(document);
+        return data;
     }
 
     private static string Read(string document) =>

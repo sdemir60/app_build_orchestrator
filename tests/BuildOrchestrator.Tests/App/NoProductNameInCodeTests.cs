@@ -14,8 +14,9 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 public class NoProductNameInCodeTests
 {
-    /// <summary>Tanımlayıcı sınırı içinde (case-insensitive) "osys" geçen HERHANGİ bir kelime.</summary>
-    private static readonly Regex ProductNameInIdentifier = new(@"\b\w*osys\w*\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    /// <summary>Tanımlayıcı sınırı içinde (case-insensitive) "osys" geçen HERHANGİ bir kelime. Ürün adının TEK
+    /// tanımı: herkese açık dokümanları bağlayan guard da bunu kullanır (<see cref="DocumentationTests"/>).</summary>
+    internal static readonly Regex ProductNameInIdentifier = new(@"\b\w*osys\w*\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     [Fact]
     public void No_identifier_in_src_carries_the_product_name()
