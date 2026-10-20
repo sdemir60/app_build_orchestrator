@@ -7,7 +7,10 @@
 | Doküman | Ne için |
 |---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | **Teknik referans.** Mimari, process topolojisi, IPC, incremental karar, build motoru, git yüzeyi, UI, design system, güven sınırı, bilinçli kararlar, bilinen sınırlar. |
-| [README.md](README.md) | Giriş: ne yapar, gereksinimler, kurulum, build/test/run, paketleme ve yayın, kullanım, güncelleme, kısayollar. |
+| [README.md](README.md) | Vitrin: kısa tanım, ekran görüntüleri (`docs/images/`), öne çıkanlar, hızlı başlangıç, geliştirici komutları, doküman haritası. |
+| [docs/FEATURES.md](docs/FEATURES.md) | Özellik kataloğu: her özellik önem sırasıyla, **What / How** + teknoloji etiketleri. |
+| [docs/WHY.md](docs/WHY.md) | Kazanımlar: FEATURES'ın kazanım olan maddeleri, aynı başlık ve sırayla, **Goal / Common practice / In Build Orchestrator**. |
+| [docs/USER-GUIDE.md](docs/USER-GUIDE.md) | Kullanım kılavuzu: gereksinim, kurulum, ekran ekran kullanım, kısayollar, güncelleme, diskte durum, performans modları, bilinen sınırlar. |
 | [CHANGELOG.md](CHANGELOG.md) | Sürüm notları — What's new ekranının TEK kaynağı (exe'ye gömülür). Yalnız sürüm çıkarılırken yazılır. |
 
 **Bir kusur veya davranış sorusu geldiğinde önce bunları oku.** ARCHITECTURE.md §22 kod haritasıdır (hangi
@@ -61,8 +64,10 @@ Solution: `BuildOrchestrator.slnx` (kökte).
 
 - Yanıtları **Türkçe** ver, teknik terimleri İngilizce bırak. Sade yaz; sadece koddaki gerçeğe dayan, emin
   olmadığını yazma.
-- **Kod, UI metinleri ve loglar İngilizce**; kod yorumları ve `.claude/` kayıtları Türkçe. README.md ve
-  ARCHITECTURE.md İngilizce.
+- **Kod, UI metinleri ve loglar İngilizce**; kod yorumları ve `.claude/` kayıtları Türkçe. ARCHITECTURE.md ve
+  docs/USER-GUIDE.md yalnız İngilizce. README.md, docs/FEATURES.md ve docs/WHY.md İngilizce esastır; Türkçe
+  aynaları (`.tr.md`, aynı klasörde) **aynı işte** güncellenir, uyuşmazlıkta İngilizce doğrudur. Bölüm sayısı,
+  karşılıklı dil linki ve WHY ⊂ FEATURES sırası `DocumentationTests` ile pinlidir.
 
 ## Build / test
 
@@ -120,9 +125,15 @@ kadarki tüm değişiklikler dokümanlara işlenir.
 
 - **Anlatı üslubu korunur.** Doküman projeyi ANLATIR; "şu oturumda şunu ekledik / eskiden böyleydi" YAZILMAZ.
   Değişen davranış ilgili bölümde **yerinde yeniden yazılır** — doküman changelog biriktirmez.
-- **Yer:** teknik/mimari/tasarım/güven sınırı → ARCHITECTURE.md · kullanım/komut/gereksinim/kısayol →
-  README.md · çalışma kuralı → CLAUDE.md. README özetler, ARCHITECTURE ayrıntılandırır; aynı şey iki yerde
-  ayrıntısıyla tekrarlanmaz.
+- **Yer:** teknik/mimari/tasarım/güven sınırı → ARCHITECTURE.md · kullanım/ekran/kısayol/gereksinim/kurulum →
+  docs/USER-GUIDE.md · yeni ya da değişen özellik → docs/FEATURES.md (kazanımı varsa docs/WHY.md'ye de, aynı
+  başlık ve sırayla) · vitrin ve hızlı başlangıç → README.md · çalışma kuralı → CLAUDE.md. README özetler,
+  FEATURES listeler, USER-GUIDE ve ARCHITECTURE ayrıntılandırır; aynı şey iki yerde ayrıntısıyla tekrarlanmaz.
+- **FEATURES / WHY kalıbı:** madde başlığı ≤5 kelime; FEATURES'ta `**What:**` + `**How:**`, WHY'da `**Goal:**` +
+  `**Common practice:**` + `**In Build Orchestrator:**` (TR: Ne yapar / Nasıl; Amaç / Yaygın pratik / Build
+  Orchestrator'da), ardından 2-4 etiket (teknoloji + ne için). Common practice satırı genel resimdir — kişiye,
+  ekibe ya da belirli bir script'e atıf yapmaz; WHY'ın üçüncü satırı mekanizma değil kullanıcının yaşadığı
+  sonuçtur. Rakam ve iç ad (müşteri/ürün adı) yazılmaz.
 - **Her iddia kodda doğrulanır.** Doğru ifadeye dokunma; emin olamadığını sor.
 - **Rakam gömme:** bayatlayacak sayı (test sayısı, sha) yazma; dayanıklı dil kullan.
 - `.claude/outputs/` ve `.claude/summaries/` **tarihseldir** — geriye dönük düzeltilmez.
