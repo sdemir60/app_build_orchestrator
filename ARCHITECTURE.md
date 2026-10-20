@@ -3416,7 +3416,13 @@ group, nor the pill's coming and going moves it. The other end, ahead of the cap
 buttons, opens with the **update pill** and a hairline of its own (§13.3), then carries the window's application
 commands in decreasing order of use: the three view-mode toggles, a hairline, then the gear (Settings), the
 sparkle (What's new) and the `i` (About), and last, behind a hairline of its own, the *Exit* power button that quits
-the application (§12.3, §13.3). All three hairlines are one style. The cluster is docked right, so the pill
+the application (§12.3, §13.3). All three hairlines are one style. Every icon in the cluster is drawn in the same
+16 px box, *Exit* included. Neighbouring items stand 1 px apart and each hairline keeps 8 px on either side, so it stands
+9 px from the buttons beside it and the groups read as groups. The design writes a 2 px gap; at 2 px the cluster
+would come within 1 px of the resource strip in the narrowest window with the pill showing, and the strip never comes
+closer to the cluster than a hairline stands from its buttons. WPF's `StackPanel` has no gap, so the cluster and the pill's slot are a
+`GapStackPanel`, whose gap goes only between shown children and is a whole number of device pixels at every scale: a
+hidden pill leaves no gap behind, and the icons do not shift by a pixel when it arrives. The cluster is docked right, so the pill
 grows into the empty space on its left: the icons keep their distance from the window's right edge whether the
 pill is there or not. The pill shows only while a downloaded update is ready to install (§12.5); the application
 starts with no offer, so it is absent until one arrives. It is neutral (no amber, the title bar's rule), and it
@@ -4443,7 +4449,7 @@ at the window's tunnelling key event, before any shortcut binding sees it — an
 **The exit card** is the title bar's second popover (`ExitCard`, on the same base as the update card), opened by the
 *Exit* button or `Ctrl+Q` while work is in flight (§12.3); with nothing in flight both close the application at once
 and no card appears. The button ends the right cluster: a small icon button (22 px, radius 4) drawing Lucide *power*
-at 13 px and 1.7, `text-secondary` at rest and `surface-raised` with `text-primary` on hover. While the card is open it
+at 16 px — the box its neighbours use — and 1.7, `text-secondary` at rest and `surface-raised` with `text-primary` on hover. While the card is open it
 sits on `surface-overlay` in `text-primary` — not the icon button's amber active state: the title bar carries no amber
 besides the mark — and its tooltip is off; otherwise the tooltip is `Exit — quit and end every process (Ctrl+Q)`, the
 shortcut catalog's sentence and gesture, opening below. The card hangs 9 px below the button with its *right* edge on
@@ -5786,6 +5792,7 @@ styles, and `Controls/` holds the custom elements that a template cannot express
 | Kbd · ProgressBar · Popover · Dialog · Focus visual | Styles over stock elements. A focus ring is a rectangle pushed outside its element by `-(offset + stroke/2)` and rounded by the same amount so it follows the corner — arithmetic XAML cannot do, so `DsChrome.FocusRingOffset` derives both. Its default is `NaN`, not zero: zero is a real offset (the input's ring hugs the edge with no gap) and WPF skips a property's change callback when the assigned value equals the default, which would leave that ring flat against the box and square-cornered |
 | Status glyph · building spinner · status dot | Custom controls drawing rings and dots — the spinner is the glyph's dashed ring, rotating, so the dash pattern has one source and is converted to WPF's stroke-relative unit per stroke width. Rotation is the *only* thing that moves there: the glyph itself holds no animation clock, so it is not a motion owner and carries no motion seam |
 | Tracked text | Custom element for letter-spaced caps labels (§14.2) |
+| Gap stack | A panel for the design's CSS `gap`, which `StackPanel` lacks: one row (or column) with a fixed gap between shown children only, a whole number of device pixels under layout rounding (§12.4) |
 
 The action bar's chip, secondary-button, icon-button and segment-item styles each carry a `Ds.Bar.*` sibling
 (`Ds.Bar.Chip`, `Ds.Bar.Chip.Action`, `Ds.Bar.Button.Secondary.Sm`, `Ds.Bar.IconButton`, `Ds.Bar.Segment.Item`) —
@@ -6171,15 +6178,15 @@ brush. The mapping lives in one place so the two menus cannot drift; the ⋯ tha
 the same family of filled marks as the drag grip. The application icon is a multi-size ICO with the 16 and 24 px rasters hand-corrected;
 carets and chevrons are drawn, not typed.
 
-Two icons have no literal counterpart in the design source and are marked *derived* in the dictionary, with
-the reasoning written beside them: the caption restore glyph, and the `info` circle in the title bar. Both are
-drawn on the same grid and at the same stroke weight as the neighbour they sit next to — the info icon shares
-`Icon.Gear`'s 1.7 px so the two buttons carry equal optical weight. The What's new icon between them (a
-four-point star, keyed `Icon.WhatsNew` rather than the design's own name for it — that name collides with an
-unrelated source guard protecting the event stream's own celebration vocabulary) is drawn at the same 1.7 px
-for the same reason, and so is the *Exit* button's Lucide *power* at the end of the cluster; all four title-bar icon
-buttons read as one family. The power icon's stem stands on x = 12, which in its 13 px box falls on a pixel centre at
-100 % rather than splitting across two half-lit columns.
+One icon has no literal counterpart in the design source and is marked *derived* in the dictionary, with the
+reasoning written beside it: the caption restore glyph, drawn on the same grid and at the same stroke weight as the
+caption glyphs beside it. The title bar's `info` icon is the design's own: an r = 9 ring with a short stem and a dot,
+the same ring as the update pill's and the *Exit* button's *power*. It shares `Icon.Gear`'s 1.7 px so the two
+buttons carry equal optical weight. The What's new icon between them (a four-point star, keyed `Icon.WhatsNew`
+rather than the design's own name for it — that name collides with an unrelated source guard protecting the event
+stream's own celebration vocabulary) is drawn at the same 1.7 px for the same reason, and so is the *Exit* button's
+Lucide *power* at the end of the cluster. All four sit in the same 16 px box as the layout toggles, so the title-bar
+icon buttons read as one family.
 
 The discovery blocks and the empty views (§13.2) are the one place an icon is drawn large, and each panel has one
 picture for both: Lucide *network* for the graph and *list* for the project list, 28 px, a 1.4 stroke, `text-faint`
@@ -6189,8 +6196,8 @@ every other icon. The list icon is keyed `Icon.ListLines`, so it cannot be mista
 selector's `Icon.LayList`.
 
 The update pill (§12.4) draws Lucide *circle-arrow-up* (`Icon.UpdateReady`) at 13 px in the pill's text colour and
-the title bar's 1.7 weight. Its ring is r = 9, as the design draws it — the design calls it the same circle as the
-`info` icon, but the derived `info` circle is r = 10 and the pill follows the design. The card's version change
+the title bar's 1.7 weight. Its ring is r = 9 — the same circle as the `info` icon's, as the design draws both. The
+card's version change
 uses *arrow-right* (`Icon.ArrowRight`, 1.8), and its *Restart to update* button reuses `Icon.Rebuild`, the
 rotate-cw of the Build menu family, rather than a second copy of the same geometry.
 
@@ -7575,6 +7582,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Updater seam and its Velopack implementation — installed or not, check, download, the download size (deltas or full), install at exit of the offered version only | `App/Services/Updates/IAppUpdater.cs`, `VelopackUpdater.cs` |
 | Update feed — GitHub Releases of this repository, `BO_UPDATE_SOURCE`, `BO_UPDATE_PRERELEASE` | `App/Services/Updates/UpdateFeed.cs` |
 | Update surface of the view model — the current offer, the Restart lock and its order, the Restart request and its gate | `App/ViewModels/RunViewModel.Update.cs`, texts `App/ViewModels/UpdateText.cs`; the lock's task bucket reads the workspace work from `RunViewModel.Workspace.cs` (`NonSyncWorkspaceBusy`, the list `WorkspaceBusy` also reads); re-evaluated from `RunViewModel.Workspace.cs` (`OnWorkspaceBusyChanged`) and `RunViewModel.Stream.cs` (`runStarted`) |
+| Title bar right cluster spacing — one 16 px icon box, the 1 px gap between items (a hidden pill leaves none), the hairline's 8 px sides | `App/MainWindow.xaml` (`TitleBarClusterGap`, `TitleBarSeparator`), `App/Controls/GapStackPanel.cs` |
 | Title bar update pill — the first element of the right cluster, its shared hairline style, visibility, version and name from the offer, the entrance; the card's popup and its placement below the pill's left edge (custom, independent of the Windows handedness setting), its close paths (dialogs, the Esc popover layer, the Restart request) | `App/MainWindow.UpdatePill.cs` (`UpdateCardGap`), `App/Controls/PopoverPlacement.cs`, `App/MainWindow.xaml` (`UpdatePillSlot`, `UpdatePopup`, `TitleBarSeparator`), `App/MainWindow.xaml.cs` (`AnyPopoverOpen`, `CloseAllPopovers`), `App/Resources/Controls.xaml` (`Ds.UpdatePill`) |
 | The resource strip in the window — the sampler built over the outer job and the engine PID, the one rule that runs it (window loaded, surface not hidden, not minimized; re-asked from `Loaded`, the hidden-surface signal and `WindowState`), the stop at close, and the caption gestures the strip forwards (drag, double-click maximize and restore, the system menu and its DIP anchor) with their test seams | `App/MainWindow.ResourceStrip.cs` (`SetupResourceStrip`, `ShouldSampleResources`, `RefreshResourceSampler`, `StopResourceStrip`, `SystemMenuAnchor`), `App/MainWindow.HiddenSurface.cs` (`SetSurfaceHidden`), `App/MainWindow.xaml.cs` (`OnClosed`), `App/Shell/Win32.cs` (the native caption press: `WM_NCLBUTTONDOWN`, `HTCAPTION`, `ReleaseCapture`, `SendMessage`, `GetMessagePos`); the title bar `Grid` in `App/MainWindow.xaml` |
 | Restart request → the closing screen's restart mode as the topmost layer; the full exit when its bar fills; keyboard and global hotkeys suspended while the closing screen shows | `App/MainWindow.UpdateRestart.cs` (`OnRestartToUpdateRequested`, `OnClosingScreenFilled`, `InputSuspended`, `OnPreviewKeyDown`), `App/MainWindow.xaml` (`ClosingOverlay`), `App/MainWindow.xaml.cs` (`OnGlobalHotkey`) |

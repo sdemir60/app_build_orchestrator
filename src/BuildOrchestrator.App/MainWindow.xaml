@@ -6,6 +6,7 @@
         xmlns:views="clr-namespace:BuildOrchestrator.App.Views"
         xmlns:services="clr-namespace:BuildOrchestrator.App.Services"
         xmlns:vm="clr-namespace:BuildOrchestrator.App.ViewModels"
+        xmlns:sys="clr-namespace:System;assembly=System.Runtime"
         Title="{x:Static services:AppIdentity.Product}" Width="1400" Height="800" WindowState="Maximized"
         MinWidth="{DynamicResource Size.WindowMinWidth}" MinHeight="{DynamicResource Size.WindowMinHeight}"
         WindowStyle="SingleBorderWindow"
@@ -58,13 +59,18 @@
       <Setter Property="StrokeEndLineCap" Value="Round" />
       <Setter Property="StrokeLineJoin" Value="Round" />
     </Style>
-    <!-- [design v1.23.0 §2.12] Title bar'ın sağ kümesindeki 1×14 dikey ayraç (border, yatay 5px) — TEK tanım: layout
+    <!-- Title bar'ın sağ kümesinde (ve güncelleme hapının slotunda) iki komşu öğe arasındaki boşluk. TEK tanım: iki GapStackPanel de
+         bunu okur. Prototipin kümedeki `gap: 2`'si değil 1: 2 px, 8'lik ayraç kenarıyla birlikte en dar pencerede (1240) güncelleme hapı
+         görünürken kümeyi ortadaki kaynak şeridine 1 px yaklaştırıyordu (ölçüldü; 1'de pay 11 px). -->
+    <sys:Double x:Key="TitleBarClusterGap">1</sys:Double>
+    <!-- [design v1.23.0 §2.12] Title bar'ın sağ kümesindeki 1×14 dikey ayraç (border, yatay 8px) — TEK tanım: layout
          ikonlarını dişliden ayıran ayraç ve güncelleme hapının arkasındaki ayraç aynı stildir (tasarım: "mevcut
-         ayraçla aynı"). -->
+         ayraçla aynı"). Kümenin 1'lik boşluğuyla birlikte ayraç iki yanındaki düğmeden 9 px uzakta durur; prototipin 5'i
+         kullanıcı isteğiyle açıldı (2026-10-20: ayraç yanı ikon arasından yalnız 1 px fazlaydı, gruplar ayrılmıyordu). -->
     <Style x:Key="TitleBarSeparator" TargetType="Rectangle">
       <Setter Property="Width" Value="1" />
       <Setter Property="Height" Value="14" />
-      <Setter Property="Margin" Value="5,0" />
+      <Setter Property="Margin" Value="8,0" />
       <Setter Property="VerticalAlignment" Value="Center" />
       <Setter Property="Fill" Value="{DynamicResource Brush.Border}" />
     </Style>
@@ -103,15 +109,17 @@
             </StackPanel>
 
             <!-- [design v1.23.0 §2.1] Sağ küme: güncelleme hapı + ayraç · layout seçici (quad/list/focus) + ayraç · gear,
-                 What's new, About. Küme sağa dock'ludur: başa eklenen öğe SOLA doğru büyür, sağdaki ikonlar kaymaz. -->
-            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center"
-                        WindowChrome.IsHitTestVisibleInChrome="True" Margin="0,0,8,0">
+                 What's new, About. Küme sağa dock'ludur: başa eklenen öğe SOLA doğru büyür, sağdaki ikonlar kaymaz. Öğeler
+                 arasında 1 px (TitleBarClusterGap); gizli hap boşluk doğurmaz. -->
+            <controls:GapStackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center"
+                                    Gap="{StaticResource TitleBarClusterGap}"
+                                    WindowChrome.IsHitTestVisibleInChrome="True" Margin="0,0,8,0">
               <!-- [design v1.23.0 §2.12] GÜNCELLEME HAPI — kümenin BAŞI, arkasında mevcut ayraçla aynı ayraç; ikisi
                    BİRLİKTE girer (PopIn.PlayEntrance), bu yüzden tek kaptadır. Görünürlük ve metin teklifin tek
                    yerinden (RunViewModel.AvailableUpdate) MainWindow.UpdatePill.cs'te sürülür; başlangıçta Collapsed.
                    Hap yalnız kuruluma hazır bir teklif varken görünür. Amber YOK. -->
-              <StackPanel x:Name="UpdatePillSlot" Orientation="Horizontal" VerticalAlignment="Center"
-                          Visibility="Collapsed">
+              <controls:GapStackPanel x:Name="UpdatePillSlot" Orientation="Horizontal" VerticalAlignment="Center"
+                                      Gap="{StaticResource TitleBarClusterGap}" Visibility="Collapsed">
                 <Grid VerticalAlignment="Center">
                   <controls:PopupToggleButton x:Name="UpdatePill" Style="{DynamicResource Ds.UpdatePill}"
                                               VerticalAlignment="Center">
@@ -147,7 +155,7 @@
                   </Popup>
                 </Grid>
                 <Rectangle x:Name="UpdatePillSeparator" Style="{StaticResource TitleBarSeparator}" />
-              </StackPanel>
+              </controls:GapStackPanel>
               <ToggleButton x:Name="LayQuadButton" Style="{DynamicResource Ds.IconButton.Toggle}" Click="OnLayoutQuad"
                             AutomationProperties.Name="Default layout — graph + list · console + stream (splits reset)">
                 <ToggleButton.ToolTip>
@@ -240,8 +248,9 @@
               <Grid x:Name="ExitSlot" VerticalAlignment="Center">
                 <Button x:Name="ExitButton" Style="{DynamicResource Ds.IconButton.Open}" Click="OnExitButtonClick"
                         AutomationProperties.Name="{x:Static local:AccessibilityNames.Exit}">
-                  <!-- Lucide power 13px, kalınlık 1.7 (ⓘ ile aynı); kontur butonun Foreground'u. -->
-                  <Viewbox Width="13" Height="13">
+                  <!-- Lucide power 16px — dişli ve ⓘ ile aynı kutu (tasarımın 13'ünde komşularından küçük kalıyordu) —, kalınlık 1.7
+                       (ⓘ ile aynı); kontur butonun Foreground'u. -->
+                  <Viewbox Width="16" Height="16">
                     <Canvas Width="24" Height="24">
                       <Path Style="{StaticResource TitleBarIcon}" Data="{DynamicResource Icon.Power}"
                             StrokeThickness="{DynamicResource Icon.Power.StrokeThickness}" />
@@ -262,7 +271,7 @@
                   </Border>
                 </Popup>
               </Grid>
-            </StackPanel>
+            </controls:GapStackPanel>
 
             <!-- [design-v1.2.1 §2.1] LOGO KİLİDİ (sürükleme alanı — hit-test-visible DEĞİL):
                  ürün markası (19px, tam renk) → ürün adı → 1×13 ayraç → firma logosu (10px, %55). [v1.11.0]
