@@ -238,8 +238,9 @@ or `Esc`, while a stop is already draining — one the user asked for, or the in
 press of a run is the polite request, and a press during a drain says the user would rather not wait, which is
 honoured. And the user confirms a full exit of the application while a run is in flight (§12.3): someone who is leaving
 does not wait for a drain, so the exit sends the hard stop itself — at once, or over a drain already under way. It goes
-out once: after it the Stop button is disabled, a further press or `Esc` does nothing, and an exit that finds it already
-sent sends nothing more.
+out once: after it the Stop button is disabled and a further press does nothing, a further `Esc` leaves the run alone —
+with nothing left to stop it closes the window the way `X` does (§13.7) — and an exit that finds it already sent sends
+nothing more.
 
 The choice between them is not about the wait — it is about how much work a stop throws away. A drained
 project *succeeds*, so its `BuildState` is persisted and the next Build skips it as up to date. A terminated
@@ -3188,8 +3189,9 @@ distinct exit code is then all that sets this case apart from the silent one. Th
 switch from `ui-state.json` itself, since it never builds a window or a view model.
 
 **What closing the window does is the user's setting** — *Close to tray* under Settings → General (§13.3), on
-by default. `X`, `Alt+F4` and the system menu's *Close* all arrive at the window's one `Closing` handler, and a
-pure rule (`WindowCloseRule`) decides; the window only applies the answer. With the switch on, the close is
+by default. `X`, `Alt+F4`, the system menu's *Close* and an `Esc` that has nothing left to close or stop (§13.7) all
+arrive at the window's one `Closing` handler, and a pure rule (`WindowCloseRule`) decides; the window only applies the
+answer. With the switch on, the close is
 cancelled and the window hides to the tray; the first time this happens, an **OS tray balloon** explains it,
 once — in-app toasts are prohibited by the design. With the switch off, the close is the title bar's *Exit* (below). No shell
 switch is copied anywhere: whatever acts on one reads it from `ui-state.json` at the moment it acts — this one on
@@ -3666,7 +3668,7 @@ path — declining a request leaves the `stopped` line standing, because that li
 
 An `Esc` while a stop already drains is the hard stop (§4.5): it runs the same command as a press of the *Stop now*
 button, so the console gets one line for it and the button reads *Terminating…*; the phase line itself does not animate.
-A further `Esc` does nothing.
+A further `Esc` leaves the run alone: it closes the window the way `X` does (§13.7).
 
 **Projects list.** 36 px rows: a 2 px status stripe (3 px when selected) running the row's full height, the
 8 px **status dot** — the same colour as the stripe — the project name with the solution name beside it, then
@@ -4394,7 +4396,7 @@ disabled and the line names what it waits for, in a fixed order — a Clean, Opt
 (`Available once the build finishes — Esc stops it.`; the design says F5, but F5 only builds — the key's name is
 read from the shortcut catalog). That line follows the Stop button's stage (§4.5): once a stop has been requested the
 next Esc is the hard stop, so it says `Available once the build stops — Esc stops it now.`, and once the hard stop has
-gone Esc does nothing, so it drops the key (`Available once the build stops.`). The reason is one computed property
+gone Esc stops nothing more — it closes the window the way `X` does — so it drops the key (`Available once the build stops.`). The reason is one computed property
 of the view model; its task bucket takes the workspace work other than Sync from the same list the workspace-busy
 question reads, so the two cannot drift. It is re-evaluated at the workspace-busy notification — which every change
 of the Sync, Clean, Optimize, checkout and pull flags and of the run lock reaches, and so does the end of a run — when
@@ -5721,14 +5723,19 @@ panel header switches to its project-log half with the `Back` button. Clicking t
 selection.
 
 Esc is a chain and only ever closes the topmost layer: the exit card (§13.3), which sits above even the dialogs →
-dialog → popover/menu (the action bar's popovers and the title bar's update card) → selection → the running build.
-With nothing else open, Esc stops a Build, Rebuild or
+dialog → popover/menu (the action bar's popovers and the title bar's update card) → selection → the running build →
+the window. With nothing else open, Esc stops a Build, Rebuild or
 Clean gracefully (§4.5) — so a selection made mid-run is dropped by the first Esc and the build stopped by the
 second. While a stop drains — the user's own or a branch switch's — Esc is the hard stop, the same step pressing
-*Stop now* takes (§4.5), and after that Esc does nothing. A Sync, a Deep Clean, an Optimize, a checkout or a pull
+*Stop now* takes (§4.5). A Sync, a Deep Clean, an Optimize, a checkout or a pull
 cannot be stopped; Esc during one writes a single console line saying so (`sync can't be stopped — it will finish on its own`),
-once per job. A silent Sync is invisible, and Esc says nothing about it. Right-clicking a row is not a selection
-gesture — it opens the row menu and leaves the selection alone.
+once per job. A silent Sync is invisible, and Esc says nothing about it. Once Esc has nothing left to close or stop —
+nothing the user can see is running, the hard stop has gone out, or the job's line is written — it closes the window:
+it makes the very call the title bar's `X` makes, so the window's one close rule decides (§12.3). With *Close to tray*
+on the window hides to the tray; with it off it is a full exit — at once with nothing in flight, through the
+confirmation card otherwise. Esc itself never stops work the way *Exit* does: a drain or a Sync carries on — in the
+tray, or under the card until the user answers it. Right-clicking a row is not a selection gesture — it opens the row
+menu and leaves the selection alone.
 
 **Starting a run drops the selection and keeps the filter.** Build, Rebuild, Resolve cycles and a row's own
 Build, Rebuild and Clean all go through the same start: the selection is cleared, so the graph glides back to
@@ -5861,7 +5868,7 @@ active set appears as a removable chip in the panel header.
 | `F7` | window | Clean — the Build menu's `-t:Clean`, not the maintenance box's Deep Clean |
 | `Ctrl+F` | window | Focus the project filter |
 | `F1` | window | About — version, shortcuts and diagnostics (toggle) |
-| `Esc` | window | Close the topmost layer; with none open, stop the running build (§13.7) |
+| `Esc` | window | Close the topmost layer; with none open, stop the running build; with nothing left to stop, close the window like `X` (§13.7) |
 | `Ctrl+Q` | window | Exit — quit at once with nothing in flight; otherwise open the confirmation card, or close it if open (§12.3) |
 
 These are the only shortcuts. `F5` does not branch on state: in Visual Studio `F5` never stops what is running,
@@ -7534,7 +7541,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Maximize overflow fix · DWM corners/border · caption glyphs | `App/Shell/MaximizeFix.cs`, `Dwm.cs`, `CaptionGlyphs.cs` |
 | Single instance, tray icon, global hotkeys (table, show/hide decision), shutdown | `App/Shell/SingleInstance.cs`, `AppTrayIcon.cs`, `Hotkey.cs`, `App/Shell/AppShutdown.cs` |
 | Start with Windows — the `Run` value, Task Manager's disabled mark, the state the switch shows, the save-time write, the removal at uninstall (`RemoveForUninstall`) | `App/Services/AutostartService.cs` |
-| Window close decision — `X`, `Alt+F4`, system-menu *Close*: close, stay, hide to the tray or ask for a full exit | `App/Shell/WindowCloseRule.cs`; applied in `App/MainWindow.xaml.cs` (`OnClosing`) |
+| Window close decision — `X`, `Alt+F4`, system-menu *Close*, an `Esc` with nothing left to do: close, stay, hide to the tray or ask for a full exit | `App/Shell/WindowCloseRule.cs`; applied in `App/MainWindow.xaml.cs` (`OnClosing`) |
 | Full exit: what is in flight (`ExitWork`), the hard stop of a run and the stop wait (`ExitStopWaitMs`), the jobs cut off and the git writes waited for, the release on engine silence or death, `ExitReady`; the run's progress for the card (`ExitProgress`) | `App/ViewModels/RunViewModel.Exit.cs`; the work kinds and the one rule of which ones the exit waits for: `App/ViewModels/ExitWork.cs` (`ExitWorkRules.Waits`); the hard stop shared with *Stop now*: `RunViewModel.cs` (`SendHardStopAsync`); no Sync once the exit is asked for, and nothing leaves the engine gate: `RunViewModel.cs` (`SyncCoreAsync`), `RunViewModel.Engine.cs` (`EnsureEngineAwakeAsync`) — both read the one flag, `_exitRequested` |
 | …its shell side: the *Exit* button and `Ctrl+Q`, the confirmation card's open state, placement, close paths and once-a-second process count, *Stop and exit* playing the closing screen, `ExitReady` moving it on, the one decision tray *Exit* and `X` share and the deferred bring-forward, the shutdown | `App/MainWindow.Exit.cs` (`OnExitRequested`, `RequestExitFromUser`, `RequestExitFromOutside`, `ConfirmExitInFront`, `ConfirmExitInFrontNow`, `BringForwardForExit`, `StopAndExit`, `OnExitReady`, `ExitCardGap`), `App/MainWindow.UpdateRestart.cs` (`OnClosingScreenFilled`), `App/MainWindow.xaml` (`ExitSeparator`, `ExitButton`, `ExitPopup`), `App/MainWindow.xaml.cs` (`ExitNow`, `CatalogTooltip`), `App/Resources/Controls.xaml` (`Ds.IconButton.Open`) |
 | Exit card (status, ends on exit, decision; the drop-in from the right; focus on *Cancel*) and its texts | `App/Views/ExitCard.xaml(.cs)`, texts `App/ViewModels/ExitText.cs` |

@@ -206,8 +206,8 @@ ve ince ilerleme çubuğu durur; acil uyarılar faz satırının yerine geçer.\
 ## Her yerden çalışan kısayollar
 
 **Ne yapar:** Pencerede F5 derler, F6 yeniden derler, F7 temizler, Ctrl+F süzer, F1 About'u açar, Esc üstteki
-katmanı kapatır ya da build'i durdurur, Ctrl+Q çıkar; her yerden Shift+Space pencereyi gösterir ya da gizler,
-Ctrl+Shift+Space pencereyi açmadan Build başlatır.\
+katmanı kapatır, build'i durdurur ya da — yapacak iş kalmayınca — pencereyi X gibi kapatır, Ctrl+Q çıkar; her yerden
+Shift+Space pencereyi gösterir ya da gizler, Ctrl+Shift+Space pencereyi açmadan Build başlatır.\
 **Nasıl:** Pencere ve global kısayollar About → Shortcuts'u, menü rozetlerini ve ipuçlarını da çizen tek bir
 katalogdan gelir. Globaller Windows'a kaydedilir, pencere Visual Studio'nun arkasındayken ya da tepsideyken de
 çalışır; sonuç bildirim olarak gelir.\

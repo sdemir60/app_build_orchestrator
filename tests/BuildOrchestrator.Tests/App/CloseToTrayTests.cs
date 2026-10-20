@@ -19,6 +19,7 @@ namespace BuildOrchestrator.Tests.App;
 /// ve onay kartı açılır (kartın kendisi <see cref="ExitCardTests"/>'te).</item>
 /// <item>Tepsi → Exit anahtardan bağımsız olarak AYNI karardır — × ile aynı kabuk yolu.</item>
 /// <item>Kartın "Stop and exit"i çıkışı başlattıktan sonra gelen × pencereyi yerinde tutar, ikinci bir şey istemez.</item>
+/// <item>[kullanıcı kararı 2026-10-20] Yapacak işi kalmayan Esc ×'in yolundan geçer — iki dal da aynıdır.</item>
 /// </list>
 ///
 /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-19 · Exit]</b> ESKİ İDDİA: × (anahtar kapalıyken) ve tepsi → Exit güvenli tam çıkışı
@@ -190,6 +191,67 @@ public sealed class CloseToTrayTests
 
         Assert.Equal(1, h.Shutdowns);
         Assert.NotEqual(Visibility.Hidden, h.Window.Visibility);
+    }
+
+    // ---------------------------------------------------------------- Esc — × ile aynı yol
+
+    // [kullanıcı kararı 2026-10-20] Esc'in yapacak işi kalmayınca (açık katman yok, durdurulacak ya da anlatılacak bir şey yok) pencere ×
+    // gibi kapanır: kararı ×'in kendi kuralı verir — Exit gibi işi durdurmaz. Zincirin hangi durumda bu halkaya indiği KeyboardShortcutTests
+    // ve EscStopTests'tedir; burada ×'in iki dalı Esc'le pinlenir. ESKİ: bu durumlarda Esc hiçbir şey yapmazdı.
+
+    /// <summary>Close to tray açık (varsayılan) ve hiçbir şey koşmuyor: Esc, × gibi pencereyi tepsiye gizler — uygulama kapanmaz, çıkış
+    /// istenmez, motora komut gitmez.</summary>
+    [StaFact]
+    public void With_nothing_left_to_do_escape_hides_to_the_tray_like_the_close_button()
+    {
+        using var temp = new TempDir();
+        var h = Harness.New(temp);
+
+        MainWindowHost.PressEscape(h.Window);
+
+        Assert.False(h.Closed);
+        Assert.Equal(Visibility.Hidden, h.Window.Visibility);
+        Assert.Equal(0, h.Shutdowns);
+        Assert.False(h.Vm.ExitPending);
+        Assert.Empty(h.Sent);
+    }
+
+    /// <summary>Close to tray kapalı ve uçuşta iş yok: Esc, × gibi uygulamayı kapatır — bir kez, onay istemeden; motora komut gitmez.</summary>
+    [StaFact]
+    public void With_close_to_tray_off_escape_quits_like_the_close_button_when_nothing_is_in_flight()
+    {
+        using var temp = new TempDir();
+        var h = Harness.New(temp, CloseToTrayOff());
+
+        MainWindowHost.PressEscape(h.Window);
+        h.PumpUntilShutdown();
+
+        Assert.Equal(1, h.Shutdowns);
+        Assert.Equal(0, h.Confirmations);
+        Assert.Empty(h.Sent);
+    }
+
+    /// <summary>Close to tray kapalı ve derleme duruyor: ilk Esc graceful, ikincisi hard stop gönderir — ikisi de pencereye dokunmaz; hard
+    /// gittikten sonraki Esc × gibi davranır: uygulama doğrudan KAPANMAZ, onay için pencere öne gelir ve kart açılır (bir kez). Kart
+    /// sorulmadan hiçbir şey durdurulmaz: giden yalnız kullanıcının iki Stop'udur, çıkış başlamaz.</summary>
+    [StaFact]
+    public void With_close_to_tray_off_escape_after_the_hard_stop_asks_like_the_close_button()
+    {
+        using var temp = new TempDir();
+        var h = Harness.New(temp, CloseToTrayOff());
+        MainWindowHost.StartBuild(h.Vm);
+
+        MainWindowHost.PressEscape(h.Window); // graceful
+        MainWindowHost.PressEscape(h.Window); // hard ("Stop now")
+        Assert.Equal(0, h.Confirmations);     // ön-koşul: durdurma basışları onay istemedi
+        MainWindowHost.PressEscape(h.Window); // × gibi
+
+        IpcCommand[] expected = [new StopRunCommand("r1", StopKind.Graceful), new StopRunCommand("r1", StopKind.Hard)];
+        Assert.Equal(expected, h.Sent.ToArray()); // tüm gönderim: Esc'in × halkası motora hiçbir şey göndermedi
+        Assert.Equal(1, h.Confirmations);
+        Assert.False(h.Vm.ExitPending);
+        Assert.Equal(0, h.Shutdowns);
+        Assert.False(h.Closed);
     }
 
     // ---------------------------------------------------------------- tepsi → Exit

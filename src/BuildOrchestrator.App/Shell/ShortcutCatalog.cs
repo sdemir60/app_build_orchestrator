@@ -93,8 +93,10 @@ public static class ShortcutCatalog
         // yazılmaz.
         new(ShortcutId.About, GesturesFor(WindowIntent.ShowAbout),
             "About — version, shortcuts and diagnostics", ShortcutGroup.Application),
+        // [kullanıcı kararı 2026-10-20] Zincirin son halkası pencerenin × gibi kapanışıdır (KeyboardShortcuts.ResolveEsc).
         new(ShortcutId.Escape, GesturesFor(WindowIntent.Escape),
-            "Close the topmost layer: exit card → dialog → popover/menu → selection; otherwise stop the running build",
+            "Close the topmost layer: exit card → dialog → popover/menu → selection; otherwise stop the running build, "
+                + "or close the window like ×",
             ShortcutGroup.Application),
         // [Exit] Bu cümle AYNI ZAMANDA title bar'daki Exit butonunun tooltip'idir (MainWindow.Exit.cs) — iki yerde yazılmaz.
         new(ShortcutId.Exit, GesturesFor(WindowIntent.Exit),

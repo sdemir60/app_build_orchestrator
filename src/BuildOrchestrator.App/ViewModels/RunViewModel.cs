@@ -1526,7 +1526,8 @@ public sealed partial class RunViewModel : ObservableObject
         if (_currentRunId is null) return;
         // [Stop now · kullanıcı kararı 2026-10-03] Basışın ne göndereceğini TEK durum seçer (StopStage): istenmedi → graceful;
         // graceful gitti → hard, BİR KEZ; hard gitti → hiçbir şey (hard'dan sonraki basış ya da kapıyı atlayıp komutu doğrudan çalıştıran
-        // Esc burada yutulur). Hard da graceful ile AYNI gönderim kapısından geçer (SendStopAsync): faz zaten Stopping'dir.
+        // bir çağrı burada yutulur; o aşamadaki Esc komuta hiç gelmez — pencereyi × gibi kapatır, [kullanıcı kararı 2026-10-20]
+        // KeyboardShortcuts.ResolveEsc). Hard da graceful ile AYNI gönderim kapısından geçer (SendStopAsync): faz zaten Stopping'dir.
         switch (StopStage)
         {
             case StopStage.Terminating:

@@ -213,8 +213,8 @@ place.\
 ## Shortcuts that work from anywhere
 
 **What:** In the window, F5 builds, F6 rebuilds, F7 cleans, Ctrl+F filters, F1 opens About, Esc closes the top
-layer or stops the build and Ctrl+Q exits; from anywhere, Shift+Space shows or hides the window and
-Ctrl+Shift+Space starts a Build without bringing it up.\
+layer, stops the build or — with nothing left to do — closes the window like X, and Ctrl+Q exits; from anywhere,
+Shift+Space shows or hides the window and Ctrl+Shift+Space starts a Build without bringing it up.\
 **How:** Window and global shortcuts come from one catalogue that also draws About → Shortcuts, the menu badges and
 the tooltips. The global ones are registered with Windows and work while the window is behind Visual Studio or in
 the tray, and the result arrives as a notification.\

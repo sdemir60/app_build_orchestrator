@@ -464,7 +464,7 @@ arrives, says so in red — *Engine stopped unexpectedly (idle shutdown failed)*
 | `F7` | window | Clean — the Build menu's Clean, not the maintenance box's Deep Clean |
 | `Ctrl+F` | window | Focus the project filter |
 | `F1` | window | About — version, shortcuts and diagnostics |
-| `Esc` | window | Close the topmost open layer: exit card → dialog → popover/menu → selection; with none open, stop the running build |
+| `Esc` | window | Close the topmost open layer: exit card → dialog → popover/menu → selection; with none open, stop the running build; with nothing left to stop, close the window like `X` |
 | `Ctrl+Q` | window | Exit — quit; with work running, open the confirmation card first (press again to close it) |
 
 The two global hotkeys work whether the window is in front, behind Visual Studio or in the tray. `Shift+Space`
@@ -480,9 +480,11 @@ rather than mysterious.
 
 `Esc` stops a Build, Rebuild or Clean the way *Stop* does — the projects in flight finish and the next Build
 carries on from there. Pressing it while a stop drains — yours, or one a branch switch started — is *Stop now*: the
-in-flight compiles are terminated at once, and a further `Esc` does nothing. A Sync, Deep Clean, Optimize, branch
-switch or pull cannot be stopped;
-`Esc` during one writes a single console line saying so.
+in-flight compiles are terminated at once. A Sync, Deep Clean, Optimize, branch switch or pull cannot be stopped;
+`Esc` during one writes a single console line saying so. Once `Esc` has nothing left to close or stop — nothing is
+running, *Stop now* has gone out, or that line is written — it closes the window just as `X` does: with *Close to
+tray* on the app drops to the tray and any work carries on; with it off the app quits, asking first with the exit
+card if work is still running. Unlike *Exit*, it never stops anything itself.
 
 Disabled commands stay disabled when triggered by a shortcut — the key never bypasses the button's state.
 `F1` toggles About and works even while another dialog is open: About opens on top, and Esc closes the topmost

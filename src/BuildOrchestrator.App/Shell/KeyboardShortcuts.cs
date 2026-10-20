@@ -2,10 +2,11 @@ using System.Windows.Input;
 
 namespace BuildOrchestrator.App.Shell;
 
-/// <summary>[E5/T46] Esc zincirinin kapatacağı EN ÜST açık katman. Yalnız biri döner — alt katmana SIZMAZ.</summary>
+/// <summary>[E5/T46] Esc zincirinin kapatacağı EN ÜST açık katman. Yalnız biri döner — alt katmana SIZMAZ.
+/// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-20]</b> ESKİ: zincir hiçbir şey yapmayan bir <c>None</c> da dönebilirdi (açık
+/// katman yok, durdurulacak ya da anlatılacak bir şey yok). O durumların cevabı artık <see cref="CloseWindow"/>'dur — <c>None</c> kalktı.</para></summary>
 public enum EscAction
 {
-    None,
     CloseDialog,
     ClosePopovers,
     ClearSelection,
@@ -16,20 +17,30 @@ public enum EscAction
     StopNow,
     /// <summary>Durdurulamayan bir iş sürüyor: nedenini konsola bir kez yaz.</summary>
     ExplainUnstoppable,
+    /// <summary>[kullanıcı kararı 2026-10-20] Esc'in yapacak işi kalmadı: pencereyi title bar'ın × düğmesi gibi kapat — AYNI çağrı, AYNI
+    /// karar (<see cref="WindowCloseRule"/>): Close to tray açıksa tepsiye, kapalıysa tam çıkış (uçuşta iş varsa onay kartı). Exit gibi işi
+    /// durdurmaz.</summary>
+    CloseWindow,
 }
 
 /// <summary>[kullanıcı kararı 2026-09-29] Esc zincirinin koşu katmanının girdisi — VM'in o anki durumu
-/// (<c>RunViewModel.EscRunState</c>).</summary>
+/// (<c>RunViewModel.EscRunState</c>). Girdi olgudur (ne sürüyor, Esc'in son basışı ne yaptı); Esc'in ne yapacağı kararı
+/// <see cref="KeyboardShortcuts.ResolveEsc"/>'tedir.</summary>
 public enum EscRunState
 {
-    /// <summary>Durdurulacak ya da anlatılacak bir iş yok.</summary>
+    /// <summary>Durdurulacak ya da anlatılacak bir iş yok — görünmeyen sessiz Sync dahil.</summary>
     Idle,
     /// <summary>Bir koşu uçuşta ya da işaretleniyor; Stop alınabilir.</summary>
     Stoppable,
     /// <summary>Stop zaten istendi (kullanıcı ya da branch kesmesi; uçuştakiler bitiyor): Esc hard stop'tur.</summary>
     Stopping,
+    /// <summary>[kullanıcı kararı 2026-10-20] Hard stop gitti (<c>Terminating…</c>): koşu kendi kendine biter, durdurulacak bir şey
+    /// kalmadı.</summary>
+    Terminating,
     /// <summary>Kullanıcıya görünen, durdurulamayan bir workspace işi sürüyor (Sync, Deep Clean, Optimize, checkout, pull).</summary>
     Unstoppable,
+    /// <summary>[kullanıcı kararı 2026-10-20] Durdurulamayan iş sürüyor ve nedeni bu işte zaten yazıldı: anlatılacak bir şey kalmadı.</summary>
+    UnstoppableExplained,
 }
 
 /// <summary>[E5/T46 · Fix Wave 1] Bir pencere-seviyesi tuş bağlamasının SEMANTİK NİYETİ — MainWindow bunları
@@ -99,12 +110,18 @@ public static class KeyboardShortcuts
     /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-03]</b> ESKİ İDDİA: durdurma zaten sürüyorsa Esc ikinci
     /// bir stop GÖNDERMEZ, şerit "duyuldu" der. GEREKÇE: drain en yavaş projenin kalan süresi kadar sürebilir;
     /// durdurma sürerken (kullanıcı ya da branch kesmesi istemiş olsun) Esc beklemek istemediğini söyler ve hard
-    /// stop'tur (<see cref="EscAction.StopNow"/> — uçuştakiler öldürülür, sonraki Build onları baştan derler).
-    /// Hard gittikten sonraki Esc'i komutun kapısı yutar.</para>
+    /// stop'tur (<see cref="EscAction.StopNow"/> — uçuştakiler öldürülür, sonraki Build onları baştan derler). Hard gittikten
+    /// sonraki Esc'in cevabı aşağıdaki 2026-10-20 kuralındadır.</para>
     ///
     /// <para>[Exit] Exit'in onay kartı (<paramref name="exitCardOpen"/>) zincirin EN ÜSTÜDÜR — dialogların da üstünde durur, Esc önce
     /// onu kapatır (popover katmanının kapanışıyla: kart o katmandadır). Kartın İÇİNDEKİ Esc'i kartın kendisi yakalar; bu dal odak
-    /// pencerede kalmışken devreye girer.</para></summary>
+    /// pencerede kalmışken devreye girer.</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-20]</b> ESKİ İDDİA: açık katman yokken koşuda yapacak işi kalmayan Esc hiçbir
+    /// şey yapmazdı — hiçbir şey koşmuyorken, hard stop gittikten sonra (Stop komutunun kapısı yutardı) ve durdurulamayan işin satırı
+    /// yazıldıktan sonra. GEREKÇE: kullanıcı bu anlarda Esc'e bastı ve hiçbir şey olmadı; "× gibi kapatsın" dedi. Zincirin son halkası
+    /// artık pencerenin kapanışıdır (<see cref="EscAction.CloseWindow"/>) — ×'in yolu, Exit'inki değil. Stopping'deki hard stop
+    /// kullanıcının seçimiyle korundu: sıra Esc → Stopping, Esc → Stop now, Esc → ×.</para></summary>
     public static EscAction ResolveEsc(bool dialogOpen, bool popoverOrMenuOpen, bool hasSelection, EscRunState run,
         bool exitCardOpen = false)
     {
@@ -117,7 +134,7 @@ public static class KeyboardShortcuts
             EscRunState.Stoppable => EscAction.StopRun,
             EscRunState.Stopping => EscAction.StopNow,
             EscRunState.Unstoppable => EscAction.ExplainUnstoppable,
-            _ => EscAction.None,
+            _ => EscAction.CloseWindow, // Idle, Terminating, UnstoppableExplained: koşuda Esc'e iş kalmadı
         };
     }
 }
