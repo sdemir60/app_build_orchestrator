@@ -199,8 +199,8 @@ satır tutar ve yukarı kaydırınca diskten geri yükler; proje sayfası ilk sa
 **Ne yapar:** Title bar'ın altındaki şerit en son ne istendiğini, o anki fazı, ilerlemeyi, kalan süreyi ve hata
 durumunu her zaman gösterir; olay akışı koşunun olaylarını sırayla, her biri tek satır listeler.\
 **Nasıl:** Kalıcı işlem etiketi (SYNC, BUILD, REBUILD, CLEAN, DEEP CLEAN, OPTIMIZE, RESOLVE, SWITCHING BRANCH) iş
-sürerken amber, bitince nötrdür. Yanında faz satırı, hatalı projelerin chip'leri ve ince ilerleme çubuğu durur;
-acil uyarılar faz satırının yerine geçer.\
+sürerken amber, bitince nötrdür. Yanında faz satırı, o an derlenen projelerin (koşu bitince hatalıların) chip'leri
+ve ince ilerleme çubuğu durur; acil uyarılar faz satırının yerine geçer.\
 `"son ne istendi" için kalıcı etiket` · `kalan süre tahmini` · `hatalıya tek tık götüren chip'ler` · `koşunun zaman çizelgesi olarak olay akışı`
 
 ## Her yerden çalışan kısayollar
@@ -239,8 +239,8 @@ derleyicileriyle birlikte kapanır.\
 uzaklığı ölçer, hiçbir şey derlemeden; terminalde ya da Visual Studio'da yapılan commit, checkout, pull, merge ve
 rebase onu kendiliğinden tazeler.\
 **Nasıl:** Elle Sync yalnız ref'leri fetch eder, sonra tarar ve karar verir; ağ yoksa yerel HEAD ile sürer. Deponun
-HEAD'i yoklama yerine dosya bildirimiyle izlenir ve git durulunca konsolu, seçimi ve kaydırma konumunu koruyan
-sessiz bir Sync çalışır.\
+HEAD'i yoklama yerine dosya bildirimiyle izlenir; git durulunca kendiliğinden bir Sync çalışır, branch
+değişmediyse bu, konsolu, seçimi ve kaydırma konumunu koruyan sessiz bir Sync'tir.\
 `yalnız ref fetch, çalışma ağacına dokunmaz` · `Sync'e nadiren bastıran HEAD izleme` · `ekranı bozmayan sessiz Sync` · `yarım merge'de bekleme`
 
 ## Branch değiştirme ve pull

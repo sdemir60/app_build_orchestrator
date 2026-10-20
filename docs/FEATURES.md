@@ -205,8 +205,9 @@ line, with the first error in front of you.\
 **What:** The ribbon under the title bar always shows what was asked last, the current phase, progress, the time
 left and the error state; the event stream lists the run's events one line each, in order.\
 **How:** A persistent operation label (SYNC, BUILD, REBUILD, CLEAN, DEEP CLEAN, OPTIMIZE, RESOLVE, SWITCHING BRANCH)
-is amber while work runs and neutral after. Next to it sit the phase line, chips for the failed projects and a thin
-progress bar, and urgent warnings take the phase line's place.\
+is amber while work runs and neutral after. Next to it sit the phase line, chips for the projects building now
+(and, once the run ends, for the failed ones) and a thin progress bar; urgent warnings take the phase line's
+place.\
 `persistent label for what was asked last` · `remaining-time estimate` · `failure chips, one click to the failed` · `event stream as the run's timeline`
 
 ## Shortcuts that work from anywhere
@@ -245,8 +246,9 @@ with its engine and compilers.\
 measures the distance to the remote, without compiling anything; commits, checkouts, pulls, merges and rebases
 made in a terminal or in Visual Studio refresh it on their own.\
 **How:** A manual Sync fetches refs only, then scans and decides, and carries on with the local HEAD when offline.
-The repository's HEAD is watched with file notifications instead of polling, and once git has settled a quiet
-Sync runs that keeps the console, the selection and the scroll position.\
+The repository's HEAD is watched with file notifications instead of polling; once git has settled a Sync runs
+by itself, and unless the branch changed it is a quiet one that keeps the console, the selection and the scroll
+position.\
 `ref-only fetch, working tree untouched` · `HEAD watch so Sync is rarely pressed` · `quiet Sync that keeps the screen` · `waits during a half-done merge`
 
 ## Branch switch and fast-forward pull

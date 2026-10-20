@@ -171,8 +171,8 @@ açar ve ilk hata hemen önündedir.\
 **Amaç:** derlemenin her an ne yaptığını ve ne kadar kaldığını bilmek.\
 **Yaygın pratik:** konsoldan yapılan derleme bir metin akışı basar; nereye geldiği ya da ne kadar süreceği akan
 yazıdan tahmin edilir.\
-**Build Orchestrator'da:** üstteki satır her zaman fazı, ilerlemeyi ve kalan süreyi verir; hatalı projeler orada
-tek tıkla açılan chip'ler olarak görünür.\
+**Build Orchestrator'da:** üstteki satır her zaman fazı, ilerlemeyi ve kalan süreyi verir; oradaki chip'ler o an
+derlenen projeleri, koşu bitince de hatalıları adıyla gösterir, tek tık uzaklıkta.\
 `kalan süre tahmini` · `hatalıya tek tık götüren chip'ler`
 
 ## Her yerden çalışan kısayollar
@@ -189,8 +189,8 @@ pencere yoktur, sonuç bildirim olarak gelir.\
 **Amaç:** derleme aracının gün boyu hazır olması ama yolu kesmemesi.\
 **Yaygın pratik:** bir derleme script'i her seferinde terminalden başlatılır, bitip bitmediğini öğrenmek o
 terminale geri dönmeyi gerektirir.\
-**Build Orchestrator'da:** uygulama Windows ile başlar ve tepside bekler; ekran köşesindeki küçük işaret derlemenin
-sürdüğünü gösterir, sonucu bir bildirim söyler.\
+**Build Orchestrator'da:** uygulama istenirse Windows ile başlar ve tepside bekler; ekran köşesindeki küçük işaret
+derlemenin sürdüğünü gösterir, sonucu bir bildirim söyler.\
 `arka planda çalışmak için tepsi ikonu` · `sonuç için Windows bildirimi`
 
 ## Kendiliğinden Sync

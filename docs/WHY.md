@@ -168,8 +168,8 @@ its log from the top with the first error in front of you.\
 **Goal:** know at any moment what the build is doing and how long is left.\
 **Common practice:** a console build prints a stream of text, and how far it has got or how long it will take is
 guessed from the scrolling.\
-**In Build Orchestrator:** a line at the top always gives the phase, the progress and the time left, and the failed
-projects appear there as chips that open them in one click.\
+**In Build Orchestrator:** a line at the top always gives the phase, the progress and the time left; chips there
+name the projects building now and, once the run ends, the failed ones, one click away.\
 `remaining-time estimate` · `failure chips, one click to the failed`
 
 ## Shortcuts that work from anywhere
@@ -186,8 +186,8 @@ no window to switch to, and the result arrives as a notification.\
 **Goal:** have the build tool ready all day without it getting in the way.\
 **Common practice:** a build script is started from a terminal every time, and finding out whether it finished
 means going back to that terminal.\
-**In Build Orchestrator:** the app starts with Windows and waits in the tray; a small mark in the screen corner shows
-a build is running, and a notification reports the result.\
+**In Build Orchestrator:** the app can start with Windows and wait in the tray; a small mark in the screen corner
+shows a build is running, and a notification reports the result.\
 `tray icon to work in the background` · `Windows notification for the result`
 
 ## Syncs on its own
