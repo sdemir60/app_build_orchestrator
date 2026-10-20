@@ -77,7 +77,7 @@ dotnet test  tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj --filt
 dotnet run   --project src/BuildOrchestrator.App/BuildOrchestrator.App.csproj
 ```
 
-Süit **filtrelidir**: `Category=Acceptance` testleri gerçek MSBuild ister — OSYS reposunu uçtan uca derleyenler
+Süit **filtrelidir**: `Category=Acceptance` testleri gerçek MSBuild ister — gerçek, büyük bir referans repoyu uçtan uca derleyenler
 ~2 dk sürer — ayrı koşulur (`--filter "Category=Acceptance"`). Uygulama açıkken build alma — çalışan Supervisor
 kendi binary'lerini kilitler.
 
@@ -136,6 +136,10 @@ kadarki tüm değişiklikler dokümanlara işlenir.
   sonuçtur. Rakam ve iç ad (müşteri/ürün adı) yazılmaz.
 - **Her iddia kodda doğrulanır.** Doğru ifadeye dokunma; emin olamadığını sor.
 - **Rakam gömme:** bayatlayacak sayı (test sayısı, sha) yazma; dayanıklı dil kullan.
+- **Repo herkese açık:** dokümanlara (README, docs/, ARCHITECTURE, CHANGELOG, bu dosya) iç ürün, müşteri ya da kişi
+  adı, iç disk yolu ve iç repoya özgü ayrıntı yazılmaz; örnek gerekiyorsa nötr ad kullanılır (Acme, `D:\src\acme`).
+  İç ürünün adı `DocumentationTests` ile pinlidir; müşteri adları guard'a yazılmaz (yazmak onları yayınlamak olur),
+  onlara elle dikkat edilir. Ekran görüntüleri de nötr bir deneme reposundan çekilir.
 - `.claude/outputs/` ve `.claude/summaries/` **tarihseldir** — geriye dönük düzeltilmez.
 
 ## Sürüm çıkarma

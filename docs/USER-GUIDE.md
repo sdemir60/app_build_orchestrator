@@ -193,7 +193,7 @@ remove it too.
    out correctly: for external roots it is read from the files themselves rather than from git, so an
    uncommitted edit marks the project stale just as a commit would.
 
-   When a copy is refreshed the console says where it landed — `Updated external 'DoganTrend' → a1b2c3d`, a
+   When a copy is refreshed the console says where it landed — `Updated external 'Acme.Shared' → a1b2c3d`, a
    short sha. Reading a revision is local (`rev-parse HEAD`), so a root reports one even with the switch off;
    a path with no `.git` above it reports none. The revision is only ever shown for information — no build
    decision reads it.

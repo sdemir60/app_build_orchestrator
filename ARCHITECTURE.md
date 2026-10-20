@@ -1073,7 +1073,7 @@ apart. Reading content closes all three, works offline, and needs no version con
 The cost is reading files, and it is paid once: `source-hash-cache.json` (§16) keys each hash by the file's
 size and modification time, so a steady-state run only stats the input set and writes nothing back — the file is
 rewritten only when an entry changed (§16). Measured end to end on the real
-OSYS repository (177 projects, 22,982 input files, 288 MB), from the scan through both binding passes: **303 ms
+reference repository (177 projects, 22,982 input files, 288 MB), from the scan through both binding passes: **303 ms
 per run** with a warm cache, against ~213 ms for the two git commands the old formula ran. With the cache empty
 but the files in the OS cache it is ~670 ms. Everything on that path that is IO — collecting each project's
 inputs, scanning the cache for misses, reading the misses — runs `IoParallelism.Degree`-way parallel; the values do not
@@ -2735,7 +2735,7 @@ While one stands:
 
 ### 10.4 External roots
 
-Some projects an OSYS build depends on live **outside** the repository root — customer-specific components
+Some projects a build depends on live **outside** the repository root — shared or customer-specific components
 kept in their own git repositories. The user lists them in Settings; every Sync scans them
 into the same graph as the repository's own projects, and every Build updates their working copies before
 compiling.
@@ -2811,7 +2811,7 @@ Build, where the user has already decided to compile.
 
 **Each root's revision is read where reading it is free.** `rev-parse HEAD` is local, so it happens at plan
 time whether or not updates are on; a root with no working copy above it simply has no revision. When an
-update does run, the console says where the copy landed: `Updated external 'DoganTrend' → a1b2c3d`, and that
+update does run, the console says where the copy landed: `Updated external 'Acme.Shared' → a1b2c3d`, and that
 reading — taken right after the fast-forward — is preferred over the plan-time one. A failure to read is
 never fatal: the revision is diagnostic, no
 decision depends on it, and rows do not display it — they display the decision (§13.2).
@@ -4647,7 +4647,7 @@ line contradicting the permanent ribbon message, the same reason Sync, Build and
 that state. The root is still applied because it is local state that persists, and the first Sync after the
 engine returns carries it.
 
-A root that changes *later* announces itself in the console — `Repository root → D:\src\osys — Sync
+A root that changes *later* announces itself in the console — `Repository root → D:\src\acme — Sync
 required` — and the old repository's state goes with it: the rows fall back to hollow, the plan surface empties
 (§13.2) and the last Sync's HEAD is forgotten, so the first trigger on the new root is not compared with the old
 branch. Save's one Sync then runs on the new root. The first setup stays silent, because a Sync starts there
@@ -6797,7 +6797,7 @@ A category of tests that assert properties of the *source*, not of a run:
 | Ledger file access (`LedgerStreamingGuardTests`) | the two large ledgers (`evaluation-cache.json`, `source-hash-cache.json`) never turn their file into one string or byte array and never open, create or move it themselves — they read and write through the stream forms of `AtomicFile` (sharing delete on read, retried atomic rename on write); hashing a *source* file is the one exempt read; the rule is shown to catch each bypass and to ignore a comment |
 | Entry point (`EntryPointTests`) | the App starts from the hand-written `Program.Main`, `VelopackApp…Run()` comes before the `App` is created, the uninstall hook removes the startup value, and the `Velopack` library and the `vpk` tool carry one version (§12.1) |
 | Repository hygiene (`RepoHygieneTests`) | the MIT `LICENSE`, the SDK band in `global.json`, the pinned `vpk` tool, the README's badge (the release run of `main`), and the workflows: CI builds and tests every push to `develop`, with no path filter, on the pinned image, leaves `main` to the release and can be called by it; the release runs on pushes to `main` one at a time and is never cancelled, writes only from its publish job, has its guard check the head of `main` and hand the tag on, tags only after the tests and the package and before the upload, and publishes through `package.ps1` (§18); a failed release is re-run once on its failed jobs |
-| User documents (`DocumentationTests`) | README, FEATURES and WHY each have a Turkish mirror (`.tr.md`) with as many sections, and each language links to the other; every WHY item is a FEATURES item with the same title, in the same order; relative links in the user documents, the user guide included, point to files that exist |
+| User documents (`DocumentationTests`) | README, FEATURES and WHY each have a Turkish mirror (`.tr.md`) with as many sections, and each language links to the other; every WHY item is a FEATURES item with the same title, in the same order; relative links in the user documents, the user guide included, point to files that exist; and no public document — these, the technical reference, the release notes and the working conventions — names the internal product the tool was first built for (the pattern of the code guard above, so the name is defined once) |
 | Automation roles (`AutomationRoleTests`) | every `UserControl` of the app declares its automation role through an override in the app assembly — never WPF's default custom type, which the post-layout peer walk re-enumerates on every pass (§15) |
 | One trim definition (`MemoryTrimGuardTests`) | `GC.Collect` is written exactly once in the source, in `Core/Diagnostics/MemoryTrim.cs`; and every `RunCoordinator` the tests construct — an explicit `new`, or a target-typed one — passes a trim seam (`memoryTrim:`, not `null`), so none falls back to the real blocking collection; the rules are shown to catch each form of the call and to ignore prose |
 | One memory read (`MemoryReadGuardTests`) | the process's memory is read in exactly one file, `Core/Diagnostics/MemoryLine.cs` (§11.4): `GetProcessMemoryInfo` (the private bytes; its P/Invoke declaration in `NativeMethods.cs` is the one exempt mention, and the exemption is pinned to still declare the call), `GetGCMemoryInfo` and `GC.GetTotalMemory` are called nowhere else; `Process.PrivateMemorySize64` is written nowhere at all, `MemoryLine` included, because it snapshots every process on the machine; and `GC.GetTotalMemory` is called only with the literal `false` — any other argument may be a hidden full collection, which the `GC.Collect` guard cannot see. The rules are shown to catch each form of the call and to ignore prose |
