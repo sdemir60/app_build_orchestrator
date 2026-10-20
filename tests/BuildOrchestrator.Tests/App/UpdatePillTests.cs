@@ -100,8 +100,12 @@ public class UpdatePillTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>Hapın ayracı mevcut ayraçla TEK stildir (literal ikinci kez yazılmaz): 1×14, <c>border</c>, yatay 5px. [Exit] Exit
-    /// butonunun önündeki ayraç da aynı stildir — kümenin üç ayracı (hap · layout | gear · About | Exit).</summary>
+    /// <summary>Hapın ayracı mevcut ayraçla TEK stildir (literal ikinci kez yazılmaz): 1×14, <c>border</c>, yatay 8px. [Exit] Exit
+    /// butonunun önündeki ayraç da aynı stildir — kümenin üç ayracı (hap · layout | gear · About | Exit).
+    /// <para><b>[DEĞİŞEN KURAL — 2026-10-20, kullanıcı: "divider sağ sol tarafları bir tık daha mı açılmalı"]</b> ESKİ İDDİA: yatay 5px
+    /// (prototipin <c>margin: 0 5px</c>'i). Prototipte kümenin <c>gap: 2</c>'si de vardı ama uygulanmamıştı; ölçüm (kullanıcının ekran
+    /// görüntüsü, %100): ayraç yanında görünen çizimler arası 9 px, ikonlar arasında 8 — ayraç grupları ayırmıyordu. Ayraç artık yatay 8 +
+    /// kümenin 1'lik boşluğu = düğmeden 9 px (<see cref="TitleBarClusterTests"/>).</para></summary>
     [StaFact]
     public void The_pill_separator_shares_the_one_title_bar_separator_style()
     {
@@ -115,7 +119,7 @@ public class UpdatePillTests
         {
             Assert.Same(style, s.Style);
             Assert.Equal((1.0, 14.0), (s.Width, s.Height));
-            Assert.Equal(new Thickness(5, 0, 5, 0), s.Margin);
+            Assert.Equal(new Thickness(8, 0, 8, 0), s.Margin);
             Assert.Equal(DsResources.TokenColor(window, "Brush.Border"), DsResources.ColorOf(s.Fill));
         });
         GC.KeepAlive(window);

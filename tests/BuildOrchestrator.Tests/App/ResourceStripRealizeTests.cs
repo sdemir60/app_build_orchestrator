@@ -221,7 +221,10 @@ public class ResourceStripRealizeTests(ITestOutputHelper output)
     }
 
     /// <summary>En dar pencerede (1240) ve güncelleme hapı görünürken şerit ne sol logo kilidine, ne sağ kümeye (hap dahil), ne caption butonlarına
-    /// değer. Boşluklar ölçülüp çıktıya yazılır (controller'ın göz kontrolü ve rapor için).</summary>
+    /// değer. Boşluklar ölçülüp çıktıya yazılır (controller'ın göz kontrolü ve rapor için).
+    /// <para><b>[2026-10-20 · EKLENEN KURAL]</b> Değmemek yetmez: şerit sağ kümeye, kümenin bir ayracının yanındaki düğmeye durduğu mesafeden
+    /// (hap → ayraç) daha fazla yaklaşmaz — yaklaşırsa kümenin bir grubu gibi okunur. Ölçüldü: kümeye 2 px öğe arası boşluk ve 8'lik ayraç
+    /// kenarı birlikte girince şerit ile hap arasında 1 px kalıyordu (eskiden 39); kesişme iddiası bunu yeşil geçirdi.</para></summary>
     [StaFact]
     public void At_the_narrowest_width_with_the_update_pill_showing_the_strip_touches_neither_cluster()
     {
@@ -246,6 +249,10 @@ public class ResourceStripRealizeTests(ITestOutputHelper output)
         Assert.False(stripBounds.IntersectsWith(rightCluster), $"şerit {stripBounds} sağ kümeyle {rightCluster} çakışıyor");
         Assert.False(stripBounds.IntersectsWith(captionButtons), $"şerit {stripBounds} caption butonlarıyla {captionButtons} çakışıyor");
         Assert.True(stripBounds.Left > logoLock.Right && stripBounds.Right < rightCluster.Left, "şerit iki kümenin ARASINDA değil");
+        double groupSpacing = Bounds(window, window.UpdatePillSeparator).Left - pill.Right; // hap → ayraç
+        Assert.True(groupSpacing > 0, "hap ile ayracı arasında boşluk ölçülemedi — ölçüm vakum");
+        Assert.True(rightCluster.Left - stripBounds.Right >= groupSpacing,
+            $"şerit sağ kümeye {rightCluster.Left - stripBounds.Right:0.##} px yaklaşıyor — kümenin ayraç mesafesinden ({groupSpacing:0.##}) az");
         GC.KeepAlive(window);
     }
 

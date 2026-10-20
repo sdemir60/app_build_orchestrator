@@ -12,7 +12,7 @@ namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
 /// [Exit] Title bar'ın Exit butonu: sağ ikon kümesinin SONU (About'tan sonra, pencere kontrollerinden önce), önünde kümenin diğer
-/// ayraçlarıyla aynı ayraç; DS IconButton sm (22×22, radius 4) içinde Lucide power, 13px, kalınlık 1.7 (ⓘ ile aynı); varsayılan
+/// ayraçlarıyla aynı ayraç; DS IconButton sm (22×22, radius 4) içinde Lucide power, 16px (dişli ve ⓘ ile aynı kutu), kalınlık 1.7 (ⓘ ile aynı); varsayılan
 /// <c>text-secondary</c>, hover <c>surface-raised</c> + <c>text-primary</c>; kart açıkken <c>surface-overlay</c> + <c>text-primary</c> —
 /// IconButton'ın amber <c>active</c> hâli DEĞİL (title bar'da logo dışında amber yok) — ve tooltip gösterilmez. Tooltip "Exit — quit
 /// and end every process (Ctrl+Q)", altta açılır; cümle ve jest kısayol kataloğundan gelir. Uçuşta iş yokken buton da Ctrl+Q da
@@ -39,6 +39,12 @@ public class ExitButtonTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>
+    /// <para><b>[DEĞİŞEN KURAL — 2026-10-20, kullanıcı: "exit ikonu küçük kaldı diğerlerine göre"]</b> ESKİ İDDİA: ikon 13 px'lik kutudadır
+    /// (Exit tasarımının sayısı; tasarımda komşuları da 13 px'tir). Uygulamada komşular — dişli, What's new, ⓘ — 16 px'te çizilir; ölçüm
+    /// (kullanıcının ekran görüntüsü, %100): Exit'in görünen boyu 11×12 ve çizgisi 0,92 px, dişlininki 14×15 ve 1,13 px. Exit artık dişlinin
+    /// kutusunu taşır (16 px: görünen boy 13,1×14,4, çizgi 1,13 — dişliyle aynı); kümenin tek kutu kuralı <see cref="TitleBarClusterTests"/>'te.</para>
+    /// </summary>
     [StaFact]
     public void The_exit_button_is_a_small_icon_button_drawing_the_power_icon()
     {
@@ -50,7 +56,9 @@ public class ExitButtonTests
         Assert.Equal(window.FindResource("Radius.Sm"), DsChrome.GetCornerRadius(button));
         Assert.Equal(new CornerRadius(4), DsChrome.GetCornerRadius(button));
         var icon = DsResources.Descendants(button).OfType<Viewbox>().Single();
-        Assert.Equal((13.0, 13.0), (icon.Width, icon.Height));
+        var gearIcon = DsResources.Descendants(window.GearButton).OfType<Viewbox>().Single();
+        Assert.Equal((gearIcon.Width, gearIcon.Height), (icon.Width, icon.Height)); // dişlinin kutusu
+        Assert.Equal((16.0, 16.0), (icon.Width, icon.Height));
         var path = DsResources.Descendants(icon).OfType<Path>().Single();
         Assert.Same(window.FindResource("Icon.Power"), path.Data);
         Assert.Equal(1.7, path.StrokeThickness);

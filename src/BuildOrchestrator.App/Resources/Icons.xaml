@@ -187,16 +187,16 @@
     </GeometryGroup>
 
     <!--
-      [About] lucide `info` — <circle cx="12" cy="12" r="10"/> + <path d="M12 16v-4"/> + <path d="M12 8h.01"/>
-
-      TÜRETİLMİŞ: design-v1 BuildApp.jsx:44-72 ikon tablosunda `info` YOKTUR (Icon.CaptionRestore ile aynı
-      statü — kaynaksız değer, gerekçesi burada). Geometri lucide'dan alınmıştır çünkü bu sözlükteki 24-viewBox
-      ikonların TÜMÜ lucide ailesindendir; ikon dili böyle tutarlı kalır. Kalınlığı için aşağıya bakın: title
-      bar'da Icon.Gear'ın KOMŞUSUDUR, optik ağırlıkları eşleşmelidir.
+      [About] title bar'ın ⓘ'si — .claude/outputs/2026-10-15-16-54-design-v1.25.0/prototype/app/BuildApp.jsx:102 `I.info`:
+      <circle cx="12" cy="12" r="9"/> + <path d="M12 11v5"/> + <path d="M12 7.6h.01"/> (tasarım v1.2.1'den beri böyle).
+      Halka güncelleme hapının (Icon.UpdateReady) ve Exit'in power halkasıyla aynı r=9'dur.
+      Eskiden lucide `info`'ydu (r=10, M12 16v-4, M12 8h.01) ve TÜRETİLMİŞ sayılıyordu — design-v1'in ikon tablosunda `info`
+      yoktu. 16 px'te r=10 halka 14,5 px ile title bar kümesinin en büyük çizimiydi (dişli 13,0 genişlik, Exit 13,1); tasarımın
+      r=9'u 13,1 px'tir.
     -->
     <GeometryGroup x:Key="Icon.Info">
-        <EllipseGeometry Center="12,12" RadiusX="10" RadiusY="10" />
-        <PathGeometry Figures="M12 16v-4 M12 8h.01" />
+        <EllipseGeometry Center="12,12" RadiusX="9" RadiusY="9" />
+        <PathGeometry Figures="M12 11v5 M12 7.6h.01" />
     </GeometryGroup>
 
     <!--
@@ -253,8 +253,8 @@
       prototype/app/BuildApp.jsx:104-105 (`I.update`, `I.arrowRight`). Kartın Restart düğmesinin rotate-cw'si
       Icon.Rebuild'dir (aynı çizim, ikinci anahtar açılmaz).
     -->
-    <!-- BuildApp.jsx:104 lucide circle-arrow-up — r=9 halka (tasarım "ⓘ ile aynı r=9" der; Icon.Info r=10'dur,
-         hap prototipi izler) + ok başı + gövde. -->
+    <!-- BuildApp.jsx:104 lucide circle-arrow-up — r=9 halka (tasarım "ⓘ ile aynı r=9" der; Icon.Info'nun halkası da r=9)
+         + ok başı + gövde. -->
     <GeometryGroup x:Key="Icon.UpdateReady">
         <EllipseGeometry Center="12,12" RadiusX="9" RadiusY="9" />
         <PathGeometry Figures="m15.5 11.5-3.5-3.5-3.5 3.5 M12 16V8" />
@@ -428,8 +428,8 @@
     <!-- strokeWidth="1.9" (design-v1.11.0 BuildApp.jsx:81 rebuild — ailenin tek 1.9'u, kaynakta öyle) -->
     <sys:Double x:Key="Icon.Rebuild.StrokeThickness">1.9</sys:Double>
 
-    <!-- strokeWidth="1.7" (BuildApp.jsx:59, :60 · Icon.Info TÜRETİLMİŞ: title bar'da Gear'ın KOMŞUSU olduğu
-         için AYNI kalınlıkta çizilir — optik ağırlıkları eşleşmeli) -->
+    <!-- strokeWidth="1.7" (BuildApp.jsx:59, :60 · Icon.Info: design-v1.25.0 BuildApp.jsx:102 — title bar'da Gear'ın
+         KOMŞUSUDUR, optik ağırlıkları eşleşir) -->
     <sys:Double x:Key="Icon.AlertTri.StrokeThickness">1.7</sys:Double>
     <sys:Double x:Key="Icon.Gear.StrokeThickness">1.7</sys:Double>
     <sys:Double x:Key="Icon.Info.StrokeThickness">1.7</sys:Double>

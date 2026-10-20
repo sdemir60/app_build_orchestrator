@@ -144,8 +144,8 @@ public class IconGeometryTests
     }
 
     /// <summary>[design v1.23.0 §2.12] Güncelleme ikonları prototipin geometrisini BİREBİR taşır (BuildApp.jsx:104-105,
-    /// viewBox 24): hap = lucide circle-arrow-up — <c>r=9</c> halka (tasarım "ⓘ ile aynı r=9" der; uygulamadaki
-    /// <c>Icon.Info</c> r=10'dur, hap prototipi izler) + ok başı ve gövde, 1.7 kalınlık; kartın geçiş oku = lucide
+    /// viewBox 24): hap = lucide circle-arrow-up — <c>r=9</c> halka (tasarım "ⓘ ile aynı r=9" der; <c>Icon.Info</c>'nun halkası da
+    /// r=9'dur, <see cref="The_info_icon_carries_the_prototype_geometry"/>) + ok başı ve gövde, 1.7 kalınlık; kartın geçiş oku = lucide
     /// arrow-right — gövde + ok başı, 1.8 kalınlık. Sınırlar çizimi doğrular: halka 3..21, ok 5..19.</summary>
     [StaFact]
     public void The_update_icons_carry_the_prototype_geometry()
@@ -169,10 +169,40 @@ public class IconGeometryTests
         Assert.Equal(1.8, Assert.IsType<double>(icons["Icon.ArrowRight.StrokeThickness"]));
     }
 
+    /// <summary>Title bar'ın ⓘ'si (About) prototipin geometrisini BİREBİR taşır (design-v1.25.0 BuildApp.jsx:102, viewBox 24): <c>r=9</c> halka +
+    /// gövde <c>M12 11v5</c> + nokta <c>M12 7.6h.01</c>, 1.7 kalınlık. Halka güncelleme hapınınkiyle ve Exit'in power halkasıyla aynıdır (x 3..21).
+    /// <para><b>[DEĞİŞEN KURAL — 2026-10-20, kullanıcı: "diğer ikonlar da birbiri arasında ölçü olarak tam uyumlu değil"]</b> ESKİ İDDİA (pinsizdi,
+    /// sözlükte "TÜRETİLMİŞ" yazıyordu): ⓘ lucide <c>info</c>'dur — <c>r=10</c>, gövde <c>M12 16v-4</c>, nokta <c>M12 8h.01</c> — çünkü design-v1'in
+    /// ikon tablosunda <c>info</c> yoktu. Tasarım v1.2.1'den beri kendi ⓘ'sini r=9 çizer. Ölçüm (16 px kutu, kalem dahil): r=10 halka 14,5 px ile
+    /// kümenin en büyük çizimiydi (dişli 13,0 genişlik, Exit 13,1); r=9 halka 13,1 px — Exit'in halkasıyla aynı.</para></summary>
+    [StaFact]
+    public void The_info_icon_carries_the_prototype_geometry()
+    {
+        var icons = IconResources.Load();
+
+        var info = Assert.IsType<GeometryGroup>(icons["Icon.Info"]);
+        var ring = Assert.Single(info.Children.OfType<EllipseGeometry>());
+        Assert.Equal((new Point(12, 12), 9.0, 9.0), (ring.Center, ring.RadiusX, ring.RadiusY));
+        var marks = Assert.Single(info.Children.OfType<PathGeometry>());
+        Assert.Equal(2, marks.Figures.Count);
+        Assert.Equal(new Point(12, 11), marks.Figures[0].StartPoint); // gövde 11..16
+        Assert.Equal(16, marks.Bounds.Bottom, 2);
+        Assert.Equal(new Point(12, 7.6), marks.Figures[1].StartPoint); // nokta
+        Assert.Equal(new Rect(3, 3, 18, 18), info.Bounds);
+
+        var update = Assert.Single(Assert.IsType<GeometryGroup>(icons["Icon.UpdateReady"]).Children.OfType<EllipseGeometry>());
+        Assert.Equal((update.Center, update.RadiusX), (ring.Center, ring.RadiusX)); // hapın halkasıyla aynı
+        var power = Assert.IsType<PathGeometry>(icons["Icon.Power"]); // Exit'in halkası (x 3..21)
+        Assert.Equal(power.Bounds.Left, info.Bounds.Left, 1);
+        Assert.Equal(power.Bounds.Right, info.Bounds.Right, 1);
+        Assert.Equal(1.7, Assert.IsType<double>(icons["Icon.Info.StrokeThickness"]));
+    }
+
     /// <summary>[Exit] Exit'in ikonu lucide power'dır (viewBox 24): dikey gövde <c>M12 2v10</c> + üstü açık halka
     /// <c>M18.4 6.6a9 9 0 1 1-12.77.04</c> — iki figür. Sınırlar çizimi doğrular: halka x 3..21, alt ucu ~22; gövde y=2'den başlar.
-    /// Kalınlık title bar ikonlarınınkidir: 1.7 (ⓘ ile aynı). Gövde x=12'dedir: 13 px kutuda 6,5 — %100 ekranda piksel ORTASI
-    /// (kaynak şeridinin paralel ikonundaki piksel sınırı dersi).</summary>
+    /// Kalınlık title bar ikonlarınınkidir: 1.7 (ⓘ ile aynı). Gövde x=12'dedir: dişliyle aynı 16 px'lik kutuda 8'e, %100 ekranda piksel
+    /// sınırına düşer — ⓘ'nin gövdesi gibi. (Eski 13 px kutuda 6,5 — piksel ortası — beklenirdi; kullanıcının 2026-10-20 ekran görüntüsünde
+    /// o gövde de iki sütuna yayılmıştı.)</summary>
     [StaFact]
     public void The_power_icon_carries_lucides_geometry()
     {
