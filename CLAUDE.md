@@ -81,9 +81,19 @@ Süit **filtrelidir**: `Category=Acceptance` testleri gerçek MSBuild ister — 
 ~2 dk sürer — ayrı koşulur (`--filter "Category=Acceptance"`). Uygulama açıkken build alma — çalışan Supervisor
 kendi binary'lerini kilitler.
 
-- **CI (`ci.yml`) aynı süiti windows-2025 runner'ında koşar;** runner'da koşamayan/kararsız test
-  **`Category=LocalOnly`** alır ve yalnız CI filtresinde dışlanır — eşik gevşetilmez, test silinmez; lokal tam
-  süit kapı olmaya devam eder.
+- **Tam süitin kapısı CI'dır, lokal koşu değil.** `ci.yml` aynı süiti windows-2025 runner'ında, `main` dışındaki her
+  branch'in her push'unda koşar (~10 dk). İş bitince çalışma branch'i güncel `develop`'un üstüne alınır (rebase),
+  push'lanır ve koşunun yeşili beklenir (public API, curl). Kırmızıda düşen testlerin adı koşunun hata notundan okunur
+  (`check-runs/{id}/annotations`, kimliksiz — `scripts/ci-failed-tests.ps1` yazar); yalnız onlar lokalde tekrarlanır,
+  düzeltme aynı branch'e push'lanır. Lokal tam süit yalnız kullanıcı isterse koşar — kısıtsız tam süit makineyi
+  kilitliyordu.
+- **Lokal test koşusu kısıtlıdır:** yalnız değişikliğe ilişkin test sınıfları, düşük öncelik ve yarım çekirdekle, bir
+  `.cmd` dosyasından: `start "bo" /b /wait /belownormal /affinity F0 dotnet test … --no-build --filter "…" -- xUnit.MaxParallelThreads=3`
+  (öncelik ve çekirdek maskesi testhost'a, motora ve MSBuild.exe'ye miras geçer). Kısıt zamanlama testlerini
+  düşürebilir: kırmızıyı önce tek başına, kısıtsız tekrarla.
+- Runner'da koşamayan/kararsız test **`Category=LocalOnly`** alır ve yalnız CI filtresinde dışlanır — eşik
+  gevşetilmez, test silinmez. CI onları hiç koşmadığı için değişiklik onların alanına dokunduğunda (ConsoleTiltIn,
+  Popover, UiResponsivenessBudget, CycleRounds) push'tan önce lokalde koşulur.
 - **Ölçüm/sonda testi = ortam değişkeni kapısı.** `Category=Measurement` etiketi TEK BAŞINA yetmez:
   `Category!=Acceptance` filtresi diğer her kategoriyi kabul eder. Pencere açan, balloon gösteren ya da CPU
   yakan her YENİ test `[SkippableFact]` + ilk satırda `Skip.IfNot(<BO_... değişkeni> == "1")` taşır (içerik
@@ -114,7 +124,7 @@ Kullanıcı kusuru görüp tarif eder, **testi agent yazar**.
   başka türlü davranıyorsa, "doküman ile kod uyuşmuyor: doküman şunu diyor, kod şunu yapıyor" de ve kullanıcının
   hangisinin doğru olduğunu söylemesini bekle.
 - Birden çok bulgu tek kök nedene bağlıysa tek fix, ama **her biri için ayrı test**.
-- Bitişte **tam süit yeşil** (token/motion/D8 guard'ları dahil). 5'ten fazla bulgu varsa önce kısa TDD dökümü
+- Bitişte **tam süit yeşil** — çalışma branch'inin CI koşusunda (token/motion/D8 guard'ları dahil; Build / test). 5'ten fazla bulgu varsa önce kısa TDD dökümü
   (`.claude/outputs/`), sonra `superpowers:subagent-driven-development` ile task-by-task.
 
 ## Doküman güncelleme
@@ -192,7 +202,9 @@ kebab-case ve **İngilizce** (`scrollbar-restyle-plan` gibi; `plani`/`kayitlari`
 
 - Repo: `sdemir60/app_build_orchestrator` (GitHub). **`develop` günlük iş branch'idir; `main` yalnız sürümleri
   taşır.**
-- Bir iş için kendi çalışma branch'ini `develop`'tan aç, task başına commit at, bitince `develop`'a merge + push.
+- Bir iş için kendi çalışma branch'ini `develop`'tan aç, task başına commit at. Bitince branch'i güncel `develop`'un
+  üstüne al (rebase), push'la ve CI koşusunun yeşilini bekle (Build / test); sonra `develop`'a merge + push ve
+  develop'un koşusunun da yeşil olduğunu gör.
 - Merge'ün geçtiğini **doğruladıktan sonra** branch'i local ve remote'tan sil.
 - **`main`'e yalnız `/release` (`scripts/release.ps1`) dokunur** — elle merge, commit ya da push yok. `main`'deki
   her merge commit'i bir sürüm denemesidir; tag'i GitHub, testler ve paket geçince koyar (ayrıntı "Sürüm çıkarma" adım

@@ -6975,8 +6975,10 @@ own allocation counter (`PerfMeasure.AllocatedBy`), which nothing running beside
 gated and run with the normal suite.
 
 A third category, `LocalOnly`, marks a test that cannot run on the hosted CI runner — a timing budget a shared
-runner cannot hold, say. Only CI's filter excludes it (`Category!=Acceptance&Category!=LocalOnly`, §18); the local
-command above runs it, and the local full run stays the gate. A test is never loosened or deleted to make CI green.
+runner cannot hold, say. Only CI's filter excludes it (`Category!=Acceptance&Category!=LocalOnly`, §18), and the
+local command above runs it: the full suite's gate is the work branch's CI run (§18), so these tests are the part of
+the suite that only a local run covers, run before the push whenever a change touches them. A test is never loosened
+or deleted to make CI green.
 The trait goes on a whole class when its assertions are wall-clock budgets (`UiResponsivenessBudgetTests`) and on a
 single method when only that method depends on a clock or a capacity the runner cannot keep steady. Four methods
 carry it that way, each in a class whose other tests stay in CI: the popover's real pop-in (`PopoverTests`), which
@@ -6987,7 +6989,7 @@ shows that appended lines do not replay the transition — all three wait on a r
 shared runner is not steady enough for the windows they allow — and the cycle group-start surface hash (`CycleRoundsTests`), which proves the
 producers are read in parallel by having two reads meet within 50 ms. That meeting needs the thread pool to hand the
 loop a second thread in time; a loaded shared runner could not, and the same test fails locally once the process is
-pinned to a single core. The local run still executes all four, and it stays the gate.
+pinned to a single core. A local run still executes all four.
 
 Test counts are deliberately not recorded here — run the suite for the current number.
 
@@ -7027,8 +7029,11 @@ Close any running instance before building — a live Supervisor keeps its own b
 the SDK band (a later 10.0 feature band is accepted), so a local build and CI use the same SDK.
 
 **CI.** `.github/workflows/ci.yml` builds in Release and runs the suite without the `Acceptance` and `LocalOnly`
-categories (§17.5) on every push to `develop`, every pull request, on demand, and when the release workflow calls it
-(`workflow_call`) — the build and test steps are written once. A push to `main` is a release: the release
+categories (§17.5) on every push to any branch but `main`, every pull request, on demand, and when the release
+workflow calls it (`workflow_call`) — the build and test steps are written once. A work branch is pushed before its
+merge, and its run is the full suite's gate: a full local run takes every core of the developer's machine for the
+length of the suite, and the runner does the same work on a clean machine. `develop`'s own run then checks the merged
+result. A push to `main` is a release: the release
 workflow's own `ci` job is `main`'s build and test, so `ci.yml` does not run there a second time (two runs of one
 commit could disagree, one red by chance while the release went out green). The run on `develop` is what a
 release waits for: `release.ps1` refuses a `develop` whose run is not green. That is why the trigger has no path
@@ -7036,7 +7041,10 @@ filter: a `develop` head that changed only documentation would get no run, and t
 never comes. The README's badge shows the release run of `main` — the released code — whichever branch is the
 repository's default. The runner is pinned to `windows-2025` rather than `windows-latest`, whose image moves under it; MSBuild is
 found there through `vswhere` as anywhere else. A newer run of the workflow on the same ref cancels the older one,
-and the test results are kept as a TRX artifact. The concurrency group carries the workflow's name as well as the
+and the test results are kept as a TRX artifact. When the test step fails, `scripts/ci-failed-tests.ps1` writes the
+failed tests — each name with the first line of its message — as one error annotation on the run (GitHub keeps at
+most ten per step, so the list is one note). The public API serves annotations without a sign-in, where the job log
+and the artifact need one, so a red run names its failures to anyone reading it. The concurrency group carries the workflow's name as well as the
 ref: a called workflow takes its caller's context, so the release's `ci` job runs as `release` on `main`, and a
 manual `ci` run on `main` — the default branch "Run workflow" offers — falls in a group of its own instead of
 cancelling a release's tests (a cancelled run would end `cancelled`, which the retry below does not re-run). CI
@@ -7915,7 +7923,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | One-command release from `develop`: guards (`develop`'s CI run green and something to release included), `Version`, build, release commit, `--no-ff` merge into `main`, `develop` fast-forwarded to `main`, one atomic push of `main` and `develop` — no tag; the undo line when it stops after the release commit, withheld when a push that reported an error left the release merge on `origin`'s `main` | `scripts/release.ps1` |
 | The `/release` request: order and commands; the note rules stay in `CLAUDE.md` | `.claude/skills/release/SKILL.md` |
 | End-to-end check of a publish output | `scripts/verify-publish.ps1` |
-| CI build and suite on `develop`; the release workflow on `main` (guard → CI → package → tag → GitHub Release); one automatic re-run of a failed release | `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `.github/workflows/release-retry.yml` |
+| CI build and suite on every branch but `main` (a work branch's run is the full suite's gate), its failed tests as one annotation; the release workflow on `main` (guard → CI → package → tag → GitHub Release); one automatic re-run of a failed release | `.github/workflows/ci.yml`, `scripts/ci-failed-tests.ps1`, `.github/workflows/release.yml`, `.github/workflows/release-retry.yml` |
 | SDK band · pinned `vpk` · licence | `global.json` · `.config/dotnet-tools.json` · `LICENSE` |
 
 **Reading the map.** A rule of thumb that holds across the code base: where a behaviour has both a *decision*

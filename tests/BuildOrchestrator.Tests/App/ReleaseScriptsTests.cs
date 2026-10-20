@@ -171,6 +171,62 @@ public class ReleaseScriptsTests
         return (p.ExitCode, stdout.GetAwaiter().GetResult() + stderr.GetAwaiter().GetResult());
     }
 
+    /// <summary>Asgari bir TRX (vstest'in sonuç dosyası, kendi ad alanıyla): her satır bir test sonucudur — ad, sonuç ve varsa hata
+    /// mesajı. <c>ci-failed-tests.ps1</c>'in okuduğu yalnız bunlardır.</summary>
+    private static string Trx(params (string Name, string Outcome, string? Message)[] results)
+    {
+        System.Xml.Linq.XNamespace ns = "http://microsoft.com/schemas/VisualStudio/TeamTest/2010";
+        var run = new System.Xml.Linq.XElement(ns + "TestRun", new System.Xml.Linq.XElement(ns + "Results",
+            results.Select(r => new System.Xml.Linq.XElement(ns + "UnitTestResult",
+                new System.Xml.Linq.XAttribute("testName", r.Name), new System.Xml.Linq.XAttribute("outcome", r.Outcome),
+                r.Message is null ? null : new System.Xml.Linq.XElement(ns + "Output",
+                    new System.Xml.Linq.XElement(ns + "ErrorInfo", new System.Xml.Linq.XElement(ns + "Message", r.Message)))))));
+        return run.ToString();
+    }
+
+    /// <summary>Script çıktısındaki GitHub hata notları (<c>::error …</c> satırları).</summary>
+    private static List<string> ErrorNotes(string output) =>
+        [.. output.Split('\n').Select(l => l.TrimEnd('\r')).Where(l => l.StartsWith("::error", StringComparison.Ordinal))];
+
+    /// <summary>[CI · düşen test notu] ci.yml'in test adımı düşünce <c>ci-failed-tests.ps1</c> TRX'teki düşen testleri TEK bir hata notu
+    /// olarak yazar: başlıkta sayı, gövdede test başına bir satır — ad + hata mesajının İLK satırı; satırlar GitHub'ın kaçışıyla
+    /// (<c>%0A</c>) birleşir. Geçen test yazılmaz. Tek not, çünkü GitHub adım başına en çok on hata notu tutar; not herkese açık
+    /// API'den kimliksiz okunur (<see cref="RepoHygieneTests.A_failed_CI_test_step_writes_the_failed_tests_as_one_note"/>).</summary>
+    [SkippableFact]
+    public void The_CI_failure_note_lists_each_failed_test_with_the_first_line_of_its_message()
+    {
+        RequirePowerShell();
+        using var temp = new TempDir();
+        string trx = Path.Combine(temp.Path, "tests.trx");
+        File.WriteAllText(trx, Trx(("Ns.A.Fails", "Failed", "Expected: 2\nActual: 3"), ("Ns.B.Passes", "Passed", null),
+            ("Ns.C.Also(scale: 1.25)", "Failed", "100% off")));
+
+        var (code, output) = Run("ci-failed-tests.ps1", "-Trx", trx);
+
+        Assert.True(code == 0, output);
+        Assert.Equal("::error title=2 test(s) failed::Ns.A.Fails :: Expected: 2%0ANs.C.Also(scale: 1.25) :: 100%25 off",
+            Assert.Single(ErrorNotes(output)));
+    }
+
+    /// <summary>Düşen test yoksa not yazılmaz; TRX hiç yazılmadıysa (test adımı sonuç yazamadan düştü — derleme ya da host çökmesi)
+    /// bunu söyleyen tek bir not yazılır. Script iki durumda da adımı düşürmez: job zaten kırmızıdır.</summary>
+    [SkippableFact]
+    public void The_CI_failure_step_writes_no_note_without_a_failure_and_says_so_without_results()
+    {
+        RequirePowerShell();
+        using var temp = new TempDir();
+        string trx = Path.Combine(temp.Path, "tests.trx");
+        File.WriteAllText(trx, Trx(("Ns.B.Passes", "Passed", null)));
+
+        var (passedCode, passedOutput) = Run("ci-failed-tests.ps1", "-Trx", trx);
+        var (missingCode, missingOutput) = Run("ci-failed-tests.ps1", "-Trx", Path.Combine(temp.Path, "none.trx"));
+
+        Assert.True(passedCode == 0, passedOutput);
+        Assert.Empty(ErrorNotes(passedOutput));
+        Assert.True(missingCode == 0, missingOutput);
+        Assert.StartsWith("::error title=No test results::", Assert.Single(ErrorNotes(missingOutput)), StringComparison.Ordinal);
+    }
+
     [SkippableFact]
     public void The_notes_cut_from_the_changelog_parse_to_the_same_entry_the_app_shows()
     {
