@@ -604,9 +604,10 @@ public partial class MainWindow : Window
     /// binerler (XAML'de sonra gelen üstte çizilir); Esc her zaman EN ÜST katmanı indirir, alta sızmaz.
     /// [kullanıcı kararı 2026-09-29] Zincirin son halkası koşudur — karar <see cref="KeyboardShortcuts.ResolveEsc"/>'te;
     /// Stop kendi komutundan geçer: Esc graceful gönderir; Stopping sürerken (kullanıcı ya da branch kesmesi istemiş
-    /// olsun) hard stop gönderir ([kullanıcı kararı 2026-10-03]); komut hangisi olduğuna kendi fazından karar verir ve
-    /// hard gittikten sonraki Esc'i kendi içinde yutar
-    /// (<see cref="RunViewModel.EscRunState"/> yalnız zincirin girdisidir).</summary>
+    /// olsun) hard stop gönderir ([kullanıcı kararı 2026-10-03]); komut hangisi olduğuna kendi fazından karar verir
+    /// (<see cref="RunViewModel.EscRunState"/> yalnız zincirin girdisidir). [kullanıcı kararı 2026-10-20] Koşuda Esc'e iş kalmadıysa
+    /// (hiçbir şey koşmuyor, hard stop gitti, durdurulamaz satırı yazıldı) pencere title bar'ın × düğmesiyle AYNI çağrıyla kapanır
+    /// (<see cref="OnClose"/>): karar <see cref="OnClosing"/>'tedir (<see cref="WindowCloseRule"/>) — ikinci bir kapanış kuralı yazılmaz.</summary>
     private void OnEscapePressed()
     {
         switch (KeyboardShortcuts.ResolveEsc(AnyDialogOpen, AnyPopoverOpen, _vm.SelectedProjectId is not null,
@@ -622,6 +623,7 @@ public partial class MainWindow : Window
             case EscAction.StopRun:
             case EscAction.StopNow: _vm.StopCommand.Execute(null); break;
             case EscAction.ExplainUnstoppable: _vm.NoteEscCannotStop(); break;
+            case EscAction.CloseWindow: Close(); break; // × ile aynı: tepsiye ya da tam çıkış (iş varsa onay kartı)
         }
     }
 

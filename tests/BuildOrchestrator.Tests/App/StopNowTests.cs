@@ -148,11 +148,13 @@ public class StopNowTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>Esc zincirinin girdisi faza bakar, kapıya DEĞİL: graceful gittikten sonra Stop'un kapısı hâlâ açıktır ama
-    /// durum "Stoppable" değil "Stopping"tir — ikincisi hard'dır, birincisi graceful. Hard gittikten sonra da Stopping
-    /// kalır (üçüncü Esc komutun kapısında yutulur).</summary>
+    /// <summary>Esc zincirinin girdisi Stop'un aşamasına bakar, kapıya DEĞİL: graceful gittikten sonra Stop'un kapısı hâlâ açıktır
+    /// ama durum "Stoppable" değil "Stopping"tir — ikincisi hard'dır, birincisi graceful. Hard gittikten sonra durum "Terminating"tir.
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-20]</b> ESKİ İDDİA (<c>The_esc_chain_reads_Stopping_through_the_whole_stop</c>):
+    /// hard gittikten sonra da durum Stopping kalırdı ve üçüncü Esc komutun kapısında yutulurdu. GEREKÇE: kullanıcı hard stop'tan sonra
+    /// da Esc'e bastı ve hiçbir şey olmadı; o basış artık × gibi kapatır — zincir hard'ı gönderen basışla sonrakini ayırt etmelidir.</para></summary>
     [StaFact]
-    public async Task The_esc_chain_reads_Stopping_through_the_whole_stop()
+    public async Task The_esc_chain_reads_Stopping_during_the_drain_and_Terminating_once_the_hard_stop_has_gone()
     {
         using var temp = new TempDir();
         var (window, vm, _) = MainWindowHost.NewWithSends(temp);
@@ -164,7 +166,8 @@ public class StopNowTests
         Assert.Equal(EscRunState.Stopping, vm.EscRunState);
 
         await vm.StopCommand.ExecuteAsync(null);
-        Assert.Equal(EscRunState.Stopping, vm.EscRunState);
+        Assert.Equal(StopStage.Terminating, vm.StopStage); // ön-koşul: hard gitti
+        Assert.Equal(EscRunState.Terminating, vm.EscRunState);
         GC.KeepAlive(window);
     }
 

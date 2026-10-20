@@ -214,7 +214,7 @@ public class UpdateRestartLockTests
     }
 
     /// <summary>[F-M1] Aşama metinleri birebir; durduran tuşun adı kataloğun jestiyle yazılır. Terminating'de tuşa HİÇ
-    /// değinilmez: o aşamada Esc hiçbir şey yapmaz.</summary>
+    /// değinilmez: o aşamada Esc hiçbir şey durdurmaz ([kullanıcı kararı 2026-10-20] pencereyi × gibi kapatır).</summary>
     [Fact]
     public void The_stop_stage_texts_are_verbatim_and_the_terminating_one_names_no_key()
     {
