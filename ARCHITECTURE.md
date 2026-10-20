@@ -7044,7 +7044,9 @@ found there through `vswhere` as anywhere else. A newer run of the workflow on t
 and the test results are kept as a TRX artifact. When the test step fails, `scripts/ci-failed-tests.ps1` writes the
 failed tests — each name with the first line of its message — as one error annotation on the run (GitHub keeps at
 most ten per step, so the list is one note). The public API serves annotations without a sign-in, where the job log
-and the artifact need one, so a red run names its failures to anyone reading it. The concurrency group carries the workflow's name as well as the
+and the artifact need one, so a red run names its failures to anyone reading it. The note is plain ASCII — accented
+letters drop to their base letter, typographic marks to their ASCII form, anything else to `?` — because the step's
+output crosses two shells on the runner and non-ASCII text arrived garbled; the exact text stays in the artifact. The concurrency group carries the workflow's name as well as the
 ref: a called workflow takes its caller's context, so the release's `ci` job runs as `release` on `main`, and a
 manual `ci` run on `main` — the default branch "Run workflow" offers — falls in a group of its own instead of
 cancelling a release's tests (a cancelled run would end `cancelled`, which the retry below does not re-run). CI

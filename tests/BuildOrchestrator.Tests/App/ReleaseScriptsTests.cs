@@ -208,6 +208,30 @@ public class ReleaseScriptsTests
             Assert.Single(ErrorNotes(output)));
     }
 
+    /// <summary>Not düz ASCII yazılır: Türkçe harfler temel harflerine (<c>ç→c</c>, <c>ğ→g</c>, <c>ı→i</c>, <c>ş→s</c>…), tipografik
+    /// işaretler ASCII karşılıklarına (<c>→</c> → <c>-&gt;</c>, <c>—</c> → <c>-</c>), kalan her şey <c>?</c>'e iner. Tam metin TRX
+    /// artifact'ında kalır.
+    /// <para><b>Ölçüldü (2026-10-20, ilk uçtan uca deneme):</b> script <c>[Console]::OutputEncoding</c>'i UTF-8'e çekip <c>Write-Output</c>
+    /// ile yazıyordu. GitHub'daki not <c>deliberate probe: çalışma branch'i notu</c> yerine <c>deliberate probe: �al��ma branch'i notu</c>
+    /// oldu (KillMidBuildTests'in "IOCP doğumları eksik"i de "do�umlar�"). Aynı script lokalde, UTF-8 okunan çıktıyla doğru geldi: runner'da
+    /// çıktı iki kabuk katmanından geçer (adımın pwsh'ı → powershell.exe) ve o zincir lokalde kurulamıyor. Her katmanın bozmadan taşıdığı
+    /// tek biçim ASCII'dir.</para></summary>
+    [SkippableFact]
+    public void The_CI_failure_note_is_plain_ascii_so_no_shell_layer_can_garble_it()
+    {
+        RequirePowerShell();
+        using var temp = new TempDir();
+        string trx = Path.Combine(temp.Path, "tests.trx");
+        File.WriteAllText(trx, Trx(("Ns.Tr.Fails", "Failed", "çalışma ağacı: IOCP doğumları eksik — İzmir 2 → 3 ✓")));
+
+        var (code, output) = Run("ci-failed-tests.ps1", "-Trx", trx);
+
+        Assert.True(code == 0, output);
+        string note = Assert.Single(ErrorNotes(output));
+        Assert.Equal("::error title=1 test(s) failed::Ns.Tr.Fails :: calisma agaci: IOCP dogumlari eksik - Izmir 2 -> 3 ?", note);
+        Assert.All(note, c => Assert.True(c < 128, $"ASCII dışı karakter: U+{(int)c:X4}"));
+    }
+
     /// <summary>Düşen test yoksa not yazılmaz; TRX hiç yazılmadıysa (test adımı sonuç yazamadan düştü — derleme ya da host çökmesi)
     /// bunu söyleyen tek bir not yazılır. Script iki durumda da adımı düşürmez: job zaten kırmızıdır.</summary>
     [SkippableFact]
