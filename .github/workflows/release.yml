@@ -22,7 +22,7 @@ jobs:
     outputs:
       tag: ${{ steps.guard.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: guard
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release-guard.ps1 -OnMain
   ci:
@@ -34,8 +34,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
       - run: dotnet tool restore

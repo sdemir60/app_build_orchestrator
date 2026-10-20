@@ -24,8 +24,8 @@ jobs:
   build-test:
     runs-on: windows-2025   # pinli: windows-latest imaji zamanla degisir; MSBuild vswhere ile cozuldugu icin VS surumunden bagimsiz
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
       - run: dotnet build BuildOrchestrator.slnx -c Release
@@ -33,7 +33,7 @@ jobs:
       # Dusen testleri tek bir hata notu yapar: adlari API'den kimliksiz okunur (log ve artifact giris ister).
       - if: failure()
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci-failed-tests.ps1 -Trx tests/BuildOrchestrator.Tests/TestResults/tests.trx
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: test-results
