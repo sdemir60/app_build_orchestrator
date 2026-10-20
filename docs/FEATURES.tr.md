@@ -29,9 +29,11 @@ MSBuild.exe'sinde koşar.\
 
 **Ne yapar:** Birbirinin çıktısına referans veren projeler plandan atılmaz: döngü tek birim olarak, okudukları API
 oturana kadar gereken en az turda derlenir ve sonuç oturup oturmadığını söyler.\
-**Nasıl:** Döngüler güçlü bağlı bileşenler olarak bulunur ve tek bir imzayı paylaşır. İlk tur yalnız gereken
-üyeleri derler; bir üye, okuduğu kardeş API'si değiştiyse sonraki turda yeniden derlenir, sabit bir tavana kadar.\
-`döngü tespiti için Tarjan SCC` · `yazılırken DLL okumayan bariyerli turlar` · `oturmanın kanıtı API yüzey hash'i`
+**Nasıl:** Döngüler güçlü bağlı bileşenler olarak bulunur ve tek bir imzayı paylaşır; Build onları bütün koşunun
+içinde oturtur, Resolve cycles ise yalnız döngüleri ve ihtiyaç duydukları bayat projeleri koşturur. İlk tur yalnız
+gereken üyeleri derler, bir üye ancak okuduğu kardeş API'si değiştiyse sabit bir tavana kadar yeniden derlenir, kök
+bağımlılığı hâlâ kırık olan grup da turlarını boşuna yeniden ödemek yerine atlanır.\
+`döngü tespiti için Tarjan SCC` · `yazılırken DLL okumayan bariyerli turlar` · `oturmanın kanıtı API yüzey hash'i` · `yalnız döngü koşusu için Resolve cycles`
 
 ## Her projenin neden derleneceğini söyler
 
@@ -181,7 +183,8 @@ hangisi diye sorar; Reveal in Explorer .csproj'u seçili gösterir.\
 **Ne yapar:** Bütün projeler, her zaman panele sığan build sırası bantlarında küçük düğümler olarak çizilir; bir
 düğüm seçilince onu doğrudan bağımlılıkları ve bağımlılarıyla birlikte sığdırır ve bağlantıları çizer; koşu grafta
 sakin bir ışık oyunu olarak izlenir.\
-**Nasıl:** Bantlar listenin gruplarıyla aynıdır, kalıcı bir kenar ağı yoktur. Koşuda bekleyen düğümler söner,
+**Nasıl:** Bantlar listenin gruplarıyla aynıdır, kalıcı bir kenar ağı yoktur. Her düğüm satırıyla aynı durumdan
+boyanır: hatalı projeler kırmızı kalır, döngüdeki projeler amber küp olarak görünür. Koşuda bekleyen düğümler söner,
 derlenenler etraflarında amber noktalarla parlar, sonunda bu koşuda derlenen projeler tek tek yanar.\
 `her zaman sığan düzen, kaydırma çubuğu yok` · `bağımlılık incelemek için odakla-sığdır` · `koşuyu izleten opaklık anlatısı` · `listeyle ortak vurgulama`
 

@@ -30,13 +30,14 @@ other build at the same time, and one broken project does not stop the unrelated
 
 ## Resolves dependency cycles
 
-**Goal:** keep solutions with circular references buildable without a ritual.\
+**Goal:** keep solutions with circular references buildable, quickly and without a ritual.\
 **Common practice:** when projects reference each other's DLLs, the same projects are built several times in a
 particular order, and it is never quite clear which one was compiled against an old DLL; the order becomes team
 folklore.\
-**In Build Orchestrator:** the projects in a cycle rebuild within one Build until they settle, and the result says
-plainly whether they did or which project stopped them.\
-`Tarjan SCC for cycle detection` · `API surface hash as proof of convergence`
+**In Build Orchestrator:** the projects in a cycle settle within one Build, or on their own with Resolve cycles, in
+as few compiles as it takes: a member whose inputs have not changed is not compiled again, and the result says
+plainly whether the cycle settled or which project stopped it.\
+`Tarjan SCC for cycle detection` · `API surface hash as proof of convergence` · `Resolve cycles for a cycle-only run`
 
 ## Says why each project builds
 
@@ -147,11 +148,12 @@ solution in Visual Studio or its folder in Explorer.\
 
 ## The dependency graph
 
-**Goal:** see at a glance how hundreds of projects depend on each other.\
+**Goal:** see at a glance how hundreds of projects depend on each other, and where a build stands.\
 **Common practice:** finding out what a project depends on and what it affects means opening project files one by
 one, or asking whoever has been on the team longest.\
-**In Build Orchestrator:** clicking a project brings forward what it uses and what uses it, and during a build the
-graph shows which projects are compiling.\
+**In Build Orchestrator:** the whole solution stays in view: clicking a project brings forward what it uses and what
+uses it, and during and after a build the graph shows which projects are compiling, which have failed and which sit
+in a cycle.\
 `focus-and-fit to inspect dependencies` · `opacity story to follow the run`
 
 ## Console and project logs
@@ -221,11 +223,12 @@ references, and the list refreshes on its own afterwards.\
 ## Performance profiles, live cost
 
 **Goal:** keep the machine usable while it builds.\
-**Common practice:** while a large solution builds on every core, the editor, the browser and the meeting app
-stutter, so long builds wait for a break.\
-**In Build Orchestrator:** how much of the machine a build may take is one click away; on the default profile the
-window and other apps stay smooth, and what the build uses is shown in the title bar.\
-`Job Object CPU cap to limit the machine share` · `job accounting for the live strip`
+**Common practice:** a large solution built on every core at once can lock the machine up: the editor, the browser
+and the meeting app stutter or freeze, so long builds wait for a break.\
+**In Build Orchestrator:** parallelism fits itself to the machine's cores and free memory, and how much of the
+machine a build may take is one click away; on the default profile the window and other apps stay smooth, and what
+the build uses is shown in the title bar.\
+`Job Object CPU cap to limit the machine share` · `worker budget against paging` · `job accounting for the live strip`
 
 ## Light idle, smooth under load
 

@@ -29,9 +29,11 @@ project runs in its own MSBuild.exe.\
 
 **What:** Projects that reference each other's output stay in the plan: the cycle builds as one unit, in as few
 rounds as it takes for the APIs they read to settle, and the result says whether it converged.\
-**How:** Cycles are found as strongly connected components and share one signature. The first round builds only
-the members that need it; a member builds again only if a sibling API it reads has changed, up to a fixed cap.\
-`Tarjan SCC for cycle detection` · `barriered rounds, no DLL read mid-write` · `API surface hash as proof of convergence`
+**How:** Cycles are found as strongly connected components and share one signature; Build settles them inside the
+whole run, while Resolve cycles runs only the cycles and the stale projects they need. The first round builds only
+the members that need it, a member builds again only if a sibling API it reads has changed, up to a fixed cap, and
+a group whose broken root still fails is skipped instead of paying for its rounds again.\
+`Tarjan SCC for cycle detection` · `barriered rounds, no DLL read mid-write` · `API surface hash as proof of convergence` · `Resolve cycles for a cycle-only run`
 
 ## Says why each project builds
 
@@ -185,9 +187,10 @@ Studio and asks which one when the project belongs to several; Reveal in Explore
 **What:** All projects are drawn as small nodes in build-order bands that always fit the panel; selecting a node
 fits it with its direct dependencies and dependents and draws the links, and a run plays out on the graph as a
 calm play of light.\
-**How:** The bands match the list's groups, and there is no permanent web of edges. During a run waiting nodes dim,
-building ones glow with amber beads around them, and at the end the projects built in this run light up one by
-one.\
+**How:** The bands match the list's groups, and there is no permanent web of edges. Every node is painted from the
+same state as its row, so failed projects stay red and projects in a cycle show as amber cubes. During a run
+waiting nodes dim, building ones glow with amber beads around them, and at the end the projects built in this run
+light up one by one.\
 `always-fit layout, no scrollbars` · `focus-and-fit to inspect dependencies` · `opacity story to follow the run` · `shared hover with the list`
 
 ## Console and project logs
