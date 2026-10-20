@@ -31,13 +31,14 @@ kırılan bir proje ilgisiz olanları durdurmaz.\
 
 ## Bağımlılık döngülerini çözer
 
-**Amaç:** döngüsel referanslı çözümleri bir ritüele gerek kalmadan derlenebilir tutmak.\
+**Amaç:** döngüsel referanslı çözümleri hızlıca ve bir ritüele gerek kalmadan derlenebilir tutmak.\
 **Yaygın pratik:** projeler birbirinin DLL'ine referans verdiğinde aynı projeler belli bir sırayla birkaç kez
 derlenir ve hangisinin eski bir DLL'e karşı derlendiği hiçbir zaman tam belli olmaz; sıra zamanla ekipte sözlü bir
 alışkanlığa dönüşür.\
-**Build Orchestrator'da:** döngüdeki projeler tek Build içinde oturana kadar yeniden derlenir; sonuç oturup
-oturmadığını ya da hangi projenin durdurduğunu açıkça söyler.\
-`döngü tespiti için Tarjan SCC` · `oturmanın kanıtı API yüzey hash'i`
+**Build Orchestrator'da:** döngüdeki projeler tek Build içinde ya da Resolve cycles ile tek başına, gereken en az
+derlemeyle oturur: girdisi değişmeyen üye yeniden derlenmez; sonuç döngünün oturup oturmadığını ya da hangi projenin
+durdurduğunu açıkça söyler.\
+`döngü tespiti için Tarjan SCC` · `oturmanın kanıtı API yüzey hash'i` · `yalnız döngü koşusu için Resolve cycles`
 
 ## Her projenin neden derleneceğini söyler
 
@@ -150,11 +151,12 @@ da klasörünü Explorer'da açar.\
 
 ## Bağımlılık grafı
 
-**Amaç:** yüzlerce projenin birbirine nasıl bağlı olduğunu tek bakışta görmek.\
+**Amaç:** yüzlerce projenin birbirine nasıl bağlı olduğunu ve derlemenin nerede durduğunu tek bakışta görmek.\
 **Yaygın pratik:** bir projenin neye bağlı olduğunu ve neyi etkilediğini öğrenmek proje dosyalarını tek tek açmak
 ya da ekipte en uzun süredir çalışana sormak demektir.\
-**Build Orchestrator'da:** bir projeye tıklamak onun kullandıklarını ve onu kullananları öne çıkarır; derleme
-sırasında hangi projelerin derlendiği grafta da görünür.\
+**Build Orchestrator'da:** bütün çözüm gözünün önünde kalır: bir projeye tıklamak onun kullandıklarını ve onu
+kullananları öne çıkarır; derleme sırasında ve sonrasında hangi projelerin derlendiği, hangilerinin düştüğü ve
+hangilerinin bir döngüde olduğu grafta görünür.\
 `bağımlılık incelemek için odakla-sığdır` · `koşuyu izleten opaklık anlatısı`
 
 ## Konsol ve proje logları
@@ -224,11 +226,12 @@ adıyla söyler; ardından liste kendiliğinden yenilenir.\
 ## Perf profilleri ve canlı maliyet
 
 **Amaç:** makine derlerken kullanılabilir kalsın.\
-**Yaygın pratik:** büyük bir çözüm bütün çekirdeklerle derlenirken editör, tarayıcı ve toplantı uygulaması takılır;
-uzun derlemeler bu yüzden bir molayı bekler.\
-**Build Orchestrator'da:** derlemenin makineden ne kadar alacağı tek tık uzaktadır; varsayılan profilde pencere ve
-diğer uygulamalar akıcı kalır, derlemenin kullandığı kaynak title bar'da görünür.\
-`makine payını sınırlayan Job Object CPU sınırı` · `canlı şerit için job muhasebesi`
+**Yaygın pratik:** büyük bir çözümü bütün çekirdeklerle aynı anda derlemek makineyi kilitleyebilir: editör,
+tarayıcı ve toplantı uygulaması takılır ya da donar; uzun derlemeler bu yüzden bir molayı bekler.\
+**Build Orchestrator'da:** paralellik makinenin çekirdek sayısına ve boş belleğine kendiliğinden uyar, derlemenin
+makineden ne kadar alacağı da tek tık uzaktadır; varsayılan profilde pencere ve diğer uygulamalar akıcı kalır,
+derlemenin kullandığı kaynak title bar'da görünür.\
+`makine payını sınırlayan Job Object CPU sınırı` · `sayfalamaya karşı worker bütçesi` · `canlı şerit için job muhasebesi`
 
 ## Boşta hafif, yükte akıcı
 

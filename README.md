@@ -28,13 +28,13 @@ Every feature, with how it works: [FEATURES.md](docs/FEATURES.md). What each one
 
 ## Screenshots
 
-| Before a build: why each project will build | After it: one failure, two dependents flagged |
+| Before a build: why each project will build | After it: the failure, and the projects built against it |
 |---|---|
-| ![Rows marked modified and affected after a commit](docs/images/decisions.png) | ![A failed project in red and two dependents with an amber warning](docs/images/result.png) |
-
-Click a failed project and the console turns into its log, while the graph shows what it uses and what uses it.
-
-![The project page of a failed project, with its dependencies highlighted on the graph](docs/images/error-page.png)
+| ![Rows marked modified and affected after a commit, with the reason in a tooltip](docs/images/decisions.png) | ![One failed project and its flagged dependents, filtered to failures and warnings](docs/images/result.png) |
+| **Resolve cycles: rounds until the cycle settles** | **Row actions: build, rebuild or clean one project** |
+| ![Resolve cycles building a dependency cycle in rounds](docs/images/cycles.png) | ![The row menu of a project with Build, Rebuild and Clean](docs/images/row-actions.png) |
+| **A failed project: its log, and its links on the graph** | **Built from Visual Studio: the result arrives as a notification** |
+| ![The project page of a failed project, with its dependencies highlighted on the graph](docs/images/error-page.png) | ![A Windows notification reporting a finished build over the code editor](docs/images/tray.png) |
 
 ## Quick start
 

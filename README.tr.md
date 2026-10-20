@@ -28,14 +28,13 @@ değiştirdiği: [WHY.tr.md](docs/WHY.tr.md).
 
 ## Ekran görüntüleri
 
-| Derlemeden önce: her proje neden derlenecek | Sonra: bir hata, işaretlenen iki bağımlı |
+| Derlemeden önce: her proje neden derlenecek | Sonra: hata ve ona karşı derlenen projeler |
 |---|---|
-| ![Bir commit'ten sonra modified ve affected işaretli satırlar](docs/images/decisions.png) | ![Kırmızı bir hatalı proje ve amber uyarılı iki bağımlı](docs/images/result.png) |
-
-Hatalı bir projeye tıklayınca konsol onun loguna döner, graf da projenin kullandıklarını ve onu kullananları
-gösterir.
-
-![Hatalı bir projenin sayfası, bağımlılıkları grafta vurgulu](docs/images/error-page.png)
+| ![Bir commit'ten sonra modified ve affected işaretli satırlar, gerekçe ipucunda](docs/images/decisions.png) | ![Hatalı bir proje ve işaretlenen bağımlıları, hatalı ve uyarılı filtresiyle](docs/images/result.png) |
+| **Resolve cycles: döngü oturana kadar turlar** | **Satır eylemleri: tek projeyi derle, yeniden derle, temizle** |
+| ![Bir bağımlılık döngüsünü turlarla derleyen Resolve cycles](docs/images/cycles.png) | ![Build, Rebuild ve Clean seçenekli satır menüsü](docs/images/row-actions.png) |
+| **Hatalı proje: logu ve graftaki bağlantıları** | **Visual Studio'dan derleme: sonuç bildirim olarak gelir** |
+| ![Bağımlılıkları grafta vurgulu, hatalı bir projenin sayfası](docs/images/error-page.png) | ![Kod düzenleyicinin üstünde biten derlemeyi bildiren Windows bildirimi](docs/images/tray.png) |
 
 ## Hızlı başlangıç
 
