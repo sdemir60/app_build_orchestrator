@@ -57,33 +57,49 @@ public class RepoHygieneTests
         Assert.DoesNotContain("vpk", ci, StringComparison.Ordinal);               // CI yayın yapmaz
     }
 
-    /// <summary>Workflow'un <c>push:</c> tetikleyicisindeki branch listesi (sırası serbest).</summary>
-    private static HashSet<string> PushBranches(string workflow, string name)
+    /// <summary>Workflow'un <c>push:</c> tetikleyicisindeki branch listesi (sırası serbest); <paramref name="filter"/> listenin anahtarıdır
+    /// (<c>branches</c> ya da <c>branches-ignore</c>).</summary>
+    private static HashSet<string> PushBranches(string workflow, string name, string filter = "branches")
     {
-        var push = Regex.Match(workflow, @"(?m)^[ \t]+push:[ \t]*\n[ \t]+branches:[ \t]*\[(?<list>[^\]\n]*)\]");
-        Assert.True(push.Success, $"{name}: push tetikleyicisinin branches listesi bulunamadı");
+        var push = Regex.Match(workflow, @"(?m)^[ \t]+push:[ \t]*\n[ \t]+" + Regex.Escape(filter) + @":[ \t]*\[(?<list>[^\]\n]*)\]");
+        Assert.True(push.Success, $"{name}: push tetikleyicisinin {filter} listesi bulunamadı");
         return push.Groups["list"].Value.Split(',').Select(b => b.Trim().Trim('\'', '"')).ToHashSet();
     }
 
-    /// <summary>Günlük iş <c>develop</c>'ta, <c>main</c> yalnız sürümleri taşır (kullanıcı kararı 2026-09-30): CI develop'un her
-    /// push'unu derleyip koşturur — yayının ön koşuludur, <c>release.ps1</c> develop HEAD'inin <c>ci.yml</c> koşusu yeşil değilse
-    /// durur (<see cref="ReleaseScriptsTests"/>). <c>main</c>'e push yayını (<c>release.yml</c>) başlatır; main'in build ve testi
-    /// onun <c>ci</c> job'ıdır (<c>workflow_call</c> ile buradan) — ci.yml main'de AYRICA koşmaz. Pull request'ler de koşar.
-    /// Tetikleyicide yol filtresi (<c>paths</c> / <c>paths-ignore</c>) YOKTUR: release.ps1 develop'un HER ucunda bir koşu bekler —
-    /// yalnız doküman değiştiren bir develop ucu koşu almasaydı sonuç "not green (no run)" olur, yayın kilitlenirdi.
+    /// <summary>Günlük iş <c>develop</c>'ta, <c>main</c> yalnız sürümleri taşır (kullanıcı kararı 2026-09-30). CI <c>main</c> DIŞINDAKİ her
+    /// branch'in her push'unu derleyip koşturur: çalışma branch'leri merge'den ÖNCE (tam süitin kapısı), <c>develop</c> merge'den sonra —
+    /// yayının ön koşulu, <c>release.ps1</c> develop HEAD'inin <c>ci.yml</c> koşusu yeşil değilse durur (<see cref="ReleaseScriptsTests"/>).
+    /// <c>main</c>'e push yayını (<c>release.yml</c>) başlatır; main'in build ve testi onun <c>ci</c> job'ıdır (<c>workflow_call</c> ile
+    /// buradan) — ci.yml main'de AYRICA koşmaz. Pull request'ler de koşar. Tetikleyicide yol filtresi (<c>paths</c> / <c>paths-ignore</c>)
+    /// YOKTUR: release.ps1 develop'un HER ucunda bir koşu bekler — yalnız doküman değiştiren bir develop ucu koşu almasaydı sonuç "not green
+    /// (no run)" olur, yayın kilitlenirdi.
     /// <para><b>Değişen kural (kullanıcı kararı 2026-10-13: tag'i GitHub, testler geçince koyar):</b> eski iddia "CI develop'un ve
     /// main'in her push'unu koşar" idi. Bir yayın push'u main'de iki ayrı test koşusu doğuruyordu (ci ve release'in ci'ı); ölçüm
     /// (2026-10-12): aynı commit (<c>cc49ff58</c>) main'in ci koşusunda kırmızı, release'inkinde yeşil çıktı — yayın çıktı, rozet
-    /// kırmızı kaldı. main'in tek test koşusu artık yayının kendi koşusudur.</para></summary>
+    /// kırmızı kaldı. main'in tek test koşusu artık yayının kendi koşusudur.</para>
+    /// <para><b>Değişen kural (kullanıcı kararı 2026-10-20: tam süitin kapısı CI):</b> eski iddia "CI yalnız develop'un push'unu koşar"
+    /// (<c>branches: [develop]</c>) idi; tam süitin kapısı lokal koşuydu. Ölçüm (2026-10-20): kısıtsız lokal süit makineyi kilitledi ve
+    /// bilgisayar yeniden başladı; düşük öncelik + 4 çekirdekle 20 dk sürdü ve 7 sahte kırmızı verdi (yedisi de tek başına geçti). CI aynı
+    /// süiti 8-12 dk'da, makineye dokunmadan koşar; çalışma branch'i merge'den önce push'lanır ve onun koşusu beklenir.</para></summary>
     [Fact]
-    public void CI_runs_on_every_push_to_develop_and_leaves_main_to_the_release()
+    public void CI_runs_on_every_push_but_main_and_leaves_main_to_the_release()
     {
         string ci = Workflow("ci.yml");
-        var branches = PushBranches(ci, "ci.yml");
-        Assert.Contains("develop", branches);
-        Assert.DoesNotContain("main", branches);
+        Assert.Equal(new[] { "main" }, PushBranches(ci, "ci.yml", "branches-ignore"));
+        Assert.DoesNotMatch(@"(?m)^[ \t]+push:[ \t]*\n[ \t]+branches:", ci); // pozitif liste çalışma branch'lerini dışarıda bırakırdı
         Assert.Contains("pull_request:", ci, StringComparison.Ordinal);
         Assert.DoesNotMatch(@"(?m)^[ \t]+paths(-ignore)?:", ci); // her develop ucu koşu alır
+    }
+
+    /// <summary>Test adımı düşünce CI düşen testleri TEK bir hata notu (annotation) olarak yazar — <c>scripts/ci-failed-tests.ps1</c>, test
+    /// adımının yazdığı TRX'ten (<c>LogFileName</c> ile aynı ad). Not herkese açık API'den kimliksiz okunur
+    /// (<c>check-runs/{id}/annotations</c>); job logu ve TRX artifact'ı giriş ister. Script'in kendisi <see cref="ReleaseScriptsTests"/>'te.</summary>
+    [Fact]
+    public void A_failed_CI_test_step_writes_the_failed_tests_as_one_note()
+    {
+        string ci = Workflow("ci.yml");
+        Assert.Contains("--logger \"trx;LogFileName=tests.trx\"", ci, StringComparison.Ordinal);
+        Assert.Matches(@"(?m)^[ \t]+(- )?if: failure\(\)[ \t]*\n[ \t]+run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci-failed-tests\.ps1 -Trx tests/BuildOrchestrator\.Tests/TestResults/tests\.trx[ \t]*$", ci);
     }
 
     /// <summary>Çağrılan workflow'un üst düzey <c>concurrency</c>'si ÇAĞIRANIN bağlamında değerlendirilir: release'in ci job'ı
@@ -105,7 +121,7 @@ public class RepoHygieneTests
     /// sessizce develop'un durumunu göstermeye başlardı. Bu yüzden rozet <c>?branch=main</c> taşır. ci.yml rozeti YOKTUR: ci main'de
     /// koşmaz, main'li bir ci rozeti son eski koşuda donup kalırdı.
     /// <para><b>Değişen kural (kullanıcı kararı 2026-10-13):</b> eski rozet ci.yml'in main koşusuydu; main'in testi artık yayının
-    /// kendi koşusudur (bkz. <see cref="CI_runs_on_every_push_to_develop_and_leaves_main_to_the_release"/>).</para></summary>
+    /// kendi koşusudur (bkz. <see cref="CI_runs_on_every_push_but_main_and_leaves_main_to_the_release"/>).</para></summary>
     [Fact]
     public void The_README_badge_shows_the_release_run_of_main()
     {

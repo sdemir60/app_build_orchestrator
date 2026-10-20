@@ -171,6 +171,86 @@ public class ReleaseScriptsTests
         return (p.ExitCode, stdout.GetAwaiter().GetResult() + stderr.GetAwaiter().GetResult());
     }
 
+    /// <summary>Asgari bir TRX (vstest'in sonuç dosyası, kendi ad alanıyla): her satır bir test sonucudur — ad, sonuç ve varsa hata
+    /// mesajı. <c>ci-failed-tests.ps1</c>'in okuduğu yalnız bunlardır.</summary>
+    private static string Trx(params (string Name, string Outcome, string? Message)[] results)
+    {
+        System.Xml.Linq.XNamespace ns = "http://microsoft.com/schemas/VisualStudio/TeamTest/2010";
+        var run = new System.Xml.Linq.XElement(ns + "TestRun", new System.Xml.Linq.XElement(ns + "Results",
+            results.Select(r => new System.Xml.Linq.XElement(ns + "UnitTestResult",
+                new System.Xml.Linq.XAttribute("testName", r.Name), new System.Xml.Linq.XAttribute("outcome", r.Outcome),
+                r.Message is null ? null : new System.Xml.Linq.XElement(ns + "Output",
+                    new System.Xml.Linq.XElement(ns + "ErrorInfo", new System.Xml.Linq.XElement(ns + "Message", r.Message)))))));
+        return run.ToString();
+    }
+
+    /// <summary>Script çıktısındaki GitHub hata notları (<c>::error …</c> satırları).</summary>
+    private static List<string> ErrorNotes(string output) =>
+        [.. output.Split('\n').Select(l => l.TrimEnd('\r')).Where(l => l.StartsWith("::error", StringComparison.Ordinal))];
+
+    /// <summary>[CI · düşen test notu] ci.yml'in test adımı düşünce <c>ci-failed-tests.ps1</c> TRX'teki düşen testleri TEK bir hata notu
+    /// olarak yazar: başlıkta sayı, gövdede test başına bir satır — ad + hata mesajının İLK satırı; satırlar GitHub'ın kaçışıyla
+    /// (<c>%0A</c>) birleşir. Geçen test yazılmaz. Tek not, çünkü GitHub adım başına en çok on hata notu tutar; not herkese açık
+    /// API'den kimliksiz okunur (<see cref="RepoHygieneTests.A_failed_CI_test_step_writes_the_failed_tests_as_one_note"/>).</summary>
+    [SkippableFact]
+    public void The_CI_failure_note_lists_each_failed_test_with_the_first_line_of_its_message()
+    {
+        RequirePowerShell();
+        using var temp = new TempDir();
+        string trx = Path.Combine(temp.Path, "tests.trx");
+        File.WriteAllText(trx, Trx(("Ns.A.Fails", "Failed", "Expected: 2\nActual: 3"), ("Ns.B.Passes", "Passed", null),
+            ("Ns.C.Also(scale: 1.25)", "Failed", "100% off")));
+
+        var (code, output) = Run("ci-failed-tests.ps1", "-Trx", trx);
+
+        Assert.True(code == 0, output);
+        Assert.Equal("::error title=2 test(s) failed::Ns.A.Fails :: Expected: 2%0ANs.C.Also(scale: 1.25) :: 100%25 off",
+            Assert.Single(ErrorNotes(output)));
+    }
+
+    /// <summary>Not düz ASCII yazılır: Türkçe harfler temel harflerine (<c>ç→c</c>, <c>ğ→g</c>, <c>ı→i</c>, <c>ş→s</c>…), tipografik
+    /// işaretler ASCII karşılıklarına (<c>→</c> → <c>-&gt;</c>, <c>—</c> → <c>-</c>), kalan her şey <c>?</c>'e iner. Tam metin TRX
+    /// artifact'ında kalır.
+    /// <para><b>Ölçüldü (2026-10-20, ilk uçtan uca deneme):</b> script <c>[Console]::OutputEncoding</c>'i UTF-8'e çekip <c>Write-Output</c>
+    /// ile yazıyordu. GitHub'daki not <c>deliberate probe: çalışma branch'i notu</c> yerine <c>deliberate probe: �al��ma branch'i notu</c>
+    /// oldu (KillMidBuildTests'in "IOCP doğumları eksik"i de "do�umlar�"). Aynı script lokalde, UTF-8 okunan çıktıyla doğru geldi: runner'da
+    /// çıktı iki kabuk katmanından geçer (adımın pwsh'ı → powershell.exe) ve o zincir lokalde kurulamıyor. Her katmanın bozmadan taşıdığı
+    /// tek biçim ASCII'dir.</para></summary>
+    [SkippableFact]
+    public void The_CI_failure_note_is_plain_ascii_so_no_shell_layer_can_garble_it()
+    {
+        RequirePowerShell();
+        using var temp = new TempDir();
+        string trx = Path.Combine(temp.Path, "tests.trx");
+        File.WriteAllText(trx, Trx(("Ns.Tr.Fails", "Failed", "çalışma ağacı: IOCP doğumları eksik — İzmir 2 → 3 ✓")));
+
+        var (code, output) = Run("ci-failed-tests.ps1", "-Trx", trx);
+
+        Assert.True(code == 0, output);
+        string note = Assert.Single(ErrorNotes(output));
+        Assert.Equal("::error title=1 test(s) failed::Ns.Tr.Fails :: calisma agaci: IOCP dogumlari eksik - Izmir 2 -> 3 ?", note);
+        Assert.All(note, c => Assert.True(c < 128, $"ASCII dışı karakter: U+{(int)c:X4}"));
+    }
+
+    /// <summary>Düşen test yoksa not yazılmaz; TRX hiç yazılmadıysa (test adımı sonuç yazamadan düştü — derleme ya da host çökmesi)
+    /// bunu söyleyen tek bir not yazılır. Script iki durumda da adımı düşürmez: job zaten kırmızıdır.</summary>
+    [SkippableFact]
+    public void The_CI_failure_step_writes_no_note_without_a_failure_and_says_so_without_results()
+    {
+        RequirePowerShell();
+        using var temp = new TempDir();
+        string trx = Path.Combine(temp.Path, "tests.trx");
+        File.WriteAllText(trx, Trx(("Ns.B.Passes", "Passed", null)));
+
+        var (passedCode, passedOutput) = Run("ci-failed-tests.ps1", "-Trx", trx);
+        var (missingCode, missingOutput) = Run("ci-failed-tests.ps1", "-Trx", Path.Combine(temp.Path, "none.trx"));
+
+        Assert.True(passedCode == 0, passedOutput);
+        Assert.Empty(ErrorNotes(passedOutput));
+        Assert.True(missingCode == 0, missingOutput);
+        Assert.StartsWith("::error title=No test results::", Assert.Single(ErrorNotes(missingOutput)), StringComparison.Ordinal);
+    }
+
     [SkippableFact]
     public void The_notes_cut_from_the_changelog_parse_to_the_same_entry_the_app_shows()
     {
