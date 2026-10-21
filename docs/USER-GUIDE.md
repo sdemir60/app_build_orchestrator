@@ -633,9 +633,9 @@ meaning:
 - **CPU** — the share of the whole machine used by the app, the engine and the compilers together (`69%`).
 - **Memory** — their private bytes added up (`310 MB`, `4.8 GB`): what they have committed, which is not the figure
   Task Manager's default memory column shows (the private working set), so the two can differ.
-- **Parallelism and mode** — the projects building now, the number the engine set for this run when it started, and
-  the number the mode allows, then the mode: `0/0/4 Balanced` while idle, `4/4/4 Balanced` when four projects build at
-  once, `2/2/4 Balanced` when the engine cut the run to fit the machine (the tooltip says why).
+- **Parallelism and mode** — the projects building now and the number the engine set for this run when it started,
+  then the mode and the number it allows: `0/0 Balanced · 4` while idle, `4/4 Balanced · 4` when four projects build at
+  once, `2/2 Balanced · 4` when the engine cut the run to fit the machine (the tooltip says why).
 
 CPU and memory refresh about every three seconds, and not at all while the window is in the tray or minimized; the
 parallelism cell follows the run at once. The strip only reads: the mode is changed on the chip. How it measures is in

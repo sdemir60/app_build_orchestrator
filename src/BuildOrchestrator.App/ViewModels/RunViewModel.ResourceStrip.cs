@@ -17,9 +17,9 @@ namespace BuildOrchestrator.App.ViewModels;
 /// <item><b>CPU ve RAM</b> örnekleyiciden gelir (<see cref="ApplyResourceSample"/>, 3 sn'de bir); sayıdan metne Core'dadır
 /// (<see cref="ResourceStripText"/>). İlk örnek gelene dek hücreler okunamayan değerdir (<c>—</c>). CPU tooltip'i örnekten bağımsızdır, hücrenin
 /// moduna bağlıdır.</item>
-/// <item><b>Paralellik + mod</b> uygulama durumudur, örneklenmez, ANINDA güncellenir: <c>3/4/4 Balanced</c> — pay
+/// <item><b>Paralellik + mod</b> uygulama durumudur, örneklenmez, ANINDA güncellenir: <c>3/4 Balanced · 4</c> — pay
 /// <see cref="RunCounters.Building"/> (o an derlenen proje sayısı), ortadaki sayı motorun koşu başında belirlediği paralellik
-/// (<c>runStarted.Parallelism</c> — modun sayısı, makineye göre kırpılmış olabilir; koşu yokken <c>/0</c>), sınır ve mod sözcüğü
+/// (<c>runStarted.Parallelism</c> — modun sayısı, makineye göre kırpılmış olabilir; koşu yokken <c>/0</c>), mod sözcüğü ve sınır
 /// <i>hücrenin modu</i>.</item>
 /// </list>
 ///
@@ -34,7 +34,7 @@ namespace BuildOrchestrator.App.ViewModels;
 /// <c>2/4</c>, tooltip <c>2 of 4 — reduced: …</c>) ve tek proje koşusu (R3, <see cref="RunTargetId"/> dolu) çipi CANLI izleyip "reduced"
 /// demezdi. YENİ kural yukarıda; gerekçe: şeridin amacı koşu başında makineye göre belirlenen sayıyı göstermekti — <c>2/4</c> "makine kırptı"
 /// ile "o an yalnız 2 proje hazırdı"yı ayırt edemiyordu. Ortadaki sayı koşu boyunca değişmediği için tek proje koşusu da koşu başında donar:
-/// çipi izleseydi Light'a dönüşte <c>1/4/2 Light</c> okunurdu (koşunun sayısı sınırın üstünde).</para>
+/// çipi izleseydi Light'a dönüşte <c>1/4 Light · 2</c> okunurdu (koşunun sayısı sınırın üstünde).</para>
 ///
 /// <para><b>Pay koşu yokken 0'dır</b> — <see cref="Counters"/> orada yalan söyleyebilir: motor koşu ortasında ölürse satırlar hiç
 /// bitirilmez, <c>Started</c> kalır. Kimse derlemiyorken "3/4" yazmak şeridi yanıltırdı.</para>
@@ -67,7 +67,7 @@ public sealed partial class RunViewModel
     /// <summary>Paralellik hücresinin ortadaki sayısı: <c>/4</c> — motorun koşu başında belirlediği paralellik; koşu yokken <c>/0</c>.</summary>
     [ObservableProperty] private string _stripRunParallelismText = "";
 
-    /// <summary>Paralellik hücresinin sınırı: <c>/4</c> — hücrenin modunun tablo paralelliği.</summary>
+    /// <summary>Paralellik hücresinin sınırı (hücrenin sonunda, mod sözcüğünden sonra): <c>4</c> — hücrenin modunun tablo paralelliği.</summary>
     [ObservableProperty] private string _stripAllowedText = "";
 
     /// <summary>Paralellik hücresinin mod sözcüğü: <c>Full</c> / <c>Balanced</c> / <c>Light</c> — hücrenin modu.</summary>

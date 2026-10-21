@@ -21,7 +21,7 @@ namespace BuildOrchestrator.Tests.App;
 /// gelir.</para>
 ///
 /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-19]</b> ESKİ: hücre <c>pay/payda</c>'ydı, payda modun TABLO değeriydi ve tek proje
-/// koşusu (R3, <c>RunTargetId</c> dolu) çipi CANLI izleyip "reduced" demezdi. YENİ: pay ile sınırın arasında koşunun kendi sayısı durur ve
+/// koşusu (R3, <c>RunTargetId</c> dolu) çipi CANLI izleyip "reduced" demezdi. YENİ: payın yanında koşunun kendi sayısı durur ve
 /// tek proje koşusu da tam koşu gibi koşu başındaki cevapla anlatılır — gerekçe ilgili testlerin özetinde.</para>
 /// </summary>
 public class ResourceStripViewModelTests
@@ -51,9 +51,9 @@ public class ResourceStripViewModelTests
     private static string MemoryTooltip(string app, string engine, string compilers) =>
         $"Memory used by {AppIdentity.Product} · app {app} · engine {engine} · compilers {compilers}";
 
-    /// <summary>Paralellik hücresinin dört metni, ekrandaki sırayla: pay · ortadaki sayı · sınır · mod sözcüğü.</summary>
-    private static (string Building, string Run, string Limit, string Mode) Cell(RunViewModel vm) =>
-        (vm.StripBuildingText, vm.StripRunParallelismText, vm.StripAllowedText, vm.StripModeText);
+    /// <summary>Paralellik hücresinin dört metni, ekrandaki sırayla: pay · ortadaki sayı · mod sözcüğü · sınır.</summary>
+    private static (string Building, string Run, string Mode, string Limit) Cell(RunViewModel vm) =>
+        (vm.StripBuildingText, vm.StripRunParallelismText, vm.StripModeText, vm.StripAllowedText);
 
     // ---------------------------------------------------------------- boşta: hücre çipi izler (anında)
 
@@ -63,7 +63,7 @@ public class ResourceStripViewModelTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = NewVm(engine);
 
-        Assert.Equal(("0", NoRun, "/4", "Balanced"), Cell(vm));
+        Assert.Equal(("0", NoRun, "Balanced", "4"), Cell(vm));
         Assert.Equal("Balanced — up to 4 projects build in parallel", vm.StripParallelTooltip);
         Assert.Equal(CpuTooltip(" · cap 70%"), vm.StripCpuTooltip);
     }
@@ -76,7 +76,7 @@ public class ResourceStripViewModelTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
 
-        Assert.Equal(("0", NoRun, "/4", "Balanced"), Cell(vm));
+        Assert.Equal(("0", NoRun, "Balanced", "4"), Cell(vm));
         Assert.Equal("Balanced — up to 4 projects build in parallel", vm.StripParallelTooltip);
         Assert.Equal(CpuTooltip(" · cap 70%"), vm.StripCpuTooltip);
     }
@@ -84,9 +84,9 @@ public class ResourceStripViewModelTests
     /// <summary>Çip her basışta dönerken hücre AYNI ANDA değişir (örnek beklenmez): sınır modun tablo paralelliği, mod sözcüğü modun adı, CPU
     /// tooltip'inin cap'i modun cap'i (Full'de ek yok). Ortadaki sayı boşta yoktur — çip onu yaratmaz.</summary>
     [Theory]
-    [InlineData(1, "Light", "/2", "Light — up to 2 projects build in parallel", " · cap 40%")]
-    [InlineData(2, "Full", "/6", "Full — up to 6 projects build in parallel", "")]
-    [InlineData(3, "Balanced", "/4", "Balanced — up to 4 projects build in parallel", " · cap 70%")]
+    [InlineData(1, "Light", "2", "Light — up to 2 projects build in parallel", " · cap 40%")]
+    [InlineData(2, "Full", "6", "Full — up to 6 projects build in parallel", "")]
+    [InlineData(3, "Balanced", "4", "Balanced — up to 4 projects build in parallel", " · cap 70%")]
     public async Task Turning_the_chip_while_idle_changes_the_parallel_cell_and_the_cap_at_once(
         int presses, string mode, string allowed, string tooltip, string cap)
     {
@@ -96,7 +96,7 @@ public class ResourceStripViewModelTests
         for (int i = 0; i < presses; i++) await vm.CyclePerfAsync(); // Balanced → Light → Full → Balanced
 
         Assert.Equal(mode, vm.PerfMode);
-        Assert.Equal(("0", NoRun, allowed, mode), Cell(vm));
+        Assert.Equal(("0", NoRun, mode, allowed), Cell(vm));
         Assert.Equal(tooltip, vm.StripParallelTooltip);
         Assert.Equal(CpuTooltip(cap), vm.StripCpuTooltip);
     }
@@ -110,7 +110,7 @@ public class ResourceStripViewModelTests
 
         vm.SetPerfMode("Light");
 
-        Assert.Equal(("0", NoRun, "/2", "Light"), Cell(vm));
+        Assert.Equal(("0", NoRun, "Light", "2"), Cell(vm));
     }
 
     // ---------------------------------------------------------------- CPU ve RAM hücreleri
@@ -181,8 +181,8 @@ public class ResourceStripViewModelTests
     // ---------------------------------------------------------------- koşuda: hücre KOŞUYU anlatır (R2, K4, K8)
 
     /// <summary>
-    /// Tam koşu koşu başındaki cevapla anlatılır: Balanced'ta başlayan koşuda çip Full'e çevrilse bile hücre <c>0/4/4 Balanced</c> kalır
-    /// (işçi sayısı koşu başında sabittir) ve CPU tooltip'i Balanced'ın cap'ini söyler (R4); koşu bitince hücre çipi izler: <c>0/0/6 Full</c>,
+    /// Tam koşu koşu başındaki cevapla anlatılır: Balanced'ta başlayan koşuda çip Full'e çevrilse bile hücre <c>0/4 Balanced · 4</c> kalır
+    /// (işçi sayısı koşu başında sabittir) ve CPU tooltip'i Balanced'ın cap'ini söyler (R4); koşu bitince hücre çipi izler: <c>0/0 Full · 6</c>,
     /// cap'siz.
     /// </summary>
     [Fact]
@@ -193,19 +193,19 @@ public class ResourceStripViewModelTests
         await vm.BuildCommand.ExecuteAsync(null); // StartRunCommand(PerfMode = "Balanced") gider
         vm.OnEvent(Started());
 
-        Assert.Equal(("0", "/4", "/4", "Balanced"), Cell(vm));
+        Assert.Equal(("0", "/4", "Balanced", "4"), Cell(vm));
 
         await vm.CyclePerfAsync(); // Balanced → Light
         await vm.CyclePerfAsync(); // Light → Full
 
         Assert.Equal("Full", vm.PerfMode);
-        Assert.Equal(("0", "/4", "/4", "Balanced"), Cell(vm));
+        Assert.Equal(("0", "/4", "Balanced", "4"), Cell(vm));
         Assert.Equal(CpuTooltip(" · cap 70%"), vm.StripCpuTooltip);
 
         CompleteRun(vm, 3);
 
         Assert.False(vm.IsRunning);
-        Assert.Equal(("0", NoRun, "/6", "Full"), Cell(vm));
+        Assert.Equal(("0", NoRun, "Full", "6"), Cell(vm));
         Assert.Equal("Full — up to 6 projects build in parallel", vm.StripParallelTooltip);
         Assert.Equal(CpuTooltip(""), vm.StripCpuTooltip);
     }
@@ -223,11 +223,11 @@ public class ResourceStripViewModelTests
         await vm.CyclePerfAsync(); // planlama penceresinde çip → Light
 
         Assert.False(vm.IsRunning);
-        Assert.Equal(("0", NoRun, "/2", "Light"), Cell(vm)); // koşu başlamadı: hücre çipi izliyor
+        Assert.Equal(("0", NoRun, "Light", "2"), Cell(vm)); // koşu başlamadı: hücre çipi izliyor
 
         vm.OnEvent(Started());
 
-        Assert.Equal(("0", "/4", "/4", "Balanced"), Cell(vm));
+        Assert.Equal(("0", "/4", "Balanced", "4"), Cell(vm));
         Assert.Equal(CpuTooltip(" · cap 70%"), vm.StripCpuTooltip);
     }
 
@@ -241,7 +241,7 @@ public class ResourceStripViewModelTests
         vm.OnEvent(Started(parallelism: 2));
         await vm.CyclePerfAsync(); // Light → Full
 
-        Assert.Equal(("0", "/2", "/2", "Light"), Cell(vm));
+        Assert.Equal(("0", "/2", "Light", "2"), Cell(vm));
     }
 
     /// <summary>Pay o an derlenen proje sayısıdır (<see cref="RunViewModel.Counters"/>.Building ile aynı): koşu başlar başlamaz <c>0</c> ve
@@ -255,7 +255,7 @@ public class ResourceStripViewModelTests
         await vm.BuildCommand.ExecuteAsync(null);
         vm.OnEvent(Started());
 
-        Assert.Equal(("0", "/4", "/4", "Balanced"), Cell(vm));
+        Assert.Equal(("0", "/4", "Balanced", "4"), Cell(vm));
         Assert.Equal("0 of 4 projects building in parallel", vm.StripParallelTooltip);
 
         StartProject(vm, "A");
@@ -263,18 +263,18 @@ public class ResourceStripViewModelTests
 
         Assert.Equal(2, vm.Counters.Building);
         Assert.Equal(vm.Counters.Building.ToString(), vm.StripBuildingText);
-        Assert.Equal(("2", "/4", "/4", "Balanced"), Cell(vm));
+        Assert.Equal(("2", "/4", "Balanced", "4"), Cell(vm));
         Assert.Equal("2 of 4 projects building in parallel", vm.StripParallelTooltip);
 
         SucceedProject(vm, "A");
 
-        Assert.Equal(("1", "/4", "/4", "Balanced"), Cell(vm));
+        Assert.Equal(("1", "/4", "Balanced", "4"), Cell(vm));
         Assert.Equal("1 of 4 projects building in parallel", vm.StripParallelTooltip);
     }
 
     /// <summary>
     /// Motor işçi sayısını makineye göre kıstıysa (<c>runStarted.Parallelism</c> &lt; tablo, gerekçe dolu) ortadaki sayı ve tooltip'in
-    /// <c>of N</c>'i motorun sayısıdır, sınır modun tablo değeri kalır: <c>2/3/4 Balanced</c> — üç sayı üç ayrı şeyi söyler. Tooltip nedeni de
+    /// <c>of N</c>'i motorun sayısıdır, sınır modun tablo değeri kalır: <c>2/3 Balanced · 4</c> — üç sayı üç ayrı şeyi söyler. Tooltip nedeni de
     /// söyler (motorun yazdığı gerekçe aynen). Koşu bitince kırpma hücreden düşer.
     /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-19]</b> ESKİ: hücre <c>2/4</c>'tü, tooltip <c>2 of 4 — reduced: …</c>; kırpılmış sayı
     /// şeritte hiçbir yerde yazmıyordu ve <c>2/4</c> "o an yalnız 2 proje hazırdı"dan ayırt edilemiyordu.</para>
@@ -289,20 +289,20 @@ public class ResourceStripViewModelTests
         StartProject(vm, "A");
         StartProject(vm, "B");
 
-        Assert.Equal(("2", "/3", "/4", "Balanced"), Cell(vm));
+        Assert.Equal(("2", "/3", "Balanced", "4"), Cell(vm));
         Assert.Equal("2 of 3 — reduced: 3 GB free memory", vm.StripParallelTooltip);
 
         CompleteRun(vm, 2);
 
-        Assert.Equal(("0", NoRun, "/4", "Balanced"), Cell(vm));
+        Assert.Equal(("0", NoRun, "Balanced", "4"), Cell(vm));
         Assert.Equal("Balanced — up to 4 projects build in parallel", vm.StripParallelTooltip);
     }
 
     /// <summary>
     /// Tek proje koşusu (satırdan Build/Rebuild/Clean — <c>RunTargetId</c> dolu) tam koşu gibi koşu başındaki cevapla anlatılır: koşu ortasında
-    /// çip Light'a dönse de hücre <c>1/4/4 Balanced</c> kalır ve CPU tooltip'i Balanced'ın cap'ini söyler.
+    /// çip Light'a dönse de hücre <c>1/4 Balanced · 4</c> kalır ve CPU tooltip'i Balanced'ın cap'ini söyler.
     /// <para><b>[DEĞİŞEN KURAL — 2026-10-19]</b> ESKİ (R3): tek proje koşusunda hücre çipi CANLI izlerdi (payda, mod, cap). Gerekçe: ortadaki
-    /// sayı koşunun kendi sayısıdır ve koşu boyunca değişmez; hücre çipi izleseydi bu koşu Light'a dönüşte <c>1/4/2 Light</c> okunurdu — koşunun
+    /// sayı koşunun kendi sayısıdır ve koşu boyunca değişmez; hücre çipi izleseydi bu koşu Light'a dönüşte <c>1/4 Light · 2</c> okunurdu — koşunun
     /// sayısı sınırın üstünde.</para>
     /// </summary>
     [Fact]
@@ -315,13 +315,13 @@ public class ResourceStripViewModelTests
         vm.OnEvent(Started(total: 1));
         StartProject(vm, "A");
 
-        Assert.Equal(("1", "/4", "/4", "Balanced"), Cell(vm));
+        Assert.Equal(("1", "/4", "Balanced", "4"), Cell(vm));
         Assert.Equal("1 of 4 projects building in parallel", vm.StripParallelTooltip);
 
         await vm.CyclePerfAsync(); // koşu ortasında Balanced → Light
 
         Assert.Equal("Light", vm.PerfMode);
-        Assert.Equal(("1", "/4", "/4", "Balanced"), Cell(vm));
+        Assert.Equal(("1", "/4", "Balanced", "4"), Cell(vm));
         Assert.Equal("1 of 4 projects building in parallel", vm.StripParallelTooltip);
         Assert.Equal(CpuTooltip(" · cap 70%"), vm.StripCpuTooltip);
     }
@@ -340,7 +340,7 @@ public class ResourceStripViewModelTests
         await vm.BuildProjectCommand.ExecuteAsync(IdOf("A"));
         vm.OnEvent(Started(total: 1, parallelism: 2, reducedReason: "1 logical processor"));
 
-        Assert.Equal(("0", "/2", "/4", "Balanced"), Cell(vm));
+        Assert.Equal(("0", "/2", "Balanced", "4"), Cell(vm));
         Assert.Equal("0 of 2 — reduced: 1 logical processor", vm.StripParallelTooltip);
     }
 
@@ -359,15 +359,15 @@ public class ResourceStripViewModelTests
         vm.OnEvent(Started());
         await vm.CyclePerfAsync();
         await vm.CyclePerfAsync(); // çip Full; koşunun hücresi Balanced'ta
-        Assert.Equal(("0", "/4", "/4", "Balanced"), Cell(vm));
+        Assert.Equal(("0", "/4", "Balanced", "4"), Cell(vm));
 
         vm.RunTargetId = IdOf("A");
 
-        Assert.Equal(("0", "/4", "/4", "Balanced"), Cell(vm));
+        Assert.Equal(("0", "/4", "Balanced", "4"), Cell(vm));
 
         vm.RunTargetId = null;
 
-        Assert.Equal(("0", "/4", "/4", "Balanced"), Cell(vm));
+        Assert.Equal(("0", "/4", "Balanced", "4"), Cell(vm));
     }
 
     /// <summary>
@@ -390,7 +390,7 @@ public class ResourceStripViewModelTests
         StartProject(vm, "B");
         await vm.CyclePerfAsync();
         await vm.CyclePerfAsync(); // çip Full
-        Assert.Equal(("2", "/2", "/4", "Balanced"), Cell(vm));
+        Assert.Equal(("2", "/2", "Balanced", "4"), Cell(vm));
         Assert.Equal(2, vm.Counters.Building);
 
         switch (ending)
@@ -402,7 +402,7 @@ public class ResourceStripViewModelTests
         }
 
         Assert.False(vm.IsRunning);
-        Assert.Equal(("0", NoRun, "/6", "Full"), Cell(vm));
+        Assert.Equal(("0", NoRun, "Full", "6"), Cell(vm));
         Assert.Equal("Full — up to 6 projects build in parallel", vm.StripParallelTooltip);
         Assert.Equal(CpuTooltip(""), vm.StripCpuTooltip);
     }
@@ -421,7 +421,7 @@ public class ResourceStripViewModelTests
         await vm.BuildCommand.ExecuteAsync(null); // yeni koşu Light'ın komutuyla gider
         vm.OnEvent(Started(parallelism: 2));
 
-        Assert.Equal(("0", "/2", "/2", "Light"), Cell(vm));
+        Assert.Equal(("0", "/2", "Light", "2"), Cell(vm));
         Assert.Equal("0 of 2 projects building in parallel", vm.StripParallelTooltip); // "reduced" eki yok
     }
 }
