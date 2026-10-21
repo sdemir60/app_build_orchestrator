@@ -2,6 +2,12 @@
 
 Release notes for Build Orchestrator, newest version first. The What's new window in the app reads this file.
 
+## [1.11.2] - 2026-10-21
+
+### Changed
+
+- The parallelism cell in the title bar names the mode before the number it allows: it reads 0/0 Balanced · 4 instead of 0/0/4 Balanced, the run's own numbers first and the mode after them.
+
 ## [1.11.1] - 2026-10-21
 
 ### Fixed
