@@ -817,13 +817,6 @@ public sealed partial class RunViewModel : ObservableObject
     /// <para><see cref="ObservablePropertyAttribute"/>: kalıcılık bu bildirimden sürer (MainWindow).</para></summary>
     [ObservableProperty] private bool _stashOnBranchSwitch = GeneralSettingsCatalog.DefaultOf(GeneralSetting.StashOnBranchSwitch);
 
-    /// <summary>[RESOLVE Faz 4 / karar 11] Settings → General "Resolve cycles at full priority": Resolve cycles koşusu
-    /// profilin işçi sayısıyla ama cap'siz ve Normal öncelikte mi koşsun. Varsayılanın TEK tanımı kataloğun satırıdır
-    /// (<see cref="GeneralSettingsCatalog.DefaultOf"/> — onaylanmış değer ve gerekçesi orada) — kapalıyken Resolve da profili izler.
-    /// Değer her <see cref="StartRunCommand"/> ile motora gider; Build/Rebuild/Clean'i etkilemez (dönüşüm Core'da: <see cref="PerfProfile.ForRun"/>).
-    /// <para><see cref="ObservablePropertyAttribute"/>: kalıcılık bu bildirimden sürer (MainWindow).</para></summary>
-    [ObservableProperty] private bool _resolveAtFullPriority = GeneralSettingsCatalog.DefaultOf(GeneralSetting.ResolveAtFullPriority);
-
     /// <summary>[idle-memory · dalga 2 / spec §6.5] Settings → General → CONSOLE "Compact console": konsol anlatısı proje
     /// çıktısını kompakt mı göstersin — açık ⇒ hatalar tam, her projenin ilk uyarıları ve kalanın sayısı; kapalı ⇒ her
     /// satır. Proje logu sayfası ve disk her zaman tamdır. Varsayılanın TEK tanımı kataloğun satırıdır
@@ -908,6 +901,7 @@ public sealed partial class RunViewModel : ObservableObject
         WakeEngine = () => engine.WakeAsync(); // [idle-memory · dalga 3 · Task 21] üretimin uyanması: konağın kendisi
         _osActions = osActions; // [E1/T67] null ise OS eylemleri güvenle no-op (test default'u); üretimde enjekte edilir
         _compact = new CompactNarrative(CompactConsole); // [O2] açılıştaki etkin kip ayarın kendisidir — ikinci bir literal yok
+        RefreshStrip(); // [kaynak şeridi] paralellik hücresi ve CPU tooltip'i ilk karede de çipi anlatır (RunViewModel.ResourceStrip.cs)
     }
 
     // ---------------------------------------------------------------- komutlar
@@ -961,11 +955,6 @@ public sealed partial class RunViewModel : ObservableObject
         // [tek proje] Hedef, kilitten ÖNCE yazılır: kilit düşerken (PropagateRunLock) bırakılır, dolayısıyla
         // sıra ters olsaydı hedef daha tıklama anında silinirdi. Tam koşuda açıkça null'dır.
         RunTargetId = scopeProjectId;
-        // [RESOLVE Faz 4 / karar 11 · fix 1A — I2] Koşunun perf bağlamı IsStarting'ten ÖNCE TEK yerde yakalanır: chip açılış
-        // koreografisi boyunca canlıdır (IsMidRunLocked) ve oradaki not da AÇILAN koşuyu anlatmalı. Komutun anahtarı aşağıda
-        // AYNI değerden kurulur — koreografi sırasında Save anahtarı değiştirse de not ile tel ayrışmaz.
-        var runPerf = (Mode: mode, ResolveAtFullPriority);
-        _runPerf = runPerf;
         IsStarting = true;
         ClearConsoleForNewOperation();
         // [design doBuild — BuildApp.jsx:1199-1200] Seçim sıfırlanır. SIRA ÖNEMLİ: konsol temizliğinden SONRA
@@ -1022,7 +1011,9 @@ public sealed partial class RunViewModel : ObservableObject
             // chip'inin komutu uyanık olmayan motora gönderilmez).
             var cmd = new StartRunCommand(runId, mode, RootPath, Configuration, Parallelism,
                 DependentMode.Safe, LayerPatterns, PerfMode,
-                ExternalProjectsForWire, UpdateExternals, scopeProjectId, runPerf.ResolveAtFullPriority);
+                ExternalProjectsForWire, UpdateExternals, scopeProjectId);
+            // [kaynak şeridi · R2] Koşunun perf modu, motora giden metin olarak, komutun kurulduğu yerde yakalanır; runStarted'ta koşu hücresine devredilir.
+            CaptureStripRunMode(cmd);
             if (await SendWithFailureLineAsync(cmd, SendFailedLine(RunModeLabel(mode)), pass)) return;
         }
         // Komut gitmedi (motor kapısı "gönderme" dedi ya da gönderim düştü): hiçbir engine event'i gelmeyecek — faz Starting'te asılı
@@ -1179,8 +1170,8 @@ public sealed partial class RunViewModel : ObservableObject
     /// akardı; bir silme de MSBuild'in yazdığı bin/obj ile yarışırdı. Basış kuyruğa alınmaz: komut çalışmaz, konsola satır
     /// düşmez, düğme Stop olmaz — ekran süren işindir (Sync düğmesi meşgul hâlini gösterir, sessiz Sync dahil). İş bitince
     /// kapıyı <see cref="NotifySyncGatedCommands"/> yeniden sorar.</para>
-    /// <para>Tam çıkış beklerken (<see cref="ExitPending"/>) de kapalıdır: bekleyiş iş bitince kapanmak içindir — o sırada
-    /// başlayan bir koşu çıkışı bir tam derleme boyunca bekletirdi.</para>
+    /// <para>Tam çıkış işi durdururken (<see cref="ExitPending"/>) de kapalıdır: uygulama kapanmak üzeredir — o sırada başlayan bir
+    /// koşu kapanışın ortasında yeni bir iş açardı.</para>
     /// <para>Koşulların TEK yeri <see cref="WhyRunCannotStart"/>'tır: kapı onun <c>null</c> dönmesidir, yani kapı ile kapalı
     /// olma nedeni ayrışamaz.</para>
     /// </summary>
@@ -1302,8 +1293,8 @@ public sealed partial class RunViewModel : ObservableObject
     /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-19 · task 3]</b> Yukarıdaki "yerinde" kuralı artık yalnız
     /// Silent ve Appended kiplerde geçerlidir. Sync düğmesi (Manual) ve branch değişimi (BranchChange) ekranı baştan
     /// başlatır (<see cref="SyncModeRules.RestartsPlanSurface"/>): konsol ve akışla AYNI ANDA liste ve graf da
-    /// ekranda boşalır (<see cref="BeginPlanSurfaceRestart"/> — VM'e dokunmaz; ClearPlanSurface'in faz Boot'u,
-    /// boş-durum daveti ve grafın "Sync'ten sonra" etiketi YOK), topoloji gelince yapı aynı olsa da reveal'le ve
+    /// ekranda boşalır (<see cref="BeginPlanSurfaceRestart"/> — VM'e dokunmaz; ClearPlanSurface'in faz Boot'u ve iki
+    /// panelin boş görünümü YOK, ekranı keşif blokları tutar), topoloji gelince yapı aynı olsa da reveal'le ve
     /// graf fit hâlde geri gelir. Gerekçe: kullanıcı bu iki eylemi "baştan başla" olarak okuyor; ekranın yerinde
     /// kalması Sync'in bir şey yapıp yapmadığını belirsiz bırakıyordu. Sync topoloji getirmezse (gönderim
     /// düştü, <c>planFailed</c>, motor kaybı) önceki yüzey geri gelir (<see cref="EndPlanSurfaceRestart"/>).</para>
@@ -1514,7 +1505,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// olur — ve BİR KEZ gider (<see cref="HardStopRequested"/>); konsola <see cref="StopNowRequestedLine"/> düşer, bitişte
     /// <see cref="HardStoppedLine"/> (yalnız bir şey sonlandırıldıysa). Basışın ne göndereceğini TEK durum seçer
     /// (<see cref="StopStage"/>: Stop → Stop now → Terminating…); Stop düğmesi, tepsi maddesi ve satırdaki ikon da aynı durumu
-    /// okur. Kullanıcının çıkış isteği hard stop'a TIRMANMAZ (<see cref="RequestExit"/>).</para>
+    /// okur. Tam çıkış (<see cref="RequestExit"/>) drain'i beklemez, doğrudan hard stop'tur (kullanıcı kararı 2026-10-19).</para>
     /// <para>Drain, uçuştaki en yavaş projenin kalan süresi kadar sürebilir; uygulamanın tıklamayı ALDIĞINI o
     /// pencerede göstermesi bu yüzden davranışın kendisi kadar önemlidir.</para>
     /// <para><b>Faz gönderimden ÖNCE yazılır:</b> yavaş/tıkalı bir engine'de gönderimin dönmesini beklemek
@@ -1535,24 +1526,32 @@ public sealed partial class RunViewModel : ObservableObject
         if (_currentRunId is null) return;
         // [Stop now · kullanıcı kararı 2026-10-03] Basışın ne göndereceğini TEK durum seçer (StopStage): istenmedi → graceful;
         // graceful gitti → hard, BİR KEZ; hard gitti → hiçbir şey (hard'dan sonraki basış ya da kapıyı atlayıp komutu doğrudan çalıştıran
-        // Esc burada yutulur). Hard da graceful ile AYNI gönderim kapısından geçer (SendStopAsync): faz zaten Stopping'dir.
+        // bir çağrı burada yutulur; o aşamadaki Esc komuta hiç gelmez — pencereyi × gibi kapatır, [kullanıcı kararı 2026-10-20]
+        // KeyboardShortcuts.ResolveEsc). Hard da graceful ile AYNI gönderim kapısından geçer (SendStopAsync): faz zaten Stopping'dir.
         switch (StopStage)
         {
             case StopStage.Terminating:
                 return;
             case StopStage.StopNow:
-                _hardTerminated = 0;
-                HardStopRequested = true;
-                AppendRunLine(StopNowRequestedLine);
-                // Gönderim senkron düşerse (engine hazır değil / pipe koptu) istek geri alınır — graceful'daki hata yolunun
-                // deseni: "Terminating…" yanlış bilgi vermesin, kapı yeniden açılsın ve kullanıcı tekrar deneyebilsin.
-                if (!await SendStopAsync(_currentRunId, StopKind.Hard)) HardStopRequested = false;
+                await SendHardStopAsync(_currentRunId);
                 return;
             default:
                 AppendRunLine(StopRequestedLine(Counters.Building));
                 await SendStopAsync(_currentRunId, StopKind.Graceful);
                 return;
         }
+    }
+
+    /// <summary>[Stop now] Hard stop'un TEK yolu — Stopping'deki Stop basışı/Esc (<see cref="StopAsync"/>) ve tam çıkış
+    /// (<see cref="RequestExit"/>) buradan geçer: bayrak, konsol satırı ve gönderim birlikte. Gönderim senkron düşerse (engine
+    /// hazır değil / pipe koptu) istek geri alınır — graceful'daki hata yolunun deseni: "Terminating…" yanlış bilgi vermesin,
+    /// kapı yeniden açılsın ve kullanıcı tekrar deneyebilsin.</summary>
+    private async Task SendHardStopAsync(string runId)
+    {
+        _hardTerminated = 0;
+        HardStopRequested = true;
+        AppendRunLine(StopNowRequestedLine);
+        if (!await SendStopAsync(runId, StopKind.Hard)) HardStopRequested = false;
     }
 
     /// <summary>Stop'un gönderimi — kullanıcının Stop'u (graceful ve hard) ve branch kesmesi
@@ -1688,6 +1687,7 @@ public sealed partial class RunViewModel : ObservableObject
     {
         PropagateRunActive();
         PropagateRunLock();
+        OnStripRunStateChanged(value); // [kaynak şeridi · R2] koşu hücresi koşuyla başlar, koşuyla biter (her bitiş yolu buradan geçer)
     }
     partial void OnIsStartingChanged(bool value)
     {
@@ -1771,18 +1771,14 @@ public sealed partial class RunViewModel : ObservableObject
     /// KULLANMAZ. Bu yüzden fallback dalı üretimden erişilemez, yalnız savunma amaçlıdır ve
     /// <c>internal</c>'dır: onu pinleyen test doğrudan çağırır.</para>
     /// </summary>
-    internal static PerfProfile ProfileFor(string perfMode) =>
-        PerfProfile.TryParse(perfMode) ?? PerfProfile.For(CorePerfMode.Balanced);
+    internal static PerfProfile ProfileFor(string perfMode) => PerfProfile.For(ModeFor(perfMode));
 
-    /// <summary>[RESOLVE Faz 4 / karar 11 · fix 1A — I2] Koşunun perf bağlamı: koşu modu ve koşu başındaki "Resolve cycles at
-    /// full priority" anahtarı — notlar motorla AYNI dönüşümü (<see cref="PerfProfile.ForRun"/>) aynı girdilerle anlatsın
-    /// diye. <see cref="BeginRunAsync"/> onu <see cref="IsStarting"/>'ten ÖNCE yazar ve
-    /// <see cref="StartRunCommand.ResolveAtFullPriority"/>'yi AYNI değerden kurar. Okuyanlar: <see cref="CyclePerfAsync"/>
-    /// (yalnız <see cref="IsMidRunLocked"/> iken — açılış koreografisi dahil) ve <see cref="OnRunStarted"/>'ın Resolve notu.
-    /// <para>Koşu bitince SIFIRLANMAZ, bilerek: bir sonraki koşu başlatılırken, okunmadan önce yeniden yazılır; idle chip yolu
-    /// onu okumaz. Bitmiş (ya da gönderilemeyen) bir koşunun bağlamı bu yüzden sonrakine sızamaz. Oturumda henüz koşu
-    /// başlatılmadıysa <c>null</c>'dır: chip düz notu yazar, run başı notu yazılmaz.</para></summary>
-    private (RunMode Mode, bool ResolveAtFullPriority)? _runPerf;
+    /// <summary>
+    /// [kaynak şeridi] Perf metninin MODU — <see cref="ProfileFor"/>'un fallback'iyle AYNI kural (tanınmayan metin → Balanced), tek yerde:
+    /// profil (paralellik/cap/priority) bu modun tablo satırıdır, kaynak şeridinin mod sözcüğü ve metinleri bu modun adından/satırından gelir
+    /// (<c>RunViewModel.ResourceStrip.cs</c>). Metin → mod eşlemesi <see cref="PerfProfile.TryParseMode"/>'dadır; burada ikinci bir tablo yoktur.
+    /// </summary>
+    internal static CorePerfMode ModeFor(string perfMode) => PerfProfile.TryParseMode(perfMode) ?? CorePerfMode.Balanced;
 
     /// <summary>
     /// [T43 · T20-b/K11] Perf chip: Full → Balanced → Light → Full döngüsü; paralelliği de günceller. Koşarken de
@@ -1809,13 +1805,9 @@ public sealed partial class RunViewModel : ObservableObject
         var profile = ProfileFor(PerfMode);
         Parallelism = profile.Parallelism;
         if (!IsMidRunLocked) return;
-        // BuildApp.jsx:1366-1372'nin K11 karşılığı (kopya metin Core'da). [RESOLVE Faz 4] Resolve cycles koşusunda not,
-        // motorun uyguladığını (cap'siz + Normal) söyler.
-        // [fix 1A — I2] Mod + anahtar koşunun başlatılırken yakalanan bağlamından (_runPerf): açılış koreografisinde de
-        // AÇILAN koşuyu anlatır, bir öncekini değil.
-        AppendRunLine(_runPerf is { } run
-            ? PerfNoteText.Note(run.Mode, profile, run.ResolveAtFullPriority)
-            : PerfNoteText.Note(profile));
+        // BuildApp.jsx:1366-1372'nin K11 karşılığı (kopya metin Core'da): motor her koşu modunda profili aynen uyguladığından not
+        // koşu modundan bağımsız profilin kendi notudur.
+        AppendRunLine(PerfNoteText.Note(profile));
         await TrySendAsync(new SetPerfModeCommand(PerfMode), "setPerfMode");
     }
 
@@ -1886,6 +1878,7 @@ public sealed partial class RunViewModel : ObservableObject
         }
         EvaluateEngineSilence();
         EvaluateEngineIdle();
+        EvaluateExit(); // [Exit] durdurma cevabının süresi (ExitStopWaitMs) saatle dolar — olay gelmeden
     }
 
     // ---------------------------------------------------------------- event → durum
@@ -1974,6 +1967,8 @@ public sealed partial class RunViewModel : ObservableObject
         // gerçek kuyruğu doldurur. (Başlangıç modu burada DÜŞÜRÜLMEZ — design v1.20.0 §2.3: o yalnız kararın
         // yokluğudur ve önizlemenin kararıyla kalkar.)
         foreach (var row in Projects) row.InRunQueue = false;
+        // [kaynak şeridi · R2] Koşu hücresi IsRunning'den ÖNCE kurulur: IsRunning'in değişim kancası hücreyi koşu başındaki modla yazar.
+        BeginStripRun(e);
         IsRunning = true;
         Phase = AppPhase.Running; // [C2] Idle → Running
         IsStarting = false; // [Fix wave 1(It-3), Finding 3] planlama bitti — Stop artık IsRunning üzerinden erişilebilir
@@ -2014,25 +2009,15 @@ public sealed partial class RunViewModel : ObservableObject
         // konsoluna TEK satır — tek projelik koşu hariç (WorkersReducedNote'un kapısı) — (event stream'deki eşini
         // RunViewModel.Stream.cs, koşunun başlangıç satırının hemen ardından
         // yayar). Metin Supervisor'ın decision.log satırıyla AYNI (WorkersReducedNote → PerfNoteText); stderr kopyası
-        // yoktur, App stderr'i atar. Resolve notundan ÖNCE: decision.log'un sırası, ve Resolve notunun sayısı bu kırpmadan
-        // gelir.
+        // yoktur, App stderr'i atar.
         if (WorkersReducedNote(e) is { } reductionNote)
             AppendRunLine(reductionNote);
-        // [RESOLVE Faz 4 / karar 11 · fix 1A — I1] Resolve cycles tam öncelikte başladıysa kullanıcının konsoluna TEK satır.
-        // Metin PerfNoteText'te (Supervisor'ın decision.log satırıyla AYNI); sayı motorun fiilî paralelliği, anahtar koşu
-        // başlatılırken yakalanan değer (_runPerf). Supervisor'ın stderr'i App'te atılır (EngineHost), kullanıcının gördüğü
-        // satır buradan yazılır. Anahtar kapalıyken, Full'de ve Build/Rebuild/Clean'de satır yoktur.
-        if (_runPerf is { } run
-            && PerfNoteText.ResolveNote(e.Mode, ProfileFor(PerfMode) with { Parallelism = e.Parallelism },
-                run.ResolveAtFullPriority) is { } resolveNote)
-            AppendRunLine(resolveNote);
         // [koşu başı uyarıları görünür] Motorun koşu başında bulduğu uyarılar (runStarted.Warnings — önce bayat obj, sonra
         // ters katman) kullanıcının konsoluna AYNEN, her satır bir kez; "warning: " öneki satırı amber boyar (ConsoleLine).
         // Metin Supervisor'ın decision.log satırıyla AYNI; stderr kopyası yoktur, App stderr'i atar. Event stream'deki
-        // eşlerini RunViewModel.Stream.cs, başlangıç satırının (ve varsa kırpma satırının) ardından yayar. Sıra: kırpma ve
-        // Resolve notlarından SONRA — o iki not koşunun nasıl koştuğunu söyler ve yan yana kalır (Resolve notunun sayısı
-        // kırpmadan gelir); uyarılar akıştaki gibi onların ardından gelir. Tek projelik koşuda da yazılır: kırpma notunun
-        // istisnası burada geçerli değil — o projenin bayat obj'si o koşuyu bozabilir.
+        // eşlerini RunViewModel.Stream.cs, başlangıç satırının (ve varsa kırpma satırının) ardından yayar. Sıra: kırpma notundan
+        // SONRA — o not koşunun nasıl koştuğunu söyler; uyarılar akıştaki gibi onun ardından gelir. Tek projelik koşuda da
+        // yazılır: kırpma notunun istisnası burada geçerli değil — o projenin bayat obj'si o koşuyu bozabilir.
         foreach (string warning in e.Warnings ?? [])
             AppendRunLine(warning);
         UpdateEta(); // runStarted anında henüz hiçbir completion yok → X/N fallback (ETA numarası YOK)

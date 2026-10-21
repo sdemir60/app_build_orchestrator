@@ -1,0 +1,73 @@
+<!-- [Exit] Exit'in onay kartı. Kök taban tipi PopoverBase'tir (IsOpen + giriş + Esc + VM takası orada). Kabuk (Ds.Popover, 320px, dolgu 0)
+     ve yerleşim (butonun 9px altı, sağ kenarı butonla hizalı, Popup) MainWindow.xaml'dedir; burada yalnız gövde vardır: üç blok, aralarında
+     1px border. İçerik RunViewModel.ExitWork / ExitProgress ve kabuğun saydığı süreçlerdir (ExitCard.xaml.cs RefreshContent); metinler
+     ExitText'ten. Ölçüler güncelleme kartının ailesindendir (UpdateCard.xaml). -->
+<views:PopoverBase x:Class="BuildOrchestrator.App.Views.ExitCard"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:BuildOrchestrator.App"
+             xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
+             xmlns:vm="clr-namespace:BuildOrchestrator.App.ViewModels"
+             xmlns:views="clr-namespace:BuildOrchestrator.App.Views"
+             AutomationProperties.Name="{x:Static local:AccessibilityNames.Exit}">
+  <StackPanel>
+    <!-- (1) DURUM — padding 13 16 14: caps etiket (11px text-faint) + sağda mono ilerleme (11px text-faint, tabular); 8px altında tek
+         cümle (13px/500 text-primary). -->
+    <Border x:Name="PART_Status" Padding="16,13,16,14">
+      <StackPanel>
+        <DockPanel x:Name="PART_HeadingRow">
+          <TextBlock x:Name="PART_Progress" DockPanel.Dock="Right" VerticalAlignment="Center" Margin="8,0,0,0"
+                     FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.2xs}"
+                     FontWeight="{DynamicResource FontWeight.Body}" Typography.NumeralAlignment="Tabular"
+                     Foreground="{DynamicResource Brush.TextFaint}" />
+          <controls:TrackedTextBlock x:Name="PART_Heading" VerticalAlignment="Center" FontSize="{DynamicResource FontSize.2xs}"
+                                     FontWeight="{DynamicResource FontWeight.Emphasis}"
+                                     Foreground="{DynamicResource Brush.TextFaint}" />
+        </DockPanel>
+        <TextBlock x:Name="PART_Sentence" Margin="0,8,0,0" TextWrapping="Wrap" FontSize="{DynamicResource FontSize.Sm}"
+                   FontWeight="{DynamicResource FontWeight.Emphasis}" Foreground="{DynamicResource Brush.TextPrimary}" />
+      </StackPanel>
+    </Border>
+
+    <!-- (2) ENDS ON EXIT — padding 12 16 13: caps başlık; 8px altında kapanacak süreçler, satır başına mono 11px: solda ad
+         (text-secondary), sağda ×N (text-dim), satırlar arası 4. Satırları kabuğun sayımı kurar (RefreshContent); gösterilecek süreç
+         yoksa blok hiç çizilmez. -->
+    <Border x:Name="PART_ProcessesBlock" Padding="16,12,16,13" BorderThickness="0,1,0,0"
+            BorderBrush="{DynamicResource Brush.Border}">
+      <StackPanel>
+        <controls:TrackedTextBlock x:Name="PART_ProcessesHeading" Text="{x:Static vm:ExitText.EndsOnExit}"
+                                   FontSize="{DynamicResource FontSize.2xs}" FontWeight="{DynamicResource FontWeight.Emphasis}"
+                                   Foreground="{DynamicResource Brush.TextFaint}" />
+        <StackPanel x:Name="PART_Processes" Margin="0,8,0,0" />
+      </StackPanel>
+    </Border>
+
+    <!-- (3) KARAR — padding 12 16 14: sonuç satırı (12px text-dim, satır 1.5) · 12px altında sağa yaslı Cancel (secondary sm) + birincil
+         düğme (danger sm, 12px power ikonlu), aralarında 8. Sonuç satırı yokken (uçuşta iş yok) düğmeler bloğun üstündedir. -->
+    <Border x:Name="PART_Decision" Padding="16,12,16,14" BorderThickness="0,1,0,0"
+            BorderBrush="{DynamicResource Brush.Border}">
+      <StackPanel>
+        <TextBlock x:Name="PART_Outcome" TextWrapping="Wrap" LineStackingStrategy="BlockLineHeight"
+                   LineHeight="{DynamicResource LineHeight.Normal12}" FontSize="{DynamicResource FontSize.Xs}"
+                   Foreground="{DynamicResource Brush.TextDim}" />
+        <StackPanel x:Name="PART_Actions" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+          <Button x:Name="PART_Cancel" Style="{DynamicResource Ds.Button.Secondary.Sm}"
+                  Content="{x:Static vm:ExitText.Cancel}" />
+          <Button x:Name="PART_Action" Style="{DynamicResource Ds.Button.Danger.Sm}" Margin="8,0,0,0">
+            <StackPanel Orientation="Horizontal">
+              <!-- lucide power 12px; kontur düğmenin Foreground'u (danger metni). -->
+              <Viewbox Width="12" Height="12" Margin="0,0,6,0" VerticalAlignment="Center">
+                <Canvas Width="24" Height="24">
+                  <Path Data="{DynamicResource Icon.Power}" StrokeThickness="{DynamicResource Icon.Power.StrokeThickness}"
+                        Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                        StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                </Canvas>
+              </Viewbox>
+              <TextBlock x:Name="PART_ActionLabel" VerticalAlignment="Center" />
+            </StackPanel>
+          </Button>
+        </StackPanel>
+      </StackPanel>
+    </Border>
+  </StackPanel>
+</views:PopoverBase>

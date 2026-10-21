@@ -325,6 +325,10 @@ public class CleanCommandTests
     /// (<c>cleanStarted</c>); kullanıcı "tıkladığım anda olsun" dedi, çünkü aradaki gecikme ekranı iki adımda
     /// boşaltıyor gibi duruyordu. Bedeli kabul edildi: gönderim düşerse ya da komut reddedilirse liste boş kalır
     /// ve geri getirmek kullanıcının Sync'ine kalır.</para>
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-19]</b> (3) Boşalan liste eskiden hiçbir şey söylemezdi
+    /// (<see cref="ListInviteState.None"/>): o günkü metin ("No projects found under this folder.") Boot'ta yalan olurdu.
+    /// Ölçülen sonuç: Clean sürerken graf kendi boş kutusunu çizerken liste bomboş kalıyordu. Liste artık boşken HER
+    /// durumda boş görünümünü (<c>No projects</c>) gösterir — metin nedeni iddia etmediği için Boot'ta da doğrudur.</para>
     /// </summary>
     [Fact]
     public async Task Clean_empties_the_project_list_and_the_graph_at_click()
@@ -348,12 +352,13 @@ public class CleanCommandTests
         Assert.Equal(1, topologyChanges);
         Assert.Equal(0, vm.WillBuildCount);
         Assert.True(vm.AllClean);
-        // Panel YANLIŞ konuşmaz: boş liste + Boot fazı = hiçbir davet (klasörde proje YOK demek olurdu).
-        // [design v1.24.0 · plan K2] Clean'in kendi penceresi keşif DEĞİLDİR (Sync yok) — keşif bloğu da çıkmaz.
+        // Boş liste boş olduğunu söyler — Boot fazında da (yukarıdaki DEĞİŞEN KURAL 3). Faz yine Boot'tur: proje
+        // durumları bilinmiyor. [design v1.24.0 · plan K2] Clean'in kendi penceresi keşif DEĞİLDİR (Sync yok) — keşif
+        // bloğu çıkmaz.
         Assert.Equal(AppPhase.Boot, vm.Phase);
         Assert.False(vm.IsDiscovering);
-        Assert.Equal(ListInviteState.None,
-            ListInvite.Resolve(vm.HasWorkspace, vm.IsDiscovering, vm.Phase, vm.Projects.Count, vm.VisibleProjects.Count));
+        Assert.Equal(ListInviteState.NoProjects,
+            ListInvite.Resolve(vm.HasWorkspace, vm.IsDiscovering, vm.Projects.Count, vm.VisibleProjects.Count));
     }
 
     /// <summary>[kullanıcı kararı 2026-09-12] Boşaltma TIKLAMADADIR, dolayısıyla motora hiç ulaşmamış bir Clean de

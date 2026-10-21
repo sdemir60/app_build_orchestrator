@@ -12,6 +12,11 @@ namespace BuildOrchestrator.App;
 /// </summary>
 public static class AccessibilityNames
 {
+    // ---- Title bar: kaynak şeridi (design v1.25.0 §2.1) ----
+    /// <summary>Şeridin grup adı (prototip: <c>aria-label="Resource usage"</c>). Hücrelerin etiketi YOKTUR (tasarım: anlam tooltip'te);
+    /// ekran okuyucu her hücrenin değerini kendi metninden duyar, bu ad üçünü tek grup olarak adlandırır.</summary>
+    public const string ResourceUsage = "Resource usage";
+
     // ---- Action bar: durum/filtre sayaç chip'leri (AYNI metin tooltip + UIA-adı) ----
     public const string FilterAll = "All projects — clear filters";
     /// <summary>Derleniyor chip'i — sözcük DURUM chip'leriyle aynı kaynaktan (<see cref="StateFilter"/>), satırın
@@ -150,6 +155,10 @@ public static class AccessibilityNames
     /// <summary>[design v1.13.0 §2.1 · D4/T8] Title bar'daki ikon-yalnız sparkle butonu (dişli ile ⓘ
     /// arasında). About ile AYNI kural: UIA adı kısa, tooltip <see cref="Shell.ShortcutCatalog"/>'dan.</summary>
     public const string WhatsNew = "What's new";
+
+    /// <summary>[Exit] Title bar'ın Exit butonu — UIA adı kısa ve kartın boştaki başlığıyla aynı sözcük (<see cref="ViewModels.ExitText.ExitLabel"/>
+    /// tek kaynak); tooltip <see cref="Shell.ShortcutCatalog"/>'dan.</summary>
+    public const string Exit = ViewModels.ExitText.ExitLabel;
 
     /// <summary>[design v1.23.0 §2.12] Title bar'daki güncelleme hapı (<c>aria-label="Update to &lt;sürüm&gt;"</c>) ve
     /// açtığı kartın kökü — ekran okuyucu ikisini aynı adla duyar.</summary>

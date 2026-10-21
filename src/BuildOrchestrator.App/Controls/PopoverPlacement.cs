@@ -24,4 +24,14 @@ internal static class PopoverPlacement
     /// KULLANILMAZ: boşluk tek yerden, <paramref name="gap"/>'ten gelir — popup'ta offset yazılmaz.</summary>
     internal static CustomPopupPlacementCallback BelowLeftEdgeCallback(double gap) =>
         (_, targetSize, _) => [new CustomPopupPlacement(BelowLeftEdge(targetSize, gap), PopupPrimaryAxis.None)];
+
+    /// <summary>[Exit] Sağ kenarı hedefin sağ kenarında: popover hedefin altından SOLA doğru sarkar (CSS <c>top: calc(100% + gap);
+    /// right: 0</c>) — kümenin sonundaki bir butonun kartı pencerenin dışına taşmaz.</summary>
+    internal static Point BelowRightEdge(Size targetSize, Size popupSize, double gap) =>
+        new(targetSize.Width - popupSize.Width, targetSize.Height + gap);
+
+    /// <summary><see cref="BelowRightEdge"/>'in WPF geri çağrısı — <see cref="BelowLeftEdgeCallback"/>'in kuralıyla: boşluk tek yerden
+    /// gelir, popup'ın offset'leri kullanılmaz.</summary>
+    internal static CustomPopupPlacementCallback BelowRightEdgeCallback(double gap) =>
+        (popupSize, targetSize, _) => [new CustomPopupPlacement(BelowRightEdge(targetSize, popupSize, gap), PopupPrimaryAxis.None)];
 }

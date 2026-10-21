@@ -53,6 +53,11 @@ public class IconGeometryTests
         // [design v1.23.0 §2.12] Güncelleme hapı ve kartı — hap: lucide circle-arrow-up, kartın sürüm geçişi: lucide
         // arrow-right (design-v1.24.0 prototype/app/BuildApp.jsx:104-105). Kartın rotate-cw'si Icon.Rebuild'dir.
         "Icon.UpdateReady", "Icon.ArrowRight",
+        // [design v1.25.0 §2.1] Title bar'ın kaynak şeridinin üç ikonu — lucide cpu · memory-stick ve üç dik çizgi (design-v1.25.0
+        // prototype/app/BuildApp.jsx:125-127). Şerit etiketsizdir: anlamı taşıyan görsel bu üç çizimdir.
+        "Icon.Cpu", "Icon.MemoryStick", "Icon.Parallel",
+        // [Exit] Title bar'ın Exit butonu ve kartın "Stop and exit"i — lucide power.
+        "Icon.Power",
     ];
 
     /// <summary>[T60] Tasarımda <c>fill="currentColor" stroke="none"</c> ile verilen (DOLU) ikonlar —
@@ -139,8 +144,8 @@ public class IconGeometryTests
     }
 
     /// <summary>[design v1.23.0 §2.12] Güncelleme ikonları prototipin geometrisini BİREBİR taşır (BuildApp.jsx:104-105,
-    /// viewBox 24): hap = lucide circle-arrow-up — <c>r=9</c> halka (tasarım "ⓘ ile aynı r=9" der; uygulamadaki
-    /// <c>Icon.Info</c> r=10'dur, hap prototipi izler) + ok başı ve gövde, 1.7 kalınlık; kartın geçiş oku = lucide
+    /// viewBox 24): hap = lucide circle-arrow-up — <c>r=9</c> halka (tasarım "ⓘ ile aynı r=9" der; <c>Icon.Info</c>'nun halkası da
+    /// r=9'dur, <see cref="The_info_icon_carries_the_prototype_geometry"/>) + ok başı ve gövde, 1.7 kalınlık; kartın geçiş oku = lucide
     /// arrow-right — gövde + ok başı, 1.8 kalınlık. Sınırlar çizimi doğrular: halka 3..21, ok 5..19.</summary>
     [StaFact]
     public void The_update_icons_carry_the_prototype_geometry()
@@ -162,6 +167,97 @@ public class IconGeometryTests
 
         Assert.Equal(1.7, Assert.IsType<double>(icons["Icon.UpdateReady.StrokeThickness"]));
         Assert.Equal(1.8, Assert.IsType<double>(icons["Icon.ArrowRight.StrokeThickness"]));
+    }
+
+    /// <summary>Title bar'ın ⓘ'si (About) prototipin geometrisini BİREBİR taşır (design-v1.25.0 BuildApp.jsx:102, viewBox 24): <c>r=9</c> halka +
+    /// gövde <c>M12 11v5</c> + nokta <c>M12 7.6h.01</c>, 1.7 kalınlık. Halka güncelleme hapınınkiyle ve Exit'in power halkasıyla aynıdır (x 3..21).
+    /// <para><b>[DEĞİŞEN KURAL — 2026-10-20, kullanıcı: "diğer ikonlar da birbiri arasında ölçü olarak tam uyumlu değil"]</b> ESKİ İDDİA (pinsizdi,
+    /// sözlükte "TÜRETİLMİŞ" yazıyordu): ⓘ lucide <c>info</c>'dur — <c>r=10</c>, gövde <c>M12 16v-4</c>, nokta <c>M12 8h.01</c> — çünkü design-v1'in
+    /// ikon tablosunda <c>info</c> yoktu. Tasarım v1.2.1'den beri kendi ⓘ'sini r=9 çizer. Ölçüm (16 px kutu, kalem dahil): r=10 halka 14,5 px ile
+    /// kümenin en büyük çizimiydi (dişli 13,0 genişlik, Exit 13,1); r=9 halka 13,1 px — Exit'in halkasıyla aynı.</para></summary>
+    [StaFact]
+    public void The_info_icon_carries_the_prototype_geometry()
+    {
+        var icons = IconResources.Load();
+
+        var info = Assert.IsType<GeometryGroup>(icons["Icon.Info"]);
+        var ring = Assert.Single(info.Children.OfType<EllipseGeometry>());
+        Assert.Equal((new Point(12, 12), 9.0, 9.0), (ring.Center, ring.RadiusX, ring.RadiusY));
+        var marks = Assert.Single(info.Children.OfType<PathGeometry>());
+        Assert.Equal(2, marks.Figures.Count);
+        Assert.Equal(new Point(12, 11), marks.Figures[0].StartPoint); // gövde 11..16
+        Assert.Equal(16, marks.Bounds.Bottom, 2);
+        Assert.Equal(new Point(12, 7.6), marks.Figures[1].StartPoint); // nokta
+        Assert.Equal(new Rect(3, 3, 18, 18), info.Bounds);
+
+        var update = Assert.Single(Assert.IsType<GeometryGroup>(icons["Icon.UpdateReady"]).Children.OfType<EllipseGeometry>());
+        Assert.Equal((update.Center, update.RadiusX), (ring.Center, ring.RadiusX)); // hapın halkasıyla aynı
+        var power = Assert.IsType<PathGeometry>(icons["Icon.Power"]); // Exit'in halkası (x 3..21)
+        Assert.Equal(power.Bounds.Left, info.Bounds.Left, 1);
+        Assert.Equal(power.Bounds.Right, info.Bounds.Right, 1);
+        Assert.Equal(1.7, Assert.IsType<double>(icons["Icon.Info.StrokeThickness"]));
+    }
+
+    /// <summary>[Exit] Exit'in ikonu lucide power'dır (viewBox 24): dikey gövde <c>M12 2v10</c> + üstü açık halka
+    /// <c>M18.4 6.6a9 9 0 1 1-12.77.04</c> — iki figür. Sınırlar çizimi doğrular: halka x 3..21, alt ucu ~22; gövde y=2'den başlar.
+    /// Kalınlık title bar ikonlarınınkidir: 1.7 (ⓘ ile aynı). Gövde x=12'dedir: dişliyle aynı 16 px'lik kutuda 8'e, %100 ekranda piksel
+    /// sınırına düşer — ⓘ'nin gövdesi gibi. (Eski 13 px kutuda 6,5 — piksel ortası — beklenirdi; kullanıcının 2026-10-20 ekran görüntüsünde
+    /// o gövde de iki sütuna yayılmıştı.)</summary>
+    [StaFact]
+    public void The_power_icon_carries_lucides_geometry()
+    {
+        var icons = IconResources.Load();
+
+        var power = Assert.IsType<PathGeometry>(icons["Icon.Power"]);
+        Assert.Equal(2, power.Figures.Count);
+        Assert.Equal(new Point(12, 2), power.Figures[0].StartPoint);
+        Assert.Equal(3, power.Bounds.Left, 1);
+        Assert.Equal(2, power.Bounds.Top, 1);
+        Assert.Equal(21, power.Bounds.Right, 1);
+        Assert.Equal(22, power.Bounds.Bottom, 0);
+        Assert.Equal(1.7, Assert.IsType<double>(icons["Icon.Power.StrokeThickness"]));
+    }
+
+    /// <summary>[design v1.25.0 §2.1] Kaynak şeridinin ikonları prototipin geometrisini BİREBİR taşır (BuildApp.jsx:125-127, viewBox
+    /// 24): cpu = iki <c>rect</c> (14×14 <c>rx=2</c> gövde, 5×5 <c>rx=0.8</c> çekirdek) + sekiz bacak çizgisi; memory-stick = gövde
+    /// (iki çentikli) + ayırıcı çizgi + üst üç, alt üç kontak (toplam sekiz figür); parallel = üç dik çizgi (x 7/13/19, y 5..19 —
+    /// prototipin 6/12/18'inden TÜRETİLMİŞ, aşağıya bak). Kalınlıklar prototipin ikon başına değerleridir: cpu ve memory 1.8, parallel
+    /// 1.9. Sınırlar çizimin kendisini doğrular.
+    /// <para><b>[DEĞİŞEN KURAL — 2026-10-19, piksel hizası]</b> ESKİ İDDİA: parallel prototipin x 6/12/18'ini birebir taşır. 12 px'lik
+    /// kutuda birim yarım pikseldir; çift koordinat %100 ölçekli ekranda piksel SINIRINA düşer ve her çizgi iki komşu sütuna yarım
+    /// parlaklıkta bölünür — canlı ölçüm (4K, %100): CPU ikonunun sütunları 91'e çıkarken paralel ikonun her çizgisi iki sütunda 54'te
+    /// kaldı ve kullanıcı "soluk" gördü. Tek koordinat (7/13/19) piksel ORTASINA düşer; cpu'nun gövde ve bacak çizgileri de zaten tek
+    /// koordinattadır (5, 9, 15, 19).</para>
+    /// <para><b>[DEĞİŞEN KURAL — 2026-10-19]</b> ESKİ İDDİA: üçü de 1.8 — README §2.1'in genel "stroke 1.8" cümlesi prototipin
+    /// <c>parallel</c> için yazdığı 1.9'u eziyordu. Gerekçe: aynı renkte üç ince çizgi diğer iki ikonun yarısı kadar mürekkep taşır ve
+    /// 1.8'de daha soluk okunur (canlı ekran görüntüsünde, %150: paralel ikon 48, CPU ve RAM ikonları 90'ar piksel boyuyordu; kullanıcı
+    /// "paralel ikon bir tık soluk" dedi) — prototipin 1.9'u bu optik telafidir.</para></summary>
+    [StaFact]
+    public void The_resource_strip_icons_carry_the_prototype_geometry()
+    {
+        var icons = IconResources.Load();
+
+        var cpu = Assert.IsType<GeometryGroup>(icons["Icon.Cpu"]);
+        var rects = cpu.Children.OfType<RectangleGeometry>().ToList();
+        Assert.Equal(new[] { new Rect(5, 5, 14, 14), new Rect(9.5, 9.5, 5, 5) }, rects.Select(r => r.Rect));
+        Assert.Equal(new[] { 2.0, 0.8 }, rects.Select(r => r.RadiusX));
+        Assert.Equal(new[] { 2.0, 0.8 }, rects.Select(r => r.RadiusY));
+        Assert.Equal(8, Assert.Single(cpu.Children.OfType<PathGeometry>()).Figures.Count);
+        Assert.Equal(new Rect(2.5, 2.5, 19, 19), cpu.Bounds);
+
+        var memory = Assert.IsType<PathGeometry>(icons["Icon.MemoryStick"]);
+        Assert.Equal(8, memory.Figures.Count);
+        Assert.Equal(3, memory.Bounds.Left, 2);
+        Assert.Equal(5.5, memory.Bounds.Top, 2);
+        Assert.Equal(21, memory.Bounds.Right, 2);
+        Assert.Equal(18.5, memory.Bounds.Bottom, 2);
+
+        var parallel = Assert.IsType<PathGeometry>(icons["Icon.Parallel"]);
+        Assert.Equal(3, parallel.Figures.Count);
+        Assert.Equal(new Rect(7, 5, 12, 14), parallel.Bounds);
+
+        Assert.Equal((1.8, 1.8, 1.9), (Assert.IsType<double>(icons["Icon.Cpu.StrokeThickness"]),
+            Assert.IsType<double>(icons["Icon.MemoryStick.StrokeThickness"]), Assert.IsType<double>(icons["Icon.Parallel.StrokeThickness"])));
     }
 
     [StaFact]

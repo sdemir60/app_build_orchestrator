@@ -119,18 +119,14 @@ public class NoTurkishUserTextTests
     [Fact] // eksen (a) — src ağacı: C# + XAML
     public void No_Turkish_characters_reach_the_user_from_the_src_tree()
     {
-        var offenders = SourceGuard.ScanSrcLiterals("*.cs", TurkishCharacters, ExceptedFiles, IgnoredCallers)
-            .Concat(SourceGuard.ScanSrcLiterals("*.xaml", TurkishCharacters, ExceptedFiles, IgnoredCallers))
-            .ToList();
+        var offenders = SourceGuard.ScanSrcCodeAndMarkupLiterals(TurkishCharacters, ExceptedFiles, IgnoredCallers);
         Assert.True(offenders.Count == 0, Report("Türkçe KARAKTER", offenders));
     }
 
     [Fact] // eksen (b) — src ağacı: C# + XAML
     public void No_Turkish_words_reach_the_user_from_the_src_tree()
     {
-        var offenders = SourceGuard.ScanSrcLiterals("*.cs", TurkishWords, ExceptedFiles, IgnoredCallers)
-            .Concat(SourceGuard.ScanSrcLiterals("*.xaml", TurkishWords, ExceptedFiles, IgnoredCallers))
-            .ToList();
+        var offenders = SourceGuard.ScanSrcCodeAndMarkupLiterals(TurkishWords, ExceptedFiles, IgnoredCallers);
         Assert.True(offenders.Count == 0, Report("Türkçe KELİME", offenders));
     }
 
@@ -185,10 +181,7 @@ public class NoTurkishUserTextTests
         Assert.True(xamlFiles.Count >= 18, $"yalnız {xamlFiles.Count} .xaml dosyası tarandı.");
 
         // Her üretim projesi GERÇEKTEN kapsamda mı (guard yalnız App'e bakıyor olmasın).
-        Assert.Contains(Path.Combine("BuildOrchestrator.Core", "Git", "GitService.cs"), csFiles);
-        Assert.Contains(Path.Combine("BuildOrchestrator.Supervisor", "RunCoordinator.cs"), csFiles);
-        Assert.Contains(Path.Combine("BuildOrchestrator.Contracts", "Ipc", "IpcMessages.cs"), csFiles);
-        Assert.Contains(Path.Combine("BuildOrchestrator.App", "ViewModels", "RibbonText.cs"), csFiles);
+        SourceGuard.AssertScansEveryProductionProject("*.cs");
 
         int csLiterals = SourceGuard.CountSrcLiterals("*.cs");
         int xamlLiterals = SourceGuard.CountSrcLiterals("*.xaml");
@@ -250,8 +243,7 @@ public class NoTurkishUserTextTests
             var hits = RepoScanSurfaces
                 .SelectMany(s => SourceGuard.ScanRepoLiterals(s.Pattern, TurkishCharacters, ignoredCallers: IgnoredCallers,
                     excludedRootFolders: ExcludedRepoRoots))
-                .Concat(SourceGuard.ScanSrcLiterals("*.cs", TurkishCharacters, ExceptedFiles, IgnoredCallers))
-                .Concat(SourceGuard.ScanSrcLiterals("*.xaml", TurkishCharacters, ExceptedFiles, IgnoredCallers))
+                .Concat(SourceGuard.ScanSrcCodeAndMarkupLiterals(TurkishCharacters, ExceptedFiles, IgnoredCallers))
                 .Count(o => o.Contains(name, StringComparison.Ordinal));
             Assert.True(hits > 0, $"istisna ARTIK GEREKSİZ, kaldır: {name} ({reason})");
         }

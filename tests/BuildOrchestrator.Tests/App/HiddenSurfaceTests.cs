@@ -1206,14 +1206,17 @@ public class HiddenSurfaceTests
     }
 
     /// <summary>
-    /// [perf Faz A · A6] <b>Gizli pencerede motor bekçisi çalışır</b> (Review Focus 2). Tik gövdesi gizliyken kapanır, bekçi
-    /// kapanmaz: tepsiden Exit + susmuş motorda bekleyen çıkışı bekçinin uyarısı serbest bırakır (<c>RunViewModel.Exit.cs</c>),
-    /// yani çıkış ancak tik sürdükçe gelir. Bu bir REGRESYON pinidir: bekçi kapıdan önce de koşulsuz koşar ve test kapısız
-    /// da yeşildir. <c>SafeExitTests.A_silent_engine_does_not_hold_the_exit</c> ile aynı senaryo — bu kez gerçek kabuğun tikiyle
-    /// ve pencere gizliyken.
+    /// [perf Faz A · A6 · Exit] <b>Gizli pencerede çıkışın süresi işler.</b> Tik gövdesi gizliyken kapanır, motorun tik işleri
+    /// kapanmaz: cevapsız kalan bir durdurmada bekleyen çıkışı süresinin dolması serbest bırakır (<c>RunViewModel.Exit.cs</c>),
+    /// yani çıkış ancak tik sürdükçe gelir. Bu bir REGRESYON pinidir: değerlendirme gizli kapıdan önce de koşulsuz koşar.
+    /// <c>SafeExitTests.An_unanswered_stop_holds_the_exit_only_for_the_stop_wait</c> ile aynı senaryo — bu kez gerçek kabuğun
+    /// tikiyle ve pencere gizliyken.
+    /// <para><b>[DEĞİŞEN KURAL — Exit, 2026-10-19]</b> ESKİ: çıkış derlemenin drain'ini beklerdi ve onu bekçinin uyarısı
+    /// (<see cref="RunViewModel.EngineSilenceThresholdMs"/>) serbest bırakırdı. Çıkış artık hard stop'un cevabını en çok
+    /// <see cref="RunViewModel.ExitStopWaitMs"/> bekler.</para>
     /// </summary>
     [StaFact]
-    public void A_silent_engine_still_frees_a_pending_exit_while_the_surface_is_hidden()
+    public void An_unanswered_stop_still_frees_a_pending_exit_while_the_surface_is_hidden()
     {
         using var dir = new TempDir();
         long now = 1_000;
@@ -1226,20 +1229,18 @@ public class HiddenSurfaceTests
         MainWindowHost.StartBuild(vm, "P0", "P1");
         window.SetSurfaceHidden(true); // koşu sürerken tepsiye iner
         Assert.True(window.IsSurfaceHidden); // ön-koşul: gizli sinyal gerçekten yazıldı
-        vm.RequestExit();              // tepsiden Exit: graceful stop, drain beklenir
-        Assert.True(vm.ExitPending);   // ön-koşul: çıkış drain'i bekliyor — bekçinin penceresi
+        vm.RequestExit();              // hard stop, cevabı beklenir
+        Assert.True(vm.ExitPending);   // ön-koşul: çıkış durdurmanın cevabını bekliyor
         Assert.Equal(0, ready);
 
-        now += RunViewModel.EngineSilenceThresholdMs - 1;
+        now += RunViewModel.ExitStopWaitMs - 1;
         window.OnElapsedTick();
-        Assert.Null(vm.EngineOverdueMessage); // eşiğin ALTI: meşru drain
         Assert.Equal(0, ready);
 
         now += 1;
         window.OnElapsedTick();
 
-        Assert.NotNull(vm.EngineOverdueMessage); // bekçi gizliyken de uyardı
-        Assert.Equal(1, ready);                  // ...ve bekleyen çıkışı serbest bıraktı
+        Assert.Equal(1, ready);                  // süre gizliyken de doldu ve bekleyen çıkışı serbest bıraktı
         DispatcherPump.PumpUntil(() => shutdowns > 0, TimeSpan.FromSeconds(2));
         DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(200)); // PumpUntil ilk çağrıda döner: geç gelen ikinci kapatma da yakalansın
         Assert.Equal(1, shutdowns);              // ...ve uygulama TAM bir kez kapatıldı
@@ -1264,7 +1265,7 @@ public class HiddenSurfaceTests
         using var dir = new TempDir();
         string[] names = MainWindowHost.ProjectNames(5);
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, names);
-        WithLoadedActionBar(window, (host, bar) =>
+        MainWindowHost.WithLoadedActionBar(window, (host, bar) =>
         {
             var building = ActionBarTests.ChipValue(bar.BuildingChip);      // chip değeri ve spinner: ActionBarTests'in TEK okuma yolları
             var spinner = ActionBarTests.ChipSpinner(bar.BuildingChip);
@@ -1290,32 +1291,6 @@ public class HiddenSurfaceTests
             Assert.Equal(Visibility.Visible, spinner.Visibility);
         });
         GC.KeepAlive(window);
-    }
-
-    /// <summary>[perf Faz A · temizlik 2b] Kabuğun alt çubuğu: ağaçtaki TEK örnek. Chip'lerini <c>Loaded</c>'da kurduğu için headless
-    /// ağaçta chip'siz durur (bkz. <see cref="WithLoadedActionBar"/>).</summary>
-    private static ActionBar ActionBarOf(MainWindow window) => DsResources.Descendants(window.Shell).OfType<ActionBar>().Single();
-
-    /// <summary>
-    /// [perf Faz A · temizlik 2b] Alt çubuk testlerinin TEK girişi: kabuk içeriğini ekran dışı gerçek bir pencereye taşır
-    /// (<see cref="MainWindowHost.HostOffscreen"/>), çubuğun yüklenmesini bekler (chip'ler <c>Loaded</c>'da kurulur), gövdeyi çalıştırır ve
-    /// pencereyi — gövdedeki bir iddia patlasa da — kapatır. <c>Loaded</c> ÖNCESİNİ de sınayan test
-    /// (<see cref="An_action_bar_that_starts_hidden_builds_its_chips_once_from_the_current_counters_on_first_show"/>) çubuğu önce
-    /// <see cref="ActionBarOf"/> ile alır, gizli işaretler ve ancak sonra buraya girer; gövdeye gelen çubuk o örnektir.
-    /// </summary>
-    private static void WithLoadedActionBar(MainWindow window, Action<Window, ActionBar> body)
-    {
-        var host = MainWindowHost.HostOffscreen(window);
-        try
-        {
-            var bar = ActionBarOf(window);
-            DispatcherPump.PumpUntil(() => bar.IsLoaded, TimeSpan.FromSeconds(5)); // chip'ler Loaded'da kurulur
-            body(host, bar);
-        }
-        finally
-        {
-            host.Close();
-        }
     }
 
     /// <summary>
@@ -1557,7 +1532,7 @@ public class HiddenSurfaceTests
     {
         using var dir = new TempDir();
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, MainWindowHost.ProjectNames(5));
-        WithLoadedActionBar(window, (host, bar) =>
+        MainWindowHost.WithLoadedActionBar(window, (host, bar) =>
         {
             Assert.False(bar.BuildingChip.IsChecked);                              // ön-koşul: chip kurulu, filtre yok
             HiddenSurface.SetIsHidden(host, true);
@@ -1594,7 +1569,7 @@ public class HiddenSurfaceTests
         using var dir = new TempDir();
         string[] names = MainWindowHost.ProjectNames(5);
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, names);
-        var bar = ActionBarOf(window);
+        var bar = MainWindowHost.ActionBarOf(window);
         Assert.False(bar.IsLoaded);                                     // ön-koşul: headless ağaçta çubuk hiç yüklenmez
         Assert.Null(bar.BuildingChip);                                  // ön-koşul: chip'ler henüz kurulmadı (Loaded'da kurulurlar)
         window.SetSurfaceHidden(true);                                  // tepside başlama: içerik gizli işaretli ve yüklenmemiş
@@ -1603,7 +1578,7 @@ public class HiddenSurfaceTests
         MainWindowHost.StartProject(vm, names[0]);                      // gizliyken sayaç değişti: bildirim yalnız bayrağı kaldırdı
         Assert.Equal(1, vm.Counters.Building);                          // ön-koşul: model sayacı değişti
 
-        WithLoadedActionBar(window, (host, _) =>                        // ilk gösterim: gizli sinyal pencereden kalkar, Loaded chip'leri kurar
+        MainWindowHost.WithLoadedActionBar(window, (host, _) =>         // ilk gösterim: gizli sinyal pencereden kalkar, Loaded chip'leri kurar
         {
             Assert.NotNull(bar.BuildingChip);                           // Loaded chip'leri kurdu (yukarıda kurulu değildi)
             var building = ActionBarTests.ChipValue(bar.BuildingChip);

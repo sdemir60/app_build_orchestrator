@@ -2,6 +2,27 @@
 
 Release notes for Build Orchestrator, newest version first. The What's new window in the app reads this file.
 
+## [1.11.0] - 2026-10-21
+
+### Added
+
+- The middle of the title bar shows what the tool costs the machine while it works: CPU, memory, and the projects building now against the number set for the run and the number the mode allows, followed by the mode. Hover a cell for its meaning; it pauses while the window is in the tray or minimized.
+- A power button at the right end of the title bar, or Ctrl+Q, quits the app. With work running a card asks first and says what will end; Stop and exit stops the work and closes the app, letting a branch switch or a pull finish first. Exit from the tray, and closing the window with Close to tray off, ask the same way.
+
+### Changed
+
+- Esc closes the window like the X button once it has nothing left to close or stop: to the tray when Close to tray is on, otherwise it quits, asking first if work is still running.
+- About no longer lists the app's memory, which the title bar now shows; the copied diagnostics still include it.
+
+### Fixed
+
+- A click on Build, or on the Debug or Release item not selected, that brings the window back from the background now does its job instead of being lost.
+- The project list no longer stays blank when it has no projects, for example while Clean or Optimize runs or when Sync finds none: an empty list reads No projects and an empty graph reads No graph.
+
+### Removed
+
+- The Resolve cycles at full priority setting. Resolve cycles follows the performance mode like a build; choose Full to run it faster.
+
 ## [1.10.1] - 2026-10-16
 
 ### Fixed

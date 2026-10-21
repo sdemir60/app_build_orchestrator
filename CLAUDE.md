@@ -7,7 +7,10 @@
 | Doküman | Ne için |
 |---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | **Teknik referans.** Mimari, process topolojisi, IPC, incremental karar, build motoru, git yüzeyi, UI, design system, güven sınırı, bilinçli kararlar, bilinen sınırlar. |
-| [README.md](README.md) | Giriş: ne yapar, gereksinimler, kurulum, build/test/run, paketleme ve yayın, kullanım, güncelleme, kısayollar. |
+| [README.md](README.md) | Vitrin: kısa tanım, ekran görüntüleri (`docs/images/`), öne çıkanlar, hızlı başlangıç, geliştirici komutları, doküman haritası. |
+| [docs/FEATURES.md](docs/FEATURES.md) | Özellik kataloğu: her özellik önem sırasıyla, **What / How** + teknoloji etiketleri. |
+| [docs/WHY.md](docs/WHY.md) | Kazanımlar: FEATURES'ın kazanım olan maddeleri, aynı başlık ve sırayla, **Goal / Common practice / In Build Orchestrator**. |
+| [docs/USER-GUIDE.md](docs/USER-GUIDE.md) | Kullanım kılavuzu: gereksinim, kurulum, ekran ekran kullanım, kısayollar, güncelleme, diskte durum, performans modları, bilinen sınırlar. |
 | [CHANGELOG.md](CHANGELOG.md) | Sürüm notları — What's new ekranının TEK kaynağı (exe'ye gömülür). Yalnız sürüm çıkarılırken yazılır. |
 
 **Bir kusur veya davranış sorusu geldiğinde önce bunları oku.** ARCHITECTURE.md §22 kod haritasıdır (hangi
@@ -61,8 +64,10 @@ Solution: `BuildOrchestrator.slnx` (kökte).
 
 - Yanıtları **Türkçe** ver, teknik terimleri İngilizce bırak. Sade yaz; sadece koddaki gerçeğe dayan, emin
   olmadığını yazma.
-- **Kod, UI metinleri ve loglar İngilizce**; kod yorumları ve `.claude/` kayıtları Türkçe. README.md ve
-  ARCHITECTURE.md İngilizce.
+- **Kod, UI metinleri ve loglar İngilizce**; kod yorumları ve `.claude/` kayıtları Türkçe. ARCHITECTURE.md ve
+  docs/USER-GUIDE.md yalnız İngilizce. README.md, docs/FEATURES.md ve docs/WHY.md İngilizce esastır; Türkçe
+  aynaları (`.tr.md`, aynı klasörde) **aynı işte** güncellenir, uyuşmazlıkta İngilizce doğrudur. Bölüm sayısı,
+  karşılıklı dil linki ve WHY ⊂ FEATURES sırası `DocumentationTests` ile pinlidir.
 
 ## Build / test
 
@@ -72,13 +77,23 @@ dotnet test  tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj --filt
 dotnet run   --project src/BuildOrchestrator.App/BuildOrchestrator.App.csproj
 ```
 
-Süit **filtrelidir**: `Category=Acceptance` testleri gerçek MSBuild ister — OSYS reposunu uçtan uca derleyenler
+Süit **filtrelidir**: `Category=Acceptance` testleri gerçek MSBuild ister — gerçek, büyük bir referans repoyu uçtan uca derleyenler
 ~2 dk sürer — ayrı koşulur (`--filter "Category=Acceptance"`). Uygulama açıkken build alma — çalışan Supervisor
 kendi binary'lerini kilitler.
 
-- **CI (`ci.yml`) aynı süiti windows-2025 runner'ında koşar;** runner'da koşamayan/kararsız test
-  **`Category=LocalOnly`** alır ve yalnız CI filtresinde dışlanır — eşik gevşetilmez, test silinmez; lokal tam
-  süit kapı olmaya devam eder.
+- **Tam süitin kapısı CI'dır, lokal koşu değil.** `ci.yml` aynı süiti windows-2025 runner'ında, `main` dışındaki her
+  branch'in her push'unda koşar (~10 dk). İş bitince çalışma branch'i güncel `develop`'un üstüne alınır (rebase),
+  push'lanır ve koşunun yeşili beklenir (public API, curl). Kırmızıda düşen testlerin adı koşunun hata notundan okunur
+  (`check-runs/{id}/annotations`, kimliksiz — `scripts/ci-failed-tests.ps1` yazar); yalnız onlar lokalde tekrarlanır,
+  düzeltme aynı branch'e push'lanır. Lokal tam süit yalnız kullanıcı isterse koşar — kısıtsız tam süit makineyi
+  kilitliyordu.
+- **Lokal test koşusu kısıtlıdır:** yalnız değişikliğe ilişkin test sınıfları, düşük öncelik ve yarım çekirdekle, bir
+  `.cmd` dosyasından: `start "bo" /b /wait /belownormal /affinity F0 dotnet test … --no-build --filter "…" -- xUnit.MaxParallelThreads=3`
+  (öncelik ve çekirdek maskesi testhost'a, motora ve MSBuild.exe'ye miras geçer). Kısıt zamanlama testlerini
+  düşürebilir: kırmızıyı önce tek başına, kısıtsız tekrarla.
+- Runner'da koşamayan/kararsız test **`Category=LocalOnly`** alır ve yalnız CI filtresinde dışlanır — eşik
+  gevşetilmez, test silinmez. CI onları hiç koşmadığı için değişiklik onların alanına dokunduğunda (ConsoleTiltIn,
+  Popover, UiResponsivenessBudget, CycleRounds) push'tan önce lokalde koşulur.
 - **Ölçüm/sonda testi = ortam değişkeni kapısı.** `Category=Measurement` etiketi TEK BAŞINA yetmez:
   `Category!=Acceptance` filtresi diğer her kategoriyi kabul eder. Pencere açan, balloon gösteren ya da CPU
   yakan her YENİ test `[SkippableFact]` + ilk satırda `Skip.IfNot(<BO_... değişkeni> == "1")` taşır (içerik
@@ -109,7 +124,7 @@ Kullanıcı kusuru görüp tarif eder, **testi agent yazar**.
   başka türlü davranıyorsa, "doküman ile kod uyuşmuyor: doküman şunu diyor, kod şunu yapıyor" de ve kullanıcının
   hangisinin doğru olduğunu söylemesini bekle.
 - Birden çok bulgu tek kök nedene bağlıysa tek fix, ama **her biri için ayrı test**.
-- Bitişte **tam süit yeşil** (token/motion/D8 guard'ları dahil). 5'ten fazla bulgu varsa önce kısa TDD dökümü
+- Bitişte **tam süit yeşil** — çalışma branch'inin CI koşusunda (token/motion/D8 guard'ları dahil; Build / test). 5'ten fazla bulgu varsa önce kısa TDD dökümü
   (`.claude/outputs/`), sonra `superpowers:subagent-driven-development` ile task-by-task.
 
 ## Doküman güncelleme
@@ -120,11 +135,21 @@ kadarki tüm değişiklikler dokümanlara işlenir.
 
 - **Anlatı üslubu korunur.** Doküman projeyi ANLATIR; "şu oturumda şunu ekledik / eskiden böyleydi" YAZILMAZ.
   Değişen davranış ilgili bölümde **yerinde yeniden yazılır** — doküman changelog biriktirmez.
-- **Yer:** teknik/mimari/tasarım/güven sınırı → ARCHITECTURE.md · kullanım/komut/gereksinim/kısayol →
-  README.md · çalışma kuralı → CLAUDE.md. README özetler, ARCHITECTURE ayrıntılandırır; aynı şey iki yerde
-  ayrıntısıyla tekrarlanmaz.
+- **Yer:** teknik/mimari/tasarım/güven sınırı → ARCHITECTURE.md · kullanım/ekran/kısayol/gereksinim/kurulum →
+  docs/USER-GUIDE.md · yeni ya da değişen özellik → docs/FEATURES.md (kazanımı varsa docs/WHY.md'ye de, aynı
+  başlık ve sırayla) · vitrin ve hızlı başlangıç → README.md · çalışma kuralı → CLAUDE.md. README özetler,
+  FEATURES listeler, USER-GUIDE ve ARCHITECTURE ayrıntılandırır; aynı şey iki yerde ayrıntısıyla tekrarlanmaz.
+- **FEATURES / WHY kalıbı:** madde başlığı ≤5 kelime; FEATURES'ta `**What:**` + `**How:**`, WHY'da `**Goal:**` +
+  `**Common practice:**` + `**In Build Orchestrator:**` (TR: Ne yapar / Nasıl; Amaç / Yaygın pratik / Build
+  Orchestrator'da), ardından 2-4 etiket (teknoloji + ne için). Common practice satırı genel resimdir — kişiye,
+  ekibe ya da belirli bir script'e atıf yapmaz; WHY'ın üçüncü satırı mekanizma değil kullanıcının yaşadığı
+  sonuçtur. Rakam ve iç ad (müşteri/ürün adı) yazılmaz.
 - **Her iddia kodda doğrulanır.** Doğru ifadeye dokunma; emin olamadığını sor.
 - **Rakam gömme:** bayatlayacak sayı (test sayısı, sha) yazma; dayanıklı dil kullan.
+- **Repo herkese açık:** dokümanlara (README, docs/, ARCHITECTURE, CHANGELOG, bu dosya) iç ürün, müşteri ya da kişi
+  adı, iç disk yolu ve iç repoya özgü ayrıntı yazılmaz; örnek gerekiyorsa nötr ad kullanılır (Acme, `D:\src\acme`).
+  İç ürünün adı `DocumentationTests` ile pinlidir; müşteri adları guard'a yazılmaz (yazmak onları yayınlamak olur),
+  onlara elle dikkat edilir. Ekran görüntüleri de nötr bir deneme reposundan çekilir.
 - `.claude/outputs/` ve `.claude/summaries/` **tarihseldir** — geriye dönük düzeltilmez.
 
 ## Sürüm çıkarma
@@ -177,7 +202,9 @@ kebab-case ve **İngilizce** (`scrollbar-restyle-plan` gibi; `plani`/`kayitlari`
 
 - Repo: `sdemir60/app_build_orchestrator` (GitHub). **`develop` günlük iş branch'idir; `main` yalnız sürümleri
   taşır.**
-- Bir iş için kendi çalışma branch'ini `develop`'tan aç, task başına commit at, bitince `develop`'a merge + push.
+- Bir iş için kendi çalışma branch'ini `develop`'tan aç, task başına commit at. Bitince branch'i güncel `develop`'un
+  üstüne al (rebase), push'la ve CI koşusunun yeşilini bekle (Build / test); sonra `develop`'a merge + push ve
+  develop'un koşusunun da yeşil olduğunu gör.
 - Merge'ün geçtiğini **doğruladıktan sonra** branch'i local ve remote'tan sil.
 - **`main`'e yalnız `/release` (`scripts/release.ps1`) dokunur** — elle merge, commit ya da push yok. `main`'deki
   her merge commit'i bir sürüm denemesidir; tag'i GitHub, testler ve paket geçince koyar (ayrıntı "Sürüm çıkarma" adım

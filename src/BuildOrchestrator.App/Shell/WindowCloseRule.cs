@@ -13,8 +13,8 @@ internal enum CloseAction
     /// <summary>Kapanış iptal edilir ve pencere tepsiye gizlenir — uygulama arka planda sürer.</summary>
     HideToTray,
 
-    /// <summary>Kapanış iptal edilir ve güvenli tam çıkış istenir — uygulamayı kapatan, çıkış hazır olunca gelen
-    /// Shutdown'dır.</summary>
+    /// <summary>Kapanış iptal edilir ve tam çıkış istenir — title bar'ın Exit butonuyla aynı karar: uçuşta iş yoksa uygulama
+    /// kapanır (uygulamayı kapatan, çıkış hazır olunca gelen Shutdown'dır), varsa pencere öne gelir ve onay kartı açılır.</summary>
     RequestExit,
 }
 
@@ -27,10 +27,11 @@ internal enum CloseAction
 /// da Windows oturumu kapanıyor) her şeyi geçer — <c>exitPending</c> bir kez açılınca geri dönmez, yani bekleyişin
 /// ardından gelen Shutdown'ın kendi kapanışı da bu kapıdan geçer ve iptal edilmemelidir. (2) Bekleyen çıkış pencereyi
 /// yerinde tutar, Close to tray açık olsa bile: kullanıcı kapatmayı istedi ve bekleyişi izliyor; ikinci × ikinci bir
-/// çıkış istemez. (3) İkisi de yoksa anahtar söz alır: açık → tepsiye (K5), kapalı → güvenli tam çıkış.</para>
+/// çıkış istemez. (3) İkisi de yoksa anahtar söz alır: açık → tepsiye (K5), kapalı → tam çıkış (Exit butonunun kararı).</para>
 ///
-/// <para>[final review F7] Tam çıkış istendikten sonra pencerenin öne gelip gelmeyeceği de burada sorulur
-/// (<see cref="ShouldBringForward"/>): aynı öncelik iki soruda iki ayrı yerde yazılmasın diye.</para>
+/// <para><b>[DEĞİŞEN KURAL — Exit, 2026-10-19]</b> ESKİ: tam çıkış uçuştaki işi beklerken pencerenin öne gelip gelmeyeceği de burada
+/// sorulurdu (<c>ShouldBringForward</c>). Çıkış artık iş varken beklemeye girmez, önce onay ister; pencereyi kartı göstermek için öne
+/// getiren ve kararı kendi ertelenmiş turunda yeniden soran kabuktur (<c>MainWindow.ConfirmExitInFrontNow</c>).</para>
 /// </summary>
 internal static class WindowCloseRule
 {
@@ -39,11 +40,4 @@ internal static class WindowCloseRule
         : exitPending ? CloseAction.Stay
         : closeToTray ? CloseAction.HideToTray
         : CloseAction.RequestExit;
-
-    /// <summary>[final review F7] Tam çıkış istendikten sonra (tepsi → Exit ya da ×) pencere öne gelsin mi: yalnız çıkış
-    /// uçuştaki işi BEKLİYORSA ve gerçek kapanış henüz başlamadıysa — <see cref="Decide"/> ile AYNI öncelik (gerçek
-    /// kapanış > bekleyen çıkış). Bekleyiş istekle AYNI çağrıda da bitebilir: açılış koreografisindeyken Stop bekleyen
-    /// koşuyu senkron geri alır ve <c>ExitReady</c> <c>RequestExit</c>'in içinden gelir. <c>exitPending</c> geri
-    /// dönmediği için yalnız ona bakmak kapanmakta olan pencereyi bir kare öne getirirdi.</summary>
-    public static bool ShouldBringForward(bool exiting, bool exitPending) => exitPending && !exiting;
 }

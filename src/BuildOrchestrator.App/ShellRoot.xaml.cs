@@ -74,6 +74,9 @@ public partial class ShellRoot : UserControl
     public Views.StickyRibbon Ribbon => PART_Ribbon;
     /// <summary>[perf Faz A · A5 test yüzeyi] Build menüsü — ActionBar'ın popup'ı içinde durur; kalıtsal sinyal oraya da inmelidir.</summary>
     public Views.BuildMenu BuildMenuControl => PART_ActionBar.BuildMenuControl;
+    /// <summary>[kullanıcı kararı 2026-10-19] Alt çubuk: pencere, kendisini arka plandan öne getiren tıkın kendi tazelemesini yapan bir
+    /// komuta inip inmediğini ona sorar (<see cref="Views.ActionBar.StartsOwnRefreshAt"/>, <c>MainWindow.OnActivated</c>).</summary>
+    public Views.ActionBar ActionBarControl => PART_ActionBar;
 
     // ---- [E5/T46] Klavye kısayolları: filtre odağı (Ctrl+F) + popover Esc katmanı (MainWindow'un Esc zinciri) ----
     /// <summary>[test yüzeyi] Proje filtre input'u (Ctrl+F bunu odaklar; içindeki Esc yereldir).</summary>
@@ -232,7 +235,8 @@ public partial class ShellRoot : UserControl
     /// <summary>[design v1.8.0 §2.4] Kurulum daveti (başlık + açıklama + kurulum listesi + iki düğme) —
     /// repo seçilmemişken.</summary>
     public UIElement ListInviteOverlay => PART_ListInvite;
-    /// <summary>[E2/T10] "No projects found under this folder." — repo Sync'lendi ama 0 proje.</summary>
+    /// <summary>[kullanıcı kararı 2026-10-19] Boş görünüm (liste ikonu + "No projects") — listede satır yokken, faz ne
+    /// olursa olsun.</summary>
     public UIElement NoProjectsOverlay => PART_NoProjects;
     /// <summary>[design v1.8.0 §2.4] Kurulum davetinin primary butonu — MainWindow Settings'i buna bağlar.
     /// <b>[DEĞİŞEN KURAL]</b> Eskiden <c>ChooseFolderButton</c>'dı ve doğrudan bir klasör seçici açardı.</summary>
@@ -258,7 +262,7 @@ public partial class ShellRoot : UserControl
     internal (string Root, string Layers) SetupChecklist => (PART_SetupRootValue.Text, PART_SetupLayersValue.Text);
 
     /// <summary>[E2/T10] Liste boş-durum davetinin görünürlüğünü uygular (karar <see cref="ViewModels.ListInvite"/>'te
-    /// verilir — SAF; burada YALNIZ uygulanır). PickRepository → invite paneli; NoProjects → 0-proje metni;
+    /// verilir — SAF; burada YALNIZ uygulanır). PickRepository → invite paneli; NoProjects → boş görünüm;
     /// [A13/T2 · 2.4] NoFilterMatch → "filtre eşleşmedi" metni; [design v1.24.0] Discovering → keşif bloğu; None →
     /// hepsi gizli. Durumlar birbirini DIŞLAR.</summary>
     public void SetListInvite(ViewModels.ListInviteState state)

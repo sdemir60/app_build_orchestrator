@@ -1,5 +1,6 @@
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.Core.Diagnostics;
+using static BuildOrchestrator.Tests.ByteUnits;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -13,11 +14,16 @@ namespace BuildOrchestrator.Tests.App;
 /// About'u üç gruba ayırdı: kimlik (Version · Engine · Copyright — About sekmesi), RUNTIME ve PATHS (Environment
 /// sekmesi). Sürüm satırları Environment'tan ÇIKTI (tekrar yok); pano metni artık
 /// <c>Build Orchestrator {sürüm}</c> başlığı + hizalı <c>Engine</c> + Runtime + Paths satırlarıdır.</para>
+///
+/// <para><b>[DEĞİŞEN KURAL — kaynak şeridi, karar K7]</b> ESKİ İDDİA (idle-memory spec §6.6): App'in üç bellek satırı
+/// (<c>App private</c> · <c>GC committed</c> · <c>Managed heap</c>) Environment sekmesinin RUNTIME grubundaydı ve pano metni onları
+/// Runtime satırlarının arasında taşırdı. Title bar'a kaynak şeridi geldi ve belleği gösterir; About'taki satırlar yalnız pencerenin
+/// açıldığı andaki bir görüntüydü. Satırlar ekrandan ÇIKTI, kopyalanan tanı metninde (destek talebine yapıştırılan) KALDI: modelde
+/// <c>CopyOnly</c> grubudur — hiçbir sekmede çizilmez, yalnız <see cref="DiagnosticsReport.ToText"/>'e girer, metindeki yeri
+/// değişmedi. Görünür/yalnız-kopya ayrımı TEK yerdedir: modelin grupları.</para>
 /// </summary>
 public class DiagnosticsReportTests
 {
-    private const long Mb = 1024 * 1024;
-
     private static DiagnosticsInput Full() => new(
         Product: "Build Orchestrator",
         Version: "1.0.0+it5",
@@ -34,7 +40,7 @@ public class DiagnosticsReportTests
         LogsRoot: @"C:\state\logs");
 
     private static IEnumerable<DiagnosticsLine> AllLines(DiagnosticsSnapshot s) =>
-        s.Identity.Concat(s.Runtime).Concat(s.Paths);
+        s.Identity.Concat(s.Runtime).Concat(s.CopyOnly).Concat(s.Paths);
 
     /// <summary>[dalga 3 · B1 fix 1 · m-3] Motor PID satırının değeri — satır üretimin etiket sabitiyle bulunur (etiketin literal pini yalnız
     /// RUNTIME grubunun etiket sırası testindedir).</summary>
@@ -50,28 +56,42 @@ public class DiagnosticsReportTests
     }
 
     /// <summary>
-    /// <b>[DEĞİŞEN KURAL — idle-memory spec §6.6]</b> RUNTIME grubu: Engine PID · .NET runtime · OS · App private · GC committed ·
-    /// Managed heap — bellek değerleri MB.
-    /// <para><b>Eski iddia</b> (<c>The_runtime_group_is_engine_pid_dotnet_runtime_and_os</c>): grup yalnız üç satırdı (Engine PID ·
-    /// .NET runtime · OS). <b>Değişme gerekçesi (boşta bellek ölçüm raporu, 2026-10-13):</b> motorun bellek satırı vardı, App'in
-    /// yoktu — App'in koşu sonrası 798 MB özel belleği ancak dış araçlarla (sayaçlar, yığın dökümü) görüldü; destek talebine
-    /// yapıştırılan tanı metni App'in belleğini hiç taşımıyordu. Üç satır motorun bellek satırının
-    /// (<c>memory: private=… committed=… heap=…</c>) App'teki eşidir: aynı okuma, aynı MB kuralı (<see cref="MemoryLine"/>).</para>
+    /// <b>[DEĞİŞEN KURAL — kaynak şeridi, karar K7]</b> RUNTIME grubu: Engine PID · .NET runtime · OS — Environment sekmesinin çizdiği satırlar.
+    /// <para><b>Eski iddia</b> (<c>The_runtime_group_is_engine_pid_dotnet_runtime_os_and_the_app_memory</c>, idle-memory spec §6.6): grup altı
+    /// satırdı — bu üçü ve ardından App private · GC committed · Managed heap (MB; boşta bellek ölçüm raporu, 2026-10-13: App'in koşu
+    /// sonrası 798 MB özel belleği ancak dış araçlarla görülmüştü). <b>Değişme gerekçesi:</b> title bar'a kaynak şeridi geldi ve belleği
+    /// gösterir; About'taki satırlar yalnız pencerenin açıldığı andaki bir görüntüydü. Üç satır ekrandan çıktı, sayılar kopyalanan metinde
+    /// kalır ve modelde <c>CopyOnly</c> grubundadır (<see cref="The_copy_only_group_is_the_app_memory_in_megabytes"/>).</para>
     /// </summary>
     [Fact]
-    public void The_runtime_group_is_engine_pid_dotnet_runtime_os_and_the_app_memory()
+    public void The_runtime_group_is_engine_pid_dotnet_runtime_and_os_without_the_app_memory()
     {
         var s = DiagnosticsReport.Compose(Full());
 
-        Assert.Equal(["Engine PID", ".NET runtime", "OS", "App private", "GC committed", "Managed heap"],
-            s.Runtime.Select(l => l.Label));
-        Assert.Equal(["4242", ".NET 10.0.0", "Microsoft Windows 10.0.26200", "309 MB", "250 MB", "8 MB"],
-            s.Runtime.Select(l => l.Value));
+        Assert.Equal(["Engine PID", ".NET runtime", "OS"], s.Runtime.Select(l => l.Label));
+        Assert.Equal(["4242", ".NET 10.0.0", "Microsoft Windows 10.0.26200"], s.Runtime.Select(l => l.Value));
+    }
+
+    /// <summary>
+    /// [kaynak şeridi, karar K7] Yalnız-kopya grup: App private · GC committed · Managed heap, MB — hiçbir sekmede çizilmez, yalnız kopyalanan
+    /// tanı metnine girer (hata bildirimi için). Satırlar motorun bellek satırının (<c>memory: private=… committed=… heap=…</c>) App'teki eşidir:
+    /// aynı okuma, aynı MB kuralı (<see cref="MemoryLine"/>); okuma ve değerler değişmedi, yalnız satırların nerede durduğu değişti. MODELDEKİ
+    /// etiketlerin harfi harfine pini BURADADIR; kopyalanan metindeki aynı satırların sırası ve hizası ayrı bir testte pinlidir
+    /// (<see cref="The_clipboard_text_keeps_the_memory_rows_between_the_runtime_rows_and_the_paths"/>); öteki testler satırları bu gruptan okur.
+    /// </summary>
+    [Fact]
+    public void The_copy_only_group_is_the_app_memory_in_megabytes()
+    {
+        var s = DiagnosticsReport.Compose(Full());
+
+        Assert.Equal(["App private", "GC committed", "Managed heap"], s.CopyOnly.Select(l => l.Label));
+        Assert.Equal(["309 MB", "250 MB", "8 MB"], s.CopyOnly.Select(l => l.Value));
     }
 
     /// <summary>[idle-memory · spec §6.6] Bellek satırlarının sayısı motorun bellek satırıyla AYNI kuraldan gelir
     /// (<see cref="MemoryLine.Megabytes"/>): yarım MB sıfırdan uzağa yuvarlanır (2,5 MB → 3; tam sayı bölmesi ya da bankacı
-    /// yuvarlaması 2 verirdi) ve büyük değer binlik ayırıcı almaz — App kendi yuvarlamasını yazmaz.</summary>
+    /// yuvarlaması 2 verirdi) ve büyük değer binlik ayırıcı almaz — App kendi yuvarlamasını yazmaz. [Karar K7] Satırlar artık
+    /// yalnız-kopya gruptadır; kural aynı.</summary>
     [Fact]
     public void The_memory_rows_round_like_the_engine_memory_line()
     {
@@ -80,8 +100,7 @@ public class DiagnosticsReportTests
             Memory = new MemoryReading(PrivateBytes: 5L * 1024 * Mb, CommittedBytes: 5 * Mb / 2, HeapBytes: Mb / 2 - 1),
         });
 
-        Assert.Equal(["5120 MB", "3 MB", "0 MB"],
-            s.Runtime.Where(l => l.Label is "App private" or "GC committed" or "Managed heap").Select(l => l.Value));
+        Assert.Equal(["5120 MB", "3 MB", "0 MB"], s.CopyOnly.Select(l => l.Value));
     }
 
     /// <summary>
@@ -102,8 +121,9 @@ public class DiagnosticsReportTests
             s.Paths.Select(l => l.Value));
     }
 
-    /// <summary>Tekrar YOK: bir etiket üç grubun toplamında bir kez geçer — eski <c>App version</c>/<c>Engine
-    /// version</c> satırları Environment'a geri sızarsa burada yakalanır.</summary>
+    /// <summary>Tekrar YOK: bir etiket tüm grupların (kimlik, Runtime, yalnız-kopya, Paths) toplamında bir kez geçer — eski
+    /// <c>App version</c>/<c>Engine version</c> satırları Environment'a geri sızarsa burada yakalanır; taşınan bellek satırları da
+    /// iki grupta birden kalamaz.</summary>
     [Fact]
     public void No_label_appears_twice_and_the_old_version_rows_are_gone()
     {
@@ -170,21 +190,23 @@ public class DiagnosticsReportTests
     }
 
     /// <summary>
-    /// [idle-memory · final review (Tasks 9-10)] Bellek okunamazsa (<c>MemoryLine.TryRead</c> <c>null</c> döner) tanı ekranı yine
-    /// kurulur ve üç bellek satırı <see cref="DiagnosticsReport.Unknown"/> gösterir, satırlar KAYBOLMAZ — motor doğmamışken PID
+    /// [idle-memory · final review (Tasks 9-10)] Bellek okunamazsa (<c>MemoryLine.TryRead</c> <c>null</c> döner) tanı raporu yine
+    /// kurulur ve üç bellek satırı <see cref="DiagnosticsReport.Unknown"/> yazar, satırlar KAYBOLMAZ — motor doğmamışken PID
     /// satırının <c>—</c> olması gibi. Bir tanı, tanı ekranını bozamaz: eskiden okuma korumasızdı ve süreç sorgusu patlarsa About
-    /// hiç açılmazdı (motorun bellek satırı için <c>MemoryLine.Report</c> aynı güvenceyi baştan veriyordu).
+    /// hiç açılmazdı (motorun bellek satırı için <c>MemoryLine.Report</c> aynı güvenceyi baştan veriyordu). [Karar K7] Satırlar
+    /// artık yalnız-kopya gruptadır: <c>—</c> kopyalanan metinde okunur.
     /// </summary>
     [Fact]
     public void An_unreadable_memory_reads_as_unknown_on_its_three_rows_instead_of_breaking_the_report()
     {
         var s = DiagnosticsReport.Compose(Full() with { Memory = null });
 
-        Assert.All(new[] { "App private", "GC committed", "Managed heap" },
-            label => Assert.Equal(DiagnosticsReport.Unknown, s.Runtime.Single(l => l.Label == label).Value));
+        Assert.Equal(3, s.CopyOnly.Count); // satırlar KAYBOLMAZ
+        Assert.All(s.CopyOnly, line => Assert.Equal(DiagnosticsReport.Unknown, line.Value));
         Assert.Equal("4242", PidValue(s)); // öbür satırlar etkilenmez
-        Assert.Contains(DiagnosticsReport.ToText(s).Split(Environment.NewLine),
-            row => row.StartsWith("App private", StringComparison.Ordinal) && row.EndsWith(DiagnosticsReport.Unknown, StringComparison.Ordinal));
+        var rows = DiagnosticsReport.ToText(s).Split(Environment.NewLine);
+        Assert.All(s.CopyOnly, line => Assert.Contains(rows,
+            row => row.StartsWith(line.Label, StringComparison.Ordinal) && row.EndsWith(DiagnosticsReport.Unknown, StringComparison.Ordinal)));
     }
 
     [Fact]
@@ -193,16 +215,20 @@ public class DiagnosticsReportTests
             l => l.Value == DiagnosticsReport.NoRepository);
 
     /// <summary>[v1.19.0 §2.10] Pano metni: ilk satır <c>{ürün} {sürüm}</c>, ardından hizalı <c>Engine</c> +
-    /// Runtime + Paths satırları — satır başına bir satır. Telif panoya GİTMEZ (destek talebinde bilgi taşımaz).</summary>
+    /// Runtime + Paths satırları — satır başına bir satır. Telif panoya GİTMEZ (destek talebinde bilgi taşımaz).
+    /// <para><b>[DEĞİŞEN KURAL — kaynak şeridi, karar K7]</b> Eski iddia: metin Engine + Runtime + Paths'ti (üç bellek satırı Runtime'ın
+    /// içindeydi). Bellek satırları yalnız-kopya gruba taşındı ve metin onları hâlâ taşır: Engine + Runtime + <b>yalnız-kopya</b> + Paths.
+    /// Yalnız-kopya grup boşsa "kopyada var" iddiası boşa geçerdi; dolu olduğu önce sınanır.</para></summary>
     [Fact]
-    public void The_clipboard_text_is_a_title_line_then_engine_runtime_and_paths()
+    public void The_clipboard_text_is_a_title_line_then_engine_runtime_the_copy_only_rows_and_paths()
     {
         var s = DiagnosticsReport.Compose(Full());
         var rows = DiagnosticsReport.ToText(s).Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
 
+        Assert.NotEmpty(s.CopyOnly);
         Assert.Equal("Build Orchestrator 1.0.0+it5", rows[0]);
         var body = rows.Skip(1).ToList();
-        var expected = new[] { s.Engine }.Concat(s.Runtime).Concat(s.Paths).ToList();
+        var expected = new[] { s.Engine }.Concat(s.Runtime).Concat(s.CopyOnly).Concat(s.Paths).ToList();
         Assert.Equal(expected.Count, body.Count);
         for (int i = 0; i < expected.Count; i++)
         {
@@ -212,13 +238,43 @@ public class DiagnosticsReportTests
         Assert.DoesNotContain("Copyright", DiagnosticsReport.ToText(s), StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// [kaynak şeridi, karar K7 · PİN] Üç bellek satırı ekrandan kalktı ama kopyalanan metin DEĞİŞMEDİ: bugüne kadarki sırayla —
+    /// Engine, Runtime satırları, üç bellek satırı, Paths — ve bugünkü hizayla. Metin harfi harfine yazılır (modelin gruplarından
+    /// türetilmez): gruplar yeniden dizilse ya da bir satır başka gruba taşınsa bile bir destek talebine yapıştırılan metin, eskisiyle
+    /// karşılaştırılabilir kalır.
+    /// <para>PİN: satırları taşımadan ÖNCEKİ rapor da yeşildir; bu test taşımanın metni oynatmadığını yakalar.</para>
+    /// </summary>
+    [Fact]
+    public void The_clipboard_text_keeps_the_memory_rows_between_the_runtime_rows_and_the_paths()
+    {
+        string[] expected =
+        [
+            "Build Orchestrator 1.0.0+it5",
+            "Engine           1.0.0+engine",
+            "Engine PID       4242",
+            ".NET runtime     .NET 10.0.0",
+            "OS               Microsoft Windows 10.0.26200",
+            "App private      309 MB",
+            "GC committed     250 MB",
+            "Managed heap     8 MB",
+            @"MSBuild          C:\VS\MSBuild.exe (v17.9.8)",
+            @"Repository root  D:\repo",
+            @"State file       C:\state\ui-state.json",
+            @"Logs             C:\state\logs",
+        ];
+
+        Assert.Equal(string.Join(Environment.NewLine, expected) + Environment.NewLine,
+            DiagnosticsReport.ToText(DiagnosticsReport.Compose(Full())));
+    }
+
     /// <summary>Değerler AYNI kolonda başlar: bir destek talebine yapıştırıldığında okunabilir olmalı.</summary>
     [Fact]
     public void The_clipboard_text_aligns_the_values_in_one_column()
     {
         var s = DiagnosticsReport.Compose(Full());
         var rows = DiagnosticsReport.ToText(s).Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries).Skip(1);
-        var lines = new[] { s.Engine }.Concat(s.Runtime).Concat(s.Paths);
+        var lines = new[] { s.Engine }.Concat(s.Runtime).Concat(s.CopyOnly).Concat(s.Paths);
 
         var columns = rows.Zip(lines, (row, line) => row.LastIndexOf(line.Value, StringComparison.Ordinal))
                           .Distinct()

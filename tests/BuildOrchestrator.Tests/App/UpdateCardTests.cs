@@ -448,7 +448,7 @@ public class UpdateCardTests
     {
         using var temp = new TempDir();
         var (window, vm) = MainWindowHost.NewRealizedWithOffer(temp);
-        window.UpdateRestartOverlay.Timer = new FakePollTimer();
+        window.ClosingOverlay.Timer = new FakePollTimer();
         window.UpdatePill.IsChecked = true;
 
         Assert.True(CommandPress.Press(vm.RestartToUpdateCommand));

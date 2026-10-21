@@ -322,10 +322,10 @@ public class ReducedMotionCoverageTests
     public void The_update_restart_screen_fade_in_snaps_with_no_clock_when_off()
     {
         Assert.Null(BuildOrchestrator.App.App.Motion); // seam'siz kapı: headless null (reduced) — sızıntı vacuous PASS'a dönüşmesin
-        var screen = new UpdateRestartScreen { Timer = new FakePollTimer(), NowMs = () => 0, Opacity = 0.5 };
+        var screen = new ClosingScreen { Timer = new FakePollTimer(), NowMs = () => 0, Opacity = 0.5 };
         var window = DsResources.Realize(DsResources.NewHost(), screen);
 
-        screen.Play(AppIdentity.Version, "1.8.0");
+        screen.PlayRestart(AppIdentity.Version, "1.8.0");
         Assert.Equal(Visibility.Visible, screen.Visibility);
         Assert.Equal(1.0, screen.Opacity);
         Assert.False(screen.HasAnimatedProperties);

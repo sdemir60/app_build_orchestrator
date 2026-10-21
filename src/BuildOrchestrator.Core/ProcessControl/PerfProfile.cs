@@ -1,5 +1,3 @@
-using BuildOrchestrator.Contracts.Ipc;
-
 namespace BuildOrchestrator.Core.ProcessControl;
 
 /// <summary>[T20-a/K11] Kullanıcının perf chip'iyle seçtiği üç profil.</summary>
@@ -53,31 +51,18 @@ public readonly record struct PerfProfile(int Parallelism, int? CpuCapPercent, P
     /// </summary>
     public static ProcessPriorityClassKind CopyPhaseFloorPriority => For(PerfMode.Balanced).Priority;
 
-    /// <summary>App/IPC tarafındaki perf-mode string'i ile köprü. Eşleşme ORDINAL'dir (App her zaman
-    /// "Full"/"Balanced"/"Light" yazar); tanınmayan metin ⇒ <c>null</c>, çağıran kendi varsayılanına düşer.</summary>
-    public static PerfProfile? TryParse(string perfModeText) => perfModeText switch
+    /// <summary>App/IPC tarafındaki perf-mode string'i ile köprü, metinden MODA: "Full"/"Balanced"/"Light" eşlemesinin TEK tablosu burasıdır
+    /// (<see cref="TryParse"/> da bunu kullanır). Eşleşme ORDINAL'dir (App her zaman böyle yazar); tanınmayan metin ⇒ <c>null</c>, çağıran
+    /// kendi varsayılanına düşer.</summary>
+    public static PerfMode? TryParseMode(string perfModeText) => perfModeText switch
     {
-        "Full" => For(PerfMode.Full),
-        "Balanced" => For(PerfMode.Balanced),
-        "Light" => For(PerfMode.Light),
+        "Full" => PerfMode.Full,
+        "Balanced" => PerfMode.Balanced,
+        "Light" => PerfMode.Light,
         _ => null,
     };
 
-    /// <summary>
-    /// [RESOLVE Faz 4 / karar 11 — kullanıcı onayı] Bir koşuda GERÇEKTEN uygulanacak profil. Resolve cycles
-    /// (<see cref="RunMode.Cycles"/>), Ayarlar'ın "Resolve cycles at full priority" anahtarı açıkken, profilin işçi
-    /// sayısını KORUR ama cap'ini ve priority'sini Full'ün satırından alır (cap yok + Normal). Gerekçe ölçümdür: başka
-    /// yük altındaki bir makinede Balanced'ın tavanı ve düşük önceliği Resolve'u belirgin uzattı, sakin makinede fark
-    /// küçük kaldı — ve Resolve, kullanıcının başında beklediği kısa bir koşudur. Değerler ayrı sabit olarak YAZILMAZ
-    /// (<see cref="CopyPhaseFloorPercent"/> ile aynı gerekçe: tablo değiştiği gün sessizce ayrışırdı).
-    /// <para>Anahtar kapalıyken ya da Build/Rebuild/Clean'de profil AYNEN döner; Full zaten cap'siz + Normal
-    /// olduğundan dönüşüm onu değiştirmez. Saf ve TEK yerdir: Supervisor run başında da canlı <c>setPerfMode</c>'da
-    /// da bunu uygular, konsol notu da bunu anlatır (<see cref="PerfNoteText.ResolveNote"/>).</para>
-    /// </summary>
-    public static PerfProfile ForRun(RunMode mode, PerfProfile profile, bool resolveAtFullPriority)
-    {
-        if (mode != RunMode.Cycles || !resolveAtFullPriority) return profile;
-        var full = For(PerfMode.Full);
-        return profile with { CpuCapPercent = full.CpuCapPercent, Priority = full.Priority };
-    }
+    /// <summary>App/IPC tarafındaki perf-mode string'i ile köprü, metinden PROFİLE: <see cref="TryParseMode"/>'un çözdüğü modun tablo satırı;
+    /// tanınmayan metin ⇒ <c>null</c>, çağıran kendi varsayılanına düşer.</summary>
+    public static PerfProfile? TryParse(string perfModeText) => TryParseMode(perfModeText) is { } mode ? For(mode) : null;
 }

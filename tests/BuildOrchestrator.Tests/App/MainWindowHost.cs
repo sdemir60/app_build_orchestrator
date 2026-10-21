@@ -2,6 +2,7 @@ using System.IO;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using BuildOrchestrator.App;
@@ -10,6 +11,7 @@ using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 
@@ -140,25 +142,59 @@ internal static class MainWindowHost
     /// realize edilmiş kabuk ve VM'i, veri akmadan. Böyle bir kabukla başlayan testlerin TEK kurulumu —
     /// <c>UpdatePillTests.Realized</c> ile <c>UpdateCardTests.Shell</c> aynı iki satırı ayrı ayrı yazmıştı;
     /// <see cref="NewWithProjects"/> da buradan başlar. <paramref name="console"/> ve
-    /// <paramref name="productionMemoryCollector"/>: <see cref="New"/>'ünküler.</summary>
+    /// <paramref name="productionMemoryCollector"/>: <see cref="New"/>'ünküler.
+    /// <para>[temizlik · madde 1] <paramref name="dpi"/> verilirse kabuk o ekran ölçeğinde realize edilir (makinenin ölçeği ne olursa olsun):
+    /// pencerenin kendi ölçeği realize'dan ÖNCE (MaximizeFix çerçeve dolgusunu ondan okur), içeriğinki SONRA verilir
+    /// (<see cref="RelayoutAt"/>). <c>null</c> ⇒ sistemin ölçeği, davranış birebir eskisi gibi.</para></summary>
     public static (MainWindow window, RunViewModel vm) NewRealized(TempDir uiStateDir, Func<long>? nowMs = null,
-        ConsoleBatcher? console = null, bool productionMemoryCollector = false)
+        ConsoleBatcher? console = null, bool productionMemoryCollector = false, DpiScale? dpi = null)
     {
         var (window, vm) = New(uiStateDir, nowMs: nowMs, productionMemoryCollector: productionMemoryCollector, console: console);
-        Realize(window);
+        if (dpi is { } windowScale) VisualTreeHelper.SetRootDpi(window, windowScale);
+        var content = Realize(window);
+        if (dpi is { } contentScale) RelayoutAt(content, contentScale);
         return (window, vm);
     }
 
     /// <summary>[motor · Task 8] <see cref="NewRealized"/> + kuruluma hazır bir teklif (<see cref="UpdateOffers.Sample"/>):
     /// hap görünür, kartın içeriği dolu. Uygulama teklifsiz açılır; hapı/kartı sınayan kabuk testleri teklifi burada,
-    /// kurulumdan SONRA alır (üretimdeki gibi teklif sonradan gelir) ve görünür olan hap bir layout turuyla ölçülür.</summary>
-    public static (MainWindow window, RunViewModel vm) NewRealizedWithOffer(TempDir uiStateDir)
+    /// kurulumdan SONRA alır (üretimdeki gibi teklif sonradan gelir) ve görünür olan hap bir layout turuyla ölçülür.
+    /// <para>[temizlik · madde 1] <paramref name="dpi"/>: <see cref="NewRealized"/>'ınki. Teklif hapın şablonunu realize'dan SONRA doğurur ve
+    /// sonradan doğan görsel ölçeği almaz (<see cref="RelayoutAt"/>), bu yüzden teklif geldikten sonra ölçek içeriğe yeniden verilir.</para></summary>
+    public static (MainWindow window, RunViewModel vm) NewRealizedWithOffer(TempDir uiStateDir, DpiScale? dpi = null)
     {
-        var (window, vm) = NewRealized(uiStateDir);
+        var (window, vm) = NewRealized(uiStateDir, dpi: dpi);
         vm.AvailableUpdate = UpdateOffers.Sample();
-        ((FrameworkElement)window.Content).UpdateLayout();
+        var content = (FrameworkElement)window.Content;
+        content.UpdateLayout();
+        if (dpi is { } scale) RelayoutAt(content, scale);
         return (window, vm);
     }
+
+    /// <summary>[temizlik · madde 1] Realize edilmiş içeriği <paramref name="dpi"/> ölçeğinde yeniden yerleştirir. Başsız süitte içerik kökü
+    /// pencerenin görsel çocuğu DEĞİLDİR (pencerenin ContentPresenter'ı onu yalnız gerçek bir ölçüm turunda alır — <see cref="Realize"/>),
+    /// yani pencereye verilen ölçek içeriğe inmez; içerik kökü kendi ölçeğini ayrıca alır. <c>SetRootDpi</c> ölçeği yalnız O AN ağaçta olan
+    /// görsellere yazar — sonradan şablondan doğan çocuk almaz (ölçüldü: realize'dan önce verilince hapın etiketi ve ikonu 1.0'da kaldı).
+    /// Bu yüzden realize'dan SONRA verilir ve yerleşim yuvarlaması yeni ölçekle baştan koşsun diye her öğenin ölçümü geçersizlenir.</summary>
+    private static void RelayoutAt(FrameworkElement content, DpiScale dpi)
+    {
+        VisualTreeHelper.SetRootDpi(content, dpi);
+        foreach (var element in DsResources.RealizedObjects(content).OfType<UIElement>()) element.InvalidateMeasure();
+        content.UpdateLayout();
+    }
+
+    /// <summary>[temizlik madde 4] Title bar'ın İÇ kutusu: <c>TitleBarRow</c>'un (40'lık bant + alt hairline) çocuğu olan Grid — kümeleri taşıyan
+    /// DockPanel ile ortadaki kaynak şeridinin ORTAK hücresi, hairline'dan sonra kalan alan. "Bant → Grid → ilk çocuk DockPanel" yapısını bilen
+    /// TEK yer (<see cref="TitleBarDock"/> ile): <c>MainWindowRealizeTests</c> ve <c>ResourceStripRealizeTests</c> onu üç kez ayrı ayrı yazıyordu.</summary>
+    public static Grid TitleBarGrid(MainWindow window)
+    {
+        ArgumentNullException.ThrowIfNull(window);
+        return Assert.IsType<Grid>(window.TitleBarRow.Child);
+    }
+
+    /// <summary>[temizlik madde 4] Title bar'ın iki kümesini (sol logo kilidi, sağ küme + caption butonları) taşıyan DockPanel —
+    /// <see cref="TitleBarGrid"/>'in İLK çocuğu; kaynak şeridi aynı Grid'in son çocuğudur.</summary>
+    public static DockPanel TitleBarDock(MainWindow window) => Assert.IsType<DockPanel>(TitleBarGrid(window).Children[0]);
 
     /// <summary>[P3 · final review O5] Bir testin geçici kalıcı durum dosyası — <see cref="New"/>'ün pencereye verdiği
     /// store'un yolu. TEK tanım: pencerenin okuduğu dosyayı tohumlayan ya da sonradan okuyan her test yolu buradan
@@ -293,14 +329,15 @@ internal static class MainWindowHost
     /// motorun cevabını test <c>vm.OnEvent(...)</c> ile verir. Verilmezse gönderim her zaman düşer.</summary>
     public static void AcceptSends(RunViewModel vm) => vm.DebugSendOverride = _ => Task.CompletedTask;
 
-    /// <summary>[idle-memory · dalga 3 · T21 fix dalgası] Kabuğun iki çıkış dikişini no-op yapar: tam çıkış (tepsi → Exit, çıkış isteği) koşan
-    /// bir test gerçek uygulamayı kapatmaz ve pencereyi öne getirmez. Çağrıyı SAYAN testler kendi sahtelerini takar (<c>CloseToTrayTests</c>,
+    /// <summary>[idle-memory · dalga 3 · T21 fix dalgası · Exit] Kabuğun çıkış dikişlerini no-op yapar: tam çıkış (tepsi → Exit, çıkış isteği)
+    /// koşan bir test gerçek uygulamayı kapatmaz, onay için pencereyi öne getirmez ve göstermez. Çağrıyı SAYAN testler kendi sahtelerini takar (<c>CloseToTrayTests</c>,
     /// <c>HiddenSurfaceTests</c>); yalnız etkisizleştiren testlerin TEK satırı budur.</summary>
     public static void NeutralizeExitSeams(MainWindow window)
     {
         ArgumentNullException.ThrowIfNull(window);
         window.ShutdownApplication = () => { };
-        window.BringForward = () => { };
+        window.ConfirmExitInFront = () => { };
+        window.BringForwardForExit = () => { };
     }
 
     /// <summary>[perf Faz B · B3] Stop/Esc testlerinin ortak kurulumu: <see cref="New"/> (ya da <paramref name="projectNames"/>
@@ -518,5 +555,38 @@ internal static class MainWindowHost
         if (VisualTreeHelper.GetParent(content) is FrameworkElement presenter) presenter.Measure(new Size(width, height));
         content.DataContext = context;
         return DsResources.Realize(DsResources.NewHost(), content, width, height);
+    }
+
+    /// <summary>[perf Faz A · temizlik 2b] Kabuğun alt çubuğu: ağaçtaki TEK örnek. Chip'lerini <c>Loaded</c>'da kurduğu için headless
+    /// ağaçta chip'siz durur (bkz. <see cref="WithLoadedActionBar"/>).</summary>
+    public static ActionBar ActionBarOf(MainWindow window)
+    {
+        ArgumentNullException.ThrowIfNull(window);
+        return DsResources.Descendants(window.Shell).OfType<ActionBar>().Single();
+    }
+
+    /// <summary>
+    /// [perf Faz A · temizlik 2b] Alt çubuk testlerinin TEK girişi: kabuk içeriğini ekran dışı gerçek bir pencereye taşır
+    /// (<see cref="HostOffscreen"/>), çubuğun yüklenmesini bekler (chip'ler ve Build düğmesinin komutu <c>Loaded</c>'da kurulur), gövdeyi
+    /// çalıştırır ve pencereyi — gövdedeki bir iddia patlasa da — kapatır. <c>Loaded</c> ÖNCESİNİ de sınayan test
+    /// (<see cref="HiddenSurfaceTests.An_action_bar_that_starts_hidden_builds_its_chips_once_from_the_current_counters_on_first_show"/>)
+    /// çubuğu önce <see cref="ActionBarOf"/> ile alır, gizli işaretler ve ancak sonra buraya girer; gövdeye gelen çubuk o örnektir.
+    /// [kullanıcı kararı 2026-10-19] <c>HiddenSurfaceTests</c>'ten buraya taşındı: pencereye tıkla dönüş testleri
+    /// (<c>WindowReturnClickTests</c>) de yüklenmiş çubuk ister.
+    /// </summary>
+    public static void WithLoadedActionBar(MainWindow window, Action<Window, ActionBar> body)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+        var host = HostOffscreen(window);
+        try
+        {
+            var bar = ActionBarOf(window);
+            DispatcherPump.PumpUntil(() => bar.IsLoaded, TimeSpan.FromSeconds(5)); // chip'ler Loaded'da kurulur
+            body(host, bar);
+        }
+        finally
+        {
+            host.Close();
+        }
     }
 }

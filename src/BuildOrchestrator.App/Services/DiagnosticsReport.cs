@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using BuildOrchestrator.Core.Diagnostics;
+using BuildOrchestrator.Core.Formatting;
 
 namespace BuildOrchestrator.App.Services;
 
@@ -11,8 +12,8 @@ public readonly record struct DiagnosticsLine(string Label, string Value);
 /// [About] Tanı raporunun ham girdisi — TOPLAMAYI çağıran yapar (<see cref="AppIdentity"/>,
 /// <c>RuntimeInformation</c>, <c>MsBuildResolver</c>, <see cref="MemoryLine.TryRead()"/>, uygulamanın kendi yol static'leri), bu tip
 /// yalnız taşır. Böylece rapor mantığı WPF'siz ve process'siz test edilir. <see cref="Memory"/> App sürecinin bellek okumasıdır
-/// (bayt) — raporun kurulduğu anın görüntüsü, canlı değil; okunamadıysa <c>null</c> (üç bellek satırı
-/// <see cref="DiagnosticsReport.Unknown"/> gösterir, tanı ekranı bozulmaz). <see cref="EngineState"/> [idle-memory · dalga 3 · karar 39]
+/// (bayt) — raporun kurulduğu anın görüntüsü, canlı değil; kopyalanan metindeki üç bellek satırının kaynağıdır (ekranda çizilmez);
+/// okunamadıysa <c>null</c> (üç satır <see cref="DiagnosticsReport.Unknown"/> yazar, tanı ekranı bozulmaz). <see cref="EngineState"/> [idle-memory · dalga 3 · karar 39]
 /// VM'in motor durumudur (<c>RunViewModel.EngineState</c>) — PID satırının uyku değeri ondan okunur.
 /// </summary>
 public sealed record DiagnosticsInput(
@@ -34,6 +35,11 @@ public sealed record DiagnosticsInput(
 /// [design v1.19.0 §2.10] Tanı modelinin gruplu hâli. About sekmesi <see cref="Identity"/>'yi, Environment sekmesi
 /// <see cref="Runtime"/> ile <see cref="Paths"/>'i çizer; "Copy diagnostics" <see cref="DiagnosticsReport.ToText"/>
 /// ile AYNI nesneden metin üretir. Bir değer iki grupta geçmez.
+///
+/// <para><b>[kaynak şeridi · karar K7] Görünür/yalnız-kopya ayrımı BURADADIR:</b> <see cref="CopyOnly"/> hiçbir sekmede çizilmez, yalnız
+/// <see cref="DiagnosticsReport.ToText"/>'e girer. View yalnız <see cref="Identity"/>, <see cref="Runtime"/> ve <see cref="Paths"/>'i
+/// bağlar; hangi satırın çizildiğini ayrıca bir süzgeçle söylemez — bir satırı ekrandan almak ya da kopyaya katmak onu bir gruptan
+/// ötekine taşımaktır.</para>
 /// </summary>
 public sealed record DiagnosticsSnapshot(
     string Product,
@@ -41,6 +47,7 @@ public sealed record DiagnosticsSnapshot(
     DiagnosticsLine Engine,
     DiagnosticsLine Copyright,
     IReadOnlyList<DiagnosticsLine> Runtime,
+    IReadOnlyList<DiagnosticsLine> CopyOnly,
     IReadOnlyList<DiagnosticsLine> Paths)
 {
     /// <summary>About sekmesinin satırları: Version · Engine · Copyright.</summary>
@@ -58,17 +65,22 @@ public sealed record DiagnosticsSnapshot(
 /// <c>Engine version</c>, <c>Engine PID</c> … <c>Worktree pool</c>) ve Environment sekmesi onun tamamını çizerdi.
 /// Sürümler About sekmesine taşındı (Version · Engine · Copyright); Environment RUNTIME ve PATHS gruplarıdır.</para>
 ///
-/// <para><b>[idle-memory · spec §6.6] App'in belleği RUNTIME grubundadır:</b> <c>App private</c> · <c>GC committed</c> ·
+/// <para><b>[idle-memory · spec §6.6] App'in belleği tanı raporundadır:</b> <c>App private</c> · <c>GC committed</c> ·
 /// <c>Managed heap</c> — motorun bellek satırının (<c>memory: private=… committed=… heap=…</c>) App'teki eşi. Okuma çağıranındır
 /// (<see cref="DiagnosticsInput.Memory"/>; okunamadıysa <c>null</c> ve üç satır <see cref="Unknown"/> yazar), MB sayısı satırınkiyle
 /// AYNI kuraldan (<see cref="MemoryLine.Megabytes"/>); burada yalnız birim eklenir.</para>
+///
+/// <para><b>[DEĞİŞEN KURAL — kaynak şeridi · karar K7]</b> ESKİ MODEL bu üç satırı RUNTIME grubuna koyardı ve Environment sekmesi onları
+/// çizerdi. Title bar'a kaynak şeridi geldi ve belleği gösterir; satırlar ekrandan ÇIKTI, kopyalanan tanı metninde (hata bildirimi için)
+/// KALDI: <see cref="DiagnosticsSnapshot.CopyOnly"/> grubudur ve <see cref="ToText"/> onları eskisi gibi Runtime satırlarından sonra,
+/// Paths'ten önce yazar — kopyalanan metin DEĞİŞMEDİ. Etiketler yine yalnız <see cref="Compose"/>'dadır.</para>
 /// </summary>
 public static class DiagnosticsReport
 {
     /// <summary>Motor henüz doğmadı.</summary>
     public const string NotStarted = "not started";
-    /// <summary>Değer bu koşulda YOK (ör. motor doğmadığı için PID).</summary>
-    public const string Unknown = "—";
+    /// <summary>Değer bu koşulda YOK (ör. motor doğmadığı için PID). İşaret Core'un tek tanımıdır (<see cref="MissingValue.Mark"/>).</summary>
+    public const string Unknown = MissingValue.Mark;
     /// <summary>Henüz bir repo kökü seçilmemiş.</summary>
     public const string NoRepository = "no repository";
     /// <summary>MSBuild çözümü sürüyor (vswhere child process'i).</summary>
@@ -101,6 +113,9 @@ public static class DiagnosticsReport
                 new(EnginePidLabel, EnginePidValue(input)),
                 new(".NET runtime", input.Runtime),
                 new("OS", input.Os),
+            ],
+            CopyOnly:
+            [
                 new("App private", MemoryValue(input.Memory?.PrivateBytes)),
                 new("GC committed", MemoryValue(input.Memory?.CommittedBytes)),
                 new("Managed heap", MemoryValue(input.Memory?.HeapBytes)),
@@ -116,14 +131,14 @@ public static class DiagnosticsReport
 
     /// <summary>
     /// Panoya gidecek düz metin (bir destek talebine yapıştırılır): ilk satır <c>{ürün} {sürüm}</c> — çıktının
-    /// nereden geldiğini söyler — ardından <c>Engine</c> + Runtime + Paths satırları, değerler TEK kolonda hizalı.
+    /// nereden geldiğini söyler — ardından <c>Engine</c> + Runtime + yalnız-kopya (bellek) + Paths satırları, değerler TEK kolonda hizalı.
     /// Telif panoya GİTMEZ: bir destek talebinde bilgi taşımaz. Satır ayracı
     /// <see cref="StringBuilder.AppendLine()"/>'ın platform ayracıdır.
     /// </summary>
     public static string ToText(DiagnosticsSnapshot snapshot)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
-        List<DiagnosticsLine> lines = [snapshot.Engine, .. snapshot.Runtime, .. snapshot.Paths];
+        List<DiagnosticsLine> lines = [snapshot.Engine, .. snapshot.Runtime, .. snapshot.CopyOnly, .. snapshot.Paths];
         int width = lines.Max(l => l.Label.Length);
 
         var text = new StringBuilder()

@@ -750,18 +750,16 @@ public class RunViewModelStateTests
         Assert.DoesNotContain("applies to the next run", text);
     }
 
-    // ---------------------------------------------------------------- [RESOLVE Faz 4 · fix 1A] Resolve notu ve koşu bağlamı
+    // ---------------------------------------------------------------- Resolve cycles de sıradan bir koşudur: perf notu yalnız çipin notu
 
-    /// <summary>[RESOLVE Faz 4 · fix 1A] Döngülü topolojili bir VM (Balanced). Koşular üretimdeki gibi KOMUT yolundan
-    /// başlar — koşunun perf bağlamı (mod + Resolve anahtarı) yalnız orada yakalanır. Motor başlatılmamıştır: gönderim
-    /// düşer, motorun cevabını (<see cref="RunStartedEvent"/>) test verir.</summary>
-    private static RunViewModel PerfContextVm(EngineHost engine, bool fullPriority)
+    /// <summary>Döngülü topolojili bir VM (Balanced). Koşular üretimdeki gibi KOMUT yolundan başlar. Motor başlatılmamıştır:
+    /// gönderim düşer, motorun cevabını (<see cref="RunStartedEvent"/>) test verir.</summary>
+    private static RunViewModel PerfContextVm(EngineHost engine)
     {
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1")
         {
             RootPath = @"D:\repo",
             PerfMode = "Balanced",
-            ResolveAtFullPriority = fullPriority,
         };
         vm.OnEvent(CycleTopology());
         return vm;
@@ -772,63 +770,69 @@ public class RunViewModelStateTests
         (mode == RunMode.Cycles ? vm.BuildCyclesCommand : vm.BuildCommand).ExecuteAsync(null);
 
     /// <summary>
-    /// [RESOLVE Faz 4 · fix 1A — I1] Resolve cycles tam öncelikte başlarken kullanıcının konsoluna TEK satır düşer; App
-    /// <c>runStarted</c>'ta yazar. Sayı motorun fiilî paralelliğidir (profilin dördü değil, cevaptaki üç), anahtar koşu
-    /// başlatılırken yakalanan değerdir. Kusur: satır yalnız Supervisor'ın stderr'ine gidiyordu ve App stderr'i atar —
-    /// kullanıcı onu hiç görmüyordu. Anahtar kapalıyken ve Build'de satır yoktur.
+    /// Resolve cycles de başlarken konsola bir perf/priority satırı yazmaz: <c>runStarted</c>'ta yalnız işçi kırpma notu ve koşu başı
+    /// uyarıları düşer, Build'deki gibi.
+    /// <para><b>[DEĞİŞEN KURAL — 2026-10-17]</b> Eski iddia (<c>A_resolve_run_at_full_priority_says_so_once_when_it_starts</c>): anahtar
+    /// açıkken Resolve cycles tam öncelikte başlarken kullanıcının konsoluna TEK satır
+    /// (<c>parallelism: 3 · cpu cap off · priority normal (Resolve cycles)</c>) düşerdi; anahtar kapalıyken ve Build'de satır yoktu. Anahtar
+    /// ve kural kalktı, satır da onunla gitti (gerekçe ve ölçüm: <see cref="ResolveFollowsProfileSettingsTests"/>).</para>
     /// </summary>
     [Theory]
-    [InlineData(RunMode.Cycles, true, true)]
-    [InlineData(RunMode.Cycles, false, false)]
-    [InlineData(RunMode.Build, true, false)]
-    public async Task A_resolve_run_at_full_priority_says_so_once_when_it_starts(RunMode mode, bool fullPriority, bool noted)
+    [InlineData(RunMode.Cycles)]
+    [InlineData(RunMode.Build)]
+    public async Task A_resolve_run_writes_no_priority_note_when_it_starts(RunMode mode)
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = PerfContextVm(engine, fullPriority);
+        var vm = PerfContextVm(engine);
 
         await StartViaCommandAsync(vm, mode);
         vm.OnEvent(new RunStartedEvent("r1", mode, 4, 3, "Debug"));
 
         string text = vm.GetRunDocumentText();
-        Assert.Equal(noted ? 1 : 0, text.Split("parallelism: 3 · cpu cap off · priority normal (Resolve cycles)").Length - 1);
-        Assert.Equal(noted, text.Contains("priority normal", StringComparison.Ordinal));
+        Assert.DoesNotContain("priority", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("(Resolve cycles)", text, StringComparison.Ordinal);
     }
 
     /// <summary>
-    /// [RESOLVE Faz 4 · fix 1A — I3] Koşu içi chip notu motorun O koşuya uyguladığını söyler: Resolve cycles tam öncelikteyse
-    /// cap'siz + Normal (<see cref="PerfNoteText.ResolveNote"/>), anahtar kapalıysa ya da koşu Build ise profilin kendi notu.
-    /// Mod ve anahtar koşunun yakalanan bağlamından gelir (komut yolundan başlamış koşu).
+    /// Koşu içi chip notu her modda profilin kendi notudur: Resolve cycles'ta da Build'de de aynı <c>parallelism: 2 · cpu cap 40%</c>
+    /// (<see cref="PerfNoteText.Note(PerfProfile)"/>) — motor ikisine de Light'ın cap'ini uygular.
+    /// <para><b>[DEĞİŞEN KURAL — 2026-10-17]</b> Eski iddia (<c>A_perf_change_during_a_run_describes_what_the_engine_applies_to_it</c>): not motorun
+    /// O koşuya uyguladığını söylerdi — anahtar açıkken Resolve cycles'ta cap'siz + Normal
+    /// (<c>parallelism: 2 · cpu cap off · priority normal (Resolve cycles)</c>), anahtar kapalıyken ya da Build'de profilin notu. Mod ve
+    /// anahtar koşunun başlatılırken yakalanan bağlamından gelirdi. Anahtar, kural ve o bağlam kalktı (gerekçe ve ölçüm:
+    /// <see cref="ResolveFollowsProfileSettingsTests"/>).</para>
     /// </summary>
     [Theory]
-    [InlineData(RunMode.Cycles, true, ResolveNote)]
-    [InlineData(RunMode.Cycles, false, "parallelism: 2 · cpu cap 40%")]
-    [InlineData(RunMode.Build, true, "parallelism: 2 · cpu cap 40%")]
-    public async Task A_perf_change_during_a_run_describes_what_the_engine_applies_to_it(
-        RunMode mode, bool fullPriority, string expected)
+    [InlineData(RunMode.Cycles)]
+    [InlineData(RunMode.Build)]
+    public async Task A_perf_change_during_a_run_writes_the_profile_note_in_every_mode(RunMode mode)
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = PerfContextVm(engine, fullPriority);
+        var vm = PerfContextVm(engine);
         await StartViaCommandAsync(vm, mode);
         vm.OnEvent(new RunStartedEvent("r1", mode, 4, 3, "Debug"));
 
         await vm.CyclePerfAsync(); // Balanced → Light
 
         string text = vm.GetRunDocumentText();
-        Assert.Contains(expected, text);
-        Assert.Equal(expected.Contains("priority normal", StringComparison.Ordinal),
-            text.Contains("priority normal", StringComparison.Ordinal));
+        Assert.Contains("parallelism: 2 · cpu cap 40%", text);
+        Assert.DoesNotContain("priority", text, StringComparison.Ordinal);
     }
 
     /// <summary>
-    /// [RESOLVE Faz 4 · fix 1A — I2] Açılış koreografisi boyunca chip canlıdır (<see cref="RunViewModel.IsMidRunLocked"/>) ve
-    /// notu AÇILAN koşuyu anlatmalı. Kusur: bağlam komutla birlikte, koreografiden SONRA yazılıyordu; oturumun ilk Resolve'u
-    /// o pencerede <c>cpu cap 40%</c> der, motor ise cap'siz ve Normal koşardı.
+    /// Açılış koreografisi boyunca chip canlıdır (<see cref="RunViewModel.IsMidRunLocked"/>): Resolve cycles açılırken basılan çip de
+    /// profilin düz notunu yazar.
+    /// <para><b>[DEĞİŞEN KURAL — 2026-10-17]</b> Eski iddia (<c>A_perf_change_while_a_resolve_run_is_opening_describes_that_run</c>): not AÇILAN
+    /// koşuyu anlatırdı — kusur (fix 1A · I2) bağlamın komutla birlikte, koreografiden SONRA yazılmasıydı, oturumun ilk Resolve'u o
+    /// pencerede <c>cpu cap 40%</c> derken motor cap'siz ve Normal koşardı; düzeltme bağlamı koşu başında yakalamaktı. Motor artık
+    /// Resolve'u da çipin cap'iyle koşturduğundan anlatılacak ayrı bir bağlam kalmadı (gerekçe ve ölçüm:
+    /// <see cref="ResolveFollowsProfileSettingsTests"/>).</para>
     /// </summary>
     [Fact]
-    public async Task A_perf_change_while_a_resolve_run_is_opening_describes_that_run()
+    public async Task A_perf_change_while_a_resolve_run_is_opening_writes_the_plain_profile_note()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = PerfContextVm(engine, fullPriority: true);
+        var vm = PerfContextVm(engine);
         var choreography = new TaskCompletionSource();
         vm.OperationChoreography = _ => choreography.Task;
 
@@ -836,21 +840,26 @@ public class RunViewModelStateTests
         Assert.True(vm.IsStarting); // komut henüz gitmedi
         await vm.CyclePerfAsync(); // Balanced → Light
 
-        Assert.Contains(ResolveNote, vm.GetRunDocumentText());
+        string text = vm.GetRunDocumentText();
+        Assert.Contains("parallelism: 2 · cpu cap 40%", text);
+        Assert.DoesNotContain("priority", text, StringComparison.Ordinal);
         choreography.SetResult();
         await start;
     }
 
     /// <summary>
-    /// [RESOLVE Faz 4 · fix 1A — I2] Bir önceki koşunun bağlamı sonrakinin koreografisine sızmaz: Resolve başlatıldıktan
-    /// (komutu gittikten) sonra Build açılırken chip düz notu yazar — motor Light'ın cap'ini uygular. Kusur: not son
-    /// gönderilen (Resolve) komutla konuşup <c>cpu cap off · priority normal</c> derdi.
+    /// Bir önceki koşunun komutu sonrakinin koreografisine bir şey bırakmaz: Resolve başlatıldıktan (komutu gittikten) sonra Build açılırken
+    /// chip düz notu yazar — motor Light'ın cap'ini uygular.
+    /// <para><b>[DEĞİŞEN KURAL — 2026-10-17]</b> Aynı iddia, gerekçesi değişti. Eski gerekçe (fix 1A · I2): koşunun perf bağlamı (mod + Resolve
+    /// anahtarı) son gönderilen komuttan okunuyordu ve Build'in açılış notu Resolve'un <c>cpu cap off · priority normal</c> notuyla
+    /// konuşabiliyordu — sızıntıyı bağlamı koşu başında yakalamak kapatmıştı. Bağlamın kendisi kalktı (gerekçe ve ölçüm:
+    /// <see cref="ResolveFollowsProfileSettingsTests"/>); sızacak bir şey kalmadı, pin kuralın uçtan uca korunması için durur.</para>
     /// </summary>
     [Fact]
     public async Task A_perf_change_while_a_build_opens_after_a_resolve_start_writes_the_plain_note()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = PerfContextVm(engine, fullPriority: true);
+        var vm = PerfContextVm(engine);
         await StartViaCommandAsync(vm, RunMode.Cycles); // komut gider; motor yok, VM boşa döner
         Assert.False(vm.IsMidRunLocked);
         var choreography = new TaskCompletionSource();
@@ -862,22 +871,25 @@ public class RunViewModelStateTests
 
         string text = vm.GetRunDocumentText();
         Assert.Contains("parallelism: 2 · cpu cap 40%", text);
-        Assert.DoesNotContain("priority normal", text);
+        Assert.DoesNotContain("priority", text, StringComparison.Ordinal);
         choreography.SetResult();
         await start;
     }
 
     /// <summary>
-    /// [RESOLVE Faz 4 · re-review N1] Koşu açılırken anahtar değişse de (Save koreografi sürerken) O koşu başlatıldığı
-    /// andaki değerle kalır: komutun bayrağı, açılıştaki chip notu ve <c>runStarted</c> notu AYNI yakalanan değeri okur.
-    /// Pinsizdi: üç okumadan biri canlı özelliğe dönse süit yeşil kalırdı — not cap'siz derken motor cap uygulardı ya da
-    /// tersi. Üç gerçek tek demette karşılaştırılır ki bir kırmızı hangisinin koptuğunu göstersin.
+    /// Resolve cycles'ın komutu da her koşu gibi çipin değerini taşır: koreografi sürerken çip Light'a çevrilse bile gönderilen
+    /// <see cref="StartRunCommand"/>'ın <c>PerfMode</c>'u ve <c>Parallelism</c>'i çipin O ANKİ değeridir (komut koreografiden sonra kurulur) —
+    /// Resolve'a özgü bir alan ya da dönüşüm yoktur.
+    /// <para><b>[DEĞİŞEN KURAL — 2026-10-17]</b> Eski iddia (<c>A_setting_changed_while_a_resolve_run_opens_does_not_reach_that_run</c>, re-review N1):
+    /// koşu açılırken Resolve anahtarı değişse de (Save koreografi sürerken) o koşu başlatıldığı andaki değerle kalırdı — komutun bayrağı,
+    /// açılıştaki chip notu ve <c>runStarted</c> notu AYNI yakalanan değeri okurdu. Anahtar kalktı; geriye komutun çipin değerini taşıması
+    /// kaldı (gerekçe ve ölçüm: <see cref="ResolveFollowsProfileSettingsTests"/>).</para>
     /// </summary>
     [Fact]
-    public async Task A_setting_changed_while_a_resolve_run_opens_does_not_reach_that_run()
+    public async Task A_resolve_run_sends_the_chips_perf_mode_like_any_run()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = PerfContextVm(engine, fullPriority: true);
+        var vm = PerfContextVm(engine);
         var sent = new List<StartRunCommand>();
         vm.DebugOnCommandSent = c => { if (c is StartRunCommand s) sent.Add(s); };
         var choreography = new TaskCompletionSource();
@@ -885,17 +897,13 @@ public class RunViewModelStateTests
 
         var start = StartViaCommandAsync(vm, RunMode.Cycles);
         Assert.True(vm.IsStarting);
-        vm.ResolveAtFullPriority = false; // Save koreografi sürerken anahtarı kapatır
-        await vm.CyclePerfAsync();        // Balanced → Light: not AÇILAN koşuyu anlatmalı
+        await vm.CyclePerfAsync(); // Balanced → Light: komut koreografiden SONRA kurulur, değeri taşır
         choreography.SetResult();
         await start;
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, 4, 3, "Debug"));
 
-        string text = vm.GetRunDocumentText();
-        Assert.Equal((Flag: true, ChipNote: true, StartNote: true), (
-            Flag: Assert.Single(sent).ResolveAtFullPriority,
-            ChipNote: text.Contains(ResolveNote, StringComparison.Ordinal),
-            StartNote: text.Contains("parallelism: 3 · cpu cap off · priority normal (Resolve cycles)", StringComparison.Ordinal)));
+        var command = Assert.Single(sent);
+        Assert.Equal("Light", command.PerfMode);
+        Assert.Equal(PerfProfile.For(PerfMode.Light).Parallelism, command.Parallelism);
     }
 
     // ---------------------------------------------------------------- [PERF Faz D / karar 10] İşçi kırpma notu görünür
@@ -913,7 +921,7 @@ public class RunViewModelStateTests
     public async Task A_run_with_fewer_workers_than_asked_says_so_in_the_console_and_after_the_stream_start_line(string? reason)
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = PerfContextVm(engine, fullPriority: true);
+        var vm = PerfContextVm(engine);
         await StartViaCommandAsync(vm, RunMode.Build);
 
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 4, 2, "Debug", WorkersReducedReason: reason));
@@ -938,23 +946,26 @@ public class RunViewModelStateTests
     }
 
     /// <summary>
-    /// [kırpma notu görünür] Kırpılmış bir Resolve cycles koşusu tam öncelikte başlarsa iki not da konsola düşer; sıra
-    /// decision.log'unkiyle AYNI: önce kırpma (sayının nereden geldiğini söyler), sonra o sayıyı kullanan Resolve notu.
+    /// [kırpma notu görünür] Kırpılmış bir Resolve cycles koşusu konsola YALNIZ kırpma satırını yazar: tek kez, ve ardından bir
+    /// priority/cap notu gelmez (fiili işçi sayısını kırpma satırı söyler).
+    /// <para><b>[DEĞİŞEN KURAL — 2026-10-17]</b> Eski iddia (<c>A_clamped_resolve_run_names_the_reduction_before_its_full_priority_note</c>): anahtar açıkken
+    /// kırpılmış bir Resolve koşusunda iki not da konsola düşerdi, sıra decision.log'unkiyle AYNI — önce kırpma (sayının nereden geldiğini
+    /// söyler), sonra o sayıyı kullanan <c>parallelism: 2 · cpu cap off · priority normal (Resolve cycles)</c> notu. O not kuralla birlikte
+    /// kalktı (gerekçe ve ölçüm: <see cref="ResolveFollowsProfileSettingsTests"/>).</para>
     /// </summary>
     [Fact]
-    public async Task A_clamped_resolve_run_names_the_reduction_before_its_full_priority_note()
+    public async Task A_clamped_resolve_run_names_the_reduction_once_and_writes_no_priority_note()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = PerfContextVm(engine, fullPriority: true);
+        var vm = PerfContextVm(engine);
         await StartViaCommandAsync(vm, RunMode.Cycles);
 
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, 4, 2, "Debug", WorkersReducedReason: "1 logical processor"));
 
-        // [review M2] Sıra da satır bazlı: IndexOf alt-dizeyi bulurdu, süslenmiş bir satır sırayı sahte doğrulardı.
+        // [review M2] Satır bazlı: alt-dize sayımı süslenmiş bir satırı kaçırırdı.
         var lines = vm.GetRunDocumentText().Split('\n');
-        int reduction = Array.IndexOf(lines, ReductionNote);
-        int resolve = Array.IndexOf(lines, ResolveNote);
-        Assert.True(reduction >= 0 && resolve > reduction, string.Join('\n', lines));
+        Assert.Equal(1, lines.Count(l => l == ReductionNote));
+        Assert.DoesNotContain(lines, l => l.Contains("priority", StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -967,7 +978,7 @@ public class RunViewModelStateTests
     public async Task A_new_run_does_not_carry_the_previous_runs_pending_reduction_line()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = PerfContextVm(engine, fullPriority: true);
+        var vm = PerfContextVm(engine);
         vm.OnEvent(new RunStartedEvent("r0", RunMode.Build, 4, 2, "Debug", WorkersReducedReason: "1 logical processor"));
         // r0'ın önizlemesi hiç gelmedi: bekleyen satırı yayılmadı, sıradaki runStarted onu ezer
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 4, 4, "Debug"));
@@ -996,7 +1007,7 @@ public class RunViewModelStateTests
         string? warning, string staleLine)
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = PerfContextVm(engine, fullPriority: true);
+        var vm = PerfContextVm(engine);
         vm.OnEvent(new RunStartedEvent("r0", RunMode.Build, 4, 2, "Debug", WorkersReducedReason: reason,
             Warnings: warning is null ? null : [warning]));
         vm.OnEngineExited(1); // motor önizlemeden önce öldü: r0'ın önizlemesi hiç gelmeyecek
@@ -1019,7 +1030,6 @@ public class RunViewModelStateTests
     internal const string StaleObjWarning = "warning: " + StaleObjWarningText;
     internal const string ReverseLayerWarning = "warning: " + ReverseLayerWarningText;
     private const string ReductionNote = "workers reduced to 2 (1 logical processor)";
-    private const string ResolveNote = "parallelism: 2 · cpu cap off · priority normal (Resolve cycles)";
 
     /// <summary>
     /// [koşu başı uyarıları görünür] Motorun koşu başı uyarıları (<c>runStarted.Warnings</c> — bayat obj, ters katman)
@@ -1038,7 +1048,7 @@ public class RunViewModelStateTests
         bool singleProject)
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = PerfContextVm(engine, fullPriority: true);
+        var vm = PerfContextVm(engine);
         await StartViaCommandAsync(vm, RunMode.Build);
         if (singleProject) vm.RunTargetId = "A"; // satırdan basıldı (BeginRunAsync bunu tıklama anında yazar)
 
@@ -1064,15 +1074,18 @@ public class RunViewModelStateTests
     }
 
     /// <summary>
-    /// [koşu başı uyarıları görünür] Konsol sırası: önce kırpma notu, sonra Resolve notu, sonra koşu başı uyarıları
-    /// (motorun sırasıyla) — event stream'deki sırayla AYNI (başlangıç → kırpma → uyarılar). İki not koşunun nasıl koştuğunu
-    /// söyler ve yan yana kalır (Resolve notunun sayısı kırpmadan gelir); uyarılar onların ardından gelir.
+    /// [koşu başı uyarıları görünür] Konsol sırası: önce kırpma notu, sonra koşu başı uyarıları (motorun sırasıyla) — event
+    /// stream'deki sırayla AYNI (başlangıç → kırpma → uyarılar). Kırpma notu koşunun nasıl koştuğunu söyler; uyarılar onun ardından gelir.
+    /// <para><b>[DEĞİŞEN KURAL — 2026-10-17]</b> Eski iddia (<c>Run_start_warnings_follow_the_reduction_and_resolve_notes_in_the_console</c>): sıra
+    /// kırpma → Resolve notu → uyarılardı; iki not koşunun nasıl koştuğunu söyler ve yan yana kalırdı (Resolve notunun sayısı kırpmadan
+    /// gelirdi). Resolve notu kuralla birlikte kalktı (gerekçe ve ölçüm: <see cref="ResolveFollowsProfileSettingsTests"/>); uyarılar
+    /// artık doğrudan kırpma notunu izler.</para>
     /// </summary>
     [Fact]
-    public async Task Run_start_warnings_follow_the_reduction_and_resolve_notes_in_the_console()
+    public async Task Run_start_warnings_follow_the_reduction_note_in_the_console()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = PerfContextVm(engine, fullPriority: true);
+        var vm = PerfContextVm(engine);
         await StartViaCommandAsync(vm, RunMode.Cycles);
 
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, 4, 2, "Debug", WorkersReducedReason: "1 logical processor",
@@ -1082,7 +1095,6 @@ public class RunViewModelStateTests
         int[] order =
         [
             Array.IndexOf(lines, ReductionNote),
-            Array.IndexOf(lines, ResolveNote),
             Array.IndexOf(lines, StaleObjWarning),
             Array.IndexOf(lines, ReverseLayerWarning),
         ];
@@ -1103,7 +1115,7 @@ public class RunViewModelStateTests
     public async Task Run_start_warnings_beyond_the_stream_limit_collapse_into_one_summary_line(int count, bool collapsed)
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = PerfContextVm(engine, fullPriority: true);
+        var vm = PerfContextVm(engine);
         await StartViaCommandAsync(vm, RunMode.Build);
         string[] texts = [.. Enumerable.Range(1, count).Select(i => $"P{i}: obj holds a restore for .NETStandard,Version=v2.0")];
         string[] warnings = [.. texts.Select(t => "warning: " + t)]; // Supervisor'ın kompozisyonu: "warning: " + metin
@@ -1133,7 +1145,7 @@ public class RunViewModelStateTests
     public async Task A_single_project_run_writes_the_reduction_line_to_neither_the_console_nor_the_stream(RunMode mode)
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = PerfContextVm(engine, fullPriority: true);
+        var vm = PerfContextVm(engine);
         await StartViaCommandAsync(vm, RunMode.Build);
         vm.RunTargetId = "A"; // satırdan basıldı (BeginRunAsync bunu tıklama anında yazar)
 

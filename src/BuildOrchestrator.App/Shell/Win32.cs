@@ -11,6 +11,17 @@ internal static class Win32
     // --- pencere mesajları (WndProc hook'unun tanıdıkları)
     public const int WM_HOTKEY = 0x0312;
 
+    /// <summary>[kullanıcı kararı 2026-10-19] Etkin olmayan pencereye fareyle basıldı — Windows bunu pencereyi etkinleştirmeden ÖNCE
+    /// gönderir, tıkı en son teslim eder. <c>lParam</c>: düşük söz isabet kodu (<see cref="HTCLIENT"/>), yüksek söz basışın fare mesajı
+    /// (<see cref="WM_LBUTTONDOWN"/> — sol el ayarında da mantıksal sol tuş).</summary>
+    public const int WM_MOUSEACTIVATE = 0x0021;
+
+    /// <summary>İsabet kodu: istemci alanı (title bar değil).</summary>
+    public const int HTCLIENT = 1;
+
+    /// <summary>Sol tuş basıldı (istemci alanı).</summary>
+    public const int WM_LBUTTONDOWN = 0x0201;
+
     /// <summary>Yatay tekerlek / precision touchpad'in iki parmakla yatay kaydırması. WPF bu mesajı HİÇ
     /// dağıtmaz (yalnız <c>WM_MOUSEWHEEL</c> bir routed event'e çevrilir), bu yüzden yatay kaydırma
     /// uygulamanın kendi hook'undan geçer — bkz. <see cref="Controls.HorizontalWheelScroll"/>.</summary>
@@ -58,6 +69,31 @@ internal static class Win32
     /// <summary>Tepsi build overlay'inin ex-style kümesi — TEK yer (çağrı yerinde bit'ler yeniden yazılmaz,
     /// ve test kurulan kümeyi doğrudan okuyabilir).</summary>
     public const int OverlayExStyle = WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+
+    // --- yerel caption'a devir (kaynak şeridi: hücrelerin üstündeki basışı pencerenin kendi title bar'ı gibi işletmek)
+
+    /// <summary>Sol tuş bırakıldı (client alanı). Yerel taşıma döngüsü bırakmayı yutar; WPF'in fare durumu bununla eşitlenir.</summary>
+    public const uint WM_LBUTTONUP = 0x0202;
+
+    /// <summary>Non-client alanda sol tuş basıldı: <c>wParam</c> isabet kodu (<see cref="HTCAPTION"/>), <c>lParam</c> basışın EKRAN noktası
+    /// (düşük söz x, yüksek söz y; ikisi de işaretli 16 bit).</summary>
+    public const uint WM_NCLBUTTONDOWN = 0x00A1;
+
+    /// <summary>İsabet kodu: title bar. <see cref="WM_NCLBUTTONDOWN"/> bunu taşırsa Windows pencerenin kendi caption sürüklemesini
+    /// çalıştırır (taşıma döngüsü; büyütülmüş pencereyi önce geri alır, kenara yaklaşınca snap).</summary>
+    public const int HTCAPTION = 2;
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool ReleaseCapture();
+
+    [DllImport("user32.dll", EntryPoint = "SendMessageW")]
+    public static extern nint SendMessage(nint hWnd, uint msg, nint wParam, nint lParam);
+
+    /// <summary>Bu thread'in kuyruğundan en son alınan mesajın imleç konumu — EKRAN koordinatı, <c>lParam</c>'ın paketli biçiminde
+    /// (düşük söz x, yüksek söz y, işaretli). Fare mesajı işlenirken basışın yeridir; imleç sonradan oynamış olsa da değişmez.</summary>
+    [DllImport("user32.dll")]
+    public static extern uint GetMessagePos();
 
     [DllImport("user32.dll", EntryPoint = "GetWindowLongW", SetLastError = true)]
     public static extern int GetWindowLong(nint hWnd, int nIndex);

@@ -67,8 +67,10 @@ public class KeyboardWiringTests
         Assert.Equal(WindowIntent.FocusFilter, Intent(Key.F, ModifierKeys.Control));  // Ctrl+F → filtre odağı
         Assert.Equal(WindowIntent.ShowAbout, Intent(Key.F1, ModifierKeys.None));      // F1     → About
         Assert.Equal(WindowIntent.Escape, Intent(Key.Escape, ModifierKeys.None));     // Esc    → katman zinciri
+        Assert.Equal(WindowIntent.Exit, Intent(Key.Q, ModifierKeys.Control));         // Ctrl+Q → Exit (title bar butonuyla aynı)
 
-        // Negatif-pin: tabloda TAM 6 satır — fazladan/kayıp bir bağlama (ör. yanlışlıkla eklenen Ctrl+P) kırar.
-        Assert.Equal(6, KeyboardShortcuts.WindowBindings.Count);
+        // Negatif-pin: tabloda TAM 7 satır — fazladan/kayıp bir bağlama (ör. yanlışlıkla eklenen Ctrl+P) kırar.
+        // [Exit] 6 → 7: tasarım Exit butonuna Ctrl+Q kısayolunu verdi (kullanıcı kararı 2026-10-19).
+        Assert.Equal(7, KeyboardShortcuts.WindowBindings.Count);
     }
 }

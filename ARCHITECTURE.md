@@ -10,8 +10,10 @@ was taken deliberately against an obvious alternative, the rationale is given in
 history of how it was reached. Chronological records (iteration plans, review outputs, decision logs) live
 under `.claude/outputs/` and are not repeated here.
 
-**Reading order.** [`README.md`](README.md) is the entry point — what the tool does and how to run it. This
-document is the technical reference behind it, including the security boundary and threat model (§21) and a
+**Reading order.** [`README.md`](README.md) is the entry point — what the tool does and how to start.
+[`docs/FEATURES.md`](docs/FEATURES.md) lists every feature and how it works, [`docs/WHY.md`](docs/WHY.md) what
+each one changes, and [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md) how to use the app screen by screen. This
+document is the technical reference behind them, including the security boundary and threat model (§21) and a
 code map (§22) that says which file owns which behaviour.
 
 ---
@@ -114,9 +116,13 @@ exactly the declared version, and that version is not the SDK's default `1.0.0`.
 
 That identity is also what the UI displays. `Services/AppIdentity` reads the product name, informational
 version and copyright back off the App assembly, and the window title, the title bar caption, the tray tooltip,
-the tray balloons and the About dialog all draw from it — a guard forbids the product name appearing as a literal
-in any App source file. The copyright is read as one string rather than composed from a year and a company,
-because a copyright year is not a runtime value.
+the tray balloons, the About dialog, What's new's subtitle and the file filter of the settings import and export
+dialogs all draw from it — a guard forbids the product name written as a literal in any source file, and a second one
+forbids it inside any literal at all, quoted or embedded in a sentence. That second scan reads every production file
+and exempts only a short list kept with its reasons — today one comment in the MSBuild file the engine writes to its
+own cache, which no surface shows (§17.2). Core does not know the identity of the App that hosts it, so the two strip
+tooltips that name the product take the name as a parameter. The copyright is read as one string rather than composed
+from a year and a company, because a copyright year is not a runtime value.
 
 Windows reads the same name off the executable: the App's `.csproj` sets `AssemblyTitle` to `$(Product)`, so the
 file description — the name Task Manager shows for the process and for the startup entry of §12.3 — is the
@@ -204,7 +210,7 @@ indefinitely. One unread pipe, both symptoms.
 | App | everything | Disposing the outer job closes the last handle → cascade |
 | App | Supervisor only | `Process.Kill(entireProcessTree: true)`, then a wait of at most a second for it to end — the kill is asynchronous, and an update must not meet the engine's files still locked (§12.5) |
 | App | Supervisor only, to put an idle engine to sleep (§4.7) | The engine's generation is retired first, so the exit raises no `EngineExited`; `shutdown` is written (at most 500 ms) and the engine's own exit is awaited for at most two seconds (`SleepExitWait`); what is still alive is then killed as in the row above. An exit that arrives meanwhile pre-empts a sleep or a wake in flight instead of waiting behind it (one already inside its own kill finishes that kill) |
-| Supervisor | the whole MSBuild tree | `TerminateJobObject(inner)` — the hard stop |
+| Supervisor | the whole MSBuild tree | `TerminateJobObject(inner)`, plus the run's hard-stop token every compile listens to (§4.5) — the hard stop |
 | Supervisor | one project | `Kill(entireProcessTree: true)` on that `MSBuild.exe` |
 | Supervisor | App | not possible — the App's death reaches it as stdin EOF and it exits cleanly |
 
@@ -213,20 +219,28 @@ measured bound is under two seconds with no orphan.
 
 ### 4.5 Stop semantics
 
-**Graceful stop** is what the first press of the Stop button or of `Esc` requests, and what a full exit of the application requests
-for a run still in flight (§12.3). Nothing new is dispatched; the in-flight `MSBuild.exe` children finish,
+**Graceful stop** is what the first press of the Stop button or of `Esc` requests. Nothing new is dispatched; the in-flight
+`MSBuild.exe` children finish,
 *including their post-build copy events*. A compiler server living *outside* the job would break this
 promise: its emit would run where a stop cannot see it, and a DLL could be caught mid-write. The
 shared-compilation flags stay off today for a different reason — the measured gain does not pay for the
 server's memory (§9.2) — but if they are ever turned on, the server has to be born inside the job for exactly
 this guarantee.
 
-**Hard stop** terminates the inner job outright. The App sends it in exactly one situation: the user presses the Stop
-button, or `Esc`, while a stop is already draining — one the user asked for, or the interrupt a branch switch sends. The
-first press of a run is the polite request; a press during a drain says the user would rather not wait, and it is
-honoured. It goes out once: after it the Stop button is disabled and a further press or `Esc` does nothing. A full exit
-of the application never escalates — closing the window while a stop drains waits for the drain like any other exit
-(§12.3).
+**Hard stop** terminates the inner job outright, and it also cancels every compile the engine is starting or running:
+each `MSBuild.exe` invocation listens to the run's hard-stop token, so one that starts after the stop is killed at once
+and one already running is killed as well. Terminating the job alone would leave a gap — the coordinator announces a
+project as building and takes its slot *before* it starts the process, and a stop landing in that interval would empty
+a job that still accepts new members, so the late `MSBuild.exe` would join it afterwards and build to the end. A stop
+that arrives while a compile waits out a copy-contention backoff (§9.5) ends that wait the same way, and the project is
+reported `failed("stopped")`. The App sends a hard stop in two situations. The user presses the Stop button,
+or `Esc`, while a stop is already draining — one the user asked for, or the interrupt a branch switch sends: the first
+press of a run is the polite request, and a press during a drain says the user would rather not wait, which is
+honoured. And the user confirms a full exit of the application while a run is in flight (§12.3): someone who is leaving
+does not wait for a drain, so the exit sends the hard stop itself — at once, or over a drain already under way. It goes
+out once: after it the Stop button is disabled and a further press does nothing, a further `Esc` leaves the run alone —
+with nothing left to stop it closes the window the way `X` does (§13.7) — and an exit that finds it already sent sends
+nothing more.
 
 The choice between them is not about the wait — it is about how much work a stop throws away. A drained
 project *succeeds*, so its `BuildState` is persisted and the next Build skips it as up to date. A terminated
@@ -552,9 +566,6 @@ gate.
 a row (§13.2). It defaults to null, so a full run writes the same line it always did.
 When it is set the engine plans in full and then cuts the plan down to that one project (§8.1): dependencies
 are not compiled and nothing outside the scope enters the run.
-
-`startRun` also carries **`resolveAtFullPriority`** — the user's *Resolve cycles at full priority* setting, read
-only by a `Cycles` run (§11.1). A line without it decodes as on, the setting's default.
 
 Which runs compile dependency cycles is not a field: every compiling mode does (`Build`, `Rebuild`, `Cycles`;
 §8.1), and `Cycles` is the narrow-scope one. Modes are written to the wire as camelCase text like every other
@@ -1062,7 +1073,7 @@ apart. Reading content closes all three, works offline, and needs no version con
 The cost is reading files, and it is paid once: `source-hash-cache.json` (§16) keys each hash by the file's
 size and modification time, so a steady-state run only stats the input set and writes nothing back — the file is
 rewritten only when an entry changed (§16). Measured end to end on the real
-OSYS repository (177 projects, 22,982 input files, 288 MB), from the scan through both binding passes: **303 ms
+reference repository (177 projects, 22,982 input files, 288 MB), from the scan through both binding passes: **303 ms
 per run** with a warm cache, against ~213 ms for the two git commands the old formula ran. With the cache empty
 but the files in the OS cache it is ~670 ms. Everything on that path that is IO — collecting each project's
 inputs, scanning the cache for misses, reading the misses — runs `IoParallelism.Degree`-way parallel; the values do not
@@ -1393,10 +1404,6 @@ of the plan, `Cycles` compiles only the cycle groups and their stale upstream. W
 in one place (`CycleCompilation`), and so is the component map a run carries (`CycleCompilation.GroupsFor`: a full
 run of a compiling mode over a plan with cycles). `Cycles` is the third icon of the maintenance box in the action
 bar (§13.2) and is optional — useful when the cycles alone are the work to pay for.
-
-A `Cycles` run is also the one run that does not take the perf profile's cap and priority: it keeps the
-profile's worker count and runs uncapped at Normal priority, unless *Resolve cycles at full priority* is turned off in
-Settings (§11.1).
 
 **A single project is a scope, not a mode.** A run started from a row (§13.2) carries the project's identity
 and keeps the mode of the item pressed — *Build* or *Rebuild*. Planning runs in full, exactly as for any run,
@@ -1860,6 +1867,9 @@ in-flight ledger closes that hole.
   refreshes the rows with a silent Sync (§4.7, §10.2) — the selection and an open project page stay — so the
   recovered decisions reach the screen. The count rides on `engineReady` (§5.3) and the App prints `previous run was
   interrupted; N projects will rebuild`.
+- **A confirmed exit leans on the same ledger.** *Stop and exit* terminates the compiles in flight and waits for the
+  engine's answer only briefly (§12.3); whatever it did not hear about is still listed in the file when the engine is
+  killed, and the next start invalidates it like any other interruption.
 - **Failure to recover never blocks the engine.** A file whose content cannot be parsed is not trusted — nobody
   knows who was in flight — so it is deleted and nothing is invented. A file that cannot be *read* (a lock, a
   permission) is a different case: a warning goes to stderr, the file stays, and the next engine start tries
@@ -2553,8 +2563,8 @@ in place.** A Manual, BranchChange or ConfigurationChange Sync (`SyncModeRules.R
 project list and the graph at the request, in the same moment as the console and the event stream. Only the
 screen starts over: the rows, their decisions and the topology stay in the view model, so the phase does not
 drop to `Boot`. Until the topology arrives the list and the graph show their discovery blocks (below) — never
-the no-projects message, a filter's no-match line or the graph's *appears after Sync* box — and the graph header
-counts nothing rather than zero projects. A ConfigurationChange Sync is the one kind that lets go of the decisions
+their empty views (*No projects*, *No graph*) or a filter's no-match line — and the graph header counts nothing
+rather than zero projects. A ConfigurationChange Sync is the one kind that lets go of the decisions
 too (`SyncModeRules.DropsDecisions`): the configuration is part of every signature, so the decisions in hand
 belong to the configuration selected before, and when the engine starts that Sync every row returns to the start
 mode (§14.3) until the new configuration's preview colours it. It happens then and not at the click, because the
@@ -2577,7 +2587,7 @@ block that names what is happening, and the list counts the projects found so fa
 reports (§13.2). A silent Sync never opens it — it leaves no trace on the screen — and neither does an Appended
 Sync that keeps its rows (a pull, a Save that changed only the external roots or the layers): those rows stay and
 are reconciled in place. The work of Clean or Optimize before its Sync is not discovery either: until the chained
-Sync is requested the list stays empty and the graph keeps its *appears after Sync* box. The state closes when the
+Sync is requested both panels show their empty views (*No projects*, *No graph*; §13.2). The state closes when the
 topology arrives — before the surface is rebuilt, so the reveal plays on a visible surface — and on every path
 that ends a Sync without one (the send failed, planning failed, the engine was lost, it completed without a
 topology), all of which run through one place (`EndSyncMode`). Reports are read only while the state is open, and
@@ -2652,7 +2662,16 @@ alone (a fetch, a new branch or tag) adds no entry and triggers nothing, and nei
 commit, when there is no reflog yet. `--no-show-signature` keeps a machine that has `log.showSignature` on from mixing
 signature checks into the entries. A return to the window is the second trigger: when more
 than five seconds have passed since the last Sync started or ended, it runs a silent Sync even when HEAD has not
-moved, because files may have been edited elsewhere.
+moved, because files may have been edited elsewhere. The one return that runs nothing is a click that lands on a
+command doing that refresh itself: an enabled *Build*, which plans from disk with the same scan and decisions as a
+Sync, or the Debug/Release item that is not selected, which starts its own Sync (§13.2). Windows activates a window
+in the background before it delivers the click that activated it, so a Sync requested at the activation would close
+that very control under the click and the click would do nothing. The window therefore notes a left press in its
+client area that activates it (`WM_MOUSEACTIVATE`), asks the action bar what lies under that press, and leaves the
+return alone when the answer is one of the two; the click then runs as it would on an active window. A return by
+keyboard, the taskbar or the tray, a click anywhere else and a click on the configuration already selected run the
+silent Sync as above. A press dragged off the button before its release builds nothing and refreshes nothing; the
+next return does.
 
 Each trigger is weighed against the HEAD of the last Sync (§5.3, `syncCompleted`), read from the git directory —
 or, in a reftable repository, from git (§10.1):
@@ -2716,7 +2735,7 @@ While one stands:
 
 ### 10.4 External roots
 
-Some projects an OSYS build depends on live **outside** the repository root — customer-specific components
+Some projects a build depends on live **outside** the repository root — shared or customer-specific components
 kept in their own git repositories. The user lists them in Settings; every Sync scans them
 into the same graph as the repository's own projects, and every Build updates their working copies before
 compiling.
@@ -2792,7 +2811,7 @@ Build, where the user has already decided to compile.
 
 **Each root's revision is read where reading it is free.** `rev-parse HEAD` is local, so it happens at plan
 time whether or not updates are on; a root with no working copy above it simply has no revision. When an
-update does run, the console says where the copy landed: `Updated external 'DoganTrend' → a1b2c3d`, and that
+update does run, the console says where the copy landed: `Updated external 'Acme.Shared' → a1b2c3d`, and that
 reading — taken right after the fast-forward — is preferred over the plan-time one. A failure to read is
 never fatal: the revision is diagnostic, no
 decision depends on it, and rows do not display it — they display the decision (§13.2).
@@ -2856,27 +2875,23 @@ is the worker count a profile *asks for* — the engine fits the request to the 
 | Balanced (default) | 4 | BelowNormal | 70 % |
 | Light | 2 | Idle | 40 % |
 
-A Resolve cycles run is not a fourth profile: with *Resolve cycles at full priority* on it keeps the chosen profile's
-parallelism and takes the Full row's priority and cap — Normal, none (below).
+A run's mode never changes the row that applies: `Build`, `Rebuild`, `Clean` and `Cycles` (§8.1) all run with the
+chosen profile's cap and priority exactly as the table gives them — a Resolve cycles run is not a fourth profile. The
+Supervisor applies the profile as it is, at the start of the run and on every mid-run switch, and the copy floor and
+the drain rule (§11.3) work on that same profile. Full is the only profile without a cap.
 
-Switching mid-run changes the cap and the priority live and writes a console note whose body is exactly
-`parallelism: <n> · cpu cap <p>%` (`cpu cap off` for Full); during a Resolve cycles run at full priority a switch to
-Balanced or Light writes the Resolve cycles note below instead, which adds the priority. **Parallelism does not
-change mid-run** — workers are created once at the start of a run — so the new worker count applies to the next run.
-The note text has a single owner in Core, called by both the App and the Supervisor.
+Switching mid-run changes the cap and the priority live and writes a console note, whatever the run's mode, whose body
+is exactly `parallelism: <n> · cpu cap <p>%` (`cpu cap off` for Full). **Parallelism does not change mid-run** —
+workers are created once at the start of a run — so the new worker count applies to the next run. The note text has a
+single owner in Core (`PerfNoteText`): the App takes the note from it, and the Supervisor's run-start lines take the
+wording of the cap from it too.
 
-**A Resolve cycles run takes full priority.** A `Cycles` run (§8.1) keeps the worker count of the chosen profile but
-takes the cap and the priority of the Full row — no cap, Normal — whatever the profile. Measured on a machine with
-other work running, Balanced's cap and lower priority stretched a Resolve run markedly, while on a quiet machine the
-difference was small; the run is short and the user is waiting for it. The rule is one pure function in Core
-(`PerfProfile.ForRun`); the Supervisor applies it at the start of the run and to every mid-run switch, with the mode
-and the setting that came with the run, so the copy floor and the drain rule (§11.3) work on the profile actually in
-force. `runStarted` carries the cap actually written — none — and the console and `decision.log` get one line,
-`parallelism: <n> · cpu cap off · priority normal (Resolve cycles)`, which is also the note a mid-run switch to
-Balanced or Light writes during such a run. *Settings → General → Resolve cycles at full priority* (on by default,
-carried by every `startRun`) turns the rule off, and a Resolve run then follows the profile like any other run.
-`Build`, `Rebuild` and `Clean` are never affected — including the cycle rounds a `Build` runs for a dirty group — and
-Full is uncapped at Normal already.
+**Resolve cycles follows the profile.** A `Cycles` run takes the chosen profile's cap and priority like any other run,
+and whoever wants Resolve to run faster picks Full. Running it uncapped at Normal priority whatever the profile does
+not pay for itself: measured on the real workspace with Balanced's worker count, the uncapped run was no faster on a
+quiet machine and only a few percent faster on a machine kept busy by other work, and there it left the interface
+without a frame for seconds at a time, while under Balanced's cap and priority such gaps were rare and short. The chip
+alone sets the cap and the priority a run starts with; no run mode and no setting overrides them.
 
 The perf intent is also honoured during the planning window: a change made while a run is starting is held and
 applied when the run begins, rather than being silently dropped.
@@ -2900,18 +2915,26 @@ one line, `workers reduced to <n> (<reason>)` (`PerfNoteText.WorkersReduced`), r
 text: the engine writes it to `decision.log`, and the App writes it to the console when the run starts and to the
 event stream right after the run's opening line. A single-project run (§8.1) is the exception on the App side: its
 worker count does not describe it, and the stream's opening line for it says nothing of parallelism either, so the App
-writes neither line and `decision.log` alone keeps it as a diagnostic. The engine keeps no stderr copy: the App
+writes neither line and `decision.log` alone keeps it as a diagnostic. The count and the reason, without the line
+around them, reach one more place: the resource strip's parallelism cell, for as long as a run lasts — the count as its
+middle number, the reason in its tooltip (§11.5, §13.2). There a single-project run is no exception: the cell shows the
+count the engine answered for every run, so it explains a reduced one as well. The engine keeps no stderr copy: the App
 discards the engine's stderr (§4.3), so the line the user sees is the App's.
 
 **Memory, not cores, is usually the first limit.** Each worker is an `MSBuild.exe` that starts a fresh,
 multi-threaded compiler process for its project (`UseSharedCompilation=false`, §9.2, so nothing is shared
 between workers), and a large project's compiler holds on the order of a gigabyte while it runs. On a developer machine that already has an IDE, browsers and other tools
 open, Full can exhaust physical memory: the operating system then pages other applications out and back in,
-and the whole desktop stalls — not just this tool. Measured on such a machine with real compilers, the
-interface thread itself stayed responsive under every profile, while free physical memory under Full fell to
+and the whole desktop stalls — not just this tool. Measured on such a machine with real compilers as the only heavy
+work, the interface thread itself stayed responsive under every profile, while free physical memory under Full fell to
 a fraction of a gigabyte and committed memory passed the machine's limit; Balanced kept a working margin.
 That is why Balanced is the default, and why a build that freezes the machine is answered by a lower profile.
-The measurement is kept as an opt-in test (§17.5).
+The measurement is kept as an opt-in test (§17.5). The processor adds a reason of its own, and it shows in the
+interface rather than in the memory counters: under Full the compilers run at the same priority class as the
+interface and with no cap, so when other work keeps the cores busy they compete with it on equal terms. The Resolve
+measurement above — a run without a cap at Normal priority, on a machine whose cores other work kept busy — left the
+interface with frame gaps of several seconds, where Balanced's cap and lower priority kept the gaps fewer and shorter.
+This is the CPU-side reason Balanced is the default. The interface shows no warning for Full.
 
 ### 11.2 What the cap does and does not cover
 
@@ -2922,7 +2945,9 @@ the job. Both are written **only to the inner job**:
 - `git.exe` and `vswhere.exe` start as plain child processes and are never assigned to the inner job. Sync,
   branch listing and MSBuild resolution therefore run at full speed even in Light mode. The cascade still
   covers them, because they inherit outer-job membership.
-- The App is in no job at all — the UI, rendering and console batching are never throttled.
+- The App is in no job at all — the UI, rendering and console batching are never throttled. It owns the outer job,
+  and it reads it: the resource strip (§11.5) asks it for its processor accounting and its member list. The outer
+  job is written only as §4 describes; the strip never writes to it.
 - No memory, disk, network, process-count or thread limit is written. The job carries exactly three things:
   `KILL_ON_JOB_CLOSE`, the priority class and the CPU rate.
 
@@ -2935,8 +2960,8 @@ fresh structure would silently clear the kill flag.
 While a post-build copy is stuck on contention, the cap and priority are raised to the Balanced values
 (70 % / BelowNormal) for the duration of that window, which is reference-counted. Light's 40 % is therefore not
 an absolute ceiling. The floor is *defined as* Balanced's values rather than as separate constants, so the two
-cannot drift apart. The floor only raises: a run with no cap — Full, or a Resolve cycles run at full priority
-(§11.1) — never opens the window, and a Normal priority is never lowered to it.
+cannot drift apart. The floor only raises: a run with no cap — Full — never opens the window, and a Normal priority
+is never lowered to it.
 
 Once a graceful stop starts draining, the cap is never re-applied and the priority cannot go below the same
 floor (§4.5).
@@ -2947,10 +2972,26 @@ When a run ends, whatever its outcome, and when a Sync, a Clean or an Optimize f
 engine trims its memory and then reports it. The trim is one aggressive, blocking, compacting garbage collection — the
 single definition `MemoryTrim.CollectAndRelease`, which the App's own trim uses too (§12.3) — and the report is one
 line on the engine's stderr: `memory: private=<MB> committed=<MB> heap=<MB>` — the process's private bytes, the
-managed heap's committed bytes as of the last collection, and the managed heap's current size. The line is written
-after the trim, so it carries what the trim left and not what the operation piled up. A checkout or a pull trims
-nothing and writes no line. stdout stays NDJSON; the App discards the engine's stderr (§4.3), so the line serves
-whoever reads that stream directly, such as a measurement harness.
+managed heap's committed bytes as of the last collection, and the managed heap's current size. A megabyte is
+1024 × 1024 bytes and a figure is rounded to the nearest whole megabyte, halves away from zero — one rule
+(`MemoryLine.RoundedMegabytes`) shared by this line, the application's diagnostics text (§13.3) and the resource strip
+(§11.5). The line is written after the trim, so it carries what the trim left and not what the operation piled up. A
+checkout or a pull trims nothing and writes no line. stdout stays NDJSON; the App discards the engine's stderr (§4.3),
+so the line serves whoever reads that stream directly, such as a measurement harness.
+
+**The private bytes have one read path.** `GetProcessMemoryInfo` is the only call that reads them (its
+`PrivateUsage`, the process's commit charge): `MemoryLine.CurrentPrivateBytes` reads this process and
+`MemoryLine.PrivateBytesOf` another one, which it opens by its id, so the engine's line, the application's diagnostics
+text (§13.3) and the resource strip (§11.5) report the same measure of the same bytes. `MemoryLine.Read` takes the
+line's `private` from the first of the two; the line's format and meaning are those above. A process that cannot be
+opened, cannot be read or has exited reads as nothing and not as a failure — between listing a process and opening it,
+it may simply have ended — and its exit is asked for explicitly, because a process object that something still holds
+a handle to can be opened and read after it has ended. The one process that looks alive after its end is one that
+exited with code 259, the value meaning *still active*; its stale figure rounds to 0 MB. `Process.PrivateMemorySize64`
+is deliberately not used: every call snapshots all the processes on the machine (milliseconds and a few kilobytes) and
+the snapshot's own buffer is part of the number it returns — on the order of a megabyte in the process that reads
+itself — whereas `GetProcessMemoryInfo` reads one process in microseconds, allocates nothing and counts nothing of
+its own. A guard forbids the snapshot counter everywhere and `GetProcessMemoryInfo` outside `MemoryLine` (§17.2).
 
 The trim happens at the end of the operation and never inside it: after a run's last event has been written and its
 slot released, so the App never waits for it, and in the `finally` of a Sync, a Clean and an Optimize — a Clean or an
@@ -2960,6 +3001,68 @@ still written, and the run's own end collects. The trim is an optimization and n
 collection that throws is swallowed after one `warning: memory trim failed: <message>` line on stderr, written before
 the memory line, which then describes an uncollected heap. An engine that is asleep (§4.7) has no process, so it trims
 nothing and writes no line; its next start trims and reports at the end of its first operation like any other.
+
+### 11.5 Resource strip
+
+The title bar shows what the tool itself costs the machine while it works: three read-only cells — processor,
+memory, parallelism — which the view of §13.2 draws. The measurement is the App's alone and needs no IPC: it reads the
+**outer job** the App owns (§4.2) and the App's own process, and asks the engine nothing. The processes of the machine
+are never enumerated — the job lists its own members and each one is opened by its id — and a guard keeps the known
+ways of enumerating them out of the source (§17.2).
+
+**CPU** is the share of the whole machine the tool used since the previous sample: the processor time the App itself
+spent plus the time the outer job accounted for (`JobObject.QueryAccounting`, the user plus kernel time of every
+process the job has held — the Supervisor, `git`, `vswhere`, each `MSBuild.exe` and whatever its targets spawned,
+members that have already ended included, so a compiler that finishes does not make the total fall), divided by the
+wall-clock time between the two samples times the number of logical processors, as a whole percent: nearest integer,
+halves away from zero, clamped to 0–100 (`ResourceStripText.CpuPercent`, in decimal arithmetic, so that an exact half
+is never lost to floating-point error). The wall-clock difference is the real one, read from a monotonic clock and not
+the nominal interval, so a tick that arrives late still yields a true figure.
+
+**RAM** is the sum of three parts, each a process's private bytes (the commit charge, read as §11.4 describes), and the
+tooltip lists them apart: the App; the engine, the process `EngineHost.EnginePid` names; and the compilers, which are
+every other member of the outer job — `git` and `vswhere` during a Sync included, and the console hosts that belong to
+members, the engine's own `conhost.exe` among them, so an engine that is awake and idle already shows a small compilers
+figure and not 0 MB. The compilers are summed from those members and never computed as a total minus the engine, so
+they cannot come out negative. While the engine sleeps (§4.7) it has no process and the job is empty: the engine and
+the compilers are a measured 0 and the figure is the App alone. Private bytes are not what Task Manager's default
+memory column shows, which is the private working set — only the private pages resident right now — so the two differ
+whenever some committed pages are not resident, and the strip's figure is the larger then.
+
+**Parallelism** is not sampled: it is application state and follows it at once. The cell holds three numbers and the
+mode word, `3/4/4 Balanced`. The first is the number of projects building now, and `0` whenever no run is in flight —
+the row states of a run whose engine died can stay *started*, so the raw counter is not trusted outside a run. The
+middle one is the run's own count, `runStarted.Parallelism`: what the engine fitted to the machine when the run started
+(§11.1) — the mode's number unless the machine was short of memory or processors — fixed for the run. With no run in
+flight there is no such count, and the cell writes the missing-value mark in its place (`0/—/4`); nothing is sampled
+or queried for it outside a run. The last one is what the mode asks for (`/4`, the table of §11.1). A run the engine
+cut to two workers therefore reads `2/2/4`, told apart at a glance from a full-width run that has only two projects
+ready at the moment (`2/4/4`), and its tooltip says why. The mode word is the cell's mode, and which mode that is
+depends on the run. While a run is in flight — a full run and a **single-project run** (§8.1) alike — the cell
+describes the run: the mode it started with (the one its start command carried), its own count and that mode's table
+value, until the run ends. A mid-run switch of the chip moves the cap and the priority at once (§11.1), but neither the
+cell nor the CPU tooltip's cap; the console note announces the switch. With no run in flight the cell follows the chip
+live. The reduction reason of §11.1 is the second half of the tooltip of a reduced run (§13.2).
+
+**Rhythm.** The sampler (`ResourceSampler`) is given its probe, its timer and its clock, and the suite drives it by
+hand (§17.3). The first time the window is loaded, visible and not minimized, it reads once as the baseline and takes
+its first sample half a second later, so the CPU and RAM cells read `—` for half a second and not for a whole beat;
+from then on it samples every three seconds. It runs only while someone could see the result: the timer stops while
+the window is hidden in the tray (the hidden-surface signal of §12.3) or minimized, and nothing is read meanwhile.
+When the window comes back it samples at once, and that sample's CPU is the average over the time since the previous
+sample, the hidden stretch included; the next one, three seconds later, is current again. The tick is a dispatcher
+timer at background priority on the UI thread, so a very busy interface may deliver a sample late — the figure is
+still true, since it divides by the elapsed time actually measured.
+
+**When a read fails.** A job query that fails (a Win32 error, or the job already closed by an exit in progress) leaves
+the CPU and RAM cells at `—` for that sample; the tooltip still gives the App's own share. The next good sample
+recovers, and its CPU is measured from the last reading the job did give. A member that ends between being listed and
+being opened counts as 0 and never blanks a cell. The member list is read into a buffer of 256 entries, so a job with
+more members would leave the surplus out of the memory sum without saying so (their processor time is still in the
+job's accounting, which does not depend on the list). A sample costs a few system calls plus one
+open-read-close per member, microseconds each, and no managed allocation after warm-up (§17.3); nothing runs off the UI
+thread. With `BO_PROBE_STRIP=<file>` the sampler appends one line per sample, which is how the rule that sampling stops
+while the window is hidden is watched in a real run (§17.5).
 
 ---
 
@@ -3052,6 +3155,24 @@ is empty and what lets clicks fall through the same pixels. Consequences that ha
   then receives no `Click` and no `IsMouseOver`, so both would have to be re-synthesized from `WM_NCLBUTTONDOWN`
   / `WM_NCLBUTTONUP`. There is no middle ground between "flyout on" and "ordinary button", and the flyout is not
   wanted here: the caption buttons are plain WPF buttons, hovered by their own template trigger.
+- **The resource strip sits in the caption, and answers for it.** An element in the caption area receives no mouse
+  events, and a tooltip needs them, so the strip's cells carry `WindowChrome.IsHitTestVisibleInChrome`; `WindowChrome`
+  turns every non-client point under a flagged element into client area — the 6 px resize border at the top edge
+  included. That is why the strip's root has no background and each of its three cells has a transparent one: only the
+  cells are client, while the 14 px between them, the bands above and below them (the strip is vertically centred and
+  as tall as its cells) and the top resize border stay the native title bar, with its drag, its double-click, its
+  system menu and its resizing. What the caption would have done over a cell, the window does itself
+  (`MainWindow.ResourceStrip.cs`). A press of the left button is handed to the native caption: after `ReleaseCapture`
+  the window sends itself `WM_NCLBUTTONDOWN` with `HTCAPTION` and the point of the press, and Windows runs its own
+  move loop — in every window state, so a maximized window is restored and carried along with the cursor, and one
+  dragged to an edge snaps, as it does from the left logo lock. WPF's `Window.DragMove` is deliberately not used: it
+  does nothing unless the window is in its normal state, and this window opens maximized. The loop swallows the
+  release of the button, so the window then gives WPF a `WM_LBUTTONUP`, which is what `DragMove` does too. A double
+  click (`ClickCount == 2`) is told apart before the drag is handed over and toggles maximize and restore through the
+  method the caption button uses, and releasing the right button opens the system menu at the cursor.
+  `SystemCommands.ShowSystemMenu` takes a logical (DIP) screen point while `PointToScreen` gives device pixels, so the
+  anchor is divided by the window's scale (`SystemMenuAnchor`); undivided, the menu opens away from the cursor on any
+  scaled display. The left logo lock is not flagged and stays caption.
 - The window opens **maximized**; `Width`/`Height` (1400 × 800) remain as the restore size. Minimum size
   1240 × 620. DPI awareness is PerMonitorV2 (px → DIP 1:1), with `UseLayoutRounding` at the root so hairlines
   stay hairlines.
@@ -3068,35 +3189,50 @@ distinct exit code is then all that sets this case apart from the silent one. Th
 switch from `ui-state.json` itself, since it never builds a window or a view model.
 
 **What closing the window does is the user's setting** — *Close to tray* under Settings → General (§13.3), on
-by default. `X`, `Alt+F4` and the system menu's *Close* all arrive at the window's one `Closing` handler, and a
-pure rule (`WindowCloseRule`) decides; the window only applies the answer. With the switch on, the close is
+by default. `X`, `Alt+F4`, the system menu's *Close* and an `Esc` that has nothing left to close or stop (§13.7) all
+arrive at the window's one `Closing` handler, and a pure rule (`WindowCloseRule`) decides; the window only applies the
+answer. With the switch on, the close is
 cancelled and the window hides to the tray; the first time this happens, an **OS tray balloon** explains it,
-once — in-app toasts are prohibited by the design. With the switch off, the close becomes a full exit. No shell
+once — in-app toasts are prohibited by the design. With the switch off, the close is the title bar's *Exit* (below). No shell
 switch is copied anywhere: whatever acts on one reads it from `ui-state.json` at the moment it acts — this one on
 every close — so a value saved in Settings applies to the very next close.
 
-**A full exit waits for the work in flight.** The tray menu's *Exit* always asks for one, whatever the switch
-says; `X` asks for one when the switch is off, and both take the same shell path. With nothing in flight the
-application closes at once — from the tray, without showing the window first. Otherwise the exit lets the work
-finish. A run is stopped gracefully (§4.5) — or, still in its opening choreography or waiting for its engine to wake
-with nothing sent, withdrawn (§14.5) — so its in-flight projects finish, post-build copy included. A Clean,
-Optimize, checkout or pull has no cancel and runs to its end, since cutting one off could leave the tree half-changed;
-a Sync has no cancel either, and a fetching one writes git refs, so it too is let finish. No Sync starts once the exit
-has been asked for — neither the automatic one (§10.3), nor the one a Clean, Optimize, checkout or pull chains on
-completion, nor one that finds nothing in flight and so lets the exit close at once: each would be new work started
-after the request, only to refresh a window that is closing, and the next start syncs anyway. Requests waiting at the
-gate of a sleeping engine (§4.7) are withdrawn the same way: none is sent and no wake starts, and a waiting Sync that
-does not go is released by its own roll-back. A project-log load waiting there is not work the exit waits for. The
-job's own end releases the exit. While the exit waits, the ribbon reads the Stopping line whatever the phase (§13.2)
-and the console records `exit requested — the app closes when the work in flight finishes` once. The window stays and
-comes forward — out of the tray, or restored if it was closed while minimized — because an exit waiting behind a
-hidden window would look like nothing happening; a later `X` neither hides it nor asks again, and a second request
-sends no second stop and writes no second line. The wait is not endless — if the engine falls silent (§4.6) or dies,
-the exit goes ahead, and the application's shutdown closes the engine and whatever it left through the outer job
-(§4.4); an engine that is only quiet — a long git write, a build step that prints nothing — is cut off the same way
-(§20). The view model decides only *when* (`RequestExit`, then `ExitReady` once); the shell does the closing, and from
-that moment every `Closing` really closes. A Windows session that ends closes the application at once, with neither
-the wait nor the tray — Windows does not wait either.
+**A full exit stops the work in flight — once the user confirms it.** Four requests ask for one and all four take the same
+decision: the title bar's *Exit* button and `Ctrl+Q` (§13.3), the tray menu's *Exit* whatever the switch says, and `X`
+when the switch is off. With nothing in flight the application closes at once — from the tray without showing the window
+first. With work in flight nothing is stopped yet: the exit's confirmation card opens under the *Exit* button and says what
+will stop and what will stay (§13.3). From `X` and from the tray the window first comes forward — out of the tray, or
+restored if it was closed while minimized — because the card cannot show on a hidden window. That happens on a dispatcher
+turn of its own, since WPF refuses `Show` while a close is in progress, and the turn asks again: if the work ended
+meanwhile the application closes without the card, and if an exit is already under way it does nothing. *Work in flight*
+is the workspace's one question (`WorkspaceIdle`): a run — its planning and opening choreography included — a Sync (the
+silent one included), a Deep Clean, an Optimize, a checkout or a pull; `RunViewModel.ExitWork` names which one, for the
+card.
+
+*Stop and exit* on the card is what stops it, and how depends on the work. A run is stopped hard (§4.5) — or, still in
+its opening choreography or waiting for its engine to wake with nothing sent, withdrawn (§14.5) — so its in-flight
+compiles are terminated rather than drained; the engine reports them `failed("stopped")`, and whatever it did not get to
+report is invalidated at the next start by the in-flight ledger (§8.7). Either way the next Build compiles them again,
+and finished projects keep their results. The exit waits for the engine's `runStopped` for at most three seconds
+(`ExitStopWaitMs`) and then goes ahead regardless. A Sync, a Deep Clean and an Optimize have no cancel and are not waited
+for: the shutdown ends them with the engine. Cutting them off is safe — a Deep Clean removes the state before the folders
+(§5.2), a restore cut short is completed by the next Optimize, and the next start syncs anyway (§20 has the one residue an
+interrupted fetch can leave). A checkout and a pull are waited for: git is writing the working tree and `.git/index`, and
+cutting it off would leave a half-switched tree behind a stale `index.lock`. No Sync starts once the exit has been asked
+for — neither the automatic one (§10.3), nor the one a checkout or pull chains on completion: each would be new work
+started after the request, only to refresh a window that is closing, and the next start syncs anyway. Requests waiting
+at the gate of a sleeping engine (§4.7) are withdrawn the same way: none is sent and no wake starts, and a waiting Sync
+that does not go is released by its own roll-back. A project-log load waiting there is not work the exit waits for.
+
+While the exit stops the work, the closing screen covers the window (§13.3); underneath, the ribbon reads the Stopping
+line whatever the phase (§13.2) and the console records `exit requested — ending the work in flight, then closing` once,
+followed for a run by the hard stop's own line. A later `X` neither hides the window nor asks again, and a second request
+sends no second stop and writes no second line. The wait for a git write is not endless — if the engine falls silent
+(§4.6) or dies, the exit goes ahead, and the application's shutdown closes the engine and whatever it left through the
+outer job (§4.4); a git write that is only slow is cut off the same way (§20). The view model decides only *when*
+(`RequestExit`, then `ExitReady` once); the shell does the closing — after the closing screen's bar has filled — and from
+that moment every `Closing` really closes. A Windows session that ends closes the application at once, with neither the
+card, the screen nor the tray — Windows does not wait either.
 
 **A build that runs while the window is away is not invisible.** When the main window is hidden *and* a build is
 in flight (`Starting` / `Running` / `Stopping` — `Syncing` is deliberately out of scope), the product mark
@@ -3108,9 +3244,9 @@ while the main window is hidden, so it cannot be a popup inside it.
 goes out at once — once the engine has woken, if it was asleep — and the end finale never starts (§14.5). The signal
 behind that rule gates every other surface the run's events would otherwise redraw: the event stream's rows, the
 graph's status, phase and selection pushes and its filter refresh, the ribbon, the Build menu, the project rows and
-their list, the action bar's counter chips and the body of the 200 ms tick (live durations, the console header's line
-counter, following the frontier — only the engine's two tick jobs still run, the silence watchdog and the idle rule,
-§4.6 and §4.7). The console document is left alone too: the narrative goes on filling the
+their list, the action bar's counter chips, the resource strip's cells and the body of the 200 ms tick (live
+durations, the console header's line counter, following the frontier — only the engine's two tick jobs still run, the
+silence watchdog and the idle rule, §4.6 and §4.7). The console document is left alone too: the narrative goes on filling the
 view model's store, and the document is built from the store's last slice, once and without the tilt, when the window
 comes back (§13.5). Infinite decorative animations run only while their element is visible (§14.5), so a hidden window runs
 none. Each surface only notes that it has fallen behind; when the window comes back each catches up with the model in
@@ -3119,7 +3255,8 @@ cross-fade of a row's dot. The graph, the ribbon's progress bar and a row whose 
 their own short transitions rather than a replay of the run. A topology change is the exception: the graph is rebuilt on the spot even while hidden, and the return
 does not repeat it. Measured with CPU cycle counters, a build that runs in the tray costs the UI thread a small
 fraction of what the same build costs with the window in front, and no piece of its work holds the thread long
-enough to be felt.
+enough to be felt. The resource strip's sampler stops with the signal, and also while the window is minimized: nothing
+is read from the machine meanwhile, and one sample is taken the moment the window is back (§11.5).
 
 Three properties make the overlay a good citizen rather than a box parked on the desktop. It never takes focus and never
 appears in Alt-Tab (`ShowActivated=false` plus `WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`). Clicking the drawn logo
@@ -3273,10 +3410,19 @@ operation markers, so the branch chip's amber dot and the git locks are current 
 The title bar opens with a **logo lock**: the product mark at 19 px in full colour, the product name, a
 hairline, and finally the company logo at 10 px and 55 % opacity. The hierarchy is the point — product ahead
 and vivid, company behind and quiet. The lock ends there, and the title bar names no repository: the action
-bar below says it once, with the workspace name and the branch chip. The other end, ahead of the caption
+bar below says it once, with the workspace name and the branch chip. The middle of the bar is the **resource strip**
+(§13.2), centred on the window itself and not on the space between the two ends, so neither the lock, nor the command
+group, nor the pill's coming and going moves it. The other end, ahead of the caption
 buttons, opens with the **update pill** and a hairline of its own (§13.3), then carries the window's application
 commands in decreasing order of use: the three view-mode toggles, a hairline, then the gear (Settings), the
-sparkle (What's new) and the `i` (About). Both hairlines are one style. The cluster is docked right, so the pill
+sparkle (What's new) and the `i` (About), and last, behind a hairline of its own, the *Exit* power button that quits
+the application (§12.3, §13.3). All three hairlines are one style. Every icon in the cluster is drawn in the same
+16 px box, *Exit* included. Neighbouring items stand 1 px apart and each hairline keeps 8 px on either side, so it stands
+9 px from the buttons beside it and the groups read as groups. The design writes a 2 px gap; at 2 px the cluster
+would come within 1 px of the resource strip in the narrowest window with the pill showing, and the strip never comes
+closer to the cluster than a hairline stands from its buttons. WPF's `StackPanel` has no gap, so the cluster and the pill's slot are a
+`GapStackPanel`, whose gap goes only between shown children and is a whole number of device pixels at every scale: a
+hidden pill leaves no gap behind, and the icons do not shift by a pixel when it arrives. The cluster is docked right, so the pill
 grows into the empty space on its left: the icons keep their distance from the window's right edge whether the
 pill is there or not. The pill shows only while a downloaded update is ready to install (§12.5); the application
 starts with no offer, so it is absent until one arrives. It is neutral (no amber, the title bar's rule), and it
@@ -3352,20 +3498,22 @@ the GitHub feed is used: a broken variable of a development gate must not keep t
 ### 13.1 MVVM
 
 `RunViewModel` is the single run-facing view model, split across partial files by surface — the run core, the
-action bar, the event stream, the workspace, the automatic Sync, the git operation in progress, the safe exit,
-Esc's run layer, the discovery state and the update offer. It owns the project rows, the counters, the phase, the
-selection, the filter and the command set. Rows are `ProjectRowViewModel` — observable state only; every visual
-decision (colour, glyph, badge) is made in XAML from that state.
+action bar, the event stream, the workspace, the automatic Sync, the git operation in progress, the full exit,
+Esc's run layer, the discovery state, the update offer and the resource strip. It owns the project rows, the counters,
+the phase, the selection, the filter and the command set. Rows are `ProjectRowViewModel` — observable state only;
+every visual decision (colour, glyph, badge) is made in XAML from that state.
 
 Text that the design specifies literally is produced by **pure, testable static classes**, not by controls:
 `RibbonText` (one line per ribbon phase), `StreamText`, `InteractionText`, `UpdateText`, `ProjectFilter`,
-`RunCounters`, `LayerGrouping`. A control that also decided its own wording would be a second source of truth.
+`RunCounters`, `LayerGrouping` and, from Core, `ResourceStripText` (§11.5). A control that also decided its own
+wording would be a second source of truth.
 
 ### 13.2 Panels
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│ TITLE BAR 40px — mark · title · logo   Update v │ ⊞ ≡ ▣ │ ⚙ ✦ i  — □ ×│
+│ TITLE BAR 40px — mark · title · logo · resource strip (centred) ·    │
+│                  Update v │ ⊞ ≡ ▣ │ ⚙ ✦ i │ ⏻  — □ ×                 │
 ├──────────────────────────────────────────────────────────────────────┤
 │ STICKY RIBBON 32px — operation pill · phase · building chips ·        │
 │                      failure chips        · global progress 2px      │
@@ -3379,15 +3527,66 @@ Text that the design specifies literally is produced by **pure, testable static 
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-**Title bar.** The brand alone: the product mark, the product name, a hairline, the company mark. It carries
-no repository or branch context — the branch already has a chip in the action bar, and the one remaining fact,
-*which workspace is open*, sits next to it as a mono label whose tooltip is the repository root. Its right end is
-the update pill and the application commands (§12.4).
+**Title bar.** Brand plus application-level telemetry: on the left the product mark, the product name, a hairline and
+the company mark; in the exact middle the resource strip (below); at the right end the update pill and the
+application commands (§12.4). It carries no repository or branch context — the branch already has a chip in the
+action bar, and the one remaining fact, *which workspace is open*, sits next to it as a mono label whose tooltip is
+the repository root. The run's own story — phase, counts, failures — stays in the ribbon.
+
+**Resource strip.** Three read-only cells in the exact middle of the bar, 14 px apart and without a label: each is a
+12 px Lucide icon (`text-faint`, stroke 1.8 — 1.9 for the parallelism lines, §14.4), 5 px of air, then its value in
+Geist Mono 11 px with tabular figures (`text-dim`). What each value means and how it is measured is §11.5; this is how
+it looks and behaves.
+
+- **CPU** (*cpu*) — a whole percent: `1%`, `69%`.
+- **RAM** (*memory-stick*) — whole megabytes under 1 GB (`310 MB`), one decimal from 1 GB (`4.8 GB`). The switch
+  happens when the rounded megabytes reach 1024, so `1024 MB` is never written; the megabyte count is the one rule of
+  §11.4 (`MemoryLine.RoundedMegabytes`), the decimal is rounded in integer arithmetic, and the separator is a point
+  whatever the culture (`ResourceStripText.Memory`).
+- **Parallelism and mode** (three vertical lines) — what this run does, then what the mode is: the projects building
+  now and, after a `/`, the run's own count, both `text-dim`; then `/` and the number the mode allows in `text-faint`,
+  and 5 px later the mode word in Geist 11 px `text-faint`. `0/—/4 Balanced` while idle, `4/4/4 Balanced` when four
+  projects build at once, `2/2/4 Balanced` where the engine fitted the run to the machine. The mode word only reads;
+  the mode is changed on the perf chip of the action bar.
+
+An unreadable value is `—`. Each cell reserves the width of its widest value with hidden ghost texts taken from Core
+constants (`100%`, `12.3 GB`, and `12/12/12` followed by `Balanced`), the live value left-aligned beside the icon, so
+`1%` becoming `69%` or `310 MB` becoming `4.8 GB` moves nothing and the strip is as wide in every state as in the
+widest.
+
+The tooltips are the only labels. They open below the cell and, as the application's tooltips do by default, at once. CPU:
+`CPU used by <product> — app, engine and compilers`, with ` · cap 70%` added for a mode that has a cap (the mode's table
+value; Full has none and adds nothing) — the cap is in the tooltip and never in the cell. RAM:
+`Memory used by <product> · app 310 MB · engine 85 MB · compilers 4.4 GB`, a sleeping engine reading
+`engine 0 MB · compilers 0 MB` and a part that could not be read `—`. Parallelism: while idle
+`Balanced — up to 4 projects build in parallel`; during a run `3 of 4 projects building in parallel`, where the `4` is
+the run's own count, `0 of 4` included (the cell describes the run from its first moment), and a run started from a
+single project's row reads the same way; in a run the engine reduced, `2 of 2 — reduced: <reason>` with the engine's
+reason word for word. The product name comes from
+`AppIdentity`, and the texts live in `ResourceStripText` and nowhere else.
+
+The strip only reads. Nothing in it is clickable, no cell has a hover background, the cursor does not change, it
+carries no amber (§14.4), and a changing value plays no animation or transition; `2/2/4` is information, not a warning.
+
+**Position and hit testing.** The title bar row holds a `Grid` with the `DockPanel` of the two clusters and, declared
+after it so that it draws on top, the strip with `HorizontalAlignment="Center"`: it is centred on the bar and not on
+the space between the clusters, so the logo lock, the command group and the update pill's coming and going do not move
+it. At the narrowest window (1240 px) with the pill showing, it touches neither cluster. Only its three cells take
+part in hit testing — a tooltip needs mouse events — and the rest of the strip is native caption; what a press on a
+cell does is §12.2.
+
+**Writing the values.** The texts of the cells and the three tooltips are written from code, not bound in XAML.
+`ResourceStrip` listens to the view model's strip properties (`RunViewModel.ResourceStrip.cs`) and, while the surface
+is hidden (§12.3), writes nothing — a changed text invalidates measurement, and during a run the count of projects
+building changes many times a second — and notes only that it is behind; when the surface shows, it catches up in one pass. A
+`{Binding}` would not know that gate, and a tooltip is not part of the tree and inherits no data context in the first
+place, so its content is assigned the same way. A source guard keeps bindings out of the markup (§17.2). To UI
+Automation the strip is a named group, *Resource usage*, and its values are read from their own text.
 
 **No workspace.** Without a repository root — on first run, or after a Save closed the workspace (§13.3) — the
 window is the first-run screen: the project list carries the setup invitation (`Configure the workspace`, a
-checklist of the root and the layer count, *Open settings* and *Import settings…*), the graph its dashed
-*Graph appears after Sync* box, the console's prompt line `Waiting for a workspace` (§13.5), the ribbon
+checklist of the root and the layer count, *Open settings* and *Import settings…*), the graph its empty view
+(`No graph`, below), the console's prompt line `Waiting for a workspace` (§13.5), the ribbon
 `Not configured — repository root not set`. The panel headers carry no counts — no `N projects · N
 dependencies`, `N lines` or `N events`, nor the console's `compact` tag — and the PROJECTS header neither the
 `build-order` label nor the filter box: there is nothing to count or filter. Sync, Build, the maintenance box and
@@ -3396,19 +3595,33 @@ the action bar's chips are disabled. One switch drives the panel side of this fr
 
 **While a Sync discovers the project set** (§10.2), neither left panel sits empty. The graph's body is a centred
 block on `surface-base` — Lucide *network* at 28 px, 1.4 stroke, `text-faint` at 70 % opacity, and 10 px below it
-`Graph appears once projects are discovered` in 12 px `text-faint`; the dashed *appears after Sync* box, the node
-surface and the header's `N projects · N dependencies` count are hidden for the duration (`GraphView.ApplyBodyState`,
-the one gate for the header count and the three body layers). The project list shows its own block, also on
+`Graph appears once projects are discovered` in 12 px `text-faint`; the empty view, the node surface and the
+header's `N projects · N dependencies` count are hidden for the duration (`GraphView.ApplyBodyState`, the one gate for
+the header count and the two body layers — the discovery block and the empty view are one block with two texts). The
+project list shows its own block, also on
 `surface-base` with 24 px side padding: Lucide *list* in the same icon look, `Discovering projects` in 13 px/500
 `text-secondary`, and a mono 11 px tabular line that never wraps — `29 found`, or with an external root registered
 `31 found · 29 repository · 2 external`; the total is one step brighter (`text-dim`), the rest `text-faint`. There
 is no denominator and no source name, because how many solutions or roots remain is not known until the scan ends,
 and nothing moves — no spinner, no pulse; only the numbers change. The block is a list state like the others:
-`ListInvite.Resolve` puts it after the setup invitation and before *No projects found* and *No projects match this
+`ListInvite.Resolve` puts it after the setup invitation and before the empty view and *No projects match this
 filter*, so a filter that matches nothing cannot cover it. The PROJECTS header hides its filter box, `build-order`
 label and filter chip meanwhile, through the same gate as the no-workspace look (`ShellRoot.ApplyListTools`); the
-filter itself survives the Sync and comes back with its chip. The counter is a polite live region (§15). The
-first-run screen does not change: without a workspace there is no Sync and no discovery.
+filter itself survives the Sync and comes back with its chip. The counter is a polite live region (§15).
+Discovery never reaches the first-run screen: without a workspace there is no Sync.
+
+**An empty panel says so.** Whenever the project list has no rows and none of the states above applies — a Clean or
+an Optimize is running, a job or a Sync ended without bringing a plan back, the engine is not ready yet, a Sync found
+no projects — the list shows its empty view: the same Lucide *list* in the discovery look and, 10 px below it,
+`No projects` in 12 px `text-faint`. The graph does the same whenever it has no nodes, first run included: its
+*network* icon and `No graph`, in the one body block the discovery state also uses. Each panel therefore has one
+picture, whether it is waiting for a scan or has nothing to show. The text is deliberately general: it does not claim
+why the panel is empty, so it is true whichever operation emptied it. The decision does not read the phase:
+`ListInvite.Resolve` takes the setup invitation first, then
+discovery, then the empty view, then the filter line. Three states keep their own look because they say something
+else — the setup invitation asks for settings, the discovery blocks are busy and count, and the filter line says
+that projects exist but the filter hides them; *No projects* there would send the user looking for missing projects
+instead of clearing the filter.
 
 **Sticky ribbon.** On the left a **persistent operation pill** — `SYNC` · `BUILD` · `REBUILD` · `CLEAN` ·
 `DEEP CLEAN` · `OPTIMIZE` · `RESOLVE` — mono, caps, 19 px, one-pixel border. `CLEAN` is a `-t:Clean` run —
@@ -3461,7 +3674,7 @@ path — declining a request leaves the `stopped` line standing, because that li
 
 An `Esc` while a stop already drains is the hard stop (§4.5): it runs the same command as a press of the *Stop now*
 button, so the console gets one line for it and the button reads *Terminating…*; the phase line itself does not animate.
-A further `Esc` does nothing.
+A further `Esc` leaves the run alone: it closes the window the way `X` does (§13.7).
 
 **Projects list.** 36 px rows: a 2 px status stripe (3 px when selected) running the row's full height, the
 8 px **status dot** — the same colour as the stripe — the project name with the solution name beside it, then
@@ -3912,12 +4125,12 @@ the event stream clear, the list and the graph start over, the new section's fir
 `Configuration → Release`, and nothing goes to the network. The segment is therefore enabled exactly when a Sync
 could start (`CanSwitchConfiguration`): a workspace is open, no run is in flight or being planned, no workspace
 operation (Sync, Clean, Optimize, a checkout, a pull) is in flight and the engine is available. It follows the
-Sync command's own gate, so it locks the moment a Sync is requested, not when the engine answers — which is what
-a return to the window needs: clicking the segment of a window in the background activates the window first, the
-activation can request a silent Sync (§10.3), and only then is the click processed; the segment is locked by
-that time, so that click is swallowed and the next one switches. A switch accepted while a Sync was in flight
-would let that Sync's answer, computed for the old configuration, colour the rows of the new one. A git
-operation left half-way does not lock it, exactly as it does not lock the Sync button.
+Sync command's own gate, so it locks the moment a Sync is requested, not when the engine answers: a switch accepted
+while a Sync was in flight would let that Sync's answer, computed for the old configuration, colour the rows of the
+new one. A click on the item not selected that brings the window back from the background is the one case that lock
+would get wrong — Windows activates the window before it delivers the click, and a Sync requested at the activation
+would lock the segment under it — so the return to the window starts no Sync for that click (§10.3) and the click
+switches. A git operation left half-way does not lock it, exactly as it does not lock the Sync button.
 
 **The maintenance box.** Three icon buttons in one chip-weight box — *Clean* (eraser), *Optimize* (gauge) and
 *Resolve cycles* (unlink) — 24px tall, `surface-raised`, one hairline border, `radius-xs`, clipped, with a
@@ -3992,15 +4205,15 @@ behaves identically**, and for the reason that generalises the rule: an operatio
 plan takes the old one down with the click, not with the reply — and an Optimize ends in a Sync. A Sync on its
 own does not take the plan down: it replaces decisions, not the plan's structure (§10.2).
 The phase moves
-to `Boot` for the duration, which is what makes an empty list honest — the list invite reads an empty list in
-`Idle` as "no projects under this folder", which would be a lie — and the graph shows its own *appears after
-Sync* empty state. That is the job's own stretch, before any Sync: the moment the chained Sync is requested, both
+to `Boot` for the duration — the project states are no longer known, and the ribbon's phase line says it is waiting
+for a Sync — and both panels show their empty views (*No projects*, *No graph*; §13.2). That is the job's own stretch, before any
+Sync: the moment the chained Sync is requested, both
 panels switch to their discovery blocks and the list counts the projects as they are found, until the topology
 fills them in (§10.2). A repository change does exactly this for the same reason; a branch change does not — its
 rows and decisions stay in the plan, only the screen starts over until its Sync's topology brings them back
 (§10.2). Because the emptying happens at the
-click, a command that fails to send, or one the Supervisor rejects, leaves the list empty until the user runs a
-Sync; that is the accepted cost of acting on the click rather than on the engine's acceptance.
+click, a command that fails to send, or one the Supervisor rejects, leaves the list empty — showing its empty view —
+until the user runs a Sync; that is the accepted cost of acting on the click rather than on the engine's acceptance.
 
 This costs no extra waiting in practice. No run starts for the whole of a Sync, a Clean or an Optimize — or of a
 checkout or a pull, the same busy question (`WorkspaceBusy`): the run commands are closed for that stretch
@@ -4153,8 +4366,8 @@ shadow, and a 140 ms pop-in (4 px up, scale .985 → 1). Outside click, Esc, or 
 that opened them closes them. That last one needs saying because WPF does not give it for free: a popup that
 closes on outside clicks drops its `IsOpen` while the press is still travelling, and the same press then
 re-checks the trigger and reopens it — the gesture cancels itself out and the popover cannot be closed by
-the control that opened it. One gate (`PopoverToggle`) closes that window for all five popovers — branch, the
-Build chevron, the row menu, the Open-in-VS chooser and the update card. Rows inside them are 28 px. The branch popover is
+the control that opened it. One gate (`PopoverToggle`) closes that window for all six popovers — branch, the
+Build chevron, the row menu, the Open-in-VS chooser, the update card and the exit card. Rows inside them are 28 px. The branch popover is
 272 px wide and carries a search box; picking a row is a checkout (§10.3), picking the active branch does
 nothing, and the remote `origin/HEAD` pointer is not listed.
 
@@ -4189,7 +4402,7 @@ disabled and the line names what it waits for, in a fixed order — a Clean, Opt
 (`Available once the build finishes — Esc stops it.`; the design says F5, but F5 only builds — the key's name is
 read from the shortcut catalog). That line follows the Stop button's stage (§4.5): once a stop has been requested the
 next Esc is the hard stop, so it says `Available once the build stops — Esc stops it now.`, and once the hard stop has
-gone Esc does nothing, so it drops the key (`Available once the build stops.`). The reason is one computed property
+gone Esc stops nothing more — it closes the window the way `X` does — so it drops the key (`Available once the build stops.`). The reason is one computed property
 of the view model; its task bucket takes the workspace work other than Sync from the same list the workspace-busy
 question reads, so the two cannot drift. It is re-evaluated at the workspace-busy notification — which every change
 of the Sync, Clean, Optimize, checkout and pull flags and of the run lock reaches, and so does the end of a run — when
@@ -4209,11 +4422,13 @@ empty band. The card's root carries the pill's screen-reader name, `Update to <v
 
 *Restart to update* raises a request on the view model, and the command itself is the gate: a call that bypasses
 the button's `CanExecute` still raises nothing while the restart is locked or there is no offer. The shell answers
-by closing the card and playing **the restart screen** (`UpdateRestartScreen`), the window's topmost layer — above
-the modals and over the title bar, taking clicks in the caption band too, so neither dragging nor the window
-buttons reach through it. On `surface-base` it centres a 232 px column: the product mark at 30 px,
-`Updating <product>` at 13 px/600, the version change in 11 px mono (installed in `text-dim`, an 11 px arrow,
-incoming in `text-secondary`), a 2 px amber progress bar and a step line in 11 px `text-faint`. There is one step,
+by closing the card and playing **the closing screen** (`ClosingScreen`) in its restart mode. The closing screen is the
+window's topmost layer — above the modals and over the title bar, taking clicks in the caption band too, so neither
+dragging nor the window buttons reach through it — and it has two modes that share it, this one and the exit's (below);
+only one ever plays. On `surface-base` it centres a 232 px column: the product mark at 30 px, a heading at 13 px/600, a
+middle line in 11 px mono, a 2 px amber progress bar and a step line in 11 px `text-faint`. In the restart mode the
+heading is `Updating <product>` and the middle line the version change (installed in `text-dim`, an 11 px arrow,
+incoming in `text-secondary`). There is one step,
 `Closing <product>…`, and the bar fills linearly over its 800 ms. Closing is the only step the application's own
 window can truthfully show: Windows does not let a running program's files be replaced, so the installation
 happens after the application has closed, in `Update.exe` with no window, and the new version then opens like any
@@ -4221,15 +4436,55 @@ start (§12.5). The numbers live in a pure core (`UpdateRestartTimeline`); the s
 frame timer against an injected clock, so tests step through it frame by frame without waiting. The step line is a
 polite live region, announced once per step rather than per frame.
 
-When the bar is full the timer stops, the screen raises `BarFilled`, and the shell sends the application down the
-safe full exit that tray → *Exit* takes (§12.3) — which also waits for any work that started meanwhile. The exit is
-asked for only then on purpose: requested in the same turn as the screen, the shutdown runs at the dispatcher's
+When the bar is full the timer stops, the screen raises `BarFilled`, and the shell asks for the full exit of §12.3
+without a card — the user has just confirmed the restart, and any work that started meanwhile ends by the exit's own
+rules. The exit is asked for only then on purpose: requested in the same turn as the screen, the shutdown runs at the dispatcher's
 Normal priority, ahead of the Render-priority pass that first draws the screen, and the window would close before
 the screen was ever seen. The screen has no exit motion; it stays, bar full, until the window closes. The new
 version opens with the amber dot on the sparkle button, since the version last read in What's new is no longer
-the running one (below). While the screen shows, the window ignores the keyboard — every key is consumed
+the running one (below). While the screen shows, in either mode, the window ignores the keyboard — every key is consumed
 at the window's tunnelling key event, before any shortcut binding sees it — and the global hotkeys do nothing
 (§13.9).
+
+**The exit card** is the title bar's second popover (`ExitCard`, on the same base as the update card), opened by the
+*Exit* button or `Ctrl+Q` while work is in flight (§12.3); with nothing in flight both close the application at once
+and no card appears. The button ends the right cluster: a small icon button (22 px, radius 4) drawing Lucide *power*
+at 16 px — the box its neighbours use — and 1.7, `text-secondary` at rest and `surface-raised` with `text-primary` on hover. While the card is open it
+sits on `surface-overlay` in `text-primary` — not the icon button's amber active state: the title bar carries no amber
+besides the mark — and its tooltip is off; otherwise the tooltip is `Exit — quit and end every process (Ctrl+Q)`, the
+shortcut catalog's sentence and gesture, opening below. The card hangs 9 px below the button with its *right* edge on
+the button's (`PopoverPlacement.BelowRightEdge`), in a 320 px `Ds.Popover` shell without padding, and drops in from 4 px
+above, scaling from its top-right corner (§14.5). Being a popup — a window of its own — it sits above everything, the
+modals included, and unlike the update card a dialog opening does not close it. It closes on *Cancel*, a second press on
+the button or `Ctrl+Q`, an outside click and Esc, and Esc closes it before anything else, an open dialog included
+(§13.7). Opening puts keyboard focus on *Cancel*. The open state lives on the button (`DsChrome.IsActive`, two-way with
+the popup's `IsOpen`), the way the update pill's `IsChecked` carries its card.
+
+The card is three blocks separated by `border` hairlines. The **status** block names the work as a caps label in 11 px
+`text-faint` — `BUILD IN PROGRESS`, likewise for a Rebuild, Resolve, Clean, Deep clean, Optimize, Sync, branch switch or
+pull — with the run's progress in mono on the right (`14/38`: the ribbon's own two counters, absent before the run has a
+plan), and under it one 13 px/500 sentence in `text-primary`: `Exit stops the build, then quits.`, or, for the checkout
+and pull the exit waits for, `Exit waits for the branch switch, then quits.` The **ends on exit** block lists what the
+exit will end: the outer job's processes counted by name (`JobProcessCensus` — each PID is named on its own through
+`ProcessImage`, nothing scans the machine), in 11 px mono with the name in `text-secondary` and `×N` in `text-dim` on
+the right, the largest count first. The engine itself and the console hosts are not listed — they belong to the
+application, not to the work — so the block disappears when nothing else is there. The list is counted only while the
+card is open, once a second. The **decision** block says in one 12 px `text-dim` line what stays — for a run `4 projects
+in flight stay unbuilt. Finished projects keep their results; the next Build picks up the rest.`, and for each other job
+what its cut leaves — over a right-aligned *Cancel* (secondary) and *Stop and exit* (danger, with a 12 px power icon;
+*Wait and exit* for a git write). The card follows the view model (`ExitWork`): when the work ends while it is open it
+turns into `EXIT` and `Nothing is running. Exit quits right away.` with an *Exit* button, and the progress, the process
+block and the outcome line go. Every text lives in one class (`ExitText`), and what the button does is decided when it
+is pressed, from the work in flight at that moment.
+
+*Stop and exit* closes the card and plays the closing screen in its **exit mode**: `Closing <product>` as the heading,
+the work and its progress as the middle line in `text-dim` (`Build · 14/38`), and two steps — `Stopping build…` (or
+`Finishing branch switch…`), then `Ending 5 processes…`, the number being the processes the card counted. The first step
+fills half the bar over at least 500 ms and holds there until the view model says the exit is ready (`ExitReady`: the
+engine's `runStopped`, the stop wait running out, or at once for a job that is cut off); the second fills the rest over
+500 ms, and only when the bar is full does the shell close the application — so both lines can be read and the screen is
+drawn before the window goes. The numbers live in a pure core (`ExitClosingTimeline`), read on every frame like the
+restart's.
 
 **The three modals — Settings, About and What's new — share one shell** (`ModalDialog`, with its look in the
 `Ds.ModalDialog` template). It owns everything that is not content: a full-bleed scrim, the `Ds.Dialog` frame
@@ -4270,27 +4525,27 @@ The rail exists because settings grow. A single column put every section under t
 setting squeezed it further; a section list keeps each page short and gives the next settings a place to land
 without widening the dialog. **General** is that place. Its rows come from one catalog
 (`GeneralSettingsCatalog`) in six groups — *Startup* (*Start with Windows*, *Start minimized to tray*, *Close
-to tray*), *Build* (*Pull before build*, *Resolve cycles at full priority*), *Branches* (*Stash and switch
+to tray*), *Build* (*Pull before build*), *Branches* (*Stash and switch
 branches*, §10.3), *Console* (*Compact console*, §13.5), *Engine* (*Stop the engine when idle*, §4.7) and
 *Notifications* (*Show notifications*) — and every row is drawn by one template (`Ds.Settings.ToggleRow`): the name
 over a single line of description on the left, a switch on the right, a hairline between rows but not above a group's
 first. Adding a setting is adding a catalog row; there is no layout work. The row is also the setting's one default:
 the view model's field, the window's seed from a `ui-state.json` that has no key for it and the shell switches' reader
-all ask the catalog (`DefaultOf`), the dialog's draft opens on the row and *Clear* returns to it, and for the five
+all ask the catalog (`DefaultOf`), the dialog's draft opens on the row and *Clear* returns to it, and for the four
 workflow preferences — the ones that are not shell switches — the row carries the approved value together with the
 reason for it, so that neither is written twice in the source. A row that depends on another (*Start minimized to
 tray* on *Start with Windows*) fades to the switch's own disabled opacity and stops taking input while its parent is
 off, without moving anything. Every switch on the page drives behaviour. *Stash and switch branches* follows the pull
 switch's rules: saved with *Save*, carried to the engine on the next checkout, and a console note written only when
-its value actually changed. *Resolve cycles at full priority* follows the same rules and travels with every `startRun`
-(§11.1). *Compact console* is saved and noted the same way — `Compact console on — errors, the first warnings of each
-project and a warning count from the next run`, or `Compact console off — every MSBuild line is shown from the next
-run` — but it never reaches the engine: it is the App's own choice of how the console writes each project's output
-(§13.5). The mode in effect follows the switch whenever no work is in flight — no run, Sync, Clean, Optimize, checkout
-or pull; while work is in flight the mode it had when that work started holds, so a run's narrative is written in one
-mode and no project's count of warnings changes its rules halfway. A *Save* made while nothing is in flight therefore
-takes effect at once, and one made during a run or any other work the moment none is left, however that work ended — a
-pull the engine refused or a run that never started included. Text already on screen is never rewritten.
+its value actually changed. *Compact console* is saved and noted the same way — `Compact console on — errors, the
+first warnings of each project and a warning count from the next run`, or `Compact console off — every MSBuild line
+is shown from the next run` — but it never reaches the engine: it is the App's own choice of how the console writes
+each project's output (§13.5). The mode in effect follows the switch whenever no work is in flight — no run, Sync,
+Clean, Optimize, checkout or pull; while work is in flight the mode it had when that work started holds, so a run's
+narrative is written in one mode and no project's count of warnings changes its rules halfway. A *Save* made while
+nothing is in flight therefore takes effect at once, and one made during a run or any other work the moment none is
+left, however that work ended — a pull the engine refused or a run that never started included. Text already on
+screen is never rewritten.
 
 *Stop the engine when idle* is saved and noted the same way — `Stop the engine when idle on — the engine exits after
 five idle minutes`, or `Stop the engine when idle off — the engine is no longer stopped when idle` — and it never
@@ -4371,7 +4626,7 @@ then the pending repository root (which resets the project rows to hollow), then
 order is load-bearing, because the Sync command carries the layer patterns and the external list — sent before
 they were applied, it would carry stale ones: the grouping would be wrong for a whole Sync and the external rows
 would describe the previous list. The Sync itself is unconditional: Save does not compare old and new state to
-decide whether to run it. The five workflow preferences ride along as optional values: *Save* gives all five, and a
+decide whether to run it. The four workflow preferences ride along as optional values: *Save* gives all four, and a
 caller that leaves one out leaves that setting as it was, without a note.
 
 The pull switch has a note of its own, and it is quieter still: it prints only when the value actually changed
@@ -4398,7 +4653,7 @@ line contradicting the permanent ribbon message, the same reason Sync, Build and
 that state. The root is still applied because it is local state that persists, and the first Sync after the
 engine returns carries it.
 
-A root that changes *later* announces itself in the console — `Repository root → D:\src\osys — Sync
+A root that changes *later* announces itself in the console — `Repository root → D:\src\acme — Sync
 required` — and the old repository's state goes with it: the rows fall back to hollow, the plan surface empties
 (§13.2) and the last Sync's HEAD is forgotten, so the first trigger on the new root is not compared with the old
 branch. Save's one Sync then runs on the new root. The first setup stays silent, because a Sync starts there
@@ -4416,12 +4671,12 @@ change deferred — …`. A root entered afterwards is a first setup again: sile
 
 **Export · Import · Clear.** The footer carries three icon buttons on its left. Export writes
 `build-orchestrator-settings.json` — `{ app, version, repositoryRoot, externalProjects[{ path }],
-pullExternalBeforeBuild, stashOnBranchSwitch, resolveAtFullPriority, compactConsole, stopEngineWhenIdle,
+pullExternalBeforeBuild, stashOnBranchSwitch, compactConsole, stopEngineWhenIdle,
 startWithWindows, startMinimizedToTray, closeToTray, showNotifications, layers[{ name, pattern }] }`, the external
 array sitting between the root and the layers (the field order the file is written in, not just a key that happens to
 be present) and holding only cards with a non-blank path; import reads one back **into the form**; clear empties the
 root, every layer and every external card, and returns every General switch to its catalog default — *Pull before
-build*, *Resolve cycles at full priority*, *Compact console*, *Stop the engine when idle*, *Close to tray* and *Show
+build*, *Compact console*, *Stop the engine when idle*, *Close to tray* and *Show
 notifications* on, the rest off. Every General switch travels in the file, so saving an imported file that has *Start
 with Windows* on turns it on for that machine — deliberately. All three touch the draft only: nothing is applied until
 *Save*, and there is no confirmation dialog. Clear's confirmation is the button itself — the first press turns the icon
@@ -4449,8 +4704,8 @@ highlighted pattern`, in that order of priority. The draft derives the reason fr
 conditions that gate *Save* (`SaveBlockedReason`, with `CanSave` defined as "no reason"), so the button and the
 line cannot disagree.
 
-A file that omits a switch's key (`pullExternalBeforeBuild`, `stashOnBranchSwitch`, `resolveAtFullPriority`,
-`compactConsole`, `stopEngineWhenIdle`, `startWithWindows`, `startMinimizedToTray`, `closeToTray` or
+A file that omits a switch's key (`pullExternalBeforeBuild`, `stashOnBranchSwitch`, `compactConsole`,
+`stopEngineWhenIdle`, `startWithWindows`, `startMinimizedToTray`, `closeToTray` or
 `showNotifications`) leaves that switch where it is, the same rule the external list already follows: a file cannot
 silently reset a setting it does not carry.
 
@@ -4460,7 +4715,8 @@ older file carries included (§10.4) — and an entry whose path is blank is ski
 same rule the repository root already followed; a file that carries the key — an empty array included —
 replaces the list outright, because the key's presence is itself a decision. The import feedback line reflects
 that: `Imported — N layers · M external · root set`, with the `M external` clause appearing only when the file
-carried the key at all.
+carried the key at all. A top-level key this version does not read — one an older version wrote — is ignored: the
+file is not rejected, and the rest of it is imported.
 
 The About dialog is the second modal on the shared shell; its identity block fills the head and the tab switch
 sits in the shell's tab strip. It is 620 px wide and its height follows its content around a **fixed** 284 px body:
@@ -4493,9 +4749,9 @@ inset 14 px top, 18 px sides and 20 px bottom.
   closes About and asks the window to open What's new through the same path as the title-bar button, so the
   unread mark clears exactly as it does there.
 - **Environment** is two caps groups: **RUNTIME** — engine PID (`asleep` while the engine sleeps, `—` when there is
-  none), .NET runtime, OS and the application's own memory (**App private**, **GC committed** and **Managed heap**,
-  in MB) — and **PATHS** — the resolved `MSBuild.exe`, the repository root, the state file and the logs. The
-  application and engine versions are not repeated here.
+  none), .NET runtime and OS — and **PATHS** — the resolved `MSBuild.exe`, the repository root, the state file and the
+  logs. The application and engine versions are not repeated here, and neither is the application's memory: the
+  resource strip in the title bar shows it (§13.2), and the copied text keeps it (below).
 - **Shortcuts** is three caps groups, **GLOBAL**, **BUILD** and **APPLICATION**; each row is the catalog's
   description and its key caps, and a global hotkey whose registration failed is marked `unavailable` — each
   one on its own row, since they register separately.
@@ -4505,14 +4761,18 @@ their groups from the same catalog the window binds its keys from, and the About
 and the clipboard text from **one** diagnostics model (`DiagnosticsReport`), so no value is written twice. It
 composes no text of its own. `MSBuild.exe` resolution is the one asynchronous value: `vswhere` is a child
 process, so it runs when the Environment tab is first selected, not when the dialog opens, and the row reads
-`resolving…` until it lands. The memory rows are the application's counterpart of the engine's memory line (§11.4): the
-same process read (`MemoryLine.Read`, in its guarded form `TryRead`) and the same MB rule (`MemoryLine.Megabytes`),
-with only the unit added here, so the two surfaces never round a number two ways. They are the picture of the moment
-the model is built — when the dialog opens, and again when the `MSBuild.exe` resolution lands — not a live reading, and
-*Copy diagnostics* copies that picture. A read that fails does not stop the dialog: the three rows read `—`.
+`resolving…` until it lands. The model has one more group that no tab draws, the **copy-only** group
+(`DiagnosticsSnapshot.CopyOnly`): the application's own memory — **App private**, **GC committed** and **Managed
+heap**, in MB — which goes into the copied text between the runtime and the path rows, where a support request finds
+it. Whether a row is drawn or only copied is decided by the group it sits in, never by a filter in the view. These rows
+are the application's counterpart of the engine's memory line (§11.4): the same process read (`MemoryLine.Read`, in
+its guarded form `TryRead`) and the same MB rule (`MemoryLine.Megabytes`), with only the unit added here, so the two
+surfaces never round a number two ways. They are the picture of the moment the model is built — when the dialog opens,
+and again when the `MSBuild.exe` resolution lands — not a live reading (the live one is the resource strip's, §11.5),
+and *Copy diagnostics* copies that picture. A read that fails does not stop the dialog: the three copied rows read `—`.
 *Copy diagnostics* sits in the footer's left corner, pulled 10 px left so its label
 lines up with the 18 px gutter; it writes a title line with the product and version followed by the engine,
-runtime and path rows in one aligned column, and confirms with the check icon and the success tone for the same
+runtime, memory and path rows in one aligned column, and confirms with the check icon and the success tone for the same
 1.4 s the console's copy button uses. *Close* sits on the right.
 
 There is deliberately no third-party tab: the dialog is not an attribution inventory. The one licence text the
@@ -5468,14 +5728,20 @@ panel header switches to its project-log half with the `Back` button. Clicking t
 `Back`, or Esc, clears it and follow-mode resumes. Text selection inside the console never clears the project
 selection.
 
-Esc is a chain and only ever closes the topmost layer: dialog → popover/menu (the action bar's popovers and the
-title bar's update card) → selection → the running build. With nothing else open, Esc stops a Build, Rebuild or
+Esc is a chain and only ever closes the topmost layer: the exit card (§13.3), which sits above even the dialogs →
+dialog → popover/menu (the action bar's popovers and the title bar's update card) → selection → the running build →
+the window. With nothing else open, Esc stops a Build, Rebuild or
 Clean gracefully (§4.5) — so a selection made mid-run is dropped by the first Esc and the build stopped by the
 second. While a stop drains — the user's own or a branch switch's — Esc is the hard stop, the same step pressing
-*Stop now* takes (§4.5), and after that Esc does nothing. A Sync, a Deep Clean, an Optimize, a checkout or a pull
+*Stop now* takes (§4.5). A Sync, a Deep Clean, an Optimize, a checkout or a pull
 cannot be stopped; Esc during one writes a single console line saying so (`sync can't be stopped — it will finish on its own`),
-once per job. A silent Sync is invisible, and Esc says nothing about it. Right-clicking a row is not a selection
-gesture — it opens the row menu and leaves the selection alone.
+once per job. A silent Sync is invisible, and Esc says nothing about it. Once Esc has nothing left to close or stop —
+nothing the user can see is running, the hard stop has gone out, or the job's line is written — it closes the window:
+it makes the very call the title bar's `X` makes, so the window's one close rule decides (§12.3). With *Close to tray*
+on the window hides to the tray; with it off it is a full exit — at once with nothing in flight, through the
+confirmation card otherwise. Esc itself never stops work the way *Exit* does: a drain or a Sync carries on — in the
+tray, or under the card until the user answers it. Right-clicking a row is not a selection gesture — it opens the row
+menu and leaves the selection alone.
 
 **Starting a run drops the selection and keeps the filter.** Build, Rebuild, Resolve cycles and a row's own
 Build, Rebuild and Clean all go through the same start: the selection is cleared, so the graph glides back to
@@ -5526,6 +5792,7 @@ styles, and `Controls/` holds the custom elements that a template cannot express
 | Kbd · ProgressBar · Popover · Dialog · Focus visual | Styles over stock elements. A focus ring is a rectangle pushed outside its element by `-(offset + stroke/2)` and rounded by the same amount so it follows the corner — arithmetic XAML cannot do, so `DsChrome.FocusRingOffset` derives both. Its default is `NaN`, not zero: zero is a real offset (the input's ring hugs the edge with no gap) and WPF skips a property's change callback when the assigned value equals the default, which would leave that ring flat against the box and square-cornered |
 | Status glyph · building spinner · status dot | Custom controls drawing rings and dots — the spinner is the glyph's dashed ring, rotating, so the dash pattern has one source and is converted to WPF's stroke-relative unit per stroke width. Rotation is the *only* thing that moves there: the glyph itself holds no animation clock, so it is not a motion owner and carries no motion seam |
 | Tracked text | Custom element for letter-spaced caps labels (§14.2) |
+| Gap stack | A panel for the design's CSS `gap`, which `StackPanel` lacks: one row (or column) with a fixed gap between shown children only, a whole number of device pixels under layout rounding (§12.4) |
 
 The action bar's chip, secondary-button, icon-button and segment-item styles each carry a `Ds.Bar.*` sibling
 (`Ds.Bar.Chip`, `Ds.Bar.Chip.Action`, `Ds.Bar.Button.Secondary.Sm`, `Ds.Bar.IconButton`, `Ds.Bar.Segment.Item`) —
@@ -5573,19 +5840,20 @@ Three pieces of shared machinery keep the copies from multiplying:
   frame, which also keeps the pill a true capsule at both widths (a fixed radius would be clipped
   horizontally but not vertically, turning the ends into ellipses).
 - **`PopIn`** is the one entrance body: the 140 ms popover pop-in (the branch popover, the Build menu, the row
-  menu and the Open-in-VS chooser), the modal entrance, the update pill's entrance, the update card's drop-in and
-  the update restart screen's fade-in differ only in duration, direction, scale and scale origin (§14.5). It has no
-  exit animation, and no overlay has one of its own: overlays hide immediately, and the restart screen does not
+  menu and the Open-in-VS chooser), the modal entrance, the update pill's entrance, the update and exit cards'
+  drop-ins and the closing screen's fade-in differ only in duration, direction, scale and scale origin (§14.5). It has
+  no exit animation, and no overlay has one of its own: overlays hide immediately, and the closing screen does not
   leave at all — the window closes under it.
 - **`RevealStagger`** owns the hero acquisition, generation stamping and guarded release of the opening
   reveal, and the one motion both surfaces share: 300 ms, settling from 5 px above. The *cadence* is
   deliberately not shared — the graph staggers node by node in build order, with the whole wave capped
   (§13.6); the list row by row, 10 ms apart, each row's delay capped at 380 ms (§13.2).
 
-The branch popover and the update card derive from a common base that owns the open state, the
+The branch popover, the update card and the exit card derive from a common base that owns the open state, the
 refresh-then-animate-then-focus sequence, the Esc handling (a popover is a separate HWND, so the window-level Esc
-chain does not reach it) and outside click; what each adds is its own — the branch search filter; the card's
-drop-in and its *Later*, which asks to close exactly the way Esc does. The width belongs to
+chain does not reach it) and outside click; what each adds is its own — the branch search filter; the update card's
+drop-in and its *Later*, which asks to close exactly the way Esc does; the exit card's drop-in from the right, its focus
+on *Cancel* (which asks to close the same way) and its action request. The width belongs to
 the shell `Border` alone — each body stretches into whatever the shell's padding leaves rather than restating a
 number, since a restated width silently drops the shell's border thickness and WPF then clips the overflowing
 edge of the body.
@@ -5607,14 +5875,15 @@ active set appears as a removable chip in the panel header.
 | `F7` | window | Clean — the Build menu's `-t:Clean`, not the maintenance box's Deep Clean |
 | `Ctrl+F` | window | Focus the project filter |
 | `F1` | window | About — version, shortcuts and diagnostics (toggle) |
-| `Esc` | window | Close the topmost layer; with none open, stop the running build (§13.7) |
+| `Esc` | window | Close the topmost layer; with none open, stop the running build; with nothing left to stop, close the window like `X` (§13.7) |
+| `Ctrl+Q` | window | Exit — quit at once with nothing in flight; otherwise open the confirmation card, or close it if open (§12.3) |
 
 These are the only shortcuts. `F5` does not branch on state: in Visual Studio `F5` never stops what is running,
 and a key that both starts and stops starts a new build when it is pressed to stop one that has just finished.
 `Shift+F5` is deliberately unbound — it is Visual Studio's *Stop Debugging*, and pressed out of habit it used to
-start a Rebuild here. What's new has no key (§13.3). While the update restart screen shows (§13.3) — from the
-*Restart to update* click until the window closes — none of these keys, window or global, does anything; one
-shell property answers that question for both paths.
+start a Rebuild here. What's new has no key (§13.3). While the closing screen shows (§13.3) — from the
+*Restart to update* or *Stop and exit* click until the window closes — none of these keys, window or global, does
+anything; one shell property answers that question for both paths.
 
 The key → intent table is a pure, tested structure that `MainWindow` merely wires into `InputBinding`s; `F5`,
 `F6` and `F7` bind straight to the view model's Build, Rebuild and CleanAll commands, and every dispatch
@@ -5644,7 +5913,8 @@ whole (§13.5).
 This section is the design system. There is no external style sheet, no runtime theming and no second
 authority: the values below are declared once in `Resources/Tokens.xaml` and `Resources/Motion.xaml` so the
 application can consume them, and component-specific measurements sit as named constants on the control that
-draws them. Section §13 gives those per-component values in context.
+draws them. The resource strip is the exception: a guard keeps numeric measurements out of its markup, so its four
+measurements are tokens named for it in `Tokens.xaml` (§14.1). Section §13 gives those per-component values in context.
 
 ### 14.1 Tokens
 
@@ -5675,6 +5945,14 @@ tokens, nothing else; panels and cards are flat with a 1 px border.
 
 Fixed heights: title bar 40, ribbon 32, progress 2, action bar 42, panel header 28, row 36 (compact 30), layer
 header 24.
+
+The resource strip's own measurements (§13.2) are tokens named for it, because a guard keeps numeric measurements out
+of its markup (§17.2): `Size.ResourceStripIcon` 12 (the icon box), `Thickness.ResourceStripCellGap` 14 (the left margin of
+the second and third cell), `Thickness.ResourceStripValueGap` 5 (from the icon to the value and from the number to
+the mode word) and `Size.ResourceStripIconViewBox` 24 (the design box its three icons are drawn in; the key is the
+strip's own because the application's other 24 px canvases write the literal). Its text is `FontSize.2xs` (11); the
+values and the parallelism cell's first two numbers are `Brush.TextDim`, the icons, the mode's `/N` and the mode word
+`Brush.TextFaint`.
 
 ### 14.2 Typography and fonts
 
@@ -5900,25 +6178,40 @@ brush. The mapping lives in one place so the two menus cannot drift; the ⋯ tha
 the same family of filled marks as the drag grip. The application icon is a multi-size ICO with the 16 and 24 px rasters hand-corrected;
 carets and chevrons are drawn, not typed.
 
-Two icons have no literal counterpart in the design source and are marked *derived* in the dictionary, with
-the reasoning written beside them: the caption restore glyph, and the `info` circle in the title bar. Both are
-drawn on the same grid and at the same stroke weight as the neighbour they sit next to — the info icon shares
-`Icon.Gear`'s 1.7 px so the two buttons carry equal optical weight. The What's new icon between them (a
-four-point star, keyed `Icon.WhatsNew` rather than the design's own name for it — that name collides with an
-unrelated source guard protecting the event stream's own celebration vocabulary) is drawn at the same 1.7 px
-for the same reason; all three title-bar icon buttons read as one family.
+One icon has no literal counterpart in the design source and is marked *derived* in the dictionary, with the
+reasoning written beside it: the caption restore glyph, drawn on the same grid and at the same stroke weight as the
+caption glyphs beside it. The title bar's `info` icon is the design's own: an r = 9 ring with a short stem and a dot,
+the same ring as the update pill's and the *Exit* button's *power*. It shares `Icon.Gear`'s 1.7 px so the two
+buttons carry equal optical weight. The What's new icon between them (a four-point star, keyed `Icon.WhatsNew`
+rather than the design's own name for it — that name collides with an unrelated source guard protecting the event
+stream's own celebration vocabulary) is drawn at the same 1.7 px for the same reason, and so is the *Exit* button's
+Lucide *power* at the end of the cluster. All four sit in the same 16 px box as the layout toggles, so the title-bar
+icon buttons read as one family.
 
-The two discovery blocks (§13.2) are the one place an icon is drawn large: Lucide *network* for the graph and
-*list* for the project list, 28 px, a 1.4 stroke, `text-faint` at 70 % opacity — an empty-state picture, not a
-control. The look is one shared style (`Ds.DiscoveryIcon` with its `.Path` twin); geometry and weight stay in the
-dictionary like every other icon. The list icon is keyed `Icon.ListLines`, so it cannot be mistaken for the layout
+The discovery blocks and the empty views (§13.2) are the one place an icon is drawn large, and each panel has one
+picture for both: Lucide *network* for the graph and *list* for the project list, 28 px, a 1.4 stroke, `text-faint`
+at 70 % opacity — an empty-state picture, not a control. The look is one shared style (`Ds.DiscoveryIcon` with its
+`.Path` twin, and `Ds.DiscoveryCaption` for the 12 px line under it); geometry and weight stay in the dictionary like
+every other icon. The list icon is keyed `Icon.ListLines`, so it cannot be mistaken for the layout
 selector's `Icon.LayList`.
 
 The update pill (§12.4) draws Lucide *circle-arrow-up* (`Icon.UpdateReady`) at 13 px in the pill's text colour and
-the title bar's 1.7 weight. Its ring is r = 9, as the design draws it — the design calls it the same circle as the
-`info` icon, but the derived `info` circle is r = 10 and the pill follows the design. The card's version change
+the title bar's 1.7 weight. Its ring is r = 9 — the same circle as the `info` icon's, as the design draws both. The
+card's version change
 uses *arrow-right* (`Icon.ArrowRight`, 1.8), and its *Restart to update* button reuses `Icon.Rebuild`, the
 rotate-cw of the Build menu family, rather than a second copy of the same geometry.
+
+The resource strip (§13.2) draws three icons at 12 px in `text-faint` in a 24-unit design box. They are drawn from the
+design prototype in Lucide's style: a processor (`Icon.Cpu`), a memory module (`Icon.MemoryStick` — the design's own
+name for it is *memory*, a word this code base uses for the memory line) and, for parallelism, three vertical lines at
+x = 7, 13 and 19 (`Icon.Parallel`). The processor and the module are stroked at 1.8 and the three lines at 1.9, the
+prototype's own values: at the same colour three thin lines carry about half the ink of the other two marks and read
+fainter at an equal weight. The lines' positions are *derived*: the prototype draws them at 6, 12 and 18, but in a 12 px
+box a unit is half a pixel, so on a 100 % display an even coordinate falls on a pixel edge and each line is drawn as two
+half-bright columns; one unit to the right puts them on pixel centres, where the processor's own lines already sit.
+Like every icon each is a geometry in
+`Icons.xaml`; here it is drawn inside a `Viewbox` that scales the 24-unit box down to 12 px, and the stroke scales with
+it.
 
 **Two marks, one hierarchy.** The application carries its own brand — five pill strips and a gradient chevron —
 and the company logo sits behind it. Both are controls, not fragments of markup: `Controls/AppMark.xaml` draws
@@ -5938,7 +6231,9 @@ The chevron is the one gradient in the application, and it too is a single share
 rule and a guard enforces it, with a single file-scoped exemption for the mark's dictionary: flattening a logo
 would mean redrawing it, and source artwork is transferred verbatim. The chevron is amber — the same accent the
 interface uses — which is deliberate: the brand speaks the interface's palette. The cost is that the mark
-carries accent weight in the title bar, so no other amber element belongs in that region.
+carries accent weight in the title bar, so no other amber element belongs in that region but one: the 5 px dot on the
+What's new button that marks an unread version (`UnseenNotesDot`, §13.3) — a status mark rather than decoration, gone
+once the notes are opened.
 
 The mark's palette comes from the neutral ramp and the amber family, except a few intermediate tones that exist
 only in the artwork; those are declared in `Tokens.xaml` beside the rest, with their reasoning, exactly like
@@ -6014,11 +6309,11 @@ glides, which step a `ScrollViewer`'s or the console editor's offset each frame 
 Build menu rise 4 px from below at scale .985 over 140 ms; the modals rise 6 px over `Duration.Base` without
 scaling; the title bar's update pill drops 4 px from above over `Duration.Slow` without scaling, together with its
 hairline; the update card drops 4 px from above at scale .985 over 140 ms, scaling from its top-left corner
-because it hangs from the pill; the update restart screen only fades in, over `Duration.Base` — it covers the
-whole window and has no edge to travel, so no transform is set up at all. All ease out and all snap to their end
-state under reduced motion. None of them has an exit motion, the restart screen included: it stays, bar full,
-until the window closes (§13.3). Its progress bar is information rather than decoration and advances whatever the
-motion setting. The pill's entrance is the one that is conditional: it plays when an offer arrives — the
+because it hangs from the pill, and the exit card does the same from its top-right corner because it hangs from the
+right edge of its button; the closing screen only fades in, over `Duration.Base` — it covers the whole window and has
+no edge to travel, so no transform is set up at all. All ease out and all snap to their end state under reduced motion.
+None of them has an exit motion, the closing screen included: it stays, bar full, until the window closes (§13.3). Its
+progress bar is information rather than decoration and advances whatever the motion setting. The pill's entrance is the one that is conditional: it plays when an offer arrives — the
 application starts without one (§12.5), so that is the moment an update becomes ready, never the first frame — and
 a later offer while the pill is showing only changes its text. Its hover is the design system's 120 ms colour transition (`Duration.Fast`); the design's text
 says 80 ms, but its own measurements and prototype use the standard one.
@@ -6252,17 +6547,18 @@ set from one central name table so the same element cannot be named two ways. Th
 phase text, assertive and announced when the phase changes and when the engine-starting line (§13.2) appears or
 goes; the discovery counter (§13.2), polite and announced once when the count changes — its automation name is
 written with the text, because a block built from two runs reports an empty `Text` once the runs are rewritten; and
-the update restart screen's step line (§13.3), polite and announced once per step rather than per frame. Each region
+the closing screen's step line (§13.3), in either of its modes, polite and announced once per step rather than per
+frame. Each region
 decides when it speaks; how it speaks is one helper (`LiveRegion`), which finds or creates the element's automation
 peer and raises the live-region event, so no region raises it on its own. Contrast is asserted by test for every text
 token, including the dim ones.
 
 Every `UserControl` of the app reports a real automation role — a project row is a list item, the panels are
-panes, the menus are menus, the marks are images — never WPF's default *custom* type (`UserControlRolePeer`, pinned
-by a source guard). The role reads better in a screen reader, and it also governs cost: with an automation client
-attached, WPF walks the peer tree after every layout pass, and a custom-typed peer makes that walk re-enumerate the
-control's whole visual subtree every time, whereas a peer with a real role is visited only when something beneath
-it changed. On a machine with such a client the walk was a fifth of the UI thread's busy time during a visible run,
+panes, the menus are menus, the marks are images, the resource strip is a named group — never WPF's default *custom*
+type (`UserControlRolePeer`, pinned by a source guard). The role reads better in a screen reader, and it also
+governs cost: with an automation client attached, WPF walks the peer tree after every layout pass, and a custom-typed
+peer makes that walk re-enumerate the control's whole visual subtree every time, whereas a peer with a real role is
+visited only when something beneath it changed. On a machine with such a client the walk was a fifth of the UI thread's busy time during a visible run,
 most of it the project rows being re-enumerated every frame.
 
 Known gap: graph nodes are not keyboard-navigable. They are not silent, though — each node body is a `Button`
@@ -6286,10 +6582,13 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 | `source-hash-cache.json` | source content hashes keyed by path, size and modification time (§7.1) — this is what turns the content decision into one stat pass per run | falls back to empty (the next run re-reads and rebuilds it) |
 | `run-inflight.json` | the ids of the projects the engine has dispatched and not yet reported — written at dispatch, erased at the result, emptied at the end of every run; left non-empty only by an engine that died mid-run, and read once at the next engine start (§8.7). Absent while no run is in flight | an unparsable file is deleted and nothing is recovered; an unreadable one stays for the next start |
 | `msbuild\wpf-temporary-assembly.targets`, `msbuild\wpf-temporary-assembly-friend.cs` | the two files behind `-p:CustomBeforeMicrosoftCommonTargets` (§9.2). An engine writes them the first time it resolves `MSBuild.exe` — on its first run or its first Optimize — and only when the content on disk differs from its own; both files carry a fixed, old modification time however they were written (§9.2); the path carries no version, and a missing or edited file is repaired the next time a new engine resolves MSBuild | rewritten from the engine's own copy the next time a new engine resolves MSBuild; if they cannot be written or pinned, builds run without the argument |
-| `ui-state.json` | layout mode + three splits, repository root, configuration, perf mode, layer patterns, external roots (path) and whether to update them (§10.4), whether to stash before a branch switch (§10.3), whether *Resolve cycles* runs at full priority (§11.1), whether the console is compact (§13.5) and whether an idle engine is stopped (§4.7) — all three on when the field is absent —, the gestures of the two global hotkeys (show/hide and build, §12.3), *Start with Windows* (`Autostart`) and *Start minimized to tray*, whether closing the window hides to the tray and whether tray notifications are shown (§12.3), tray-balloon-shown, last-seen release-notes version. The branch is not stored: it is whatever is checked out. Fields older versions wrote and this one no longer reads are ignored | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
+| `ui-state.json` | layout mode + three splits, repository root, configuration, perf mode, layer patterns, external roots (path) and whether to update them (§10.4), whether to stash before a branch switch (§10.3), whether the console is compact (§13.5) and whether an idle engine is stopped (§4.7) — the last two on when the field is absent —, the gestures of the two global hotkeys (show/hide and build, §12.3), *Start with Windows* (`Autostart`) and *Start minimized to tray*, whether closing the window hides to the tray and whether tray notifications are shown (§12.3), tray-balloon-shown, last-seen release-notes version. The branch is not stored: it is whatever is checked out. Fields older versions wrote and this one no longer reads are ignored | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
 
 *Start with Windows* additionally writes one `HKCU\...\Run` value, and turning it on removes Task Manager's
 disabled mark for that value under `HKCU\...\Explorer\StartupApproved\Run` when there is one (§12.3).
+
+The resource strip (§11.5) persists nothing: each sample lives in memory for one beat, and the file the
+`BO_PROBE_STRIP` probe appends to (§17.5) exists only when a developer names one.
 
 **The state folder is not the installation.** An installed copy lives in `%LOCALAPPDATA%\BuildOrchestrator.App\`
 (§12.5), a different folder on purpose: Velopack owns that one — its `Update.exe`, `current\` and the downloaded
@@ -6362,20 +6661,28 @@ guards. It targets `net10.0-windows` with `UseWPF` because a meaningful portion 
 STA thread.
 
 Shared test infrastructure lives in one place per concern rather than being copied: resource realization
-(`DsResources`, `IconResources`), window and dialog hosts (`MainWindowHost` — which holds the one console batcher whose
+(`DsResources` — which also holds the device-pixel grid realized layout is measured on, `InDevicePixels` (§17.4) —,
+`IconResources`), window and dialog hosts (`MainWindowHost` — which holds the one console batcher whose
 pump never ticks (`NeverTickingBatcher`) and the one a test drains (`DrainableBatcher`), the lookup and the press of a
 window key binding (`KeyBindingOf`, `PressKeyBinding`), the console-line counter (`Occurrences`), the engine host the
-fixture built (`EngineOf`) and `NeutralizeExitSeams`, which makes the shell's two exit seams no-ops so that a test
+fixture built (`EngineOf`), the title bar's inner grid and the dock of its two clusters (`TitleBarGrid`,
+`TitleBarDock`), the shell realized at a forced display scale, with or without an update offer (the `dpi` of
+`NewRealized` and `NewRealizedWithOffer`, §17.4), the shell's action bar loaded in a real window off screen
+(`WithLoadedActionBar` — the bar builds its chips and binds Build's command on `Loaded`, which a headless tree never
+raises) and
+`NeutralizeExitSeams`, which makes the shell's two exit seams no-ops so that a test
 asking for a full exit closes nothing —, `SettingsDialogHost` — with `GeneralSwitch` and `CatalogRow`, the lookups of
 a General switch and of its catalog row —, `AboutDialogHost`, which takes the clock that puts an engine to sleep under
 it, `SplitterHost`, `GraphTestView`), the MSBuild-shaped lines the console tests feed (`MsBuildLines`: `Warning`, a
 realistic warning as long as a real build line; `WarningLine`, `ErrorLine` and `CommandLine`, the inline lines of the
 compact console's tests; and `BudgetWarning`, the memory budget's fixed input), shared assertions (`FocusTrap`, the
-modal focus-trap proof both dialogs use), input synthesis (`MouseInput`, the shared place a real mouse press or wheel
-is raised — the only one for the wheel — both halves of the gesture or the tunnel alone, the horizontal wheel
+modal focus-trap proof both dialogs use), input synthesis (`MouseInput`, the shared place a real mouse press, release
+or wheel is raised — a press or release of any button, a press with the click count of a double click, and, for the
+wheel (its only place), both halves of the gesture or the tunnel alone, the horizontal wheel
 included; `KeyInput`, its keyboard twin and the one place a key event is built, which takes the presentation source
 from outside for a window that is not
-shown; `CommandPress`, whose `Click` is the one place a button's click event is raised; and `UserScrollGesture`, which
+shown; `CommandPress`, whose `Click` is the one place a button's click event is raised and whose `Select` presses a
+radio item the way a click does; and `UserScrollGesture`, which
 drags the vertical or the horizontal bar of a scroll host), dispatcher pumping and animation hosting
 (`DispatcherPump`, `AnimationHost`, `MotionScope`; `ScrollAnimation`, which reads the scroll animation applied to a
 panel; and `ActiveClockInspector`, which lists the timing tree's root clocks with their owners, reads the clock
@@ -6392,7 +6699,9 @@ folder goes, and `SpoolScope`, that same close for a folder the test does not ow
 (`SentCommands`, thread-safe, because a real engine completes a send on another thread), the General settings' chains
 (`GeneralSettingChains`, one table row per catalog row, walked by one theory class, `GeneralSettingChainTests`: a new
 setting is a catalog row and a table row, and a test fails until it has both), fixtures (`GitTestRepo`, `LegacyFixture`,
-`SyntheticGraph`, `JobTestChildren`, `VmTopology`, `FakeMotionSignal`, `FakeMotionSettings`) and measurement
+`SyntheticGraph`, `JobTestChildren`, `GatedMemberJob` — a job with a live member, a child that waits until its stdin
+closes, its grandchild's birth caught on the job's port —, `VmTopology`, `FakeMotionSignal`, `FakeMotionSettings`), the byte units the memory tests
+count in (`ByteUnits`) and measurement
 (`PerfMeasure` — timings, the bytes an action allocates on the test thread and the UI thread's CPU in cycles
 (`ThreadCycles`, `CyclesPerMs`), the one counter of the two measurement tests that read it). Tests that cannot run
 concurrently declare it explicitly through serial collections — the CPU-saturating job tests, the console UI tests and
@@ -6479,7 +6788,8 @@ A category of tests that assert properties of the *source*, not of a run:
 | Anti-slop | the prohibited visual patterns of §14.7 |
 | Design token scale | duplicated size tokens stay equal to their single authority |
 | Shortcut literals | no gesture text (`"F5"`, `"F6"`, …) is written outside the shortcut catalog, and the file the guard exempts still exists |
-| Product name literal | the product name never appears as a literal; it is read from the assembly |
+| Product name literal (`AppIdentityTests`) | the quoted product name appears in no `.cs` or `.xaml` file of the four production projects; and no literal in them carries the name at all, quoted or embedded in a sentence: the name is read from the assembly, or arrives as a parameter. The second scan reads every production file — a file is covered the day it is added — and exempts only a list kept with its reasons (today the comment in the MSBuild file the engine writes to its cache, §3.3), which must equal the files that still carry the name, so an exemption cannot outlive its reason. Each rule is shown to catch a planted literal — the embedded one in a C# file and a XAML attribute that no list names, never in a comment — and the scan is shown to cover every production project |
+| One missing-value mark (`MissingValueTests`) | the em dash that stands for a missing value — an unknown duration, an unreadable strip value, an absent About value — is declared once (`Core/Formatting/MissingValue.cs`) and written as a whole literal nowhere else in the `.cs` and `.xaml` of the production projects; the other names bind to it. A dash inside a sentence is outside the rule. The rule is shown to catch a planted literal in C# and in XAML and to ignore a sentence and a comment |
 | Brand marks | the product mark's and the company wordmark's path data each live in exactly one source file |
 | Gradient prohibition | no XAML declares a gradient except the product mark — and that exemption still points at a file that really carries one |
 | App icon provenance | the multi-size ICO is rendered from the product mark, not the company icon |
@@ -6494,12 +6804,20 @@ A category of tests that assert properties of the *source*, not of a run:
 | Ledger file access (`LedgerStreamingGuardTests`) | the two large ledgers (`evaluation-cache.json`, `source-hash-cache.json`) never turn their file into one string or byte array and never open, create or move it themselves — they read and write through the stream forms of `AtomicFile` (sharing delete on read, retried atomic rename on write); hashing a *source* file is the one exempt read; the rule is shown to catch each bypass and to ignore a comment |
 | Entry point (`EntryPointTests`) | the App starts from the hand-written `Program.Main`, `VelopackApp…Run()` comes before the `App` is created, the uninstall hook removes the startup value, and the `Velopack` library and the `vpk` tool carry one version (§12.1) |
 | Repository hygiene (`RepoHygieneTests`) | the MIT `LICENSE`, the SDK band in `global.json`, the pinned `vpk` tool, the README's badge (the release run of `main`), and the workflows: CI builds and tests every push to `develop`, with no path filter, on the pinned image, leaves `main` to the release and can be called by it; the release runs on pushes to `main` one at a time and is never cancelled, writes only from its publish job, has its guard check the head of `main` and hand the tag on, tags only after the tests and the package and before the upload, and publishes through `package.ps1` (§18); a failed release is re-run once on its failed jobs |
+| User documents (`DocumentationTests`) | README, FEATURES and WHY each have a Turkish mirror (`.tr.md`) with as many sections, and each language links to the other; every WHY item is a FEATURES item with the same title, in the same order; relative links in the user documents, the user guide included, point to files that exist; and no public document — these, the technical reference, the release notes and the working conventions — names the internal product the tool was first built for (the pattern of the code guard above, so the name is defined once) |
 | Automation roles (`AutomationRoleTests`) | every `UserControl` of the app declares its automation role through an override in the app assembly — never WPF's default custom type, which the post-layout peer walk re-enumerates on every pass (§15) |
 | One trim definition (`MemoryTrimGuardTests`) | `GC.Collect` is written exactly once in the source, in `Core/Diagnostics/MemoryTrim.cs`; and every `RunCoordinator` the tests construct — an explicit `new`, or a target-typed one — passes a trim seam (`memoryTrim:`, not `null`), so none falls back to the real blocking collection; the rules are shown to catch each form of the call and to ignore prose |
-| One memory read (`MemoryReadGuardTests`) | the process's memory (`PrivateMemorySize64`, `GetGCMemoryInfo`, `GC.GetTotalMemory`) is read only in `Core/Diagnostics/MemoryLine.cs` (§11.4), and `GC.GetTotalMemory` only with the literal `false` — any other argument may be a hidden full collection, which the `GC.Collect` guard cannot see |
+| One memory read (`MemoryReadGuardTests`) | the process's memory is read in exactly one file, `Core/Diagnostics/MemoryLine.cs` (§11.4): `GetProcessMemoryInfo` (the private bytes; its P/Invoke declaration in `NativeMethods.cs` is the one exempt mention, and the exemption is pinned to still declare the call), `GetGCMemoryInfo` and `GC.GetTotalMemory` are called nowhere else; `Process.PrivateMemorySize64` is written nowhere at all, `MemoryLine` included, because it snapshots every process on the machine; and `GC.GetTotalMemory` is called only with the literal `false` — any other argument may be a hidden full collection, which the `GC.Collect` guard cannot see. The rules are shown to catch each form of the call and to ignore prose |
+| No machine-wide process scan (`NoProcessScanGuardTests`) | no production source calls `Process.GetProcesses`, `Process.GetProcessesByName` or the Win32 enumerators behind them (`EnumProcesses`, `CreateToolhelp32Snapshot`, `NtQuerySystemInformation`), which keeps the known ways of scanning the machine out of the resource strip's read path (§11.5). The rule is shown to catch each form, a method group included, and to ignore a comment and the single-process lookups, and the scan is shown to cover all four production projects. A `using static`, a type alias, reflection and WMI are outside what a source scan sees, and so are the properties of a `Process` that fill themselves from a snapshot of the whole machine (`WorkingSet64` read from an arbitrary `Process`, say), which stay a matter for review |
+| Resource strip source (`ResourceStripGuardTests`) | the strip's markup carries no raw colour and no numeric measurement — every size is a token (§14.1) —, no animation, transition, trigger or clock in the markup or the code-behind, no pointer reaction, cursor, button or accent colour, and no `{Binding}`: its values are written from code under the hidden-surface gate (§13.2); its root declares no background and exactly its three cells a transparent one (§12.2); the window's code hands a drag to the native caption — its native calls, the closing `WM_LBUTTONUP` included, are pinned to still be there — and never calls `Window.DragMove` (§12.2); its ghost texts are the Core constants and are never retyped; the tokens, icons, fonts and colours it reads are read by key, and its four measurements are the design's numbers, each defined once. Every rule is shown against a planted violation |
 | One engine gate (`EngineGateGuardTests`) | every request to the engine passes the gate of §4.7 and nothing walks around it: `SendWithFailureLineAsync(` is called only from the four methods that ask the gate first (`TrySendAsync`, `BeginRunAsync`, `SyncCoreAsync`, `LoadProjectLogAsync`); `SendToEngineAsync(` only from `SendWithFailureLineAsync`, and the host's `SendAsync(` — through any reference — only from `SendToEngineAsync`; a request is registered with the gate (`EngineGate.Enter`, whatever the receiver) only from `EnsureEngineAwakeAsync`, and every call of the gate holds its pass with `using`; the gate questions that `ReleaseAfterEngineLoss` asks are exactly the list of window-holding types the loss theory walks; and the branch inventory never asks the gate. The scans read code only — comments and string literals are skipped — and the call-form rules each have a proof test that catches their form of bypass. Two things stay for review: a send made inside an allowed method without asking the gate, and an allowed method bound to a delegate and called from elsewhere |
 | One infinite bottom request (`ConsoleBottomRequestGuardTests`) | the console asks for an infinite bottom (`ScrollToEnd(`) only in the mode switch's pin, `PinAfterModeSwitch`; the follow's and End's request is finite and vertical (§13.4). The scan reads code only, proves first that the pin still asks for it, and is shown to see a request outside the pin and to ignore a comment, a literal and a brace inside the pin |
-| No literal default (`GeneralSettingChainTests.No_workflow_setting_starts_from_a_literal_default`) | none of the five workflow preferences starts from a literal in the source: not the view model's field (written with `true` or `false`, or left unset), not the draft's or the apply call's parameter, not the window's seed from a key-less state (`?? true`); the catalog row is the one default (§13.3). The wire records of the contracts keep their own field defaults, which only say how a line without the field reads, and lie outside the rule. The rule is shown to catch each form, and to ignore a comment, a string and a field that reads the catalog |
+| No literal default (`GeneralSettingChainTests.No_workflow_setting_starts_from_a_literal_default`) | none of the four workflow preferences starts from a literal in the source: not the view model's field (written with `true` or `false`, or left unset), not the draft's or the apply call's parameter, not the window's seed from a key-less state (`?? true`); the catalog row is the one default (§13.3). The wire records of the contracts keep their own field defaults, which only say how a line without the field reads, and lie outside the rule. The rule is shown to catch each form, and to ignore a comment, a string and a field that reads the catalog |
+
+**A guard's coverage claim has its own proof.** A whole-`src` guard that claims to read every production project asserts
+that its scan saw a file of each (`SourceGuard.AssertScansEveryProductionProject`). The real tree always passes that check, so
+its failure path is pinned on its pure core with planted lists (`SourceGuardTests`): a project with no scanned file is named,
+and a folder that merely shares the project's prefix does not stand in for it.
 
 **Tests never run the real collection.** The operation-end trim (§11.4, §12.3) is a blocking, compacting collection of
 the whole process; paid at the end of every operation of every window and coordinator test, it would stall the suite
@@ -6514,9 +6832,24 @@ test is about it: the one that pins it on a window (`RunBufferReleaseTests`), th
 
 Process-control tests are deterministic by contract: they wait on handles and completion ports, never on
 elapsed time. The cascade-kill bound is measured, not assumed, and so is the full exit of §12.3: against a real
-engine and real `MSBuild.exe` children, an exit asked for mid-build lets the in-flight projects succeed and leaves
-no Supervisor or MSBuild process behind (`SafeExitProcessTests`). Scheduler tests assert dispatch *sequences*, not
-just outcomes.
+engine and real `MSBuild.exe` children, an exit confirmed mid-build terminates the in-flight projects, closes on the
+engine's own answer and leaves no Supervisor or MSBuild process behind
+(`SafeExitProcessTests`). Scheduler tests assert dispatch *sequences*, not just outcomes.
+
+The resource strip's measurement (§11.5) is tested the same way. The Win32 reads run against real jobs and real
+children (`JobResourceQueryTests`): a member is a child blocked on its stdin, so it is alive when asked about and ends
+when the test says so, and the end is awaited on the job's completion port. The accounting keeps an exited member's
+processor time, a process that has ended reads as nothing, a handle that can never be valid gives the Win32 error,
+concurrent callers of the member list do not disturb one another's buffer, and the private-bytes reader reads what the
+snapshot counter read — within the margin that counter's own snapshot buffer needs in this process, within a quarter
+of a megabyte in another one. The sampler (`ResourceSamplerTests`) takes its probe, its timer and its clock from
+outside, so a fake timer fired by hand and a clock the test holds drive the whole rhythm — the first sample, the
+beat, the pause, the immediate sample on return, the average over a hidden stretch, a tick queued before a pause that
+must do nothing — and the failure paths are reached through seams rather than by luck: a job over a handle that can
+never be valid, a member that is gone before it can be opened. One test runs a real dispatcher timer with its
+intervals shortened and waits on a condition, not on a duration. The cost is pinned the way the compact console's hot path is: after warm-up a sample
+allocates zero bytes, with an empty job and with a live member (`PerfMeasure.AllocatedBy`). The arithmetic and the
+texts (`ResourceStripTextTests`) are checked at the rounding edges, at the 1024 MB switch and under other cultures.
 
 Responsiveness is a tested contract, not an aspiration. A set of budget tests drives the production surfaces at
 the scale of the real repository — a 177-project topology, an inventory of several hundred refs — and asserts
@@ -6538,6 +6871,39 @@ out of that: **any task adding a new XAML root or template also adds a realizati
 Animation behaviour is measured the same way: the harness can drive the live window, take frames through
 `PrintWindow(PW_RENDERFULLCONTENT)`, read state through UI Automation and diff pixels between frames — so
 "an animation plays" is a testable claim, not a visual impression.
+
+**Measured layout is asserted in device pixels.** `UseLayoutRounding` snaps every size and offset to whole device
+pixels, so a measurement in DIPs moves with the display scale: at 125 % the update pill's 22 is drawn 28 px tall,
+22.4 DIPs, and two sums that land on the same pixel can still differ by a floating-point residue. A layout test takes
+its tolerance from the scale, never as a fixed DIP — the resource strip's realization allows an edge-to-edge gap two
+device pixels (below). The update pill's tests are the strictest. They compare positions on the grid
+(`DsResources.InDevicePixels`) — a real shift is at least one device pixel — and let a design number differ from its
+measurement by at most half a device pixel across a single rounding step. A gap is therefore read from the previous
+element's layout slot: WPF rounds a margin once when it measures and again when it arranges, and at 175 % that puts the
+pill's label a pixel past its slot. A gap read that way cannot see the previous element's right margin, so the three
+margins are pinned as values as well. These tests run at five forced scales, 100 % to 200 %, whatever the machine's
+own: `MainWindowHost.NewRealized` gives the window its scale before realization and the content root its scale after,
+then re-measures the whole tree — headless, the content is not a visual child of the window, and a visual born after
+the scale was set keeps the system's, so `NewRealizedWithOffer` gives the scale again once the offer has built the pill.
+
+The resource strip is realized in the real window at the minimum width with the update pill showing
+(`ResourceStripRealizeTests`, on `window.Content`), and what it asserts is measured: the strip's centre is the bar's
+centre at three widths, the pill's coming and going moves nothing, neither cluster is touched, the cells keep their
+width and the values their left edge whatever the values are, the ghost texts are the Core constants, colours, fonts
+and sizes are the tokens, the tooltips open below and read the view model, the strip is a named group to UI
+Automation, and — through a model of `WindowChrome`'s hit test — only the cells are client area while the gaps and the
+bands around them stay with the native title bar. The hidden-surface rule is pinned on the strip itself and, for the
+whole realized tree, by `HiddenSurfaceTests`. `ResourceStripWiringTests` drives the window's sampling rule from its
+three signals (a table of loaded, hidden and minimized), the first real tick after loading, the stop at close and the
+forwarded caption gestures through three seams (`CaptionDragForTest`, `CaptionToggleMaximizeForTest`,
+`CaptionSystemMenuForTest`). The drag seam sits on the native message itself — which message, which hit code and which
+point, with the window normal and with it maximized — so a drag that does nothing for a maximized window cannot pass
+it; a source guard keeps `Window.DragMove` out of the strip's code and the native call in it. The real move loop and
+the real system menu need a window handle and a mouse and are checked by eye. `ResourceStripViewModelTests` pins the
+rules of the parallelism cell (§11.5): the chip and the missing-value mark while idle, the run's own mode and count
+through a change of the chip, the count of projects building, a reduced run whose three numbers differ, the
+single-project run described like a full run, a change of the run target that moves nothing, and every way a run can
+end handing the cell back to the chip.
 
 ### 17.5 Acceptance
 
@@ -6580,11 +6946,16 @@ it cost. It is a reading with no threshold; its decision rule is that Ctrl+Home 
 table (§13.5) only if, on a page of ten or twelve thousand lines, the editor's own landing costs more than 50 ms of UI
 thread CPU and far more than End does. The content-decision measurements are gated differently: they read a real
 repository whose root comes from `BO_MEASURE_ROOT`, `BO_MEASURE_COLD_ROOT` or `BO_CACHE_ROOT` with a local default, and
-skip only when that root is absent — on a machine where the default root exists they run with the normal suite. One
-probe lives in the application rather than the suite, because what it measures only exists there: with
+skip only when that root is absent — on a machine where the default root exists they run with the normal suite. Two
+probes live in the application rather than the suite, because what they measure only exists there: with
 `BO_PROBE_FRAMES=<file>` the shell records the gap between every two frames it draws, one line per five-second window
-(frames drawn, longest gap, gaps over 33/50/100/250 ms), which is how an animation freeze under a real, full-priority
-run is measured; without the variable nothing is created.
+(frames drawn, longest gap, gaps over 33/50/100/250 ms), which is how an animation freeze under a real run with no cap
+(Full) is measured; with `BO_PROBE_STRIP=<file>` the resource strip's sampler appends one line per sample,
+`HH:mm:ss.fff cpu=<percent> ram=<MB>` — the RAM is the strip's total in whole megabytes, an unreadable value is a `-`,
+and the baseline reading of the first activation is no sample and writes nothing — which is how the rule that sampling
+stops while the window is hidden or minimized is watched in a real run: no line while the window sits in the tray, one
+the moment it returns. Without the variables nothing is created, and a write the strip's probe cannot make is
+swallowed and never reaches the sampler.
 
 The memory budget (`NarrativeBudgetTests`) has two halves. The measurement drives a long synthetic run through the real
 shell and view model — a run that names its run folder, as the engine's do, so the narrative spools to disk (§13.5) —
@@ -6604,8 +6975,10 @@ own allocation counter (`PerfMeasure.AllocatedBy`), which nothing running beside
 gated and run with the normal suite.
 
 A third category, `LocalOnly`, marks a test that cannot run on the hosted CI runner — a timing budget a shared
-runner cannot hold, say. Only CI's filter excludes it (`Category!=Acceptance&Category!=LocalOnly`, §18); the local
-command above runs it, and the local full run stays the gate. A test is never loosened or deleted to make CI green.
+runner cannot hold, say. Only CI's filter excludes it (`Category!=Acceptance&Category!=LocalOnly`, §18), and the
+local command above runs it: the full suite's gate is the work branch's CI run (§18), so these tests are the part of
+the suite that only a local run covers, run before the push whenever a change touches them. A test is never loosened
+or deleted to make CI green.
 The trait goes on a whole class when its assertions are wall-clock budgets (`UiResponsivenessBudgetTests`) and on a
 single method when only that method depends on a clock or a capacity the runner cannot keep steady. Four methods
 carry it that way, each in a class whose other tests stay in CI: the popover's real pop-in (`PopoverTests`), which
@@ -6616,7 +6989,7 @@ shows that appended lines do not replay the transition — all three wait on a r
 shared runner is not steady enough for the windows they allow — and the cycle group-start surface hash (`CycleRoundsTests`), which proves the
 producers are read in parallel by having two reads meet within 50 ms. That meeting needs the thread pool to hand the
 loop a second thread in time; a loaded shared runner could not, and the same test fails locally once the process is
-pinned to a single core. The local run still executes all four, and it stays the gate.
+pinned to a single core. A local run still executes all four.
 
 Test counts are deliberately not recorded here — run the suite for the current number.
 
@@ -6656,8 +7029,11 @@ Close any running instance before building — a live Supervisor keeps its own b
 the SDK band (a later 10.0 feature band is accepted), so a local build and CI use the same SDK.
 
 **CI.** `.github/workflows/ci.yml` builds in Release and runs the suite without the `Acceptance` and `LocalOnly`
-categories (§17.5) on every push to `develop`, every pull request, on demand, and when the release workflow calls it
-(`workflow_call`) — the build and test steps are written once. A push to `main` is a release: the release
+categories (§17.5) on every push to any branch but `main`, every pull request, on demand, and when the release
+workflow calls it (`workflow_call`) — the build and test steps are written once. A work branch is pushed before its
+merge, and its run is the full suite's gate: a full local run takes every core of the developer's machine for the
+length of the suite, and the runner does the same work on a clean machine. `develop`'s own run then checks the merged
+result. A push to `main` is a release: the release
 workflow's own `ci` job is `main`'s build and test, so `ci.yml` does not run there a second time (two runs of one
 commit could disagree, one red by chance while the release went out green). The run on `develop` is what a
 release waits for: `release.ps1` refuses a `develop` whose run is not green. That is why the trigger has no path
@@ -6665,7 +7041,12 @@ filter: a `develop` head that changed only documentation would get no run, and t
 never comes. The README's badge shows the release run of `main` — the released code — whichever branch is the
 repository's default. The runner is pinned to `windows-2025` rather than `windows-latest`, whose image moves under it; MSBuild is
 found there through `vswhere` as anywhere else. A newer run of the workflow on the same ref cancels the older one,
-and the test results are kept as a TRX artifact. The concurrency group carries the workflow's name as well as the
+and the test results are kept as a TRX artifact. When the test step fails, `scripts/ci-failed-tests.ps1` writes the
+failed tests — each name with the first line of its message — as one error annotation on the run (GitHub keeps at
+most ten per step, so the list is one note). The public API serves annotations without a sign-in, where the job log
+and the artifact need one, so a red run names its failures to anyone reading it. The note is plain ASCII — accented
+letters drop to their base letter, typographic marks to their ASCII form, anything else to `?` — because the step's
+output crosses two shells on the runner and non-ASCII text arrived garbled; the exact text stays in the artifact. The concurrency group carries the workflow's name as well as the
 ref: a called workflow takes its caller's context, so the release's `ci` job runs as `release` on `main`, and a
 manual `ci` run on `main` — the default branch "Run workflow" offers — falls in a group of its own instead of
 cancelling a release's tests (a cancelled run would end `cancelled`, which the retry below does not re-run). CI
@@ -7007,11 +7388,14 @@ do, and how the interface works around each — useful to know before attempting
   deliberately does not add one. The keyboard route to any project is the projects list, which is fully
   traversable and drives the same selection everywhere (§13.7); the graph reflects that selection rather than
   being a second way to reach it.
-- **A full exit's wait ends on engine silence.** The exit waits for the work in flight (§12.3), but the silence
-  watchdog (§4.6) releases it once the engine has sent nothing for the threshold, and silence cannot tell a wedged
-  engine from one that is busy without a word. A checkout or pull whose git write runs longer than that, or a
-  build step that prints nothing for that long while a stop drains, is then cut off by the application's
-  shutdown. An engine heartbeat inside those waits — the one a package restore already has — would close it.
+- **A full exit's wait for a git write ends on engine silence.** The exit waits for a checkout or a pull (§12.3), but
+  the silence watchdog (§4.6) releases it once the engine has sent nothing for the threshold, and silence cannot tell a
+  wedged engine from one that is busy without a word. A git write that runs longer than that is then cut off by the
+  application's shutdown. An engine heartbeat inside those waits — the one a package restore already has — would close
+  it.
+- **An exit can cut a fetch mid-write.** A Sync is not waited for (§12.3). If its `git fetch` is killed between taking a
+  ref's lock and renaming it into place, a `.lock` file stays behind in `.git` and the next fetch of that ref fails
+  until the file is removed. The window is short, and the risk was accepted for an exit that does not wait.
 - **An engine that dies just as it is put to sleep counts as asleep.** The sleep and the death race for one claim on
   the engine's generation (§4.6); when the sleep wins, the death is part of the stop, so no death is reported and the
   next request that needs the engine wakes a fresh one. Nothing is lost — a sleep only begins when nothing is in
@@ -7174,9 +7558,11 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Maximize overflow fix · DWM corners/border · caption glyphs | `App/Shell/MaximizeFix.cs`, `Dwm.cs`, `CaptionGlyphs.cs` |
 | Single instance, tray icon, global hotkeys (table, show/hide decision), shutdown | `App/Shell/SingleInstance.cs`, `AppTrayIcon.cs`, `Hotkey.cs`, `App/Shell/AppShutdown.cs` |
 | Start with Windows — the `Run` value, Task Manager's disabled mark, the state the switch shows, the save-time write, the removal at uninstall (`RemoveForUninstall`) | `App/Services/AutostartService.cs` |
-| Window close decision — `X`, `Alt+F4`, system-menu *Close*: close, stay, hide to the tray or ask for a full exit — and whether a waiting exit brings the window forward | `App/Shell/WindowCloseRule.cs`; applied in `App/MainWindow.xaml.cs` (`OnClosing`) |
-| Safe full exit: the wait for work in flight, the graceful stop, the release on engine silence or death, `ExitReady` | `App/ViewModels/RunViewModel.Exit.cs`; no Sync once the exit is asked for, and nothing leaves the engine gate: `RunViewModel.cs` (`SyncCoreAsync`), `RunViewModel.Engine.cs` (`EnsureEngineAwakeAsync`) — both read the one flag, `_exitRequested` |
-| …its shell side: the one path tray *Exit* and `X` share, bringing the waiting window forward, the shutdown | `App/MainWindow.xaml.cs` (`RequestFullExit`, `ExitNow`) |
+| Window close decision — `X`, `Alt+F4`, system-menu *Close*, an `Esc` with nothing left to do: close, stay, hide to the tray or ask for a full exit | `App/Shell/WindowCloseRule.cs`; applied in `App/MainWindow.xaml.cs` (`OnClosing`) |
+| Full exit: what is in flight (`ExitWork`), the hard stop of a run and the stop wait (`ExitStopWaitMs`), the jobs cut off and the git writes waited for, the release on engine silence or death, `ExitReady`; the run's progress for the card (`ExitProgress`) | `App/ViewModels/RunViewModel.Exit.cs`; the work kinds and the one rule of which ones the exit waits for: `App/ViewModels/ExitWork.cs` (`ExitWorkRules.Waits`); the hard stop shared with *Stop now*: `RunViewModel.cs` (`SendHardStopAsync`); no Sync once the exit is asked for, and nothing leaves the engine gate: `RunViewModel.cs` (`SyncCoreAsync`), `RunViewModel.Engine.cs` (`EnsureEngineAwakeAsync`) — both read the one flag, `_exitRequested` |
+| …its shell side: the *Exit* button and `Ctrl+Q`, the confirmation card's open state, placement, close paths and once-a-second process count, *Stop and exit* playing the closing screen, `ExitReady` moving it on, the one decision tray *Exit* and `X` share and the deferred bring-forward, the shutdown | `App/MainWindow.Exit.cs` (`OnExitRequested`, `RequestExitFromUser`, `RequestExitFromOutside`, `ConfirmExitInFront`, `ConfirmExitInFrontNow`, `BringForwardForExit`, `StopAndExit`, `OnExitReady`, `ExitCardGap`), `App/MainWindow.UpdateRestart.cs` (`OnClosingScreenFilled`), `App/MainWindow.xaml` (`ExitSeparator`, `ExitButton`, `ExitPopup`), `App/MainWindow.xaml.cs` (`ExitNow`, `CatalogTooltip`), `App/Resources/Controls.xaml` (`Ds.IconButton.Open`) |
+| Exit card (status, ends on exit, decision; the drop-in from the right; focus on *Cancel*) and its texts | `App/Views/ExitCard.xaml(.cs)`, texts `App/ViewModels/ExitText.cs` |
+| Process names for the card — the outer job's members counted by name, the engine and console hosts left out; one PID to its image name; the outer job's member list shared with the resource strip; opening a live process by PID, shared with the memory read | `App/Services/JobProcessCensus.cs`, `App/Services/OuterJobMembers.cs`, `Core/ProcessControl/ProcessImage.cs`, `Core/ProcessControl/LiveProcess.cs` |
 | *Show notifications* on the four balloons (first close, run result, second instance, ignored Build hotkey) | `App/Shell/UiStateStore.cs` (`FirstCloseBalloonGate`), `App/Services/TrayBuildIndicatorController.cs`, `App/Shell/SecondInstanceGate.cs`, `App/MainWindow.xaml.cs` (`OnGlobalHotkey`) |
 | The ignored Build hotkey's balloon: shown only with the window hidden and *Show notifications* on; the reason is the run gate's own answer | `App/MainWindow.xaml.cs` (`OnGlobalHotkey`, `TrayNotifierForTest`), `App/ViewModels/RunViewModel.cs` (`WhyRunCannotStart`), `App/ViewModels/RunGateText.cs` (the reason sentences), `App/Shell/AppTrayIcon.cs` (`ShowBuildIgnored`, `BuildIgnoredBody`) |
 | Tray build indicator — when it shows, exit choreography, one balloon, then the exit notice (`ExitCompleted`, carrying the run the exit began for) | `App/Services/TrayBuildIndicatorController.cs` |
@@ -7197,7 +7583,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Keyboard semantics (key → intent, Esc chain) | `App/Shell/KeyboardShortcuts.cs` |
 | …Esc's run layer on the view model (the chain's input state, the can't-be-stopped line) | `App/ViewModels/RunViewModel.Esc.cs` |
 | Shortcut display text, descriptions and About groups (single source) | `App/Shell/ShortcutCatalog.cs` |
-| Product identity (name, version, copyright, tagline, About overview) and the grouped diagnostics model, the application's three memory rows included (read when the dialog opens and when the MSBuild resolution lands, `—` when the read fails) and the engine PID row, which reads `asleep` while the engine sleeps (the view model's engine state rides in with the model's input) | `App/Services/AppIdentity.cs`, `DiagnosticsReport.cs`, `App/Views/AboutDialog.xaml.cs` (`RefreshDiagnostics`) |
+| Product identity (name, version, copyright, tagline, About overview) and the grouped diagnostics model: the groups the tabs draw (identity, runtime, paths), the copy-only group — the application's three memory rows, read when the dialog opens and when the MSBuild resolution lands, `—` when the read fails, drawn on no tab and written into the copied text — and the engine PID row, which reads `asleep` while the engine sleeps (the view model's engine state rides in with the model's input) | `App/Services/AppIdentity.cs`, `DiagnosticsReport.cs` (`CopyOnly`, `ToText`), `App/Views/AboutDialog.xaml.cs` (`RefreshDiagnostics`) |
 | Layer row placeholders (Settings, by row index) | `App/Shell/LayerPlaceholders.cs` |
 | Workspace label text (the repository root's folder name) | `App/ViewModels/TitleBarContext.cs` |
 | Release notes (What's new data, categories, fold rule) | `CHANGELOG.md` (content), `App/Services/ReleaseNotes.cs` (reader and rules) |
@@ -7206,8 +7592,10 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Updater seam and its Velopack implementation — installed or not, check, download, the download size (deltas or full), install at exit of the offered version only | `App/Services/Updates/IAppUpdater.cs`, `VelopackUpdater.cs` |
 | Update feed — GitHub Releases of this repository, `BO_UPDATE_SOURCE`, `BO_UPDATE_PRERELEASE` | `App/Services/Updates/UpdateFeed.cs` |
 | Update surface of the view model — the current offer, the Restart lock and its order, the Restart request and its gate | `App/ViewModels/RunViewModel.Update.cs`, texts `App/ViewModels/UpdateText.cs`; the lock's task bucket reads the workspace work from `RunViewModel.Workspace.cs` (`NonSyncWorkspaceBusy`, the list `WorkspaceBusy` also reads); re-evaluated from `RunViewModel.Workspace.cs` (`OnWorkspaceBusyChanged`) and `RunViewModel.Stream.cs` (`runStarted`) |
+| Title bar right cluster spacing — one 16 px icon box, the 1 px gap between items (a hidden pill leaves none), the hairline's 8 px sides | `App/MainWindow.xaml` (`TitleBarClusterGap`, `TitleBarSeparator`), `App/Controls/GapStackPanel.cs` |
 | Title bar update pill — the first element of the right cluster, its shared hairline style, visibility, version and name from the offer, the entrance; the card's popup and its placement below the pill's left edge (custom, independent of the Windows handedness setting), its close paths (dialogs, the Esc popover layer, the Restart request) | `App/MainWindow.UpdatePill.cs` (`UpdateCardGap`), `App/Controls/PopoverPlacement.cs`, `App/MainWindow.xaml` (`UpdatePillSlot`, `UpdatePopup`, `TitleBarSeparator`), `App/MainWindow.xaml.cs` (`AnyPopoverOpen`, `CloseAllPopovers`), `App/Resources/Controls.xaml` (`Ds.UpdatePill`) |
-| Restart request → the update restart screen as the topmost layer; the safe full exit when its bar fills; keyboard and global hotkeys suspended while it shows | `App/MainWindow.UpdateRestart.cs` (`OnRestartToUpdateRequested`, `OnRestartScreenFilled`, `InputSuspended`, `OnPreviewKeyDown`), `App/MainWindow.xaml` (`UpdateRestartOverlay`), `App/MainWindow.xaml.cs` (`OnGlobalHotkey`, `RequestFullExit`) |
+| The resource strip in the window — the sampler built over the outer job and the engine PID, the one rule that runs it (window loaded, surface not hidden, not minimized; re-asked from `Loaded`, the hidden-surface signal and `WindowState`), the stop at close, and the caption gestures the strip forwards (drag, double-click maximize and restore, the system menu and its DIP anchor) with their test seams | `App/MainWindow.ResourceStrip.cs` (`SetupResourceStrip`, `ShouldSampleResources`, `RefreshResourceSampler`, `StopResourceStrip`, `SystemMenuAnchor`), `App/MainWindow.HiddenSurface.cs` (`SetSurfaceHidden`), `App/MainWindow.xaml.cs` (`OnClosed`), `App/Shell/Win32.cs` (the native caption press: `WM_NCLBUTTONDOWN`, `HTCAPTION`, `ReleaseCapture`, `SendMessage`, `GetMessagePos`); the title bar `Grid` in `App/MainWindow.xaml` |
+| Restart request → the closing screen's restart mode as the topmost layer; the full exit when its bar fills; keyboard and global hotkeys suspended while the closing screen shows | `App/MainWindow.UpdateRestart.cs` (`OnRestartToUpdateRequested`, `OnClosingScreenFilled`, `InputSuspended`, `OnPreviewKeyDown`), `App/MainWindow.xaml` (`ClosingOverlay`), `App/MainWindow.xaml.cs` (`OnGlobalHotkey`) |
 | Popover trigger that reports expanded / collapsed to UI Automation | `App/Controls/PopupToggleButton.cs` |
 
 **Engine and IPC**
@@ -7290,11 +7678,11 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | What a row reads the moment a result lands, before the next preview (success, trusted or not · failure · Clean · a skip as up to date at its turn · a carried member's discarded record) | `Core/Planning/NextPreview.cs` |
 | Run elapsed clock | `Core/Scheduling/RunClock.cs` |
 | Bounded synchronous retry (used by state store and clipboard) | `Core/Scheduling/SyncRetry.cs` |
-| Worker loop, event pump, stop bookkeeping, perf lifecycle, cycle round loop (it applies the settled rule as it reports the members: a settled member's success is trusted, a settled carried member is reported up to date, an unsettled carried member of a group with a verdict is reported skipped with its record discarded (`ReportDiscardedCarry`), every other success is invalidated) and non-convergence memory; the build-slot budget and who holds it (a worker from dispatch to result, a cycle member from `projectStarted` to `cycleMemberHeld`); the interrupt flag and the one reporting gate that stops trusting results after it; the dependency-issue computation that precedes every compile and cannot throw (`DepIssuesForCompile`); in-flight ledger calls | `Supervisor/RunCoordinator.cs` |
+| Worker loop, event pump, stop bookkeeping (the hard-stop token every compile listens to, `_hardStop`), perf lifecycle, cycle round loop (it applies the settled rule as it reports the members: a settled member's success is trusted, a settled carried member is reported up to date, an unsettled carried member of a group with a verdict is reported skipped with its record discarded (`ReportDiscardedCarry`), every other success is invalidated) and non-convergence memory; the build-slot budget and who holds it (a worker from dispatch to result, a cycle member from `projectStarted` to `cycleMemberHeld`); the interrupt flag and the one reporting gate that stops trusting results after it; the dependency-issue computation that precedes every compile and cannot throw (`DepIssuesForCompile`); in-flight ledger calls | `Supervisor/RunCoordinator.cs` |
 | Failure-evidence classification (compiler exit vs. timeout/stop/invoke error) — the one clause the evidence gate reads | `Core/State/FailureClassification.cs` |
 | Per-run and per-project logs, decision log; the name of the App's narrative file in the run folder; a project's log read back — from the live writer (`SnapshotProjectLog`) or from disk (`ReadProjectLogFromDisk`, null only when the log is absent, every other read failure rising to the caller) | `Core/Logs/RunLogWriter.cs`, `RunLogPaths.cs` (`NarrativeFileName`), `ProjectLogNaming.cs` |
 | Run-log retention: the three-day window, the newest run kept, the bounded sweep and its one stderr line; the sweep started in the background at engine start | `Core/Logs/RunLogRetention.cs`, `Core/Logs/RunLogPaths.cs` (`TryParseRunDirName`), `Supervisor/Program.cs` |
-| The engine's operation-end trim and memory line: the single collection; the line format, the process read (`Read`, returning a `MemoryReading`, and the guarded `TryRead` the About dialog uses), the one MB rule (`Megabytes`) and the sink that swallows its own errors (written once, in `DiagnosticLine.Write`); after a run, a Sync, a Clean and an Optimize — whatever the outcome — the engine trims, then writes the line to stderr: the collection skipped while a run holds the slot, one warning line when it throws | `Core/Diagnostics/MemoryTrim.cs`, `MemoryLine.cs`, `Supervisor/RunCoordinator.cs` (`TrimAndReportMemory`, `IsRunActive`), `Supervisor/SupervisorHost.cs` (`SyncWorkspaceAsync`, `CleanWorkspaceAsync`, `OptimizeWorkspaceAsync` — each in its `finally`), the stderr channel in `Supervisor/Program.cs` |
+| The engine's operation-end trim and memory line: the single collection; the line format, the process read (`Read`, returning a `MemoryReading`, and the guarded `TryRead` the About dialog uses), the one read path of the private bytes (`CurrentPrivateBytes` for this process, `PrivateBytesOf` for another, both through `GetProcessMemoryInfo`), the one MB rule (`RoundedMegabytes`, whose text is `Megabytes`) and the sink that swallows its own errors (written once, in `DiagnosticLine.Write`); after a run, a Sync, a Clean and an Optimize — whatever the outcome — the engine trims, then writes the line to stderr: the collection skipped while a run holds the slot, one warning line when it throws | `Core/Diagnostics/MemoryTrim.cs`, `MemoryLine.cs`, `Supervisor/RunCoordinator.cs` (`TrimAndReportMemory`, `IsRunActive`), `Supervisor/SupervisorHost.cs` (`SyncWorkspaceAsync`, `CleanWorkspaceAsync`, `OptimizeWorkspaceAsync` — each in its `finally`), the stderr channel in `Supervisor/Program.cs` |
 | Log chunking for the UI | `Core/Logs/LogChunker.cs` |
 | The project-log answer: the request's id echoed on every chunk, "no log" as one empty flagged chunk; the three sources (the live run, the engine's latest run, the folder the request names — for an engine that has run nothing itself), the one place that turns a read failure into no log with its single warning line (`TryGetProjectLogSnapshot`, the line itself through `ReportDiagnostic`), and the folder rule | `Supervisor/SupervisorHost.cs` (`SendProjectLogAsync`), `Supervisor/RunCoordinator.cs` (`TryGetProjectLogSnapshot`, `ReportDiagnostic`; `logsRoot`, the one entry of the logs root), `Core/Logs/RunLogPaths.cs` (`TryGetRunDirectory`), `Contracts/Ipc/IpcMessages.cs` (`GetProjectLogCommand`, `ProjectLogChunkEvent`) |
 | Writing a diagnostic line and swallowing the write's own failure — the one place, shared by the engine's memory line and the coordinator's two warnings that ride a reply or a close (the unreadable project log, the failed trim) | `Core/Diagnostics/DiagnosticLine.cs` (`Write`), `MemoryLine.cs`, `Supervisor/RunCoordinator.cs` (`ReportDiagnostic`) |
@@ -7332,7 +7720,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | The HEAD watcher on `logs/HEAD` (in a reftable repository on `reftable/tables.list`, with HEAD's reflog taken from git) and its 1.5 s settle window | `Core/Git/HeadWatcher.cs`, `Core/Git/SettleDebouncer.cs` |
 | Revision text shortening (only a full 40-hex sha is cut to 7) | `Core/Git/RevisionText.cs` |
 | The `N behind` chip's command handler (main repository fast-forward) | `Supervisor/SupervisorHost.cs` |
-| Automatic Sync decision: triggers (HEAD watcher, window activation, end of run), the one pending trigger, the double-Sync check, the interrupt request | `App/Services/AutoSyncCoordinator.cs` |
+| Automatic Sync decision: triggers (HEAD watcher, window activation, end of run), the one pending trigger, the double-Sync check, the interrupt request, the return that a self-refreshing click makes unnecessary | `App/Services/AutoSyncCoordinator.cs` |
+| The click that brings the window back: the activating left press (`WM_MOUSEACTIVATE`), what lies under it (an enabled Build, the configuration not selected) | `App/MainWindow.xaml.cs` (`OnActivated`), `App/Views/ActionBar.xaml.cs` (`StartsOwnRefreshAt`) |
 | The view model's side of it: the port, the interrupted run's summary | `App/ViewModels/RunViewModel.AutoSync.cs` |
 | Git-operation gate: the chip's dot and tooltip, the checkout and pull locks, the 2 s poll, the stuck-lock line | `App/ViewModels/RunViewModel.GitOperation.cs`, `App/Services/IPollTimer.cs` |
 | Sync kinds and their rules (clearing, fetch, transcript, visibility, restarting the plan surface, dropping the decisions) | `App/ViewModels/SyncMode.cs` |
@@ -7351,6 +7740,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Root normalization and the `C:\repo` / `C:\repo2` prefix trap — one gate for both the reset and the prune | `Core/Paths/RootScope.cs` |
 | Orphaned atomic-write `.tmp` sweep (per-target pattern, age threshold) | `Core/Paths/TempFileSweeper.cs`, the three ledgers' `SweepOrphanTempFiles` |
 | Human-readable byte sizes (console summaries and the stream) | `Core/Formatting/ByteFormat.cs` |
+| The one missing-value mark (`—`): an unknown duration, an unreadable strip value, an absent About value | `Core/Formatting/MissingValue.cs` |
 | `cleanWorkspace` handler and its run-active rejection | `Supervisor/SupervisorHost.cs` (`CleanWorkspaceAsync`), `Supervisor/RunCoordinator.cs` (`IsRunActive`) |
 | `optimizeWorkspace` handler: run-active rejection, event bridge, the catch-all that keeps exceptions off the wire | `Supervisor/SupervisorHost.cs` (`OptimizeWorkspaceAsync`) |
 | Root-scoped Core service factories, including Optimize's lazily resolved MSBuild toolset | `Supervisor/SupervisorHost.cs` (`WorkspaceServices`) |
@@ -7371,10 +7761,12 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 
 | Behaviour | File |
 |---|---|
-| Job object: creation, assignment, CPU rate, priority, terminate | `Core/ProcessControl/JobObject.cs`, `NativeMethods.cs` |
+| Job object: creation, assignment, CPU rate, priority, terminate — and, read-only, its processor accounting and its member list (`QueryAccounting`, `QueryProcessIds`, whose buffer is reused under a lock) | `Core/ProcessControl/JobObject.cs`, `NativeMethods.cs` |
+| Resource strip arithmetic and texts: the CPU percent, the memory text (megabytes below 1 GB, one-decimal gigabytes above), the CPU and memory tooltips, the parallelism cell's run count and limit and its tooltips, the ghost widths | `Core/Diagnostics/ResourceStripText.cs` (mode text → mode: `Core/ProcessControl/PerfProfile.cs`, `TryParseMode`) |
+| Resource strip sampling: the probe over the outer job and the App (`JobResourceProbe` — accounting, member list, the private bytes of each member, the engine told from the compilers), the sampler's rhythm and CPU baseline (`ResourceSampler` — baseline, first sample, three-second beat, pause, the immediate sample on return) and the `BO_PROBE_STRIP` recorder (`StripSampleProbe`) | `App/Services/ResourceSampler.cs`; `OuterJob` and `EnginePid` in `App/Services/EngineHost.cs` |
 | Suspended launch + handle-list inheritance | `Core/ProcessControl/JobProcessLauncher.cs`, `ProcThreadAttributeList.cs`, `JobChildProcess.cs` |
 | Job completion port notifications | `Core/ProcessControl/JobCompletionPort.cs` |
-| Perf table, copy-phase floor, and the Resolve cycles full-priority rule: the transform, its note, the single point where the engine applies it (run start and every mid-run switch) and where the App writes the note (run start, mid-run switch) | `Core/ProcessControl/PerfProfile.cs` (`ForRun`), `PerfNoteText.cs` (`ResolveNote`), `ICpuGovernor.cs`, `ICopyPhaseCpuFloor.cs`, `Supervisor/RunCoordinator.cs` (`ApplyPerfLocked`), `App/ViewModels/RunViewModel.cs` (`OnRunStarted`, `CyclePerfAsync`) |
+| Perf table and copy-phase floor; the chip's note; the single point where the engine applies the chosen profile (run start and every mid-run switch) and where the App writes the note (mid-run switch) | `Core/ProcessControl/PerfProfile.cs`, `PerfNoteText.cs` (`Note`), `ICpuGovernor.cs`, `ICopyPhaseCpuFloor.cs`, `Supervisor/RunCoordinator.cs` (`ApplyPerfLocked`), `App/ViewModels/RunViewModel.cs` (`CyclePerfAsync`) |
 | Worker budget: the clamp rule with all its constants, the machine reading it uses (logical processors, free physical memory), the note a reduction writes, the single point where the engine applies it at run start (and writes the note to `decision.log`), and where the App writes the note (console at run start, event stream right after the opening line) | `Core/ProcessControl/WorkerBudget.cs`, `MachineResources.cs`, `PerfNoteText.cs` (`WorkersReduced`), `NativeMethods.cs` (`GlobalMemoryStatusEx`), `Supervisor/RunCoordinator.cs`, `App/ViewModels/RunViewModel.cs` (`OnRunStarted`, `WorkersReducedNote`), `App/ViewModels/RunViewModel.Stream.cs` (`BuildPreviewEvent` branch) |
 | Run-start warnings (stale `obj`, reverse layer): gathered once before `runStarted`, written to `decision.log`, carried by `runStarted.warnings`, and where the App writes them (console at run start; event stream after the opening and reduction lines with the prefix dropped, folded into one counting line past a small limit) | `Supervisor/RunCoordinator.cs`, `Supervisor/StaleObjRunStartWarner.cs`, `Contracts/Ipc/IpcMessages.cs` (`RunStartedEvent.Warnings`), `App/ViewModels/RunViewModel.cs` (`OnRunStarted`), `App/ViewModels/RunViewModel.Stream.cs` (`BuildPreviewEvent` branch), `App/ViewModels/StreamText.cs` (`RunStartWarningLines`) |
 | File IO concurrency: the one degree shared by the first content-hash fill (the miss scan and the reads), input collection, the fingerprint warm-up, the output checks and the group-start surface hash | `Core/Io/IoParallelism.cs`, `Core/Incremental/SourceHashCache.cs`, `Core/Incremental/IncrementalRunBinder.cs`, `Supervisor/RunCoordinator.cs` |
@@ -7384,6 +7776,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Run state, rows, counters, commands | `App/ViewModels/RunViewModel*.cs` |
+| The resource strip's state: the CPU and RAM texts and tooltips from a sample (`ApplyResourceSample`); the parallelism cell and the CPU tooltip from the chip, the counter and the run (`RefreshStrip`), with the mode a run started with (`CaptureStripRunMode` when the start command is built, `BeginStripRun` at `runStarted`, handed back when `IsRunning` falls), the run's count and the reduction reason; the one text → mode fallback (`ModeFor`) | `App/ViewModels/RunViewModel.ResourceStrip.cs`; `ModeFor` in `RunViewModel.cs` |
 | Ribbon phase lines and ETA display, with the texts that pre-empt them in their order — the engine-starting line included | `App/ViewModels/RibbonText.cs` |
 | The Stop button's three stages and their labels, shared by the action bar, the tray item and the row icon | `App/ViewModels/StopText.cs` |
 | Event stream composition and wording | `App/ViewModels/StreamComposer.cs`, `StreamText.cs`, `StreamEventViewModel.cs` |
@@ -7405,6 +7798,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 
 | Behaviour | File |
 |---|---|
+| Resource strip view: the three cells, their icons, the ghost-text frame, the downward tooltips, the writes gated by the hidden-surface signal, the UI Automation group | `App/Views/ResourceStrip.xaml(.cs)`; icons and measurements in `App/Resources/Icons.xaml` (`Icon.Cpu`, `Icon.MemoryStick`, `Icon.Parallel`) and `Tokens.xaml` (`Size.ResourceStripIcon`, `Size.ResourceStripIconViewBox`, `Thickness.ResourceStripCellGap`, `Thickness.ResourceStripValueGap`); the group's name in `App/AccessibilityNames.cs` |
 | Sticky ribbon: phase, building chips, failure cluster, progress; it listens to the engine state and announces the engine-starting line | `App/Views/StickyRibbon.xaml(.cs)` |
 | Project row: stripe, dot, decision label, hover icons, play/Stop wiring, breath, shake | `App/Views/ProjectRow.xaml(.cs)`, `ProjectRowActions.xaml(.cs)`; label wording `App/ViewModels/DecisionLabel.cs` |
 | Row menu (Build · Rebuild · Clean; ⋯ and right-click) | `App/Views/ProjectRowMenu.xaml(.cs)` |
@@ -7427,12 +7821,12 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Emptying rows, graph and the will-build surface at a Clean or Optimize click, on a real repository change and when a Save closes the workspace | `App/ViewModels/RunViewModel.ActionBar.cs` (`ClearPlanSurface`) |
 | Closing the workspace on a Save with an empty root (root, phase, plan and git surface, selection, filter, a new console page) | `App/ViewModels/RunViewModel.ActionBar.cs` (`CloseWorkspace`, `RootOf`), `RunViewModel.Workspace.cs` (`ForgetGitSurface`) |
 | No-workspace look of the panels (header counts, PROJECTS list tools, the console's waiting prompt) | `App/ShellRoot.xaml.cs` (`SetHasWorkspace`; the list tools' one gate `ApplyListTools` is shared with discovery), driven from `HasWorkspace` in `App/MainWindow.xaml.cs` |
-| Discovery blocks: the list's (a list state, the counter and its live region) and the graph's (body layers and header count behind one gate); their shared icon look and their centred column in the interface font | `App/ShellRoot.xaml(.cs)` (`PART_Discovering`, `SetDiscovering`, `SetDiscoveryCount`), `App/Graph/GraphView.xaml(.cs)` (`DiscoveryState`, `SetDiscovering`, `ApplyBodyState`), `App/Resources/Controls.xaml` (`Ds.DiscoveryIcon`, `Ds.DiscoveryBlock`), wired from the view model in `App/MainWindow.xaml.cs` (`ApplyDiscovery`) |
+| Discovery blocks and empty views: the list's (list states — the discovery block with the counter and its live region, the empty view) and the graph's (one body block with two texts; body layers and header count behind one gate); their shared icon look, caption and centred column in the interface font | `App/ShellRoot.xaml(.cs)` (`PART_Discovering`, `PART_NoProjects`, `SetDiscovering`, `SetDiscoveryCount`, `SetListInvite`), `App/Graph/GraphView.xaml(.cs)` (`StateBlock`, `SetDiscovering`, `ApplyBodyState`), `App/Resources/Controls.xaml` (`Ds.DiscoveryIcon`, `Ds.DiscoveryBlock`, `Ds.DiscoveryCaption`), wired from the view model in `App/MainWindow.xaml.cs` (`ApplyDiscovery`, `RefreshListInvite`) |
 | Import shortcut's wait before the file picker, and the picker centred over the window | `App/Views/SettingsDialog.xaml.cs` (`OpenForImportAsync`, `ImportPickerDelayMs`), `App/Shell/CenteredDialog.cs`, `App/Shell/DialogPlacement.cs`, `App/Shell/Win32.cs` |
 | Step hold between an operation and the next (dispatcher timer, zero under reduced motion and while the window is hidden) | `App/Services/StepHold.cs`, `App/ViewModels/RunViewModel.cs` (`OperationHold`) |
-| Branch popover and its base (shared with the update card) | `App/Views/BranchPopover.xaml(.cs)`, `PopoverBase.cs` |
+| Branch popover and its base (shared with the update and exit cards) | `App/Views/BranchPopover.xaml(.cs)`, `PopoverBase.cs` |
 | Update card (identity, highlights, decision; the drop-in; *Later*) | `App/Views/UpdateCard.xaml(.cs)` |
-| Update restart screen — the 232 px column, the frame timer and clock, the fade-in, the once-per-step announcement, `BarFilled` when the bar is full; its one step, duration and percentage | `App/Views/UpdateRestartScreen.xaml(.cs)`; timeline `App/ViewModels/UpdateRestartTimeline.cs`, texts `App/ViewModels/UpdateText.cs` |
+| Closing screen — the 232 px column, the two modes (restart: version change; exit: work and progress), the frame timer and clock, the fade-in, the once-per-step announcement, the exit mode's hold until the exit is ready (`MarkStopped`), `BarFilled` when the bar is full | `App/Views/ClosingScreen.xaml(.cs)`; restart timeline `App/ViewModels/UpdateRestartTimeline.cs` and texts `App/ViewModels/UpdateText.cs`; exit timeline `App/ViewModels/ExitClosingTimeline.cs` and texts `App/ViewModels/ExitText.cs` |
 | Release-note category blocks — one drawing for What's new and the update card, measures per surface | `App/Views/ReleaseNoteBlocks.cs` |
 | Branch popover row (virtualized item container) | `App/Views/BranchRow.cs` |
 | Settings dialog (section rail + pages), layer/external-project drag-reorder | `App/Views/SettingsDialog.xaml(.cs)`, `App/Controls/DragReorderBehavior.cs` |
@@ -7531,7 +7925,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | One-command release from `develop`: guards (`develop`'s CI run green and something to release included), `Version`, build, release commit, `--no-ff` merge into `main`, `develop` fast-forwarded to `main`, one atomic push of `main` and `develop` — no tag; the undo line when it stops after the release commit, withheld when a push that reported an error left the release merge on `origin`'s `main` | `scripts/release.ps1` |
 | The `/release` request: order and commands; the note rules stay in `CLAUDE.md` | `.claude/skills/release/SKILL.md` |
 | End-to-end check of a publish output | `scripts/verify-publish.ps1` |
-| CI build and suite on `develop`; the release workflow on `main` (guard → CI → package → tag → GitHub Release); one automatic re-run of a failed release | `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `.github/workflows/release-retry.yml` |
+| CI build and suite on every branch but `main` (a work branch's run is the full suite's gate), its failed tests as one annotation; the release workflow on `main` (guard → CI → package → tag → GitHub Release); one automatic re-run of a failed release | `.github/workflows/ci.yml`, `scripts/ci-failed-tests.ps1`, `.github/workflows/release.yml`, `.github/workflows/release-retry.yml` |
 | SDK band · pinned `vpk` · licence | `global.json` · `.config/dotnet-tools.json` · `LICENSE` |
 
 **Reading the map.** A rule of thumb that holds across the code base: where a behaviour has both a *decision*
@@ -7546,11 +7940,19 @@ decided, look at the pure class; when it concerns *how* it was drawn or animated
 
 | Document | Role |
 |---|---|
-| [`README.md`](README.md) | Entry point: what the tool does, requirements, how to install, build, run, package and release it, how to use it |
+| [`README.md`](README.md) | Entry point: what the tool does, highlights, screenshots (`docs/images/`), quick start, developer commands, document map |
+| [`docs/FEATURES.md`](docs/FEATURES.md) | Every feature, most important first: what it does, how, and the techniques behind it |
+| [`docs/WHY.md`](docs/WHY.md) | What each feature changes: the goal, the common practice without such a tool, and the result here |
+| [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md) | Requirements, installation and use, screen by screen: shortcuts, updates, state on disk, performance modes, known limits |
 | **`ARCHITECTURE.md`** (this file) | Technical reference: architecture, processes, contracts, algorithms, UI, design system, security boundary, code map |
+| [`CHANGELOG.md`](CHANGELOG.md) | Release notes, embedded in the app as What's new (§18) |
 | [`CLAUDE.md`](CLAUDE.md) | Working conventions for this repository |
 | `.claude/skills/release/` | The `/release` skill (§18) — a working instruction, not part of the record below |
-| `.claude/` · `.superpowers/` | Historical record of the delivery, kept as written. Superseded by the three documents above; not an authority for the current system |
+| `.claude/` · `.superpowers/` | Historical record of the delivery, kept as written. Superseded by the documents above; not an authority for the current system |
+
+README, FEATURES and WHY are written in English with a Turkish mirror beside each (`README.tr.md`,
+`docs/FEATURES.tr.md`, `docs/WHY.tr.md`); the user guide and this document are English only.
+`DocumentationTests` keeps the mirrors in step (§17).
 
 **Maintenance.** This document describes the system as it is. When behaviour changes, the affected section is
 rewritten in place, in the same voice — it does not accumulate a change log, and it does not record which

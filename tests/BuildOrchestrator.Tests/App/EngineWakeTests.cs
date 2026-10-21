@@ -894,8 +894,11 @@ public class EngineWakeTests
     }
 
     /// <summary>[Fix round 1 · I2 · R3] Uyanma sürerken çıkış istenirse kapıda bekleyen hiçbir şey gönderilmez: Sync'in kendi geri alımı çalışır
-    /// (ne Sync ne branch envanteri gider, satır yok), uçuşta iş kalmaz ve çıkış o anda — bir kez — hazır olur.
-    /// <para>KIRMIZI (e843d516): uyanma bitince Sync ve envanter uyanan motora gidiyor, çıkış o Sync'in bitişini bekliyordu.</para></summary>
+    /// (ne Sync ne branch envanteri gider, satır yok), uçuşta iş kalmaz ve çıkış — bir kez — hazır olur.
+    /// <para>KIRMIZI (e843d516): uyanma bitince Sync ve envanter uyanan motora gidiyor, çıkış o Sync'in bitişini bekliyordu.</para>
+    /// <para><b>[DEĞİŞEN KURAL — Exit, 2026-10-19]</b> ESKİ: çıkış kapıda bekleyen Sync'i bekliyordu (istek uçuşta sayılır) ve uyanma
+    /// bitince hazır oluyordu. Sync artık beklenmez (<see cref="SafeExitTests"/>) — çıkış istekle AYNI çağrıda hazırdır; kapının geri
+    /// alımı yine çalışır ve hiçbir şey gönderilmez.</para></summary>
     [WpfFact]
     public async Task An_exit_requested_during_a_wake_withdraws_the_sync_waiting_in_the_gate()
     {
@@ -908,7 +911,7 @@ public class EngineWakeTests
         Assert.Equal(EngineState.Waking, vm.EngineState); // ön-koşul: Sync kapıda
 
         vm.RequestExit();
-        Assert.Equal(0, exitReady); // çıkış kapıda bekleyen Sync'i bekliyor (istek uçuşta sayılır)
+        Assert.Equal(1, exitReady); // Sync beklenmez
         waking.SetResult(Woken());
         DispatcherPump.DrainToIdle();
         await sync;
@@ -1680,7 +1683,9 @@ public class EngineWakeTests
     /// <summary>[T21 OOS-3 · R3 · PİN] Kapıda bekleyen bakım Clean'i de çıkışta geri çekilir — checkout ve pull da aynı yoldan geçer (gönderimin
     /// varsayılan yolu <c>TrySendAsync</c>): uyanma sürerken çıkış istenir; uyanma bitince Clean gönderilmez, kendi geri alımı (istek penceresi)
     /// pencereyi bırakır ve çıkış bir kez hazır olur. PİN: kapı R3'ten beri her komut türüne aynı soruyu sorar — kırmızısı gösterilemez; ileride
-    /// bu yoldaki bir komutun çıkış sorusunu atlamasını yakalar.</summary>
+    /// bu yoldaki bir komutun çıkış sorusunu atlamasını yakalar.
+    /// <para><b>[DEĞİŞEN KURAL — Exit, 2026-10-19]</b> ESKİ: çıkış kapıda bekleyen Clean'i bekliyordu. Deep Clean artık beklenmez
+    /// (<see cref="SafeExitTests"/>) — çıkış istekle AYNI çağrıda hazırdır; kapının geri alımı yine çalışır.</para></summary>
     [WpfFact]
     public async Task An_exit_requested_during_a_wake_withdraws_a_clean_waiting_in_the_gate()
     {
@@ -1690,7 +1695,7 @@ public class EngineWakeTests
         vm.ExitReady += (_, _) => exitReady++;
 
         vm.RequestExit();
-        Assert.Equal(0, exitReady); // çıkış kapıda bekleyen Clean'i bekliyor (istek uçuşta sayılır)
+        Assert.Equal(1, exitReady); // Deep Clean beklenmez
         waking.SetResult(Woken());
         DispatcherPump.DrainToIdle();
         await clean;

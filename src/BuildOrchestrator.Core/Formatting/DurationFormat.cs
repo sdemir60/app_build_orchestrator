@@ -10,11 +10,11 @@ namespace BuildOrchestrator.Core.Formatting;
 /// </summary>
 public static class DurationFormat
 {
-    /// <summary>Bir proje/koşu süresi: null → <c>"—"</c>; &lt;9950ms → tek ondalık saniye (<c>"4.2s"</c>);
+    /// <summary>Bir proje/koşu süresi: null → <see cref="MissingValue.Mark"/> (<c>—</c>); &lt;9950ms → tek ondalık saniye (<c>"4.2s"</c>);
     /// &lt;60s → tam saniye (<c>"12s"</c>); aksi halde <c>"1m 12s"</c> (saniye 2 hane pad).</summary>
     public static string Duration(long? ms)
     {
-        if (ms is not { } v) return "—";
+        if (ms is not { } v) return MissingValue.Mark;
         // [Fix wave 1/C2 review Finding 3] Yuvarlama AÇIKÇA yarı-yukarı (AwayFromZero) — JS'in toFixed(1)'iyle
         // paritede: ör. 250ms → "0.3s". ToString("0.0") biçimlendirmesine ÖRTÜK olarak bırakılmaz (implicit
         // yuvarlama modu .NET sürümleri arasında garanti değildir); tam sayıya (0.1 birim) burada AÇIKÇA

@@ -6,6 +6,7 @@
         xmlns:views="clr-namespace:BuildOrchestrator.App.Views"
         xmlns:services="clr-namespace:BuildOrchestrator.App.Services"
         xmlns:vm="clr-namespace:BuildOrchestrator.App.ViewModels"
+        xmlns:sys="clr-namespace:System;assembly=System.Runtime"
         Title="{x:Static services:AppIdentity.Product}" Width="1400" Height="800" WindowState="Maximized"
         MinWidth="{DynamicResource Size.WindowMinWidth}" MinHeight="{DynamicResource Size.WindowMinHeight}"
         WindowStyle="SingleBorderWindow"
@@ -58,13 +59,18 @@
       <Setter Property="StrokeEndLineCap" Value="Round" />
       <Setter Property="StrokeLineJoin" Value="Round" />
     </Style>
-    <!-- [design v1.23.0 §2.12] Title bar'ın sağ kümesindeki 1×14 dikey ayraç (border, yatay 5px) — TEK tanım: layout
+    <!-- Title bar'ın sağ kümesinde (ve güncelleme hapının slotunda) iki komşu öğe arasındaki boşluk. TEK tanım: iki GapStackPanel de
+         bunu okur. Prototipin kümedeki `gap: 2`'si değil 1: 2 px, 8'lik ayraç kenarıyla birlikte en dar pencerede (1240) güncelleme hapı
+         görünürken kümeyi ortadaki kaynak şeridine 1 px yaklaştırıyordu (ölçüldü; 1'de pay 11 px). -->
+    <sys:Double x:Key="TitleBarClusterGap">1</sys:Double>
+    <!-- [design v1.23.0 §2.12] Title bar'ın sağ kümesindeki 1×14 dikey ayraç (border, yatay 8px) — TEK tanım: layout
          ikonlarını dişliden ayıran ayraç ve güncelleme hapının arkasındaki ayraç aynı stildir (tasarım: "mevcut
-         ayraçla aynı"). -->
+         ayraçla aynı"). Kümenin 1'lik boşluğuyla birlikte ayraç iki yanındaki düğmeden 9 px uzakta durur; prototipin 5'i
+         kullanıcı isteğiyle açıldı (2026-10-20: ayraç yanı ikon arasından yalnız 1 px fazlaydı, gruplar ayrılmıyordu). -->
     <Style x:Key="TitleBarSeparator" TargetType="Rectangle">
       <Setter Property="Width" Value="1" />
       <Setter Property="Height" Value="14" />
-      <Setter Property="Margin" Value="5,0" />
+      <Setter Property="Margin" Value="8,0" />
       <Setter Property="VerticalAlignment" Value="Center" />
       <Setter Property="Fill" Value="{DynamicResource Brush.Border}" />
     </Style>
@@ -84,183 +90,225 @@
            idi ve alt çizgi HİÇ YOKTU (title bar ile gövde arasında ayırıcı yok). Pin: MainWindowRealizeTests. -->
       <Border x:Name="TitleBarRow" Grid.Row="0" Background="{DynamicResource Brush.SurfaceBase}"
               BorderBrush="{DynamicResource Brush.BorderSubtle}" BorderThickness="0,0,0,1">
-        <DockPanel LastChildFill="False">
-          <!-- Caption pencere butonları (min/max/close) — kabuk makinesi -->
-          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" WindowChrome.IsHitTestVisibleInChrome="True">
-            <Button x:Name="MinButton" Style="{StaticResource CaptionButton}" Click="OnMinimize"
-                    AutomationProperties.Name="Minimize">
-              <Path Style="{StaticResource CaptionGlyph}" Data="{DynamicResource Icon.CaptionMinimize}" />
-            </Button>
-            <Button x:Name="MaxButton" Style="{StaticResource CaptionButton}" Click="OnMaximizeRestore">
-              <!-- Data'yı VE AutomationProperties.Name'i CaptionGlyphs.BindMaxButton sürer (K8) -->
-              <Path x:Name="MaxGlyph" Style="{StaticResource CaptionGlyph}" />
-            </Button>
-            <Button x:Name="CloseButton" Style="{StaticResource CaptionButton}" Click="OnClose"
-                    AutomationProperties.Name="Close">
-              <Path Style="{StaticResource CaptionGlyph}" Data="{DynamicResource Icon.CaptionClose}" />
-            </Button>
-          </StackPanel>
+        <Grid>
+          <DockPanel LastChildFill="False">
+            <!-- Caption pencere butonları (min/max/close) — kabuk makinesi -->
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" WindowChrome.IsHitTestVisibleInChrome="True">
+              <Button x:Name="MinButton" Style="{StaticResource CaptionButton}" Click="OnMinimize"
+                      AutomationProperties.Name="Minimize">
+                <Path Style="{StaticResource CaptionGlyph}" Data="{DynamicResource Icon.CaptionMinimize}" />
+              </Button>
+              <Button x:Name="MaxButton" Style="{StaticResource CaptionButton}" Click="OnMaximizeRestore">
+                <!-- Data'yı VE AutomationProperties.Name'i CaptionGlyphs.BindMaxButton sürer (K8) -->
+                <Path x:Name="MaxGlyph" Style="{StaticResource CaptionGlyph}" />
+              </Button>
+              <Button x:Name="CloseButton" Style="{StaticResource CaptionButton}" Click="OnClose"
+                      AutomationProperties.Name="Close">
+                <Path Style="{StaticResource CaptionGlyph}" Data="{DynamicResource Icon.CaptionClose}" />
+              </Button>
+            </StackPanel>
 
-          <!-- [design v1.23.0 §2.1] Sağ küme: güncelleme hapı + ayraç · layout seçici (quad/list/focus) + ayraç · gear,
-               What's new, About. Küme sağa dock'ludur: başa eklenen öğe SOLA doğru büyür, sağdaki ikonlar kaymaz. -->
-          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center"
-                      WindowChrome.IsHitTestVisibleInChrome="True" Margin="0,0,8,0">
-            <!-- [design v1.23.0 §2.12] GÜNCELLEME HAPI — kümenin BAŞI, arkasında mevcut ayraçla aynı ayraç; ikisi
-                 BİRLİKTE girer (PopIn.PlayEntrance), bu yüzden tek kaptadır. Görünürlük ve metin teklifin tek
-                 yerinden (RunViewModel.AvailableUpdate) MainWindow.UpdatePill.cs'te sürülür; başlangıçta Collapsed.
-                 Hap yalnız kuruluma hazır bir teklif varken görünür. Amber YOK. -->
-            <StackPanel x:Name="UpdatePillSlot" Orientation="Horizontal" VerticalAlignment="Center"
-                        Visibility="Collapsed">
-              <Grid VerticalAlignment="Center">
-                <controls:PopupToggleButton x:Name="UpdatePill" Style="{DynamicResource Ds.UpdatePill}"
-                                            VerticalAlignment="Center">
-                  <StackPanel Orientation="Horizontal">
-                    <!-- Lucide circle-arrow-up 13px; kontur hapın Foreground'u (text-primary). -->
-                    <Viewbox Width="13" Height="13" VerticalAlignment="Center">
-                      <Canvas Width="24" Height="24">
-                        <Path Style="{StaticResource TitleBarIcon}" Data="{DynamicResource Icon.UpdateReady}"
-                              StrokeThickness="{DynamicResource Icon.UpdateReady.StrokeThickness}" />
-                      </Canvas>
-                    </Viewbox>
-                    <TextBlock Text="{x:Static vm:UpdateText.PillLabel}" Margin="6,0,0,0" VerticalAlignment="Center" />
-                    <!-- Mono tabular sürüm — rengi hapın ikinci kanalından (nötr text-dim, hover/açık text-secondary). -->
-                    <TextBlock x:Name="UpdatePillVersion" Margin="6,0,0,0" VerticalAlignment="Center"
-                               FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.2xs}"
-                               FontWeight="{DynamicResource FontWeight.Body}" Typography.NumeralAlignment="Tabular"
-                               Foreground="{Binding Path=(controls:DsChrome.IconForeground), RelativeSource={RelativeSource AncestorType=ToggleButton}}" />
-                  </StackPanel>
-                </controls:PopupToggleButton>
-                <!-- [design v1.23.0 §2.12 · plan U2] Kart = mevcut popover altyapısı: hapın 9px ALTINDA, sol kenarı hapla
-                     hizalı, 344px Ds.Popover kabuğu, dolgu 0 (blokların kendi dolguları var). Yerleşim Custom: geri
-                     çağrı ve boşluk MainWindow.UpdatePill.cs'te (Bottom yatay hizayı Windows'un el tercihine bırakır —
-                     sağ el ayarında kart hapın soluna sarkardı). Dışarı tık kapatır (StaysOpen=False); hapa ikinci basış
-                     PopoverToggle ile kapatır; bir dialog açılınca kabuk kapatır (Popup ayrı HWND'dir, dialogun altında
-                     kalamaz). -->
-                <Popup x:Name="UpdatePopup" Placement="Custom" PlacementTarget="{Binding ElementName=UpdatePill}"
+            <!-- [design v1.23.0 §2.1] Sağ küme: güncelleme hapı + ayraç · layout seçici (quad/list/focus) + ayraç · gear,
+                 What's new, About. Küme sağa dock'ludur: başa eklenen öğe SOLA doğru büyür, sağdaki ikonlar kaymaz. Öğeler
+                 arasında 1 px (TitleBarClusterGap); gizli hap boşluk doğurmaz. -->
+            <controls:GapStackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center"
+                                    Gap="{StaticResource TitleBarClusterGap}"
+                                    WindowChrome.IsHitTestVisibleInChrome="True" Margin="0,0,8,0">
+              <!-- [design v1.23.0 §2.12] GÜNCELLEME HAPI — kümenin BAŞI, arkasında mevcut ayraçla aynı ayraç; ikisi
+                   BİRLİKTE girer (PopIn.PlayEntrance), bu yüzden tek kaptadır. Görünürlük ve metin teklifin tek
+                   yerinden (RunViewModel.AvailableUpdate) MainWindow.UpdatePill.cs'te sürülür; başlangıçta Collapsed.
+                   Hap yalnız kuruluma hazır bir teklif varken görünür. Amber YOK. -->
+              <controls:GapStackPanel x:Name="UpdatePillSlot" Orientation="Horizontal" VerticalAlignment="Center"
+                                      Gap="{StaticResource TitleBarClusterGap}" Visibility="Collapsed">
+                <Grid VerticalAlignment="Center">
+                  <controls:PopupToggleButton x:Name="UpdatePill" Style="{DynamicResource Ds.UpdatePill}"
+                                              VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal">
+                      <!-- Lucide circle-arrow-up 13px; kontur hapın Foreground'u (text-primary). -->
+                      <Viewbox Width="13" Height="13" VerticalAlignment="Center">
+                        <Canvas Width="24" Height="24">
+                          <Path Style="{StaticResource TitleBarIcon}" Data="{DynamicResource Icon.UpdateReady}"
+                                StrokeThickness="{DynamicResource Icon.UpdateReady.StrokeThickness}" />
+                        </Canvas>
+                      </Viewbox>
+                      <TextBlock Text="{x:Static vm:UpdateText.PillLabel}" Margin="6,0,0,0" VerticalAlignment="Center" />
+                      <!-- Mono tabular sürüm — rengi hapın ikinci kanalından (nötr text-dim, hover/açık text-secondary). -->
+                      <TextBlock x:Name="UpdatePillVersion" Margin="6,0,0,0" VerticalAlignment="Center"
+                                 FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.2xs}"
+                                 FontWeight="{DynamicResource FontWeight.Body}" Typography.NumeralAlignment="Tabular"
+                                 Foreground="{Binding Path=(controls:DsChrome.IconForeground), RelativeSource={RelativeSource AncestorType=ToggleButton}}" />
+                    </StackPanel>
+                  </controls:PopupToggleButton>
+                  <!-- [design v1.23.0 §2.12 · plan U2] Kart = mevcut popover altyapısı: hapın 9px ALTINDA, sol kenarı hapla
+                       hizalı, 344px Ds.Popover kabuğu, dolgu 0 (blokların kendi dolguları var). Yerleşim Custom: geri
+                       çağrı ve boşluk MainWindow.UpdatePill.cs'te (Bottom yatay hizayı Windows'un el tercihine bırakır —
+                       sağ el ayarında kart hapın soluna sarkardı). Dışarı tık kapatır (StaysOpen=False); hapa ikinci basış
+                       PopoverToggle ile kapatır; bir dialog açılınca kabuk kapatır (Popup ayrı HWND'dir, dialogun altında
+                       kalamaz). -->
+                  <Popup x:Name="UpdatePopup" Placement="Custom" PlacementTarget="{Binding ElementName=UpdatePill}"
+                         StaysOpen="False" AllowsTransparency="True" PopupAnimation="None"
+                         IsOpen="{Binding IsChecked, ElementName=UpdatePill, Mode=TwoWay}">
+                    <Border Style="{DynamicResource Ds.Popover}" Width="344" Padding="0">
+                      <views:UpdateCard x:Name="UpdateCardView"
+                                        IsOpen="{Binding IsOpen, ElementName=UpdatePopup, Mode=OneWay}" />
+                    </Border>
+                  </Popup>
+                </Grid>
+                <Rectangle x:Name="UpdatePillSeparator" Style="{StaticResource TitleBarSeparator}" />
+              </controls:GapStackPanel>
+              <ToggleButton x:Name="LayQuadButton" Style="{DynamicResource Ds.IconButton.Toggle}" Click="OnLayoutQuad"
+                            AutomationProperties.Name="Default layout — graph + list · console + stream (splits reset)">
+                <ToggleButton.ToolTip>
+                  <ToolTip controls:AppTooltip.Side="Bottom">Default layout — graph + list · console + stream (splits reset)</ToolTip>
+                </ToggleButton.ToolTip>
+                <Viewbox Width="16" Height="16">
+                  <Canvas Width="16" Height="16">
+                    <Path Style="{StaticResource TitleBarIcon}" Data="{DynamicResource Icon.LayQuad}"
+                          StrokeThickness="{DynamicResource Icon.LayQuad.StrokeThickness}" />
+                  </Canvas>
+                </Viewbox>
+              </ToggleButton>
+              <ToggleButton x:Name="LayListButton" Style="{DynamicResource Ds.IconButton.Toggle}" Click="OnLayoutList"
+                            AutomationProperties.Name="List layout — graph hidden · console + stream equal">
+                <ToggleButton.ToolTip>
+                  <ToolTip controls:AppTooltip.Side="Bottom">List layout — graph hidden · console + stream equal</ToolTip>
+                </ToggleButton.ToolTip>
+                <Viewbox Width="16" Height="16">
+                  <Canvas Width="16" Height="16">
+                    <Path Style="{StaticResource TitleBarIcon}" Data="{DynamicResource Icon.LayList}"
+                          StrokeThickness="{DynamicResource Icon.LayList.StrokeThickness}" />
+                  </Canvas>
+                </Viewbox>
+              </ToggleButton>
+              <ToggleButton x:Name="LayFocusButton" Style="{DynamicResource Ds.IconButton.Toggle}" Click="OnLayoutFocus"
+                            AutomationProperties.Name="Console focus — graph hidden · compact stream">
+                <ToggleButton.ToolTip>
+                  <ToolTip controls:AppTooltip.Side="Bottom">Console focus — graph hidden · compact stream</ToolTip>
+                </ToggleButton.ToolTip>
+                <Viewbox Width="16" Height="16">
+                  <Canvas Width="16" Height="16">
+                    <Path Style="{StaticResource TitleBarIcon}" Data="{DynamicResource Icon.LayFocus}"
+                          StrokeThickness="{DynamicResource Icon.LayFocus.StrokeThickness}" />
+                  </Canvas>
+                </Viewbox>
+              </ToggleButton>
+              <Rectangle Style="{StaticResource TitleBarSeparator}" />
+              <Button x:Name="GearButton" Style="{DynamicResource Ds.IconButton}" Click="OnSettings"
+                      AutomationProperties.Name="Settings">
+                <Button.ToolTip>
+                  <ToolTip controls:AppTooltip.Side="Bottom">Settings — general, workspace, external projects and layers</ToolTip>
+                </Button.ToolTip>
+                <Viewbox Width="16" Height="16">
+                  <Canvas Width="24" Height="24">
+                    <Path Style="{StaticResource TitleBarIcon}" Data="{DynamicResource Icon.Gear}"
+                          StrokeThickness="{DynamicResource Icon.Gear.StrokeThickness}" />
+                  </Canvas>
+                </Viewbox>
+              </Button>
+              <!-- [design v1.13.0 §2.1 · D4/T8] What's new butonu: dişli ile ⓘ ARASINDA, ikisiyle AYNI optik
+                   ağırlıkta (Icon.WhatsNew.StrokeThickness = Icon.Gear/Icon.Info ile aynı 1.7px). Tooltip metni
+                   ELLE yazılmaz — ShortcutCatalog'dan gelir (kopya YASAK), o yüzden kod-tarafı kurulur
+                   (MainWindow ctor, About'un info butonuyla AYNI desen). -->
+              <Button x:Name="NotesButton" Style="{DynamicResource Ds.IconButton}" Click="OnNotes"
+                      AutomationProperties.Name="{x:Static local:AccessibilityNames.WhatsNew}">
+                <Grid>
+                  <Viewbox Width="16" Height="16">
+                    <Canvas Width="24" Height="24">
+                      <Path Style="{StaticResource TitleBarIcon}" Data="{DynamicResource Icon.WhatsNew}"
+                            StrokeThickness="{DynamicResource Icon.WhatsNew.StrokeThickness}" />
+                    </Canvas>
+                  </Viewbox>
+                  <!-- [design v1.13.0 §2.1/§2.11] GÖRÜLMEMİŞ SÜRÜM İŞARETİ: 5px amber nokta — açılış toast'ı /
+                       karşılama pop-up'ı YOK (§8), diyalog görülünce nokta söner.
+                       ⓘ'dan buraya TAŞINDI (eskiden design v1.9.0'da About'un What's new sekmesine
+                       yönlendiriyordu; artık bu butonun kendi diyaloguna — NotesDialog — açar). -->
+                  <Ellipse x:Name="UnseenNotesDot" Width="5" Height="5" Visibility="Collapsed"
+                           HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,2,2,0"
+                           Fill="{DynamicResource Brush.Amber}" IsHitTestVisible="False" />
+                </Grid>
+              </Button>
+              <!-- [About] Gear/What's new butonunun SAĞINDA, aynı grupta: grup kullanım sıklığı azalan sırada
+                   dizilir (layout > settings > what's new > about) ve Windows/Office geleneğinde Help/About
+                   uygulama komutlarının en sonundadır. Tooltip metni ELLE yazılmaz — ShortcutCatalog'dan gelir
+                   (kopya YASAK), o yüzden kod-tarafı kurulur (MainWindow ctor). -->
+              <Button x:Name="InfoButton" Style="{DynamicResource Ds.IconButton}" Click="OnAbout"
+                      AutomationProperties.Name="{x:Static local:AccessibilityNames.About}">
+                <Viewbox Width="16" Height="16">
+                  <Canvas Width="24" Height="24">
+                    <Path Style="{StaticResource TitleBarIcon}" Data="{DynamicResource Icon.Info}"
+                          StrokeThickness="{DynamicResource Icon.Info.StrokeThickness}" />
+                  </Canvas>
+                </Viewbox>
+              </Button>
+              <!-- [Exit] Kümenin SONU: kendi ayracıyla (mevcut ayraçlarla AYNI stil) ve uygulamayı tamamen kapatan Exit butonu.
+                   Pencere kontrolleri (— □ ×) ondan sonra gelir. Davranış MainWindow.Exit.cs'te: uçuşta iş yoksa hemen kapatır, varsa
+                   onay kartını açar. Kart açıkken buton surface-overlay + text-primary'dedir ve tooltip'i kapalıdır (Ds.IconButton.Open —
+                   amber YOK). Tooltip metni ELLE yazılmaz — ShortcutCatalog'dan gelir (About'un deseni). -->
+              <Rectangle x:Name="ExitSeparator" Style="{StaticResource TitleBarSeparator}" />
+              <Grid x:Name="ExitSlot" VerticalAlignment="Center">
+                <Button x:Name="ExitButton" Style="{DynamicResource Ds.IconButton.Open}" Click="OnExitButtonClick"
+                        AutomationProperties.Name="{x:Static local:AccessibilityNames.Exit}">
+                  <!-- Lucide power 16px — dişli ve ⓘ ile aynı kutu (tasarımın 13'ünde komşularından küçük kalıyordu) —, kalınlık 1.7
+                       (ⓘ ile aynı); kontur butonun Foreground'u. -->
+                  <Viewbox Width="16" Height="16">
+                    <Canvas Width="24" Height="24">
+                      <Path Style="{StaticResource TitleBarIcon}" Data="{DynamicResource Icon.Power}"
+                            StrokeThickness="{DynamicResource Icon.Power.StrokeThickness}" />
+                    </Canvas>
+                  </Viewbox>
+                </Button>
+                <!-- [Exit] Onay kartı = mevcut popover altyapısı: butonun 9px ALTINDA, SAĞ kenarı butonla hizalı (kümenin sonundaki
+                     butondan sola sarkar), 320px Ds.Popover kabuğu, dolgu 0. Yerleşim Custom: geri çağrı ve boşluk MainWindow.Exit.cs'te.
+                     Açık/kapalı durumunun kaynağı butonun DsChrome.IsActive'idir (iki yönlü — dışarı tıkla kapanan popup butonu da
+                     söndürür; gösterilmeyen pencerede IsOpen zorla false kalır, durum butonda okunur). Dışarı tık kapatır
+                     (StaysOpen=False); butona ikinci basış PopoverToggle ile kapatır. Popup ayrı bir HWND'dir: açık dialogların da üstünde
+                     durur — güncelleme kartının aksine dialog açılınca kapanmaz. -->
+                <Popup x:Name="ExitPopup" Placement="Custom" PlacementTarget="{Binding ElementName=ExitButton}"
                        StaysOpen="False" AllowsTransparency="True" PopupAnimation="None"
-                       IsOpen="{Binding IsChecked, ElementName=UpdatePill, Mode=TwoWay}">
-                  <Border Style="{DynamicResource Ds.Popover}" Width="344" Padding="0">
-                    <views:UpdateCard x:Name="UpdateCardView"
-                                      IsOpen="{Binding IsOpen, ElementName=UpdatePopup, Mode=OneWay}" />
+                       IsOpen="{Binding Path=(controls:DsChrome.IsActive), ElementName=ExitButton, Mode=TwoWay}">
+                  <Border Style="{DynamicResource Ds.Popover}" Width="320" Padding="0">
+                    <views:ExitCard x:Name="ExitCardView" IsOpen="{Binding IsOpen, ElementName=ExitPopup, Mode=OneWay}" />
                   </Border>
                 </Popup>
               </Grid>
-              <Rectangle x:Name="UpdatePillSeparator" Style="{StaticResource TitleBarSeparator}" />
-            </StackPanel>
-            <ToggleButton x:Name="LayQuadButton" Style="{DynamicResource Ds.IconButton.Toggle}" Click="OnLayoutQuad"
-                          AutomationProperties.Name="Default layout — graph + list · console + stream (splits reset)">
-              <ToggleButton.ToolTip>
-                <ToolTip controls:AppTooltip.Side="Bottom">Default layout — graph + list · console + stream (splits reset)</ToolTip>
-              </ToggleButton.ToolTip>
-              <Viewbox Width="16" Height="16">
-                <Canvas Width="16" Height="16">
-                  <Path Style="{StaticResource TitleBarIcon}" Data="{DynamicResource Icon.LayQuad}"
-                        StrokeThickness="{DynamicResource Icon.LayQuad.StrokeThickness}" />
-                </Canvas>
-              </Viewbox>
-            </ToggleButton>
-            <ToggleButton x:Name="LayListButton" Style="{DynamicResource Ds.IconButton.Toggle}" Click="OnLayoutList"
-                          AutomationProperties.Name="List layout — graph hidden · console + stream equal">
-              <ToggleButton.ToolTip>
-                <ToolTip controls:AppTooltip.Side="Bottom">List layout — graph hidden · console + stream equal</ToolTip>
-              </ToggleButton.ToolTip>
-              <Viewbox Width="16" Height="16">
-                <Canvas Width="16" Height="16">
-                  <Path Style="{StaticResource TitleBarIcon}" Data="{DynamicResource Icon.LayList}"
-                        StrokeThickness="{DynamicResource Icon.LayList.StrokeThickness}" />
-                </Canvas>
-              </Viewbox>
-            </ToggleButton>
-            <ToggleButton x:Name="LayFocusButton" Style="{DynamicResource Ds.IconButton.Toggle}" Click="OnLayoutFocus"
-                          AutomationProperties.Name="Console focus — graph hidden · compact stream">
-              <ToggleButton.ToolTip>
-                <ToolTip controls:AppTooltip.Side="Bottom">Console focus — graph hidden · compact stream</ToolTip>
-              </ToggleButton.ToolTip>
-              <Viewbox Width="16" Height="16">
-                <Canvas Width="16" Height="16">
-                  <Path Style="{StaticResource TitleBarIcon}" Data="{DynamicResource Icon.LayFocus}"
-                        StrokeThickness="{DynamicResource Icon.LayFocus.StrokeThickness}" />
-                </Canvas>
-              </Viewbox>
-            </ToggleButton>
-            <Rectangle Style="{StaticResource TitleBarSeparator}" />
-            <Button x:Name="GearButton" Style="{DynamicResource Ds.IconButton}" Click="OnSettings"
-                    AutomationProperties.Name="Settings">
-              <Button.ToolTip>
-                <ToolTip controls:AppTooltip.Side="Bottom">Settings — general, workspace, external projects and layers</ToolTip>
-              </Button.ToolTip>
-              <Viewbox Width="16" Height="16">
-                <Canvas Width="24" Height="24">
-                  <Path Style="{StaticResource TitleBarIcon}" Data="{DynamicResource Icon.Gear}"
-                        StrokeThickness="{DynamicResource Icon.Gear.StrokeThickness}" />
-                </Canvas>
-              </Viewbox>
-            </Button>
-            <!-- [design v1.13.0 §2.1 · D4/T8] What's new butonu: dişli ile ⓘ ARASINDA, ikisiyle AYNI optik
-                 ağırlıkta (Icon.WhatsNew.StrokeThickness = Icon.Gear/Icon.Info ile aynı 1.7px). Tooltip metni
-                 ELLE yazılmaz — ShortcutCatalog'dan gelir (kopya YASAK), o yüzden kod-tarafı kurulur
-                 (MainWindow ctor, About'un info butonuyla AYNI desen). -->
-            <Button x:Name="NotesButton" Style="{DynamicResource Ds.IconButton}" Click="OnNotes"
-                    AutomationProperties.Name="{x:Static local:AccessibilityNames.WhatsNew}">
-              <Grid>
-                <Viewbox Width="16" Height="16">
-                  <Canvas Width="24" Height="24">
-                    <Path Style="{StaticResource TitleBarIcon}" Data="{DynamicResource Icon.WhatsNew}"
-                          StrokeThickness="{DynamicResource Icon.WhatsNew.StrokeThickness}" />
-                  </Canvas>
-                </Viewbox>
-                <!-- [design v1.13.0 §2.1/§2.11] GÖRÜLMEMİŞ SÜRÜM İŞARETİ: 5px amber nokta — açılış toast'ı /
-                     karşılama pop-up'ı YOK (§8), diyalog görülünce nokta söner.
-                     ⓘ'dan buraya TAŞINDI (eskiden design v1.9.0'da About'un What's new sekmesine
-                     yönlendiriyordu; artık bu butonun kendi diyaloguna — NotesDialog — açar). -->
-                <Ellipse x:Name="UnseenNotesDot" Width="5" Height="5" Visibility="Collapsed"
-                         HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,2,2,0"
-                         Fill="{DynamicResource Brush.Amber}" IsHitTestVisible="False" />
-              </Grid>
-            </Button>
-            <!-- [About] Gear/What's new butonunun SAĞINDA, aynı grupta: grup kullanım sıklığı azalan sırada
-                 dizilir (layout > settings > what's new > about) ve Windows/Office geleneğinde Help/About
-                 uygulama komutlarının en sonundadır. Tooltip metni ELLE yazılmaz — ShortcutCatalog'dan gelir
-                 (kopya YASAK), o yüzden kod-tarafı kurulur (MainWindow ctor). -->
-            <Button x:Name="InfoButton" Style="{DynamicResource Ds.IconButton}" Click="OnAbout"
-                    AutomationProperties.Name="{x:Static local:AccessibilityNames.About}">
-              <Viewbox Width="16" Height="16">
-                <Canvas Width="24" Height="24">
-                  <Path Style="{StaticResource TitleBarIcon}" Data="{DynamicResource Icon.Info}"
-                        StrokeThickness="{DynamicResource Icon.Info.StrokeThickness}" />
-                </Canvas>
-              </Viewbox>
-            </Button>
-          </StackPanel>
+            </controls:GapStackPanel>
 
-          <!-- [design-v1.2.1 §2.1] LOGO KİLİDİ (sürükleme alanı — hit-test-visible DEĞİL):
-               ürün markası (19px, tam renk) → ürün adı → 1×13 ayraç → firma logosu (10px, %55). [v1.11.0]
-               Hiyerarşi şart: ürün önde ve tam renk, firma arkada ve soluk. Öğeler arası boşluk 9px
-               (kaynaktaki `gap: 9`) — WPF'te sol marj olarak verilir. -->
-          <StackPanel x:Name="TitleBarLogoLock" Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
-            <!-- [design-v1.2.0] ÜRÜN markası. 1.2.0'a kadar burada yalnız Delta wordmark'ı vardı; uygulama
-                 artık kendi markasını taşıyor. Çizim Controls/AppMark.xaml'de (tek yer — About hero'su aynı
-                 kontrolü 30px'te kullanır). -->
-            <controls:AppMark Height="19" VerticalAlignment="Center" />
-            <!-- Ürün adı literal DEĞİL: AppIdentity onu Directory.Build.props'un <Product> değerinden okur
-                 (kopya YASAK). Tasarım: 12px/500 text-secondary. -->
-            <TextBlock Text="{x:Static services:AppIdentity.Product}" VerticalAlignment="Center" Margin="9,0,0,0"
-                       FontSize="{DynamicResource FontSize.Xs}"
-                       FontWeight="{DynamicResource FontWeight.Emphasis}"
-                       Foreground="{DynamicResource Brush.TextSecondary}" />
-            <!-- İki markayı ayıran hairline. Firma logosu opsiyoneldir — düşerse bu ayraç da düşer. -->
-            <Rectangle Width="1" Height="13" Margin="9,0,0,0" VerticalAlignment="Center"
-                       Fill="{DynamicResource Brush.Border}" SnapsToDevicePixels="True" />
-            <!-- FİRMA logosu (design-v1.2.0'da 15px tam boydan 10px/%55'e indi — ürün markası öne geçti).
-                 Çizim Controls/BrandLogo.xaml'de. İkon-yalnız olduğu için firma adı tooltip'te verilir. -->
-            <controls:BrandLogo x:Name="TitleBarLogo" Height="10" Opacity="0.55" Margin="9,0,0,0"
-                                VerticalAlignment="Center" ToolTip="Delta" />
-            <!-- [design v1.11.0 §2.1] KİLİT BURADA BİTER. Eskiden burayı mono bir bağlam metni izliyordu
-                 (`OSYS · main` + `· main-2` eki, repo yokken `no repository`). v1.11.0 onu kaldırdı: branch ve
-                 worktree bilgisi zaten alt bardaki chip'lerde duruyordu (aynı olgu iki yerde), workspace adı
-                 ise alt bara — branch chip'inin soluna — taşındı (§2.7-5a, ActionBar.PART_Workspace). -->
-          </StackPanel>
-        </DockPanel>
+            <!-- [design-v1.2.1 §2.1] LOGO KİLİDİ (sürükleme alanı — hit-test-visible DEĞİL):
+                 ürün markası (19px, tam renk) → ürün adı → 1×13 ayraç → firma logosu (10px, %55). [v1.11.0]
+                 Hiyerarşi şart: ürün önde ve tam renk, firma arkada ve soluk. Öğeler arası boşluk 9px
+                 (kaynaktaki `gap: 9`) — WPF'te sol marj olarak verilir. -->
+            <StackPanel x:Name="TitleBarLogoLock" Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
+              <!-- [design-v1.2.0] ÜRÜN markası. 1.2.0'a kadar burada yalnız Delta wordmark'ı vardı; uygulama
+                   artık kendi markasını taşıyor. Çizim Controls/AppMark.xaml'de (tek yer — About hero'su aynı
+                   kontrolü 30px'te kullanır). -->
+              <controls:AppMark Height="19" VerticalAlignment="Center" />
+              <!-- Ürün adı literal DEĞİL: AppIdentity onu Directory.Build.props'un <Product> değerinden okur
+                   (kopya YASAK). Tasarım: 12px/500 text-secondary. -->
+              <TextBlock Text="{x:Static services:AppIdentity.Product}" VerticalAlignment="Center" Margin="9,0,0,0"
+                         FontSize="{DynamicResource FontSize.Xs}"
+                         FontWeight="{DynamicResource FontWeight.Emphasis}"
+                         Foreground="{DynamicResource Brush.TextSecondary}" />
+              <!-- İki markayı ayıran hairline. Firma logosu opsiyoneldir — düşerse bu ayraç da düşer. -->
+              <Rectangle Width="1" Height="13" Margin="9,0,0,0" VerticalAlignment="Center"
+                         Fill="{DynamicResource Brush.Border}" SnapsToDevicePixels="True" />
+              <!-- FİRMA logosu (design-v1.2.0'da 15px tam boydan 10px/%55'e indi — ürün markası öne geçti).
+                   Çizim Controls/BrandLogo.xaml'de. İkon-yalnız olduğu için firma adı tooltip'te verilir. -->
+              <controls:BrandLogo x:Name="TitleBarLogo" Height="10" Opacity="0.55" Margin="9,0,0,0"
+                                  VerticalAlignment="Center" ToolTip="Delta" />
+              <!-- [design v1.11.0 §2.1] KİLİT BURADA BİTER. Eskiden burayı mono bir bağlam metni izliyordu
+                   (`OSYS · main` + `· main-2` eki, repo yokken `no repository`). v1.11.0 onu kaldırdı: branch ve
+                   worktree bilgisi zaten alt bardaki chip'lerde duruyordu (aynı olgu iki yerde), workspace adı
+                   ise alt bara — branch chip'inin soluna — taşındı (§2.7-5a, ActionBar.PART_Workspace). -->
+            </StackPanel>
+          </DockPanel>
+          <!-- [design v1.25.0 §2.1 · kaynak şeridi] Title bar'ın TAM ORTASI: CPU · RAM · paralellik + mod. DockPanel ile AYNI hücrede, ondan
+               SONRA bildirilir (üstte çizilir); HorizontalAlignment=Center ile yatayda, VerticalAlignment=Center ile dikeyde hücrenin ortasına oturur
+               (kutusu yalnız hücreler kadar uzun — bandın üstünü/altını kaplamaz) — sol logo kilidi, sağ küme ve güncelleme hapı onu oynatmaz
+               (Grid hücresi bütün bant, kümeler DockPanel'in içinde). WindowChrome.IsHitTestVisibleInChrome=True: tıklama alanı ve caption
+               kuralı Views/ResourceStrip.xaml başlığında. Sol logo kilidi caption bölgesi olarak kalır. -->
+          <views:ResourceStrip x:Name="ResourceStripView" HorizontalAlignment="Center" VerticalAlignment="Center"
+                               WindowChrome.IsHitTestVisibleInChrome="True" />
+        </Grid>
       </Border>
 
       <!-- ==================================== GÖVDE ==================================== -->
@@ -285,13 +333,13 @@
       <views:NotesDialog x:Name="NotesOverlay" Grid.Row="0" Grid.RowSpan="2"
                          WindowChrome.IsHitTestVisibleInChrome="True" />
 
-      <!-- [design v1.23.0 §2.12 · plan U4] RESTART EKRANI — modalların da ÜSTÜNDE, pencerenin EN ÜST katmanı: title bar
+      <!-- [design v1.23.0 §2.12 · plan U4 · Exit] KAPANIŞ EKRANI — modalların da ÜSTÜNDE, pencerenin EN ÜST katmanı: title bar
            dahil her şeyi örter (prototip zIndex 300) ve caption bandında da tıklamayı kendisi alır (sürükleme ve pencere
-           düğmeleri altında kalır). Varsayılan Collapsed; Restart to update onu oynatır, görünürken pencere klavyeyi ve
-           global kısayolları yok sayar (MainWindow.UpdateRestart.cs). Pencere kapanana dek kalır — çubuğu dolunca uygulama
-           güvenli tam çıkışa girer, kurulumu Update.exe yapar. -->
-      <views:UpdateRestartScreen x:Name="UpdateRestartOverlay" Grid.Row="0" Grid.RowSpan="2"
-                                 WindowChrome.IsHitTestVisibleInChrome="True" />
+           düğmeleri altında kalır). Varsayılan Collapsed; iki kipi vardır: Restart to update (MainWindow.UpdateRestart.cs — çubuğu
+           dolunca tam çıkış, kurulumu Update.exe yapar) ve Exit'in "Stop and exit"i (MainWindow.Exit.cs — iş durunca ikinci adım,
+           çubuğu dolunca kapanış). Görünürken pencere klavyeyi ve global kısayolları yok sayar; pencere kapanana dek kalır. -->
+      <views:ClosingScreen x:Name="ClosingOverlay" Grid.Row="0" Grid.RowSpan="2"
+                           WindowChrome.IsHitTestVisibleInChrome="True" />
     </Grid>
   </Border>
 </Window>

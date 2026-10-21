@@ -2,6 +2,7 @@ using System.IO;
 using System.Text.RegularExpressions;
 using System.Windows;
 using BuildOrchestrator.App;
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
@@ -9,24 +10,30 @@ using BuildOrchestrator.Contracts.Ipc;
 namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
-/// [P3 · Task 3] Pencere kapanışının kabuk kablosu: × / Alt+F4 / sistem menüsü Kapat (üçü de
+/// [P3 · Task 3 · Exit] Pencere kapanışının kabuk kablosu: × / Alt+F4 / sistem menüsü Kapat (üçü de
 /// <c>MainWindow.OnClosing</c>'e iner) ve tepsi → Exit. Kararın kendisi saf <see cref="WindowCloseRule"/>'dadır
-/// (<see cref="WindowCloseRuleTests"/>); burada pencerenin onu GERÇEKTEN uyguladığı ve VM'in güvenli çıkışına
-/// (<see cref="RunViewModel.RequestExit"/>) bağlandığı pinlenir:
+/// (<see cref="WindowCloseRuleTests"/>); burada pencerenin onu GERÇEKTEN uyguladığı ve Exit butonunun kararına bağlandığı pinlenir:
 /// <list type="bullet">
 /// <item>Close to tray açık (varsayılan) → × pencereyi tepsiye gizler, uygulama sürer.</item>
-/// <item>Kapalı → × güvenli tam çıkıştır: uçuşta iş yoksa uygulama hemen kapanır; varsa derleme graceful durur,
-/// pencere öne gelir ve görünür kalır, iş bitince kapanır. Bekleyişteki ikinci × ikinci bir durdurma üretmez.</item>
-/// <item>Tepsi → Exit anahtardan bağımsız olarak HER ZAMAN güvenli çıkıştır — × ile AYNI kabuk yolu; beklerken
-/// pencere öne gelir.</item>
+/// <item>Kapalı → × Exit butonu gibi davranır: uçuşta iş yoksa uygulama hemen kapanır; varsa hiçbir şey durdurulmaz, pencere öne gelir
+/// ve onay kartı açılır (kartın kendisi <see cref="ExitCardTests"/>'te).</item>
+/// <item>Tepsi → Exit anahtardan bağımsız olarak AYNI karardır — × ile aynı kabuk yolu.</item>
+/// <item>Kartın "Stop and exit"i çıkışı başlattıktan sonra gelen × pencereyi yerinde tutar, ikinci bir şey istemez.</item>
+/// <item>[kullanıcı kararı 2026-10-20] Yapacak işi kalmayan Esc ×'in yolundan geçer — iki dal da aynıdır.</item>
 /// </list>
+///
+/// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-19 · Exit]</b> ESKİ İDDİA: × (anahtar kapalıyken) ve tepsi → Exit güvenli tam çıkışı
+/// DOĞRUDAN isterdi — uçuştaki iş beklenir, bekleyiş sürerken pencere öne gelirdi (<c>WindowCloseRule.ShouldBringForward</c>). Tasarım:
+/// "Kapalıysa × de Exit gibi davranır: hiçbir iş yoksa hemen kapanır, iş varsa onay kartını açar"; tepsi → Exit de aynı karara bağlandı
+/// (kullanıcı onayı aynı gün). Pencere artık bekleyişi göstermek için değil, kartı göstermek için öne gelir.</para>
 ///
 /// <para>Harness: pencere GÖSTERİLMEZ (<see cref="MainWindowHost"/> — motor doğmaz, tepsi kurulmaz). Hiç gösterilmemiş
 /// bir pencerede <c>Close()</c> WPF'in HWND'siz yolundan <c>OnClosing</c>'i doğrudan çağırır; iptal edilen kapanış
-/// pencereyi yerinde bırakır. Uygulamayı kapatan ve pencereyi öne getiren çağrılar kabuğun iki dikişidir
-/// (<see cref="MainWindow.ShutdownApplication"/>, <see cref="MainWindow.BringForward"/>) — her tetikten ÖNCE sayaçlı
+/// pencereyi yerinde bırakır. Uygulamayı kapatan ve onay için pencereyi öne getiren çağrılar kabuğun iki dikişidir
+/// (<see cref="MainWindow.ShutdownApplication"/>, <see cref="MainWindow.ConfirmExitInFront"/>) — her tetikten ÖNCE sayaçlı
 /// sahtelerle değiştirilir, yani ne uygulama kapanır ne pencere görünür. Sahteler SENKRONDUR: üretim değerlerinin
-/// dispatcher'a ertelemesi burada gözlenmez (öne getirmeninki kaynakta pinlidir). Gönderim
+/// dispatcher'a ertelemesi burada gözlenmez (öne getirmeninki kaynakta pinlidir; ertelenen gövdenin kararları
+/// <see cref="MainWindow.ConfirmExitInFrontNow"/> ile doğrudan sürülür). Kapanış ekranının zamanı sahtedir. Gönderim
 /// <see cref="MainWindowHost.AcceptSends"/> ile kabul edilir, motorun cevabı <c>vm.OnEvent(...)</c> ile verilir.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
@@ -38,7 +45,9 @@ public sealed class CloseToTrayTests
         public MainWindow Window { get; }
         public RunViewModel Vm { get; }
         public List<IpcCommand> Sent { get; } = [];
-        public int Shutdowns { get; private set; }
+        public int Shutdowns => _fakes.Shutdowns;
+        private readonly ExitSeamFakes _fakes;
+        public int Confirmations { get; private set; }
         public int BroughtForward { get; private set; }
 
         /// <summary>Pencere GERÇEKTEN kapandı (<c>Closed</c>) — iptal edilen bir kapanış bunu yazmaz.</summary>
@@ -48,8 +57,10 @@ public sealed class CloseToTrayTests
         {
             Window = window;
             Vm = vm;
-            window.ShutdownApplication = () => Shutdowns++;
-            window.BringForward = () => BroughtForward++;
+            _fakes = new ExitSeamFakes(window);
+            window.ConfirmExitInFront = () => Confirmations++;
+            window.BringForwardForExit = () => BroughtForward++;
+            window.ClosingOverlay.Timer = new FakePollTimer();
             window.Closed += (_, _) => Closed = true;
             MainWindowHost.AcceptSends(vm);
             vm.DebugOnCommandSent = Sent.Add;
@@ -65,6 +76,15 @@ public sealed class CloseToTrayTests
         /// üretimdeki erteleme (<c>Dispatcher.BeginInvoke</c>) burada hiç yoktur — bu testler onu gözlemez. Pompa
         /// yalnız VM'in <c>ExitReady</c>'yi sonraki bir dispatcher turuna bırakacağı bir değişikliğe karşı bekler.</summary>
         public void PumpUntilShutdown() => DispatcherPump.PumpUntil(() => Shutdowns > 0, TimeSpan.FromSeconds(2));
+
+        /// <summary>Exit butonu → kart → "Stop and exit": çıkış uçuştaki işi durdurmaya başladı.</summary>
+        public void StopAndExitFromTheCard()
+        {
+            CommandPress.Click(Window.ExitButton);
+            Assert.True(DsChrome.GetIsActive(Window.ExitButton), "ön-koşul: kart açılmadı");
+            CommandPress.Click(Window.ExitCardView.PART_Action);
+            Assert.True(Vm.ExitPending, "ön-koşul: çıkış başlamadı");
+        }
     }
 
     private static UiState CloseToTrayOff() => new() { CloseToTray = false };
@@ -92,7 +112,7 @@ public sealed class CloseToTrayTests
     // ---------------------------------------------------------------- × — Close to tray kapalı
 
     /// <summary>Close to tray kapalı ve uçuşta iş yok: × uygulamayı kapatır — bir kez. Ne bekleyiş açılır ne motora
-    /// komut gider; pencere tepsiye inmez.</summary>
+    /// komut gider; pencere tepsiye inmez ve onay istenmez.</summary>
     [StaFact]
     public void With_close_to_tray_off_the_close_button_quits_when_nothing_is_in_flight()
     {
@@ -106,14 +126,16 @@ public sealed class CloseToTrayTests
         Assert.NotEqual(Visibility.Hidden, h.Window.Visibility);
         Assert.False(h.Vm.ExitPending);
         Assert.Empty(h.Sent);
-        Assert.Equal(0, h.BroughtForward); // bekleyiş yok — öne getirilecek bir şey de yok
+        Assert.Equal(0, h.Confirmations);
     }
 
-    /// <summary>[final review · F7] Close to tray kapalı ve bir derleme koşuyor: × çıkışı ister ve bekleyiş sürerken
-    /// pencere ÖNE gelir (bir kez) — tepsi → Exit ile AYNI kabuk yolu. Görev çubuğundan küçültülmüş hâlde kapatılan
-    /// bir pencere aksi hâlde bekleyiş boyunca küçük kalırdı ve bekleyen çıkış "hiçbir şey olmuyor" gibi görünürdü.</summary>
+    /// <summary>Close to tray kapalı ve bir derleme koşuyor: × Exit butonu gibi davranır — hiçbir şey durdurulmaz, pencere kapanmaz ve
+    /// tepsiye inmez; onay için pencere öne gelir ve kart açılır (bir kez). Görev çubuğundan küçültülmüş hâlde kapatılan bir pencere aksi
+    /// hâlde kartı gösteremezdi.
+    /// <para><b>[DEĞİŞEN KURAL]</b> ESKİ: × derlemeyi durdurur ve çıkış bekleyişi sürerken pencere öne gelirdi (bkz. tip özeti). KIRMIZI
+    /// (değişiklikten önce): stopRun gidiyor ve bekleyiş açılıyordu.</para></summary>
     [StaFact]
-    public void With_close_to_tray_off_the_close_button_brings_the_waiting_window_forward()
+    public void With_close_to_tray_off_the_close_button_asks_before_stopping_a_running_build()
     {
         using var temp = new TempDir();
         var h = Harness.New(temp, CloseToTrayOff());
@@ -121,40 +143,34 @@ public sealed class CloseToTrayTests
 
         h.Window.Close();
 
-        Assert.True(h.Vm.ExitPending); // ön-koşul: çıkış derlemeyi bekliyor
-        Assert.Equal(1, h.BroughtForward);
-        Assert.Equal(0, h.Shutdowns);
-    }
-
-    /// <summary>Close to tray kapalı ve bir derleme koşuyor: × derlemeyi graceful durdurur (TEK <c>stopRun</c>) ve
-    /// uygulama drain'i bekler — pencere ne kapanır ne tepsiye iner. Bekleyişteki ikinci × ikinci bir durdurma
-    /// üretmez; motor koşuyu kapatınca uygulama bir kez kapanır.</summary>
-    [StaFact]
-    public void With_close_to_tray_off_the_close_button_waits_for_a_running_build()
-    {
-        using var temp = new TempDir();
-        var h = Harness.New(temp, CloseToTrayOff());
-        MainWindowHost.StartBuild(h.Vm);
-
-        h.Window.Close();
-
-        Assert.Equal(new StopRunCommand("r1", StopKind.Graceful), Assert.Single(h.Sent));
-        Assert.True(h.Vm.ExitPending);
+        Assert.Equal(1, h.Confirmations);
+        Assert.False(h.Vm.ExitPending);
+        Assert.Empty(h.Sent);
         Assert.Equal(0, h.Shutdowns);
         Assert.False(h.Closed);
         Assert.NotEqual(Visibility.Hidden, h.Window.Visibility);
+    }
 
-        h.Window.Close(); // bekleyişte ikinci ×
+    /// <summary>Kartın "Stop and exit"i çıkışı başlattıktan sonra gelen × — anahtar ne olursa olsun — pencereyi yerinde tutar: tepsiye
+    /// inmez (kapanmakta olan uygulama görünmeden sürerdi), kapanmaz, ikinci bir durdurma ya da onay istemez
+    /// (<see cref="WindowCloseRule"/>'un Stay dalı — kabuk karara VM'in <c>ExitPending</c>'ini gerçekten verir).</summary>
+    [StaTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void A_close_while_the_exit_stops_the_work_keeps_the_window_and_asks_nothing(bool closeToTray)
+    {
+        using var temp = new TempDir();
+        var h = Harness.New(temp, new UiState { CloseToTray = closeToTray });
+        MainWindowHost.StartBuild(h.Vm);
+        h.StopAndExitFromTheCard();
 
+        h.Window.Close();
+
+        Assert.False(h.Closed);
+        Assert.NotEqual(Visibility.Hidden, h.Window.Visibility);
         Assert.Single(h.Sent.OfType<StopRunCommand>());
+        Assert.Equal(0, h.Confirmations);
         Assert.Equal(0, h.Shutdowns);
-        Assert.False(h.Closed);
-        Assert.NotEqual(Visibility.Hidden, h.Window.Visibility);
-
-        h.Vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
-        h.PumpUntilShutdown();
-
-        Assert.Equal(1, h.Shutdowns);
     }
 
     /// <summary>[final review · F3] Close to tray her kapatmada TAZE okunur: pencere varsayılanla (açık) kurulduktan
@@ -177,49 +193,85 @@ public sealed class CloseToTrayTests
         Assert.NotEqual(Visibility.Hidden, h.Window.Visibility);
     }
 
-    // ---------------------------------------------------------------- tepsi → Exit
+    // ---------------------------------------------------------------- Esc — × ile aynı yol
 
-    /// <summary>Tepsi → Exit HER ZAMAN güvenli çıkıştır — Close to tray açıkken de (varsayılan). Bir derleme koşuyorsa
-    /// graceful durur ve bekleyiş sürerken pencere ÖNE gelir (bir kez): gizli bir pencerede bekleyen çıkış "hiçbir şey
-    /// olmuyor" gibi görünürdü. Drain bitince uygulama kapanır.</summary>
+    // [kullanıcı kararı 2026-10-20] Esc'in yapacak işi kalmayınca (açık katman yok, durdurulacak ya da anlatılacak bir şey yok) pencere ×
+    // gibi kapanır: kararı ×'in kendi kuralı verir — Exit gibi işi durdurmaz. Zincirin hangi durumda bu halkaya indiği KeyboardShortcutTests
+    // ve EscStopTests'tedir; burada ×'in iki dalı Esc'le pinlenir. ESKİ: bu durumlarda Esc hiçbir şey yapmazdı.
+
+    /// <summary>Close to tray açık (varsayılan) ve hiçbir şey koşmuyor: Esc, × gibi pencereyi tepsiye gizler — uygulama kapanmaz, çıkış
+    /// istenmez, motora komut gitmez.</summary>
     [StaFact]
-    public void The_tray_exit_brings_the_window_forward_while_it_waits()
+    public void With_nothing_left_to_do_escape_hides_to_the_tray_like_the_close_button()
     {
         using var temp = new TempDir();
         var h = Harness.New(temp);
-        MainWindowHost.StartBuild(h.Vm);
 
-        h.Window.ExitFromTray();
+        MainWindowHost.PressEscape(h.Window);
 
-        Assert.Equal(1, h.BroughtForward);
+        Assert.False(h.Closed);
+        Assert.Equal(Visibility.Hidden, h.Window.Visibility);
         Assert.Equal(0, h.Shutdowns);
-        Assert.Equal(new StopRunCommand("r1", StopKind.Graceful), Assert.Single(h.Sent));
+        Assert.False(h.Vm.ExitPending);
+        Assert.Empty(h.Sent);
+    }
 
-        h.Vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
+    /// <summary>Close to tray kapalı ve uçuşta iş yok: Esc, × gibi uygulamayı kapatır — bir kez, onay istemeden; motora komut gitmez.</summary>
+    [StaFact]
+    public void With_close_to_tray_off_escape_quits_like_the_close_button_when_nothing_is_in_flight()
+    {
+        using var temp = new TempDir();
+        var h = Harness.New(temp, CloseToTrayOff());
+
+        MainWindowHost.PressEscape(h.Window);
         h.PumpUntilShutdown();
 
         Assert.Equal(1, h.Shutdowns);
-        Assert.Equal(1, h.BroughtForward);
+        Assert.Equal(0, h.Confirmations);
+        Assert.Empty(h.Sent);
     }
 
-    /// <summary>[final review · F2] Close to tray AÇIKKEN (varsayılan) tepsi → Exit bir derlemeyi bekliyor ve kullanıcı
-    /// × basıyor: pencere tepsiye İNMEZ ve kapanmaz — bekleyen çıkış anahtarı geçer (<see cref="WindowCloseRule"/>'un
-    /// Stay dalı). Kabuk karara VM'in <c>ExitPending</c>'ini gerçekten verir; vermeseydi anahtar söz alır ve kapanmakta
-    /// olan uygulama görünmeden tepside sürerdi. İkinci bir durdurma gitmez, uygulama kapanmaz.</summary>
+    /// <summary>Close to tray kapalı ve derleme duruyor: ilk Esc graceful, ikincisi hard stop gönderir — ikisi de pencereye dokunmaz; hard
+    /// gittikten sonraki Esc × gibi davranır: uygulama doğrudan KAPANMAZ, onay için pencere öne gelir ve kart açılır (bir kez). Kart
+    /// sorulmadan hiçbir şey durdurulmaz: giden yalnız kullanıcının iki Stop'udur, çıkış başlamaz.</summary>
     [StaFact]
-    public void With_close_to_tray_on_the_close_button_keeps_the_window_while_a_tray_exit_waits()
+    public void With_close_to_tray_off_escape_after_the_hard_stop_asks_like_the_close_button()
+    {
+        using var temp = new TempDir();
+        var h = Harness.New(temp, CloseToTrayOff());
+        MainWindowHost.StartBuild(h.Vm);
+
+        MainWindowHost.PressEscape(h.Window); // graceful
+        MainWindowHost.PressEscape(h.Window); // hard ("Stop now")
+        Assert.Equal(0, h.Confirmations);     // ön-koşul: durdurma basışları onay istemedi
+        MainWindowHost.PressEscape(h.Window); // × gibi
+
+        IpcCommand[] expected = [new StopRunCommand("r1", StopKind.Graceful), new StopRunCommand("r1", StopKind.Hard)];
+        Assert.Equal(expected, h.Sent.ToArray()); // tüm gönderim: Esc'in × halkası motora hiçbir şey göndermedi
+        Assert.Equal(1, h.Confirmations);
+        Assert.False(h.Vm.ExitPending);
+        Assert.Equal(0, h.Shutdowns);
+        Assert.False(h.Closed);
+    }
+
+    // ---------------------------------------------------------------- tepsi → Exit
+
+    /// <summary>Tepsi → Exit Close to tray'e bakmaz ve × ile AYNI karardır: bir derleme koşuyorsa hiçbir şey durdurulmaz, onay için
+    /// pencere öne gelir ve kart açılır (bir kez) — tepsideki gizli pencere kartı gösteremezdi.
+    /// <para><b>[DEĞİŞEN KURAL]</b> ESKİ: tepsi → Exit derlemeyi durdurur, pencereyi öne getirir ve iş bitince kapatırdı. KIRMIZI
+    /// (değişiklikten önce): stopRun gidiyordu.</para></summary>
+    [StaFact]
+    public void The_tray_exit_asks_before_stopping_a_running_build()
     {
         using var temp = new TempDir();
         var h = Harness.New(temp);
         MainWindowHost.StartBuild(h.Vm);
+
         h.Window.ExitFromTray();
-        Assert.True(h.Vm.ExitPending); // ön-koşul: çıkış derlemeyi bekliyor
 
-        h.Window.Close();
-
-        Assert.NotEqual(Visibility.Hidden, h.Window.Visibility);
-        Assert.False(h.Closed);
-        Assert.Single(h.Sent.OfType<StopRunCommand>());
+        Assert.Equal(1, h.Confirmations);
+        Assert.Empty(h.Sent);
+        Assert.False(h.Vm.ExitPending);
         Assert.Equal(0, h.Shutdowns);
     }
 
@@ -244,7 +296,7 @@ public sealed class CloseToTrayTests
         Assert.False(MainWindowHost.UiStateStore(temp).Load().TrayBalloonShown);
     }
 
-    /// <summary>Uçuşta iş yokken tepsi → Exit uygulamayı hemen kapatır — pencere GÖSTERİLMEDEN.</summary>
+    /// <summary>Uçuşta iş yokken tepsi → Exit uygulamayı hemen kapatır — pencere GÖSTERİLMEDEN, onay istenmeden.</summary>
     [StaFact]
     public void The_tray_exit_quits_without_showing_the_window_when_idle()
     {
@@ -254,18 +306,17 @@ public sealed class CloseToTrayTests
         h.Window.ExitFromTray();
         h.PumpUntilShutdown();
 
-        Assert.Equal(0, h.BroughtForward);
+        Assert.Equal(0, h.Confirmations);
         Assert.Equal(1, h.Shutdowns);
         Assert.Empty(h.Sent);
     }
 
-    /// <summary>[design v1.11.0 §3.1] Açılış koreografisi oynarken (koşu komutu henüz GİTMEDİ) tepsi → Exit: bekleyiş
-    /// açılır ve AYNI çağrıda biter — Stop bekleyen koşuyu senkron geri alır ve <c>ExitReady</c>
-    /// <c>RequestExit</c>'in içinden gelir. <c>ExitPending</c> geri dönmediği için yalnız ona bakan bir kabuk pencereyi
-    /// kapanıştan hemen önce bir kare için öne getirirdi; kapanış zaten başladıysa getirilmez. Uygulama bir kez kapanır
-    /// ve motora ne <c>startRun</c> ne <c>stopRun</c> gider — koreografi sonradan bitse de.</summary>
+    /// <summary>[design v1.11.0 §3.1] Açılış koreografisi oynarken (koşu komutu henüz GİTMEDİ) koşu yine de uçuştaki iştir: tepsi → Exit
+    /// onay ister; hiçbir şey geri alınmaz, motora <c>stopRun</c> gitmez ve uygulama kapanmaz.
+    /// <para><b>[DEĞİŞEN KURAL]</b> ESKİ: tepsi → Exit bekleyen koşuyu Stop'un marking kuralıyla geri alır ve uygulama AYNI çağrıda kapanırdı
+    /// (pencere bir kare için öne gelmezdi). Geri alma artık kartın "Stop and exit"indedir (<c>SafeExitTests</c>).</para></summary>
     [StaFact]
-    public async Task The_tray_exit_does_not_flash_the_window_when_the_wait_ends_at_once()
+    public async Task The_tray_exit_during_the_opening_choreography_asks_too()
     {
         using var temp = new TempDir();
         var (window, vm, _) = MainWindowHost.NewWithProjects(temp, ("Alpha", null));
@@ -276,18 +327,74 @@ public sealed class CloseToTrayTests
         Assert.True(vm.IsStarting); // ön-koşul: işlem başladı, komut henüz gitmedi
 
         window.ExitFromTray();
-        h.PumpUntilShutdown();
 
-        Assert.True(vm.ExitPending); // bekleyiş açıldı ve aynı çağrıda bitti
-        Assert.Equal(1, h.Shutdowns);
-        Assert.Equal(0, h.BroughtForward);
+        Assert.Equal(1, h.Confirmations);
+        Assert.False(vm.ExitPending);
+        Assert.Equal(0, h.Shutdowns);
 
         choreography.SetResult();
         await build;
+        Assert.Empty(h.Sent.OfType<StopRunCommand>());
+        Assert.Equal(0, h.Shutdowns);
+    }
 
-        Assert.Empty(h.Sent);
+    // ---------------------------------------------------------------- ertelenen onay
+
+    /// <summary>Onay pencereyi kendi dispatcher turunda öne getirir (× yolunda çağrı <c>OnClosing</c>'in içindedir); o tur kararı yeniden
+    /// sorar: iş arada bittiyse Exit butonunun kuralı geçerlidir — uygulama kartsız, pencere gösterilmeden kapanır.</summary>
+    [StaFact]
+    public void The_deferred_confirmation_quits_if_the_work_ended_meanwhile()
+    {
+        using var temp = new TempDir();
+        var h = Harness.New(temp);
+        MainWindowHost.StartBuild(h.Vm);
+        h.Window.ExitFromTray();
+        h.Vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
+        h.Vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 0, 0, 1, 400));
+
+        h.Window.ConfirmExitInFrontNow();
+        h.PumpUntilShutdown();
+
         Assert.Equal(1, h.Shutdowns);
+        Assert.Equal(0, h.BroughtForward); // pencere öne getirilmedi
+    }
+
+    /// <summary>[inceleme Ö1] Ertelenen turun ANA dalı: iş hâlâ sürüyorsa pencere öne gelir (bir kez) ve kart, pencere yerleştikten sonra
+    /// açılır — hiçbir şey durdurulmaz, çıkış başlamaz. Öne getirme sayaçlı bir sahtedir (pencere gösterilmez); kartın açılışı gerçek yoldur.
+    /// Mutasyonla doğrulandı: kartı açan ertelenmiş çağrı kaldırılınca kırmızı.</summary>
+    [StaFact]
+    public void The_deferred_confirmation_brings_the_window_forward_and_opens_the_card()
+    {
+        using var temp = new TempDir();
+        var h = Harness.New(temp);
+        MainWindowHost.StartBuild(h.Vm);
+        h.Window.ExitFromTray();
+        Assert.Equal(1, h.Confirmations); // ön-koşul: onay istendi, tur ertelendi
+
+        h.Window.ConfirmExitInFrontNow();
+        DispatcherPump.DrainToIdle();
+
+        Assert.Equal(1, h.BroughtForward);
+        Assert.True(DsChrome.GetIsActive(h.Window.ExitButton));
+        Assert.False(h.Vm.ExitPending);
+        Assert.Empty(h.Sent);
+        Assert.Equal(0, h.Shutdowns);
+    }
+
+    /// <summary>Çıkış arada başladıysa (kartın "Stop and exit"i) ertelenen tur hiçbir şey yapmaz: pencere öne getirilmez, kart açılmaz.</summary>
+    [StaFact]
+    public void The_deferred_confirmation_does_nothing_once_the_exit_is_under_way()
+    {
+        using var temp = new TempDir();
+        var h = Harness.New(temp);
+        MainWindowHost.StartBuild(h.Vm);
+        h.StopAndExitFromTheCard();
+
+        h.Window.ConfirmExitInFrontNow();
+
         Assert.Equal(0, h.BroughtForward);
+        Assert.False(DsChrome.GetIsActive(h.Window.ExitButton));
+        Assert.Single(h.Sent.OfType<StopRunCommand>());
     }
 
     // ---------------------------------------------------------------- tam çıkış: konsol geçmişi diske
@@ -351,20 +458,21 @@ public sealed class CloseToTrayTests
             new Regex(@"protected override void OnClosed\(EventArgs e\)\s*\{(?:\s*//[^\n]*)*\s*_vm\.Narrative\.Flush\(\);")));
     }
 
-    /// <summary>[kaynak · final review F7] Pencereyi öne getiren çağrının (<see cref="MainWindow.BringForward"/>) TEK
-    /// üretim değeri gösterimi kendi dispatcher turuna ERTELER: × yolunda çağrı <c>OnClosing</c>'in içinden gelir ve
-    /// WPF, kapanış sürerken <c>Show</c>'u InvalidOperationException ile reddeder — senkron bir <c>ShowFromTray</c>
-    /// derleme beklerken basılan her ×'ı çökertirdi. Headless süit bunu göremez (dikiş sayaçlı bir sahteyle
-    /// değiştirilir, pencere gösterilmez); kural bu yüzden kaynakta pinlenir —
-    /// <see cref="MainWindow_wires_the_tray_exit_item_to_the_safe_exit"/> ile AYNI desen.</summary>
+    /// <summary>[kaynak · final review F7 · Exit] Onay için pencereyi öne getiren çağrının (<see cref="MainWindow.ConfirmExitInFront"/>) TEK
+    /// üretim değeri işini kendi dispatcher turuna ERTELER: × yolunda çağrı <c>OnClosing</c>'in içinden gelir ve WPF, kapanış sürerken
+    /// <c>Show</c>'u InvalidOperationException ile reddeder — senkron bir <c>ShowFromTray</c> derleme sürerken basılan her ×'ı çökertirdi.
+    /// Headless süit bunu göremez (dikiş sayaçlı bir sahteyle değiştirilir, pencere gösterilmez); kural bu yüzden kaynakta pinlenir —
+    /// <see cref="MainWindow_wires_the_tray_exit_item_to_the_safe_exit"/> ile AYNI desen.
+    /// <para><b>[DEĞİŞEN KURAL — Exit]</b> ESKİ: dikişin adı <c>BringForward</c>'dı ve bekleyen bir çıkışı göstermek için pencereyi öne
+    /// getirirdi; artık onay kartını göstermek için getirir (bkz. tip özeti). Erteleme kuralı aynıdır.</para></summary>
     [Fact]
-    public void MainWindow_defers_bringing_the_window_forward_out_of_the_closing_handler()
+    public void MainWindow_defers_the_exit_confirmation_out_of_the_closing_handler()
     {
-        const string relative = "MainWindow.xaml.cs";
+        const string relative = "MainWindow.Exit.cs";
         string source = File.ReadAllText(Path.Combine(RepoPaths.AppSrcRoot, relative));
 
-        Assert.Single(SourceGuard.ScanText(relative, source, new Regex(@"\bBringForward\s*=(?!=)"), skipCommentLines: true));
+        Assert.Single(SourceGuard.ScanText(relative, source, new Regex(@"\bConfirmExitInFront\s*=(?!=)"), skipCommentLines: true));
         Assert.Single(SourceGuard.ScanText(relative, source,
-            new Regex(@"\bBringForward\s*=\s*\(\)\s*=>\s*Dispatcher\.BeginInvoke\("), skipCommentLines: true));
+            new Regex(@"\bConfirmExitInFront\s*=\s*\(\)\s*=>\s*Dispatcher\.BeginInvoke\("), skipCommentLines: true));
     }
 }

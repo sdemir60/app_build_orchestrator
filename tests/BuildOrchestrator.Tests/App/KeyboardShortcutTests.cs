@@ -52,6 +52,13 @@ public class KeyboardShortcutTests
         => Assert.Equal(EscAction.CloseDialog,
             KeyboardShortcuts.ResolveEsc(dialogOpen: true, popoverOrMenuOpen: true, hasSelection: true, EscRunState.Stoppable));
 
+    /// <summary>[Exit] Exit'in onay kartı dialogların da ÜSTÜNDEDİR: Esc önce onu kapatır (popover katmanı), dialog ikinci Esc'e kalır.</summary>
+    [Fact]
+    public void Esc_closes_the_exit_card_before_an_open_dialog()
+        => Assert.Equal(EscAction.ClosePopovers,
+            KeyboardShortcuts.ResolveEsc(dialogOpen: true, popoverOrMenuOpen: true, hasSelection: true, EscRunState.Stoppable,
+                exitCardOpen: true));
+
     [Fact]
     public void Esc_closes_popovers_before_clearing_selection()
         => Assert.Equal(EscAction.ClosePopovers,
@@ -95,8 +102,44 @@ public class KeyboardShortcutTests
         => Assert.Equal(EscAction.ExplainUnstoppable,
             KeyboardShortcuts.ResolveEsc(dialogOpen: false, popoverOrMenuOpen: false, hasSelection: false, EscRunState.Unstoppable));
 
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-20]</b> ESKİ İDDİA: açık katman yoksa ve hiçbir şey koşmuyorsa Esc hiçbir şey
+    /// yapmazdı (<c>Esc_does_nothing_when_no_layer_is_open_and_nothing_runs</c> — <c>EscAction.None</c>). GEREKÇE: kullanıcı Stop
+    /// bittikten sonra da Esc'e bastı ve hiçbir şey olmadı; "çalışan bir şey yokken Esc × gibi kapatsın" dedi. Zincirin son halkası
+    /// artık pencerenin kapanışıdır — ×'in yolu (Close to tray açıksa tepsiye, kapalıysa tam çıkış), Exit'inki değil.
+    /// </summary>
     [Fact]
-    public void Esc_does_nothing_when_no_layer_is_open_and_nothing_runs()
-        => Assert.Equal(EscAction.None,
+    public void Esc_with_nothing_open_and_nothing_running_closes_the_window_like_the_close_button()
+        => Assert.Equal(EscAction.CloseWindow,
             KeyboardShortcuts.ResolveEsc(dialogOpen: false, popoverOrMenuOpen: false, hasSelection: false, EscRunState.Idle));
+
+    /// <summary>[kullanıcı kararı 2026-10-20] Hard stop gittikten sonra (<c>Terminating…</c>) Esc'in koşuda yapacak işi kalmaz — eskiden
+    /// Stop komutunun kapısında yutulurdu, artık × gibi kapatır. Kullanıcının seçtiği sıra: Esc → Stopping, Esc → Stop now, Esc → ×.</summary>
+    [Fact]
+    public void Esc_after_the_hard_stop_has_gone_closes_the_window()
+        => Assert.Equal(EscAction.CloseWindow,
+            KeyboardShortcuts.ResolveEsc(dialogOpen: false, popoverOrMenuOpen: false, hasSelection: false, EscRunState.Terminating));
+
+    /// <summary>[kullanıcı kararı 2026-10-20] Durdurulamayan işin satırı bu işte zaten yazıldıysa Esc'in anlatacak bir şeyi kalmaz — ikinci
+    /// basış eskiden hiçbir şey yapmazdı, artık × gibi kapatır.</summary>
+    [Fact]
+    public void Esc_after_the_cannot_be_stopped_line_closes_the_window()
+        => Assert.Equal(EscAction.CloseWindow,
+            KeyboardShortcuts.ResolveEsc(dialogOpen: false, popoverOrMenuOpen: false, hasSelection: false,
+                EscRunState.UnstoppableExplained));
+
+    /// <summary>[kullanıcı kararı 2026-10-20] Pencerenin kapanışı zincirin EN ALTINDADIR: Esc'in koşuda yapacak işi kalmasa da açık bir
+    /// katman (Exit kartı, dialog, popover/menü, seçim) önce kapanır — pencere ancak hepsi kapalıyken kapanır. PİN: kapanış koşu
+    /// katmanının içinde durduğu sürece yeşildir; halkayı zincirin başına taşıyan bir değişikliği yakalar.</summary>
+    [Theory]
+    [InlineData(EscRunState.Idle)]
+    [InlineData(EscRunState.Terminating)]
+    [InlineData(EscRunState.UnstoppableExplained)]
+    public void Every_open_layer_closes_before_the_window(EscRunState run)
+    {
+        Assert.Equal(EscAction.ClosePopovers, KeyboardShortcuts.ResolveEsc(false, false, false, run, exitCardOpen: true));
+        Assert.Equal(EscAction.CloseDialog, KeyboardShortcuts.ResolveEsc(dialogOpen: true, false, false, run));
+        Assert.Equal(EscAction.ClosePopovers, KeyboardShortcuts.ResolveEsc(false, popoverOrMenuOpen: true, false, run));
+        Assert.Equal(EscAction.ClearSelection, KeyboardShortcuts.ResolveEsc(false, false, hasSelection: true, run));
+    }
 }

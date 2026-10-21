@@ -97,11 +97,25 @@ public class ShortcutCatalogTests
             ShortcutCatalog.All.Where(e => e.Group == ShortcutGroup.Global).Select(e => e.Id));
         Assert.Equal([ShortcutId.Build, ShortcutId.Rebuild, ShortcutId.Clean],
             ShortcutCatalog.All.Where(e => e.Group == ShortcutGroup.Build).Select(e => e.Id));
-        Assert.Equal([ShortcutId.FocusFilter, ShortcutId.About, ShortcutId.Escape],
+        // [Exit] Ctrl+Q uygulama grubunun SONUNDADIR — en seyrek basılan; title bar'da da butonu kümenin sonundadır.
+        Assert.Equal([ShortcutId.FocusFilter, ShortcutId.About, ShortcutId.Escape, ShortcutId.Exit],
             ShortcutCatalog.All.Where(e => e.Group == ShortcutGroup.Application).Select(e => e.Id));
         Assert.Equal("Global", ShortcutCatalog.GroupTitle(ShortcutGroup.Global));
         Assert.Equal("Build", ShortcutCatalog.GroupTitle(ShortcutGroup.Build));
         Assert.Equal("Application", ShortcutCatalog.GroupTitle(ShortcutGroup.Application));
+    }
+
+    /// <summary>[Exit · inceleme K3] Esc'in cümlesi zincirin gerçek sırasını söyler: Exit'in onay kartı dialogların da üstündedir ve önce o
+    /// kapanır (<see cref="KeyboardShortcuts.ResolveEsc"/>). About → Shortcuts bu cümleyi gösterir.
+    /// <para>KIRMIZI (düzeltmeden önce): cümle "dialog → popover/menu → selection" diyordu.</para>
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-20]</b> ESKİ İDDİA: cümle "…; otherwise stop the running build" ile biterdi.
+    /// GEREKÇE: zincirin son halkası artık pencerenin × gibi kapanışıdır — cümle onu da söyler.</para></summary>
+    [Fact]
+    public void The_escape_sentence_names_the_exit_card_first_and_ends_with_closing_the_window()
+    {
+        Assert.Equal("Close the topmost layer: exit card → dialog → popover/menu → selection; otherwise stop the running build, "
+                + "or close the window like ×",
+            ShortcutCatalog.Get(ShortcutId.Escape).Description);
     }
 
     [Fact]

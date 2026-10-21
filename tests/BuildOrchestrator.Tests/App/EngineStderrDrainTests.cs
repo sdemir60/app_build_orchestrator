@@ -39,7 +39,7 @@ public sealed class EngineStderrDrainTests
 
         var chatter = Task.Run(() =>
         {
-            writeEnd.Write(new byte[1024 * 1024]); // motorun tanı seli — tamponun kat kat üstü
+            writeEnd.Write(new byte[ByteUnits.Mb]); // motorun tanı seli — tamponun kat kat üstü
             writeEnd.Dispose();
         });
 

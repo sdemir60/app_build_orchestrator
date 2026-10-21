@@ -14,10 +14,12 @@ namespace BuildOrchestrator.Tests.App;
 /// [B3 · karar 47a] Settings → General'ın HER boolean ayarının zinciri — tek teori sınıfı, satırlar <see cref="GeneralSettingChains"/>
 /// tablosundan: katalog → taslak → ayar dosyası → Save (UiState + VM aynı commit'te) → kabuğun açılış tohumu ve kalıcılığı; kabuk
 /// anahtarlarında <see cref="ShellSwitches"/> okuyucusu, ui-state dosyası ve Save'in notları. Ayara özgü davranış kendi sınıfındadır:
-/// harici projesiz kurulumda pull'un sessizliği (<see cref="PullBeforeBuildTests"/>), Resolve anahtarının koşu komutuna gitmesi
-/// (<see cref="ResolveAtFullPrioritySettingsTests"/>), boşta kuralının metinleri ve fixture sözleşmesi
+/// harici projesiz kurulumda pull'un sessizliği (<see cref="PullBeforeBuildTests"/>), boşta kuralının metinleri ve fixture sözleşmesi
 /// (<see cref="StopEngineWhenIdleSettingsTests"/>), Windows başlangıç kaydı (<see cref="StartWithWindowsTests"/>), checkout'un stash'i
 /// (<see cref="BranchCheckoutTests"/>), kompakt kipin kendisi (<see cref="CompactConsoleTests"/>).
+/// <para><b>[DEĞİŞEN KURAL — 2026-10-17]</b> Aşağıdaki tarihsel kayıtlarda adı geçen <c>Resolve cycles at full priority</c> anahtarı kalktı:
+/// zincir tablosunun satırı, taslağın bayrağı, ayar dosyası alanı, UiState alanı ve Save'in uygulaması gitti; eski kayıtların hâlâ
+/// okunduğunun pini <see cref="ResolveFollowsProfileSettingsTests"/>'tedir.</para>
 /// <para><b>[DEĞİŞEN DÜZEN — B3]</b> Eskiden her ayarın kendi zincir sınıfı vardı ve her yeni ayar bir öncekinin kopyasıydı (Pull →
 /// Stash → Resolve → Compact → Stop engine; kabuk anahtarlarında <c>ShellSwitchesTests</c> ile <c>StartWithWindowsTests</c>'in ikiz
 /// testleri). Kopyalar ayrışmıştı: Resolve'un satır/bayrak testi, Pull'un kabuk tohumu ve uygulamanın ayarı taşımadığı durum yalnız
@@ -41,7 +43,7 @@ public class GeneralSettingChainTests
     /// <summary>Kataloğun her satırı — tablodan değil KATALOGDAN: tabloya girmemiş yeni bir ayar teoride adıyla düşer.</summary>
     public static TheoryData<GeneralSetting> EverySetting() => DataOf(GeneralSettingsCatalog.Groups.SelectMany(g => g.Rows).Select(r => r.Setting));
 
-    /// <summary>VM'de yaşayan beş iş akışı tercihi.</summary>
+    /// <summary>VM'de yaşayan dört iş akışı tercihi.</summary>
     public static TheoryData<GeneralSetting> WorkflowSettings() => DataOf(WorkflowRows.Select(c => c.Setting));
 
     /// <summary>Dört kabuk anahtarı.</summary>
@@ -93,7 +95,7 @@ public class GeneralSettingChainTests
     /// yer adıyla raporlanır.
     /// <para>Eski iki karakterizasyon testi (<c>CompactConsoleSettingsTests</c> ve <c>StopEngineWhenIdleSettingsTests</c>'in
     /// <c>A_fresh_vm_a_fresh_draft_and_a_key_less_seed_show_the_catalogs_default</c>) yalnız tek-kaynaklı iki ayarı kapsıyordu; bu pin
-    /// dokuz ayarın hepsini kapsar.</para>
+    /// sekiz ayarın hepsini kapsar.</para>
     /// <para>KIRMIZI (geçici bozma, karar 47a'nın refaktöründen önce: katalogda Pull before build, Stash and switch branches ve Resolve cycles
     /// at full priority çevrildi): üç satır da dört yerde ayrıştı — taslağın satırı ve bayrağı (ctor'un literal argümanı), taze VM (alanın
     /// literali), kabuğun tohumu (<c>?? literal</c>); ör. <c>ResolveAtFullPriority — a fresh view model: True, the catalog's default: False</c>.
@@ -151,7 +153,6 @@ public class GeneralSettingChainTests
         {
             [GeneralSetting.PullBeforeBuild] = ("_updateExternals", "pullExternalsBeforeBuild", nameof(UiState.UpdateExternals)),
             [GeneralSetting.StashOnBranchSwitch] = ("_stashOnBranchSwitch", "stashOnBranchSwitch", nameof(UiState.StashOnBranchSwitch)),
-            [GeneralSetting.ResolveAtFullPriority] = ("_resolveAtFullPriority", "resolveAtFullPriority", nameof(UiState.ResolveAtFullPriority)),
             [GeneralSetting.CompactConsole] = ("_compactConsole", "compactConsole", nameof(UiState.CompactConsole)),
             [GeneralSetting.StopEngineWhenIdle] = ("_stopEngineWhenIdle", "stopEngineWhenIdle", nameof(UiState.StopEngineWhenIdle)),
         };
@@ -174,7 +175,7 @@ public class GeneralSettingChainTests
     /// katalog değişene dek ikinci bir tanım olarak yaşar. Bu guard tüm üretim kaynağını yorumları ve literalleri ayıklanmış kodda tarar
     /// (<see cref="SourceGuard.ScanSrcIdentifiers"/>). Bilinçli kapsam dışı: Contracts'taki tel varsayılanları
     /// (<c>StartRunCommand.UpdateExternals = true</c>) — eski bir NDJSON satırında alan yoksa ne olacağını söyler, UI varsayılanı değildir ve
-    /// Contracts kataloğu göremez; adları PascalCase olduğu için kural onları görmez. Vakum karşıtı: beş VM alanının kataloğun varsayılanından
+    /// Contracts kataloğu göremez; adları PascalCase olduğu için kural onları görmez. Vakum karşıtı: dört VM alanının kataloğun varsayılanından
     /// başladığı ayrıca sayılır.
     /// <para>KIRMIZI (iki geçici bozma, ikisinde de <see cref="Every_reader_of_a_setting_starts_on_the_catalogs_default"/> 9/9 yeşil kaldı):
     /// <c>_stashOnBranchSwitch</c> alanına <c>= false</c> → <c>BuildOrchestrator.App\ViewModels\RunViewModel.cs:818: bool _stashOnBranchSwitch = false</c>;
@@ -204,7 +205,7 @@ public class GeneralSettingChainTests
             // [ObservableProperty] private bool _compactConsole = true;
             [ObservableProperty] private bool _compactConsole = true;
             [ObservableProperty] private bool _stashOnBranchSwitch;
-            public Draft(bool? resolveAtFullPriority = false) { }
+            public Draft(bool? pullExternalsBeforeBuild = false) { }
             void Seed() { _vm.StopEngineWhenIdle = saved.StopEngineWhenIdle ?? true; }
             private bool _updateExternals = GeneralSettingsCatalog.DefaultOf(GeneralSetting.PullBeforeBuild);
             string text = "private bool _stopEngineWhenIdle = false;";
@@ -366,14 +367,14 @@ public class GeneralSettingChainTests
     }
 
     /// <summary>
-    /// [B3 · karar 47a] Ayarı TAŞIMAYAN bir uygulama onu değiştirmez ve not yazmaz: <see cref="RunViewModel.ApplySettingsAsync"/>'in beş
+    /// [B3 · karar 47a] Ayarı TAŞIMAYAN bir uygulama onu değiştirmez ve not yazmaz: <see cref="RunViewModel.ApplySettingsAsync"/>'in dört
     /// General parametresi de <c>bool?</c>'dur ve verilmemesi "olduğu gibi kalsın" demektir. Settings'in Save'i her değeri her zaman verir
     /// (<see cref="SettingsDraftViewModel.CommitAsync"/>); ayarı hiç anmayan bir çağıran — başka bir ayarı sınayan test — onu kendiliğinden
     /// değiştirip konsola not düşmemeli.
     /// <para><b>[DEĞİŞEN KURAL — karar 47a]</b> Eski iddia (yalnız Compact console ve Stop the engine when idle için — dalga 2 karar 16 ve
     /// dalga 3): bu iki parametre <c>bool?</c>'du, Pull before build / Stash and switch branches / Resolve cycles at full priority ise
     /// <c>bool</c> ve literal varsayılanlıydı — onları anmayan bir çağrı üçünü literal değere SIFIRLIYORDU. Değişme gerekçesi: varsayılanın
-    /// tek tanımı kataloğun satırıdır (literal bir argüman varsayılanı ikinci bir tanımdı) ve beş parametre aynı kuralı izler. Üretimin
+    /// tek tanımı kataloğun satırıdır (literal bir argüman varsayılanı ikinci bir tanımdı) ve parametrelerin hepsi aynı kuralı izler. Üretimin
     /// tek çağıranı her değeri verdiği için kullanıcının gördüğü davranış değişmez.</para>
     /// <para>KIRMIZI (refaktörden önce): üç satır — anmayan çağrı ayarı literale sıfırladı: Pull before build <c>Expected: False, Actual:
     /// True</c>, Stash and switch branches <c>Expected: True, Actual: False</c>, Resolve cycles at full priority <c>Expected: False, Actual:

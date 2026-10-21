@@ -194,6 +194,21 @@ internal static class DsResources
         return element.TransformToAncestor(root).TransformBounds(new Rect(0, 0, element.ActualWidth, element.ActualHeight));
     }
 
+    /// <summary>
+    /// [A13/B0 · temizlik madde 1] Bir dip farkını CİHAZ PİKSELİNE çevirir ve yarım-piksel ızgarasına oturtur; <paramref name="scale"/> ekran
+    /// ölçeğidir (<c>VisualTreeHelper.GetDpi(…).DpiScaleY</c> ya da testin zorladığı ölçek). Bir dip FARKINI cihaz pikseli ızgarasına
+    /// oturtmanın TEK tanımı (<c>MainWindowRealizeTests</c>'ten taşındı; <c>UpdatePillTests</c> de kullanır). Bütçenin kendisi testin işidir:
+    /// <c>ResourceStripRealizeTests</c> örneğin kenardan kenara boşluklara bir cihaz pikselinin dip karşılığıyla (<c>OnePixel</c>) iki piksel tanır.
+    ///
+    /// <para><c>UseLayoutRounding</c> altında her boy ve her hizalama offset'i tam piksele oturduğundan, iki
+    /// geometri değerinin farkı TAM ARİTMETİKTE yarım cihaz pikselinin katıdır; ölçülende görülen artık
+    /// (<c>20,4 − 19,6 = 0,7999999999999972</c>) yalnız double gösteriminden gelir. Sınır iddiaları — fark tam
+    /// bütçe kadar olduğunda — bu artık yüzünden yazı-turaya döner, bu yüzden ızgaraya oturtmak ZORUNLUDUR.
+    /// Gevşetme değildir: ara değerler zaten oluşamaz.</para>
+    /// </summary>
+    public static double InDevicePixels(double dips, double scale) =>
+        Math.Round(Math.Abs(dips) * scale * 2) / 2;
+
     /// <summary>[L1/It-5 perf] Bir kökün GERÇEKTEN kurduğu nesneler — görsel VE mantıksal ağacın birleşimi
     /// (tekilleştirilmiş). Yalnız görsel ağacı saymak perf metriği olarak yanıltıcıdır: Collapsed bir dalın
     /// şablonu genişlemez, bu yüzden <c>Button.Content</c> (Viewbox/Canvas/Path) ve <c>Popup.Child</c> alt-ağacı

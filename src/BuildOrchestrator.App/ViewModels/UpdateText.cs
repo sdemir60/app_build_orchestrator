@@ -51,8 +51,9 @@ public static class UpdateText
     public static string WaitForBuildStopping { get; } =
         $"Available once the build stops — {EscapeKey} stops it now.";
 
-    /// <summary>[perf Faz B · F-M1] Hard stop GİTTİ (<see cref="StopStage.Terminating"/>): Esc artık hiçbir şey yapmaz
-    /// (<c>StopAsync</c> bu aşamada yutar) — ipucu YOKTUR.</summary>
+    /// <summary>[perf Faz B · F-M1] Hard stop GİTTİ (<see cref="StopStage.Terminating"/>): Esc artık hiçbir şey durdurmaz — ipucu
+    /// YOKTUR. [kullanıcı kararı 2026-10-20] O aşamada Esc önce kartı kapatır, sonraki Esc pencereyi × gibi kapatır
+    /// (<see cref="KeyboardShortcuts.ResolveEsc"/>) — ikisi de durdurmaz, cümle doğru kalır.</summary>
     public const string WaitForBuildTerminating = "Available once the build stops.";
 
     /// <summary>[perf Faz B · F-M1] Koşu nedeninin metni Stop'un aşamasına göre: istenmedi → <see cref="WaitForBuild"/>,
@@ -86,5 +87,5 @@ public static class UpdateText
     /// <summary>Restart ekranının adım etiketi — sürerken yazıldığı için sonunda üç nokta (U+2026) taşır. [motor · Task 11
     /// · K6] Tek adım kapanıştır (<see cref="UpdateRestartStep"/>); kurulum ve açılış pencere kapandıktan sonra
     /// Update.exe'de olur, etiketleri yoktur.</summary>
-    public static string RestartStepLabel(UpdateRestartStep step) => "Closing " + AppIdentity.Product + "…";
+    public static string RestartStepLabel(UpdateRestartStep step) => ExitText.ClosingHeading + "…"; // [Exit · O3] "Closing <ürün>" tek yerde
 }

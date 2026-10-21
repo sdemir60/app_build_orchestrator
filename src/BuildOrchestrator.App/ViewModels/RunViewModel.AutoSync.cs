@@ -47,10 +47,13 @@ public sealed partial class RunViewModel : IAutoSyncPort
     }
 
     /// <summary>Pencere etkinleşti (tepsiden dönüş dahil — <c>ShowFromTray</c> <c>Activate</c> çağırır).</summary>
-    internal void OnWindowActivated()
+    /// <param name="clickRefreshes">[kullanıcı kararı 2026-10-19] Pencereyi öne getiren tık kendi tazelemesini yapan bir komuta (Build,
+    /// Debug|Release) iniyor — dönüşün Sync'i istenmez (<see cref="AutoSyncCoordinator.WindowActivatedAsync"/>). Bilgiyi kabuk verir: tıkın
+    /// nereye indiği bir görünüm sorusudur (<c>MainWindow.OnActivated</c>).</param>
+    internal void OnWindowActivated(bool clickRefreshes = false)
     {
         RefreshGitOperation(); // [spec §6.4] dönüşte chip'in noktası ve kilitleri koordinatörsüz de tazelenir
-        if (_autoSync is { } autoSync) _ = autoSync.WindowActivatedAsync();
+        if (_autoSync is { } autoSync) _ = autoSync.WindowActivatedAsync(clickRefreshes);
     }
 
     /// <summary>Kök değişti: izleyici yeni köke taşınır (<c>OnRootPathChanged</c>).</summary>

@@ -11,7 +11,7 @@ namespace BuildOrchestrator.Tests.App;
 /// kendisi karar verir, NASIL duyurulacağı ise tek yardımcıdadır (kopya YASAK, CLAUDE.md).
 /// <para><b>Ölçülen kusur:</b> peer bul/kur + olay yükselt ikilisi üç yerde satır satır kopyalanmıştı
 /// (<c>StickyRibbon.AnnouncePhaseIfChanged</c>, <c>ShellRoot.SetDiscoveryCount</c>,
-/// <c>UpdateRestartScreen.Render</c>); iki yeni kopyanın yorumu deseni açıkça anıyordu.</para>
+/// <c>ClosingScreen.Render</c>); iki yeni kopyanın yorumu deseni açıkça anıyordu.</para>
 /// </summary>
 public sealed class LiveRegionTests
 {

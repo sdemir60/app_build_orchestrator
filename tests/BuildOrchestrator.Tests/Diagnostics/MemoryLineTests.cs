@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -9,6 +10,7 @@ using BuildOrchestrator.Supervisor;
 using BuildOrchestrator.Tests.App;
 using BuildOrchestrator.Tests.Git;
 using BuildOrchestrator.Tests.Supervisor;
+using static BuildOrchestrator.Tests.ByteUnits;
 
 namespace BuildOrchestrator.Tests.Diagnostics;
 
@@ -17,13 +19,11 @@ namespace BuildOrchestrator.Tests.Diagnostics;
 /// ikinci bir kopya tutmaz, yalnız sözleşmeyi sabitler: alan sırası, birim, yuvarlama, kültürsüzlük, hata yutma.
 ///
 /// <para>[idle-memory · spec §6.6] Okuma (<see cref="MemoryLine.Read"/>) ve MB biçimi (<see cref="MemoryLine.Megabytes"/>) da
-/// tektir: satır ve App'in tanı satırları (About → Environment) ikisini de kullanır — iki yüzeyin sayıları aynı kuralla
+/// tektir: satır ve App'in tanı satırları (About'un kopyalanan tanı metni) ikisini de kullanır — iki yüzeyin sayıları aynı kuralla
 /// yazılır.</para>
 /// </summary>
 public class MemoryLineTests
 {
-    private const long Mb = 1024 * 1024;
-
     /// <summary>Yuvarlama tablosu — satır ve MB biçimi AYNI tabloyla sınanır (tablo tek yerde).</summary>
     public static TheoryData<long, string> Rounding => new()
     {
@@ -53,12 +53,31 @@ public class MemoryLineTests
     public void Format_rounds_each_value_half_away_from_zero_without_digit_grouping(long bytes, string expected) =>
         Assert.Equal($"memory: private={expected} committed={expected} heap={expected}", MemoryLine.Format(bytes, bytes, bytes));
 
-    /// <summary>[idle-memory · spec §6.6] MB biçimi tek başına da satırınkiyle AYNI kuraldır: App'in tanı satırları (About →
-    /// Environment) sayıyı buradan alır, kendi yuvarlamasını yazmaz.</summary>
+    /// <summary>[idle-memory · spec §6.6] MB biçimi tek başına da satırınkiyle AYNI kuraldır: App'in tanı satırları (About'un
+    /// kopyalanan tanı metni) sayıyı buradan alır, kendi yuvarlamasını yazmaz.</summary>
     [Theory]
     [MemberData(nameof(Rounding))]
     public void Megabytes_rounds_half_away_from_zero_without_digit_grouping_like_the_line(long bytes, string expected) =>
         Assert.Equal(expected, MemoryLine.Megabytes(bytes));
+
+    /// <summary>[kaynak şeridi] Aynı kuralın SAYI hâli: şerit GB'ye geçişi için yazıyı geri okumak (<c>long.Parse</c>) yerine sayıyı alır;
+    /// <see cref="MemoryLine.Megabytes"/> bu sayının yazısıdır, yani ikisi tek tablodan okunur.</summary>
+    [Theory]
+    [MemberData(nameof(Rounding))]
+    public void RoundedMegabytes_is_the_number_behind_the_megabytes_text(long bytes, string expected) =>
+        Assert.Equal(long.Parse(expected, CultureInfo.InvariantCulture), MemoryLine.RoundedMegabytes(bytes));
+
+    /// <summary>"Yarımlar sıfırdan uzağa" eksi tarafta da geçer (yarım MB'nin eksisi −1'dir, 0 değil): <c>(bayt + yarım) / MB</c> gibi
+    /// tam sayı kısayolları bu yönde ayrışırdı. Sayı ve yazı aynı değerdir.</summary>
+    [Theory]
+    [InlineData(-Mb / 2, -1L)]
+    [InlineData(-Mb / 2 + 1, 0L)]
+    [InlineData(-5 * Mb / 2, -3L)]
+    public void RoundedMegabytes_rounds_negative_halves_away_from_zero_too(long bytes, long expected)
+    {
+        Assert.Equal(expected, MemoryLine.RoundedMegabytes(bytes));
+        Assert.Equal(expected.ToString(CultureInfo.InvariantCulture), MemoryLine.Megabytes(bytes));
+    }
 
     /// <summary>Süreç okuması AYNI biçimi üretir; çalışan bir süreç en az bir MB özel bellek tutar.</summary>
     [Fact]

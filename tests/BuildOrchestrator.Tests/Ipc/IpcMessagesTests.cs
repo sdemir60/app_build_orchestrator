@@ -222,28 +222,39 @@ public class IpcMessagesTests
         Assert.DoesNotContain("scopeProjectId", JsonSerializer.Serialize<IpcCommand>(back, IpcJson.Options));
     }
 
-    /// <summary>[RESOLVE Faz 4 · fix 1B — M3] Resolve tam öncelik bayrağını taşımayan eski bir satır onaylanmış
-    /// varsayılanla (açık) çözülür (ARCHITECTURE §5).</summary>
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — 2026-10-17]</b> Eski iddia (<c>A_start_run_line_written_before_the_priority_flag_existed_resolves_at_full_priority</c>
+    /// ve <c>StartRunCommand_resolve_at_full_priority_round_trips_when_it_is_turned_off</c>): <c>startRun</c> Resolve cycles'ın tam öncelikte
+    /// koşup koşmayacağını söyleyen bir bayrak taşırdı; alanı yazmayan eski satırlar "açık" diye çözülür, kapalı bayrak tele camelCase adıyla
+    /// yazılıp geri dönerdi. Kural kalktı: Resolve cycles de öteki koşular gibi perf çipinin profilini aynen uygular (gerekçe ve ölçüm:
+    /// <see cref="BuildOrchestrator.Tests.App.ResolveFollowsProfileSettingsTests"/>) — tel artık o bayrağı HİÇ yazmaz.
+    /// </summary>
     [Fact]
-    public void A_start_run_line_written_before_the_priority_flag_existed_resolves_at_full_priority()
+    public void StartRun_json_carries_no_resolve_priority_field()
     {
-        var back = Assert.IsType<StartRunCommand>(JsonSerializer.Deserialize<IpcCommand>(LegacyStartRunLine, IpcJson.Options));
+        string json = JsonSerializer.Serialize<IpcCommand>(
+            new StartRunCommand("r1", RunMode.Cycles, @"D:\repo", "Debug", 4), IpcJson.Options);
 
-        Assert.True(back.ResolveAtFullPriority);
+        Assert.DoesNotContain("resolveAtFullPriority", json, StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>[RESOLVE Faz 4 · fix 1B — M3] Kapalı bayrak tele camelCase adıyla YAZILIR ve geri döner: tele düşmeseydi
-    /// Supervisor kapalı anahtarı varsayılan (açık) diye okurdu.</summary>
+    /// <summary>
+    /// Kalkan bayrağı hâlâ yazan eski bir App'in <c>startRun</c> satırı (ya da kaydedilmiş bir komut) yine çözülür: fazla alan yok sayılır,
+    /// kalan alanlar aynen okunur (<see cref="An_old_start_run_line_with_worktree_fields_still_parses"/> ile aynı tolerans).
+    /// </summary>
     [Fact]
-    public void StartRunCommand_resolve_at_full_priority_round_trips_when_it_is_turned_off()
+    public void An_old_apps_startRun_with_the_resolve_priority_field_still_parses()
     {
-        var cmd = new StartRunCommand("r1", RunMode.Cycles, @"D:\repo", "Debug", 4, ResolveAtFullPriority: false);
-        string json = JsonSerializer.Serialize<IpcCommand>(cmd, IpcJson.Options);
-        Assert.Contains("\"resolveAtFullPriority\":false", json, StringComparison.Ordinal);
+        const string oldLine = """
+            {"type":"startRun","runId":"r1","mode":"cycles","rootPath":"D:\\repo","configuration":"Debug",
+             "parallelism":4,"resolveAtFullPriority":true}
+            """;
 
-        var back = Assert.IsType<StartRunCommand>(JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
+        var back = Assert.IsType<StartRunCommand>(JsonSerializer.Deserialize<IpcCommand>(oldLine, IpcJson.Options));
 
-        Assert.False(back.ResolveAtFullPriority);
+        Assert.Equal("r1", back.RunId);
+        Assert.Equal(RunMode.Cycles, back.Mode);
+        Assert.Equal(4, back.Parallelism);
     }
 
     // [A1/T15] Katman pattern'leri App'ten Supervisor'a IPC ile taşınır — Core'daki LayerEngine ancak bu

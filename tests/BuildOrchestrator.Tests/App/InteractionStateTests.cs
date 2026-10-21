@@ -34,20 +34,29 @@ public class InteractionStateTests
             InteractionText.ImportSettingsNote);
     }
 
+    /// <summary>[kullanıcı kararı 2026-10-19] Boş panelin metni GENELDİR — hangi işlem boşaltmış olursa olsun liste
+    /// <c>No projects</c>, graf <c>No graph</c> der.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eski adı <c>Zero_project_and_panel_empty_texts_are_verbatim</c>'ti ve duruma özgü iki
+    /// metin pinliyordu: liste <c>No projects found under this folder.</c> (yalnız Sync 0 proje bulunca), graf
+    /// <c>Graph appears after Sync</c>. Değişme gerekçesi (gerçek kabukta 12 senaryo ölçüldü): liste Clean ve Optimize
+    /// sürerken ve bu işlerin hata yollarında HİÇBİR ŞEY göstermiyordu, grafın metni ise Sync'in klasörde hiç proje
+    /// bulamadığı durumda yanlıştı — Sync zaten koşmuştu. Kullanıcı işleme göre metin yerine tek, kısa, genel ifade
+    /// seçti.</para></summary>
     [Fact]
-    public void Zero_project_and_panel_empty_texts_are_verbatim()
+    public void Empty_panel_texts_are_verbatim()
     {
-        Assert.Equal("No projects found under this folder.", InteractionText.NoProjectsFound);
-        Assert.Equal("Graph appears after Sync", InteractionText.GraphEmpty);
+        Assert.Equal("No projects", InteractionText.ListEmpty);
+        Assert.Equal("No graph", InteractionText.GraphEmpty);
         // Event stream'in boş-durum metni KALDIRILDI (kullanıcı kararı) — panel boşken bekleme satırı konuşur;
         // pinleyen test: EventStreamIdlePromptTests.The_prompt_line_is_there_from_the_first_frame_...
         // [A13/T2 · 2.4] design-v1 §2.4 — "veri yok" DEĞİL, "veri süzüldü".
         Assert.Equal("No projects match this filter.", InteractionText.NoProjectsMatchFilter);
-        Assert.NotEqual(InteractionText.NoProjectsFound, InteractionText.NoProjectsMatchFilter);
+        Assert.NotEqual(InteractionText.ListEmpty, InteractionText.NoProjectsMatchFilter);
     }
 
     /// <summary>[design v1.24.0 §2.3 · §2.4 · §9] Keşif sürerken iki panelin metinleri BİREBİR. Grafın keşif
-    /// etiketi first run'ın etiketinden (<see cref="InteractionText.GraphEmpty"/>) AYRIDIR — first run değişmedi.</summary>
+    /// etiketi boş grafın etiketinden (<see cref="InteractionText.GraphEmpty"/>) AYRIDIR: keşif "arıyorum", boş görünüm
+    /// "yok" der.</summary>
     [Fact]
     public void Discovery_texts_are_verbatim()
     {
@@ -93,78 +102,72 @@ public class InteractionStateTests
     [Fact]
     public void No_repository_resolves_to_the_pick_repository_invitation()
     {
-        Assert.Equal(ListInviteState.PickRepository, ListInvite.Resolve(hasWorkspace: false, discovering: false, AppPhase.Empty, projectCount: 0, visibleCount: 0));
-    }
-
-    [Fact]
-    public void Synced_workspace_with_no_projects_resolves_to_the_no_projects_message()
-    {
-        Assert.Equal(ListInviteState.NoProjects, ListInvite.Resolve(hasWorkspace: true, discovering: false, AppPhase.Idle, projectCount: 0, visibleCount: 0));
+        Assert.Equal(ListInviteState.PickRepository, ListInvite.Resolve(hasWorkspace: false, discovering: false, projectCount: 0, visibleCount: 0));
     }
 
     [Fact]
     public void Workspace_with_projects_shows_no_invitation()
     {
-        Assert.Equal(ListInviteState.None, ListInvite.Resolve(hasWorkspace: true, discovering: false, AppPhase.Idle, projectCount: 5, visibleCount: 5));
+        Assert.Equal(ListInviteState.None, ListInvite.Resolve(hasWorkspace: true, discovering: false, projectCount: 5, visibleCount: 5));
     }
 
     /// <summary>
-    /// [design v1.24.0 §2.4 · §9] Boot/Syncing'de 0 satır: keşif sürüyorsa liste keşif bloğunu gösterir; keşif
-    /// yokken (Clean/Optimize'ın kendi penceresi — plan K2 — ya da Sync'siz biten bir bekleyiş) davet YOKTUR.
+    /// [kullanıcı kararı 2026-10-19] 0 satırlı liste keşif sürüyorsa keşif bloğunu, sürmüyorsa HER fazda boş görünümünü
+    /// (<c>No projects</c>) gösterir — hangi işlem boşaltmış olursa olsun.
     /// <para><b>[DEĞİŞEN KURAL — design v1.24.0]</b> Eski ad/iddia: <c>Pre_sync_phases_with_zero_projects_show_no_invitation</c>
     /// — "Boot/Syncing = henüz bilinmiyor; 0 satır olsa da davet gösterilmez, boş liste bırakılır". Değişme gerekçesi:
     /// kullanıcı Clean'e bastığında sağdaki iki panel Sync satırlarıyla hemen doluyor, proje listesi ise Sync bitene
     /// kadar bomboş kalıyordu (kullanıcı gözlemi, 2026-09-29) — tasarım v1.24.0 keşif sürerken listenin ne olduğunu
-    /// söylemesini ve bulunan projeleri saymasını istedi. Boş liste artık yalnız keşfin DIŞINDA kalır.</para>
+    /// söylemesini ve bulunan projeleri saymasını istedi.</para>
+    /// <para><b>[DEĞİŞEN KURAL — 2026-10-19]</b> Bir önceki adı
+    /// <c>Zero_projects_before_a_sync_show_the_discovery_block_only_while_discovery_runs</c>'tı ve keşfin DIŞINDA
+    /// Boot/Syncing'de "davet yok" (<see cref="ListInviteState.None"/>) iddia ediyordu: Clean/Optimize'ın kendi penceresi
+    /// (plan K2) ve Sync'siz biten bir bekleyiş boş liste bırakırdı, çünkü o günkü metin ("No projects found under this
+    /// folder.") orada yalan olurdu. Değişme gerekçesi (ölçüldü): liste o pencerede ve bakım işlerinin hata yollarında
+    /// hiçbir şey göstermiyor, graf ise aynı anda kendi boş kutusunu çiziyordu; bir koşu bittikten sonra (Done/Stopped)
+    /// projeleri sıfırlayan sessiz bir Sync de listeyi sessiz bırakıyordu. Metin artık nedeni iddia etmediği için
+    /// (<c>No projects</c>) her fazda doğrudur.</para>
+    /// <para><b>Faz kararın girdisi değildir</b> (imzadan çıktı): bu teori kırmızıyı Boot, Syncing, Done ve Stopped
+    /// satırlarıyla gösterdi; artık hiçbir faz boş listeyi susturamaz ve bu imzayla güvencededir. Yalnız Idle'ı soran
+    /// <c>Synced_workspace_with_no_projects_resolves_to_the_no_projects_message</c> da bu teorinin <c>false</c> satırına
+    /// katıldı.</para>
+    /// <para>[A13/T2 · 2.4] <c>false</c> satırı "veri yok" kararının "veri süzüldü"den ÖNCE geldiğini de pinler
+    /// (<c>visibleCount</c> 0 iken sonuç <see cref="ListInviteState.NoFilterMatch"/> DEĞİL): 0 projeli workspace'te filtreyi
+    /// suçlamak yanlıştır. Bunu ayrıca soran <c>An_empty_workspace_is_never_blamed_on_the_filter</c>, faz parametresi kalkınca
+    /// bu satırla birebir aynı çağrı oldu ve buraya katıldı.</para>
     /// </summary>
     [Theory]
-    [InlineData(AppPhase.Boot, true, ListInviteState.Discovering)]
-    [InlineData(AppPhase.Syncing, true, ListInviteState.Discovering)]
-    [InlineData(AppPhase.Boot, false, ListInviteState.None)]
-    [InlineData(AppPhase.Syncing, false, ListInviteState.None)]
-    public void Zero_projects_before_a_sync_show_the_discovery_block_only_while_discovery_runs(
-        AppPhase phase, bool discovering, ListInviteState expected)
+    [InlineData(true, ListInviteState.Discovering)]
+    [InlineData(false, ListInviteState.NoProjects)]
+    public void Zero_projects_show_the_discovery_block_while_discovery_runs_and_the_empty_view_otherwise(
+        bool discovering, ListInviteState expected)
     {
-        Assert.Equal(expected, ListInvite.Resolve(hasWorkspace: true, discovering, phase, projectCount: 0, visibleCount: 0));
+        Assert.Equal(expected, ListInvite.Resolve(hasWorkspace: true, discovering, projectCount: 0, visibleCount: 0));
     }
 
     /// <summary>[design v1.24.0 · plan K6] Keşif sürerken liste ne gösterdiğini söyler: VM'de satırlar dursa da
     /// (Sync düğmesi ekranı baştan başlatır) ve aktif filtre hiçbirini eşleştirmese de "filtre eşleşmedi" metni keşif
-    /// bloğunun önüne GEÇEMEZ; Idle'da 0 satır da "klasörde proje yok" demez — küme henüz bilinmiyor.</summary>
+    /// bloğunun önüne GEÇEMEZ; 0 satır da boş görünümü göstermez — küme henüz bilinmiyor.</summary>
     [Theory]
-    [InlineData(AppPhase.Syncing, 3, 0)]
-    [InlineData(AppPhase.Idle, 3, 0)]
-    [InlineData(AppPhase.Idle, 0, 0)]
-    [InlineData(AppPhase.Syncing, 3, 3)]
-    public void Discovery_wins_over_the_filter_and_the_zero_project_messages(AppPhase phase, int projectCount, int visibleCount)
+    [InlineData(3, 0)]
+    [InlineData(0, 0)]
+    [InlineData(3, 3)]
+    public void Discovery_wins_over_the_filter_and_the_zero_project_messages(int projectCount, int visibleCount)
     {
         Assert.Equal(ListInviteState.Discovering,
-            ListInvite.Resolve(hasWorkspace: true, discovering: true, phase, projectCount, visibleCount));
+            ListInvite.Resolve(hasWorkspace: true, discovering: true, projectCount, visibleCount));
     }
 
     // ---- [A13/T2 · 2.4] "filtre eşleşmedi" AYRI bir durumdur ----
 
+    /// <summary>Projeler var ama filtre hepsini gizliyor. Faz karara girmediği için (2026-10-19) eski
+    /// <c>The_no_filter_match_state_does_not_depend_on_the_phase</c> teorisinin (Running, Boot) iddiası imzayla
+    /// güvencededir.</summary>
     [Fact]
     public void Projects_that_the_filter_hides_resolve_to_the_no_filter_match_message()
     {
         Assert.Equal(ListInviteState.NoFilterMatch,
-            ListInvite.Resolve(hasWorkspace: true, discovering: false, AppPhase.Idle, projectCount: 5, visibleCount: 0));
-    }
-
-    [Fact] // "Veri yok" kararı "veri süzüldü"den ÖNCE gelir — 0 projeli workspace'te filtreyi suçlamak yanlıştır.
-    public void An_empty_workspace_is_never_blamed_on_the_filter()
-    {
-        Assert.Equal(ListInviteState.NoProjects,
-            ListInvite.Resolve(hasWorkspace: true, discovering: false, AppPhase.Idle, projectCount: 0, visibleCount: 0));
-    }
-
-    [Theory] // Filtre eşleşmezliği faz-bağımsızdır: koşarken de doğru mesajdır.
-    [InlineData(AppPhase.Running)]
-    [InlineData(AppPhase.Boot)]
-    public void The_no_filter_match_state_does_not_depend_on_the_phase(AppPhase phase)
-    {
-        Assert.Equal(ListInviteState.NoFilterMatch,
-            ListInvite.Resolve(hasWorkspace: true, discovering: false, phase, projectCount: 3, visibleCount: 0));
+            ListInvite.Resolve(hasWorkspace: true, discovering: false, projectCount: 5, visibleCount: 0));
     }
 
     [Theory] // Repo yokken davet KAZANIR (filtre mesajı ya da keşif bloğu oraya sızmaz).
@@ -173,6 +176,6 @@ public class InteractionStateTests
     public void With_no_repository_the_invitation_wins_over_the_filter_message(bool discovering)
     {
         Assert.Equal(ListInviteState.PickRepository,
-            ListInvite.Resolve(hasWorkspace: false, discovering, AppPhase.Empty, projectCount: 3, visibleCount: 0));
+            ListInvite.Resolve(hasWorkspace: false, discovering, projectCount: 3, visibleCount: 0));
     }
 }

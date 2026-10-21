@@ -206,6 +206,11 @@ public sealed class RunCoordinator(
     private bool _finishing;            // sonuç olayları yazılmaya başladı → Stop artık sahiplenilemez
     private Task _runTask = Task.CompletedTask;
     private StopKind? _stopKind;        // null = stop istenmedi; Hard, Graceful'u EZER (geri alınmaz)
+    // [Exit · motor yarışı] Koşunun hard stop'u — her invoke bunu dinler (InvokeOnceAsync). Koşu başında taze kurulur, Hard'da iptal
+    // edilir. Neden: proje "derleniyor" ilan edilip slot alındıktan SONRA MSBuild.exe başlar; hard stop tam o aralıkta gelirse inner job'u
+    // boşken sonlandırır ve ardından başlayan derleme sonlandırılmış job'a girip sonuna kadar koşardı. İptal edilmiş token'la başlayan
+    // invoke süreci hemen öldürür, çalışan invoke'u da öldürür.
+    private CancellationTokenSource? _hardStop;
     private bool _stopAcked;            // runStopped yazıldı mı — TryRequestStop true dedi ise ACK BORCU vardır
     // [spec 2026-09-18 §6.1 · karar 10] Koşu branch değişimiyle kesildi mi (StopKind.Interrupt). _stopKind'dan
     // AYRI tutulur: kesme bir durdurma TÜRÜ değil, sonuçların güvenilirliği hakkında bir olgudur — Hard sonradan
@@ -227,12 +232,6 @@ public sealed class RunCoordinator(
     // [T20-b/P3] Bu run'da YÜRÜRLÜKTEKİ profil — copy-contention penceresi kapanınca cap buraya döner.
     // (_perfApplied false iken anlamsızdır; ikisi de run sınırında birlikte sıfırlanır.)
     private PerfProfile? _activePerf;
-    // [RESOLVE Faz 4 / karar 11] Bu run'ın perf DÖNÜŞÜMÜNÜN girdileri: koşu modu + Ayarlar'ın "Resolve cycles at full
-    // priority" anahtarı. Run başında, ilk ApplyPerfLocked'tan ÖNCE aynı kilit altında komuttan yazılır; canlı
-    // setPerfMode da onları okur (bkz. ApplyPerfLocked). _perfApplied false iken hiçbir yol okumaz, bu yüzden run
-    // sonunda ayrıca sıfırlanmaz — her run başı onları yeniden yazar.
-    private RunMode _perfRunMode;
-    private bool _perfResolveAtFullPriority;
     // [T20-b/P3] Şu an KAÇ worker copy-contention penceresinde. Ref-count zorunludur: paralel build'de birden
     // çok worker aynı anda MSB302x görebilir ve erken çıkan biri, diğeri hâlâ kopyalarken cap'i geri kısardı.
     private int _copyFloorDepth;
@@ -345,6 +344,8 @@ public sealed class RunCoordinator(
                 _runActive = true;
                 _finishing = false;
                 _stopKind = null;
+                _hardStop?.Dispose(); // önceki koşunun invoke'ları bitti — koşu yalnız tüm worker'lar join olunca biter
+                _hardStop = new CancellationTokenSource();
                 _stopAcked = false;
                 _interrupted = false;
                 _runTask = Task.Run(() => ExecuteRunAsync(cmd, ct), CancellationToken.None);
@@ -426,6 +427,7 @@ public sealed class RunCoordinator(
     {
         var warnings = new List<string>(); // [minor 1] konsol yazımı KİLİT DIŞINDA
         bool owned = false;
+        CancellationTokenSource? hardStop = null;
         lock (_gate)
         {
             if (_runActive && !_finishing)
@@ -434,12 +436,17 @@ public sealed class RunCoordinator(
                 // Interrupt, _stopKind'a Graceful olarak girer (dispatch ve drain kuralı aynı); farkı _interrupted'dadır.
                 _stopKind = kind == StopKind.Hard ? StopKind.Hard : _stopKind ?? StopKind.Graceful; // Hard geri alınmaz
                 if (kind == StopKind.Interrupt) _interrupted = true;
-                if (kind == StopKind.Hard) innerJob.Terminate();
+                if (kind == StopKind.Hard)
+                {
+                    innerJob.Terminate();
+                    hardStop = _hardStop; // [Exit · motor yarışı] iptal KİLİT DIŞINDA: kaydedilmiş öldürmeler _gate'i tutarak koşmasın
+                }
                 else if (_stopKind == StopKind.Graceful) DrainCapLocked(warnings); // [P3] Hard'dan SONRA gelen graceful'da anlamsız
                 _scheduler?.RequestStop(); // null ise plan hâlâ kuruluyor — kurulur kurulmaz _stopKind okunup uygulanır
                 _wake?.WakeAll();          // parked worker'lar IsDone'ı yeniden değerlendirsin
             }
         }
+        hardStop?.Cancel(); // uçuştaki ve henüz başlamamış her invoke: süreci öldür ya da hiç koşturma
         Warn(warnings);
         return owned;
     }
@@ -516,13 +523,10 @@ public sealed class RunCoordinator(
     /// </summary>
     private int? ApplyPerfLocked(PerfProfile profile, List<string> warnings)
     {
-        // [RESOLVE Faz 4 / karar 11] Run başı da canlı setPerfMode da profili AYNI Core dönüşümünden geçirir: Resolve
-        // cycles koşusunda (anahtar açıkken) yürürlükteki profil cap'siz + Normal'dir; işçi sayısı zaten run başında
-        // sabitlenmiştir. Copy penceresi ve drain kuralları dönüşmüş profile uygulanır — cap'siz profilde pencere hiç
-        // açılmaz (EnterCopyFloor), priority tabanı Normal'i aşağı çekmez (EffectivePriorityLocked yalnız yükseltir).
-        var active = PerfProfile.ForRun(_perfRunMode, profile, _perfResolveAtFullPriority);
-        _activePerf = active; // [P3] copy penceresi kapanınca buraya dönülür
-        return WritePerfLocked(active, warnings);
+        // Run başı da canlı setPerfMode da profili DÖNÜŞTÜRMEDEN uygular: yürürlükteki profil koşu modundan bağımsız çipin
+        // profilidir (Resolve cycles dahil). Copy penceresi ve drain kuralları o profile uygulanır.
+        _activePerf = profile; // [P3] copy penceresi kapanınca buraya dönülür
+        return WritePerfLocked(profile, warnings);
     }
 
     /// <summary>
@@ -1004,7 +1008,7 @@ public sealed class RunCoordinator(
         // [koşu başı uyarıları görünür] Koşu başı uyarıları runStarted yazılmadan ÖNCE TEK listede toplanır: önce bayat obj
         // satırları, sonra ters katman satırları. Her satır burada decision.log'a yazılır ve AYNI metinle runStarted'la
         // (Warnings) App'e gider; kullanıcının konsol satırını ve event stream'in Warn satırını App yazar (tek projelik
-        // koşuda da). stderr'e (console) kopya YAZILMAZ: App stderr'i atar — işçi kırpma ve Resolve notlarıyla aynı
+        // koşuda da). stderr'e (console) kopya YAZILMAZ: App stderr'i atar — işçi kırpma notuyla aynı
         // sahiplik; stderr ileride yüzeye çıkarsa satır çiftlenmesin.
         // [T72/Task 14] SPIKE S2 — bayat-obj (yabancı-TFM restore artığı) teşhisi her koşuda tetiklenir: her proje kendi
         // varsayılan obj'inde derlenir. Dokunmaz, yalnız warn (StaleObjRunStartWarner ASLA fırlatmaz).
@@ -1026,7 +1030,7 @@ public sealed class RunCoordinator(
         // (tek sahip: PerfNoteText.WorkersReduced) burada decision.log'a yazılır; gerekçe runStarted'la
         // (WorkersReducedReason) App'e gider ve kullanıcının konsol + event stream satırını App AYNI metinle yazar
         // (tek projelik koşu hariç — orada işçi sayısı koşuyu tarif etmez).
-        // [kırpma notu görünür] stderr'e (console) kopya YAZILMAZ: App stderr'i atar — Resolve notuyla aynı sahiplik;
+        // [kırpma notu görünür] stderr'e (console) kopya YAZILMAZ: App stderr'i atar — koşu başı uyarılarıyla aynı sahiplik;
         // stderr ileride yüzeye çıkarsa satır çiftlenmesin.
         var (machineCores, machineFreeBytes) = _machine();
         var workerBudget = WorkerBudget.Clamp(cmd.Parallelism, machineCores, machineFreeBytes);
@@ -1048,8 +1052,6 @@ public sealed class RunCoordinator(
             // kullanıcının DAHA SONRAKİ sözüdür. Niyet burada TÜKETİLİR (bir sonraki run'a taşınmaz).
             perf = _pendingPerf ?? perf;
             _pendingPerf = null;
-            _perfRunMode = cmd.Mode;
-            _perfResolveAtFullPriority = cmd.ResolveAtFullPriority;
             if (perf is { } profile) { _perfApplied = true; appliedCap = ApplyPerfLocked(profile, perfWarnings); }
             if (_stopKind is not null) scheduler.RequestStop(); // plan kurulurken gelmiş Stop
         }
@@ -1131,15 +1133,6 @@ public sealed class RunCoordinator(
             "run {0} started: mode={1} projects={2} parallelism={3} configuration={4} cpuCap={5}",
             cmd.RunId, cmd.Mode, plan.Nodes.Count, parallelism, plan.Configuration,
             perf is null ? PerfNoteText.CapValueUnset : PerfNoteText.CapValue(appliedCap)));
-        // [RESOLVE Faz 4 / karar 11] Resolve cycles profilin önceliği/tavanı yerine tam öncelikte koşuyorsa bunu run
-        // başında söyleyen TEK satır (metin PerfNoteText'te, chip notunun ailesinde; işçi sayısı yukarıdaki bütçeden) —
-        // decision.log'a. Dönüşüm profili değiştirmediyse satır yoktur. [fix 1A — I1] Kullanıcının konsolundaki satırı App
-        // yazar (runStarted'ta, AYNI metin); stderr'e kopya YAZILMAZ — App stderr'i atar, ileride konsola taşınırsa satır
-        // çiftlenmesin.
-        if (perf is { } chosenPerf
-            && PerfNoteText.ResolveNote(cmd.Mode, chosenPerf with { Parallelism = parallelism }, cmd.ResolveAtFullPriority)
-                is { } resolveNote)
-            Decide(logs, resolveNote);
 
         // runStarted yazıldı: buradan SONRA hangi yoldan çıkılırsa çıkılsın (beklenmeyen exception dahil)
         // kapanış olayları TAM OLARAK BİR KEZ yazılır — aksi halde App'in run'ı sonsuza dek "koşuyor" kalırdı.
@@ -2655,11 +2648,24 @@ public sealed class RunCoordinator(
             Emit(run, projectId, log, warnLine);
         // Slot çağıranın elindedir ve timeout saati başlamadan ÖNCE alınmıştır (PerProjectTimeout invoker'ın
         // içinde kurulur) — sıra beklemek bir projenin süresine ya da zaman aşımına sayılmaz.
-        var invoke = await run.Invoker.InvokeAsync(request, line =>
+        // [Exit · motor yarışı] Invoke koşunun hard stop'unu da dinler (bkz. _hardStop): sonlandırılmış job'a sonradan giren bir derleme
+        // kaçmaz. Copy-contention geri çekilmesinin ortasında gelen hard stop bekleyişi iptalle keser — o bir hata değil, durdurmadır.
+        CancellationToken hardStop;
+        lock (_gate) hardStop = _hardStop?.Token ?? CancellationToken.None;
+        using var invokeCt = CancellationTokenSource.CreateLinkedTokenSource(ct, hardStop);
+        MsBuildInvokeResult invoke;
+        try
         {
-            Emit(run, projectId, log, line);
-            observeLine?.Invoke(line);
-        }, ct);
+            invoke = await run.Invoker.InvokeAsync(request, line =>
+            {
+                Emit(run, projectId, log, line);
+                observeLine?.Invoke(line);
+            }, invokeCt.Token);
+        }
+        catch (OperationCanceledException) when (hardStop.IsCancellationRequested && !ct.IsCancellationRequested)
+        {
+            return new InvokeOutcome(BuildResult.Failed, 0, FailureReasons.Stopped);
+        }
 
         return invoke.ExitCode == 0 && !invoke.TimedOut && !invoke.Killed
             ? new InvokeOutcome(BuildResult.Succeeded, invoke.DurationMs, null)

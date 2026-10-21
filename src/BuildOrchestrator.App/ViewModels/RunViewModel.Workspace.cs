@@ -613,8 +613,9 @@ public sealed partial class RunViewModel
     /// bayraklarının her geçişi (<see cref="NotifySyncGatedCommands"/>), koşu kilidinin her geçişi
     /// (<see cref="PropagateRunLock"/>), koşunun bitişi (<c>OnRunCompleted</c>) ve yarıdaki git işleminin kalkışı
     /// (<see cref="OnGitOperationChanged"/>) buraya iner. Tüketicileri birbirine BAĞLANMAZ: koordinatör bekleyen
-    /// kendiliğinden Sync tetiğini yeniden değerlendirir; [P3 · Task 2] güvenli çıkış uçuştaki iş bitince hazır olur
-    /// (<see cref="EvaluateExit"/>); [kullanıcı kararı 2026-09-29] Esc'in "durdurulamaz" satırı iş bitince yeniden
+    /// kendiliğinden Sync tetiğini yeniden değerlendirir; [P3 · Task 2 · Exit] tam çıkış durdurduğu iş bitince hazır olur
+    /// (<see cref="EvaluateExit"/>) ve açık onay kartı işin değiştiğini duyar (<see cref="NotifyExitWork"/>); [kullanıcı kararı
+    /// 2026-09-29] Esc'in "durdurulamaz" satırı iş bitince yeniden
     /// yazılabilir olur (<see cref="ResetEscNoteWhenIdle"/>); [design v1.23.0 §2.12] güncelleme kartının Restart kilidi
     /// yeniden sorulur (<see cref="NotifyUpdateRestartGate"/>); [idle-memory] uçuştaki işin değişimi bildirilir ve işlem sonu
     /// bellek trimi onu bekleten iş bitince yeniden sorulur (<see cref="NotifyOperationInFlight"/>). Bildirim EN SONDADIR: tetik
@@ -629,6 +630,7 @@ public sealed partial class RunViewModel
         EvaluateExit();
         ResetEscNoteWhenIdle();
         NotifyUpdateRestartGate();
+        NotifyExitWork();
         NotifyOperationInFlight();
     }
 

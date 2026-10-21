@@ -187,16 +187,16 @@
     </GeometryGroup>
 
     <!--
-      [About] lucide `info` — <circle cx="12" cy="12" r="10"/> + <path d="M12 16v-4"/> + <path d="M12 8h.01"/>
-
-      TÜRETİLMİŞ: design-v1 BuildApp.jsx:44-72 ikon tablosunda `info` YOKTUR (Icon.CaptionRestore ile aynı
-      statü — kaynaksız değer, gerekçesi burada). Geometri lucide'dan alınmıştır çünkü bu sözlükteki 24-viewBox
-      ikonların TÜMÜ lucide ailesindendir; ikon dili böyle tutarlı kalır. Kalınlığı için aşağıya bakın: title
-      bar'da Icon.Gear'ın KOMŞUSUDUR, optik ağırlıkları eşleşmelidir.
+      [About] title bar'ın ⓘ'si — .claude/outputs/2026-10-15-16-54-design-v1.25.0/prototype/app/BuildApp.jsx:102 `I.info`:
+      <circle cx="12" cy="12" r="9"/> + <path d="M12 11v5"/> + <path d="M12 7.6h.01"/> (tasarım v1.2.1'den beri böyle).
+      Halka güncelleme hapının (Icon.UpdateReady) ve Exit'in power halkasıyla aynı r=9'dur.
+      Eskiden lucide `info`'ydu (r=10, M12 16v-4, M12 8h.01) ve TÜRETİLMİŞ sayılıyordu — design-v1'in ikon tablosunda `info`
+      yoktu. 16 px'te r=10 halka 14,5 px ile title bar kümesinin en büyük çizimiydi (dişli 13,0 genişlik, Exit 13,1); tasarımın
+      r=9'u 13,1 px'tir.
     -->
     <GeometryGroup x:Key="Icon.Info">
-        <EllipseGeometry Center="12,12" RadiusX="10" RadiusY="10" />
-        <PathGeometry Figures="M12 16v-4 M12 8h.01" />
+        <EllipseGeometry Center="12,12" RadiusX="9" RadiusY="9" />
+        <PathGeometry Figures="M12 11v5 M12 7.6h.01" />
     </GeometryGroup>
 
     <!--
@@ -253,8 +253,8 @@
       prototype/app/BuildApp.jsx:104-105 (`I.update`, `I.arrowRight`). Kartın Restart düğmesinin rotate-cw'si
       Icon.Rebuild'dir (aynı çizim, ikinci anahtar açılmaz).
     -->
-    <!-- BuildApp.jsx:104 lucide circle-arrow-up — r=9 halka (tasarım "ⓘ ile aynı r=9" der; Icon.Info r=10'dur,
-         hap prototipi izler) + ok başı + gövde. -->
+    <!-- BuildApp.jsx:104 lucide circle-arrow-up — r=9 halka (tasarım "ⓘ ile aynı r=9" der; Icon.Info'nun halkası da r=9)
+         + ok başı + gövde. -->
     <GeometryGroup x:Key="Icon.UpdateReady">
         <EllipseGeometry Center="12,12" RadiusX="9" RadiusY="9" />
         <PathGeometry Figures="m15.5 11.5-3.5-3.5-3.5 3.5 M12 16V8" />
@@ -262,6 +262,34 @@
     <!-- BuildApp.jsx:105 lucide arrow-right — kartın "kurulu → gelen" sürüm geçişi. Kaynakta iki ayrı <path>'tir;
          tek Figures dizisinde ikinci figürün başı MUTLAK yazılır (göreli `m12 5` birincinin ucundan sayılırdı). -->
     <PathGeometry x:Key="Icon.ArrowRight" Figures="M5 12h14 M12 5l7 7-7 7" />
+
+    <!-- [Exit] lucide power — title bar'ın Exit butonu (13px) ve onay kartının "Stop and exit"i (12px). Kaynakta iki ayrı <path>'tir
+         (gövde, üstü açık halka); tek Figures dizisinde ikinci figürün başı MUTLAK yazılır. Gövde x=12'de: 13px kutuda 6,5 — %100
+         ekranda piksel ORTASI. -->
+    <PathGeometry x:Key="Icon.Power" Figures="M12 2v10 M18.4 6.6a9 9 0 1 1-12.77.04" />
+
+    <!--
+      [design v1.25.0 §2.1] Title bar'ın KAYNAK ŞERİDİNİN üç ikonu (12px, tek renk text-faint, etiketsiz — anlamı taşıyan görsel bunlardır).
+      KAYNAK: .claude/outputs/2026-10-15-16-54-design-v1.25.0/prototype/app/BuildApp.jsx:125-127 (`I.cpu`, `I.memory`, `I.parallel`; viewBox 0 0 24 24).
+      Anahtar adı `Icon.MemoryStick`: tasarımın ikon adı `memory`, lucide'ınki memory-stick'tir; repoda `Memory` sözcüğü bellek satırlarına
+      (MemoryLine) ait olduğundan karışmasın diye lucide adı kullanıldı. Üç ikon da prototipten, lucide üslubunda çizilmiştir; `Icon.Parallel`
+      prototipin üç dik çizgisidir (y = 5-19; x prototipte 6, 12, 18 — burada piksel hizası için 7, 13, 19, aşağıya bak).
+    -->
+    <!-- BuildApp.jsx:125 cpu — 2x <rect rx/> (gövde 14×14 rx 2, çekirdek 5×5 rx 0.8) + sekiz bacak <path/>'i (hepsi mutlak `M` ile başlar) -->
+    <GeometryGroup x:Key="Icon.Cpu">
+        <RectangleGeometry Rect="5,5,14,14" RadiusX="2" RadiusY="2" />
+        <RectangleGeometry Rect="9.5,9.5,5,5" RadiusX="0.8" RadiusY="0.8" />
+        <PathGeometry Figures="M9 2.5V5 M15 2.5V5 M9 19v2.5 M15 19v2.5 M2.5 9H5 M2.5 15H5 M19 9h2.5 M19 15h2.5" />
+    </GeometryGroup>
+
+    <!-- BuildApp.jsx:126 memory — gövde (sağda ve solda birer çentik) + ayırıcı çizgi + üst üç, alt üç kontak (sekiz <path/>, hepsi mutlak `M` ile başlar) -->
+    <PathGeometry x:Key="Icon.MemoryStick"
+                  Figures="M3 7.5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2V12a1.8 1.8 0 0 0 0 3.4V17a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17v-1.6a1.8 1.8 0 0 0 0-3.4Z M3 14.5h18 M8 9v3 M12 9v3 M16 9v3 M7 18.5v-4 M12 18.5v-4 M17 18.5v-4" />
+
+    <!-- BuildApp.jsx:127 parallel — üç dik çizgi. TÜRETİLMİŞ: prototip x = 6, 12, 18'de çizer; 12 px'lik kutuda birim yarım piksel
+         olduğundan çift koordinat %100 ölçekli ekranda piksel sınırına düşer ve her çizgi iki sütuna yarım parlaklıkta bölünür (canlı
+         ölçüm: 54'e karşı cpu'nun 91'i). Bir birim sağa (tek koordinat) çizgileri piksel ortasına oturtur — cpu'nun çizgileri gibi. -->
+    <PathGeometry x:Key="Icon.Parallel" Figures="M7 5v14 M13 5v14 M19 5v14" />
 
     <!-- ================= statü glyph'leri + spinner (viewBox 0 0 16 16) ================= -->
     <!-- [T60] DS `StatusGlyph` çizimleri (_ds_bundle.js:1446-1524). Gövde ince bir HALKA + içine 1.5px'lik
@@ -389,12 +417,19 @@
     <sys:Double x:Key="Icon.Brush.StrokeThickness">1.8</sys:Double>
     <!-- [design v1.23.0 §2.12] BuildApp.jsx:105 arrow-right (kartın sürüm geçişi) -->
     <sys:Double x:Key="Icon.ArrowRight.StrokeThickness">1.8</sys:Double>
+    <!-- [design v1.25.0 §2.1] kaynak şeridinin üç ikonu: README "stroke 1.8". Prototip `parallel`'i 1.9 yazar (BuildApp.jsx:127);
+         kaynaklar çelişince README kazanır, üçü de 1.8. -->
+    <sys:Double x:Key="Icon.Cpu.StrokeThickness">1.8</sys:Double>
+    <sys:Double x:Key="Icon.MemoryStick.StrokeThickness">1.8</sys:Double>
+    <!-- strokeWidth="1.9" (BuildApp.jsx:127 parallel) — prototipin optik telafisi: aynı renkte üç ince çizgi cpu ve memory'nin
+         yarısı kadar mürekkep taşır ve 1.8'de daha soluk okunur (canlı ölçüm %150: 48 piksele karşı 90). -->
+    <sys:Double x:Key="Icon.Parallel.StrokeThickness">1.9</sys:Double>
 
     <!-- strokeWidth="1.9" (design-v1.11.0 BuildApp.jsx:81 rebuild — ailenin tek 1.9'u, kaynakta öyle) -->
     <sys:Double x:Key="Icon.Rebuild.StrokeThickness">1.9</sys:Double>
 
-    <!-- strokeWidth="1.7" (BuildApp.jsx:59, :60 · Icon.Info TÜRETİLMİŞ: title bar'da Gear'ın KOMŞUSU olduğu
-         için AYNI kalınlıkta çizilir — optik ağırlıkları eşleşmeli) -->
+    <!-- strokeWidth="1.7" (BuildApp.jsx:59, :60 · Icon.Info: design-v1.25.0 BuildApp.jsx:102 — title bar'da Gear'ın
+         KOMŞUSUDUR, optik ağırlıkları eşleşir) -->
     <sys:Double x:Key="Icon.AlertTri.StrokeThickness">1.7</sys:Double>
     <sys:Double x:Key="Icon.Gear.StrokeThickness">1.7</sys:Double>
     <sys:Double x:Key="Icon.Info.StrokeThickness">1.7</sys:Double>
@@ -403,6 +438,8 @@
     <sys:Double x:Key="Icon.WhatsNew.StrokeThickness">1.7</sys:Double>
     <!-- [design v1.23.0 §2.12] BuildApp.jsx:104 güncelleme hapı — title bar ikonlarıyla AYNI 1.7. -->
     <sys:Double x:Key="Icon.UpdateReady.StrokeThickness">1.7</sys:Double>
+    <!-- [Exit] title bar'ın Exit butonu — tasarım: "stroke 1.7 (ⓘ ile aynı)". -->
+    <sys:Double x:Key="Icon.Power.StrokeThickness">1.7</sys:Double>
 
     <!-- strokeWidth="1.6" (_ds_bundle.js:1633 DependencyGraphNode paket ikonu) -->
     <sys:Double x:Key="Icon.Package.StrokeThickness">1.6</sys:Double>

@@ -85,7 +85,7 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
             {
                 if (e.PropertyName == nameof(RunViewModel.StopLabel)) stopItem.Header = run.StopLabel;
             };
-        var exitItem = new MenuItem { Header = "Exit" };
+        var exitItem = new MenuItem { Header = ViewModels.ExitText.ExitLabel }; // [Exit] title bar'ın Exit'iyle aynı sözcük, tek kaynak
         exitItem.Click += (_, _) => exit();
 
         var menu = new ContextMenu();
@@ -186,8 +186,8 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
 
     /// <summary>Tepsi ikonuna sol tık / çift tık / balloon tıkı — pencereyi geri getir.</summary>
     public event Action? RestoreRequested;
-    /// <summary>Tepsi menüsü → Exit: güvenli tam çıkış — uçuştaki iş beklenir, sonra uygulama kapanır
-    /// (<c>MainWindow.ExitFromTray</c> → <c>RunViewModel.RequestExit</c>).</summary>
+    /// <summary>Tepsi menüsü → Exit: title bar'ın Exit butonuyla aynı karar — uçuşta iş yoksa uygulama kapanır, varsa pencere öne gelir
+    /// ve onay kartı açılır (<c>MainWindow.ExitFromTray</c>).</summary>
     public event Action? ExitRequested;
 
     /// <summary>

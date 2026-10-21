@@ -5,8 +5,8 @@ namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
 /// [motor · Task 11 · K6] <c>Restart to update</c> = kart kapanır, ekran <c>Closing &lt;ürün&gt;…</c> der, çubuk dolunca
-/// uygulama güvenli tam çıkış yoluna girer (mevcut <c>RequestFullExit</c> — × ve tepsi → Exit ile AYNI yol: iş yoksa
-/// hemen <c>ExitReady</c> → Shutdown). Kurulumu çıkışta Update.exe yapar (Task 12).
+/// uygulama tam çıkış yoluna girer (<c>RunViewModel.RequestExit</c>, onaysız — kullanıcı Restart'a bastı: iş yoksa hemen
+/// <c>ExitReady</c> → Shutdown). Kurulumu çıkışta Update.exe yapar (Task 12).
 ///
 /// <para><b>Eski iddia</b> (<c>UpdateRestartScreenTests.When_the_screen_leaves_the_app_is_exactly_as_it_was</c>): ekran
 /// oynayıp sönerdi ve uygulama AYNEN kalırdı — motora komut gitmez, seçim, faz, satırlar, hap ve teklif yerinde; motor
@@ -18,7 +18,7 @@ namespace BuildOrchestrator.Tests.App;
 ///
 /// <para>Harness: pencere GÖSTERİLMEZ (<see cref="MainWindowHost"/>); uygulamayı kapatan çağrı
 /// (<c>MainWindow.ShutdownApplication</c>) sayaçlı bir sahteyle değiştirilir — uygulama kapanmaz. Ekranın zamanı
-/// sahtedir (<see cref="RestartScreenTime"/>), gerçek bir saat kurulmaz.</para>
+/// sahtedir (<see cref="ClosingScreenTime"/>), gerçek bir saat kurulmaz.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class UpdateRestartFlowTests
@@ -36,15 +36,15 @@ public class UpdateRestartFlowTests
     {
         using var temp = new TempDir();
         var (window, vm) = MainWindowHost.NewRealized(temp);
-        var time = new RestartScreenTime(window.UpdateRestartOverlay);
+        var time = new ClosingScreenTime(window.ClosingOverlay);
         int shutdowns = 0;
         window.ShutdownApplication = () => shutdowns++;
         vm.AvailableUpdate = UpdateOffers.Sample("9.9.0");
 
         vm.RestartToUpdateCommand.Execute(null);
 
-        Assert.True(window.UpdateRestartOverlay.IsShowing);
-        Assert.Equal(UpdateText.RestartStepLabel(UpdateRestartStep.Closing), window.UpdateRestartOverlay.PART_Step.Text);
+        Assert.True(window.ClosingOverlay.IsShowing);
+        Assert.Equal(UpdateText.RestartStepLabel(UpdateRestartStep.Closing), window.ClosingOverlay.PART_Step.Text);
         Assert.Equal(0, shutdowns); // ekran önce çizilir — çıkış onunla aynı turda istenmez
         time.FrameAt(UpdateRestartTimeline.TotalMs - 1);
         Assert.Equal(0, shutdowns); // çubuk dolmadan çıkış yok
@@ -53,9 +53,35 @@ public class UpdateRestartFlowTests
 
         Assert.Equal(1, shutdowns); // iş yok → çubuk dolunca çıkış hemen
         Assert.False(vm.ExitPending);
-        Assert.True(window.UpdateRestartOverlay.IsShowing);
+        Assert.True(window.ClosingOverlay.IsShowing);
         time.FrameAt(UpdateRestartTimeline.TotalMs + 5000);
         Assert.Equal(1, shutdowns); // tek atım
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[Exit · inceleme K4] Çubuk dolarken başlamış bir Sync çıkışı BEKLETMEZ: tam çıkışın kuralı geçerlidir — Sync kesilir
+    /// (<c>RunViewModel.Exit.cs</c>), uygulama <c>syncCompleted</c> beklenmeden kapanır.
+    /// <para><b>[DEĞİŞEN KURAL — Exit, 2026-10-19]</b> ESKİ: restart'ın tam çıkışı "çubuk dolarken başlamış işi de bekler"di (ARCHITECTURE
+    /// §13.3'ün eski cümlesi). Mutasyonla doğrulandı: Sync beklenen işlere eklenince kırmızı.</para></summary>
+    [StaFact]
+    public async Task A_sync_that_started_during_the_restart_screen_is_cut_off()
+    {
+        using var temp = new TempDir();
+        var (window, vm) = MainWindowHost.NewRealized(temp);
+        var time = new ClosingScreenTime(window.ClosingOverlay);
+        int shutdowns = 0;
+        window.ShutdownApplication = () => shutdowns++;
+        MainWindowHost.AcceptSends(vm);
+        vm.AvailableUpdate = UpdateOffers.Sample("9.9.0");
+        vm.RestartToUpdateCommand.Execute(null);
+        await vm.SyncCommand.ExecuteAsync(null);
+        Assert.True(vm.SyncBusy); // ön-koşul: ekran oynarken bir Sync başladı
+
+        time.FrameAt(UpdateRestartTimeline.TotalMs);
+        DispatcherPump.PumpUntil(() => shutdowns > 0, TimeSpan.FromSeconds(2));
+
+        Assert.Equal(1, shutdowns);
+        Assert.True(vm.SyncBusy); // Sync bitmedi — beklenmedi
         GC.KeepAlive(window);
     }
 
@@ -66,7 +92,7 @@ public class UpdateRestartFlowTests
     {
         using var temp = new TempDir();
         var (window, vm) = MainWindowHost.NewRealized(temp);
-        var time = new RestartScreenTime(window.UpdateRestartOverlay);
+        var time = new ClosingScreenTime(window.ClosingOverlay);
         int shutdowns = 0;
         window.ShutdownApplication = () => shutdowns++;
         vm.AvailableUpdate = UpdateOffers.Sample();
@@ -76,7 +102,7 @@ public class UpdateRestartFlowTests
         vm.RestartToUpdateCommand.Execute(null);
         time.FrameAt(UpdateRestartTimeline.TotalMs);
 
-        Assert.False(window.UpdateRestartOverlay.IsShowing);
+        Assert.False(window.ClosingOverlay.IsShowing);
         Assert.Equal(0, shutdowns);
         Assert.False(vm.ExitPending);
         GC.KeepAlive(window);
