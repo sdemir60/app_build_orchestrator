@@ -56,9 +56,16 @@ public class ResourceStripRealizeTests(ITestOutputHelper output)
 
     private static Color Token(MainWindow window, string key) => DsResources.TokenColor(window, key);
 
-    /// <summary>Paralellik hücresinin dört metni, ekrandaki sırayla: pay · ortadaki sayı (koşunun paralelliği) · sınır · mod sözcüğü.</summary>
-    private static (string Building, string Run, string Limit, string Mode) ParallelTexts(ResourceStrip strip) =>
-        (strip.BuildingValue.Text, strip.RunParallelismValue.Text, strip.AllowedValue.Text, strip.ModeValue.Text);
+    /// <summary>Paralellik hücresinin dört değeri, ekrandaki sırayla: pay · ortadaki sayı (koşunun paralelliği) · mod sözcüğü · sınır
+    /// (aradaki <see cref="ResourceStripText.LimitSeparator"/> sabit metindir, değer değildir: <see cref="LimitSeparator"/>).</summary>
+    private static (string Building, string Run, string Mode, string Limit) ParallelTexts(ResourceStrip strip) =>
+        (strip.BuildingValue.Text, strip.RunParallelismValue.Text, strip.ModeValue.Text, strip.AllowedValue.Text);
+
+    /// <summary>Mod sözcüğü ile sınırın arasındaki görünür ayraç: metni Core sabitidir (<see cref="ResourceStripText.LimitSeparator"/>), VM'den
+    /// yazılmaz ve adı yoktur — ağaçta metniyle bulunur; görünür tek kopyası olmalıdır (hayaleti gizlidir).</summary>
+    private static TextBlock LimitSeparator(ResourceStrip strip) =>
+        DsResources.Descendants(strip).OfType<TextBlock>()
+            .Single(t => t.Visibility == Visibility.Visible && t.Text == ResourceStripText.LimitSeparator);
 
     // ---------------------------------------------------------------- hücreler, ikonlar, değerler
 
@@ -83,18 +90,18 @@ public class ResourceStripRealizeTests(ITestOutputHelper output)
         Assert.Equal(ResourceStripText.Memory(4795 * Mb), strip.MemoryValue.Text);
         Assert.Equal(vm.StripCpuText, strip.CpuValue.Text);
         Assert.Equal(vm.StripMemoryText, strip.MemoryValue.Text);
-        Assert.Equal(("0", "/0", "/4", "Balanced"), ParallelTexts(strip)); // boşta: 0/0/4 Balanced
-        Assert.Equal((vm.StripBuildingText, vm.StripRunParallelismText, vm.StripAllowedText, vm.StripModeText), ParallelTexts(strip));
+        Assert.Equal(("0", "/0", "Balanced", "4"), ParallelTexts(strip)); // boşta: 0/0 Balanced · 4
+        Assert.Equal((vm.StripBuildingText, vm.StripRunParallelismText, vm.StripModeText, vm.StripAllowedText), ParallelTexts(strip));
 
         // Değerler VM'i canlı izler: çip dönünce paralellik hücresi, örnek gelince CPU/RAM aynı anda değişir.
         vm.SetPerfMode("Light");
         vm.ApplyResourceSample(new ResourceSample(null, null, null, null)); // okunamayan değer: aynı hücrede —
-        Assert.Equal(("0", "/0", "/2", "Light"), ParallelTexts(strip));
+        Assert.Equal(("0", "/0", "Light", "2"), ParallelTexts(strip));
         Assert.Equal((ResourceStripText.Unreadable, ResourceStripText.Unreadable), (strip.CpuValue.Text, strip.MemoryValue.Text));
 
         // Ortadaki sayı da VM'i canlı izler (görünümün izlediği özelliklerden biridir).
         vm.StripRunParallelismText = "/3";
-        Assert.Equal(("0", "/3", "/2", "Light"), ParallelTexts(strip));
+        Assert.Equal(("0", "/3", "Light", "2"), ParallelTexts(strip));
         GC.KeepAlive(window);
     }
 
@@ -117,10 +124,10 @@ public class ResourceStripRealizeTests(ITestOutputHelper output)
         Assert.Equal(new[] { "Icon.Cpu", "Icon.MemoryStick", "Icon.Parallel" }.Select(key => (double)window.FindResource(key + ".StrokeThickness")),
             icons.Select(p => p.StrokeThickness));
 
-        // Etiket yok: ağaçtaki GÖRÜNÜR metinler yalnız değerler (ghost'lar gizlidir).
+        // Etiket yok: ağaçtaki GÖRÜNÜR metinler yalnız değerler ve mod ile sınırın arasındaki ayraç (ghost'lar gizlidir).
         var shown = DsResources.ShownTexts(strip);
         Assert.Equal(new[] { strip.CpuValue.Text, strip.MemoryValue.Text, strip.BuildingValue.Text, strip.RunParallelismValue.Text,
-                strip.AllowedValue.Text, strip.ModeValue.Text },
+                strip.ModeValue.Text, ResourceStripText.LimitSeparator, strip.AllowedValue.Text },
             shown);
         GC.KeepAlive(window);
     }
@@ -137,7 +144,7 @@ public class ResourceStripRealizeTests(ITestOutputHelper output)
         Relayout(window);
         var before = (strip.CpuValue.Text, strip.MemoryValue.Text, ParallelTexts(strip));
         var tooltipBefore = ((ToolTip)strip.CpuCell.ToolTip).Content;
-        Assert.Equal(("12%", "200 MB", ("0", "/0", "/4", "Balanced")), before); // ön-koşul: görünürken yazılır
+        Assert.Equal(("12%", "200 MB", ("0", "/0", "Balanced", "4")), before); // ön-koşul: görünürken yazılır
         Assert.True(strip.IsMeasureValid && strip.BuildingValue.IsMeasureValid);
 
         window.SetSurfaceHidden(true);
@@ -154,9 +161,9 @@ public class ResourceStripRealizeTests(ITestOutputHelper output)
         window.SetSurfaceHidden(false);
 
         Assert.Equal(
-            (vm.StripCpuText, vm.StripMemoryText, (vm.StripBuildingText, vm.StripRunParallelismText, vm.StripAllowedText, vm.StripModeText)),
+            (vm.StripCpuText, vm.StripMemoryText, (vm.StripBuildingText, vm.StripRunParallelismText, vm.StripModeText, vm.StripAllowedText)),
             (strip.CpuValue.Text, strip.MemoryValue.Text, ParallelTexts(strip)));
-        Assert.Equal(("97%", ("2", "/3", "/2", "Light")), (strip.CpuValue.Text, ParallelTexts(strip)));
+        Assert.Equal(("97%", ("2", "/3", "Light", "2")), (strip.CpuValue.Text, ParallelTexts(strip)));
         Assert.Equal(vm.StripCpuTooltip, ((ToolTip)strip.CpuCell.ToolTip).Content);
         Assert.Equal(vm.StripParallelTooltip, ((ToolTip)strip.ParallelCell.ToolTip).Content);
         GC.KeepAlive(window);
@@ -274,9 +281,9 @@ public class ResourceStripRealizeTests(ITestOutputHelper output)
 
     // ---------------------------------------------------------------- sabit çerçeve
 
-    /// <summary>Her hücre en geniş değer kadar yer ayırır (<c>100%</c> · <c>12.3 GB</c> · <c>12/12/12 Balanced</c>): değer <c>1% → 100%</c>,
-    /// <c>310 MB → 12.3 GB</c>, <c>0/0/2 Light → 12/12/12 Balanced</c> olurken hiçbir hücrenin genişliği, şeridin kutusu ve değerin başlangıç x'i
-    /// değişmez; değer ikonun yanında SOLA hizalıdır.</summary>
+    /// <summary>Her hücre en geniş değer kadar yer ayırır (<c>100%</c> · <c>12.3 GB</c> · <c>12/12 Balanced · 12</c>): değer <c>1% → 100%</c>,
+    /// <c>310 MB → 12.3 GB</c>, <c>0/0 Light · 2 → 12/12 Balanced · 12</c> olurken hiçbir hücrenin genişliği, şeridin kutusu ve değerin başlangıç
+    /// x'i değişmez; değer ikonun yanında SOLA hizalıdır, mod sözcüğü ve sınır sayıyı izler.</summary>
     [StaFact]
     public void Every_cell_keeps_its_width_and_the_value_its_left_edge_whatever_the_value_is()
     {
@@ -288,22 +295,23 @@ public class ResourceStripRealizeTests(ITestOutputHelper output)
              DsResources.BoundsIn(strip.CpuValue, strip.CpuCell).Left, DsResources.BoundsIn(strip.MemoryValue, strip.MemoryCell).Left,
              DsResources.BoundsIn(strip.BuildingValue, strip.ParallelCell).Left);
 
-        // En dar değerler: 1% · 310 MB · 0 /0 /2 Light
+        // En dar değerler: 1% · 310 MB · 0 /0 Light · 2
         vm.SetPerfMode("Light");
         vm.ApplyResourceSample(new ResourceSample(1, 310 * Mb, 0, 0));
         Relayout(window);
-        Assert.Equal(("1%", "310 MB", ("0", "/0", "/2", "Light")), (strip.CpuValue.Text, strip.MemoryValue.Text, ParallelTexts(strip)));
+        Assert.Equal(("1%", "310 MB", ("0", "/0", "Light", "2")), (strip.CpuValue.Text, strip.MemoryValue.Text, ParallelTexts(strip)));
         var narrow = Snapshot();
         double cpuLive = strip.CpuValue.ActualWidth, memoryLive = strip.MemoryValue.ActualWidth, modeRight = Bounds(window, strip.ModeValue).Right;
+        double limitLeft = Bounds(window, strip.AllowedValue).Left;
 
-        // En geniş değerler: 100% · 12.3 GB · 12 /12 /12 Balanced
+        // En geniş değerler: 100% · 12.3 GB · 12 /12 Balanced · 12
         vm.ApplyResourceSample(new ResourceSample(100, 12595 * Mb, 0, 0));
         vm.StripBuildingText = "12";
         vm.StripRunParallelismText = "/12";
-        vm.StripAllowedText = "/12";
+        vm.StripAllowedText = "12";
         vm.StripModeText = "Balanced";
         Relayout(window);
-        Assert.Equal(("100%", "12.3 GB", ("12", "/12", "/12", "Balanced")), (strip.CpuValue.Text, strip.MemoryValue.Text, ParallelTexts(strip)));
+        Assert.Equal(("100%", "12.3 GB", ("12", "/12", "Balanced", "12")), (strip.CpuValue.Text, strip.MemoryValue.Text, ParallelTexts(strip)));
         var wide = Snapshot();
 
         output.WriteLine($"hücre genişlikleri (dar değerler): cpu {narrow.cpu:0.##} · ram {narrow.memory:0.##} · paralel {narrow.parallel:0.##} · şerit {narrow.box.Width:0.##}");
@@ -314,6 +322,7 @@ public class ResourceStripRealizeTests(ITestOutputHelper output)
         Assert.True(strip.CpuValue.ActualWidth > cpuLive, "100% 1%'den geniş değil — ölçüm vakum");
         Assert.True(strip.MemoryValue.ActualWidth > memoryLive, "12.3 GB 310 MB'den geniş değil — ölçüm vakum");
         Assert.True(Bounds(window, strip.ModeValue).Right > modeRight, "mod sözcüğü sayıyı izlemiyor");
+        Assert.True(Bounds(window, strip.AllowedValue).Left > limitLeft, "sınır mod sözcüğünü izlemiyor");
         Assert.True(narrow.cpu > IconBox(strip.CpuIcon).Width + cpuLive, "CPU hücresi ghost kadar yer ayırmıyor");
 
         Assert.Equal(HorizontalAlignment.Left, strip.CpuValue.HorizontalAlignment);
@@ -328,21 +337,29 @@ public class ResourceStripRealizeTests(ITestOutputHelper output)
         using var temp = new TempDir();
         var (window, _, strip) = Realized(temp);
 
-        // Gizli (Hidden — Collapsed DEĞİL: alanı tutar) metinler, sırayla: CPU · RAM · paralellik sayısı · mod sözcüğü.
+        // Gizli (Hidden — Collapsed DEĞİL: alanı tutar) metinler, sırayla: CPU · RAM · paralellik sayıları · mod sözcüğü · ayraç · sınır.
         var ghosts = DsResources.Descendants(strip).OfType<TextBlock>().Where(t => t.Visibility == Visibility.Hidden).ToList();
         Assert.Equal(
-            new[] { ResourceStripText.CpuGhost, ResourceStripText.MemoryGhost, ResourceStripText.ParallelGhost, ResourceStripText.ModeGhost },
+            new[] { ResourceStripText.CpuGhost, ResourceStripText.MemoryGhost, ResourceStripText.ParallelGhost, ResourceStripText.ModeGhost,
+                ResourceStripText.LimitSeparator, ResourceStripText.LimitGhost },
             ghosts.Select(t => t.Text));
-        // Tasarımın sabit çerçeve sayıları; paralellikte üç sayı (pay · koşunun paralelliği · sınır). [DEĞİŞEN KURAL — 2026-10-19] ESKİ: "12/12".
-        Assert.Equal(new[] { "100%", "12.3 GB", "12/12/12", "Balanced" }, ghosts.Select(t => t.Text));
+        // Tasarımın sabit çerçeve sayıları; paralellikte bu koşunun iki sayısı (pay · koşunun paralelliği), mod sözcüğü, ayraç ve sınır.
+        // [DEĞİŞEN KURAL — 2026-10-19] ESKİ: "12/12". [DEĞİŞEN KURAL — kullanıcı kararı 2026-10-21] ESKİ: "12/12/12" + "Balanced" (sınır sayıların
+        // sonundaydı); sınır mod sözcüğünün arkasına geçti, hayalet hücrenin sırasını izler.
+        Assert.Equal(new[] { "100%", "12.3 GB", "12/12", "Balanced", " · ", "12" }, ghosts.Select(t => t.Text));
         Assert.All(ghosts, t => Assert.True(t.ActualWidth > 0, "ghost yer tutmuyor"));
 
         // Ghost'un yazı kimliği canlı değerinkiyle AYNI (yoksa ayırdığı yer yalan söyler).
         Assert.Equal(strip.CpuValue.FontFamily, ghosts[0].FontFamily);
         Assert.Equal(strip.CpuValue.FontSize, ghosts[0].FontSize);
         Assert.Equal(strip.MemoryValue.FontFamily, ghosts[1].FontFamily);
+        Assert.Equal(strip.BuildingValue.FontFamily, ghosts[2].FontFamily);
         Assert.Equal(strip.ModeValue.FontFamily, ghosts[3].FontFamily);
         Assert.Equal(strip.ModeValue.FontSize, ghosts[3].FontSize);
+        Assert.Equal(strip.ModeValue.Margin, ghosts[3].Margin);
+        var separator = LimitSeparator(strip);
+        Assert.Equal((separator.FontFamily, separator.FontSize), (ghosts[4].FontFamily, ghosts[4].FontSize));
+        Assert.Equal((strip.AllowedValue.FontFamily, strip.AllowedValue.FontSize), (ghosts[5].FontFamily, ghosts[5].FontSize));
         GC.KeepAlive(window);
     }
 
@@ -513,16 +530,21 @@ public class ResourceStripRealizeTests(ITestOutputHelper output)
             Assert.Equal(dim, DsResources.ColorOf(v.Foreground));
         });
 
-        // Sınır ("/N" — modun sayısı): aynı mono yüz, bir ton soluk (text-faint) — renk yok, bilgi.
+        // Sınır (modun sayısı, hücrenin sonunda): aynı mono yüz, bir ton soluk (text-faint) — renk yok, bilgi.
         Assert.Equal(AppFonts.Mono, strip.AllowedValue.FontFamily);
         Assert.Equal(size, strip.AllowedValue.FontSize);
         Assert.Equal(FontNumeralAlignment.Tabular, Typography.GetNumeralAlignment(strip.AllowedValue));
         Assert.Equal(faint, DsResources.ColorOf(strip.AllowedValue.Foreground));
 
-        // Mod sözcüğü: Geist (pencere arayüz yazı tipini vermez, bu yüzden açıkça) · 11px · text-faint.
+        // Mod sözcüğü ve ondan sonraki ayraç (" · "): Geist (pencere arayüz yazı tipini vermez, bu yüzden açıkça) · 11px · text-faint.
         Assert.Equal(AppFonts.Ui, strip.ModeValue.FontFamily);
         Assert.Equal(size, strip.ModeValue.FontSize);
         Assert.Equal(faint, DsResources.ColorOf(strip.ModeValue.Foreground));
+        var separator = LimitSeparator(strip);
+        Assert.Equal(AppFonts.Ui, separator.FontFamily);
+        Assert.Equal(size, separator.FontSize);
+        Assert.Equal(FontWeights.Normal, separator.FontWeight);
+        Assert.Equal(faint, DsResources.ColorOf(separator.Foreground));
 
         // Şeritte text-dim ve text-faint dışında hiçbir renk yok: amber/statü rengi yok, hover zemini yok.
         var colours = DsResources.RealizedObjects(strip).OfType<TextBlock>().Select(t => DsResources.ColorOf(t.Foreground))
@@ -564,10 +586,14 @@ public class ResourceStripRealizeTests(ITestOutputHelper output)
         AssertGap(5, Bounds(window, strip.CpuValue).Left - Bounds(window, boxes[0]).Right, "CPU ikonu → değer");
         AssertGap(5, Bounds(window, strip.MemoryValue).Left - Bounds(window, boxes[1]).Right, "RAM ikonu → değer");
         AssertGap(5, Bounds(window, strip.BuildingValue).Left - Bounds(window, boxes[2]).Right, "paralellik ikonu → pay");
-        // pay + koşunun paralelliği + "/N" bitişik, mod sözcüğü 5 sonra
+        // pay + koşunun paralelliği bitişik, mod sözcüğü 5 sonra; mod sözcüğü + " · " + sınır bitişik (aralığı ayracın kendi boşlukları verir)
+        var separator = LimitSeparator(strip);
         AssertGap(0, Bounds(window, strip.RunParallelismValue).Left - Bounds(window, strip.BuildingValue).Right, "pay → koşunun paralelliği");
-        AssertGap(0, Bounds(window, strip.AllowedValue).Left - Bounds(window, strip.RunParallelismValue).Right, "koşunun paralelliği → /N");
-        AssertGap(5, Bounds(window, strip.ModeValue).Left - Bounds(window, strip.AllowedValue).Right, "/N → mod sözcüğü");
+        AssertGap(5, Bounds(window, strip.ModeValue).Left - Bounds(window, strip.RunParallelismValue).Right, "koşunun paralelliği → mod sözcüğü");
+        AssertGap(0, Bounds(window, separator).Left - Bounds(window, strip.ModeValue).Right, "mod sözcüğü → ayraç");
+        AssertGap(0, Bounds(window, strip.AllowedValue).Left - Bounds(window, separator).Right, "ayraç → sınır");
+        Assert.Equal(new Thickness(0), separator.Margin);
+        Assert.Equal(new Thickness(0), strip.AllowedValue.Margin);
         // ikon ve değer aynı dikey ortada
         Assert.True(Math.Abs(Bounds(window, strip.CpuValue).Top + strip.CpuValue.ActualHeight / 2 - (Bounds(window, boxes[0]).Top + 6)) <= 1.0, "CPU değeri ikonla aynı hizada değil");
         GC.KeepAlive(window);

@@ -115,7 +115,7 @@ public class ResourceStripTextTests
             Assert.Equal("4.8 GB", ResourceStripText.Memory(4966 * Mb));
             Assert.Equal("1.3 GB", ResourceStripText.Memory(1280 * Mb));
             Assert.Equal("69%", ResourceStripText.Cpu(69));
-            Assert.Equal("/4", ResourceStripText.ParallelAllowed(PerfMode.Balanced));
+            Assert.Equal("4", ResourceStripText.ParallelAllowed(PerfMode.Balanced));
             Assert.Equal("/3", ResourceStripText.ParallelRun(3));
             Assert.Equal("Memory used by Acme · app 310 MB · engine 85 MB · compilers 4.4 GB",
                 ResourceStripText.MemoryTooltip("Acme", 310 * Mb, 85 * Mb, 4506 * Mb));
@@ -174,12 +174,17 @@ public class ResourceStripTextTests
 
     // ---------------------------------------------------------------- paralellik
 
-    /// <summary>Sınır: modun tablo paralelliği, bölü işaretinden sonra — hücrenin sondaki soluk sayısı.</summary>
+    /// <summary>Sınır: modun tablo paralelliği, yalın sayı — hücrenin en sonundaki soluk sayı; mod sözcüğünü
+    /// <see cref="ResourceStripText.LimitSeparator"/> ile izler (<c>0/0 Balanced · 4</c>).
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-21]</b> ESKİ: sınır bölü işaretiyle sayıların sonundaydı (<c>/4</c>, hücre
+    /// <c>0/0/4 Balanced</c>). YENİ: mod sözcüğünün arkasında, araya nokta girer (<c>0/0 Balanced · 4</c>). Gerekçe: sınır modun tanımıdır ve
+    /// modla birlikte okunur — hücre iki küme olur: bu koşunun iki sayısı (text-dim) ve modun adı ile sayısı (text-faint).</para></summary>
     [Theory]
-    [InlineData(PerfMode.Full, "/6")]
-    [InlineData(PerfMode.Balanced, "/4")]
-    [InlineData(PerfMode.Light, "/2")]
-    public void ParallelAllowed_is_the_workers_of_the_mode_after_a_slash(PerfMode mode, string expected) =>
+    [InlineData(PerfMode.Full, "6")]
+    [InlineData(PerfMode.Balanced, "4")]
+    [InlineData(PerfMode.Light, "2")]
+    public void ParallelAllowed_is_the_bare_workers_of_the_mode(PerfMode mode, string expected) =>
         Assert.Equal(expected, ResourceStripText.ParallelAllowed(mode));
 
     /// <summary>Ortadaki sayı: motorun koşu başında belirlediği paralellik (<c>runStarted.Parallelism</c> — modun sayısı, makineye göre
@@ -261,7 +266,7 @@ public class ResourceStripTextTests
             var profile = PerfProfile.For(mode);
             string workers = profile.Parallelism.ToString(CultureInfo.InvariantCulture);
 
-            Assert.Equal("/" + workers, ResourceStripText.ParallelAllowed(mode));
+            Assert.Equal(workers, ResourceStripText.ParallelAllowed(mode));
             Assert.Equal("/" + workers, ResourceStripText.ParallelRun(profile.Parallelism));
             Assert.Equal($"{mode.ToString()} — up to {workers} projects build in parallel",
                 ResourceStripText.ParallelTooltip(mode, 0, runParallelism: null, reducedReason: null));
@@ -282,16 +287,20 @@ public class ResourceStripTextTests
         Assert.Equal("—", ResourceStripText.Unreadable);
         Assert.Equal("100%", ResourceStripText.CpuGhost);
         Assert.Equal("12.3 GB", ResourceStripText.MemoryGhost);
-        Assert.Equal("12/12/12", ResourceStripText.ParallelGhost);
+        Assert.Equal("12/12", ResourceStripText.ParallelGhost);
         Assert.Equal("Balanced", ResourceStripText.ModeGhost);
+        Assert.Equal(" · ", ResourceStripText.LimitSeparator);
+        Assert.Equal("12", ResourceStripText.LimitGhost);
     }
 
     /// <summary>
     /// Sabit çerçeve: hayalet, hücrenin gösterebileceği EN GENİŞ metin kadar yer ayırır (değer yazısı mono, genişlik karakter sayısıdır).
-    /// CPU'nun en geniş metni tavandır; RAM'inki <c>1023 MB</c> ya da iki haneli GB; paralellikte pay hanesi + koşunun paralelliği + sınır
-    /// en geniş mod için (koşunun paralelliği modun sayısını aşmaz; boştaki <c>/0</c> da sığar), mod sözcüğü de en uzun mod adı kadardır — bir
-    /// mod ya da tablo büyürse hayalet onu da kapsamak zorundadır.
+    /// CPU'nun en geniş metni tavandır; RAM'inki <c>1023 MB</c> ya da iki haneli GB; paralellikte pay hanesi + koşunun paralelliği en geniş
+    /// mod için (koşunun paralelliği modun sayısını aşmaz; boştaki <c>0/0</c> da sığar), mod sözcüğü en uzun mod adı, sınır da en geniş modun
+    /// sayısı kadardır — bir mod ya da tablo büyürse hayalet onu da kapsamak zorundadır.
     /// <para>[DEĞİŞEN KURAL — 2026-10-19] ESKİ hayalet <c>12/12</c>'ydi (pay + payda); hücreye ortadaki sayı girince üç sayı kadar yer ayırır.</para>
+    /// <para>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-21] ESKİ hayalet <c>12/12/12</c> + <c>Balanced</c>'tı (sınır sayıların sonundaydı); sınır
+    /// mod sözcüğünün arkasına geçince hayalet de hücrenin sırasını izler: <c>12/12</c> + <c>Balanced</c> + <c> · </c> + <c>12</c>.</para>
     /// </summary>
     [Fact]
     public void The_ghosts_reserve_the_width_of_the_widest_text_each_cell_can_show()
@@ -300,18 +309,19 @@ public class ResourceStripTextTests
         Assert.True(ResourceStripText.Memory(1023 * Mb).Length <= ResourceStripText.MemoryGhost.Length);   // "1023 MB"
         Assert.True(ResourceStripText.Memory(102298 * Mb).Length <= ResourceStripText.MemoryGhost.Length); // "99.9 GB"
 
-        int widestModeName = 0, widestNumbers = 0;
+        int widestModeName = 0, widestNumbers = 0, widestLimit = 0;
         foreach (PerfMode mode in Enum.GetValues<PerfMode>())
         {
             widestModeName = Math.Max(widestModeName, mode.ToString().Length);
             int workers = PerfProfile.For(mode).Parallelism;
             int workersDigits = workers.ToString(CultureInfo.InvariantCulture).Length;
-            string limit = ResourceStripText.ParallelAllowed(mode);
-            widestNumbers = Math.Max(widestNumbers, workersDigits + ResourceStripText.ParallelRun(workers).Length + limit.Length); // koşuda
-            widestNumbers = Math.Max(widestNumbers, 1 + ResourceStripText.ParallelRun(null).Length + limit.Length);              // boşta: 0/0/N
+            widestNumbers = Math.Max(widestNumbers, workersDigits + ResourceStripText.ParallelRun(workers).Length); // koşuda: N/N
+            widestNumbers = Math.Max(widestNumbers, 1 + ResourceStripText.ParallelRun(null).Length);              // boşta: 0/0
+            widestLimit = Math.Max(widestLimit, ResourceStripText.ParallelAllowed(mode).Length);
         }
         Assert.Equal(widestModeName, ResourceStripText.ModeGhost.Length);
         Assert.True(widestNumbers <= ResourceStripText.ParallelGhost.Length);
+        Assert.True(widestLimit <= ResourceStripText.LimitGhost.Length);
 
         foreach (string ghost in new[] { ResourceStripText.CpuGhost, ResourceStripText.MemoryGhost, ResourceStripText.ParallelGhost })
             Assert.True(ResourceStripText.Unreadable.Length <= ghost.Length);

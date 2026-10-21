@@ -205,9 +205,12 @@ public class ResourceStripGuardTests
     {
         string markup = Markup();
 
-        foreach (string constant in new[] { nameof(ResourceStripText.CpuGhost), nameof(ResourceStripText.MemoryGhost), nameof(ResourceStripText.ParallelGhost), nameof(ResourceStripText.ModeGhost) })
+        foreach (string constant in new[] { nameof(ResourceStripText.CpuGhost), nameof(ResourceStripText.MemoryGhost), nameof(ResourceStripText.ParallelGhost),
+                     nameof(ResourceStripText.ModeGhost), nameof(ResourceStripText.LimitSeparator), nameof(ResourceStripText.LimitGhost) })
             Assert.Contains($"ResourceStripText.{constant}", markup, StringComparison.Ordinal);
-        Assert.Empty(SourceGuard.ScanText(XamlRelative, markup, new Regex("[\"'>]\\s*(?:100%|12\\.3 GB|12/12/12|Balanced)\\s*[\"'<]")));
+        // Ayraç (" · ") de sabittir: XAML'de yeniden yazılmaz. LimitGhost'un "12"si buraya girmez — tek başına sayı her ölçü literaliyle karışırdı
+        // (literal ölçüyü ayrı guard yasaklar); kullanımını yukarıdaki Contains pinler.
+        Assert.Empty(SourceGuard.ScanText(XamlRelative, markup, new Regex("[\"'>]\\s*(?:100%|12\\.3 GB|12/12(?:/12)?|Balanced|·)\\s*[\"'<]")));
     }
 
     [Fact]
