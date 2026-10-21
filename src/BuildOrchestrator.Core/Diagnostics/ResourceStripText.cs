@@ -37,12 +37,20 @@ public static class ResourceStripText
     /// <summary>RAM hücresinin hayaleti: en geniş değer (iki haneli GB, bir ondalık).</summary>
     public const string MemoryGhost = "12.3 GB";
 
-    /// <summary>Paralellik hücresinin sayı hayaleti: üç sayı iki haneli (<c>koşan/koşunun paralelliği/sınır</c>).</summary>
-    public const string ParallelGhost = "12/12/12";
+    /// <summary>Paralellik hücresinin sayı hayaleti: bu koşunun iki sayısı, iki haneli (<c>koşan/koşunun paralelliği</c>). Sınırın hayaleti
+    /// ayrıdır (<see cref="LimitGhost"/>) — sınır mod sözcüğünün arkasında durur: <c>0/0 Balanced · 4</c>.</summary>
+    public const string ParallelGhost = "12/12";
 
     /// <summary>Paralellik hücresinin mod sözcüğü hayaleti: en uzun mod adı. Değeri enum üyesinin adından gelir — mod adı
     /// ikinci kez yazılmaz.</summary>
     public const string ModeGhost = nameof(PerfMode.Balanced);
+
+    /// <summary>Paralellik hücresinde mod sözcüğü ile sınırın arasındaki ayraç: <c>Balanced · 4</c>. Mod sözcüğünün yazı tipiyle yazılır; aralığı
+    /// kendi boşlukları verir (ölçü değil).</summary>
+    public const string LimitSeparator = " · ";
+
+    /// <summary>Paralellik hücresinin sınır hayaleti: en geniş modun sayısı (iki hane).</summary>
+    public const string LimitGhost = "12";
 
     /// <summary>Gigabaytta megabayt: GB'ye geçişin eşiği ve GB değerinin böleni.</summary>
     private const long MegabytesPerGigabyte = 1024;
@@ -120,13 +128,14 @@ public static class ResourceStripText
     public static string MemoryTooltip(string product, long? app, long? engine, long? compilers) =>
         $"Memory used by {product} · app {Memory(app)} · engine {Memory(engine)} · compilers {Memory(compilers)}";
 
-    /// <summary>Paralellik hücresinin sınırı (sondaki soluk sayı): <c>"/4"</c> — modun tablo paralelliği (<c>PerfProfile.For(mode).Parallelism</c>).
-    /// Pay (o an derlenen proje sayısı) ayrı bir metindir ve burada değil view model'dedir; ortadaki sayı <see cref="ParallelRun"/>.</summary>
+    /// <summary>Paralellik hücresinin sınırı (en sondaki soluk sayı, mod sözcüğünden sonra <see cref="LimitSeparator"/> ile): <c>"4"</c> — modun
+    /// tablo paralelliği (<c>PerfProfile.For(mode).Parallelism</c>), yalın sayı. Pay (o an derlenen proje sayısı) ayrı bir metindir ve burada
+    /// değil view model'dedir; ortadaki sayı <see cref="ParallelRun"/>.</summary>
     public static string ParallelAllowed(PerfMode mode) =>
-        string.Create(CultureInfo.InvariantCulture, $"/{PerfProfile.For(mode).Parallelism}");
+        PerfProfile.For(mode).Parallelism.ToString(CultureInfo.InvariantCulture);
 
     /// <summary>Paralellik hücresinin ortadaki sayısı: <c>"/4"</c> — motorun koşu başında belirlediği paralellik (<c>runStarted.Parallelism</c>:
-    /// modun sayısı, makineye göre kırpılmış olabilir). Koşu yokken paralel derlenen bir şey yoktur: <c>"/0"</c> — boştaki hücre <c>0/0/4</c>.
+    /// modun sayısı, makineye göre kırpılmış olabilir). Koşu yokken paralel derlenen bir şey yoktur: <c>"/0"</c> — boştaki hücre <c>0/0 Balanced · 4</c>.
     /// Tire (<see cref="MissingValue.Mark"/>) yazılmaz: boşta hücrenin üç sayısı da bir paralellik sayısıdır, tire "hesaplanamadı" diye okunur.</summary>
     public static string ParallelRun(int? runParallelism) =>
         string.Create(CultureInfo.InvariantCulture, $"/{runParallelism ?? 0}");

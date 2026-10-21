@@ -3029,15 +3029,16 @@ the compilers are a measured 0 and the figure is the App alone. Private bytes ar
 memory column shows, which is the private working set — only the private pages resident right now — so the two differ
 whenever some committed pages are not resident, and the strip's figure is the larger then.
 
-**Parallelism** is not sampled: it is application state and follows it at once. The cell holds three numbers and the
-mode word, `3/4/4 Balanced`. The first is the number of projects building now, and `0` whenever no run is in flight —
-the row states of a run whose engine died can stay *started*, so the raw counter is not trusted outside a run. The
-middle one is the run's own count, `runStarted.Parallelism`: what the engine fitted to the machine when the run started
-(§11.1) — the mode's number unless the machine was short of memory or processors — fixed for the run. With no run in
-flight nothing builds in parallel, and the cell writes `0` in its place (`0/0/4`); nothing is sampled or queried for it
-outside a run. The last one is what the mode asks for (`/4`, the table of §11.1). A run the engine
-cut to two workers therefore reads `2/2/4`, told apart at a glance from a full-width run that has only two projects
-ready at the moment (`2/4/4`), and its tooltip says why. The mode word is the cell's mode, and which mode that is
+**Parallelism** is not sampled: it is application state and follows it at once. The cell holds the run's two numbers,
+then the mode word and the mode's own number, `3/4 Balanced · 4`. The first is the number of projects building now, and
+`0` whenever no run is in flight — the row states of a run whose engine died can stay *started*, so the raw counter is
+not trusted outside a run. The second is the run's own count, `runStarted.Parallelism`: what the engine fitted to the
+machine when the run started (§11.1) — the mode's number unless the machine was short of memory or processors — fixed
+for the run. With no run in flight nothing builds in parallel, and the cell writes `0` in its place
+(`0/0 Balanced · 4`); nothing is sampled or queried for it outside a run. The number after the mode word is what the
+mode asks for (`4`, the table of §11.1). A run the engine cut to two workers therefore reads `2/2 Balanced · 4`, told
+apart at a glance from a full-width run that has only two projects ready at the moment (`2/4 Balanced · 4`), and its
+tooltip says why. The mode word is the cell's mode, and which mode that is
 depends on the run. While a run is in flight — a full run and a **single-project run** (§8.1) alike — the cell
 describes the run: the mode it started with (the one its start command carried), its own count and that mode's table
 value, until the run ends. A mid-run switch of the chip moves the cap and the priority at once (§11.1), but neither the
@@ -3544,13 +3545,13 @@ it looks and behaves.
   §11.4 (`MemoryLine.RoundedMegabytes`), the decimal is rounded in integer arithmetic, and the separator is a point
   whatever the culture (`ResourceStripText.Memory`).
 - **Parallelism and mode** (three vertical lines) — what this run does, then what the mode is: the projects building
-  now and, after a `/`, the run's own count, both `text-dim`; then `/` and the number the mode allows in `text-faint`,
-  and 5 px later the mode word in Geist 11 px `text-faint`. `0/0/4 Balanced` while idle, `4/4/4 Balanced` when four
-  projects build at once, `2/2/4 Balanced` where the engine fitted the run to the machine. The mode word only reads;
-  the mode is changed on the perf chip of the action bar.
+  now and, after a `/`, the run's own count, both `text-dim`; 5 px later the mode word in Geist 11 px `text-faint`,
+  then ` · ` in the same face and the number the mode allows in mono `text-faint`. `0/0 Balanced · 4` while idle,
+  `4/4 Balanced · 4` when four projects build at once, `2/2 Balanced · 4` where the engine fitted the run to the machine.
+  The mode word only reads; the mode is changed on the perf chip of the action bar.
 
 An unreadable value is `—`. Each cell reserves the width of its widest value with hidden ghost texts taken from Core
-constants (`100%`, `12.3 GB`, and `12/12/12` followed by `Balanced`), the live value left-aligned beside the icon, so
+constants (`100%`, `12.3 GB`, and `12/12` followed by `Balanced · 12`), the live value left-aligned beside the icon, so
 `1%` becoming `69%` or `310 MB` becoming `4.8 GB` moves nothing and the strip is as wide in every state as in the
 widest.
 
@@ -3566,7 +3567,7 @@ reason word for word. The product name comes from
 `AppIdentity`, and the texts live in `ResourceStripText` and nowhere else.
 
 The strip only reads. Nothing in it is clickable, no cell has a hover background, the cursor does not change, it
-carries no amber (§14.4), and a changing value plays no animation or transition; `2/2/4` is information, not a warning.
+carries no amber (§14.4), and a changing value plays no animation or transition; `2/2 Balanced · 4` is information, not a warning.
 
 **Position and hit testing.** The title bar row holds a `Grid` with the `DockPanel` of the two clusters and, declared
 after it so that it draws on top, the strip with `HorizontalAlignment="Center"`: it is centred on the bar and not on
@@ -5951,8 +5952,8 @@ of its markup (§17.2): `Size.ResourceStripIcon` 12 (the icon box), `Thickness.R
 the second and third cell), `Thickness.ResourceStripValueGap` 5 (from the icon to the value and from the number to
 the mode word) and `Size.ResourceStripIconViewBox` 24 (the design box its three icons are drawn in; the key is the
 strip's own because the application's other 24 px canvases write the literal). Its text is `FontSize.2xs` (11); the
-values and the parallelism cell's first two numbers are `Brush.TextDim`, the icons, the mode's `/N` and the mode word
-`Brush.TextFaint`.
+values and the parallelism cell's first two numbers are `Brush.TextDim`, the icons, the mode word, its ` · ` and the
+mode's number `Brush.TextFaint`.
 
 ### 14.2 Typography and fonts
 
