@@ -83,13 +83,13 @@ public class ResourceStripRealizeTests(ITestOutputHelper output)
         Assert.Equal(ResourceStripText.Memory(4795 * Mb), strip.MemoryValue.Text);
         Assert.Equal(vm.StripCpuText, strip.CpuValue.Text);
         Assert.Equal(vm.StripMemoryText, strip.MemoryValue.Text);
-        Assert.Equal(("0", "/—", "/4", "Balanced"), ParallelTexts(strip)); // boşta: 0/—/4 Balanced
+        Assert.Equal(("0", "/0", "/4", "Balanced"), ParallelTexts(strip)); // boşta: 0/0/4 Balanced
         Assert.Equal((vm.StripBuildingText, vm.StripRunParallelismText, vm.StripAllowedText, vm.StripModeText), ParallelTexts(strip));
 
         // Değerler VM'i canlı izler: çip dönünce paralellik hücresi, örnek gelince CPU/RAM aynı anda değişir.
         vm.SetPerfMode("Light");
         vm.ApplyResourceSample(new ResourceSample(null, null, null, null)); // okunamayan değer: aynı hücrede —
-        Assert.Equal(("0", "/—", "/2", "Light"), ParallelTexts(strip));
+        Assert.Equal(("0", "/0", "/2", "Light"), ParallelTexts(strip));
         Assert.Equal((ResourceStripText.Unreadable, ResourceStripText.Unreadable), (strip.CpuValue.Text, strip.MemoryValue.Text));
 
         // Ortadaki sayı da VM'i canlı izler (görünümün izlediği özelliklerden biridir).
@@ -137,7 +137,7 @@ public class ResourceStripRealizeTests(ITestOutputHelper output)
         Relayout(window);
         var before = (strip.CpuValue.Text, strip.MemoryValue.Text, ParallelTexts(strip));
         var tooltipBefore = ((ToolTip)strip.CpuCell.ToolTip).Content;
-        Assert.Equal(("12%", "200 MB", ("0", "/—", "/4", "Balanced")), before); // ön-koşul: görünürken yazılır
+        Assert.Equal(("12%", "200 MB", ("0", "/0", "/4", "Balanced")), before); // ön-koşul: görünürken yazılır
         Assert.True(strip.IsMeasureValid && strip.BuildingValue.IsMeasureValid);
 
         window.SetSurfaceHidden(true);
@@ -275,7 +275,7 @@ public class ResourceStripRealizeTests(ITestOutputHelper output)
     // ---------------------------------------------------------------- sabit çerçeve
 
     /// <summary>Her hücre en geniş değer kadar yer ayırır (<c>100%</c> · <c>12.3 GB</c> · <c>12/12/12 Balanced</c>): değer <c>1% → 100%</c>,
-    /// <c>310 MB → 12.3 GB</c>, <c>0/—/2 Light → 12/12/12 Balanced</c> olurken hiçbir hücrenin genişliği, şeridin kutusu ve değerin başlangıç x'i
+    /// <c>310 MB → 12.3 GB</c>, <c>0/0/2 Light → 12/12/12 Balanced</c> olurken hiçbir hücrenin genişliği, şeridin kutusu ve değerin başlangıç x'i
     /// değişmez; değer ikonun yanında SOLA hizalıdır.</summary>
     [StaFact]
     public void Every_cell_keeps_its_width_and_the_value_its_left_edge_whatever_the_value_is()
@@ -288,11 +288,11 @@ public class ResourceStripRealizeTests(ITestOutputHelper output)
              DsResources.BoundsIn(strip.CpuValue, strip.CpuCell).Left, DsResources.BoundsIn(strip.MemoryValue, strip.MemoryCell).Left,
              DsResources.BoundsIn(strip.BuildingValue, strip.ParallelCell).Left);
 
-        // En dar değerler: 1% · 310 MB · 0 /— /2 Light
+        // En dar değerler: 1% · 310 MB · 0 /0 /2 Light
         vm.SetPerfMode("Light");
         vm.ApplyResourceSample(new ResourceSample(1, 310 * Mb, 0, 0));
         Relayout(window);
-        Assert.Equal(("1%", "310 MB", ("0", "/—", "/2", "Light")), (strip.CpuValue.Text, strip.MemoryValue.Text, ParallelTexts(strip)));
+        Assert.Equal(("1%", "310 MB", ("0", "/0", "/2", "Light")), (strip.CpuValue.Text, strip.MemoryValue.Text, ParallelTexts(strip)));
         var narrow = Snapshot();
         double cpuLive = strip.CpuValue.ActualWidth, memoryLive = strip.MemoryValue.ActualWidth, modeRight = Bounds(window, strip.ModeValue).Right;
 

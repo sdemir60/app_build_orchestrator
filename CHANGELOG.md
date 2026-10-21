@@ -2,6 +2,12 @@
 
 Release notes for Build Orchestrator, newest version first. The What's new window in the app reads this file.
 
+## [1.11.1] - 2026-10-21
+
+### Fixed
+
+- With no run in flight, the parallelism cell in the title bar shows 0 for the run's number instead of a dash: it reads 0/0/4 Balanced while idle.
+
 ## [1.11.0] - 2026-10-21
 
 ### Added

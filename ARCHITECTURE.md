@@ -3034,8 +3034,8 @@ mode word, `3/4/4 Balanced`. The first is the number of projects building now, a
 the row states of a run whose engine died can stay *started*, so the raw counter is not trusted outside a run. The
 middle one is the run's own count, `runStarted.Parallelism`: what the engine fitted to the machine when the run started
 (§11.1) — the mode's number unless the machine was short of memory or processors — fixed for the run. With no run in
-flight there is no such count, and the cell writes the missing-value mark in its place (`0/—/4`); nothing is sampled
-or queried for it outside a run. The last one is what the mode asks for (`/4`, the table of §11.1). A run the engine
+flight nothing builds in parallel, and the cell writes `0` in its place (`0/0/4`); nothing is sampled or queried for it
+outside a run. The last one is what the mode asks for (`/4`, the table of §11.1). A run the engine
 cut to two workers therefore reads `2/2/4`, told apart at a glance from a full-width run that has only two projects
 ready at the moment (`2/4/4`), and its tooltip says why. The mode word is the cell's mode, and which mode that is
 depends on the run. While a run is in flight — a full run and a **single-project run** (§8.1) alike — the cell
@@ -3545,7 +3545,7 @@ it looks and behaves.
   whatever the culture (`ResourceStripText.Memory`).
 - **Parallelism and mode** (three vertical lines) — what this run does, then what the mode is: the projects building
   now and, after a `/`, the run's own count, both `text-dim`; then `/` and the number the mode allows in `text-faint`,
-  and 5 px later the mode word in Geist 11 px `text-faint`. `0/—/4 Balanced` while idle, `4/4/4 Balanced` when four
+  and 5 px later the mode word in Geist 11 px `text-faint`. `0/0/4 Balanced` while idle, `4/4/4 Balanced` when four
   projects build at once, `2/2/4 Balanced` where the engine fitted the run to the machine. The mode word only reads;
   the mode is changed on the perf chip of the action bar.
 
@@ -6900,7 +6900,7 @@ forwarded caption gestures through three seams (`CaptionDragForTest`, `CaptionTo
 point, with the window normal and with it maximized — so a drag that does nothing for a maximized window cannot pass
 it; a source guard keeps `Window.DragMove` out of the strip's code and the native call in it. The real move loop and
 the real system menu need a window handle and a mouse and are checked by eye. `ResourceStripViewModelTests` pins the
-rules of the parallelism cell (§11.5): the chip and the missing-value mark while idle, the run's own mode and count
+rules of the parallelism cell (§11.5): the chip and a zero run count while idle, the run's own mode and count
 through a change of the chip, the count of projects building, a reduced run whose three numbers differ, the
 single-project run described like a full run, a change of the run target that moves nothing, and every way a run can
 end handing the cell back to the chip.

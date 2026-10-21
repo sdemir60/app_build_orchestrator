@@ -19,7 +19,7 @@ namespace BuildOrchestrator.App.ViewModels;
 /// moduna bağlıdır.</item>
 /// <item><b>Paralellik + mod</b> uygulama durumudur, örneklenmez, ANINDA güncellenir: <c>3/4/4 Balanced</c> — pay
 /// <see cref="RunCounters.Building"/> (o an derlenen proje sayısı), ortadaki sayı motorun koşu başında belirlediği paralellik
-/// (<c>runStarted.Parallelism</c> — modun sayısı, makineye göre kırpılmış olabilir; koşu yokken <c>/—</c>), sınır ve mod sözcüğü
+/// (<c>runStarted.Parallelism</c> — modun sayısı, makineye göre kırpılmış olabilir; koşu yokken <c>/0</c>), sınır ve mod sözcüğü
 /// <i>hücrenin modu</i>.</item>
 /// </list>
 ///
@@ -64,7 +64,7 @@ public sealed partial class RunViewModel
     /// <summary>Paralellik hücresinin payı: o an derlenen proje sayısı (koşu yokken <c>0</c>).</summary>
     [ObservableProperty] private string _stripBuildingText = "";
 
-    /// <summary>Paralellik hücresinin ortadaki sayısı: <c>/4</c> — motorun koşu başında belirlediği paralellik; koşu yokken <c>/—</c>.</summary>
+    /// <summary>Paralellik hücresinin ortadaki sayısı: <c>/4</c> — motorun koşu başında belirlediği paralellik; koşu yokken <c>/0</c>.</summary>
     [ObservableProperty] private string _stripRunParallelismText = "";
 
     /// <summary>Paralellik hücresinin sınırı: <c>/4</c> — hücrenin modunun tablo paralelliği.</summary>
