@@ -110,7 +110,7 @@
     </StackPanel>
 
     <!-- (3) Paralellik + mod — üç dik çizgi. Pay = o an gerçekten derlenen proje sayısı (CANLI), ortadaki sayı = motorun koşu başında
-         belirlediği paralellik (koşu yokken "/—"), "/N" = modun sınırı, sonra mod sözcüğü. Pay ve ortadaki sayı bu koşunun gerçeğidir (text-dim),
+         belirlediği paralellik (koşu yokken "/0"), "/N" = modun sınırı, sonra mod sözcüğü. Pay ve ortadaki sayı bu koşunun gerçeğidir (text-dim),
          sınır ve mod modun tanımı (text-faint). Hayalet: "12/12/12" + "Balanced". Canlı kısım sola hizalı, mod sözcüğü sayıyı 5px aralıkla izler. -->
     <StackPanel x:Name="ParallelCell" Orientation="Horizontal" Background="Transparent"
                 Margin="{DynamicResource Thickness.ResourceStripCellGap}">

@@ -183,17 +183,20 @@ public class ResourceStripTextTests
         Assert.Equal(expected, ResourceStripText.ParallelAllowed(mode));
 
     /// <summary>Ortadaki sayı: motorun koşu başında belirlediği paralellik (<c>runStarted.Parallelism</c> — modun sayısı, makineye göre
-    /// kırpılmış olabilir), bölü işaretinden sonra; koşu yokken sayı yoktur ve değerin yokluğu yazılır (<c>/—</c>, uzun tire
-    /// <see cref="BuildOrchestrator.Core.Formatting.MissingValue.Mark"/>'tır). <c>0</c> yazılmaz: sıfır bir ölçümdür, koşu yokken ölçülen bir şey
-    /// yoktur.</summary>
+    /// kırpılmış olabilir), bölü işaretinden sonra; koşu yokken <c>/0</c> — boştaki hücre <c>0/0/4</c> okunur.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-21]</b> ESKİ: koşu yokken değerin yokluğu yazılırdı (<c>/—</c>, uzun tire
+    /// <see cref="BuildOrchestrator.Core.Formatting.MissingValue.Mark"/>) — gerekçe "sıfır bir ölçümdür, koşu yokken ölçülen bir şey yoktur"du.
+    /// YENİ: <c>/0</c>. Gerekçe: hücrenin üç sayısı da paralellik sayısıdır; boşta pay zaten <c>0</c> yazıyor, ortadaki tire kullanıcıya
+    /// "hesaplanamadı" diye okunuyordu — koşu yokken paralel derlenen bir şey yoktur, sıfırdır.</para></summary>
     [Theory]
-    [InlineData(null, "/—")]
+    [InlineData(null, "/0")]
     [InlineData(1, "/1")]
     [InlineData(2, "/2")]
     [InlineData(4, "/4")]
     [InlineData(6, "/6")]
     [InlineData(12, "/12")]
-    public void ParallelRun_is_the_parallelism_the_engine_set_at_the_start_of_the_run_or_the_missing_mark_without_a_run(
+    public void ParallelRun_is_the_parallelism_the_engine_set_at_the_start_of_the_run_or_zero_without_a_run(
         int? runParallelism, string expected) =>
         Assert.Equal(expected, ResourceStripText.ParallelRun(runParallelism));
 
@@ -286,7 +289,7 @@ public class ResourceStripTextTests
     /// <summary>
     /// Sabit çerçeve: hayalet, hücrenin gösterebileceği EN GENİŞ metin kadar yer ayırır (değer yazısı mono, genişlik karakter sayısıdır).
     /// CPU'nun en geniş metni tavandır; RAM'inki <c>1023 MB</c> ya da iki haneli GB; paralellikte pay hanesi + koşunun paralelliği + sınır
-    /// en geniş mod için (koşunun paralelliği modun sayısını aşmaz; boştaki <c>/—</c> da sığar), mod sözcüğü de en uzun mod adı kadardır — bir
+    /// en geniş mod için (koşunun paralelliği modun sayısını aşmaz; boştaki <c>/0</c> da sığar), mod sözcüğü de en uzun mod adı kadardır — bir
     /// mod ya da tablo büyürse hayalet onu da kapsamak zorundadır.
     /// <para>[DEĞİŞEN KURAL — 2026-10-19] ESKİ hayalet <c>12/12</c>'ydi (pay + payda); hücreye ortadaki sayı girince üç sayı kadar yer ayırır.</para>
     /// </summary>
@@ -305,7 +308,7 @@ public class ResourceStripTextTests
             int workersDigits = workers.ToString(CultureInfo.InvariantCulture).Length;
             string limit = ResourceStripText.ParallelAllowed(mode);
             widestNumbers = Math.Max(widestNumbers, workersDigits + ResourceStripText.ParallelRun(workers).Length + limit.Length); // koşuda
-            widestNumbers = Math.Max(widestNumbers, 1 + ResourceStripText.ParallelRun(null).Length + limit.Length);              // boşta: 0/—/N
+            widestNumbers = Math.Max(widestNumbers, 1 + ResourceStripText.ParallelRun(null).Length + limit.Length);              // boşta: 0/0/N
         }
         Assert.Equal(widestModeName, ResourceStripText.ModeGhost.Length);
         Assert.True(widestNumbers <= ResourceStripText.ParallelGhost.Length);

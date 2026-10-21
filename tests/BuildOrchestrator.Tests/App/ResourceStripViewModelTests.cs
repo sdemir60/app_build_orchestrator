@@ -15,7 +15,7 @@ namespace BuildOrchestrator.Tests.App;
 ///
 /// <para>Hücre KOŞUYU anlatır (R2): <c>runStarted</c> → koşu sonu arası, koşu BAŞINDAKİ mod, motorun koşu başında belirlediği paralellik
 /// (<c>runStarted.Parallelism</c> — ortadaki sayı ve tooltip'in <c>of N</c>'i) ve modun sınırıyla; çip koşu ortasında dönse hücre kıpırdamaz,
-/// koşu bitince çipi izler. Koşu yokken ortadaki sayı yoktur (<c>/—</c>). CPU tooltip'inin cap'i hücrenin moduyla aynıdır (R4). Koşu
+/// koşu bitince çipi izler. Koşu yokken ortadaki sayı <c>/0</c>'dır. CPU tooltip'inin cap'i hücrenin moduyla aynıdır (R4). Koşu
 /// <see cref="StartRunCommand"/>'la, üretimdeki yoldan başlar (komut gönderimi kabul edilir: <see cref="MainWindowHost.AcceptSends"/>);
 /// motorun cevabını (<c>runStarted</c> …) test verir. Ürün adı hiçbir beklentide literal yazılmaz: <see cref="AppIdentity.Product"/>'tan
 /// gelir.</para>
@@ -28,8 +28,9 @@ public class ResourceStripViewModelTests
 {
     private static readonly string[] ProjectNames = ["A", "B", "C"];
 
-    /// <summary>Koşu yokken ortadaki sayının metni: değerin yokluğu.</summary>
-    private const string NoRun = "/—";
+    /// <summary>Koşu yokken ortadaki sayının metni: sıfır (2026-10-21'e dek değerin yokluğuydu, <c>/—</c> — gerekçe
+    /// <c>ResourceStripTextTests</c>'teki ParallelRun testinde).</summary>
+    private const string NoRun = "/0";
 
     /// <summary>Üç projeli, çipi <paramref name="perfMode"/> olan VM. Komutlar motora "gider" (cevabı test verir).</summary>
     private static RunViewModel NewVm(EngineHost engine, string perfMode = "Balanced")
@@ -181,7 +182,7 @@ public class ResourceStripViewModelTests
 
     /// <summary>
     /// Tam koşu koşu başındaki cevapla anlatılır: Balanced'ta başlayan koşuda çip Full'e çevrilse bile hücre <c>0/4/4 Balanced</c> kalır
-    /// (işçi sayısı koşu başında sabittir) ve CPU tooltip'i Balanced'ın cap'ini söyler (R4); koşu bitince hücre çipi izler: <c>0/—/6 Full</c>,
+    /// (işçi sayısı koşu başında sabittir) ve CPU tooltip'i Balanced'ın cap'ini söyler (R4); koşu bitince hücre çipi izler: <c>0/0/6 Full</c>,
     /// cap'siz.
     /// </summary>
     [Fact]
@@ -371,7 +372,7 @@ public class ResourceStripViewModelTests
 
     /// <summary>
     /// Koşunun HER bitiş yolu (tamamlandı, durduruldu, motor hatası, motor ölümü) hücreyi çipe geri verir: koşu başındaki mod, koşunun sayısı ve
-    /// kırpma notu bırakılır, ortadaki sayı <c>/—</c>'ya ve pay <c>0</c>'a döner — projeler <c>Started</c> kalmış olsa bile (koşu bitişinde kimse
+    /// kırpma notu bırakılır, ortadaki sayı <c>/0</c>'a ve pay <c>0</c>'a döner — projeler <c>Started</c> kalmış olsa bile (koşu bitişinde kimse
     /// derlemiyor; motor ölünce satırlar hiç bitirilmez, <see cref="RunViewModel.Counters"/>.Building bu yüzden sıfıra inmez).
     /// </summary>
     [Theory]

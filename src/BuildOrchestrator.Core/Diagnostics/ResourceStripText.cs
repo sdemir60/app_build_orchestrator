@@ -126,10 +126,10 @@ public static class ResourceStripText
         string.Create(CultureInfo.InvariantCulture, $"/{PerfProfile.For(mode).Parallelism}");
 
     /// <summary>Paralellik hücresinin ortadaki sayısı: <c>"/4"</c> — motorun koşu başında belirlediği paralellik (<c>runStarted.Parallelism</c>:
-    /// modun sayısı, makineye göre kırpılmış olabilir). Koşu yokken sayı yoktur: <c>"/—"</c> (<see cref="MissingValue.Mark"/> — değerin
-    /// yokluğu; <c>0</c> yazılmaz, sıfır bir ölçümdür).</summary>
+    /// modun sayısı, makineye göre kırpılmış olabilir). Koşu yokken paralel derlenen bir şey yoktur: <c>"/0"</c> — boştaki hücre <c>0/0/4</c>.
+    /// Tire (<see cref="MissingValue.Mark"/>) yazılmaz: boşta hücrenin üç sayısı da bir paralellik sayısıdır, tire "hesaplanamadı" diye okunur.</summary>
     public static string ParallelRun(int? runParallelism) =>
-        runParallelism is { } value ? string.Create(CultureInfo.InvariantCulture, $"/{value}") : "/" + MissingValue.Mark;
+        string.Create(CultureInfo.InvariantCulture, $"/{runParallelism ?? 0}");
 
     /// <summary>
     /// Paralellik hücresinin tooltip'i, üç hâl. BOŞTA (<paramref name="runParallelism"/> <c>null</c> — koşu yok): <c>"Balanced — up to 4
