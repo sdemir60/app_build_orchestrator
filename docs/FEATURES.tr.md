@@ -2,8 +2,8 @@
 
 # Özellikler
 
-Build Orchestrator'ın ne yaptığı ve nasıl yaptığı. İlk yedi madde büyük resimdir; geri kalanlar ayrıntılardır, en
-önemliden başlayarak. Her madde kısa bir cümle, arkasındaki mekanizma ve tekniği adlandıran birkaç etiketten oluşur.
+Build Orchestrator'ın ne yaptığı ve nasıl yaptığı. Bir bakışta altındaki maddeler büyük resimdir; Ayrıntılar
+altındakiler en önemliden başlayarak gelir. Her madde kısa bir cümle, arkasındaki mekanizma ve tekniği adlandıran birkaç etiketten oluşur.
 Bunların her birinin neden önemli olduğu [WHY.tr.md](WHY.tr.md)'de, adım adım kullanımı
 [Kullanım kılavuzu](USER-GUIDE.md)'nda (İngilizce), tam teknik referans [ARCHITECTURE.md](../ARCHITECTURE.md)'dedir
 (İngilizce).
@@ -25,10 +25,11 @@ tık bir projeyi hepsinde seçer, gizli graf çizim yapmaz.\
 **Ne yapar:** Depo kökünü göstermen yeter; her projeyi ve projelerin birbirine nasıl bağlı olduğunu kendisi bulur.
 Elle tutulacak proje listesi, script'te bakımı yapılacak derleme sırası yoktur: yeni bir proje ya da yeni bir
 referans bir sonraki Sync'te plandadır.\
-**Nasıl:** Depo kökü altındaki her .csproj ve .sln, harici kartların gösterdiği projelerle birlikte ham XML olarak
-okunur; keşif için MSBuild hiç değerlendirilmez. Bağımlılıklar, DLL'i üreten projeyle eşleştirilen HintPath'lerden
-ve ProjectReference'lardan çıkar. Yerleştirilemeyen HintPath uyarı olarak listelenir; iki projenin sahiplendiği bir
-DLL tahmin edilmez, adıyla bildirilir.\
+**Nasıl:** Depo kökü altındaki her .csproj ham XML olarak, her .sln listelediği projeler için okunur; harici
+kartların gösterdiği projeler de bunlara katılır, keşif için MSBuild hiç değerlendirilmez. Bağımlılıklar, DLL'i
+üreten projeyle eşleştirilen HintPath'lerden ve ProjectReference'lardan çıkar. Başka bir depoda derlenen bir DLL, o
+depo harici kart olarak eklenince gerçek bağımlılığa dönüşür; iki projenin sahiplendiği bir DLL tahmin edilmez,
+adıyla bildirilir.\
 `saniyeler süren ham XML keşfi` · `gerçek graf için HintPath haritası` · `ikinci sinyal olarak ProjectReference` · `boyut ve tarih anahtarlı değerlendirme önbelleği`
 
 ### Yalnız değişeni derler
@@ -44,9 +45,9 @@ ya da üzerine yazılmış çıktı, kaynak aynı olsa da yeniden derlenir.\
 ### Sırayla ve paralel derler
 
 **Ne yapar:** Projeler gerçek bağımlılık sırasıyla derlenir, birbirini beklemeyenler aynı anda derlenir. Bir hata
-yalnız ona bağlı projeleri bekletir; ilgisiz olanlar sürer.\
+koşuyu durdurmaz: ona bağlı projeler onun son sağlam çıktısına karşı derlenir ve işaretlenir, geri kalanlar sürer.\
 **Nasıl:** Graf, eşitlikte sabit bir kuralla topolojik sıraya dizilir; aynı depo her zaman aynı planı verir.
-Boşalan her worker bağımlılıkları yeşil olan sıradaki projeyi alır ve her proje kendi MSBuild.exe'sinde koşar.\
+Boşalan her worker bağımlılıkları bitmiş sıradaki projeyi alır ve her proje kendi MSBuild.exe'sinde koşar.\
 `paralel derleme için hazır-küme zamanlayıcı` · `derleme sırası için Kahn topolojik sıralaması` · `tekrarlanabilir koşu için sabit sıra`
 
 ### Bağımlılık döngülerini çözer
@@ -66,17 +67,17 @@ atlanır.\
 **Ne yapar:** Derleme makinenin tamamını almaz: varsayılan olarak editöre, tarayıcıya ve açık olan her şeye
 işlemci zamanı ve bellek bırakır. Perf chip'i Full, Balanced (varsayılan) ve Light arasında geçer; title bar'ın
 ortasındaki kaynak şeridi aracın o anki maliyetini gösterir: CPU, bellek ve profiliyle paralellik.\
-**Nasıl:** Profil, yalnız derleyicileri taşıyan job'a paralelliği, bir öncelik sınıfını ve Full dışında sert bir
-CPU tavanını koyar; pencere, git ve Sync tam hızda kalır. Koşu başında worker sayısı işlemcilere ve boş belleğe
-göre ayarlanır, derleme makineyi sayfalamaya itmez. Şerit işlemci zamanını job'ın kendi muhasebesinden, belleği
-özel bayt olarak okur; makinedeki süreçleri listelemez.\
-`makine payını sınırlayan JOB_OBJECT_CPU_RATE_CONTROL sert tavanı` · `sayfalamaya karşı çekirdeğe ve boş belleğe göre worker bütçesi` · `canlı CPU değeri için QueryInformationJobObject muhasebesi` · `canlı RAM değeri için GetProcessMemoryInfo özel baytları`
+**Nasıl:** Profil paralelliği belirler; yalnız derleyicileri taşıyan job'a da bir öncelik sınıfı ve Full dışında
+sert bir CPU tavanı koyar; pencere, git ve Sync tam hızda kalır. Koşu başında worker sayısı işlemcilere ve boş
+belleğe göre ayarlanır, makinenin geri kalanına bir pay bırakılır. Kaynak şeridi işlemci zamanını job'ın kendi
+accounting sayaçlarından, belleği private bytes olarak okur; makinedeki süreçleri listelemez.\
+`makine payını sınırlayan JOB_OBJECT_CPU_RATE_CONTROL sert tavanı` · `sayfalamaya karşı çekirdeğe ve boş belleğe göre worker bütçesi` · `canlı CPU değeri için QueryInformationJobObject accounting'i` · `canlı RAM değeri için GetProcessMemoryInfo private bytes`
 
-### Yerli bir Windows uygulaması
+### Native bir Windows uygulaması
 
 **Ne yapar:** Build Orchestrator, WebView2 hibriti, Avalonia ve WinUI 3 yerine seçilen WPF ile yazılmış bir Windows
 masaüstü uygulamasıdır. İçinde tarayıcı çalışma zamanı yoktur; tepsi, bildirimler, global kısayollar ve başlattığı
-her süreç üzerindeki denetim Windows'un kendisinindir.\
+her derleyici üzerindeki denetim Windows'un kendisinindir.\
 **Nasıl:** Arayüz WPF ve .NET 10 üzerinde, derleme motoru ayrı bir süreçte koşar; MSBuild ne kadar çıktı üretirse
 üretsin pencere akıcı kalır. Süreç denetimi doğrudan Win32'ye gider: derleyiciler için Job Object ve CreateProcessW,
 global kısayollar için RegisterHotKey. Uygulama Velopack ile kullanıcı başına kurulur.\
@@ -140,11 +141,11 @@ Clean, Optimize, checkout ya da pull sürerken derleme komutları sıraya alınm
 ### Arkada süreç bırakmaz
 
 **Ne yapar:** Uygulama kapansa da, çökse de, Task Manager'dan öldürülse de arkada hiçbir MSBuild.exe ya da onun
-alt süreci kalmaz; MSBuild ne kadar çıktı üretirse üretsin pencere akıcı kalır.\
-**Nasıl:** Uygulama, derleme motoru ve her MSBuild.exe iç içe Windows Job Object'lerinde yaşar; son tutamaç
-kapanınca Windows bütün ağacı sonlandırır. Her alt süreç askıda başlar, job'a girer ve ancak sonra çalışır;
-aradan hiçbir şey kaçmaz.\
-`yetim sürece karşı iç içe Job Object` · `zincirleme kapanış için kill-on-close` · `boşluğu kapatan askıda başlatma` · `akıcı arayüz için ayrı motor`
+alt süreci kalmaz.\
+**Nasıl:** Derleme motoru ve her MSBuild.exe, uygulamanın sahip olduğu iç içe Windows Job Object'lerinde yaşar;
+uygulamanın son tutamacı kapanınca Windows bütün ağacı sonlandırır. Her alt süreç askıda başlar, job'a girer ve
+ancak sonra çalışır; aradan hiçbir şey kaçmaz.\
+`yetim sürece karşı iç içe Job Object` · `zincirleme kapanış için kill-on-close` · `boşluğu kapatan askıda başlatma`
 
 ### Güvenle durur, kaldığı yerden sürer
 
@@ -177,7 +178,8 @@ projenin kendi kaydettiği çıktıları siler.\
 ### Git'e kendiliğinden yazmaz
 
 **Ne yapar:** Sync, Build ve arka plan işleri depoya asla yazmaz: pull, reset, switch, rebase, commit ve push
-kendiliğinden çalışmaz; git'e yazan üç hareketin her biri senin tıklamandır.\
+kendiliğinden çalışmaz; git'e yazan üç hareketin her biri senin kararındır: bir chip'e tıklaman ya da açık
+bıraktığın bir ayar.\
 **Nasıl:** Üç yazma yolu (N behind chip'inden fast-forward, branch chip'inden checkout ve açık bıraktıysan harici
 çalışma kopyalarının güncellenmesi) tek dosyada durur, bir kaynak testi git yazma komutlarını başka her yerde
 yasaklar. status, ref ve fetch gibi okumalar ayrı yoldan yapılır.\
@@ -197,8 +199,7 @@ pull) motor susarsa amber uyarı gösterir. Hiçbir kilit kendiliğinden açılm
 süresini yanında gösterir: yeşil güncel, düz gri derlenecek, kırmızı derleyici hatası, derlenen satır amber "nefes"
 alır.\
 **Nasıl:** Şerit, nokta, glyph ve graf düğümü tek bir durum değerinden boyanır. Koşu sırasında liste derlenen
-sınırı sen kaydırana kadar görünürde tutar, birkaç saniye dokunulmazsa geri döner; tek tık aynı projeyi her
-panelde seçer.\
+sınırı sen kaydırana kadar görünürde tutar, birkaç saniye dokunulmazsa geri döner.\
 `renk + glyph + metin, renk körü dostu` · `her yüzey için tek durum kaynağı` · `koşuyu izleyen takip modu` · `yapışkan katman başlıkları`
 
 ### Duruma veya ada göre süzer
@@ -223,7 +224,8 @@ hangisi diye sorar; Reveal in Explorer .csproj'u seçili gösterir.\
 ### Grafı canlı gösterir
 
 **Ne yapar:** Bütün projeler, her zaman panele sığan build sırası bantlarında küçük düğümler olarak çizilir. Bir
-düğüm seçince onu doğrudan bağımlılıkları ve bağımlılarıyla birlikte sığdırır ve aralarındaki bağlantıları çizer;
+düğümü seçince graf onu doğrudan bağımlılıkları ve bağımlılarıyla birlikte panele sığdırır ve aralarındaki
+bağlantıları çizer;
 koşu grafta sakin bir ışık oyunu olarak akar, derlemenin nerede olduğunu tek satır okumadan görürsün.\
 **Nasıl:** Bantlar listenin gruplarıyla aynıdır, kalıcı bir kenar ağı yoktur. Her düğüm satırıyla aynı durumdan
 boyanır: hatalı projeler kırmızı kalır, döngüdeki projeler amber küp olarak görünür. Koşuda bekleyen düğümler söner,
@@ -233,7 +235,7 @@ derlenenler etraflarında amber noktalarla parlar, sonunda bu koşuda derlenen p
 ### Hatayı gösterir, gürültüyü değil
 
 **Ne yapar:** Konsol koşunun hikâyesini renkli, seçilebilir düz metin olarak anlatır; Compact console her projeden
-yalnız işe yarayanı alır: hatalar tam, ilk farklı uyarılar, kalanı koda göre sayı. Bir projeye tıklamak konsolu o
+yalnız işe yarayanı alır: hatalar tam, ilk farklı uyarılar, kalanın koda göre sayısı. Bir projeye tıklamak konsolu o
 projenin tam loguna çevirir; log baştan açılır, ilk hata önündedir.\
 **Nasıl:** Proje logları ve konsol anlatısı her koşunun diskteki klasörüne yazılır. Konsol ekranda sınırlı sayıda
 satır tutar ve yukarı kaydırınca diskten geri yükler; hiçbir şey kaybolmaz, koşu ne kadar uzun olursa olsun
@@ -312,10 +314,11 @@ güncellenir, commit'lenmemiş iş koşuyu başlamadan durdurur.\
 ### Bozuk çalışma alanını onarır
 
 **Ne yapar:** Çalışma alanı kodla hiç ilgisi olmayan sebeplerle derlenmiyorsa Sync'in yanındaki iki düğme bunu
-düzeltir. Deep Clean (silgi; ipucu Clean der) her projenin bin ve obj klasörlerini ve derleme kaydını siler,
-sonraki Build başka bir framework'ten kalan artıklardan arınmış olarak sıfırdan başlar. Optimize eksik paketleri
-geri getirir ve düzeltemediği referansları adıyla söyler. Her koşu başı da derlemeyi bozan bayat obj artıklarını
-zaten uyarıyla bildirir.\
+düzeltmeye yardım eder. Deep Clean (silgi; ipucu Clean der) her projenin bin ve obj klasörlerini ve derleme kaydını
+siler, sonraki Build başka bir framework'ten kalan artıklardan arınmış olarak sıfırdan başlar (SDK-style projeler
+bundan sonra derlenmeden önce bir Optimize ister). Optimize eksik paketleri geri getirir ve düzeltemediği
+referansları adıyla söyler. Her koşunun başında da bir projenin obj'sinde başka bir framework'ten kalan NuGet
+artıkları varsa uyarı verilir.\
 **Nasıl:** Deep Clean MSBuild çağırmaz: harici kökler dahil dosya sisteminden siler ve bitince Sync çalıştırır.
 Optimize, NuGet HintPath hedefleri eksik olan eski tip packages.config projelerini ve her SDK-style projeyi restore
 eder; bu, taze klondan ya da Deep Clean'den sonra çıkan NETSDK1004'ü çözer. Ardından yalnız eski tip projelerde

@@ -8,12 +8,12 @@ What the tool changes in a working day, entry by entry, in the same order and un
 **In short, for the team:**
 
 - **Less waiting.** A change builds what it touches, in parallel, and nothing more.
-- **No stale-DLL surprises.** What will build, and why, is on screen before Build is pressed, and a project built
-  against a broken dependency is flagged.
+- **Fewer stale-DLL surprises.** What will build, and why, is on screen before Build is pressed, and a project
+  built against a broken dependency is flagged.
 - **No build script to maintain.** The order comes from the repository itself, cycles included.
 - **A machine that stays usable.** A build takes only the share of the machine it is given.
-- **Nothing touched behind your back.** Git is written only on a click, and output stays exactly where Visual Studio
-  puts it.
+- **Nothing touched behind your back.** Your branches and working tree change only on your click or through a
+  setting you leave on, and output stays exactly where Visual Studio puts it.
 
 Each entry gives the goal, the common practice and what happens in Build Orchestrator instead. The *Common
 practice* lines describe how a multi-project .NET solution is usually built without a tool like this: by hand in
@@ -36,12 +36,11 @@ You know where the build is without reading a line of log.\
 ### Maps dependencies on its own
 
 **Goal:** never write down, or keep up to date, which project depends on which.\
-**Common practice:** the build order lives in a script, a wiki page or the heads of whoever has been around
-longest; add a project or a reference and the list is out of date, and the build breaks, or quietly picks up an old
-DLL, until someone notices.\
+**Common practice:** the build order lives in a script, a wiki page or people's memory; add a project or a
+reference and the list is out of date, and the build breaks, or quietly picks up an old DLL, until someone notices.\
 **In Build Orchestrator:** the order is read from the repository itself, every time: add a project or a reference,
-and the next Sync already places it. There is nothing to maintain, and a reference the tool cannot place is named
-instead of silently ignored.\
+and the next Sync already places it. There is nothing to maintain, and a DLL that two projects both produce is
+named instead of guessed.\
 `HintPath map for the real graph` · `raw XML discovery in seconds`
 
 ### Builds only what changed
@@ -51,17 +50,19 @@ instead of silently ignored.\
 nobody can tell which projects really need it; or you build only the one you think matters, and an old DLL turns up
 at run time.\
 **In Build Orchestrator:** before you press anything, the list already says which projects will build and why;
-Build takes exactly those, skips the rest, and says so when there is nothing to build at all.\
+Build takes those, skips the rest, and says so when there is nothing to build at all.\
 `content hash of sources` · `build ledger across sessions`
 
 ### Builds in order, in parallel
 
 **Goal:** finish the same build sooner, on the cores that would otherwise sit idle, without ever getting the order
 wrong.\
-**Common practice:** projects are built one after another in a fixed order; nothing starts until the previous one
-ends, most cores wait, and one broken project in the middle stops everything behind it, related or not.\
-**In Build Orchestrator:** independent projects compile side by side, each one starts the moment its dependencies
-are green, and a broken project holds back only what really depends on it; the rest of the build carries on.\
+**Common practice:** a script builds the solutions one after another in a fixed order; nothing starts until the
+previous one ends, most cores wait, and one broken project in the middle stops everything behind it, related or
+not.\
+**In Build Orchestrator:** independent projects compile side by side, each one starting as soon as its dependencies
+have finished and a worker is free. A broken project does not stop the build: what depends on it still compiles
+against its last good output and is flagged amber, and the rest carries on.\
 `ready-set scheduler for parallel builds` · `deterministic order for repeatable runs`
 
 ### Resolves dependency cycles
@@ -82,18 +83,17 @@ cycle settled or which project stopped it.\
 browser freezes and the call you are on breaks up, so long builds wait for lunch or for the end of the day.\
 **In Build Orchestrator:** the build takes only the share of the machine you give it with one click on the chip,
 and fits itself to the cores and free memory it finds; on the default profile the editor and your other apps stay usable,
-and the title bar shows what the build is using at that moment.\
+and the title bar shows what the tool is using at that moment.\
 `JOB_OBJECT_CPU_RATE_CONTROL hard cap to limit the machine share` · `worker budget by cores and free memory against paging` · `QueryInformationJobObject accounting for the live CPU figure`
 
 ### A native Windows app
 
-**Goal:** a desktop tool that can stay open all day and keep a firm hand on every process it starts.\
+**Goal:** a desktop tool that can stay open all day and keep a firm hand on every compiler it starts.\
 **Common practice:** build helpers are usually command-line scripts, which can build in order but show no graph, no
 reasons and no live state; a desktop tool built on web technology can show all of that, but brings a browser
 runtime along and still needs native code to control the compilers it starts.\
-**In Build Orchestrator:** the window is native WPF with no browser inside, and the engine runs in its own process
-under Windows' own process control: the app waits in the tray, answers a global shortcut, and when it closes, every
-compiler it started closes with it.\
+**In Build Orchestrator:** the window stays responsive however much the build prints; the app waits in the tray,
+answers a global shortcut, and when it closes, every compiler it started closes with it.\
 `WPF on .NET 10, no browser runtime` · `Win32 P/Invoke for process control`
 
 ## In detail
@@ -123,7 +123,7 @@ and they join the next Build on their own once it is fixed.\
 **Common practice:** a one-line fix in a shared library rebuilds every project that depends on it; in a layered
 solution, that single change becomes a long wait.\
 **In Build Orchestrator:** for an internal change only the library itself builds and the projects above it stay
-green; when a public signature changes, they build too, so nothing that should build is skipped.\
+green; when a public signature changes, they build too.\
 `API surface hash of compiled output` · `cascade cut for shared libraries`
 
 ### Works alongside Visual Studio
@@ -137,11 +137,11 @@ when a dependency changed that Visual Studio did not see.\
 
 ### Builds the way VS builds
 
-**Goal:** get the result Visual Studio would give, every time.\
+**Goal:** get the result Visual Studio would give.\
 **Common practice:** scripts that call a different build command or pass different arguments produce "builds in VS,
 fails in the script" differences, more often with older .NET Framework projects.\
-**In Build Orchestrator:** projects build exactly as Visual Studio builds them, and missing packages are restored on
-the way, with no extra package tool on the machine.\
+**In Build Orchestrator:** every project is compiled by the MSBuild.exe Visual Studio uses, into the same folders,
+and old-style packages.config projects are restored on the way, with no extra package tool on the machine.\
 `vswhere to find MSBuild` · `one MSBuild.exe process per project`
 
 ### Leaves no orphaned processes
@@ -176,7 +176,7 @@ only safe move is to clean and rebuild everything.\
 **Common practice:** some build scripts redirect or copy output into a folder of their own; when the IDE and the
 script write to different places, nobody is sure which DLL is current.\
 **In Build Orchestrator:** output is always where Visual Studio puts it; starting or stopping to use the tool
-changes nothing in the output layout, so trying it out costs nothing.\
+changes nothing in the output layout, so you can try it and stop at any time with nothing to undo.\
 `untouched output paths, same layout as VS` · `read-only use of outputs`
 
 ### Never writes to git uninvited
@@ -184,8 +184,9 @@ changes nothing in the output layout, so trying it out costs nothing.\
 **Goal:** a build tool that never touches your history or your uncommitted work.\
 **Common practice:** scripts that pull or reset before building, to be up to date, now and then overwrite local
 changes or leave unexpected merges behind, so teams hesitate to put git steps in a build script at all.\
-**In Build Orchestrator:** the repository is written only when you click a chip, and only in the safe way; Build and
-Sync only ever read it.\
+**In Build Orchestrator:** your branch moves only when you click a chip, and only in the safe way; Build and Sync
+never touch your working tree, and external copies are fast-forwarded before a Build only while Pull before build
+is on.\
 `single git writer for auditability` · `fast-forward only, history kept`
 
 ### Filters by status or name
@@ -208,12 +209,12 @@ same row opens its solution in Visual Studio or its folder in Explorer.\
 
 ### Shows the graph, live
 
-**Goal:** answer "what does this project touch?" in one click, and see where the build stands at a glance.\
-**Common practice:** finding what a project depends on, and what a change to it will affect, means opening project
-files one by one or asking whoever has been on the team longest.\
-**In Build Orchestrator:** click a project and what it uses and what uses it come forward, with the links drawn;
-during a build the graph shows which projects are compiling, which have failed and which sit in a cycle.\
-`focus-and-fit to inspect dependencies` · `opacity story to follow the run`
+**Goal:** answer "what does this project use, and what uses it?" in one click.\
+**Common practice:** finding what a project depends on, and what depends on it, means opening project files one by
+one or asking whoever has been on the team longest.\
+**In Build Orchestrator:** click a project and its direct dependencies and dependents come forward, with the links
+drawn, and the projects caught in a cycle stand out.\
+`focus-and-fit to inspect dependencies` · `always-fit layout, no scrollbars`
 
 ### Shows errors, not noise
 
@@ -276,9 +277,9 @@ updated beforehand if you leave that on; if they hold uncommitted work, the tool
 fails with errors that point nowhere near the cause, such as another framework's leftovers in obj or packages missing
 from disk; bin and obj are deleted by hand, packages are fetched again, and sometimes the repository is cloned from
 scratch.\
-**In Build Orchestrator:** Deep Clean wipes every project's build output in one click, and Optimize brings back the
-missing packages and names what is still broken; the list refreshes on its own and the next Build starts clean.
-Leftovers that would break a build are flagged at run start, before they cost you an afternoon.\
+**In Build Orchestrator:** Deep Clean wipes every project's bin and obj folders in one click, and Optimize brings
+back the missing packages and names what is still broken; the list refreshes on its own and the next Build starts
+clean. NuGet leftovers from another framework in obj are flagged at run start, before they cost you an afternoon.\
 `bin/obj wipe for a clean workspace` · `NuGet restore to fix "doesn't build here"` · `run-start warning, nothing deleted`
 
 ### Light idle, smooth under load
@@ -292,7 +293,8 @@ memory back and is ready for the next build in a few seconds.\
 
 ### Calm, accessible design
 
-**Goal:** a screen everyone on the team can read, whatever their eyesight or their Windows settings.\
+**Goal:** a screen that reads without telling red from green, follows the Windows motion setting and works with a
+screen reader.\
 **Common practice:** many tools tell success from failure by red and green alone, which not everyone can tell apart,
 and their animations run whatever the system's motion setting says.\
 **In Build Orchestrator:** every state is said with a colour, a symbol and a word, so it reads without the colour;

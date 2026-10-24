@@ -2,9 +2,9 @@ English | [Türkçe](FEATURES.tr.md)
 
 # Features
 
-What Build Orchestrator does and how it does it. The first seven entries are the big picture; the rest are the
-details, most important first. Each entry is a short statement, the mechanism behind it and a few tags naming the
-technique. Why each of these matters is in [WHY.md](WHY.md); how to use them step by step is in the
+What Build Orchestrator does and how it does it. The entries under At a glance are the big picture; those under
+In detail follow, most important first. Each entry is a short statement, the mechanism behind it and a few tags
+naming the technique. Why each of these matters is in [WHY.md](WHY.md); how to use them step by step is in the
 [User guide](USER-GUIDE.md); the full technical reference is [ARCHITECTURE.md](../ARCHITECTURE.md).
 
 ## At a glance
@@ -25,10 +25,11 @@ painted from the same project states, one click selects a project in all of them
 **What:** Point it at the repository root and it finds every project and how they depend on each other. There is
 no project list to keep by hand and no build order to maintain in a script: a new project or a new reference is in
 the plan at the next Sync.\
-**How:** Every .csproj and .sln under the repository root is read as raw XML, together with the projects your
-external cards point to; MSBuild is never evaluated for discovery. Dependencies come from HintPaths, matched to the
-project that produces the DLL, and from ProjectReferences. A HintPath it cannot place is listed as a warning, and a DLL that two projects claim is reported
-by name instead of guessed.\
+**How:** Every .csproj under the repository root is read as raw XML and every .sln for the projects it lists,
+together with the projects your external cards point to; MSBuild is never evaluated for discovery. Dependencies come
+from HintPaths, matched to the project that produces the DLL, and from ProjectReferences. A DLL built in another
+repository becomes a real dependency once that repository is added as an external card, and a DLL that two projects
+claim is reported by name instead of guessed.\
 `raw XML discovery in seconds` · `HintPath map for the real graph` · `ProjectReference as a second signal` · `evaluation cache keyed by length and time`
 
 ### Builds only what changed
@@ -43,9 +44,10 @@ date, and a deleted or overwritten output is rebuilt even when the sources are t
 ### Builds in order, in parallel
 
 **What:** Projects build in their real dependency order, and projects that do not wait on each other build at the
-same time. A failure holds back only the projects that depend on it; the unrelated ones carry on.\
+same time. A failure does not stall the run: the projects that depend on it build against its last good output and
+are flagged, and the rest carry on.\
 **How:** The graph is sorted topologically with a stable tie-break, so the same repository always yields the same
-plan. Each free worker takes the next project whose dependencies are green, and each project runs in its own
+plan. Each free worker takes the next project whose dependencies have finished, and each project runs in its own
 MSBuild.exe.\
 `ready-set scheduler for parallel builds` · `Kahn topological sort for the build order` · `deterministic order for repeatable runs`
 
@@ -67,9 +69,9 @@ again.\
 the browser and everything else you have open. The perf chip switches between Full, Balanced (the default) and
 Light, and the resource strip in the middle of the title bar shows what the tool costs right now: CPU, memory and
 parallelism with the profile.\
-**How:** A profile sets the parallelism, a priority class and, except on Full, a hard CPU cap on the job that holds
-only the compilers, so the window, git and Sync stay at full speed. At run start the worker count is fitted to the
-processors and the free memory, so a build does not push the machine into paging. The strip reads the processor
+**How:** A profile sets the parallelism, and puts a priority class and, except on Full, a hard CPU cap on the job
+that holds only the compilers, so the window, git and Sync stay at full speed. At run start the worker count is
+fitted to the processors and the free memory, leaving a reserve for the rest of the machine. The strip reads the processor
 time from the job's own accounting and the memory as private bytes, without listing the machine's processes.\
 `JOB_OBJECT_CPU_RATE_CONTROL hard cap to limit the machine share` · `worker budget by cores and free memory against paging` · `QueryInformationJobObject accounting for the live CPU figure` · `GetProcessMemoryInfo private bytes for the live RAM figure`
 
@@ -77,7 +79,7 @@ time from the job's own accounting and the memory as private bytes, without list
 
 **What:** Build Orchestrator is a Windows desktop application written in WPF, chosen over a WebView2 hybrid,
 Avalonia and WinUI 3. There is no browser runtime inside, and the tray, the notifications, the global shortcuts and
-the control over every process it starts are Windows' own.\
+the control over every compiler it starts are Windows' own.\
 **How:** The interface runs on WPF and .NET 10, and the build engine runs in a separate process, so the window stays
 responsive however much output MSBuild produces. Process control goes straight to Win32: Job Objects and
 CreateProcessW for the compilers, RegisterHotKey for the global shortcuts. The app installs per user with Velopack.\
@@ -142,11 +144,11 @@ While a Sync, Deep Clean, Optimize, checkout or pull runs, build commands are re
 ### Leaves no orphaned processes
 
 **What:** Whether the app is closed, crashes or is killed from Task Manager, no MSBuild.exe or child of it is left
-behind, and the window stays responsive however much output MSBuild produces.\
-**How:** The app, its build engine and every MSBuild.exe live in nested Windows Job Objects; when the last handle
-closes, Windows ends the whole tree. Each child starts suspended, joins the job and only then runs, so nothing
-escapes in between.\
-`nested Job Objects against orphans` · `kill-on-close for cascading shutdown` · `suspended start to close the gap` · `separate engine for a smooth UI`
+behind.\
+**How:** The build engine and every MSBuild.exe live in nested Windows Job Objects that the app owns; when the app's
+last handle closes, Windows ends the whole tree. Each child starts suspended, joins the job and only then runs, so
+nothing escapes in between.\
+`nested Job Objects against orphans` · `kill-on-close for cascading shutdown` · `suspended start to close the gap`
 
 ### Stops safely, then continues
 
@@ -181,7 +183,8 @@ for, where MSBuild removes the outputs the project itself recorded.\
 ### Never writes to git uninvited
 
 **What:** Sync, Build and background work never write to the repository: pull, reset, switch, rebase, commit and
-push never run on their own, and each of the three moves that do write to git is a click you make.\
+push never run on their own, and each of the three moves that do write to git is your call: a click on a chip, or
+a setting you leave on.\
 **How:** The three write paths (a fast-forward from the N behind chip, a checkout from the branch chip, and updating
 external working copies when you leave that on) live in one file, and a source test forbids git write commands
 anywhere else. Reads such as status, refs and fetch go through a separate path.\
@@ -202,8 +205,7 @@ decision is yours.\
 decision, warning and duration: green is up to date, plain grey will build, red is a compiler error, and a
 building row breathes amber.\
 **How:** Strip, dot, glyph and graph node are all painted from one state value. During a run the list keeps the
-building edge in view until you scroll and returns to it after a few idle seconds, and one click selects the same
-project in every panel.\
+building edge in view until you scroll and returns to it after a few idle seconds.\
 `colour + glyph + text, colour-blind safe` · `one state source for every surface` · `follow mode to track the run` · `sticky layer headers`
 
 ### Filters by status or name
@@ -320,10 +322,10 @@ order with fetch plus merge --ff-only, and uncommitted work stops the run before
 ### Repairs a broken workspace
 
 **What:** When the workspace will not build for reasons that have nothing to do with the code, two buttons next to
-Sync fix it. Deep Clean (the eraser, whose tooltip says Clean) deletes every project's bin and obj folders and the
-build record, so the next Build starts from scratch, free of leftovers from another framework. Optimize brings back
-missing packages and names the references it cannot fix. And every run start already warns about the stale obj
-leftovers that break builds.\
+Sync help fix it. Deep Clean (the eraser, whose tooltip says Clean) deletes every project's bin and obj folders and
+the build record, so the next Build starts from scratch, free of leftovers from another framework (an SDK-style
+project then needs an Optimize before it builds). Optimize brings back missing packages and names the references it
+cannot fix. And every run start already warns when a project's obj holds NuGet leftovers from another framework.\
 **How:** Deep Clean does not call MSBuild: it deletes from the file system, external roots included, and runs a
 Sync when done. Optimize restores old-style packages.config projects whose NuGet HintPath targets are missing and
 every SDK-style project, which cures NETSDK1004 after a fresh clone or a Deep Clean; it then removes NuGet leftovers
