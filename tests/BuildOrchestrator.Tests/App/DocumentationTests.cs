@@ -6,7 +6,11 @@ namespace BuildOrchestrator.Tests.App;
 /// <summary>Kullanıcı dokümanları iki dillidir: İngilizce esas, Türkçe aynası aynı klasörde <c>.tr.md</c> ekiyle durur
 /// (README, docs/FEATURES, docs/WHY). Ayna sessizce geri kalmasın diye bölüm sayıları eşit tutulur; WHY, FEATURES'ın
 /// kazanım olan maddelerini aynı başlık ve aynı sırayla taşır; dokümanlar arası göreli linkler var olan dosyaya gider.
-/// <para>Bölüm = kod bloğu dışındaki <c>## </c> satırı. FEATURES ve WHY'da her bölüm bir maddedir.</para>
+/// <para>Bölüm = kod bloğu dışındaki <c>## </c> ya da <c>### </c> satırı. FEATURES ve WHY'da <c>##</c> iki grup başlığıdır
+/// (büyük resim ve ayrıntılar), <c>###</c> maddedir; ikisi de sayılır ve sıraya girer, böylece ayna ve WHY ⊂ FEATURES
+/// denetimi madde düzeyinde kalır. Eskiden yalnız <c>## </c> sayılıyordu, çünkü her <c>##</c> bir maddeydi; maddeler grup
+/// başlıklarının altına <c>###</c> olarak inince yalnız <c>##</c> saymak iki denetimi de iki grup başlığına indirir ve
+/// sırası kaymış ya da adı ayrışmış bir WHY maddesini yeşil geçirirdi.</para>
 /// <para>Repo herkese açıktır: dokümanlar aracın ilk yazıldığı iç ürünün adını taşımaz, örnekler nötrdür (Acme).</para></summary>
 public class DocumentationTests
 {
@@ -99,8 +103,8 @@ public class DocumentationTests
     private static List<string> Sections(string document) =>
         WithoutCodeBlocks(Read(document)).Split('\n')
             .Select(line => line.TrimEnd('\r'))
-            .Where(line => line.StartsWith("## ", StringComparison.Ordinal))
-            .Select(line => line[3..].Trim())
+            .Where(line => line.StartsWith("## ", StringComparison.Ordinal) || line.StartsWith("### ", StringComparison.Ordinal))
+            .Select(line => line[(line.IndexOf(' ') + 1)..].Trim())
             .ToList();
 
     private static string WithoutCodeBlocks(string markdown) =>
