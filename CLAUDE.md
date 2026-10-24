@@ -139,11 +139,14 @@ kadarki tüm değişiklikler dokümanlara işlenir.
   docs/USER-GUIDE.md · yeni ya da değişen özellik → docs/FEATURES.md (kazanımı varsa docs/WHY.md'ye de, aynı
   başlık ve sırayla) · vitrin ve hızlı başlangıç → README.md · çalışma kuralı → CLAUDE.md. README özetler,
   FEATURES listeler, USER-GUIDE ve ARCHITECTURE ayrıntılandırır; aynı şey iki yerde ayrıntısıyla tekrarlanmaz.
-- **FEATURES / WHY kalıbı:** madde başlığı ≤5 kelime; FEATURES'ta `**What:**` + `**How:**`, WHY'da `**Goal:**` +
+- **FEATURES / WHY kalıbı:** iki doküman da iki grup başlığı taşır — `## At a glance` (büyük resim) ve
+  `## In detail` (geri kalanlar, önem sırasıyla; TR: Bir bakışta / Ayrıntılar) — maddeler `###`'tür. Madde başlığı
+  ≤5 kelime; FEATURES'ta `**What:**` + `**How:**`, WHY'da `**Goal:**` +
   `**Common practice:**` + `**In Build Orchestrator:**` (TR: Ne yapar / Nasıl; Amaç / Yaygın pratik / Build
-  Orchestrator'da), ardından 2-4 etiket (teknoloji + ne için). Common practice satırı genel resimdir — kişiye,
-  ekibe ya da belirli bir script'e atıf yapmaz; WHY'ın üçüncü satırı mekanizma değil kullanıcının yaşadığı
-  sonuçtur. Rakam ve iç ad (müşteri/ürün adı) yazılmaz.
+  Orchestrator'da), ardından 2-4 etiket (teknoloji + ne için). WHY'ın başında ekip için rakamsız kısa bir özet
+  durur; satırları günlük bir sahne anlatır (Goal = geliştiricinin isteği, Common practice = tanıdık an). Common
+  practice satırı genel resimdir — kişiye, ekibe ya da belirli bir script'e atıf yapmaz; WHY'ın üçüncü satırı
+  mekanizma değil kullanıcının yaşadığı sonuçtur. Rakam ve iç ad (müşteri/ürün adı) yazılmaz.
 - **Her iddia kodda doğrulanır.** Doğru ifadeye dokunma; emin olamadığını sor.
 - **Rakam gömme:** bayatlayacak sayı (test sayısı, sha) yazma; dayanıklı dil kullan.
 - **Repo herkese açık:** dokümanlara (README, docs/, ARCHITECTURE, CHANGELOG, bu dosya) iç ürün, müşteri ya da kişi
