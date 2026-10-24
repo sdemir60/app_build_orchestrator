@@ -18,8 +18,8 @@ namespace BuildOrchestrator.App.Controls;
 /// (koşu statüsü) alıyordu; satırda atlanan proje <c>—</c> tire gösterirdi ve <c>cycle</c> halkasız bir
 /// uyarı üçgeniydi (hiçbir üretici yazmıyordu). Değişme gerekçesi: renk artık çıktının kümülatif durumudur —
 /// glyph de onu çizer (güncel ✓, bozuk ✗, derlenecek kesikli daire). <c>—</c> yalnız run-story
-/// yüzeylerinde (event stream'in atlama satırı, konsol başlığının koşu sonucu) <see cref="VisualStatus.Skipped"/>
-/// ile çizilir; satır/node/sayaç onu hiç almaz.</para>
+/// yüzeyinde (event stream'in atlama satırı) <see cref="VisualStatus.Skipped"/> ile çizilir; satır/node/sayaç onu
+/// hiç almaz.</para>
 ///
 /// <para>Geometriler kodda parse EDİLMEZ, <c>Icons.xaml</c>'den çözülür (IconGeometryTests bunu pinler);
 /// renkler Tokens.xaml'den.</para>
@@ -105,8 +105,12 @@ public class StatusGlyph : Control
     /// Değişme gerekçesi: durum yüzeyleri çıktının durumunu ÇİZER — ekran okuyucu da GÖSTERİLENİ duyar, filtre
     /// chip'iyle AYNI sözcükle. Kova <see cref="VisualStatuses.StateOf"/>'tan okunur (sayaç ve filtreyle tek
     /// kural): yeşil "Up to date" (bu koşuda derlenmiş satır dahil), gri "To build", kırmızı "Failed"; koşu
-    /// bindirmesi "Queued"/"Building", işaretleme dalgası "Marked to build", karar yoksa "Not synced". Run-story
-    /// yüzeyleri koşunun sonucunu söylemeye devam eder: <see cref="RunLabelFor"/>.</para></summary>
+    /// bindirmesi "Queued"/"Building", işaretleme dalgası "Marked to build", karar yoksa "Not synced".</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-25]</b> Yanında bir run-story eşlemesi daha vardı
+    /// (<c>RunLabelFor</c>: koşunun sonucunu adlandıran "Succeeded", "Skipped", koşuya girmemiş proje için
+    /// "Discovered"); tek okuyucusu konsol başlığının statü sözcüğüydü ve o sözcük başlıktan kalkınca eşleme de
+    /// kalktı.</para></summary>
     internal static string LabelFor(VisualStatus status) => VisualStatuses.StateOf(status) switch
     {
         StandingStatus.Current => "Up to date",
@@ -120,18 +124,6 @@ public class StatusGlyph : Control
             VisualStatus.Skipped => "Skipped", // yalnız run-story yüzeyleri (durum yüzeyi bunu hiç almaz)
             _ => "Not synced",                 // unknown: karar yok
         },
-    };
-
-    /// <summary>[design v1.20.0 §1.4] RUN-STORY yüzeyinin (konsol başlığı) metni: motorun bu proje hakkındaki
-    /// son sözü — "Succeeded" ve "Skipped" burada kalır. Ortak sözcükler (Queued · Building · Failed · Skipped)
-    /// <see cref="LabelFor(VisualStatus)"/>'dan okunur; yalnız koşu hikâyesine özgü olanlar burada yazılır:
-    /// sonucun adı (durum yüzeyinde aynı satır "Up to date"tır) ve motorun hakkında konuşmadığı projenin
-    /// adları.</summary>
-    internal static string RunLabelFor(GraphStatus status) => status switch
-    {
-        GraphStatus.Succeeded => "Succeeded",
-        GraphStatus.Discovered => "Discovered",
-        _ => LabelFor(VisualStatuses.OfRun(status)), // Queued · Building · Failed · Skipped
     };
 
     /// <summary>Halkanın içine düşen işaret (_ds_bundle.js:1459-1478 <c>inner()</c>); <c>null</c> = işaret yok.</summary>

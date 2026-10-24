@@ -638,7 +638,7 @@ public class CompactConsoleTests
         header.SetCompact(true);
         Assert.Equal(Visibility.Visible, header.CompactText.Visibility);
 
-        header.ShowProjectLog(ConsoleHeaderRow.For("A", ProjectRowState.Succeeded, inCycle: false, depIssues: null, namePrefix: ""), 12);
+        header.ShowProjectLog("A", 12);
         Assert.Equal(Visibility.Collapsed, header.CompactText.Visibility);
         header.ShowNarrative(12);
         Assert.Equal(Visibility.Visible, header.CompactText.Visibility);
