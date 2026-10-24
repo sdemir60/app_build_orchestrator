@@ -175,15 +175,8 @@ public class VisualStatusTests
     public void A_state_surface_announces_what_it_shows(VisualStatus shown, string label)
         => Assert.Equal(label, StatusGlyph.LabelFor(shown));
 
-    /// <summary>[design v1.20.0 §1.4] RUN-STORY yüzeyi (konsol başlığı) koşunun sonucunu söyler — "Skipped" ve
-    /// "Succeeded" burada kalır; ortak sözcükler (Queued · Building · Failed) durum tablosuyla AYNI kaynaktandır.</summary>
-    [Theory]
-    [InlineData(GraphStatus.Queued, "Queued")]
-    [InlineData(GraphStatus.Building, "Building")]
-    [InlineData(GraphStatus.Succeeded, "Succeeded")]
-    [InlineData(GraphStatus.Failed, "Failed")]
-    [InlineData(GraphStatus.Skipped, "Skipped")]
-    [InlineData(GraphStatus.Discovered, "Discovered")]
-    public void A_run_story_surface_names_the_runs_result(GraphStatus status, string label)
-        => Assert.Equal(label, StatusGlyph.RunLabelFor(status));
+    // [DEĞİŞEN KURAL — kullanıcı kararı 2026-10-25] Burada bir de RUN-STORY sözcük tablosu pinliydi
+    // (A_run_story_surface_names_the_runs_result: StatusGlyph.RunLabelFor — Queued · Building · Succeeded · Failed ·
+    // Skipped · Discovered). Tek okuyucusu konsol başlığının statü sözcüğüydü; sözcük başlıktan kalkınca eşleme de kalktı.
+    // Yeni kural (başlıkta statü yok) ConsoleHeaderDesignTests.The_project_log_header_shows_only_the_project_name_and_the_right_block'ta.
 }

@@ -389,7 +389,9 @@ off to see every line; the change applies from the next run, and what is already
 A project's log opens **at the beginning** and stays where you put it — what you are looking for in a build log is
 the first error, not the last line — so it never follows the output and never returns on its own, not even when you
 scroll to the bottom. The `⌄ latest` pill takes you to the end once and appears again when new lines arrive below
-you. The header's `Back` button (an arrow icon and the word "Back") returns you to the run narrative at its end.
+you. The page's header names the project and nothing else — its state stays on its row and its graph node. Click
+the project again (in the list or the graph), click the graph's empty background or press Esc to return to the run
+narrative at its end.
 
 **Every project has a page, log or not.** A skipped project never writes a log file at all — the reason goes
 to the run's decision log — so clicking its card used to look like it did nothing. The page now opens either

@@ -263,7 +263,7 @@ public partial class ConsoleView : UserControl
     /// uzaklık oradan okunur. Ölçümü gelmeyecek bir ekleme onu kendisi ister (<see cref="AppendBatch"/>).
     /// <para>İki istisna: belge takası (<see cref="_swappingDocument"/>) — takasın geometrisi okuyucunun değildir, pill takasın sonunda
     /// oturmuş uzaklıktan okunur (<see cref="SwapDocument"/>) — ve takip (<see cref="BottomAnchorBehavior.ShouldFollow"/>): izleyen belgede
-    /// ekleme ile dibe isteğin (<see cref="RequestBottom"/>) uygulanması arasında uzaklık bir an eşiği aşar ve pill yanıp sönerdi (← Back'teki parlamanın
+    /// ekleme ile dibe isteğin (<see cref="RequestBottom"/>) uygulanması arasında uzaklık bir an eşiği aşar ve pill yanıp sönerdi (anlatıya dönüşteki parlamanın
     /// akrabası); orada pill kaydırma olaylarından okunur.</para>
     /// </summary>
     private void OnVisualLinesChanged()
@@ -720,7 +720,7 @@ public partial class ConsoleView : UserControl
 
     // ---------------------------------------------------------------- narrative (run) modu
 
-    /// <summary>[3b] Run/anlatı dokümanını kurar (<c>← Back</c> akışı): render dilimi (son
+    /// <summary>[3b] Run/anlatı dokümanını kurar (anlatıya dönüş akışı): render dilimi (son
     /// <see cref="RenderSliceLines"/>) belgeye yüklenir, ÖNCESİ backlog'da kalır ve canlı append'te tail-trim açıktır.
     ///
     /// <para><b>Anlatıya dönüş SONDAN okunur</b> (kullanıcı kararı): koşu anlatısında ilgi çeken şey en son
@@ -858,7 +858,7 @@ public partial class ConsoleView : UserControl
     ///
     /// <para><b>Neden logun tamamı, aşağı doğru dilim yüklemesi değil (ölçüldü, 800×600 gerçek pencere, satır ~190 karakter, hareket
     /// açık):</b> 10 000 satırlık bir log eşzamanlı ~21 ms'de açılır (dilimle ~14 ms), sayfa açıkken yığın ~5,8 MB tutar (dilim + liste
-    /// kopyasıyla ~4,0 MB) ve Back'te ikisi de tamamen bırakılır; 100 000 satırda ~140 ms / ~57 MB (dilimle ~14 ms / ~38 MB) — B2 fix 1 O1
+    /// kopyasıyla ~4,0 MB) ve anlatıya dönüşte ikisi de tamamen bırakılır; 100 000 satırda ~140 ms / ~57 MB (dilimle ~14 ms / ~38 MB) — B2 fix 1 O1
     /// bölme → birleştirme turunu kaldırınca 100 000 satır ~70–90 ms (kabuğun ~20 ms'lik bölmesi de kalktı), 10 000 satır değişmedi. AvalonEdit
     /// yalnız görünür satırları kurar. Aşağı doğru yükleme açılışı dilimle aynı tutardı ama sonu yüklenmemiş bir belgeye canlı satır eklemeyi
     /// (sıra), pill'in "gerçek sonunu" ve ikinci bir yükleyiciyi gerektirirdi — en basit doğru seçenek logun tamamıdır.</para></summary>
@@ -978,7 +978,7 @@ public partial class ConsoleView : UserControl
     /// <para>Hareket TEK PARÇADIR: satır sayısından bağımsız olarak her zaman aynı sürede biter. Panelin
     /// yüksekliği/yerleşimi geçiş boyunca DEĞİŞMEZ (spec §2.4) — <c>RenderTransform</c> yerleşime girmez.</para>
     ///
-    /// <para>Yalnız log bloğu REMOUNT edildiğinde oynar (proje logu açma / <c>← Back</c> / proje değişimi /
+    /// <para>Yalnız log bloğu REMOUNT edildiğinde oynar (proje logu açma / anlatıya dönüş / proje değişimi /
     /// boş-durum) — canlı satır eklenirken, kaydırırken ya da yeniden boyutlanırken ASLA (spec §2.1/§3).
     /// Reduced-motion iken hiç oynatılmaz (motion sözleşmesi). Ölçülmemiş panelde (headless, ilk kare) de oynamaz —
     /// içerik doğrudan son hâlinde görünür, asla boş kalmaz.</para>

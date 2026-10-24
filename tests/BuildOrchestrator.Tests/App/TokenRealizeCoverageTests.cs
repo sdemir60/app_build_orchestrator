@@ -116,13 +116,15 @@ public class TokenRealizeCoverageTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>[v1.18.0 §9 — DEĞİŞEN KURAL] Rozet eskiden KIRMIZI dolu bir üçgendi (<c>Icon.DepWarn</c> +
-    /// <c>Brush.StatusFailText</c>, dolgu). Tasarım amber bir KONTUR üçgeni ister (<c>Icon.AlertTri</c> +
-    /// <c>Brush.AmberText</c>, satırın uyarı üçgeniyle AYNI dil). Data/Stroke/StrokeThickness XAML-yerel
-    /// <c>{DynamicResource}</c>'dır (kod-tarafı boyama YOK — sabit renk, ConsoleHeader.xaml), bu yüzden Collapsed
-    /// dalda bile (badge hiç görünür olmasa da) gerçek bir ağaca eklenir eklenmez çözülür.</summary>
+    /// <summary>Konsol başlığı realize olur ve token'ları çözülür: zemin, sayaç ve (anlatı kipinde Collapsed dalda duran)
+    /// proje adı. XAML-yerel <c>{DynamicResource}</c>'lar gerçek bir ağaca eklenir eklenmez çözülür; anahtar adı sürüklenirse
+    /// fırça null kalır.
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-25]</b> Test eskiden aynı yoldan dependency-issue rozetinin amber
+    /// kontur üçgenini de pinlerdi (<c>Icon.AlertTri</c> + <c>Brush.AmberText</c>; daha önce kırmızı dolu <c>Icon.DepWarn</c>'dı).
+    /// Rozet başlıktan kalktı — proje sayfasının başlığı yalnız adı taşır; gerekçe <see cref="ConsoleHeaderDesignTests"/>'in
+    /// sınıf özetinde. Aynı üçgen satırın uyarı slotunda yaşamaya devam eder.</para></summary>
     [StaFact]
-    public void Console_header_realizes_and_its_dep_issue_badge_resolves_geometry_and_status_colour()
+    public void Console_header_realizes_and_its_tokens_resolve()
     {
         var host = DsResources.NewHost();
         var header = new ConsoleHeader();
@@ -131,13 +133,8 @@ public class TokenRealizeCoverageTests
         var root = (Border)header.Content;
         Assert.Equal(DsResources.TokenColor(host, "Brush.Surface"), DsResources.ColorOf(root.Background));
         Assert.Equal(DsResources.TokenColor(host, "Brush.TextFaint"), DsResources.ColorOf(header.LinesText.Foreground));
-
-        // Collapsed dal da olsa DynamicResource'lar okununca çözülür: ▲ amber kontur üçgeni geometrisi
-        // (Icons.xaml Icon.AlertTri) ve rengi burada kanıtlanır — anahtar adı sürüklenirse Data/Stroke null kalır.
-        var badge = header.DepIssueBadge.Children.OfType<Viewbox>().Single();
-        var glyph = ((Canvas)badge.Child).Children.OfType<System.Windows.Shapes.Path>().Single();
-        Assert.Same(host.FindResource("Icon.AlertTri"), glyph.Data);
-        Assert.Equal(DsResources.TokenColor(host, "Brush.AmberText"), DsResources.ColorOf(glyph.Stroke));
+        Assert.Equal(Visibility.Collapsed, header.ProjectNameText.Visibility); // ön-koşul: anlatı kipi, ad gizli dalda
+        Assert.Equal(DsResources.TokenColor(host, "Brush.TextPrimary"), DsResources.ColorOf(header.ProjectNameText.Foreground));
         GC.KeepAlive(window);
     }
 }
