@@ -6,13 +6,15 @@
        satıra SAĞ TIK bu menüyü açar (VS Solution Explorer alışkanlığı). Kapsam YALNIZ o projedir —
        bağımlılıklar derlenmez (§3.8 v1.11.0).
 
-       Genişlik 154 ve iç ölçüler bileşenin KENDİ değerleridir (design-v1.11.0 BuildApp.jsx:599-614), token
-       değil — kaynak satırıyla yazılır. Kabuk (surface-overlay + 1px border-strong + radius-lg + overlay
-       gölgesi) DS'in ortak `Ds.Popover` stilidir: yeni bir overlay deseni GİRMEZ.
+       Genişlik ve iç ölçüler bileşenin KENDİ değerleridir (design-v1.11.0 BuildApp.jsx:599-614), token
+       değil — MenuRowMetrics'te durur, çünkü tepsinin sağ tık menüsü (Ds.ContextMenu) AYNI satırı çizer. Kabuk
+       (surface-overlay + 1px border-strong + radius-lg + overlay gölgesi) DS'in ortak `Ds.Popover` stilidir: yeni
+       bir overlay deseni GİRMEZ.
 
        Başlıkta projenin KISA adı durur: menü satırdan koparıldığında (sağ tık imleç nerede olursa olsun aynı
        menüyü açar) hangi proje için açıldığı okunabilsin. -->
-  <Border Style="{DynamicResource Ds.Popover}" Width="154" Padding="4">
+  <Border Style="{DynamicResource Ds.Popover}" Width="{x:Static controls:MenuRowMetrics.MenuWidth}"
+          Padding="{x:Static controls:MenuRowMetrics.MenuPadding}">
     <StackPanel>
       <TextBlock x:Name="PART_Title" Margin="7,3,7,5"
                  TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"

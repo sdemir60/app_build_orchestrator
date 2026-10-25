@@ -36,6 +36,11 @@ public sealed class TrayMenuPositionProbeTests(ITestOutputHelper output)
     /// tık noktasındadır (ölçüldü: 0 px); pay yalnız yuvarlamaya aittir — bayat çarpanın kaydırması yüzlerce pikseldir.</summary>
     private const double Tolerance = 2;
 
+    /// <summary>Fare ölçüm sırasında kıpırdarsa deneme tekrarlanır: menü imlecin AÇILIŞ ANINDAKİ yerinde açılır (WPF imleci menünün ilk
+    /// yerleşim turunda okur), kıpırdayan bir imleçle tık noktası belirsizdir — ölçüldü: koşu sırasında oynayan fare 34 px'lik sahte bir
+    /// kırmızı üretti. Her denemede kıpırdarsa sonda atlanır; sonuç uydurulmaz.</summary>
+    private const int Attempts = 5;
+
     private const int WM_RBUTTONUP = 0x0205;
 
     /// <param name="staleRatio">Kütüphanenin saklı çarpanının ekranın gerçek çarpanına oranı: 1,5 = ölçek KÜÇÜLDÜ (önbellek %150'de
@@ -50,14 +55,16 @@ public sealed class TrayMenuPositionProbeTests(ITestOutputHelper output)
         Skip.IfNot(Environment.GetEnvironmentVariable("BO_PROBE_TRAY") == "1",
             "Creates a real tray icon and opens its menu — opt in with BO_PROBE_TRAY=1.");
 
-        var (distance, report) = StaThread.RunAsync(() => RightClickAfterScaleChange(staleRatio), "tray-menu-position")
-            .GetAwaiter().GetResult();
-        output.WriteLine(report);
+        var probe = StaThread.RunAsync(() => RightClickAfterScaleChange(staleRatio), "tray-menu-position").GetAwaiter().GetResult();
+        output.WriteLine(probe.Report);
 
-        Assert.True(distance <= Tolerance, report);
+        Skip.If(probe.MouseKeptMoving, "The mouse moved during every attempt — keep it still while the probe runs.");
+        Assert.True(probe.Distance <= Tolerance, probe.Report);
     }
 
-    private static (double Distance, string Report) RightClickAfterScaleChange(double staleRatio)
+    private sealed record Probe(double Distance, bool MouseKeptMoving, string Report);
+
+    private static Probe RightClickAfterScaleChange(double staleRatio)
     {
         // `pack://` şemasını WPF `PackUriHelper`'ın statik ctor'unda kaydeder; headless süitte Application yoktur, şemaya ilk dokunan
         // sonda olmalıdır — yoksa tepsi ikonunun adresi reddedilir (TrayBalloonProbeTests ile aynı).
@@ -71,30 +78,51 @@ public sealed class TrayMenuPositionProbeTests(ITestOutputHelper output)
         try
         {
             factor.Value = fresh * staleRatio; // ekran değişti, kütüphanenin önbelleği değişmedi
+            var probe = RightClickOnce(icon, menu, fresh, staleRatio);
+            for (int attempt = 1; attempt < Attempts && probe.MouseKeptMoving; attempt++)
+                probe = RightClickOnce(icon, menu, fresh, staleRatio);
+            return probe;
+        }
+        finally
+        {
+            factor.Value = fresh; // süreç geneli statik durum: sonraki testlere bayat çarpan kalmaz
+        }
+    }
 
+    /// <summary>Kabuğun sağ tık mesajını bir kez gönderir, açılan menünün yerini ölçer ve menüyü kapatır. İmleç mesajdan ölçüme kadar
+    /// <see cref="Tolerance"/>'tan fazla kıpırdadıysa sonuç "fare kıpırdadı" diye işaretlenir.</summary>
+    private static Probe RightClickOnce(TaskbarIcon icon, ContextMenu menu, double fresh, double staleRatio)
+    {
+        string scale = string.Create(System.Globalization.CultureInfo.InvariantCulture,
+            $"screen factor {fresh:F3}, cached factor {fresh * staleRatio:F3}");
+        try
+        {
             GetCursorPos(out var click);
             Win32.SendMessage(icon.TrayIcon.WindowHandle, MessageWindow.CallbackMessageId,
                 (nint)((click.Y << 16) | (click.X & 0xFFFF)), WM_RBUTTONUP);
-            GetCursorPos(out var afterClick); // menü mesajın içinde açılır; fare o arada kıpırdadıysa iki nokta da kabul
 
             DispatcherPump.PumpUntil(() => PopupHandle(menu) is nint h && Win32.IsWindowVisible(h), TimeSpan.FromSeconds(2));
             DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(200)); // yerleşim bir layout turunda oturur
+            GetCursorPos(out var afterOpen);
 
             if (PopupHandle(menu) is not nint popup || !Win32.IsWindowVisible(popup))
-                return (double.PositiveInfinity, $"The tray menu did not open (cached factor {fresh * staleRatio:F3}, screen {fresh:F3}).");
+                return new Probe(double.PositiveInfinity, false, $"The tray menu did not open ({scale}).");
 
             Win32.GetWindowRect(popup, out var r);
-            double distance = Math.Min(NearestCorner(r, click), NearestCorner(r, afterClick));
-            return (distance, string.Create(System.Globalization.CultureInfo.InvariantCulture,
-                $"screen factor {fresh:F3}, cached factor {fresh * staleRatio:F3}, click ({click.X},{click.Y}), menu " +
-                $"({r.Left},{r.Top})-({r.Right},{r.Bottom}), nearest corner {distance:F0} px"));
+            double distance = NearestCorner(r, click);
+            bool moved = Distance(click, afterOpen) > Tolerance;
+            return new Probe(distance, moved, string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                $"{scale}, click ({click.X},{click.Y}), menu ({r.Left},{r.Top})-({r.Right},{r.Bottom}), " +
+                $"nearest corner {distance:F0} px{(moved ? $", the mouse moved to ({afterOpen.X},{afterOpen.Y})" : "")}"));
         }
         finally
         {
             menu.IsOpen = false;
-            factor.Value = fresh; // süreç geneli statik durum: sonraki testlere bayat çarpan kalmaz
+            DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(100)); // popup penceresi kapanışta bir zamanlayıcıyla yıkılır
         }
     }
+
+    private static double Distance(POINT a, POINT b) => Math.Sqrt(Math.Pow(a.X - b.X, 2) + Math.Pow(a.Y - b.Y, 2));
 
     private static nint? PopupHandle(ContextMenu menu) =>
         PresentationSource.FromVisual(menu) is HwndSource { Handle: not 0 } source ? source.Handle : null;
@@ -104,7 +132,7 @@ public sealed class TrayMenuPositionProbeTests(ITestOutputHelper output)
         double best = double.PositiveInfinity;
         foreach (int x in new[] { r.Left, r.Right })
             foreach (int y in new[] { r.Top, r.Bottom })
-                best = Math.Min(best, Math.Sqrt(Math.Pow(x - p.X, 2) + Math.Pow(y - p.Y, 2)));
+                best = Math.Min(best, Distance(new POINT { X = x, Y = y }, p));
         return best;
     }
 

@@ -1479,6 +1479,74 @@
   </Style>
 
   <!--
+    [tray menu look] Bağlam menüsü: tepsinin sağ tık menüsü (AppTrayIcon.CreateMenu — uygulamanın TEK ContextMenu'sü). Proje satırının
+    menüsüyle (Views/ProjectRowMenu) AYNI dili konuşur: kabuk Ds.Popover'dır (surface-overlay + 1px border-strong + radius-lg);
+    genişlik, kabuğun iç payı, satır yüksekliği ve iç payı, ikon yuvası, ikon↔metin boşluğu ve pasif opaklık MenuRowMetrics'ten
+    okunur — TEK kaynak, iki menü ayrışmaz. Metin 13px text-secondary; ikon kendi rengiyle (IconMenuItem: Stop kırmızı kare, Exit power).
+    Vurgu — fareyle üstüne gelme VE klavyeyle seçme; WPF ikisini de IsHighlighted ile bildirir — zemini satır menüsünün hover'ı gibi
+    surface-raised'e taşır; geçiş DsTransition'ın 120ms'idir.
+
+    GÖLGESİZDİR (Effect={x:Null}): WPF popup penceresini menünün kendi boyuna kurar, overlay gölgesi pencere sınırında kırpılır ve
+    yalnız alt köşelerde, yuvarlak kenarın dışında koyu bir leke olarak kalır (canlı ekran görüntüsünde ölçüldü). Uygulama içindeki
+    popover'lar hep koyu zeminde durduğu için orada görünmez; tepsi menüsü herhangi bir zeminde — açık bir pencerenin ya da açık temalı
+    görev çubuğunun üstünde de — açılır. Gölgeye pay bırakmak menünün köşesini imleçten uzaklaştırırdı.
+
+    ANAHTARLIDIR, örtük DEĞİL: TextBox'ların hazır bağlam menülerine dokunmaz. Giriş animasyonu (PopIn) BİLEREK yok: ContextMenu'nün
+    kendi popup'ı Windows'un menü animasyonu ayarını izler (SystemParameters.MenuPopupAnimationKey) ve ilk açılışta kodun araya
+    giremeyeceği bir anda kurulur — PopIn üstüne binerse iki animasyon olurdu.
+  -->
+  <Style x:Key="Ds.ContextMenu.Item" TargetType="MenuItem">
+    <Setter Property="Height" Value="{x:Static controls:MenuRowMetrics.RowHeight}" />
+    <Setter Property="Padding" Value="{x:Static controls:MenuRowMetrics.RowPadding}" />
+    <Setter Property="FontFamily" Value="{x:Static controls:AppFonts.Ui}" />
+    <Setter Property="FontSize" Value="{DynamicResource FontSize.Sm}" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.TextSecondary}" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+    <Setter Property="controls:DsTransition.AnimatedBackground" Value="Transparent" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="MenuItem">
+          <Border Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}"
+                  CornerRadius="{DynamicResource Radius.Sm}" SnapsToDevicePixels="True">
+            <StackPanel Orientation="Horizontal">
+              <ContentPresenter ContentSource="Icon" VerticalAlignment="Center"
+                                Width="{x:Static controls:MenuRowMetrics.IconSlot}"
+                                Height="{x:Static controls:MenuRowMetrics.IconSlot}" />
+              <ContentPresenter ContentSource="Header" RecognizesAccessKey="True" VerticalAlignment="Center"
+                                Margin="{x:Static controls:MenuRowMetrics.LabelMargin}" />
+            </StackPanel>
+          </Border>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+    <Style.Triggers>
+      <Trigger Property="IsHighlighted" Value="True">
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.SurfaceRaised}" />
+      </Trigger>
+      <Trigger Property="IsEnabled" Value="False">
+        <Setter Property="Opacity" Value="{x:Static controls:MenuRowMetrics.DisabledOpacity}" />
+        <Setter Property="Cursor" Value="Arrow" />
+      </Trigger>
+    </Style.Triggers>
+  </Style>
+
+  <Style x:Key="Ds.ContextMenu" TargetType="ContextMenu">
+    <Setter Property="Width" Value="{x:Static controls:MenuRowMetrics.MenuWidth}" />
+    <Setter Property="Padding" Value="{x:Static controls:MenuRowMetrics.MenuPadding}" />
+    <Setter Property="ItemContainerStyle" Value="{DynamicResource Ds.ContextMenu.Item}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ContextMenu">
+          <Border Style="{DynamicResource Ds.Popover}" Padding="{TemplateBinding Padding}" Effect="{x:Null}">
+            <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle" />
+          </Border>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!--
     Dialog: _ds_bundle.js:963-968 — 1px border-strong, radius-lg, overlay gölgesi.
     SAPMA (T60 brief'inde KAYITLI): zemin CSS `surface-raised` degiskenitır (_ds_bundle.js:965) — README §2.9
     "surface-overlay" der; KOD KAZANIR.
