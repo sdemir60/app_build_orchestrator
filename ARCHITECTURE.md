@@ -3251,6 +3251,17 @@ outer job (§4.4); a git write that is only slow is cut off the same way (§20).
 that moment every `Closing` really closes. A Windows session that ends closes the application at once, with neither the
 card, the screen nor the tray — Windows does not wait either.
 
+**The tray menu opens where the right-click was, and the application opens it.** Right-clicking the tray icon opens a
+menu with *Stop* (§4.5) and *Exit* (above). The tray library would open it itself, converting the click — physical
+pixels from the shell — into WPF units with a scale factor it caches at the first click on the icon (the left click
+that brings the window back counts) and refreshes only when its hidden message window receives `WM_DPICHANGED`. WPF,
+for its part, rebuilds the menu's popup window on every opening and converts back at the scale of the moment. Once the
+display scale changed with the application running, the two factors disagreed and the menu opened hundreds of pixels
+from the click. The application therefore handles the library's preview event, so the library never opens the menu,
+and opens it itself with `MousePoint` placement: WPF reads the cursor in physical pixels and no cached scale sits
+between the click and the menu. Like the library, it then brings the menu's window to the foreground, without which a
+click elsewhere would not close it. The menu's look is the project row menu's (§13.8).
+
 **A build that runs while the window is away is not invisible.** When the main window is hidden *and* a build is
 in flight (`Starting` / `Running` / `Stopping` — `Syncing` is deliberately out of scope), the product mark
 animates in the bottom-right corner of the primary work area. It appears if the user drops to the tray mid-run
@@ -5782,6 +5793,7 @@ styles, and `Controls/` holds the custom elements that a template cannot express
 | Segment | An `ItemsControl` of `RadioButton`s — the `Debug｜Release` control, and the About dialog's tab switch |
 | Input | A `TextBox` style with watermark, prefix and invalid states, in two heights: the default one, and a shorter variant for the 28 px panel-header strip, where the default would fill the strip edge to edge and push its focus ring outside. The template deliberately leaves `PART_ContentHost` without a margin: WPF applies `Padding` to the content host itself, so a template that also binds the padding to a margin indents the caret and the typed text by two paddings instead of one. `DsChrome.IsClearable` is opt-in and only the two search boxes set it (the project filter and the branch search): while the box holds text a 16 px `✕` sits inside the right padding — which is reserved whether or not the `✕` shows, so typing never narrows the text area — and clicking it empties the box through `DsChrome.ClearTextCommand`, a normal edit that the filter binding and `TextChanged` both see. The `✕` is not focusable, so the caret stays in the box |
 | Select | A `ComboBox` template, ported from the design system's `<select>`. It is the library's one component with no live consumer — external-project cards carry no source picker (§10.4) — and is kept so the port does not have to be redone. Same input shell and focus ring as `Ds.Input`; the dropdown carries the same overlay chrome as the popovers, at a smaller radius. The chevron reuses the chip dropdown's existing glyph rather than adding a second copy of the same geometry, and the row hover runs through the same `DsTransition` gate as every other 120 ms colour change in the library — no bespoke entrance animation was added for the popup itself |
+| Context menu | `Ds.ContextMenu` and `Ds.ContextMenu.Item` over the stock `ContextMenu` and `MenuItem` — keyed, not implicit, so text boxes keep their stock menu. The tray menu (§12.3) is the application's only context menu and speaks the project row menu's language: the `Ds.Popover` shell at the row menu's width and padding, 26 px rows with a 13 px icon slot and an 8 px gap — one class holds these measurements for both menus (`MenuRowMetrics`), so the two cannot drift — a 13 px `text-secondary` label, and the row menu's highlight, `surface-raised` through the 120 ms `DsTransition`, for the pointer and the keyboard alike (WPF reports both as `IsHighlighted`); a disabled item fades to 0.45. An item's icon (`IconMenuItem`) is built when its template is applied, inside the menu's tree, so its paint resolves there. Two departures from the popover are deliberate. The shell has no shadow: WPF sizes the popup window to the menu, the overlay shadow is clipped at the window's edge, and what survives is a dark patch in the lower corners outside the rounded border — invisible on the application's own dark surfaces, gray over a light window or taskbar, and the tray menu opens over anything; room for the shadow would move the menu's corner away from the cursor. And there is no pop-in: the menu's own popup follows Windows' menu animation setting, and a second entrance on top of it would play twice |
 | Tooltips | Open with **no delay** and stay until the pointer leaves, on disabled elements too. All three are `ToolTipService` attached properties that WPF reads from the tooltip's *owner*, not from the tooltip — set on the `ToolTip` style they are dead, which is how every tooltip in the app ended up on WPF's ~1 s default and looked like it never appeared. The defaults are overridden once, on `FrameworkElement`'s metadata (`AppTooltipDefaults`) |
 | Scrollbar | An implicit `ScrollBar` style — a 10 px transparent rail, no arrow buttons, and a neutral thumb pill inset by 3 px. The pill reacts to the *rail*, not to itself: a 4 px pill is a poor grab target, so as soon as the pointer enters the 10 px rail the inset flows from 3 px to 1 px — an 8 px pill — and the fill steps once up the neutral ramp; dragging steps once more. Only the pill grows, never the rail, so hovering never re-lays out the content beside it. Being implicit the style crosses template boundaries, so stock and third-party viewers alike (the console editor included) wear it without their XAML knowing; the stock corner square between two bars is neutralised app-wide |
 | Kbd · ProgressBar · Popover · Dialog · Focus visual | Styles over stock elements. A focus ring is a rectangle pushed outside its element by `-(offset + stroke/2)` and rounded by the same amount so it follows the corner — arithmetic XAML cannot do, so `DsChrome.FocusRingOffset` derives both. Its default is `NaN`, not zero: zero is a real offset (the input's ring hugs the edge with no gap) and WPF skips a property's change callback when the assigned value equals the default, which would leave that ring flat against the box and square-cornered |
@@ -5908,7 +5920,8 @@ whole (§13.5).
 This section is the design system. There is no external style sheet, no runtime theming and no second
 authority: the values below are declared once in `Resources/Tokens.xaml` and `Resources/Motion.xaml` so the
 application can consume them, and component-specific measurements sit as named constants on the control that
-draws them. The resource strip is the exception: a guard keeps numeric measurements out of its markup, so its four
+draws them — or, where two components draw the same element, in one class both read: the project row menu and the
+tray menu draw the same menu row and share `MenuRowMetrics` (§13.8). The resource strip is the exception: a guard keeps numeric measurements out of its markup, so its four
 measurements are tokens named for it in `Tokens.xaml` (§14.1). Section §13 gives those per-component values in context.
 
 ### 14.1 Tokens
@@ -6166,7 +6179,9 @@ its eraser, gauge or unlink mark for the spinner, in the same 12 px box, so the 
 
 The Build split menu and the project row menu share **one icon family** on a single grid: play, rotate-cw,
 brush. The mapping lives in one place so the two menus cannot drift; the ⋯ that opens the row menu belongs to
-the same family of filled marks as the drag grip. The application icon is a multi-size ICO with the 16 and 24 px rasters hand-corrected;
+the same family of filled marks as the drag grip. The tray menu draws no mark of its own: *Stop* carries the stop
+square the Stop button and the row's stop icon draw (`Icon.Stop` in `status-fail-text`), and *Exit* the title bar
+*Exit* button's Lucide *power* (`Icon.Power`) in the `text-dim` of menu-row icons. The application icon is a multi-size ICO with the 16 and 24 px rasters hand-corrected;
 carets and chevrons are drawn, not typed.
 
 One icon has no literal counterpart in the design source and is marked *derived* in the dictionary, with the
@@ -6925,7 +6940,10 @@ A second group carries the `Measurement` category: probes and measurements that 
 assert rules — the tray overlay's own cost, rendered frames of its loop, the notification call, where the real
 file picker lands, UI latency and memory under each perf profile, the UI thread cost of a build's events while the
 window is hidden, the managed-memory budget of the run narrative, the UI thread cost of landing at the end of a long
-project page, and the content-decision timings. The filter above does **not** exclude them (`!=` admits every other
+project page, and the content-decision timings. One test in the group asserts a rule rather than reading a number,
+because only a real tray shows it: the tray menu opens at the click even when the tray library's cached scale no
+longer matches the screen (`TrayMenuPositionProbeTests`, §12.3). It repeats a reading the mouse moved during and skips
+when the mouse never keeps still. The filter above does **not** exclude them (`!=` admits every other
 category value). The tray, file-picker, hidden-window, memory, perf and page-end probes open real windows and dialogs,
 show balloons, force full collections, press hundreds of keys or saturate every core, so each is gated on an
 environment variable — `BO_PROBE_TRAY`, `BO_PROBE_FILE_DIALOG`, `BO_MEASURE_OVERLAY`, `BO_MEASURE_HIDDEN`,
@@ -7548,6 +7566,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Window shell, layout wiring, shortcut binding | `App/MainWindow.xaml(.cs)`, `App/ShellRoot.xaml(.cs)` |
 | Maximize overflow fix · DWM corners/border · caption glyphs | `App/Shell/MaximizeFix.cs`, `Dwm.cs`, `CaptionGlyphs.cs` |
 | Single instance, tray icon, global hotkeys (table, show/hide decision), shutdown | `App/Shell/SingleInstance.cs`, `AppTrayIcon.cs`, `Hotkey.cs`, `App/Shell/AppShutdown.cs` |
+| Tray menu — opened by the application at the cursor's physical point instead of by the tray library (§12.3); its items and their icons | `App/Shell/AppTrayIcon.cs` (`OpenMenuOurselves`, `OpenMenu`, `CreateMenu`) |
 | Start with Windows — the `Run` value, Task Manager's disabled mark, the state the switch shows, the save-time write, the removal at uninstall (`RemoveForUninstall`) | `App/Services/AutostartService.cs` |
 | Window close decision — `X`, `Alt+F4`, system-menu *Close*, an `Esc` with nothing left to do: close, stay, hide to the tray or ask for a full exit | `App/Shell/WindowCloseRule.cs`; applied in `App/MainWindow.xaml.cs` (`OnClosing`) |
 | Full exit: what is in flight (`ExitWork`), the hard stop of a run and the stop wait (`ExitStopWaitMs`), the jobs cut off and the git writes waited for, the release on engine silence or death, `ExitReady`; the run's progress for the card (`ExitProgress`) | `App/ViewModels/RunViewModel.Exit.cs`; the work kinds and the one rule of which ones the exit waits for: `App/ViewModels/ExitWork.cs` (`ExitWorkRules.Waits`); the hard stop shared with *Stop now*: `RunViewModel.cs` (`SendHardStopAsync`); no Sync once the exit is asked for, and nothing leaves the engine gate: `RunViewModel.cs` (`SyncCoreAsync`), `RunViewModel.Engine.cs` (`EnsureEngineAwakeAsync`) — both read the one flag, `_exitRequested` |
@@ -7796,6 +7815,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Single-project run commands (build · rebuild · clean), run target and lock pushed to rows | `App/ViewModels/RunViewModel.cs` (`BuildProjectCommand`, `RunTargetId`) |
 | Build-state row removal after a clean | `Core/State/BuildStateStore.cs` (`Remove`) |
 | Row menu placement (row-right inset, row overlap, viewport clamp) | `App/Controls/RowMenuPlacement.cs` |
+| Menu-row measurements shared by the row menu and the tray menu · the tray menu's look (`Ds.ContextMenu`, `Ds.ContextMenu.Item`) · a menu item that builds its icon when its template is applied | `App/Controls/MenuRowMetrics.cs`, `App/Resources/Controls.xaml`, `App/Controls/IconMenuItem.cs` |
 | Second press on a popover trigger closes it | `App/Controls/PopoverToggle.cs` |
 | List with cumulative sticky headers and reveal | `App/Controls/StickyLayerList.xaml(.cs)` |
 | Progressive row realization (visible window first, idle slices after; rows are never recycled) with an exact (never estimated) extent | `App/Controls/FixedHeightVirtualizingPanel.cs` |
