@@ -103,6 +103,16 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// (<c>BuildStateStore</c>, <see cref="BuildPreviewItem"/>) — satır artık okumaz.</para></summary>
     [ObservableProperty] private bool? _ownFilesChanged;
 
+    /// <summary>[kullanıcı kararı 2026-10-25] Projenin son başarılı derlemesinin configuration'ı — yalnız şimdiki
+    /// configuration'dan farklıysa (kaynak <see cref="BuildPreviewItem.LastBuiltConfiguration"/>), yoksa <c>null</c>. Etiket ve
+    /// proje sayfası, imzası configuration geçişiyle değişmiş projenin gerekçesini bununla adlandırır.</summary>
+    [ObservableProperty] private string? _lastBuiltConfiguration;
+
+    /// <summary>[kullanıcı kararı 2026-10-25] Bu araç dışında derlenmiş ve kendi kontrolünden taze çıkan proje, yeniden
+    /// derlenecek bir bağımlılığın arkasında olduğu için mi derlenecek (kaynak
+    /// <see cref="BuildPreviewItem.BehindRebuildingDependency"/>). Proje sayfasının gerekçe cümlesi bunu okur.</summary>
+    [ObservableProperty] private bool _behindRebuildingDependency;
+
     /// <summary>[T53-UI · C1 debt] Satır seçili mi — <see cref="RunViewModel.SelectedProjectId"/> değiştiğinde
     /// (<see cref="RunViewModel.OnSelectedProjectIdChanged"/>) tüm satırlar için tazelenir. Kart bunu şerit
     /// genişliği (2→3), iç sarmalayıcı <c>TranslateX 4</c> ve <c>Brush.SurfaceRaised</c> zemini için okur.</summary>
@@ -2089,6 +2099,10 @@ public sealed partial class RunViewModel : ObservableObject
             // durumundan (terminal olsun olmasın) bağımsızdır.
             row.CurrentSha = item.BuiltCommit;
             row.OwnFilesChanged = item.OwnFilesChanged;      // [v1.16.0] modified ↔ affected ayrımı
+            // [kullanıcı kararı 2026-10-25] Gerekçenin iki olgusu: son derlemenin (farklı) configuration'ı ve önce yeniden
+            // derlenecek bağımlılık — etiket ve proje sayfası gerçek sebebi bunlardan söyler.
+            row.LastBuiltConfiguration = item.LastBuiltConfiguration;
+            row.BehindRebuildingDependency = item.BehindRebuildingDependency;
             // [DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20] Önizlemenin üç zaman alanı (LastBuiltAt, FailedAt,
             // OutputBuiltAt) burada satıra TAŞINIRDI; etiket yaş taşımadığı için satırda okuyucuları kalmadı ve
             // alanlar satırdan kalktı. Önizleme onları taşımaya devam eder (defterin kaydı, bkz. Contracts).
@@ -2358,6 +2372,10 @@ public sealed partial class RunViewModel : ObservableObject
             // (LastBuiltAt=şimdi, FailedAt=null, OutputBuiltAt=null — "az önce derlendi, eski kanıt geçersiz").
             // Alanların TEK okuyucusu etiketin yaş kuyruğuydu; yaş kalkınca alanlar da satırdan kalktı.
             row.OwnFilesChanged = RunIsClean ? null : false;   // az önce derlendi: kendi dosyası artık güncel
+            // [kullanıcı kararı 2026-10-25] Şimdiki configuration'da derlendi ve beklediği bağımlılık derlendi: iki gerekçe
+            // olgusu da düşer (Clean'de defter kaydı zaten silinir).
+            row.LastBuiltConfiguration = null;
+            row.BehindRebuildingDependency = false;
         }
         _projectStartedAtMs.Remove(projectId);
         UpdateEta(); // [Task 17] her proje tamamlanışında ETA'yı yeniden hesapla

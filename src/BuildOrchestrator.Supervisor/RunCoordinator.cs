@@ -1113,7 +1113,11 @@ public sealed class RunCoordinator(
                 // TAŞINMAZ (default false): o Sync'in "o anki çalışma ağacı" işaretidir, bir koşunun kendi
                 // önizlemesi bunu yeniden hesaplamaz — etiket Sync'ten gelen değeri korur.
                 FailedAt: BuildStateStore.FailedAtOf(builtCommits, n.Id),
-                OutputBuiltAt: OutputEvidence.OutputBuiltAt(CheckOf(n.Id), n.WillBuildReason)))]));
+                OutputBuiltAt: OutputEvidence.OutputBuiltAt(CheckOf(n.Id), n.WillBuildReason),
+                // [kullanıcı kararı 2026-10-25] Gerekçenin iki olgusu Sync'inkiyle AYNI yardımcılardan: son derlemenin
+                // (farklı) configuration'ı ve önce yeniden derlenecek bağımlılık.
+                LastBuiltConfiguration: BuildStateStore.OtherBuiltConfigurationOf(builtCommits, n.Id, plan.Configuration),
+                BehindRebuildingDependency: OutputEvidence.BehindRebuildingDependency(CheckOf(n.Id), n.WillBuildReason)))]));
         // [koşu başı uyarıları görünür] Ters katman uyarıları burada konsola BASILMAZ: runStarted'dan önce bayat obj
         // satırlarıyla aynı listede toplanıp (StaleObjRunStartWarner çağrısının yanında) kullanıcıya App üzerinden ulaşır.
         // Belirsiz üretici uyarıları metinlerini KENDİLERİ taşır (PlanProgressLines "warning: " ile başlar) —
@@ -2801,7 +2805,10 @@ public sealed class RunCoordinator(
                 // sonraki Resolve üyeyi gerekli sayar (güvenli taraf).
                 CycleMemberTerm: cycle?.Term, CycleReadSurfaces: cycle?.ReadSurfaces, CycleEngineFingerprint: cycle?.EngineFingerprint,
                 // [D6] Bu derlemenin bağlandığı doğrudan bağımlılık yüzeyleri — yüzey kapısının karşılaştırma tabanı.
-                DependencySurfaces: dependencySurfaces);
+                DependencySurfaces: dependencySurfaces,
+                // [kullanıcı kararı 2026-10-25] İmzanın yanında configuration'ı: imza onu içine katar ama hangisi olduğunu
+                // söyleyemez — configuration değişince önizleme gerekçeyi bununla adlandırır (BuildStateStore.OtherBuiltConfigurationOf).
+                BuiltConfiguration: run.Configuration);
         });
 
     /// <summary>[tek proje · Clean] Başarılı bir <c>Clean</c>'den sonra projenin defter kaydını siler —

@@ -151,7 +151,11 @@ public static class ConsoleEmptyState
             WillBuildReason.NeverBuilt => $"{head} — this tool has never built it.",
             WillBuildReason.LastFailed => $"{head} — it failed at this source.",
             WillBuildReason.DepIssue => $"{head} — its last success was linked against a failed dependency.",
-            WillBuildReason.SignatureChanged => $"{head} — the signature changed since the last successful build.",
+            // [kullanıcı kararı 2026-10-25] İmza yalnız configuration geçişiyle değişmiş olabilir: motor son derlemenin
+            // configuration'ını (şimdikinden farklıysa) gönderdiyse sayfa gerçek sebebi söyler, "imza değişti" demez.
+            WillBuildReason.SignatureChanged => row.LastBuiltConfiguration is { Length: > 0 } built
+                ? $"{head} — it was last built in {built}."
+                : $"{head} — the signature changed since the last successful build.",
             // [DEĞİŞEN KURAL — Task 6, design v1.20.0 §2.4] Eskiden bu dal yalnız row.Conditional iken (motor bu
             // koşuyu GERÇEKTEN bekletirken) devreye girerdi; Conditional=false (zorlanmış kapsam) genel "Will
             // build in this run." dalına düşerdi. DecisionLabel artık conditional'ı hiç okumadığı için (bkz. o
@@ -164,9 +168,14 @@ public static class ConsoleEmptyState
             // [Faz 3 — spec 2026-09-18 §5.3/§5.4, Task 7] Üç yeni gerekçe: çıktının kendisi diskte yok / bayat /
             // öğrenilmiş kopyası bozuk. Metinler claude-decisions.md'nin "Proje sayfası" kararlarıyla birebir.
             WillBuildReason.OutputMissing => $"{head} — its build output is missing.",
+            // [kullanıcı kararı 2026-10-25] Bayatlık kendi girdisinden değilse iki kaynaktan gelebilir: bir HintPath hedefi
+            // gerçekten yeni, ya da proje (kendi kontrolünden taze çıkmışken) yeniden derlenecek bir bağımlılığın arkasında —
+            // o an daha yeni bir çıktı yoktur, "çıktısı daha yeni" demek yanlış olurdu.
             WillBuildReason.OutputStale => row.OwnFilesChanged == true
                 ? $"{head} — its files are newer than its build output."
-                : $"{head} — a dependency's output is newer than its build output.",
+                : row.BehindRebuildingDependency
+                    ? $"{head} — one of its dependencies will be rebuilt first."
+                    : $"{head} — a dependency's output is newer than its build output.",
             WillBuildReason.OutputReplaced => $"{head} — its copy in the shared folder does not match its build output.",
             _ => $"{head} in this run.",
         };

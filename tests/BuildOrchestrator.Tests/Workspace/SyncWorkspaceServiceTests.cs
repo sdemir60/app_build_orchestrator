@@ -957,12 +957,14 @@ public class SyncWorkspaceServiceTests
     private static string WriteBuiltOutput(GitTestRepo repo, string name) =>
         LegacyFixture.WriteBuiltOutput(Path.Combine(repo.RootPath, "src", name), name);
 
-    /// <summary>Ağa çıkmayan bir Sync (<c>Fetch: false</c>) — bu testlerin konusu kararın kendisidir.</summary>
-    private static async Task<List<IpcEvent>> SyncWithoutFetchAsync(GitTestRepo repo, string cacheRoot)
+    /// <summary>Ağa çıkmayan bir Sync (<c>Fetch: false</c>) — bu testlerin konusu kararın kendisidir.
+    /// <paramref name="configuration"/> Sync'in seçili configuration'ıdır (App'te Debug/Release geçişi).</summary>
+    private static async Task<List<IpcEvent>> SyncWithoutFetchAsync(GitTestRepo repo, string cacheRoot,
+        string configuration = "Debug")
     {
         var events = new List<IpcEvent>();
         await ServiceFor(repo.RootPath, cacheRoot).RunAsync(
-            new SyncWorkspaceCommand(repo.RootPath, repo.CurrentBranchName(), Fetch: false),
+            new SyncWorkspaceCommand(repo.RootPath, repo.CurrentBranchName(), Configuration: configuration, Fetch: false),
             events.Add, CancellationToken.None);
         return events;
     }
@@ -1058,6 +1060,64 @@ public class SyncWorkspaceServiceTests
         Assert.Null(y.OutputBuiltAt);
         var done = Assert.Single(events.OfType<SyncCompletedEvent>());
         Assert.Equal((1, 2, 0), (done.ChangedCount, done.ToBuildCount, done.UpToDateCount));
+    }
+
+    /// <summary>
+    /// [kullanıcı kararı 2026-10-25] Zincirlemenin olgusu önizlemede: <c>Y</c>'nin kendi kontrolü taze (dışarıda, girdilerinden
+    /// sonra derlenmiş), ama arkasındaki <c>X</c> bu Build'de yeniden derlenecek. <c>Y</c>'nin bayatlığı kendi girdisinden ya da
+    /// bir HintPath hedefinin yeni tarihinden değil, önce derlenecek bağımlılıktan gelir — önizleme bunu taşır ki proje sayfası
+    /// "bir bağımlılığın çıktısı daha yeni" demesin (o an daha yeni bir çıktı yoktur). Kendi kaynağı çıktısından yeni olan
+    /// <c>X</c> taşımaz. Kurgu <see cref="A_project_built_elsewhere_behind_a_changed_dependency_is_rebuilt_as_affected"/>'ınkiyle
+    /// aynıdır.
+    /// </summary>
+    [Fact]
+    public async Task A_project_behind_a_dependency_that_will_build_carries_that_fact_in_the_preview()
+    {
+        using var repo = new GitTestRepo();
+        CommitLegacyXYWorkspace(repo);
+        EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"),
+            [WriteBuiltOutput(repo, "X"), WriteBuiltOutput(repo, "Y")]);
+        File.SetLastWriteTimeUtc(Path.Combine(repo.RootPath, "src", "X", "Class1.cs"), EvidenceTimes.EditedAt);
+
+        var preview = Assert.Single((await SyncWithoutFetchAsync(repo, NewCacheRoot())).OfType<BuildPreviewEvent>());
+
+        Assert.True(Assert.Single(preview.Items, i => i.Name == "Y").BehindRebuildingDependency);
+        Assert.False(Assert.Single(preview.Items, i => i.Name == "X").BehindRebuildingDependency);
+    }
+
+    /// <summary>
+    /// [kullanıcı kararı 2026-10-25 · bildirim "Release'e geçince affected — a dependency changed"] Araç <c>X</c>'i en son
+    /// Debug'da derledi (defter: Debug imzası, içerik özeti, configuration'ı); diskte o derlemeden ESKİ bir Release çıktısı
+    /// duruyor, yani proje defter kipinde. Release Sync'inde imza configuration terimi yüzünden değişir
+    /// (<c>SignatureChanged</c>) ve kendi dosyası değişmemiştir — satır bunu "bir bağımlılık değişti" diye okuyordu, oysa
+    /// hiçbir bağımlılığı yok. Önizleme son derlemenin configuration'ını taşır ki gerekçe onu adlandırsın. Debug Sync'i aynı
+    /// projeyi güncel bulur ve alanı boş bırakır: aynı configuration'da söylenecek bir şey yoktur.
+    /// </summary>
+    [Fact]
+    public async Task A_project_last_built_in_debug_carries_that_configuration_into_the_release_preview()
+    {
+        using var repo = new GitTestRepo();
+        CommitLegacyWorkspace(repo, "X");
+        string cacheRoot = NewCacheRoot();
+        var content = await PrimeBuildStateAsUpToDateAsync(repo.RootPath, cacheRoot);
+        PrimeToolBuilt(repo.RootPath, cacheRoot, ["X"], content, toolRunAt: EvidenceTimes.ToolRunAt);
+        var store = new BuildStateStore(cacheRoot);
+        string id = Path.Combine(repo.RootPath, "src", "X", "X.csproj");
+        store.Upsert(store.Load()[id] with { BuiltConfiguration = "Debug" });
+        string releaseOutput = Path.Combine(repo.RootPath, "src", "X", "bin", "Release", "X.dll");
+        Directory.CreateDirectory(Path.GetDirectoryName(releaseOutput)!);
+        File.WriteAllText(releaseOutput, "an older release build");
+        EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"), [WriteBuiltOutput(repo, "X"), releaseOutput]);
+
+        var release = Assert.Single(Assert.Single(
+            (await SyncWithoutFetchAsync(repo, cacheRoot, "Release")).OfType<BuildPreviewEvent>()).Items);
+        var debug = Assert.Single(Assert.Single(
+            (await SyncWithoutFetchAsync(repo, cacheRoot, "Debug")).OfType<BuildPreviewEvent>()).Items);
+
+        Assert.Equal((true, WillBuildReason.SignatureChanged, false), (release.WillBuild, release.Reason, release.OwnFilesChanged));
+        Assert.Equal("Debug", release.LastBuiltConfiguration);
+        Assert.Equal((false, WillBuildReason.UpToDate), (debug.WillBuild, debug.Reason));
+        Assert.Null(debug.LastBuiltConfiguration);
     }
 
     /// <summary>

@@ -776,6 +776,11 @@ Three of these carry the whole model:
   never sets it; it always carries `false`, because that flag describes what Sync last saw in the working tree,
   and a run does not repeat that read. `outputBuiltAt` is the time of the build evidence of a project built
   outside this tool (§7.6), set for that reason only; both previews write it through the same helper.
+  `lastBuiltConfiguration` names the configuration of the project's last successful build when it is not the one
+  this preview was computed for (§7.5), and `behindRebuildingDependency` marks a project built outside this tool
+  whose own check is fresh but which compiles because a dependency in the plan is rebuilt first (§7.6). Both
+  previews write the two through the same helpers, and the row's label and the project page name the reason from
+  them (§13.2, §13.5).
   The three times an item can carry — `lastBuiltAt`, `failedAt` and `outputBuiltAt` — have **no reader on the
   App side today**: no row, label, tooltip or project page prints a time (§13.2). They stay on the wire and in
   the ledger because they are cheap facts the engine already holds and the decision surfaces may want again;
@@ -1107,7 +1112,11 @@ ledger, which keeps one signature per project — its last successful build's �
 configuration selected before: switching to Release and back to Debug without building in Release in between
 changes nothing, and every project that was up to date still is. The output evidence is the one qualifier
 (§7.6): when the new configuration's output was built elsewhere after the tool's last run of the project, that
-project is in time mode and can read up to date without compiling.
+project is in time mode and can read up to date without compiling. The ledger also records which configuration
+that one signature was built in (§7.5) — not to decide, the signature already does that, but because the
+signature folds the configuration in without naming it: a project stale only because of the switch would
+otherwise read as if a dependency had changed, and with the record its row says it was last built in Debug
+(§13.2).
 
 ### 7.3 Cycles in the signature
 
@@ -1201,8 +1210,8 @@ compile error — is not evidence, and the project reads `NeverBuilt` instead of
 
 ### 7.5 Build state
 
-`build-state.json` is **global**, keyed by project id (the full csproj path), holding the built signature, the
-**built
+`build-state.json` is **global**, keyed by project id (the full csproj path), holding the built signature and the
+configuration it was built in, the **built
 content fingerprint**, the built commit, the last result, the last run timestamp, the last branch, the last
 duration, a flag marking that this success was linked against a failed dependency together with the project
 ids of that dependency issue's roots (§8.3), the signature at which this project's cycle last failed to
@@ -1217,7 +1226,11 @@ to* the signature rather than folded into it because it answers a different ques
 files change?" — and the row's `modified` ↔ `affected` split is the only thing that reads it (§13.2). That last
 field is deliberately *not* folded into the built signature: the built signature means "this was compiled
 successfully", and Fast mode reads it as a frozen upstream baseline — a signature that was never built would be
-taken for a clean one. A project from an external root (§10.4) has the same record under the same key shape, and
+taken for a clean one. The configuration of the last success sits beside the signature for the reason the
+fingerprint does: the signature folds it in but cannot name it, and a row that is stale only because the
+configuration was switched reads it to say so (§7.2, §13.2). Invalidations keep it with the rest of the record,
+and a record that predates the field answers `null`, so its row keeps the general wording until the project
+builds once. A project from an external root (§10.4) has the same record under the same key shape, and
 its built-commit slot means the same thing — except that the revision written there is **its own** working
 copy's, not the repository's, because the repository's HEAD describes a different repository. The last-branch
 slot stays empty for the same reason, and so does the commit when the working copy has no readable revision at
@@ -1323,7 +1336,10 @@ is about to be rebuilt: until that build runs, the dependency's shared copy is s
 dependent's output looks current against it. So in the Safe mode (§7.2) a time-mode project behind an upstream
 project in the plan — directly or transitively — whose build really refreshes that shared copy reads output
 stale from a dependency and is built in the same *Build*; its row reads `affected`, since its own files did not
-change, and not `built outside this tool`.
+change, and not `built outside this tool`. The pull happens inside the decision only — the check the previews
+carry keeps the project's own fresh verdict — so a preview can tell this project from one whose `HintPath` target
+really is newer, and its project page says that one of its dependencies will be rebuilt first rather than that a
+dependency's output is newer (§13.5).
 
 Which upstreams count is the whole rule. A project that will build because its signature moved, because it was
 never built, because it was built against a failed dependency whose roots are unknown, or because its own
@@ -3695,7 +3711,7 @@ and MSBuild, not invented terms:
 |---|---|
 | `modified` | its own input files changed since the last build — or, for an output built elsewhere, are newer than that output |
 | `modified · local` | same, and at least one of its input files is also dirty in `git status` |
-| `affected` | its own files are unchanged; a dependency changed — for a cycle member that dependency can be a sibling in the same cycle — or its copy in the shared folder no longer matches its build output |
+| `affected` | its own files are unchanged; a dependency changed — for a cycle member that dependency can be a sibling in the same cycle —, it was last built in another configuration, or its copy in the shared folder no longer matches its build output |
 | `never built` | no build output known to this tool: never built successfully, or its output file is missing |
 | `failed` | it failed at this source |
 | `up to date` | it is current — either because this tool's last build still matches, or because an output built outside it does |
@@ -3711,10 +3727,19 @@ Every word maps from the engine's reason (§7.4, §7.6), and the tooltip keeps a
 | output replaced | `affected` | `Its copy in the shared folder does not match its build output` |
 | output stale, own inputs newer | `modified` or `modified · local` | `Its own files are newer than its build output` |
 | signature changed, dependency issue — own files changed | `modified` | `Its own files changed since the last build` (with `local`: `— includes uncommitted edits`) |
+| signature changed, last built in another configuration — own files unchanged | `affected` | `Its own files are unchanged — last built in Debug` (the configuration named) |
 | signature changed, dependency issue, output stale — own files unchanged | `affected` | `Its own files are unchanged — a dependency changed` |
 
+The configuration row exists because the signature folds the configuration in (§7.1): a project the tool last
+built in Debug changes signature when Release is selected even though neither its files nor any dependency
+moved, and calling that a dependency change would send the reader looking in the wrong place. The engine sends
+the configuration of the last success only when it differs from the one the preview was computed for (§5.3,
+§7.5), so the row needs no comparison of its own; a ledger record written before the configuration was recorded
+keeps the general wording.
+
 **No label and no tooltip carries a time.** The slot names a fact, never a clock: the label reads the plan and
-three facts only — the reason, whether the project's own files changed, and whether any of them is dirty.
+four facts only — the reason, whether the project's own files changed, whether any of them is dirty, and the
+configuration of its last build when that is not the selected one.
 `local` is the one tail there is, and a timestamp reaching the row
 changes nothing on screen. Showing the age of the evidence behind the word was considered and rejected: for an
 output built outside this tool there is no age of *this* tool's making, so the row would have shown how long
@@ -5181,9 +5206,12 @@ lines.
   commit is not evidence and is not shown. A project built outside this tool (§7.6) reads `Up to date — built outside this tool.`
   over `Built outside this tool`, since the evidence is someone else's output rather than a build of this
   tool's; the output reasons read `its build output is missing`, `its files are newer than its build output`
-  (or `a dependency's output is newer than its build output`) and `its copy in the shared folder does not match
-  its build output`, and a missing output does not repeat itself on the evidence line, just as never built does
-  not. The status word is not written: the row and the graph node already show the project's state. A project
+  (or `a dependency's output is newer than its build output`, or — for a project whose own check is fresh but
+  which compiles behind a dependency the plan rebuilds, §7.6 — `one of its dependencies will be rebuilt first`)
+  and `its copy in the shared folder does not match its build output`, and a missing output does not repeat
+  itself on the evidence line, just as never built does not. A signature that moved only because the
+  configuration was switched reads `it was last built in Debug`, the configuration named, rather than that the
+  signature changed (§7.2). The status word is not written: the row and the graph node already show the project's state. A project
   that is compiling right now gets one line instead of two: there is no evidence yet, and its output is about
   to arrive. The reason comes from the engine's own vocabulary where there is one — the skip reasons are a
   single shared source, so the page, the event stream and `decision.log` cannot drift apart — and from the
@@ -6540,7 +6568,7 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 | Path | Content | Corruption behaviour |
 |---|---|---|
 | `logs\run-<timestamp>\` | per-run and per-project logs, written by the engine, and `narrative.log`, the run's console narrative, written by the App from the moment `runStarted` names the folder until the next console section opens (§8.5, §13.5); a run's folder is removed at the first engine start more than three days after the run, except the newest run's, which always stays (§8.5) | — |
-| `build-state.json` | per-project signature, commit, result, duration, dependency-issue note with its root project ids, non-convergent cycle signature, the fed outputs learned from the last success (§7.6), the `packages.config` content hash behind the restore decision (§9.3), a cycle member's term, the sibling surfaces it read and the engine fingerprint behind round one's compile decision (§7.5, §8.8); projects from external roots share the file under the same key shape, without a commit or branch (§7.5). A record written before a field existed loads with that field empty | falls back to empty |
+| `build-state.json` | per-project signature and the configuration it was built in, commit, result, duration, dependency-issue note with its root project ids, non-convergent cycle signature, the fed outputs learned from the last success (§7.6), the `packages.config` content hash behind the restore decision (§9.3), a cycle member's term, the sibling surfaces it read and the engine fingerprint behind round one's compile decision (§7.5, §8.8); projects from external roots share the file under the same key shape, without a commit or branch (§7.5). A record written before a field existed loads with that field empty | falls back to empty |
 | `evaluation-cache.json` | csproj evaluation cache; each entry records the schema it was written under, and an entry written under another schema is re-evaluated rather than served (§6.2); an SDK-style entry also records the `Directory.Build.*` files its layout decision read, and is re-evaluated when one of them changes or appears; Optimize removes such entries outright, whatever root they belong to | falls back to empty |
 | `source-hash-cache.json` | source content hashes keyed by path, size and modification time (§7.1) — this is what turns the content decision into one stat pass per run | falls back to empty (the next run re-reads and rebuilds it) |
 | `run-inflight.json` | the ids of the projects the engine has dispatched and not yet reported — written at dispatch, erased at the result, emptied at the end of every run; left non-empty only by an engine that died mid-run, and read once at the next engine start (§8.7). Absent while no run is in flight | an unparsable file is deleted and nothing is recovered; an unreadable one stays for the next start |

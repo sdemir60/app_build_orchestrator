@@ -91,7 +91,7 @@ global kısayollar için RegisterHotKey. Uygulama Velopack ile kullanıcı baş�
 derleneceğini (modified, modified · local, affected, never built, failed) ya da güncel olduğunu söyler; ipucu
 ayrıntıyı verir.\
 **Nasıl:** Sync, tam bir Build'in vereceği kararı önizler: projenin kendi dosyaları değiştiyse modified, yalnız bir
-bağımlılığı değiştiyse affected, değişiklik git'te de commit'lenmemişse local. Kırmızı yalnız bugünkü kaynak için
+bağımlılığı ya da configuration'ı değiştiyse affected, değişiklik git'te de commit'lenmemişse local. Kırmızı yalnız bugünkü kaynak için
 kanıtlanmış derleyici hatası demektir.\
 `modified ile affected ayrımı için içerik parmak izi` · `local işareti için git status` · `kanıta dayalı kırmızı, yanlış alarm yok`
 

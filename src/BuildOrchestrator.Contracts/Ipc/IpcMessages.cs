@@ -612,10 +612,23 @@ public sealed record CycleCompletedEvent(string RunId, string ProjectId, CycleOu
 /// YANILTICIydı ve kalktı; alanın bugün okuyucusu YOK. Sync ve koşu önizlemesi aynı yardımcıdan yazar
 /// (<see cref="BuildOrchestrator.Core.Incremental.OutputEvidence.OutputBuiltAt"/>); diğer her durumda <c>null</c>
 /// (JSON'a yazılmaz). Alan SONA ve default'lu eklendi: eski NDJSON satırları alansız çözülür.</param>
+/// <param name="LastBuiltConfiguration">[kullanıcı kararı 2026-10-25] Projenin son başarılı derlemesinin configuration'ı
+/// (<see cref="Model.BuildState.BuiltConfiguration"/>) — YALNIZ bu önizlemenin configuration'ından farklıysa; aynıysa ya da
+/// kayıt bilmiyorsa <c>null</c>. Satır, imzası yalnız configuration geçişiyle değişmiş projede gerekçeyi buradan adlandırır
+/// (<c>last built in Debug</c>); yoksa "bir bağımlılık değişti" derdi. Sync ve koşu önizlemesi AYNI yardımcıdan yazar
+/// (<see cref="BuildOrchestrator.Core.State.BuildStateStore.OtherBuiltConfigurationOf"/>). Alan SONA ve default'lu: eski NDJSON
+/// satırları alansız çözülür.</param>
+/// <param name="BehindRebuildingDependency">[kullanıcı kararı 2026-10-25] Bu araç dışında derlenmiş, kendi kontrolünden
+/// TAZE çıkan proje, planda yeniden derlenecek bir bağımlılığın arkasında olduğu için derlenecek mi
+/// (<see cref="WillBuildReason.OutputStale"/> ile zincirleme — ARCHITECTURE §7.6 "Behind a dependency that will build"). Proje
+/// sayfası bunu "bir bağımlılığın çıktısı daha yeni" diye değil "bir bağımlılığı önce yeniden derlenecek" diye söyler.
+/// Sync ve koşu önizlemesi AYNI yardımcıdan yazar (<see cref="BuildOrchestrator.Core.Incremental.OutputEvidence.BehindRebuildingDependency"/>).
+/// Alan SONA ve default'lu: eski NDJSON satırları alansız çözülür.</param>
 public sealed record BuildPreviewItem(string ProjectId, string Name, bool? WillBuild, string? BuiltCommit = null,
     WillBuildReason? Reason = null, bool? OwnFilesChanged = null, DateTimeOffset? LastBuiltAt = null,
     bool Conditional = false, IReadOnlyList<string>? DependencyRoots = null,
-    DateTimeOffset? FailedAt = null, bool LocalEdits = false, DateTimeOffset? OutputBuiltAt = null)
+    DateTimeOffset? FailedAt = null, bool LocalEdits = false, DateTimeOffset? OutputBuiltAt = null,
+    string? LastBuiltConfiguration = null, bool BehindRebuildingDependency = false)
 {
     // Liste alanı: derleyicinin record eşitliği referansa düşer (JSON round-trip farklı örnek üretir) — ProjectNode
     // ile aynı gerekçe, kök adları sıralı içerikle karşılaştırılır.
@@ -634,7 +647,9 @@ public sealed record BuildPreviewItem(string ProjectId, string Name, bool? WillB
             : other.DependencyRoots is not null && DependencyRoots.SequenceEqual(other.DependencyRoots))
         && FailedAt == other.FailedAt
         && LocalEdits == other.LocalEdits
-        && OutputBuiltAt == other.OutputBuiltAt;
+        && OutputBuiltAt == other.OutputBuiltAt
+        && LastBuiltConfiguration == other.LastBuiltConfiguration
+        && BehindRebuildingDependency == other.BehindRebuildingDependency;
 
     public override int GetHashCode()
     {
@@ -651,6 +666,8 @@ public sealed record BuildPreviewItem(string ProjectId, string Name, bool? WillB
         hash.Add(FailedAt);
         hash.Add(LocalEdits);
         hash.Add(OutputBuiltAt);
+        hash.Add(LastBuiltConfiguration);
+        hash.Add(BehindRebuildingDependency);
         return hash.ToHashCode();
     }
 }

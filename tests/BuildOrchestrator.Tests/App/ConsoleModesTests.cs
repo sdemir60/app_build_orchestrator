@@ -440,6 +440,30 @@ public class ConsoleModesTests
                 willBuildReason: WillBuildReason.BuiltOutside)));
     }
 
+    /// <summary>[kullanıcı kararı 2026-10-25] Proje sayfası gerçek sebebi söyler. İmzası yalnız configuration geçişiyle değişmiş
+    /// proje "imza değişti" demez: son derlemesi başka bir configuration'daydı. Bu araç dışında derlenmiş ve kendi kontrolünden
+    /// taze çıkan, ama arkasındaki bağımlılık yeniden derlenecek proje "bir bağımlılığın çıktısı daha yeni" demez — o an daha
+    /// yeni bir çıktı yoktur, bağımlılığı önce yeniden derlenecektir. Olgu yoksa iki cümle de bugünkü gibidir.</summary>
+    [Fact]
+    public void The_page_names_a_configuration_switch_and_a_dependency_that_rebuilds_first()
+    {
+        const string sha = "a3f81c29b4d5e6f708192a3b4c5d6e7f80910a2b"; // araç derledi: kanıt satırı yok, tek satır
+
+        Assert.Equal(["Will build — it was last built in Debug."],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
+                willBuildReason: WillBuildReason.SignatureChanged, currentSha: sha, lastBuiltConfiguration: "Debug")));
+        Assert.Equal(["Will build — the signature changed since the last successful build."],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
+                willBuildReason: WillBuildReason.SignatureChanged, currentSha: sha)));
+
+        Assert.Equal(["Will build — one of its dependencies will be rebuilt first."],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
+                willBuildReason: WillBuildReason.OutputStale, currentSha: sha, behindRebuildingDependency: true)));
+        Assert.Equal(["Will build — a dependency's output is newer than its build output."],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
+                willBuildReason: WillBuildReason.OutputStale, currentSha: sha)));
+    }
+
     /// <summary>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20] Helper'ın iki zaman parametresi
     /// (<c>lastBuiltAt</c>, <c>outputBuiltAt</c>) kalktı: sayfa artık hiçbir yaş yazmadığı için kurulacak bir
     /// zaman da yok.</summary>
@@ -447,9 +471,14 @@ public class ConsoleModesTests
         ProjectRowState state, string? skipReason = null, bool? willBuild = null,
         WillBuildReason? willBuildReason = null, bool inCycle = false, string? currentSha = null,
         bool runActive = false, bool? inRunQueue = null,
-        bool conditional = false, IReadOnlyList<string>? dependencyRoots = null, string namePrefix = "") =>
+        bool conditional = false, IReadOnlyList<string>? dependencyRoots = null, string namePrefix = "",
+        string? lastBuiltConfiguration = null, bool behindRebuildingDependency = false) =>
         new(@"C:\p\a.csproj", "A", state)
         {
+            // [kullanıcı kararı 2026-10-25] Gerekçe cümlesinin iki olgusu: son derlemenin (farklı) configuration'ı ve
+            // önce yeniden derlenecek bağımlılık.
+            LastBuiltConfiguration = lastBuiltConfiguration,
+            BehindRebuildingDependency = behindRebuildingDependency,
             SkipReason = skipReason,
             WillBuild = willBuild,
             WillBuildReason = willBuildReason,

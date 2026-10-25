@@ -2329,6 +2329,70 @@ public class RunCoordinatorTests
         }
     }
 
+    /// <summary>[kullanıcı kararı 2026-10-25] Başarılı derleme defterine imzanın yanında configuration'ını da yazar
+    /// (<see cref="BuildState.BuiltConfiguration"/>): imza configuration'ı içine katar ama hangisi olduğunu söyleyemez; bir
+    /// sonraki önizleme, configuration değiştiyse gerekçeyi bununla adlandırır.</summary>
+    [Fact]
+    public async Task A_success_records_the_configuration_it_was_built_in()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            var plan = new RunPlan(
+                new BuildPlan([Node("A") with { BuildOrder = 0 }], Cycles: [], Configuration: "Release"),
+                EmptyRefs(), Incremental: Incremental("A"));
+            using var h = new Harness(plan, new FakeInvoker((_, _, _) => Task.FromResult(Ok())), stateStore: store);
+
+            await h.Sut.StartAsync(Start(parallelism: 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var a = Assert.Contains(Id("A"), store.Load());
+            Assert.Equal(("sig", "Release"), (a.BuiltSignature, a.BuiltConfiguration));
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    /// <summary>[kullanıcı kararı 2026-10-25] Koşunun önizlemesi de Sync'inki gibi son derlemenin configuration'ını —
+    /// koşununkinden farklıysa — ve zincirleme olgusunu taşır; iki önizleme aynı yardımcılardan yazar
+    /// (<c>BuildStateStore.OtherBuiltConfigurationOf</c>, <c>OutputEvidence.BehindRebuildingDependency</c>). Taşımasaydı Build'e
+    /// basıldığı an satırın gerekçesi yeniden "bir bağımlılık değişti"ye dönerdi.</summary>
+    [Fact]
+    public async Task The_run_preview_carries_the_previous_configuration_and_the_rebuilding_dependency_fact()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            store.Upsert(new BuildState(Id("A"), "old", LastResult: BuildResult.Succeeded, BuiltConfiguration: "Debug"));
+            store.Upsert(new BuildState(Id("Same"), "old", LastResult: BuildResult.Succeeded, BuiltConfiguration: "Release"));
+            var ownCheckFresh = new OutputCheck(EvidenceMode.Time, false, true, TimeVerdict.Fresh, null);
+            var plan = new RunPlan(
+                new BuildPlan(
+                [
+                    Node("A") with { BuildOrder = 0, WillBuildReason = WillBuildReason.SignatureChanged },
+                    Node("Same") with { BuildOrder = 1, WillBuildReason = WillBuildReason.SignatureChanged },
+                    Node("Y") with { BuildOrder = 2, WillBuildReason = WillBuildReason.OutputStale },
+                ], Cycles: [], Configuration: "Release"),
+                EmptyRefs(),
+                Incremental: Incremental("A", "Same", "Y") with
+                {
+                    ChecksById = new Dictionary<string, OutputCheck>(StringComparer.OrdinalIgnoreCase) { [Id("Y")] = ownCheckFresh },
+                });
+            using var h = new Harness(plan, new FakeInvoker((_, _, _) => Task.FromResult(Ok())), stateStore: store);
+
+            await h.Sut.StartAsync(Start(parallelism: 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var items = Assert.Single(h.Events.OfType<BuildPreviewEvent>()).Items;
+            var a = Assert.Single(items, i => NameOf(i.ProjectId) == "A");
+            Assert.Equal(("Debug", false), (a.LastBuiltConfiguration, a.BehindRebuildingDependency));
+            Assert.Null(Assert.Single(items, i => NameOf(i.ProjectId) == "Same").LastBuiltConfiguration);
+            Assert.True(Assert.Single(items, i => NameOf(i.ProjectId) == "Y").BehindRebuildingDependency);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
     [Fact]
     public async Task The_run_start_preview_carries_each_projects_last_built_commit_from_the_state_store()
     {
