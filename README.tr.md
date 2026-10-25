@@ -13,15 +13,22 @@ izletir.
 
 ## Öne çıkanlar
 
-- **Yalnız değişeni derler.** Karar diskteki kaynak içeriğinden verilir, bağımlı projeler de dahil edilir.
-- **Bağımlılık sırasıyla, paralel.** Bağımsız projeler aynı anda, her biri kendi MSBuild.exe'sinde derlenir.
-- **Bağımlılık döngülerini çözer.** Birbirine referans veren projeler oturana kadar turlarla derlenir.
-- **Her kararı açıklar.** Her proje neden derleneceğini söyler, kırmızı yalnız gerçek derleyici hatasında yanar.
-- **Visual Studio ile yan yana.** IDE'de yapılan derlemeler sayılır, çıktı tam VS'nin koyduğu yere düşer.
-- **Tasarımı gereği güvenli.** Arkada MSBuild süreci kalmaz, git'e kendiliğinden yazılmaz, durdurulan koşu yarım
-  projeyi derlenmiş saymaz.
-- **Hızlı erişim.** Durum filtreleri, satırdan Visual Studio'da açma, global kısayollar, tepsi ve bildirimler.
-- **Makineyi yormaz.** Perf profilleri, canlı maliyet şeridi ve boşta uyuyan bir motor.
+- **Yalnız değişeni derler.** Karar diskteki kaynak içeriğinden verilir, bağımlı projeler dahil edilir, her proje
+  neden derleneceğini söyler ve Visual Studio'da yapılan derlemeler sayılır.
+- **Sırayla ve paralel derler.** Sıra deponun kendisinden okunur; bağımsız projeler aynı anda, her biri kendi
+  MSBuild.exe'sinde derlenir, bir hata koşuyu durdurmaz.
+- **Bağımlılık döngülerini çözer.** Birbirine referans veren projeler API'leri oturana kadar turlarla derlenir.
+- **Bütün çözüm tek ekranda.** Graf, liste, konsol ve olaylar koşuyu canlı izler; filtreler hatalı projeleri tek
+  tıkla öne getirir.
+- **Düzeltmeye tek tık.** Satır kendi projesini tek başına derler, çözümünü Visual Studio'da açar ya da Explorer'da
+  gösterir.
+- **Hep elinin altında.** Windows ile başlar, tepside bekler; global kısayol pencereyi açmadan derler.
+- **Kendiliğinden Sync.** Commit, pull ya da branch değişikliği listeyi birkaç saniyede tazeler; sonraki Build yalnız
+  farklı olanı derler.
+- **Makineyi kullanılır tutar.** Perf profilleri derlemenin makineden ne kadar alacağını belirler, title bar aracın o
+  anki maliyetini gösterir.
+- **Tasarımı gereği güvenli.** Arkada MSBuild süreci kalmaz, git'e davetsiz yazılmaz, çıktı tam VS'nin koyduğu
+  yerdedir, durdurulan koşu yarım projeyi derlenmiş saymaz.
 
 Bütün özellikler ve nasıl çalıştıkları: [FEATURES.tr.md](docs/FEATURES.tr.md). Her birinin iş gününde neyi
 değiştirdiği: [WHY.tr.md](docs/WHY.tr.md).

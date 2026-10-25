@@ -958,18 +958,26 @@ Sync transcript and the run console. The usual cause is two roots contributing t
 external card (§10.4) pointing at a second copy of something already under the repository root — and the fix
 is the user's: rename one `AssemblyName`, or drop one of the roots.
 
-Not every `HintPath` resolves inside the repository, so each one is classified into one of four buckets:
+Not every `HintPath` resolves inside the repository, and the planner's rule for the rest is binary: a `HintPath`
+whose DLL is in the producer map becomes an edge, and any other adds no edge and is not reported — a package, an
+installed product and a sibling repository's `bin` alike. Registering that sibling as an external root (§10.4)
+turns its DLLs into real edges, because the producer map then spans both roots.
+
+A finer, four-way classification exists in Core as a measurement, not as product output.
+`HintPathClassifier.Classify` sorts every `HintPath` into one of four buckets and reports
+`Edge / (Edge + Unclassified)` — how much of the *repository-internal* reference surface the strategy resolves, the
+external classes being legitimate inputs and so excluded from the denominator:
 
 | Class | Meaning |
 |---|---|
-| `Edge` | Resolved to a producing project in this repository — becomes a graph edge |
+| `Edge` | Resolved to a producing project in this repository — a graph edge |
 | `ExternalThirdParty` | Path rule identifies a package or an installed product |
-| `ExternalPlatformBin` | A platform binary under a `bin` folder with no producer here — typically a sibling repository's. Registering that sibling as an external root (§10.4) turns these into real edges, because the producer map then spans both roots |
-| `Unclassified` | Neither — emitted as a warning line |
+| `ExternalPlatformBin` | A platform binary under a `bin` folder with no producer here — typically a sibling repository's |
+| `Unclassified` | Neither |
 
-The reported health metric is `Edge / (Edge + Unclassified)`: external classes are legitimate inputs and are
-excluded from the denominator, so the number measures what it claims to — how much of the *repository-internal*
-reference surface the strategy resolves.
+Only the test suite runs the classifier and reads its metric; no Sync, run or console line prints a class, a warning
+or the ratio. Optimize reuses two of its path rules — the NuGet `packages` path and the `bin` path — to name the
+references a restore cannot fix (§9.3, §13.2).
 
 ### 6.5 Edges, cycles, build order
 
@@ -6810,7 +6818,7 @@ A category of tests that assert properties of the *source*, not of a run:
 | Ledger file access (`LedgerStreamingGuardTests`) | the two large ledgers (`evaluation-cache.json`, `source-hash-cache.json`) never turn their file into one string or byte array and never open, create or move it themselves — they read and write through the stream forms of `AtomicFile` (sharing delete on read, retried atomic rename on write); hashing a *source* file is the one exempt read; the rule is shown to catch each bypass and to ignore a comment |
 | Entry point (`EntryPointTests`) | the App starts from the hand-written `Program.Main`, `VelopackApp…Run()` comes before the `App` is created, the uninstall hook removes the startup value, and the `Velopack` library and the `vpk` tool carry one version (§12.1) |
 | Repository hygiene (`RepoHygieneTests`) | the MIT `LICENSE`, the SDK band in `global.json`, the pinned `vpk` tool, the README's badge (the release run of `main`), and the workflows: CI builds and tests every push to `develop`, with no path filter, on the pinned image, leaves `main` to the release and can be called by it; the release runs on pushes to `main` one at a time and is never cancelled, writes only from its publish job, has its guard check the head of `main` and hand the tag on, tags only after the tests and the package and before the upload, and publishes through `package.ps1` (§18); a failed release is re-run once on its failed jobs |
-| User documents (`DocumentationTests`) | README, FEATURES and WHY each have a Turkish mirror (`.tr.md`) with as many sections, and each language links to the other; every WHY item is a FEATURES item with the same title, in the same order; relative links in the user documents, the user guide included, point to files that exist; and no public document — these, the technical reference, the release notes and the working conventions — names the internal product the tool was first built for (the pattern of the code guard above, so the name is defined once) |
+| User documents (`DocumentationTests`) | README, FEATURES and WHY each have a Turkish mirror (`.tr.md`) with as many sections, and each language links to the other; every WHY item names a FEATURES item — its title before the gain dash — in the same order, and every WHY title carries that dash and a short gain while FEATURES titles carry none; relative links in the user documents, the user guide included, point to files that exist; and no public document — these, the technical reference, the release notes and the working conventions — names the internal product the tool was first built for (the pattern of the code guard above, so the name is defined once) |
 | Automation roles (`AutomationRoleTests`) | every `UserControl` of the app declares its automation role through an override in the app assembly — never WPF's default custom type, which the post-layout peer walk re-enumerates on every pass (§15) |
 | One trim definition (`MemoryTrimGuardTests`) | `GC.Collect` is written exactly once in the source, in `Core/Diagnostics/MemoryTrim.cs`; and every `RunCoordinator` the tests construct — an explicit `new`, or a target-typed one — passes a trim seam (`memoryTrim:`, not `null`), so none falls back to the real blocking collection; the rules are shown to catch each form of the call and to ignore prose |
 | One memory read (`MemoryReadGuardTests`) | the process's memory is read in exactly one file, `Core/Diagnostics/MemoryLine.cs` (§11.4): `GetProcessMemoryInfo` (the private bytes; its P/Invoke declaration in `NativeMethods.cs` is the one exempt mention, and the exemption is pinned to still declare the call), `GetGCMemoryInfo` and `GC.GetTotalMemory` are called nowhere else; `Process.PrivateMemorySize64` is written nowhere at all, `MemoryLine` included, because it snapshots every process on the machine; and `GC.GetTotalMemory` is called only with the literal `false` — any other argument may be a hidden full collection, which the `GC.Collect` guard cannot see. The rules are shown to catch each form of the call and to ignore prose |
@@ -7955,7 +7963,7 @@ decided, look at the pure class; when it concerns *how* it was drawn or animated
 |---|---|
 | [`README.md`](README.md) | Entry point: what the tool does, highlights, screenshots (`docs/images/`), quick start, developer commands, document map |
 | [`docs/FEATURES.md`](docs/FEATURES.md) | Every feature, most important first: what it does, how, and the techniques behind it |
-| [`docs/WHY.md`](docs/WHY.md) | What each feature changes: the goal, the common practice without such a tool, and the result here |
+| [`docs/WHY.md`](docs/WHY.md) | What each feature gives: the gain in the heading, the common practice without such a tool, and the result here |
 | [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md) | Requirements, installation and use, screen by screen: shortcuts, updates, state on disk, performance modes, known limits |
 | **`ARCHITECTURE.md`** (this file) | Technical reference: architecture, processes, contracts, algorithms, UI, design system, security boundary, code map |
 | [`CHANGELOG.md`](CHANGELOG.md) | Release notes, embedded in the app as What's new (§18) |
