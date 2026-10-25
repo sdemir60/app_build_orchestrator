@@ -9,7 +9,7 @@
 | [ARCHITECTURE.md](ARCHITECTURE.md) | **Teknik referans.** Mimari, process topolojisi, IPC, incremental karar, build motoru, git yüzeyi, UI, design system, güven sınırı, bilinçli kararlar, bilinen sınırlar. |
 | [README.md](README.md) | Vitrin: kısa tanım, ekran görüntüleri (`docs/images/`), öne çıkanlar, hızlı başlangıç, geliştirici komutları, doküman haritası. |
 | [docs/FEATURES.md](docs/FEATURES.md) | Özellik kataloğu: her özellik önem sırasıyla, **What / How** + teknoloji etiketleri. |
-| [docs/WHY.md](docs/WHY.md) | Kazanımlar: FEATURES'ın kazanım olan maddeleri, aynı başlık ve sırayla, **Goal / Common practice / In Build Orchestrator**. |
+| [docs/WHY.md](docs/WHY.md) | Kazanımlar: FEATURES'ın kazanım olan maddeleri, aynı sırayla; başlık = özellik adı + ` — ` + kazanım, altında **Common practice / In Build Orchestrator**. |
 | [docs/USER-GUIDE.md](docs/USER-GUIDE.md) | Kullanım kılavuzu: gereksinim, kurulum, ekran ekran kullanım, kısayollar, güncelleme, diskte durum, performans modları, bilinen sınırlar. |
 | [CHANGELOG.md](CHANGELOG.md) | Sürüm notları — What's new ekranının TEK kaynağı (exe'ye gömülür). Yalnız sürüm çıkarılırken yazılır. |
 
@@ -139,14 +139,16 @@ kadarki tüm değişiklikler dokümanlara işlenir.
   docs/USER-GUIDE.md · yeni ya da değişen özellik → docs/FEATURES.md (kazanımı varsa docs/WHY.md'ye de, aynı
   başlık ve sırayla) · vitrin ve hızlı başlangıç → README.md · çalışma kuralı → CLAUDE.md. README özetler,
   FEATURES listeler, USER-GUIDE ve ARCHITECTURE ayrıntılandırır; aynı şey iki yerde ayrıntısıyla tekrarlanmaz.
-- **FEATURES / WHY kalıbı:** iki doküman da iki grup başlığı taşır — `## At a glance` (büyük resim) ve
-  `## In detail` (geri kalanlar, önem sırasıyla; TR: Bir bakışta / Ayrıntılar) — maddeler `###`'tür. Madde başlığı
-  ≤5 kelime; FEATURES'ta `**What:**` + `**How:**`, WHY'da `**Goal:**` +
-  `**Common practice:**` + `**In Build Orchestrator:**` (TR: Ne yapar / Nasıl; Amaç / Yaygın pratik / Build
-  Orchestrator'da), ardından 2-4 etiket (teknoloji + ne için). WHY'ın başında ekip için rakamsız kısa bir özet
-  durur; satırları günlük bir sahne anlatır (Goal = geliştiricinin isteği, Common practice = tanıdık an). Common
-  practice satırı genel resimdir — kişiye, ekibe ya da belirli bir script'e atıf yapmaz; WHY'ın üçüncü satırı
-  mekanizma değil kullanıcının yaşadığı sonuçtur. Rakam ve iç ad (müşteri/ürün adı) yazılmaz.
+- **FEATURES / WHY kalıbı:** iki doküman da grup başlığı olmayan düz bir `##` listesidir, en önemliden
+  başlayarak — sıradan bir günde hissedilen maddeler (yalnız değişeni derler, paralel, döngüler, graf keşfi, tek
+  ekran, satır eylemleri, hep elinin altında, kendiliğinden Sync, makine) önde, sonra tasarım ve uygulamanın
+  kendisi, sonra karar, güvenlik, ekran ve depo maddeleri. FEATURES madde başlığı ≤5 kelime; WHY başlığı = aynı
+  ad + ` — ` + kazanım (≤6 kelime; `Builds only what changed — less waiting`), okuyan "neden kullanayım" sorusunu
+  başlıkları tarayarak cevaplar. FEATURES'ta `**What:**` + `**How:**`, WHY'da `**Common practice:**` +
+  `**In Build Orchestrator:**` (TR: Ne yapar / Nasıl; Yaygın pratik / Build Orchestrator'da), ardından 2-4 etiket
+  (teknoloji + ne için). WHY satırları günlük bir sahne anlatır: Common practice tanıdık an ve genel resimdir —
+  kişiye, ekibe ya da belirli bir script'e atıf yapmaz; In Build Orchestrator mekanizma değil kullanıcının
+  yaşadığı sonuçtur. Giriş özeti yoktur. Rakam ve iç ad (müşteri/ürün adı) yazılmaz.
 - **Her iddia kodda doğrulanır.** Doğru ifadeye dokunma; emin olamadığını sor.
 - **Rakam gömme:** bayatlayacak sayı (test sayısı, sha) yazma; dayanıklı dil kullan.
 - **Repo herkese açık:** dokümanlara (README, docs/, ARCHITECTURE, CHANGELOG, bu dosya) iç ürün, müşteri ya da kişi

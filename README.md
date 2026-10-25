@@ -13,15 +13,23 @@ you follow the whole run live.
 
 ## Highlights
 
-- **Builds only what changed.** The decision comes from source content on disk, and dependents are included.
-- **Parallel, in dependency order.** Independent projects build at the same time, each in its own MSBuild.exe.
-- **Resolves dependency cycles.** Projects that reference each other build in rounds until they settle.
-- **Explains every decision.** Each project says why it will build, and red appears only for real compiler errors.
-- **Works alongside Visual Studio.** Builds made in the IDE count, and output lands exactly where VS puts it.
-- **Safe by design.** No orphaned MSBuild processes, no git writes on its own, and a stopped run never counts a
-  half-built project as built.
-- **Quick to reach.** Status filters, open in Visual Studio from a row, global shortcuts, tray and notifications.
-- **Easy on the machine.** Performance profiles, a live cost strip and an engine that sleeps when idle.
+- **Builds only what changed.** The decision comes from source content on disk, dependents are included, every
+  project says why it will build, and builds made in Visual Studio count.
+- **Builds in order, in parallel.** The order is read from the repository itself; independent projects build at the
+  same time, each in its own MSBuild.exe, and a failure does not stall the run.
+- **Resolves dependency cycles.** Projects that reference each other build in rounds until their APIs settle.
+- **Whole solution on one screen.** Graph, list, console and events follow the run live, and filters bring the failed
+  projects forward in one click.
+- **One click to the fix.** A row builds its project alone, opens its solution in Visual Studio or reveals it in
+  Explorer.
+- **Always at hand.** Starts with Windows, waits in the tray, and a global shortcut builds without bringing the window
+  up.
+- **Syncs on its own.** A commit, pull or branch switch refreshes the list within seconds; the next Build compiles only
+  what differs.
+- **Keeps the machine usable.** Performance profiles set how much of the machine a build may take, and the title bar
+  shows what the tool costs right now.
+- **Safe by design.** No orphaned MSBuild processes, no git writes uninvited, output exactly where VS puts it, and a
+  stopped run never counts a half-built project as built.
 
 Every feature, with how it works: [FEATURES.md](docs/FEATURES.md). What each one changes in a working day:
 [WHY.md](docs/WHY.md).
