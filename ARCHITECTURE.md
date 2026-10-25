@@ -6872,7 +6872,9 @@ A headless suite does not resolve XAML at runtime — a full suite once passed g
 not open at all, because a `Double` token was being fed to a `GridLength` in the shell root. The rule that came
 out of that: **any task adding a new XAML root or template also adds a realization test.** A `Window`'s
 `Measure`/`Arrange` does not descend into content without an HWND, so realization tests run against
-`window.Content`.
+`window.Content`. A context menu is realized on its own: WPF lets a `ContextMenu` have a parent only inside its own
+popup, which exists only while the menu is open, so its test merges the application's resource chain into the menu's
+own dictionary, applies its template and measures it as a root (`TrayMenuLookTests`).
 
 Animation behaviour is measured the same way: the harness can drive the live window, take frames through
 `PrintWindow(PW_RENDERFULLCONTENT)`, read state through UI Automation and diff pixels between frames — so
