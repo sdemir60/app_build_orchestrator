@@ -1,9 +1,12 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using CommunityToolkit.Mvvm.Input;
@@ -47,6 +50,10 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
     /// zayıf bir event manager üzerinden abone olur.</summary>
     internal static readonly ICommand NoRunToStop = new RelayCommand(() => { }, () => false);
 
+    /// <summary>[test yüzeyi] Gerçek tepsi ikonu — sonda (<c>TrayMenuPositionProbeTests</c>) kabuğun sağ tık mesajını onun mesaj
+    /// penceresine gönderir ve açılan menünün ekrandaki yerini ölçer.</summary>
+    internal TaskbarIcon IconForTest => _icon;
+
     public AppTrayIcon(ICommand stopCommand, RunViewModel? run = null)
     {
         var menu = CreateMenu(stopCommand, () => ExitRequested?.Invoke(), run);
@@ -63,6 +70,7 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
         // [Ö4/K-2] Balloon tıkı da AYNI yoldan geri getirir — bu ikonun gösterdiği HER balloon'a uygulanır
         // (ilk-kapanış, ikinci-instance uyarısı, koşu sonucu): ikinci bir restore yolu YAZILMAZ.
         _icon.TrayBalloonTipClicked += (_, _) => RestoreRequested?.Invoke();
+        OpenMenuOurselves(_icon, () => OpenMenu(menu));
         _icon.ForceCreate(false); // efficiency mode KAPALI: process askıya alınırsa derleme takibi durur
     }
 
@@ -70,8 +78,11 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
     /// (gerçek bir tepsi ikonu ister), bu yüzden menü mantığı statik bir fabrikaya ayrılır ki gerçek bir
     /// tepsi kurmadan sınanabilsin. Stop maddesi <paramref name="stop"/>'a DOĞRUDAN bağlanır (<c>Command</c>) —
     /// etkinliği WPF'in kendi komut kapısından gelir, ikinci bir <c>CanExecute</c> sorgusu burada YAZILMAZ
-    /// (eski hâl <c>MainWindow</c>'da ayrı bir kapı taşıyordu — bkz. bu sınıfın özeti). Uygulamada özel
-    /// <c>MenuItem</c> şablonu yoktur; WPF'in varsayılan şablonu pasif maddeyi gri çizer.
+    /// (eski hâl <c>MainWindow</c>'da ayrı bir kapı taşıyordu — bkz. bu sınıfın özeti).
+    /// <para>[tray menu look] Menü uygulamanın diliyle çizilir (<c>Ds.ContextMenu</c>, Controls.xaml): proje satırının menüsüyle AYNI kabuk,
+    /// satırlar, vurgu ve pasif opaklık. Stop, uygulamadaki her Stop gibi kırmızı dolu kareyi (action bar'ın Stop düğmesi, satırın Stop
+    /// ikonu), Exit title bar'daki Exit düğmesinin power işaretini menü satırı ikonlarının <c>text-dim</c> rengiyle taşır. Stil kaynak
+    /// referansıdır: menü bir kaynak kapsamına girince çözülür (üretimde uygulama sözlükleri).</para>
     /// <para>[Stop now] Maddenin başlığı Stop'un üç aşamasını izler (<see cref="StopText.Label"/>: Stop → Stop now →
     /// Terminating…): Stopping'de basış hard stop olduğu için "Stop" demek basışın artık zararsız olmadığını gizlerdi.
     /// Durum <paramref name="run"/>'ın <see cref="RunViewModel.StopLabel"/>'ından gelir — Stop düğmesiyle ve satır ikonuyla
@@ -79,19 +90,59 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
     /// (menü uygulama boyunca yaşar), ayrıca çözülmez.</para></summary>
     internal static ContextMenu CreateMenu(ICommand stop, Action exit, RunViewModel? run = null)
     {
-        var stopItem = new MenuItem { Header = StopText.Label(run?.StopStage ?? StopStage.Stop), Command = stop };
+        var stopItem = new IconMenuItem
+        {
+            Header = StopText.Label(run?.StopStage ?? StopStage.Stop),
+            Command = stop,
+            IconKey = "Icon.Stop",
+            IconBrushKey = "Brush.StatusFailText",
+        };
         if (run is not null)
             run.PropertyChanged += (_, e) =>
             {
                 if (e.PropertyName == nameof(RunViewModel.StopLabel)) stopItem.Header = run.StopLabel;
             };
-        var exitItem = new MenuItem { Header = ViewModels.ExitText.ExitLabel }; // [Exit] title bar'ın Exit'iyle aynı sözcük, tek kaynak
+        var exitItem = new IconMenuItem
+        {
+            Header = ViewModels.ExitText.ExitLabel, // [Exit] title bar'ın Exit'iyle aynı sözcük, tek kaynak
+            IconKey = "Icon.Power",
+            IconBrushKey = "Brush.TextDim",
+        };
         exitItem.Click += (_, _) => exit();
 
-        var menu = new ContextMenu();
+        // [tray menu position] Menü imlecin olduğu yerde açılır: WPF imlecin yerini FİZİKSEL pikselde okur ve menü penceresini o anki
+        // ekran ölçeğiyle kurar — arada saklanan bir ölçek yoktur (bkz. OpenMenuOurselves). ContextMenu'nün varsayılanı da budur;
+        // açık yazılır çünkü doğruluk ona bağlıdır.
+        var menu = new ContextMenu { Placement = PlacementMode.MousePoint };
+        menu.SetResourceReference(FrameworkElement.StyleProperty, "Ds.ContextMenu");
         menu.Items.Add(stopItem);
         menu.Items.Add(exitItem);
         return menu;
+    }
+
+    /// <summary>
+    /// [tray menu position] Sağ tıkta menüyü kütüphane (<c>H.NotifyIcon</c>) AÇMAZ, <paramref name="open"/> açar. Kütüphanenin kendi
+    /// açışı kabuğun verdiği tık noktasını (fiziksel piksel) WPF birimine SAKLADIĞI bir DPI çarpanıyla böler; çarpanı ikona ilk
+    /// tıklandığında okur (uygulamayı tepsiden açan sol tık dahil) ve yalnız gizli mesaj penceresine <c>WM_DPICHANGED</c> gelirse
+    /// tazeler. WPF ise menünün popup penceresini her açılışta yeniden kurar ve birimi O ANKİ ölçekle piksele geri çevirir: ekran
+    /// ölçüsü uygulama açıkken değişince iki çarpan ayrışır ve menü tıktan yüzlerce piksel kayardı (ölçüm ve pin:
+    /// <c>TrayMenuPositionProbeTests</c>). Kütüphanenin açışı önizleme olayında durdurulur (<c>Handled</c>) — yerleşimini menüye hiç
+    /// yazmaz. Pin: <c>TrayMenuTests.The_app_opens_the_tray_menu_itself_instead_of_the_tray_library</c>.
+    /// </summary>
+    internal static void OpenMenuOurselves(TaskbarIcon icon, Action open) =>
+        icon.PreviewTrayContextMenuOpen += (_, e) =>
+        {
+            e.Handled = true;
+            open();
+        };
+
+    /// <summary>Menüyü açar; yerleşimi menünün kendisindedir (<see cref="CreateMenu"/>: imlecin fiziksel noktası). Menü öne getirilir —
+    /// getirilmezse dışarı tıklanınca kapanmaz; kütüphanenin kendi açışındaki adımın aynısı, popup'ın penceresi yoksa mesaj penceresiyle.</summary>
+    private void OpenMenu(ContextMenu menu)
+    {
+        menu.IsOpen = true;
+        WindowUtilities.SetForegroundWindow(
+            PresentationSource.FromVisual(menu) is HwndSource { Handle: not 0 } popup ? popup.Handle : _icon.TrayIcon.WindowHandle);
     }
 
     /// <summary>
