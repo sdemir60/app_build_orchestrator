@@ -248,6 +248,35 @@ public class BuildStateStoreTests : IDisposable
         Assert.NotEqual(fresh, fresh with { DependencySurfaces = null });
     }
 
+    /// <summary>[kullanıcı kararı 2026-10-25] <see cref="BuildState.BuiltConfiguration"/> — son başarılı derlemenin
+    /// configuration'ı — round-trip eder (JSON adı özellik adı, eşitliğe girer) ve bu alandan ÖNCE yazılmış bir kayıt null'a
+    /// çözülür. Önizlemenin yardımcısı (<see cref="BuildStateStore.OtherBuiltConfigurationOf"/>) değeri yalnız istenen
+    /// configuration'dan FARKLIYSA döner; aynıysa, kayıt alanı bilmiyorsa ya da kayıt yoksa null — satır o durumda gerekçeyi
+    /// bugünkü gibi yazar.</summary>
+    [Fact]
+    public void Built_configuration_round_trips_and_is_named_only_when_another_configuration_is_asked_for()
+    {
+        Directory.CreateDirectory(_root);
+        File.WriteAllText(StatePath,
+            """{"C:\\r\\Old.csproj":{"ProjectId":"C:\\r\\Old.csproj","BuiltSignature":"s","BuiltCommit":null,"LastResult":0,"LastRunAt":null,"LastBranch":null,"LastDurationMs":null,"NonConvergentSignature":null,"BuiltContent":null,"DepIssue":false,"DepIssueRoots":null,"FailedSignature":null,"FailedAt":null,"FedOutputs":null,"PackagesConfigHash":null,"CycleMemberTerm":null,"CycleReadSurfaces":null,"CycleEngineFingerprint":null,"DependencySurfaces":null}}""");
+        var store = new BuildStateStore(_root);
+        var fresh = new BuildState(@"C:\r\New.csproj", "s", LastResult: BuildResult.Succeeded, BuiltConfiguration: "Debug");
+        store.Upsert(fresh);
+
+        Assert.Contains("\"BuiltConfiguration\":\"Debug\"", File.ReadAllText(StatePath));
+        var state = store.Load();
+        Assert.Null(state[@"C:\r\Old.csproj"].BuiltConfiguration);
+        Assert.Equal(fresh, state[@"C:\r\New.csproj"]);
+        Assert.Equal(fresh.GetHashCode(), state[@"C:\r\New.csproj"].GetHashCode());
+        Assert.NotEqual(fresh, fresh with { BuiltConfiguration = "Release" });
+
+        Assert.Equal("Debug", BuildStateStore.OtherBuiltConfigurationOf(state, @"C:\r\New.csproj", "Release"));
+        Assert.Null(BuildStateStore.OtherBuiltConfigurationOf(state, @"C:\r\New.csproj", "Debug"));
+        Assert.Null(BuildStateStore.OtherBuiltConfigurationOf(state, @"C:\r\Old.csproj", "Release"));
+        Assert.Null(BuildStateStore.OtherBuiltConfigurationOf(state, @"C:\r\Missing.csproj", "Release"));
+        Assert.Null(BuildStateStore.OtherBuiltConfigurationOf(null, @"C:\r\New.csproj", "Release"));
+    }
+
     /// <summary>
     /// [RESOLVE Faz 3/Task 3.2] <see cref="BuildState.CycleReadSurfaces"/>'ın eşitliği SIRAYA duyarlıdır
     /// (<c>DepIssueRoots</c>/<c>FedOutputs</c> deseni): aynı okumanın iki kaydı ancak liste kanonik sıradaysa (Producer,

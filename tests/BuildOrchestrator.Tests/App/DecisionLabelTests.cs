@@ -35,8 +35,9 @@ namespace BuildOrchestrator.Tests.App;
 public class DecisionLabelTests
 {
     private static RowDecision For(
-        bool? willBuild, WillBuildReason? reason = null, bool? ownChanged = null, bool localEdits = false)
-        => DecisionLabel.For(willBuild, reason, ownChanged, localEdits);
+        bool? willBuild, WillBuildReason? reason = null, bool? ownChanged = null, bool localEdits = false,
+        string? lastBuilt = null)
+        => DecisionLabel.For(willBuild, reason, ownChanged, localEdits, lastBuilt);
 
     [Fact]
     public void Its_own_files_changed_reads_modified()
@@ -72,6 +73,37 @@ public class DecisionLabelTests
 
         Assert.Equal("affected", decision.Word);
         Assert.Equal("Its own files are unchanged — a dependency changed", decision.Title);
+    }
+
+    /// <summary>[kullanıcı kararı 2026-10-25 · bildirim "Release'e geçince affected — a dependency changed"] Yalnız
+    /// configuration'ı değişmiş proje — araç onu en son Debug'da derledi, şimdi Release seçili, kendi dosyaları aynı — "bir
+    /// bağımlılık değişti" DEMEZ: değişen configuration'dır ve gerekçe onu adıyla söyler. Sözcük beş sabit sözcükten
+    /// <c>affected</c> kalır ("kendi dosyası değişmedi, başka bir şey değişti"). Kendi dosyası bilinmiyorsa (eski kayıt) yine
+    /// daha ihtiyatlı olan <c>affected</c>.</summary>
+    [Fact]
+    public void A_project_last_built_in_another_configuration_names_that_configuration()
+    {
+        var decision = For(true, WillBuildReason.SignatureChanged, ownChanged: false, lastBuilt: "Debug");
+
+        Assert.Equal("affected", decision.Word);
+        Assert.Null(decision.Tail);
+        Assert.True(decision.Stale);
+        Assert.Equal("Its own files are unchanged — last built in Debug", decision.Title);
+        Assert.Equal("Its own files are unchanged — last built in Debug",
+            For(true, WillBuildReason.SignatureChanged, ownChanged: null, lastBuilt: "Debug").Title);
+    }
+
+    /// <summary>[kullanıcı kararı 2026-10-25] Configuration olgusu yalnız imza gerekçesini adlandırır. Kendi dosyası da
+    /// değişmiş proje <c>modified</c>'tır — daha güçlü olgu odur; çıktısı hiç olmayan proje <c>never built</c>, zaman
+    /// kipinin bayat çıktısı kendi cümlesini yazar.</summary>
+    [Fact]
+    public void The_configuration_names_only_the_signature_reason()
+    {
+        var own = For(true, WillBuildReason.SignatureChanged, ownChanged: true, lastBuilt: "Debug");
+        Assert.Equal(("modified", "Its own files changed since the last build"), (own.Word, own.Title));
+        Assert.Equal("never built", For(true, WillBuildReason.OutputMissing, ownChanged: false, lastBuilt: "Debug").Word);
+        Assert.Equal("Its own files are unchanged — a dependency changed",
+            For(true, WillBuildReason.OutputStale, ownChanged: false, lastBuilt: "Debug").Title);
     }
 
     /// <summary>Bağımlılığı patlamış bir başarı da "etkilenmiş"tir: kendi dosyaları durur, bayat olan

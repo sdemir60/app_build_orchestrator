@@ -150,7 +150,7 @@ public sealed class ContentDecisionDiagnosticsTests(ITestOutputHelper output)
             var decision = BuildOrchestrator.App.ViewModels.DecisionLabel.For(
                 node.WillBuild, node.WillBuildReason,
                 BuildStateStore.OwnFilesChanged(state, node.Id, content.GetValueOrDefault(node.Id)),
-                localEdits: false);
+                localEdits: false, lastBuiltConfiguration: null);
             string key = decision.IsEmpty ? "(BOŞ)" : decision.Word;
             labels[key] = labels.GetValueOrDefault(key) + 1;
         }
@@ -169,7 +169,7 @@ public sealed class ContentDecisionDiagnosticsTests(ITestOutputHelper output)
         foreach (var node in syncPlan.Nodes.Where(n =>
             BuildOrchestrator.App.ViewModels.DecisionLabel.For(n.WillBuild, n.WillBuildReason,
                 BuildStateStore.OwnFilesChanged(state, n.Id, content.GetValueOrDefault(n.Id)),
-                localEdits: false).IsEmpty).Take(10))
+                localEdits: false, lastBuiltConfiguration: null).IsEmpty).Take(10))
         {
             var r = state.GetValueOrDefault(node.Id);
             output.WriteLine(Inv($"- {node.Name} · inCycle={node.InCycle} · will={node.WillBuild} · reason={node.WillBuildReason} · kayıt={(r is null ? "yok" : r.LastResult.ToString())}"));

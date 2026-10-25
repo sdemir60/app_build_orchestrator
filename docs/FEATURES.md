@@ -93,7 +93,7 @@ CreateProcessW for the compilers, RegisterHotKey for the global shortcuts. The a
 (modified, modified · local, affected, never built, failed) or that it is up to date, and the tooltip gives the
 detail.\
 **How:** Sync previews the decision a full Build would make: modified when the project's own files changed,
-affected when only a dependency did, local when the change is also uncommitted in git. Red only ever means a
+affected when only a dependency or the configuration did, local when the change is also uncommitted in git. Red only ever means a
 compiler error proven for today's source.\
 `content fingerprint for modified vs affected` · `git status for the local mark` · `evidence-based red, no false alarms`
 

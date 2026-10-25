@@ -935,6 +935,24 @@ public class ProjectRowTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[kullanıcı kararı 2026-10-25] Son derlemenin configuration'ı sonradan gelse de (ör. Sync'ten sonra koşu
+    /// önizlemesi) etiketin uzun gerekçesi yerinde tazelenir: sözcük aynı kalır, gerekçe gerçek sebebe döner.</summary>
+    [StaFact]
+    public void A_late_arriving_configuration_refreshes_the_decision_reason()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending)
+        { WillBuild = true, WillBuildReason = WillBuildReason.SignatureChanged, OwnFilesChanged = false };
+        var (row, window, _) = Realize(vm);
+        Assert.Equal("Its own files are unchanged — a dependency changed", row.DecisionText.ToolTip);
+
+        vm.LastBuiltConfiguration = "Debug"; // ikinci önizleme: son derleme başka bir configuration'daydı
+        row.UpdateLayout();
+
+        Assert.Equal("affected", row.DecisionText.Text);
+        Assert.Equal("Its own files are unchanged — last built in Debug", row.DecisionText.ToolTip);
+        GC.KeepAlive(window);
+    }
+
     // ================================================================ [A13/T3b] ölçü/geometri (b4–b7)
 
     /// <summary>[A13/T3b · b4] design-v1 README §2.3 slot 7: "Süre mono 12px sağa yaslı 46px" (BuildApp.jsx:414

@@ -120,6 +120,20 @@ public sealed class BuildStateStore
         && found.FailedSignature is not null ? found.FailedAt : null;
 
     /// <summary>
+    /// [kullanıcı kararı 2026-10-25] Projenin son başarılı derlemesinin configuration'ı — YALNIZ
+    /// <paramref name="configuration"/>'dan (bu önizlemenin configuration'ı) farklıysa; aynıysa, kayıt yoksa ya da kayıt bu
+    /// alandan önce yazılmışsa <c>null</c>. Önizlemenin <c>LastBuiltConfiguration</c>'ını Sync ve koşu yolu buradan yazar —
+    /// <see cref="BuiltCommitOf"/> ile aynı desen, tek arama yeri.
+    /// </summary>
+    public static string? OtherBuiltConfigurationOf(
+        IReadOnlyDictionary<string, BuildState>? state, string projectId, string configuration) =>
+        state is not null && state.TryGetValue(projectId, out var found)
+        && found.BuiltConfiguration is { Length: > 0 } built
+        // İmzanın "cfg=" terimiyle AYNI karşılaştırma (Ordinal): imzayı değiştiren fark tam olarak budur.
+        && !string.Equals(built, configuration, StringComparison.Ordinal)
+            ? built : null;
+
+    /// <summary>
     /// [Task 7] Bir SCC üyesinin, PLANLANAN (şu anki) bileşik imzada DAHA ÖNCE turlarla yakınsAMADIĞI hafızası —
     /// <see cref="BuildState.NonConvergentSignature"/>'ın TEK okuyucusu. Plan aşaması (RunCoordinator) ve
     /// (ileride) Sync/önizleme yolu aynı aramayı iki kez YAZMAZ — <see cref="BuiltCommitOf"/> ile aynı desen.

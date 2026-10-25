@@ -217,7 +217,14 @@ public sealed record BuildState(
     // döngü üyesinde yalnız GRUP DIŞI bağımlılıklar (grup içi CycleReadSurfaces'tadır). Yüzeyi okunamayan ya da dosyası
     // olmayan bağımlılık listeye GİRMEZ — kapı o projeyi derler (güvenli yön). Kanonik sıra ve eşitlik CycleReadSurfaces
     // ile aynı. Alan SONA ve default'lu: eski kayıtlar null çözülür.
-    IReadOnlyList<CycleReadSurface>? DependencySurfaces = null)
+    IReadOnlyList<CycleReadSurface>? DependencySurfaces = null,
+    // [kullanıcı kararı 2026-10-25] Bu projenin son BAŞARILI derlemesinin configuration'ı ("Debug"/"Release") —
+    // BuiltSignature'ın yanında durur, çünkü imza configuration'ı da içine katar ama hangisi olduğunu söyleyemez:
+    // configuration değiştiğinde imza da değişir ve satır bunu "bir bağımlılık değişti" diye okurdu. Karara girmez
+    // (karar yine imzadır); önizleme bugünkü configuration'dan farklıysa onu taşır, satır gerekçeyi adıyla söyler
+    // ("last built in Debug"). Invalidasyonlar kaydı olduğu gibi kopyaladığı için (with) son başarının değeri kalır.
+    // Alan SONA ve default'lu: bu alandan önce yazılmış kayıtlar null çözülür — ayrım bilinmez, satır bugünkü metni yazar.
+    string? BuiltConfiguration = null)
 {
     // Derleyicinin record eşitliği liste alanında referans eşitliğine düşer (JSON round-trip sonrası her zaman
     // farklı örnek) — ProjectNode ile aynı gerekçe, kökler sıralı içerikle karşılaştırılır.
@@ -249,7 +256,8 @@ public sealed record BuildState(
         && CycleEngineFingerprint == other.CycleEngineFingerprint
         && (DependencySurfaces is null
             ? other.DependencySurfaces is null
-            : other.DependencySurfaces is not null && DependencySurfaces.SequenceEqual(other.DependencySurfaces));
+            : other.DependencySurfaces is not null && DependencySurfaces.SequenceEqual(other.DependencySurfaces))
+        && BuiltConfiguration == other.BuiltConfiguration;
 
     public override int GetHashCode()
     {
@@ -273,6 +281,7 @@ public sealed record BuildState(
         foreach (var surface in CycleReadSurfaces ?? []) hash.Add(surface);
         hash.Add(CycleEngineFingerprint);
         foreach (var surface in DependencySurfaces ?? []) hash.Add(surface);
+        hash.Add(BuiltConfiguration);
         return hash.ToHashCode();
     }
 }

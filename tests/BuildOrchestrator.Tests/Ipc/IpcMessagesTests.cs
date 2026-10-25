@@ -524,6 +524,28 @@ public class IpcMessagesTests
         Assert.Null(back.Items[2].Reason);
     }
 
+    /// <summary>[kullanıcı kararı 2026-10-25] Gerekçenin iki olgusu IPC sınırını geçer — son derlemenin (farklı)
+    /// configuration'ı ve önce yeniden derlenecek bağımlılık — ve eşitliğe girer; alansız eski satır ikisini de boş çözer.</summary>
+    [Fact]
+    public void BuildPreviewItem_carries_the_reason_facts_across_the_wire_and_an_old_line_reads_them_empty()
+    {
+        var item = new BuildPreviewItem(@"C:\p\a.csproj", "A", true, null, WillBuildReason.SignatureChanged,
+            LastBuiltConfiguration: "Debug", BehindRebuildingDependency: true);
+        string json = JsonSerializer.Serialize<IpcEvent>(new BuildPreviewEvent([item]), IpcJson.Options);
+
+        var back = Assert.Single(Assert.IsType<BuildPreviewEvent>(JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options)).Items);
+        Assert.Equal(item, back);
+        Assert.Equal(("Debug", true), (back.LastBuiltConfiguration, back.BehindRebuildingDependency));
+        Assert.NotEqual(item, item with { LastBuiltConfiguration = "Release" });
+        Assert.NotEqual(item, item with { BehindRebuildingDependency = false });
+
+        string old = json.Replace(",\"lastBuiltConfiguration\":\"Debug\"", "", StringComparison.Ordinal)
+            .Replace(",\"behindRebuildingDependency\":true", "", StringComparison.Ordinal);
+        Assert.DoesNotContain("lastBuiltConfiguration", old, StringComparison.Ordinal);
+        var oldBack = Assert.Single(Assert.IsType<BuildPreviewEvent>(JsonSerializer.Deserialize<IpcEvent>(old, IpcJson.Options)).Items);
+        Assert.Equal(((string?)null, false), (oldBack.LastBuiltConfiguration, oldBack.BehindRebuildingDependency));
+    }
+
     /// <summary>Koşullu proje IPC sınırını ayırt edilebilir geçer: gerekçe <c>waitingForDependency</c>,
     /// <c>conditional</c> bayrağı ve kök adları. Kökleri olmayan satır alanı hiç yazmaz; alansız eski satır
     /// koşullu değildir. Liste alanı içerikle karşılaştırılır (round-trip farklı örnek üretir).</summary>

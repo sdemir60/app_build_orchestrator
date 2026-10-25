@@ -70,6 +70,13 @@ public readonly record struct RowDecision(string Word, string? Tail, string Titl
 ///
 /// <para><b>Karar bilinmiyorsa yuva BOŞ kalır</b> — yalnız gerçekten bilinmiyorsa: Sync yapılmadı ya da motor
 /// bu satır için gerekçe üretmedi. Boş yuva "henüz bilmiyorum"un doğru karşılığıdır.</para>
+///
+/// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-25]</b> Kendi dosyası değişmemiş <c>SignatureChanged</c> satırı eskiden
+/// HER ZAMAN <c>Its own files are unchanged — a dependency changed</c> yazardı. Release'e geçişte bu yanlıştı (bildirim:
+/// "affected — a dependency changed, gerçek sebep bu değil"): imza configuration'ı da içine katar, yani araç projeyi en
+/// son Debug'da derlediyse imza değişir ve hiçbir bağımlılık değişmemiş olabilir. Motor son derlemenin configuration'ını —
+/// yalnız şimdikinden farklıysa — önizlemeyle gönderir ve gerekçe onu adlandırır (<c>— last built in Debug</c>). Kayıt bu
+/// bilgiden önce yazılmışsa (alan boş) gerekçe bugünkü gibidir.</para>
 /// </summary>
 public static class DecisionLabel
 {
@@ -79,7 +86,10 @@ public static class DecisionLabel
     /// bugünkünün karşılaştırması (<c>BuildStateStore.OwnFilesChanged</c>); bilinmiyorsa <c>null</c>.</param>
     /// <param name="localEdits">[spec 2026-09-18 §4 <c>local</c>] Projenin girdilerinden en az biri
     /// <c>git status</c>'ta kirli mi — yalnız <c>modified</c> satırında <c>local</c> kuyruğunu ekler.</param>
-    public static RowDecision For(bool? willBuild, WillBuildReason? reason, bool? ownFilesChanged, bool localEdits)
+    /// <param name="lastBuiltConfiguration">[kullanıcı kararı 2026-10-25] Projenin son başarılı derlemesinin configuration'ı,
+    /// yalnız şimdikinden farklıysa (<see cref="BuildPreviewItem.LastBuiltConfiguration"/>); yoksa <c>null</c>.</param>
+    public static RowDecision For(bool? willBuild, WillBuildReason? reason, bool? ownFilesChanged, bool localEdits,
+        string? lastBuiltConfiguration)
     {
         // Karar yok: Sync yapılmadı (willBuild null) ya da motor bu satır için gerekçe üretmedi.
         if (willBuild is null || reason is null) return RowDecision.None;
@@ -123,6 +133,13 @@ public static class DecisionLabel
                 return new("modified", localEdits ? "local" : null,
                     "Its own files are newer than its build output", Stale: true);
 
+            // [kullanıcı kararı 2026-10-25] İmza configuration'ı da içine katar: araç projeyi en son Debug'da derlediyse ve
+            // şimdi Release seçiliyse imza değişir, kendi dosyası değişmemiştir — ve hiçbir bağımlılık değişmemiş olabilir.
+            // Gerekçe bu yüzden "bir bağımlılık değişti" DEĞİL, son derlemenin configuration'ıdır (motor yalnız farklıysa
+            // gönderir). Sözcük affected kalır; kendi dosyası da değiştiyse aşağıdaki default dalı modified yazar.
+            case WillBuildReason.SignatureChanged when ownFilesChanged != true && lastBuiltConfiguration is { Length: > 0 } built:
+                return new("affected", null, OwnFilesUnchangedPrefix + "last built in " + built, Stale: true);
+
             default:
                 // SignatureChanged, DepIssue ve OutputStale (own=false/bilinmiyor): ikisinde de proje bayattır,
                 // ayrımı "kendi dosyası değişti mi" olgusu yapar. Bilinmiyorsa daha ihtiyatlı olan "affected"
@@ -141,7 +158,11 @@ public static class DecisionLabel
     /// <summary>[Faz 3 — Task 7] <c>NeverBuilt</c> ve <c>OutputMissing</c>'in PAYLAŞTIĞI tooltip — kopya YASAK.</summary>
     private const string NoBuildOutputKnownTitle = "No build output known to this tool";
 
+    /// <summary>[kullanıcı kararı 2026-10-25] Kendi dosyası değişmemiş <c>affected</c> satırın iki gerekçesinin ORTAK başı —
+    /// "bir bağımlılık değişti" ile "son derleme başka bir configuration'daydı" aynı olgudan başlar, kopya YASAK.</summary>
+    private const string OwnFilesUnchangedPrefix = "Its own files are unchanged — ";
+
     /// <summary>[Faz 3 — Task 7] Yalnız bağımlılığı değişmiş satırın (SignatureChanged/DepIssue own=false VE
     /// OutputStale own=false) PAYLAŞTIĞI tooltip — kopya YASAK.</summary>
-    private const string DependencyChangedTitle = "Its own files are unchanged — a dependency changed";
+    private const string DependencyChangedTitle = OwnFilesUnchangedPrefix + "a dependency changed";
 }

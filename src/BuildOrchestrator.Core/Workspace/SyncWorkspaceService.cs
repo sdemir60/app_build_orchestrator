@@ -190,7 +190,12 @@ public sealed class SyncWorkspaceService(
                         state.GetValueOrDefault(n.Id), id => nameById.GetValueOrDefault(id)),
                     FailedAt: BuildStateStore.FailedAtOf(state, n.Id),
                     LocalEdits: outcome.LocalEditsIds.Contains(n.Id),
-                    OutputBuiltAt: OutputEvidence.OutputBuiltAt(outcome.Checks.GetValueOrDefault(n.Id), n.WillBuildReason)))
+                    OutputBuiltAt: OutputEvidence.OutputBuiltAt(outcome.Checks.GetValueOrDefault(n.Id), n.WillBuildReason),
+                    // [kullanıcı kararı 2026-10-25] Gerekçenin iki olgusu koşu önizlemesiyle AYNI yardımcılardan: son
+                    // derlemenin (bu Sync'inkinden farklı) configuration'ı ve önce yeniden derlenecek bağımlılık.
+                    LastBuiltConfiguration: BuildStateStore.OtherBuiltConfigurationOf(state, n.Id, cmd.Configuration),
+                    BehindRebuildingDependency: OutputEvidence.BehindRebuildingDependency(
+                        outcome.Checks.GetValueOrDefault(n.Id), n.WillBuildReason)))
                 .ToList()));
 
         // --- 5) §3.1 satır 3 + 4. Sayılar syncCompleted'ın sayaçlarıyla AYNI kaynaktan gelir.

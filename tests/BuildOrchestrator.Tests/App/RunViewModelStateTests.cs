@@ -2569,7 +2569,8 @@ public class RunViewModelStateTests
         Assert.Equal(["A"], down.WarningRoots);
         Assert.Equal("Dependency issue: A", RowWarning.For(false, false, false, down.WarningRoots, down.NamePrefix));
         Assert.Equal("up to date",
-            DecisionLabel.For(down.WillBuild, down.WillBuildReason, down.OwnFilesChanged, down.LocalEdits).Word);
+            DecisionLabel.For(down.WillBuild, down.WillBuildReason, down.OwnFilesChanged, down.LocalEdits,
+                down.LastBuiltConfiguration).Word);
     }
 
     /// <summary>[D8] Koşu sürerken "up to date" ile atlanan satır (yüzey kapısı, taşınan döngü üyesi): motor defteri yeni imzayla
