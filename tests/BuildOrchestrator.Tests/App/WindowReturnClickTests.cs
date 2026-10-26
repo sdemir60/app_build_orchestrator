@@ -92,21 +92,6 @@ public class WindowReturnClickTests
         return row.Actions!;
     }
 
-    /// <summary>Satırın menüsünü <paramref name="open"/> ile açar ve maddelerini verir; menü sonra kapatılır. Maddeler popup açılınca
-    /// kurulur ve kapılarını menü açılırken okur (⋯'nin <c>Checked</c>'i — <c>ProjectRow.EnsureActions</c>).</summary>
-    private static List<Border> OpenedMenuItems(ProjectRowActions actions, Action open)
-    {
-        bool opened = false;
-        actions.RowMenu.Opened += (_, _) => opened = true;
-        open();
-        DispatcherPump.PumpUntil(() => opened, TimeSpan.FromSeconds(2));
-        Assert.True(opened, "ön-koşul: satır menüsü açılmadı");
-        actions.RowMenuContent.UpdateLayout();
-        var items = actions.RowMenuContent.Rows.ToList();
-        actions.MoreButton.IsChecked = false;
-        return items;
-    }
-
     /// <summary>Kusurun kendisi (2026-10-19): pencereyi Build'in üstünden öne getiren tık dönüşün Sync'ini istemez; Build açık kalır ve tık
     /// onu başlatır.</summary>
     [StaFact]
@@ -239,9 +224,10 @@ public class WindowReturnClickTests
         {
             var actions = Hover(TheRow(window));
             BringBackByPressingOn(window, sent, actions.MoreButton);
-            var items = OpenedMenuItems(actions, () => CommandPress.Toggle(actions.MoreButton)); // tık ⋯'ye iner
+            var items = MainWindowHost.OpenRowMenu(actions, () => CommandPress.Toggle(actions.MoreButton)); // tık ⋯'ye iner
             Assert.Equal(3, items.Count);
             Assert.All(items, item => Assert.True(item.IsEnabled));
+            actions.MoreButton.IsChecked = false;                           // menü kapanır
         });
 
     /// <summary>[bulgu 9] Satıra SAĞ basış satırın neresine inerse insin ⋯ ile aynı menüyü açar (<c>ProjectRow.OnRowRightClicked</c>).
@@ -253,9 +239,10 @@ public class WindowReturnClickTests
             var row = TheRow(window);
             var actions = Hover(row);                                       // imleç satırda
             BringBackByPressingOn(window, sent, row, MouseButton.Right);    // satırın ortası
-            var items = OpenedMenuItems(actions, () => MouseInput.Release(row, MouseButton.Right));
+            var items = MainWindowHost.OpenRowMenu(actions, () => MouseInput.Release(row, MouseButton.Right));
             Assert.Equal(3, items.Count);
             Assert.All(items, item => Assert.True(item.IsEnabled));
+            actions.MoreButton.IsChecked = false;                           // menü kapanır
         });
 
     /// <summary>[bulgu 10] Exit uçuşta iş yoksa onay sormadan kapatır. Pencereyi Exit'in üstünden öne getiren tıkta dönüşün sessiz Sync'i iş

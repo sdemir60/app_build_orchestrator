@@ -329,14 +329,7 @@ public class ProjectRowInputTests
 
         RaiseMouse(row, Mouse.MouseEnterEvent); // ikon bloğu kurulsun ki Opened'a abone olunabilsin
         var actions = row.Actions!;
-        bool opened = false;
-        actions.RowMenu.Opened += (_, _) => opened = true;
-        row.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Right)
-        { RoutedEvent = UIElement.MouseRightButtonUpEvent });
-        DispatcherPump.PumpUntil(() => opened, TimeSpan.FromSeconds(2));
-        Assert.True(opened, "ön-koşul: satır menüsü açılmadı");
-        actions.RowMenuContent.UpdateLayout();
-        var rows = actions.RowMenuContent.Rows.ToList();
+        var rows = MainWindowHost.OpenRowMenu(actions, () => MouseInput.Release(row, MouseButton.Right));
 
         rows[0].RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
         { RoutedEvent = UIElement.MouseLeftButtonUpEvent });
@@ -377,16 +370,9 @@ public class ProjectRowInputTests
 
         RaiseMouse(row, Mouse.MouseEnterEvent); // ikon bloğu kurulsun ki Opened'a abone olunabilsin
         var actions = row.Actions!;
-        bool opened = false;
-        actions.RowMenu.Opened += (_, _) => opened = true;
 
         runVm.IsStarting = true; // koşu UÇUŞTA — menü bunu görerek AÇILMALI
-        row.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Right)
-        { RoutedEvent = UIElement.MouseRightButtonUpEvent });
-        DispatcherPump.PumpUntil(() => opened, TimeSpan.FromSeconds(2));
-        Assert.True(opened, "ön-koşul: satır menüsü açılmadı");
-        actions.RowMenuContent.UpdateLayout();
-        var rows = actions.RowMenuContent.Rows.ToList();
+        var rows = MainWindowHost.OpenRowMenu(actions, () => MouseInput.Release(row, MouseButton.Right));
 
         Assert.Equal(3, rows.Count);
         Assert.All(rows, r => Assert.False(r.IsEnabled));
@@ -474,14 +460,9 @@ public class ProjectRowInputTests
         var row = Realize(runVm, runVm.Projects.Single(), out var window);
         RaiseMouse(row, Mouse.MouseEnterEvent);
         var actions = row.Actions!;
-        bool opened = false;
-        actions.RowMenu.Opened += (_, _) => opened = true;
-        actions.MoreButton.IsChecked = true;
-        DispatcherPump.PumpUntil(() => opened, TimeSpan.FromSeconds(2));
-        Assert.True(opened, "ön-koşul: satır menüsü açılmadı");
-        actions.RowMenuContent.UpdateLayout();
+        var menuRows = MainWindowHost.OpenRowMenu(actions, () => actions.MoreButton.IsChecked = true);
 
-        foreach (object source in new object[] { actions.RowMenuContent.Rows.First(), actions.BuildButton, actions.VsChooserRows })
+        foreach (object source in new object[] { menuRows.First(), actions.BuildButton, actions.VsChooserRows })
         {
             runVm.SelectProject(null);
             row.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)

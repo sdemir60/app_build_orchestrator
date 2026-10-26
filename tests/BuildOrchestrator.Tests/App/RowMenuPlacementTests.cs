@@ -44,12 +44,7 @@ public class RowMenuPlacementTests
         row.UpdateLayout();
 
         var actions = row.Actions!;
-        bool opened = false;
-        actions.RowMenu.Opened += (_, _) => opened = true;
-        actions.MoreButton.IsChecked = true;
-        DispatcherPump.PumpUntil(() => opened, TimeSpan.FromSeconds(2));
-        Assert.True(opened, "ön-koşul: satır menüsü açılmadı");
-        actions.RowMenuContent.UpdateLayout();
+        MainWindowHost.OpenRowMenu(actions, () => actions.MoreButton.IsChecked = true);
 
         // Çapa SATIRIN KÖKÜDÜR, ⋯ düğmesi değil — sabit bir offset yerine WPF'in Custom yerleşimi kullanılır.
         Assert.Equal(PlacementMode.Custom, actions.RowMenu.Placement);
