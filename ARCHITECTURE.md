@@ -2700,7 +2700,10 @@ client area that activates it (`WM_MOUSEACTIVATE`), hit-tests that point once fr
 lies under it — a project row, or the action bar, which asks its maintenance box in turn — or checks its own two
 title-bar buttons; when the answer is yes it leaves the return alone and the click runs as it would on an active
 window. A disabled control takes no hit — the hit falls to an enabled ancestor that starts nothing — so a click on a
-control other work has already closed still refreshes, and a right press counts only on a project row. The branch
+control that other work has closed leaves the return as it is: it Syncs, or waits for that work to end. The ⋯ button,
+a right-click on the row, *Exit* and `X` stay available whatever runs, so they count only while their own work could
+start: the first two while the row could start a run — otherwise the menu opens with its items locked — and the last
+two while nothing is in flight. A right press counts only on a project row. The branch
 chip is left out on purpose: opening it switches nothing, the popover may close without a choice, and the branches it
 lists are the ones the last Sync read. A return by keyboard, the taskbar or the tray, a click anywhere else — the
 filter and perf chips, a row's own body, its folder and Visual Studio icons, the title bar's other buttons — and a
@@ -3897,7 +3900,9 @@ While the run is in flight the target row's play button turns into a red **Stop*
 hover and drives the same stop command as the action bar; every other row's play button is disabled and its
 tooltip says why (`Build in progress — wait or stop it first`), and the menu's *Build* and *Rebuild* go the same
 way. *Clean* is Visual Studio's project clean — `-t:Clean` on that project — and it locks with the other two
-while a run is in flight. It is not the maintenance box's *Clean* — the workspace reset described under the
+while a run is in flight. An open menu follows that lock as it changes rather than keeping the state it opened with:
+a run or a workspace operation that starts while it is open locks its items at once, and their end unlocks them. It is
+not the maintenance box's *Clean* — the workspace reset described under the
 maintenance box below — and neither is the *Clean* in the Build split menu.
 
 The row's icon buttons are the one place the shared icon-button style is overridden: they hover to
@@ -7860,7 +7865,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Resource strip view: the three cells, their icons, the ghost-text frame, the downward tooltips, the writes gated by the hidden-surface signal, the UI Automation group | `App/Views/ResourceStrip.xaml(.cs)`; icons and measurements in `App/Resources/Icons.xaml` (`Icon.Cpu`, `Icon.MemoryStick`, `Icon.Parallel`) and `Tokens.xaml` (`Size.ResourceStripIcon`, `Size.ResourceStripIconViewBox`, `Thickness.ResourceStripCellGap`, `Thickness.ResourceStripValueGap`); the group's name in `App/AccessibilityNames.cs` |
 | Sticky ribbon: phase, building chips, failure cluster, progress; it listens to the engine state and announces the engine-starting line | `App/Views/StickyRibbon.xaml(.cs)` |
 | Project row: stripe, dot, decision label, hover icons, play/Stop wiring, breath, shake | `App/Views/ProjectRow.xaml(.cs)`, `ProjectRowActions.xaml(.cs)`; label wording `App/ViewModels/DecisionLabel.cs` |
-| Row menu (Build · Rebuild · Clean; ⋯ and right-click) | `App/Views/ProjectRowMenu.xaml(.cs)` |
+| Row menu (Build · Rebuild · Clean; ⋯ and right-click), its items following the run gate while it is open | `App/Views/ProjectRowMenu.xaml(.cs)`, `App/Views/ProjectRow.xaml.cs` |
 | Single-project run commands (build · rebuild · clean), run target and lock pushed to rows | `App/ViewModels/RunViewModel.cs` (`BuildProjectCommand`, `RunTargetId`) |
 | Build-state row removal after a clean | `Core/State/BuildStateStore.cs` (`Remove`) |
 | Row menu placement (row-right inset, row overlap, viewport clamp) | `App/Controls/RowMenuPlacement.cs` |
