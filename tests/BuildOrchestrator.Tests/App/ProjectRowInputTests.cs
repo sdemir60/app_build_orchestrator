@@ -387,6 +387,60 @@ public class ProjectRowInputTests
     }
 
     /// <summary>
+    /// <b>[kullanıcı kararı 2026-10-26 · bulgu 12] Açık menünün maddeleri koşu kapısını izler.</b> Kapı eskiden yalnız menü AÇILIRKEN okunurdu
+    /// (<c>The_row_menu_is_locked_through_the_real_row_when_a_run_is_in_flight</c>): menü açıkken bir Sync başlarsa — pencereye dönüşün
+    /// sessiz Sync'i bunun tipik yoludur — maddeler açık görünmeye devam eder ve basış sessizce yutulurdu (<c>OnRowMenuItem</c> komutun
+    /// kapısına yine bakar). Artık kapı değişince üç madde de pasifleşir ve nedenini söyler. Gerçek zincir: sağ bırakma → ⋯ <c>Checked</c> →
+    /// <c>BuildProjectCommand.CanExecuteChanged</c> → <c>SetRunActionsEnabled</c>.
+    /// </summary>
+    [StaFact]
+    public void An_open_row_menu_locks_its_items_when_a_sync_starts_under_it()
+    {
+        var runVm = NewRunVm();
+        VmTopology.Seed(runVm, RowId);
+        var row = Realize(runVm, runVm.Projects.Single(), out var window);
+        RaiseMouse(row, Mouse.MouseEnterEvent); // ikon bloğu kurulsun ki Opened'a abone olunabilsin
+        var actions = row.Actions!;
+        var rows = MainWindowHost.OpenRowMenu(actions, () => MouseInput.Release(row, MouseButton.Right));
+        Assert.Equal(3, rows.Count);
+        Assert.All(rows, r => Assert.True(r.IsEnabled)); // ön-koşul: kapı açıkken açıldı, maddeler açık
+
+        runVm.OnEvent(new SyncStartedEvent(runVm.RootPath, "main")); // menü AÇIKKEN bir Sync başladı: kapı kapandı
+
+        Assert.All(rows, r => Assert.False(r.IsEnabled));
+        Assert.All(rows, r => Assert.Equal(MenuRowMetrics.DisabledOpacity, r.Opacity));
+        Assert.All(rows, r => Assert.Equal(BuildOrchestrator.App.AccessibilityNames.BuildBusyTooltip, r.ToolTip));
+        actions.MoreButton.IsChecked = false;
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// <b>[kullanıcı kararı 2026-10-26 · bulgu 12]</b> Tersi — kullanıcının gördüğü: Sync sürerken açılan menünün maddeleri pasifti ve Sync
+    /// BİTSE DE pasif kalıyordu; menüyü kapatıp yeniden açmak gerekiyordu. Artık kapı açılınca üç madde de açılır, kilit nedeni kalkar.
+    /// </summary>
+    [StaFact]
+    public void A_row_menu_opened_during_a_sync_opens_its_items_when_the_sync_ends()
+    {
+        var runVm = NewRunVm();
+        VmTopology.Seed(runVm, RowId);
+        var row = Realize(runVm, runVm.Projects.Single(), out var window);
+        RaiseMouse(row, Mouse.MouseEnterEvent); // ikon bloğu kurulsun ki Opened'a abone olunabilsin
+        var actions = row.Actions!;
+        runVm.OnEvent(new SyncStartedEvent(runVm.RootPath, "main")); // bir Sync sürüyor: kapı kapalı
+        var rows = MainWindowHost.OpenRowMenu(actions, () => actions.MoreButton.IsChecked = true);
+        Assert.Equal(3, rows.Count);
+        Assert.All(rows, r => Assert.False(r.IsEnabled)); // ön-koşul: kapalı kapıyla açıldı, maddeler pasif
+
+        runVm.OnEvent(MainWindowHost.SyncCompleted()); // menü AÇIKKEN Sync bitti: kapı açıldı
+
+        Assert.All(rows, r => Assert.True(r.IsEnabled));
+        Assert.All(rows, r => Assert.Equal(1.0, r.Opacity));
+        Assert.All(rows, r => Assert.Null(r.ToolTip));
+        actions.MoreButton.IsChecked = false;
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
     /// [design §2.4-4 · ölçüldü] <b>Satırdaki ikon butonların hover zemini, satırın KENDİ hover zemininden
     /// bir kademe yukarıda olmalıdır.</b> İkonlar yalnız satır hover'dayken görünür — yani buton her zaman
     /// zaten boyanmış bir zeminin üstündedir. Paylaşılan <c>Ds.IconButton</c> hover'ı
