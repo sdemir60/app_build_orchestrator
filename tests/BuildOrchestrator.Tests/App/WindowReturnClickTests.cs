@@ -18,7 +18,8 @@ namespace BuildOrchestrator.Tests.App;
 /// Sync'i Build'i tıkın altından kapatıyor ve tık hiçbir şey yapmıyordu; Debug|Release'te ilk tık yutuluyor, ikincisi geçiyordu.</para>
 ///
 /// <para>Harness: gösterilmeyen pencerede ne <c>Activated</c> ne <c>WM_MOUSEACTIVATE</c> üretilebilir — testler pencerenin etkinleşme
-/// girişini (<see cref="MainWindow.OnActivated"/>) tıkın çubuktaki konumuyla doğrudan sürer. Çubuk ekran dışı gerçek bir pencerede yüklenir
+/// girişini (<see cref="MainWindow.OnActivated"/>) tıkın pencerenin içerik köküne göre konumuyla (<see cref="CenterInRoot"/>) doğrudan
+/// sürer. Çubuk ekran dışı gerçek bir pencerede yüklenir
 /// (<see cref="MainWindowHost.WithLoadedActionBar"/>: Build düğmesinin komutu <c>Loaded</c>'da bağlanır). Basış WPF'in yaptığı gibidir:
 /// kapalı öğeye basılamaz (<see cref="CommandPress"/>). Gönderimler sahte ama canlı bir motora gider; saat enjekte edilir ve son Sync'ten
 /// bir dakika sonrasına alınır. Kökte git dizini yoktur: dönüş HEAD'i okuyamaz ve sessiz Sync'ler.</para>
@@ -44,6 +45,10 @@ public class WindowReturnClickTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>Bir öğenin ortası, pencerenin içerik köküne (<see cref="MainWindow.RootShell"/>: title bar + gövde) göre — pencereyi öne
+    /// getiren basışın konumu <see cref="MainWindow.OnActivated"/>'e bu kökte verilir.</summary>
+    private static Point CenterInRoot(MainWindow window, FrameworkElement element) => ActionBarTests.CenterIn(window.RootShell, element);
+
     /// <summary>Kusurun kendisi: pencereyi Build'in üstünden öne getiren tık dönüşün Sync'ini istemez; Build açık kalır ve tık onu
     /// başlatır.</summary>
     [StaFact]
@@ -53,7 +58,7 @@ public class WindowReturnClickTests
             var build = (Button)bar.Split.PrimaryHalf!;
             Assert.True(build.IsEnabled);                                   // ön-koşul: pencere arkadayken Build açık
 
-            window.OnActivated(ActionBarTests.CenterIn(bar, build));        // tık pencereyi Build'in üstünden öne getirdi
+            window.OnActivated(CenterInRoot(window, build));                // tık pencereyi Build'in üstünden öne getirdi
 
             Assert.Empty(sent.OfType<SyncWorkspaceCommand>());              // dönüşün Sync'i istenmedi…
             Assert.True(build.IsEnabled);                                   // …Build tıkın altında açık kaldı
@@ -73,7 +78,7 @@ public class WindowReturnClickTests
             Assert.Equal("Debug", vm.Configuration);                        // ön-koşul
             Assert.True(release.IsEnabled);
 
-            window.OnActivated(ActionBarTests.CenterIn(bar, release));      // tık pencereyi Release'in üstünden öne getirdi
+            window.OnActivated(CenterInRoot(window, release));              // tık pencereyi Release'in üstünden öne getirdi
 
             Assert.Empty(sent.OfType<SyncWorkspaceCommand>());              // dönüşün Sync'i istenmedi
             CommandPress.Select(release);                                   // tık seçili olmayan öğeye iner
@@ -96,8 +101,8 @@ public class WindowReturnClickTests
             window.OnActivated(how switch
             {
                 OtherReturn.Keyboard => null,
-                OtherReturn.ClickOnAChip => ActionBarTests.CenterIn(bar, bar.SigmaChip),
-                _ => ActionBarTests.CenterIn(bar, ActionBarTests.ConfigurationItem(bar, "Debug")),
+                OtherReturn.ClickOnAChip => CenterInRoot(window, bar.SigmaChip),
+                _ => CenterInRoot(window, ActionBarTests.ConfigurationItem(bar, "Debug")),
             });
 
             Assert.Single(sent.OfType<SyncWorkspaceCommand>());             // dönüş Sync'ledi

@@ -154,16 +154,15 @@ public partial class ActionBar : UserControl
 
     // ---------------------------------------------------------------- [kullanıcı kararı 2026-10-19] pencereyi öne getiren tık
     /// <summary>
-    /// Bu noktaya inen bir tık kendi tazelemesini yapan bir komutu mu çalıştırır: AÇIK Build düğmesi (koşu diski baştan planlar —
+    /// Bu isabete inen bir tık kendi tazelemesini yapan bir komutu mu çalıştırır: AÇIK Build düğmesi (koşu diski baştan planlar —
     /// Sync'in taramasının ve kararlarının aynısı, aynı Core kodu) ya da Debug|Release'in seçili OLMAYAN öğesi (geçiş kendi Sync'ini
     /// başlatır). Pencereyi arka plandan öne getiren tık buraya iniyorsa pencere dönüşün Sync'ini istemez (<c>MainWindow.OnActivated</c>):
     /// Windows tıkı pencereyi etkinleştirdikten SONRA teslim eder ve o Sync tıkın indiği düğmeyi altından kapatırdı. Seçili öğe (geçiş
     /// no-op) ve kapalı bir düğme (tık hiçbir şey başlatmaz) sayılmaz — kapalı öğe isabet almaz, isabet onu taşıyan açık ataya düşer.
     /// </summary>
-    /// <param name="point">Çubuğa göre konum.</param>
-    internal bool StartsOwnRefreshAt(Point point)
+    /// <param name="hit">Pencerenin tek isabet testinin sonucu (<see cref="Shell.ActivatingClick.HitAt"/>).</param>
+    internal bool StartsOwnRefresh(Visual hit)
     {
-        if (InputHitTest(point) is not Visual hit) return false;
         if (PART_Split.PrimaryHalf is { } build && build.IsAncestorOf(hit)) return true;
         return new[] { PART_CfgDebug, PART_CfgRelease }.Any(item => item.IsChecked != true && item.IsAncestorOf(hit));
     }

@@ -9,6 +9,7 @@ using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.App.Services;
+using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Contracts.Ipc;
@@ -671,13 +672,18 @@ public partial class ActionBarTests
     internal static RadioButton ConfigurationItem(ActionBar bar, string configuration) =>
         bar.Segment.Items.OfType<RadioButton>().Single(item => Equals(item.Content, configuration));
 
-    /// <summary>[kullanıcı kararı 2026-10-19] Bir öğenin ortası, çubuğa göre — tıkın indiği nokta. <c>internal</c>:
-    /// <c>WindowReturnClickTests</c> de pencereyi öne getiren tıkı buradan konumlar.</summary>
-    internal static Point CenterIn(ActionBar bar, FrameworkElement element) =>
-        element.TranslatePoint(new Point(element.ActualWidth / 2, element.ActualHeight / 2), bar);
+    /// <summary>[kullanıcı kararı 2026-10-19] Bir öğenin ortası, verilen köke göre — tıkın indiği nokta. <c>internal</c>:
+    /// <c>WindowReturnClickTests</c> de pencereyi öne getiren tıkı buradan konumlar (kök orada pencerenin içerik köküdür).</summary>
+    internal static Point CenterIn(UIElement root, FrameworkElement element) =>
+        element.TranslatePoint(new Point(element.ActualWidth / 2, element.ActualHeight / 2), root);
+
+    /// <summary>[kullanıcı kararı 2026-10-19] Öğenin ortasına inen tık kendi tazelemesini yapar mı — isabet pencerenin yaptığı gibi tek
+    /// isabet testinden alınır (<see cref="ActivatingClick.HitAt"/>) ve çubuğa sorulur.</summary>
+    private static bool StartsOwnRefresh(ActionBar bar, FrameworkElement element) =>
+        bar.StartsOwnRefresh(Assert.IsAssignableFrom<Visual>(ActivatingClick.HitAt(bar, CenterIn(bar, element))));
 
     /// <summary>
-    /// [kullanıcı kararı 2026-10-19] Kendi tazelemesini yapan komutlar (<see cref="ActionBar.StartsOwnRefreshAt"/>): AÇIK Build ve
+    /// [kullanıcı kararı 2026-10-19] Kendi tazelemesini yapan komutlar (<see cref="ActionBar.StartsOwnRefresh"/>): AÇIK Build ve
     /// Debug|Release'in seçili OLMAYAN öğesi. Pencereyi arka plandan öne getiren tık bunlara iniyorsa pencere dönüşün Sync'ini istemez
     /// (<c>WindowReturnClickTests</c>). Seçili öğe (geçiş no-op), Sync düğmesi ve bir sayaç chip'i sayılmaz; bir Sync sürerken kapalı
     /// olan Build ve segment de sayılmaz — kapalı bir öğe isabet almaz, tık hiçbir şey başlatmaz.
@@ -694,17 +700,17 @@ public partial class ActionBarTests
         Assert.True(build.IsEnabled);                                       // ön-koşul: Build açık
         Assert.True(debug.IsChecked);                                       // ön-koşul: Debug seçili
 
-        Assert.True(bar.StartsOwnRefreshAt(CenterIn(bar, build)));
-        Assert.True(bar.StartsOwnRefreshAt(CenterIn(bar, release)));
-        Assert.False(bar.StartsOwnRefreshAt(CenterIn(bar, debug)));
-        Assert.False(bar.StartsOwnRefreshAt(CenterIn(bar, bar.SyncButton)));
-        Assert.False(bar.StartsOwnRefreshAt(CenterIn(bar, bar.SigmaChip)));
+        Assert.True(StartsOwnRefresh(bar, build));
+        Assert.True(StartsOwnRefresh(bar, release));
+        Assert.False(StartsOwnRefresh(bar, debug));
+        Assert.False(StartsOwnRefresh(bar, bar.SyncButton));
+        Assert.False(StartsOwnRefresh(bar, bar.SigmaChip));
 
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));               // bir Sync sürüyor: ikisi de kapalı
         Assert.False(build.IsEnabled);                                      // ön-koşul
         Assert.False(bar.Segment.IsEnabled);
-        Assert.False(bar.StartsOwnRefreshAt(CenterIn(bar, build)));
-        Assert.False(bar.StartsOwnRefreshAt(CenterIn(bar, release)));
+        Assert.False(StartsOwnRefresh(bar, build));
+        Assert.False(StartsOwnRefresh(bar, release));
         GC.KeepAlive(window);
     }
 

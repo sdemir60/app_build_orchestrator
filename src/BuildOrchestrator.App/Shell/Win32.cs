@@ -22,6 +22,9 @@ internal static class Win32
     /// <summary>Sol tuş basıldı (istemci alanı).</summary>
     public const int WM_LBUTTONDOWN = 0x0201;
 
+    /// <summary>[kullanıcı kararı 2026-10-26] Sağ tuş basıldı (istemci alanı) — satıra sağ basış satırın menüsünü açar.</summary>
+    public const int WM_RBUTTONDOWN = 0x0204;
+
     /// <summary>Yatay tekerlek / precision touchpad'in iki parmakla yatay kaydırması. WPF bu mesajı HİÇ
     /// dağıtmaz (yalnız <c>WM_MOUSEWHEEL</c> bir routed event'e çevrilir), bu yüzden yatay kaydırma
     /// uygulamanın kendi hook'undan geçer — bkz. <see cref="Controls.HorizontalWheelScroll"/>.</summary>
