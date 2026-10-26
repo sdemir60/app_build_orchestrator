@@ -3855,7 +3855,7 @@ A cleaned project reads the same `never built`, because its ledger row is gone (
 whose output file is missing from disk (§7.6).
 
 **The slot is not a result column.** The state of the output is carried by the stripe, the dot and the glyph,
-and what this run did by the duration and by the run-story surfaces (the ribbon, the console header, the event
+and what this run did by the duration and by the run-story surfaces (the ribbon, the console, the event
 stream); the slot always answers the same question — *what does this project's output need?* After a Sync that
 answer comes from comparing the stored signature with today's — or, for an output built elsewhere, its time with
 its inputs' (§7.6); after a build it comes from what just happened
@@ -5004,12 +5004,12 @@ lines.
   never shrinks. The left content's own inner `Grid` makes **every** column `Auto`, project name included —
   deliberately not `*`. A `*` column always claims the whole remainder regardless of what its content actually
   needs, and every `Auto` column after it starts at that column's *full* width rather than at the text's rendered
-  edge; with the name in a `*` column, a wide panel and a short name left a visible gap before the status glyph
+  edge; with the name in a `*` column, a wide panel and a short name left a visible gap before the first badge
   instead of the two sitting flush (the prototype's name `span` is `white-space: nowrap` with no flex-grow — it
   shrinks, never grows, and its neighbours are always immediately to its right). The real shrink-on-demand behaviour
-  is computed by hand instead: `ApplyProjectNameShrink` reads the *actual* rendered width of Back, the status glyph,
-  the status name and whichever badges are visible (each plus its own margin), subtracts their sum from the available
-  space, and caps the name's `MaxWidth` at what's left — recomputed after every `ShowProjectLog`/`RefreshStatus` call,
+  is computed by hand instead: `ApplyProjectNameShrink` reads the *actual* rendered width of Back and whichever badges
+  are visible (each plus its own margin), subtracts their sum from the available
+  space, and caps the name's `MaxWidth` at what's left — recomputed after every `ShowProjectLog`/`RefreshBadges` call,
   on the right block's own `SizeChanged` (Copy log appearing or disappearing, or the `N lines` text widening from 999
   to 1000), and on the header's own `SizeChanged` (a live splitter drag). Because WPF only refreshes `ActualWidth`
   after a layout pass, the method forces one (`UpdateLayout`) before reading its neighbours — the same idiom
@@ -5023,13 +5023,10 @@ lines.
   (`IconVisual.BoundToForeground`), so the icon tracks the same hover fade the label text does; its `-6px` left margin
   is not a clipping bug and not a full cancellation either — Ghost.Sm's own left padding is 10 px, so `-6` only takes
   back six of those ten, leaving the icon 4 px further in than the panel's own 10 px inset, not flush with it. The
-  status glyph is a real `StatusGlyph` control (13 px) rather than a character — `building` draws its own spinning arc
-  through the control's embedded `BuildingSpinner`, every other state draws the dashed/solid ring. The glyph reads the
-  selected row's own `ProjectRowViewModel.Status`, the same value the row and the graph node draw, so the header never
-  keeps a second state-to-glyph mapping: a cycle member that is `Started` but not the one actually compiling shows
-  `Queued` in the row and in the header alike. The status word beside it, and its colour, read the very same table
-  (`StatusGlyph.RunLabelFor`/`BrushKeyFor`) the glyph does rather than a second `ProjectRowState`-keyed
-  vocabulary, so word, colour and glyph are one call and cannot disagree. A dependency-issue badge and a cycle
+  name follows Back 8 px to its right, in mono 12. The header carries **no run status** — no status glyph and no status
+  word: both would repeat what the list and the graph already show — the row's stripe, dot, glyph and decision label
+  (§13.2) and the graph node — and on a project the run has not touched a dashed ring beside the word *Discovered*
+  reads like a loading indicator rather than a state. A dependency-issue badge and a cycle
   badge can appear **together** (unlike the single triangle a project row shows, which picks one by priority):
   both are an 8 px `Icon.AlertTri` outline triangle in `Brush.AmberText`, declared directly in XAML as
   `{DynamicResource}` bindings so they resolve as soon as the header is rooted in a live resource scope even
@@ -5043,18 +5040,16 @@ lines.
   `AboutDialog`'s Copy diagnostics button does, which means a hover during the 1.4 s window can hand control
   back to the style's own animated brush — an accepted trade-off shared by both buttons.
 - **The header keeps watching the selected row, not just the moment it was selected.** `ShowProjectLog` runs once, on
-  selection; a project already open can still change underneath the reader — a `Started` row reaching `Succeeded`, a
-  dependency-issue list arriving, a cycle membership settling — and none of those are selection events.
+  selection; a project already open can still change underneath the reader — a dependency-issue list arriving or
+  clearing, a cycle membership settling — and none of those are selection events.
   `MainWindow.TrackHeaderRow` subscribes to exactly the one selected `ProjectRowViewModel`'s `PropertyChanged`
-  (swapping the subscription, never stacking two) and calls `ConsoleHeader.RefreshStatus` on
-  `State`/`Status`/`DepIssues`/`InCycle` alone — `Status` is listed on its own because it can change while `State`
-  does not (a cycle member's compile starting or ending within a round flips `IsCompiling`) — every other row notification
-  (`Marked`, `Fade`, …) is not the header's concern and is ignored, the same filtered `switch` idiom
-  `ProjectRow.OnVmPropertyChanged` already uses for its own row. `RefreshStatus` touches only the glyph, the status
-  word and the two badges; it does not re-run the project-name/copy-log/mode side of `ShowProjectLog`, so a status
-  change mid-read cannot reset the reader's clipboard feedback or replay the panel's tilt transition. The 200 ms run
-  tick still owns only `SetLineCount` — status changes are comparatively rare (a handful per project per run) and are
-  pushed the instant they happen rather than polled, so the idle-tick stays allocation-free exactly as before.
+  (swapping the subscription, never stacking two) and calls `ConsoleHeader.RefreshBadges` on `DepIssues`/`InCycle`
+  alone — every other row notification (`State`, `Status`, `Marked`, `Fade`, …) is not the header's concern and is
+  ignored, the same filtered `switch` idiom `ProjectRow.OnVmPropertyChanged` already uses for its own row.
+  `RefreshBadges` touches only the two badges; it does not re-run the project-name/copy-log/mode side of
+  `ShowProjectLog`, so a badge change mid-read cannot reset the reader's clipboard feedback or replay the panel's tilt
+  transition. The 200 ms run tick still owns only `SetLineCount` — badge changes are rare and are pushed the instant
+  they happen rather than polled, so the idle-tick stays allocation-free exactly as before.
 - The document stays **plain text**, so what the user copies is meaningful. Colour comes from an offset-based
   `DocumentColorizingTransformer`, and only lines whose *format is known* get one: the prefixes the application
   itself prints (`[error]`, `warning:` — the engine's notes in a project's log included —, a command line), the
@@ -5264,7 +5259,7 @@ lines.
   and `its copy in the shared folder does not match its build output`, and a missing output does not repeat
   itself on the evidence line, just as never built does not. A signature that moved only because the
   configuration was switched reads `it was last built in Debug`, the configuration named, rather than that the
-  signature changed (§7.2). The status word is not repeated, because the header is already showing it. A project
+  signature changed (§7.2). The status word is not written: the row and the graph node already show the project's state. A project
   that is compiling right now gets one line instead of two: there is no evidence yet, and its output is about
   to arrive. The reason comes from the engine's own vocabulary where there is one — the skip reasons are a
   single shared source, so the page, the event stream and `decision.log` cannot drift apart — and from the
@@ -5274,7 +5269,7 @@ lines.
 - **There is no `build in progress` marker at the end of a project log.** There used to be an amber, blinking
   one. It was set when the page opened and never updated, so a project that finished while its log was on
   screen kept claiming to be building. Two surfaces already answer that question and stay in sync — the
-  header's status glyph and the row itself — and a third, unsynchronised channel is worth less than the times
+  row and the graph node — and a third, unsynchronised channel is worth less than the times
   it is wrong. It was removed rather than wired up.
 - **Each mode is pinned to the end you read it from.** The order is fixed — change the content, pin, then
   animate — and the pin forces a measure on **both** sides of the scroll. Before, because the editor's scroll
@@ -5772,9 +5767,9 @@ resources — no hex, no milliseconds inline.
 
 One canonical gesture: clicking a project row, a graph node or a stream line selects that project **everywhere**
 — the graph pans to the node, the list scrolls to the row, the console switches to that project's log, the
-panel header switches to its project-log half with the `Back` button. Clicking the same element again, or
-`Back`, or Esc, clears it and follow-mode resumes. Text selection inside the console never clears the project
-selection.
+panel header switches to its project-log half with the `Back` button. Clicking the same element again, clicking the
+graph's empty background, `Back`, or Esc clears it and follow-mode resumes. Text selection inside the console never
+clears the project selection.
 
 Esc is a chain and only ever closes the topmost layer: the exit card (§13.3), which sits above even the dialogs →
 dialog → popover/menu (the action bar's popovers and the title bar's update card) → selection → the running build →
@@ -6038,20 +6033,16 @@ meets 4.5:1.
 | Up to date | ✓ in a ring | Up to date |
 | Queued | clock | Queued |
 | Building | rotating dashed ring | Building |
-| Succeeded — built by this run | ✓ in a ring | Up to date · *Succeeded* in the console header |
+| Succeeded — built by this run | ✓ in a ring | Up to date |
 | Failed — a compiler failure, in this run or proven by the ledger | ✗ in a ring | Failed |
 | Skipped — run-story surfaces only | — in a ring | Skipped |
 
 Glyph and text are both drawn from the visual status. On the state surfaces — the row glyph's and the graph
 node's screen-reader names — the word names what the surface *shows*, with the same words the filter chips use
 (`StatusGlyph.LabelFor`, which reads the same state bucket as the counters): a skipped up-to-date row is
-announced *Up to date*, never *Skipped*, and a row this run built is *Up to date* too. The console header is a
-run-story surface: its status word names what the engine last said about the project in this run
-(`StatusGlyph.RunLabelFor` — *Succeeded*, *Skipped*, *Discovered* for a project the run has not touched), and
-shares the words it has in common (*Queued*, *Building*, *Failed*) with the state table rather than spelling
-them again. The `—` is a run-story mark: it appears on the event stream's skip line and in the console
-header's run result, never on a list row, a graph node or a counter — a skipped project keeps the colour and
-glyph of its standing.
+announced *Up to date*, never *Skipped*, and a row this run built is *Up to date* too. The `—` is a run-story
+mark: it appears on the event stream's skip line, never on a list row, a graph node or a counter — a skipped
+project keeps the colour and glyph of its standing. The console's project page names no status at all (§13.5).
 
 **One colour channel — the visual status.** The row's stripe, the dot beside the name, the status glyph, the
 graph node's border and the cube inside it are all painted from a single value (`VisualStatus`), and colour
@@ -6099,8 +6090,8 @@ A stopped run's plan belongs to the old configuration, so there is nothing under
 as; the next *Build* starts from the new plan. `queued` is amber, not grey:
 being in the queue is not a result, it is the scope of the operation that is running, and the amber the marking
 wave lit must not go out when the run begins. The mapping lives in one place (`VisualStatuses.For`) and every
-surface reads it; the run-story surfaces map the engine's status on their own through `VisualStatuses.OfRun`,
-which is the only mapping that still yields `skipped`.
+state surface reads it; `skipped` is drawn only by the event stream, a run-story surface, whose skip line takes
+its glyph from the line's own kind.
 
 **Queued reads only the running operation's own plan.** A row is not amber merely because it is dirty
 (`WillBuild`) — `WillBuild` is a standing fact about the project, decided fresh after every Sync and unaware of
