@@ -403,8 +403,8 @@ public partial class MainWindow : Window
         _vm.GitOperationPollTimer = new DispatcherPollTimer(Dispatcher);
         _vm.EnableAutoSync(action => Dispatcher.InvokeAsync(action));
         // (Aynı Activated olayına bağlı öbür kanca — imleç saatinin aktiflik kablajı — ctor'un başındadır: cursorClock.)
-        // [kullanıcı kararı 2026-10-19] Dönüşü bir basış getirdiyse basışın yeri ve tuşu da gider (OnActivated — MainWindow.ActivatingClick.cs).
-        Activated += (_, _) => { var (at, button) = TakeActivatingClick(); OnActivated(at, button); };
+        // [kullanıcı kararı 2026-10-19] Dönüşü bir sol basış getirdiyse basışın yeri de gider (OnActivated — MainWindow.ActivatingClick.cs).
+        Activated += (_, _) => OnActivated(TakeActivatingClick());
 
         _elapsedTimer.Tick += (_, _) => OnElapsedTick();
         _elapsedTimer.Start();

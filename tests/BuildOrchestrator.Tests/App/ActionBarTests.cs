@@ -683,20 +683,22 @@ public partial class ActionBarTests
         bar.StartsOwnRefresh(Assert.IsAssignableFrom<Visual>(ActivatingClick.HitAt(bar, CenterIn(bar, element))));
 
     /// <summary>
-    /// <b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-26]</b> Kendi tazelemesini yapan kontroller (<see cref="ActionBar.StartsOwnRefresh"/>) —
-    /// yalnız AÇIK olanlar: Build'in birincil yarısı ve chevron'u (menünün maddeleri koşudur), Sync düğmesi, <c>N behind</c> chip'i
-    /// (başarılı pull Sync zincirler), bakım kutusunun Clean / Optimize / Resolve cycles düğmeleri ve Debug|Release'in seçili OLMAYAN
-    /// öğesi. Pencereyi arka plandan öne getiren tık bunlara iniyorsa pencere dönüşün Sync'ini istemez (<c>WindowReturnClickTests</c>).
-    /// Branch chip'i (kullanıcı kararı: tık branch'i doğrudan değiştirmez, kullanıcı seçmeyebilir), sayaç chip'leri, perf chip'i ve seçili
-    /// öğe (geçiş no-op) sayılmaz — dördü de açıkken sınanır, yani sayılmamaları kapıdan değil kuraldandır. Bir Sync sürerken sayılanların
-    /// hepsi kapalıdır ve hiçbiri sayılmaz: kapalı öğe isabet almaz, tık hiçbir şey başlatmaz.
-    /// <para>Eski ad ve iddia (<c>Only_an_open_build_and_the_configuration_not_selected_start_their_own_refresh</c>, kullanıcı kararı
-    /// 2026-10-19): yalnız açık Build ve seçili olmayan Debug|Release sayılır — <b>Sync düğmesi sayılmaz</b>. Değişme gerekçesi (kullanıcı
-    /// kararı 2026-10-26): dönüşün Sync'i istendiği ANDA kapattığı her kontrolde pencereyi öne getiren ilk tık yutuluyordu; Sync düğmesi,
-    /// bakım kutusu, N behind ve chevron da kendi tazelemesini yapar.</para>
+    /// <b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-26, ikinci]</b> Pencereyi arka plandan öne getiren tık, işi bitince ekranın TAMAMINI
+    /// tazeleyen AÇIK bir kontrole iniyorsa dönüşün Sync'i istenmez (<see cref="ActionBar.StartsOwnRefresh"/>, <c>WindowReturnClickTests</c>):
+    /// Build'in birincil yarısı, Debug|Release'in seçili OLMAYAN öğesi, Sync düğmesi ve bakım kutusunun Clean / Optimize düğmeleri. Branch chip'i
+    /// (kullanıcı kararı: tık branch'i doğrudan değiştirmez, kullanıcı seçmeyebilir), sayaç chip'leri, perf chip'i ve seçili öğe (geçiş no-op)
+    /// sayılmaz — açıkken sınanır, yani sayılmamaları kapıdan değil kuraldandır. Bir Sync sürerken sayılanların hepsi kapalıdır ve hiçbiri
+    /// sayılmaz: kapalı öğe isabet almaz, tık hiçbir şey başlatmaz.
+    /// <para>Eski iddia (aynı gün, ilk karar; ad <c>Only_open_controls_that_do_their_own_refresh_count_and_the_branch_chip_does_not</c>): Build'in
+    /// chevron'u, <c>N behind</c> chip'i ve Resolve cycles de sayılır. Değişme gerekçesi: üçü de ekranın tamamını tazelemez — chevron yalnız
+    /// menü açar, kirli ağaçta pull reddedilir ve Sync zincirlenmez, Resolve cycles'ın önizlemesi plan bayrağını yazmaz
+    /// (<c>RunViewModel.PreviewWritesPlanFlag</c>); ara zincir yok, bu üçünde dönüş bugünkü gibi Sync'ler. Daha eski iddia
+    /// (<c>Only_an_open_build_and_the_configuration_not_selected_start_their_own_refresh</c>, kullanıcı kararı 2026-10-19): yalnız açık Build ve
+    /// seçili olmayan Debug|Release sayılır — <b>Sync düğmesi sayılmaz</b>; Sync, Clean ve Optimize kendi işiyle ekranı tazelediği için
+    /// 2026-10-26'da listeye girdi ve ikinci kararda kaldı.</para>
     /// </summary>
     [StaFact]
-    public void Only_open_controls_that_do_their_own_refresh_count_and_the_branch_chip_does_not()
+    public void Only_open_controls_whose_own_work_refreshes_the_whole_screen_count()
     {
         var vm = NewVm();
         VmTopology.SeedCycle(vm, VmTopology.DefaultProjectId, @"C:\p\b.csproj"); // döngü var: Resolve cycles açık
@@ -706,10 +708,12 @@ public partial class ActionBarTests
         var debug = ConfigurationItem(bar, "Debug");
         FrameworkElement[] own =
         [
-            bar.Split.PrimaryHalf!, bar.Split.MenuToggle!, bar.SyncButton, bar.BehindChip,
-            box.CleanButton, box.OptimizeButton, box.ResolveButton, ConfigurationItem(bar, "Release"),
+            bar.Split.PrimaryHalf!, ConfigurationItem(bar, "Release"), bar.SyncButton, box.CleanButton, box.OptimizeButton,
         ];
-        FrameworkElement[] notOwn = [bar.BranchChip, bar.SigmaChip, bar.PerfChip, debug];
+        FrameworkElement[] notOwn =
+        [
+            bar.Split.MenuToggle!, bar.BehindChip, box.ResolveButton, bar.BranchChip, bar.SigmaChip, bar.PerfChip, debug,
+        ];
         Assert.All(own.Concat(notOwn), element => Assert.True(element.IsEnabled)); // ön-koşul: hepsi açık
         Assert.True(debug.IsChecked);                                       // ön-koşul: Debug seçili
 

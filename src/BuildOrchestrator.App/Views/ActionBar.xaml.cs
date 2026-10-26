@@ -154,29 +154,28 @@ public partial class ActionBar : UserControl
 
     // ---------------------------------------------------------------- [kullanıcı kararı 2026-10-19 · 2026-10-26] pencereyi öne getiren tık
     /// <summary>
-    /// Bu isabete inen bir tık kendi tazelemesini yapan bir kontrolü mü çalıştırır. Pencereyi arka plandan öne getiren tık buraya iniyorsa
-    /// pencere dönüşün Sync'ini istemez (<c>MainWindow.StartsOwnRefreshAt</c>): Windows tıkı pencereyi etkinleştirdikten SONRA teslim eder
-    /// ve o Sync, istendiği ANDA kapattığı kontrolü tıkın altından kapatırdı. Çubuğun saydıkları — yalnız AÇIK olanlar:
+    /// Bu isabete inen bir tık, işi bitince ekranın TAMAMINI tazeleyen bir kontrolü mü çalıştırır. Pencereyi arka plandan öne getiren tık buraya
+    /// iniyorsa pencere dönüşün Sync'ini istemez (<c>MainWindow.StartsOwnRefreshAt</c>): Windows tıkı pencereyi etkinleştirdikten SONRA teslim
+    /// eder ve o Sync, istendiği ANDA kapattığı kontrolü tıkın altından kapatırdı. Başka her tıkta dönüş bugünkü gibi Sync'ler ve kapanan
+    /// kontrole inen tık yutulur. Çubuğun saydıkları — yalnız AÇIK olanlar:
     /// <list type="bullet">
-    /// <item>Build'in birincil yarısı (koşu diski baştan planlar — Sync'in taramasının ve kararlarının aynısı, aynı Core kodu) ve chevron'u
-    /// (menünün maddelerinin hepsi koşudur);</item>
-    /// <item>Sync düğmesi (kendisi tam bir Sync'tir) ve <c>N behind</c> chip'i (başarılı pull Sync zincirler);</item>
-    /// <item>bakım kutusunun üç düğmesi — hangileri olduğunu kutu bilir (<see cref="MaintenanceBox.StartsOwnRefresh"/>);</item>
+    /// <item>Build'in birincil yarısı (koşu diski baştan planlar — Sync'in taramasının ve kararlarının aynısı, aynı Core kodu);</item>
+    /// <item>Sync düğmesi (kendisi tam bir Sync'tir);</item>
+    /// <item>bakım kutusunun Clean ve Optimize düğmeleri — hangileri olduğunu kutu bilir (<see cref="MaintenanceBox.StartsOwnRefresh"/>);</item>
     /// <item>Debug|Release'in seçili OLMAYAN öğesi (geçiş kendi Sync'ini başlatır).</item>
     /// </list>
-    /// Sayılmayanlar: branch chip'i (kullanıcı kararı 2026-10-26 — tık branch'i doğrudan değiştirmez, yalnız popover'ı açar ve kullanıcı
-    /// seçmeyebilir; ekranı tazeleyen bir iş başlatmaz), sayaç chip'leri ve perf chip'i (kendi tazelemesini yapmaz; Sync onları kapatmaz,
-    /// tık yine çalışır), seçili öğe (geçiş no-op). Kapalı bir kontrol de sayılmaz: isabet almaz, isabet onu taşıyan açık ataya düşer ve tık
-    /// hiçbir şey başlatmaz.
+    /// Sayılmayanlar (kullanıcı kararı 2026-10-26, ikinci — ara zincir yok, ekranın tamamını tazelemeyen kontrolde dönüş Sync'ler): Build'in
+    /// chevron'u (yalnız menü açar), <c>N behind</c> chip'i (kirli ağaçta pull reddedilir ve Sync zincirlenmez), branch chip'i (tık branch'i
+    /// doğrudan değiştirmez, yalnız popover'ı açar ve kullanıcı seçmeyebilir), sayaç chip'leri ve perf chip'i (kendi tazelemesini yapmaz; Sync
+    /// onları kapatmaz, tık yine çalışır), seçili öğe (geçiş no-op). Kapalı bir kontrol de sayılmaz: isabet almaz, isabet onu taşıyan açık ataya
+    /// düşer ve tık hiçbir şey başlatmaz.
     /// </summary>
     /// <param name="hit">Pencerenin tek isabet testinin sonucu (<see cref="Shell.ActivatingClick.HitAt"/>).</param>
-    internal bool StartsOwnRefresh(Visual hit)
-    {
-        Visual?[] own = [PART_Split.PrimaryHalf, PART_Split.MenuToggle, PART_Sync, PART_BehindChip];
-        if (own.Any(control => control is not null && control.IsAncestorOf(hit))) return true;
-        if (PART_Maintenance.StartsOwnRefresh(hit)) return true;
-        return new[] { PART_CfgDebug, PART_CfgRelease }.Any(item => item.IsChecked != true && item.IsAncestorOf(hit));
-    }
+    internal bool StartsOwnRefresh(Visual hit) =>
+        (PART_Split.PrimaryHalf?.IsAncestorOf(hit) ?? false)
+        || PART_Sync.IsAncestorOf(hit)
+        || PART_Maintenance.StartsOwnRefresh(hit)
+        || new[] { PART_CfgDebug, PART_CfgRelease }.Any(item => item.IsChecked != true && item.IsAncestorOf(hit));
 
     // ---------------------------------------------------------------- lifecycle
     private void OnLoaded(object sender, RoutedEventArgs e)

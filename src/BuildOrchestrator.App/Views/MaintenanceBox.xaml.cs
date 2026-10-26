@@ -61,14 +61,16 @@ public partial class MaintenanceBox : UserControl
 
     // ---------------------------------------------------------------- [kullanıcı kararı 2026-10-26] pencereyi öne getiren tık
     /// <summary>
-    /// Bu isabete inen bir tık kutunun üç düğmesinden birini mi çalıştırır — üçü de kendi tazelemesini yapar: Clean ve Optimize bitince Sync
-    /// zincirler (<c>RunViewModel.HandOverToSyncAsync</c>), Resolve cycles bir koşudur ve her koşu diski baştan planlar. Pencereyi arka
-    /// plandan öne getiren tık buraya iniyorsa pencere dönüşün Sync'ini istemez (soran <see cref="ActionBar.StartsOwnRefresh"/>). Ayraçlar ve
-    /// kutunun çerçevesi sayılmaz; kapalı düğme isabet almaz — isabet onu saran açık Border'a düşer, tık hiçbir şey başlatmaz.
+    /// Bu isabete inen bir tık kutunun Clean ya da Optimize düğmesini mi çalıştırır — ikisi de bitince Sync zincirler
+    /// (<c>RunViewModel.HandOverToSyncAsync</c>), yani iş bitince ekranın TAMAMI tazelenmiş olur. Pencereyi arka plandan öne getiren tık
+    /// buraya iniyorsa pencere dönüşün Sync'ini istemez (soran <see cref="ActionBar.StartsOwnRefresh"/>). Resolve cycles sayılmaz (kullanıcı
+    /// kararı 2026-10-26, ikinci): koşusunun önizlemesi plan bayrağını yazmaz (<c>RunViewModel.PreviewWritesPlanFlag</c>), öbür satırların
+    /// "derlenecek" bilgisi eski kalır — dönüş bugünkü gibi Sync'ler ve düğme tıkın altından kapanır. Ayraçlar ve kutunun çerçevesi de sayılmaz;
+    /// kapalı düğme isabet almaz — isabet onu saran açık Border'a düşer, tık hiçbir şey başlatmaz.
     /// </summary>
     /// <param name="hit">Pencerenin tek isabet testinin sonucu (<see cref="Shell.ActivatingClick.HitAt"/>).</param>
     internal bool StartsOwnRefresh(Visual hit) =>
-        new[] { PART_Clean, PART_Optimize, PART_Resolve }.Any(button => button.IsAncestorOf(hit));
+        new[] { PART_Clean, PART_Optimize }.Any(button => button.IsAncestorOf(hit));
 
     // ---------------------------------------------------------------- lifecycle
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)

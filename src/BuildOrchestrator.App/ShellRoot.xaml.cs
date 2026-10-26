@@ -74,8 +74,8 @@ public partial class ShellRoot : UserControl
     public Views.StickyRibbon Ribbon => PART_Ribbon;
     /// <summary>[perf Faz A · A5 test yüzeyi] Build menüsü — ActionBar'ın popup'ı içinde durur; kalıtsal sinyal oraya da inmelidir.</summary>
     public Views.BuildMenu BuildMenuControl => PART_ActionBar.BuildMenuControl;
-    /// <summary>[kullanıcı kararı 2026-10-19] Alt çubuk: pencere, kendisini arka plandan öne getiren tıkın kendi tazelemesini yapan bir
-    /// komuta inip inmediğini ona sorar (<see cref="Views.ActionBar.StartsOwnRefresh"/>, <c>MainWindow.StartsOwnRefreshAt</c>).</summary>
+    /// <summary>[kullanıcı kararı 2026-10-19 · 2026-10-26] Alt çubuk: pencere, kendisini arka plandan öne getiren tıkın işi bitince ekranın
+    /// tamamını tazeleyen bir kontrole inip inmediğini ona sorar (<see cref="Views.ActionBar.StartsOwnRefresh"/>, <c>MainWindow.StartsOwnRefreshAt</c>).</summary>
     public Views.ActionBar ActionBarControl => PART_ActionBar;
 
     // ---- [E5/T46] Klavye kısayolları: filtre odağı (Ctrl+F) + popover Esc katmanı (MainWindow'un Esc zinciri) ----

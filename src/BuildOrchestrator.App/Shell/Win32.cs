@@ -13,8 +13,7 @@ internal static class Win32
 
     /// <summary>[kullanıcı kararı 2026-10-19] Etkin olmayan pencereye fareyle basıldı — Windows bunu pencereyi etkinleştirmeden ÖNCE
     /// gönderir, tıkı en son teslim eder. <c>lParam</c>: düşük söz isabet kodu (<see cref="HTCLIENT"/>), yüksek söz basışın fare mesajı
-    /// (<see cref="WM_LBUTTONDOWN"/>, <see cref="WM_RBUTTONDOWN"/> — sol el ayarında da mantıksal tuşlar). Çözümü
-    /// <see cref="ActivatingClick.ButtonOf"/> yapar.</summary>
+    /// (<see cref="WM_LBUTTONDOWN"/> — sol el ayarında da mantıksal sol tuş). Çözümü <see cref="ActivatingClick.IsClientLeftPress"/> yapar.</summary>
     public const int WM_MOUSEACTIVATE = 0x0021;
 
     /// <summary>İsabet kodu: istemci alanı (title bar değil).</summary>
@@ -22,9 +21,6 @@ internal static class Win32
 
     /// <summary>Sol tuş basıldı (istemci alanı).</summary>
     public const int WM_LBUTTONDOWN = 0x0201;
-
-    /// <summary>[kullanıcı kararı 2026-10-26] Sağ tuş basıldı (istemci alanı) — satıra sağ basış satırın menüsünü açar.</summary>
-    public const int WM_RBUTTONDOWN = 0x0204;
 
     /// <summary>Yatay tekerlek / precision touchpad'in iki parmakla yatay kaydırması. WPF bu mesajı HİÇ
     /// dağıtmaz (yalnız <c>WM_MOUSEWHEEL</c> bir routed event'e çevrilir), bu yüzden yatay kaydırma
