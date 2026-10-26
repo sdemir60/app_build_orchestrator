@@ -592,7 +592,8 @@ public partial class ProjectRow : UserControl
     }
 
     /// <summary>Satırın projesi ŞU AN satırdan derlenebilir mi — menünün Build/Rebuild kapısı, play ile AYNI
-    /// komuttan okunur (ikinci bir kural yazılmaz).</summary>
+    /// komuttan okunur (ikinci bir kural yazılmaz). Okuyucuları: menü açılırken (<see cref="ApplyRowMenuGate"/>), menü açıkken kapı
+    /// değiştiğinde (<see cref="OnRunGateChanged"/>) ve ⋯ ile sağ basışın tazeleme kararı (<see cref="StartsOwnRefresh"/>).</summary>
     private bool CanRunProject() =>
         _vm is { } vm && FindRunViewModel()?.BuildProjectCommand.CanExecute(vm.Id) == true;
 
