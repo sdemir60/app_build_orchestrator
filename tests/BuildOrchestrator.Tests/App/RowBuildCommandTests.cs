@@ -185,11 +185,8 @@ public class RowBuildCommandTests
     /// <summary>
     /// [final review I2] Temizlenen satır yeşil ✓ GÖSTERMEZ. Başarılı bir Clean'in gerekçesi <c>NeverBuilt</c>'tir
     /// ("never built" etiketi) — renk, sayaç ve ekran-okuyucu adı da AYNI şeyi söylemeli: gri, ○ sayacında,
-    /// "To build". Koşu statüsü <c>Succeeded</c> durum yüzeyinde çıktı durumuna düşer (Failed ile aynı biçim); koşunun
-    /// kendi sonucu yine başarıdır.
-    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-25]</b> Son iddia eskiden run-story sözcüğüydü
-    /// (<c>StatusGlyph.RunLabelFor(row.Status) == "Succeeded"</c> — konsol başlığının yazdığı); o sözcük başlıktan kalkınca
-    /// eşleme de kalktı ve iddia koşu statüsünün kendisine indi.</para>
+    /// "To build". Koşu statüsü <c>Succeeded</c> durum yüzeyinde çıktı durumuna düşer (Failed ile aynı biçim);
+    /// run-story yüzeyleri ise yine "Succeeded" der.
     /// </summary>
     [Fact]
     public async Task A_cleaned_row_shows_its_to_build_standing_not_a_green_tick()
@@ -207,7 +204,7 @@ public class RowBuildCommandTests
         Assert.Equal("To build", StatusGlyph.LabelFor(row.VisualStatus));
         Assert.Equal(0, vm.Counters.Current);
         Assert.Equal(1, vm.Counters.Stale);
-        Assert.Equal(GraphStatus.Succeeded, row.Status); // koşunun sonucu: başarı
+        Assert.Equal("Succeeded", StatusGlyph.RunLabelFor(row.Status)); // run-story: koşunun sonucu
     }
 
     /// <summary>Hedef satır TIKLAMA ANINDA işaretlenir (gönderim penceresi dahil) ve koşu bittiğinde bırakılır;
