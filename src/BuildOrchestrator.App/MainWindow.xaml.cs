@@ -29,10 +29,9 @@ public partial class MainWindow : Window
     private readonly CancellationTokenSource _consoleCts = new();
     private readonly DispatcherTimer _elapsedTimer = new() { Interval = TimeSpan.FromMilliseconds(200) };
 
-    /// <summary>[v1.18.0 review R1 finding 2] Proje-log başlığının statüsünü/rozetlerini kendi SATIRININ
-    /// değişimine bağlayan abonelik hedefi — <see cref="TrackHeaderRow"/> tek yerden kurar/söker. Başlık
-    /// eskiden yalnız SEÇİM değiştiğinde tazeleniyordu; seçili bir proje derlerken bitirirse (Started→Succeeded)
-    /// glyph sonsuza dek dönerdi ve dep-issue/cycle rozetleri bayatlardı.</summary>
+    /// <summary>[v1.18.0 review R1 finding 2] Proje-log başlığının rozetlerini kendi SATIRININ değişimine bağlayan
+    /// abonelik hedefi — <see cref="TrackHeaderRow"/> tek yerden kurar/söker. Başlık eskiden yalnız SEÇİM değiştiğinde
+    /// tazeleniyordu; seçili satıra sonradan gelen dep-issue/cycle bilgisi rozetlere ulaşmıyordu.</summary>
     private ProjectRowViewModel? _headerTrackedRow;
 
     // [T62] Pencere kabuğu: tepsi + ilk-X balloon (K5) + Snap Layouts hook + global kısayollar (GlobalHotkeys).
@@ -747,7 +746,7 @@ public partial class MainWindow : Window
         if (_vm.GetActiveLineCount() == 0) Shell.ConsoleViewControl.ShowReady(); // boş run → idle "ready"
     }
 
-    /// <summary>[v1.18.0 review R1 finding 2] Başlığın statü/rozetlerini SEÇİLİ satırın kendi
+    /// <summary>[v1.18.0 review R1 finding 2] Başlığın rozetlerini SEÇİLİ satırın kendi
     /// <see cref="INotifyPropertyChanged"/> bildirimine bağlar (bir önceki satırın aboneliği önce bırakılır —
     /// tek abonelik). <paramref name="row"/> null ise (anlatıya dönüş) yalnız bırakılır.
     ///
@@ -764,20 +763,18 @@ public partial class MainWindow : Window
         if (_headerTrackedRow is not null) _headerTrackedRow.PropertyChanged += OnHeaderTrackedRowChanged;
     }
 
-    /// <summary>Başlığı etkileyen alanlar: motor durumu (statü adı), görsel statü (glyph — final review I-2:
-    /// <see cref="ProjectRowViewModel.Status"/> State değişmeden de değişir, ör. döngü sırası üyeye geçince),
-    /// dependency-issue listesi, döngü üyeliği. Diğer her <see cref="ProjectRowViewModel"/> bildirimi
-    /// (Marked/Fade/CyclePath/…) başlığı ilgilendirmez ve görmezden gelinir — ProjectRow.OnVmPropertyChanged'in
-    /// switch deseniyle AYNI (kopya değil, aynı idiom).</summary>
+    /// <summary>Başlığı etkileyen alanlar: dependency-issue listesi ve döngü üyeliği — iki rozetin kaynağı. Diğer her
+    /// <see cref="ProjectRowViewModel"/> bildirimi (State/Status/Marked/Fade/CyclePath/…) başlığı ilgilendirmez ve
+    /// görmezden gelinir — ProjectRow.OnVmPropertyChanged'in switch deseniyle AYNI (kopya değil, aynı idiom).
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-25]</b> State ve Status da dinlenirdi: başlığın statü glyph'i ve
+    /// statü sözcüğü onlardan çizilirdi. İkisi başlıktan kalktı; o bildirimler artık başlıkta hiçbir şeyi değiştirmez.</para></summary>
     private void OnHeaderTrackedRowChanged(object? sender, PropertyChangedEventArgs e)
     {
         switch (e.PropertyName)
         {
-            case nameof(ProjectRowViewModel.State):
-            case nameof(ProjectRowViewModel.Status):
             case nameof(ProjectRowViewModel.DepIssues):
             case nameof(ProjectRowViewModel.InCycle):
-                Shell.ConsoleHeaderControl.RefreshStatus((ProjectRowViewModel)sender!);
+                Shell.ConsoleHeaderControl.RefreshBadges((ProjectRowViewModel)sender!);
                 break;
         }
     }

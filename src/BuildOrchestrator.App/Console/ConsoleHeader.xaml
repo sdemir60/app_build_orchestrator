@@ -6,12 +6,16 @@
   <!-- [T56/3a → v1.18.0 §9 "Konsol başlığı ve `Back` satırı"] Konsol panel başlığı — README §9 v1.18.0 alt
        bölümüyle BİREBİR: 28px sabit, 10px yatay padding, öğeler arası 8px, zemin surface, alt 1px
        border-subtle. İki hâl aynı kabuktadır: anlatı (caps "CONSOLE" + sağda N lines, anlatı kompakt yazılıyorsa yanında
-       "compact") ve proje-log (Back + proje adı + statü glyph/adı + [dep-issue] + [cycle] solda, Copy log + N lines sağda).
+       "compact") ve proje-log (Back + proje adı + [dep-issue] + [cycle] solda, Copy log + N lines sağda).
+
+       [DEĞİŞEN KURAL — kullanıcı kararı 2026-10-25] Proje-log hâlinde adın sağında eskiden statü glyph'i (13px StatusGlyph)
+       ve koşu statüsü sözcüğü de dururdu; koşuya girmemiş bir projede kesikli halka + "Discovered" bir yükleme göstergesi
+       gibi okunuyordu ve ikisi kalktı. Durum listede ve grafta kalır. Back, ad ve rozetler değişmedi.
 
        Sol/sağ ayrımı DIŞ Grid'in iki sütunuyladır (* / Auto): sağ blok (Copy log + N lines) HER ZAMAN tam
-       genişliğindedir — asla kırpılmaz. Sol taraftaki İÇ Grid'in ALTI sütunu da Auto'dur (proje adı DAHİL) —
+       genişliğindedir — asla kırpılmaz. Sol taraftaki İÇ Grid'in DÖRT sütunu da Auto'dur (proje adı DAHİL) —
        "*" BİLEREK kullanılmaz: bir Grid'in "*" sütunu kardeşlerinin ihtiyacından BAĞIMSIZ olarak kalan alanın
-       TAMAMINI alır, bu da geniş bir panelde kısa bir adla bile glyph/statü/rozetlerin adın metninden çok
+       TAMAMINI alır, bu da geniş bir panelde kısa bir adla bile rozetlerin adın metninden çok
        sonra, büyük bir boşlukla başlamasına yol açardı (review R1 bulgu 1 — prototipte ad `nowrap` bir
        `span`dır, asla büyümez, kardeşleri HEMEN takip eder). Gerçek kısalma (panel daraldığında) code-behind
        elde hesaplanan bir `MaxWidth`'ledir — bkz. ConsoleHeader.xaml.cs `ApplyProjectNameShrink`. -->
@@ -34,8 +38,6 @@
           <Grid.ColumnDefinitions>
             <ColumnDefinition Width="Auto" />  <!-- Back -->
             <ColumnDefinition Width="Auto" />  <!-- proje adı: panel daralınca kısalan TEK öğe (MaxWidth kod-tarafı) -->
-            <ColumnDefinition Width="Auto" />  <!-- statü glyph'i -->
-            <ColumnDefinition Width="Auto" />  <!-- statü adı -->
             <ColumnDefinition Width="Auto" />  <!-- dependency issue rozeti -->
             <ColumnDefinition Width="Auto" />  <!-- dependency cycle rozeti -->
           </Grid.ColumnDefinitions>
@@ -54,19 +56,12 @@
                      FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="12"
                      Foreground="{DynamicResource Brush.TextPrimary}" TextTrimming="CharacterEllipsis" />
 
-          <!-- Statü glyph'i — 13px çizilmiş StatusGlyph; building'de kontrolün kendi BuildingSpinner'ı döner. -->
-          <controls:StatusGlyph x:Name="StatusGlyphIcon" Grid.Column="2" Size="13" Margin="8,0,0,0"
-                                 VerticalAlignment="Center" />
-
-          <TextBlock x:Name="StatusNameText" Grid.Column="3" Margin="8,0,0,0" VerticalAlignment="Center"
-                     FontSize="11" />
-
           <!-- [README §9] amber KONTUR üçgeni (Icon.AlertTri, 8px) + 11px metin; tooltip code-behind kurulur
                (RowWarning.DepIssueDetail — tek doğruluk kaynağı, satırın "+N" kısaltmasından AYRI). Data/Stroke/
                StrokeThickness doğrudan DynamicResource — sabit renk, kod-tarafı IconPaint GEREKMEZ (CopyLogGlyph'in
                aksine bu ikisi hiç DEĞİŞMEZ); ayrıca bu XAML-yerel bağ, koşulsuz kendi kendine çözülür (Collapsed
                dalda bile) — code-behind bir tetikleyici (ShowProjectLog) beklemez. -->
-          <StackPanel x:Name="DepIssueBadge" Grid.Column="4" Orientation="Horizontal" Margin="8,0,0,0"
+          <StackPanel x:Name="DepIssueBadge" Grid.Column="2" Orientation="Horizontal" Margin="8,0,0,0"
                       VerticalAlignment="Center" Visibility="Collapsed" Cursor="Arrow">
             <!-- [final review M-6] tasarım side="bottom" — içerik code-behind'da yazılır. -->
             <StackPanel.ToolTip>
@@ -87,7 +82,7 @@
           <!-- [README §9] Döngü rozeti — sıradaki uyarı, dep-issue ile AYNI ANDA görünebilir (satırdaki tek
                üçgenin aksine, başlıkta ikisinin de kendi slotu var). Tooltip metni RowWarning.InCycle'dan
                (satırın döngü tooltip'iyle AYNI cümle, kopya YASAK). -->
-          <StackPanel x:Name="CycleBadge" Grid.Column="5" Orientation="Horizontal" Margin="8,0,0,0"
+          <StackPanel x:Name="CycleBadge" Grid.Column="3" Orientation="Horizontal" Margin="8,0,0,0"
                       VerticalAlignment="Center" Visibility="Collapsed" Cursor="Arrow">
             <!-- [final review M-6] tasarım side="bottom" — içerik code-behind'da yazılır. -->
             <StackPanel.ToolTip>

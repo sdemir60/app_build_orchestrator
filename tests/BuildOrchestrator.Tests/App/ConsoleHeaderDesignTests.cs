@@ -13,12 +13,20 @@ namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
 /// [v1.18.0 §9 "Konsol başlığı ve `Back` satırı"] README'nin "WPF tarafında sık sapan noktalar" kontrol
-/// listesini BİREBİR pinler: Back'in DS Ghost.Sm kabuğu (24px + Icon.Back + margin-left -6), statü glyph'inin
-/// ÇİZİLDİĞİ (building'de dönen spinner), dependency-issue/cycle rozetlerinin amber renk + tam-liste tooltip'i,
-/// öğe aralığının 8px olduğu, panel daralınca KIRPILAN TEK öğenin proje adı olduğu ve Copy log'un DS
-/// IconButton kabuğuna taşındığı. <see cref="ConsoleModesTests"/> mod geçişini ve içerik doldurmayı test eder;
-/// burası GERÇEKTEN realize edilmiş (ekran dışı pencere + ApplyTemplate) stil/ölçü/renk iddialarını taşır —
-/// bir Style/DynamicResource'un XAML'de YAZILI olması onun doğru ÇÖZÜLDÜĞÜNÜ kanıtlamaz.
+/// listesini BİREBİR pinler: Back'in DS Ghost.Sm kabuğu (24px + Icon.Back + margin-left -6),
+/// dependency-issue/cycle rozetlerinin amber renk + tam-liste tooltip'i, öğe aralığının 8px olduğu, panel
+/// daralınca KIRPILAN TEK öğenin proje adı olduğu ve Copy log'un DS IconButton kabuğuna taşındığı.
+/// <see cref="ConsoleModesTests"/> mod geçişini ve içerik doldurmayı test eder; burası GERÇEKTEN realize edilmiş
+/// (ekran dışı pencere + ApplyTemplate) stil/ölçü/renk iddialarını taşır — bir Style/DynamicResource'un XAML'de
+/// YAZILI olması onun doğru ÇÖZÜLDÜĞÜNÜ kanıtlamaz.
+///
+/// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-25]</b> Başlık koşu statüsünü göstermez. Eski iddialar: adın
+/// 8 px sağında 13 px <c>StatusGlyph</c> (building'de kendi spinner'ı döner, yerleşik durumda spinner gizlenip halka
+/// görünür) ve onun sağında koşu statüsü sözcüğü (<c>StatusGlyph.RunLabelFor</c>: Discovered · Queued · Building ·
+/// Succeeded · Failed · Skipped) dururdu. Değişme gerekçesi (bildirim): "proje adının sağında loading ve Discovered
+/// görünüyor" — koşuya girmemiş bir projede kesikli halka + "Discovered" bir yükleme göstergesi gibi okunuyordu; durum
+/// listede ve grafta kalır. Back, adın yeri ve iki rozet bu karardan ETKİLENMEZ: ilk uygulama onları da kaldırmıştı,
+/// kullanıcı yalnız glyph ile sözcüğün kalkmasını istediğini söyledi (2026-10-26) ve olduğu gibi geri geldiler.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class ConsoleHeaderDesignTests
@@ -26,7 +34,7 @@ public class ConsoleHeaderDesignTests
     /// <summary>[önce parent, sonra içerik] Üretimde <c>ShowProjectLog</c> her zaman zaten pencereye eklenmiş
     /// bir başlıkta çağrılır. Sırayı TERSİNE çevirip <paramref name="arrange"/>'i (ShowProjectLog) host'a
     /// bağlanmadan ÖNCE çağırmak <see cref="ConsoleHeader.ApplyProjectNameShrink"/>'in okuduğu kardeş
-    /// <c>ActualWidth</c>'leri (Back/glyph/statü/rozetler) sıfır bırakırdı — bunlar ancak GERÇEK bir
+    /// <c>ActualWidth</c>'leri (Back/rozetler) sıfır bırakırdı — bunlar ancak GERÇEK bir
     /// Measure/Arrange geçişinden (yani host'a bağlandıktan) SONRA anlamlı olur. Amber rozet ikonlarının
     /// geometrisi/rengi kendisi bu sıraya duyarlı DEĞİLDİR (ConsoleHeader.xaml'de düz <c>{DynamicResource}</c>
     /// — Collapsed dalda bile, ağaca girer girmez çözülür); bu yardımcı yine de üretimin gerçek sırasını
@@ -87,30 +95,28 @@ public class ConsoleHeaderDesignTests
         GC.KeepAlive(window);
     }
 
-    // ---------------------------------------------------------------- statü glyph'i ÇİZİLİR
+    // ---------------------------------------------------------------- koşu statüsü yok: ne glyph ne sözcük
 
-    /// <summary>[README §9] "building iken dönen amber arc (spinner)". Eski sapma: statü glyph'i düz Unicode
-    /// bir <c>TextBlock</c>'tu (<c>▸</c>), hiçbir şey dönmüyordu.</summary>
-    [StaFact]
-    public void Building_status_shows_the_drawn_spinner_not_a_static_glyph()
+    /// <summary>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-25] Satır hangi koşu durumunda olursa olsun başlıkta
+    /// <see cref="StatusGlyph"/> (ve onun <see cref="BuildingSpinner"/>'ı) yoktur; görünen metin Back, ad ve sayaçtır.
+    /// Eski iddialar (iki test): building'de glyph'in kendi spinner'ı 13 px dönerdi
+    /// (<c>Building_status_shows_the_drawn_spinner_not_a_static_glyph</c>); yerleşik durumda spinner gizlenir, halka
+    /// görünürdü (<c>A_settled_status_hides_the_spinner_and_shows_the_status_ring_instead</c>) — ve glyph'in yanında
+    /// statü sözcüğü yazardı. Gerekçe sınıf özetinde.</summary>
+    [StaTheory]
+    [InlineData(ProjectRowState.Pending)]
+    [InlineData(ProjectRowState.Started)]
+    [InlineData(ProjectRowState.Succeeded)]
+    [InlineData(ProjectRowState.Failed)]
+    [InlineData(ProjectRowState.Skipped)]
+    public void The_project_log_header_draws_no_run_status_in_any_row_state(ProjectRowState state)
     {
-        var (header, window, _) = Realize(h => ShowProjectLog(h, state: ProjectRowState.Started));
+        var (header, window, _) = Realize(h => ShowProjectLog(h, state: state));
 
-        Assert.Equal(VisualStatus.Building, header.StatusGlyphIcon.Status);
-        Assert.Equal(13.0, header.StatusGlyphIcon.Size);
-        var spinner = Assert.Single(DsResources.Descendants(header.StatusGlyphIcon).OfType<BuildingSpinner>());
-        Assert.Equal(Visibility.Visible, spinner.Visibility);
-        GC.KeepAlive(window);
-    }
-
-    [StaFact]
-    public void A_settled_status_hides_the_spinner_and_shows_the_status_ring_instead()
-    {
-        var (header, window, _) = Realize(h => ShowProjectLog(h, state: ProjectRowState.Succeeded));
-
-        Assert.Equal(VisualStatus.Succeeded, header.StatusGlyphIcon.Status);
-        var spinner = Assert.Single(DsResources.Descendants(header.StatusGlyphIcon).OfType<BuildingSpinner>());
-        Assert.Equal(Visibility.Collapsed, spinner.Visibility);
+        var tree = DsResources.Descendants(header).ToList();
+        Assert.DoesNotContain(tree, e => e is StatusGlyph or BuildingSpinner);
+        var shown = tree.OfType<TextBlock>().Where(t => t.IsVisible).Select(t => t.Text);
+        Assert.Equal(new[] { "Back", "OSYS.Sales.Core", "42 lines" }, shown);
         GC.KeepAlive(window);
     }
 
@@ -175,7 +181,8 @@ public class ConsoleHeaderDesignTests
 
     // ---------------------------------------------------------------- öğe aralığı 8px
 
-    /// <summary>Eski sapma: aralıklar 5/10 karışıktı (README §9: 8px sabit).</summary>
+    /// <summary>Eski sapma: aralıklar 5/10 karışıktı (README §9: 8px sabit). [kullanıcı kararı 2026-10-25] Statü glyph'i ve
+    /// statü sözcüğü başlıktan kalktı; onların 8 px'lik aralık iddiası da onlarla birlikte gitti.</summary>
     [StaFact]
     public void Project_log_items_are_spaced_eight_pixels_apart()
     {
@@ -183,8 +190,6 @@ public class ConsoleHeaderDesignTests
         ShowProjectLog(header);
 
         Assert.Equal(8.0, header.ProjectNameText.Margin.Left);
-        Assert.Equal(8.0, header.StatusGlyphIcon.Margin.Left);
-        Assert.Equal(8.0, header.StatusNameText.Margin.Left);
         Assert.Equal(8.0, header.DepIssueBadge.Margin.Left);
         Assert.Equal(8.0, header.CycleBadge.Margin.Left);
         Assert.Equal(8.0, header.LinesText.Margin.Left);
@@ -230,10 +235,14 @@ public class ConsoleHeaderDesignTests
     // ---------------------------------------------------------------- geniş panel: kardeşler ada BİTİŞİK durur
 
     /// <summary>[review R1 finding 1] Prototipte (<c>BuildApp.jsx:2612</c>) proje adı <c>white-space: nowrap</c>
-    /// bir <c>span</c>'dır — KISALIR ama asla BÜYÜMEZ, ve statü glyph'i onun HEMEN sağındadır. Eski sapma: ad
+    /// bir <c>span</c>'dır — KISALIR ama asla BÜYÜMEZ, ve kardeşi onun HEMEN sağındadır. Eski sapma: ad
     /// sütunu Grid'in <c>"*"</c>'ıydı — geniş bir panelde KISA bir adla bile "*" sütunu kalan alanın TAMAMINI
-    /// aldığı için glyph, adın metninden çok sonra, büyük bir boşlukla başlıyordu. Bu test dar DEĞİL geniş
+    /// aldığı için kardeş, adın metninden çok sonra, büyük bir boşlukla başlıyordu. Bu test dar DEĞİL geniş
     /// panelde koşar (bulgunun kendisi geniş panelde ortaya çıkıyordu).
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-25]</b> Adın hemen sağındaki kardeş eskiden statü glyph'iydi
+    /// ve test onun ada bitişikliğini ölçerdi; glyph başlıktan kalktı. Adın sağında artık (varsa) dependency-issue rozeti
+    /// durur — aynı kusur onu da adın metninden uzağa iterdi, bitişiklik onunla ölçülür.</para>
     ///
     /// <para><b>[review sonrası ölçüldü] <see cref="TextBlock.ActualWidth"/> BURADA YANILTICIDIR:</b> bir
     /// <c>"*"</c> sütununda bile <c>TextBlock</c>'un LAYOUT KUTUSU sütunun tam genişliğine gerer (Stretch), ve
@@ -242,10 +251,11 @@ public class ConsoleHeaderDesignTests
     /// Kanıt bu yüzden metnin KENDİ görünür genişliğini (bir <c>probe</c> ile) okur, kutunun
     /// <c>ActualWidth</c>'ini DEĞİL.</para></summary>
     [StaFact]
-    public void A_wide_panel_with_a_short_name_keeps_the_status_glyph_snug_against_it()
+    public void A_wide_panel_with_a_short_name_keeps_the_badge_snug_against_it()
     {
         const string name = "A";
-        var (header, window, _) = Realize(h => ShowProjectLog(h, name: name, lineCount: 3), width: 600);
+        var (header, window, _) = Realize(h => ShowProjectLog(h, name: name, depIssues: ["OSYS.Sales.Data"], lineCount: 3),
+            width: 600);
 
         var probe = new TextBlock
         {
@@ -255,9 +265,9 @@ public class ConsoleHeaderDesignTests
 
         double nameLeft = header.ProjectNameText.TranslatePoint(new Point(0, 0), header.ProjectLogGroup).X;
         double visibleTextRight = nameLeft + probe.DesiredSize.Width;
-        double glyphLeft = header.StatusGlyphIcon.TranslatePoint(new Point(0, 0), header.ProjectLogGroup).X;
+        double badgeLeft = header.DepIssueBadge.TranslatePoint(new Point(0, 0), header.ProjectLogGroup).X;
 
-        Assert.Equal(8.0, glyphLeft - visibleTextRight, 1); // README §9: öğe aralığı 8px — "büyük boşluk" DEĞİL
+        Assert.Equal(8.0, badgeLeft - visibleTextRight, 1); // README §9: öğe aralığı 8px — "büyük boşluk" DEĞİL
         GC.KeepAlive(window);
     }
 

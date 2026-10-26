@@ -21,11 +21,13 @@ public class ConsoleModesTests
 {
     // ---------------------------------------------------------------- başlık modları
 
-    // [v1.18.0 §9] Sol grubun tamamı (Back + ad + statü + rozetler) artık TEK bir konteynerdir
+    // [v1.18.0 §9] Sol grubun tamamı (Back + ad + rozetler) artık TEK bir konteynerdir
     // (ProjectLogGroup, Console/ConsoleHeader.xaml) — mod değişince o hücre bir kerede aç/kapa olur; alt
     // öğelerin KENDİ Visibility'si ayrı ayrı sürülmez. Bu yüzden "gizli mi" iddiası artık gruba, "doğru
-    // dolduruldu mu" iddiası içeriğe (Text/Status/ToolTip) bakar — style/ikon/aralık pinleri
-    // ConsoleHeaderDesignTests'tedir (realize gerektirir).
+    // dolduruldu mu" iddiası içeriğe (Text/ToolTip) bakar — style/ikon/aralık pinleri
+    // ConsoleHeaderDesignTests'tedir (realize gerektirir). [kullanıcı kararı 2026-10-25] Grupta eskiden statü glyph'i ve
+    // statü sözcüğü de vardı ve buradaki testler onların içeriğini de okurdu; ikisi başlıktan kalktı (gerekçe ve yeni
+    // kural: ConsoleHeaderDesignTests).
 
     [StaFact]
     public void Header_narrative_mode_shows_caps_label_and_hides_the_project_log_group()
@@ -40,8 +42,10 @@ public class ConsoleModesTests
         Assert.Equal("12 lines", header.LinesText.Text);
     }
 
+    /// <summary>[kullanıcı kararı 2026-10-25] Eski ad ve iddia: <c>..._shows_name_status_and_dep_issue_badge_...</c> — Failed
+    /// satırda statü sözcüğü "Failed" ve glyph <c>VisualStatus.Failed</c> idi; başlık artık statü göstermez.</summary>
     [StaFact]
-    public void Header_project_log_mode_shows_name_status_and_dep_issue_badge_with_full_names_in_the_tooltip()
+    public void Header_project_log_mode_shows_name_and_dep_issue_badge_with_full_names_in_the_tooltip()
     {
         var header = new ConsoleHeader();
 
@@ -53,8 +57,6 @@ public class ConsoleModesTests
         Assert.Equal(Visibility.Collapsed, header.ConsoleLabel.Visibility);
         Assert.Equal(Visibility.Visible, header.ProjectLogGroup.Visibility);
         Assert.Equal("OSYS.Sales.Core", header.ProjectNameText.Text);
-        Assert.Equal("Failed", header.StatusNameText.Text);
-        Assert.Equal(VisualStatus.Failed, header.StatusGlyphIcon.Status);
         Assert.Equal(Visibility.Visible, header.DepIssueBadge.Visibility);
         Assert.Equal("Dependency issue: Sales.Data, Sales.Contracts — last successful output referenced",
             header.DepIssueTooltip.Content);
@@ -75,7 +77,8 @@ public class ConsoleModesTests
         Assert.Equal(Visibility.Collapsed, header.DepIssueBadge.Visibility);
         Assert.Equal(Visibility.Visible, header.CycleBadge.Visibility);
         Assert.Equal(RowWarning.InCycle, header.CycleTooltip.Content);
-        Assert.Equal(VisualStatus.Building, header.StatusGlyphIcon.Status); // Started → Building
+        // [kullanıcı kararı 2026-10-25] Eskiden burada Started satırın glyph'inin Building olduğu da okunurdu; başlık artık
+        // statü göstermez.
     }
 
     [StaFact]
@@ -87,7 +90,8 @@ public class ConsoleModesTests
             depIssues: null, namePrefix: ""), 5);
         Assert.Equal(Visibility.Collapsed, header.DepIssueBadge.Visibility);
         Assert.Equal(Visibility.Collapsed, header.CycleBadge.Visibility);
-        Assert.Equal("Succeeded", header.StatusNameText.Text);
+        // [kullanıcı kararı 2026-10-25] Eskiden burada statü sözcüğünün "Succeeded" olduğu da okunurdu; başlık artık statü
+        // göstermez.
 
         header.ShowNarrative(3); // geri dönüş moddu tekrar anlatıya çevirir
         Assert.Equal(ConsoleHeader.HeaderMode.Narrative, header.Mode);

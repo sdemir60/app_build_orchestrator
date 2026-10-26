@@ -13,8 +13,12 @@ namespace BuildOrchestrator.App.Console;
 /// <summary>[T56/3a+3b → v1.18.0 §9] Konsol panel başlığının iki modu (README §9 v1.18.0 "Konsol başlığı ve
 /// `Back` satırı"). Kod-tarafı sürülür (DP/binding şişkinliği yerine küçük, test edilebilir yüzey):
 /// <see cref="ShowNarrative"/> / <see cref="ShowProjectLog"/> modu değiştirir, <see cref="SetLineCount"/>
-/// sağdaki "N lines" sayacını günceller. Statü rengi token ANAHTARIndan (<see cref="StatusGlyph.BrushKeyFor"/>)
-/// SetResourceReference ile canlı çözülür (hardcode YASAK).
+/// sağdaki "N lines" sayacını günceller.
+///
+/// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-25]</b> Proje-log modu koşu statüsünü göstermez: adın sağında eskiden
+/// statü glyph'i (<c>StatusGlyph</c>, building'de spinner) ve koşu statüsü sözcüğü dururdu; koşuya girmemiş bir projede
+/// kesikli halka + "Discovered" bir yükleme göstergesi gibi okunuyordu. Durum listede ve grafta kalır. Back, ad ve
+/// dependency issue / dependency cycle rozetleri değişmedi.</para>
 ///
 /// <para>[3b] Copy-log butonu (Ek A #3): yalnız proje-log modunda (log varken) görünür; <see cref="LogTextProvider"/>'ın
 /// döndürdüğü TAM log metnini <see cref="ClipboardWriter"/> (retry sarmalayıcı) ile panoya yazar; başarıda ikon
@@ -85,11 +89,9 @@ public partial class ConsoleHeader : UserControl
         SetLineCount(lineCount);
     }
 
-    /// <summary>Proje-log modu: Back + proje adı (mono) + statü glyph/adı + (varsa) dependency-issue/cycle
-    /// rozetleri + copy + N lines.</summary>
-    /// <param name="row">Seçili satır — tam adı (kısaltılmaz; panel daralınca TEK kısalan öğe budur), statü
-    /// glyph'i (<see cref="ProjectRowViewModel.Status"/>), statü adı/rengi (motor durumu), döngü üyeliği ve
-    /// dependency-issue listesi + kısa-ad öneği buradan okunur (bkz. <see cref="ApplyStatus"/>).</param>
+    /// <summary>Proje-log modu: Back + proje adı (mono) + (varsa) dependency-issue/cycle rozetleri + copy + N lines.</summary>
+    /// <param name="row">Seçili satır — tam adı (kısaltılmaz; panel daralınca TEK kısalan öğe budur), döngü üyeliği ve
+    /// dependency-issue listesi + kısa-ad öneği buradan okunur (bkz. <see cref="ApplyBadges"/>).</param>
     /// <param name="lineCount">Sağdaki "N lines" sayacı.</param>
     public void ShowProjectLog(ProjectRowViewModel row, int lineCount)
     {
@@ -99,7 +101,7 @@ public partial class ConsoleHeader : UserControl
         ApplyCompactTag(); // proje sayfası her zaman tamdır: etiket düşer
 
         ProjectNameText.Text = row.Name;
-        ApplyStatus(row);
+        ApplyBadges(row);
 
         // Copy log yalnız gerçekten log varken (Ek A #3 / prototip: selSt.log.length > 0). Görünürlük artık
         // TEK yerde — SetLineCount, proje-log modunda lineCount>0'a göre karar verir (M-3 ile satır geldikçe tazelenir).
@@ -108,39 +110,24 @@ public partial class ConsoleHeader : UserControl
         ApplyProjectNameShrink();
     }
 
-    /// <summary>[v1.18.0 review R1 finding 2] Statü glyph'i/adı + rozetleri TEK BAŞINA tazeler — proje adını,
-    /// modu ya da copy-log görselini SIFIRLAMAZ. <see cref="ShowProjectLog"/> yalnız SEÇİM değiştiğinde
-    /// çağrılır; seçili proje AYNI kalırken kendi statüsü değiştiğinde (ör. Started→Succeeded, ya da
-    /// dependency-issue/cycle üyeliği geldiğinde) MainWindow bunu çağırır — aksi halde başlık bir kez
-    /// kurulduktan sonra donuyordu (spinner sonsuza dek dönerdi, rozetler bayatlardı).</summary>
-    public void RefreshStatus(ProjectRowViewModel row)
+    /// <summary>[v1.18.0 review R1 finding 2] Rozetleri TEK BAŞINA tazeler — proje adını, modu ya da copy-log görselini
+    /// SIFIRLAMAZ. <see cref="ShowProjectLog"/> yalnız SEÇİM değiştiğinde çağrılır; seçili proje AYNI kalırken
+    /// dependency-issue/cycle üyeliği geldiğinde ya da gittiğinde MainWindow bunu çağırır — aksi halde başlık bir kez
+    /// kurulduktan sonra donuyordu (rozetler bayatlardı).
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-25]</b> Eski adı <c>RefreshStatus</c>'tu: statü glyph'ini ve statü
+    /// sözcüğünü de tazelerdi (seçili proje bitince spinner dururdu). İkisi başlıktan kalktı; kalan iş rozetlerdir.</para></summary>
+    public void RefreshBadges(ProjectRowViewModel row)
     {
         if (Mode != HeaderMode.ProjectLog) return; // anlatıdayken görünmez bir başlığı boşuna tazeleme
-        ApplyStatus(row);
+        ApplyBadges(row);
         ApplyProjectNameShrink(); // rozetlerin görünürlüğü değişmiş olabilir — sol bloğun payı da değişir
     }
 
-    /// <summary>[Final review I-2 · kullanıcı kararı] Glyph, yazı VE renk satırın KENDİ
-    /// <see cref="ProjectRowViewModel.Status"/>'unu okur — satır ve graf da onu okur; başlık ikinci bir
-    /// durum→glyph/ad/renk eşlemesi KURMAZ (Started ama derlenmeyen döngü üyesi satırda Queued ise başlıkta da
-    /// Queued'dır — hem ikon hem yazı). Ad/renk tablosu <see cref="StatusGlyph.RunLabelFor"/>/
-    /// <see cref="StatusGlyph.BrushKeyFor"/>'dur — glyph'in KENDİ tablosu; ikinci bir kopya AÇILMAZ.
-    ///
-    /// <para><b>[DEĞİŞEN KURAL]</b> Yazı ve rengi eskiden <c>ConsoleStatus.Name/BrushKey(row.State)</c> ile
-    /// motorun dar <c>ProjectRowState</c> sözlüğünden geliyordu: bir döngü grubunda derlenmeyen (grubunu bekleyen)
-    /// Started üye satırda/ikonda Queued görünürken yazı hâlâ "Building" diyordu (State hâlâ Started) — ikon ile
-    /// yazı ayrışıyordu. Kullanıcı kararıyla üçü de tek kaynaktan okunur; kullanılmaz kalan <c>ConsoleStatus</c>
-    /// sınıfı silindi.</para></summary>
-    private void ApplyStatus(ProjectRowViewModel row)
+    /// <summary>İki rozet satırın kendi alanlarından okunur: dependency-issue listesi (tooltip'te tam liste, kısa adlar
+    /// <see cref="RowWarning.DepIssueDetail"/>'den) ve döngü üyeliği (tooltip satırın döngü cümlesi,
+    /// <see cref="RowWarning.InCycle"/>). İkisi de kendi koşuluna bağlıdır ve aynı anda görünebilir.</summary>
+    private void ApplyBadges(ProjectRowViewModel row)
     {
-        // [design v1.20.0 §1.4] Başlık bir RUN-STORY yüzeyidir: koşu sonucunu gösterir (atlanan proje — ile).
-        // Koşu statüsü → görsel durum eşlemesi TEK yerdedir (VisualStatuses.OfRun) — burada kurulmaz.
-        var glyph = VisualStatuses.OfRun(row.Status);
-        StatusGlyphIcon.Status = glyph;
-
-        StatusNameText.Text = StatusGlyph.RunLabelFor(row.Status); // run-story: koşunun sonucu ("Skipped" burada kalır)
-        StatusNameText.SetResourceReference(ForegroundProperty, StatusGlyph.BrushKeyFor(glyph));
-
         var depIssues = row.DepIssues;
         bool hasDepIssue = depIssues is { Count: > 0 };
         DepIssueBadge.Visibility = hasDepIssue ? Visibility.Visible : Visibility.Collapsed;
@@ -237,17 +224,17 @@ public partial class ConsoleHeader : UserControl
 
     /// <summary>[v1.18.0 review R1 finding 1] Proje adı panel daralınca kısalan TEK öğedir, ama büyümemelidir:
     /// prototipte (<c>BuildApp.jsx:2612</c>) ad `white-space:nowrap` bir <c>span</c>'dır — kısalır, asla
-    /// büyümez; Back/glyph/statü/rozetler her zaman adın HEMEN sağındadır, aralarında boşluk yoktur. WPF
+    /// büyümez; rozetler her zaman adın HEMEN sağındadır, aralarında boşluk yoktur. WPF
     /// Grid'in <c>"*"</c> sütunu bunu VEREMEZ: kalan alanın TAMAMINI (mevcut siblings ihtiyacından bağımsız)
     /// o sütuna verir, sonraki Auto sütunlar da bu sütunun TAM payının bitiminden başlar — geniş bir panelde
-    /// kısa bir adla bile glyph/statü/rozetler adın metninden çok sonra, büyük bir boşlukla başlıyordu
+    /// kısa bir adla bile kardeşler adın metninden çok sonra, büyük bir boşlukla başlıyordu
     /// (review R1 bulgu 1). Bu yüzden ad sütunu Auto'dur (ConsoleHeader.xaml) ve gerçek "kısalma" burada,
-    /// <see cref="TextBlock.MaxWidth"/>'i ELDE hesaplayarak sağlanır: mevcut kardeşlerin (Back/glyph/statü/
-    /// görünür rozetler) GERÇEK genişliği + kendi marjları, sol bloğun TOPLAM payından düşülür, kalan ad'a
+    /// <see cref="TextBlock.MaxWidth"/>'i ELDE hesaplayarak sağlanır: mevcut kardeşlerin (Back ve görünür
+    /// rozetler) GERÇEK genişliği + kendi marjları, sol bloğun TOPLAM payından düşülür, kalan ad'a
     /// verilir.
     ///
     /// <para><b>[review R1 fix-1 · ölçülen WPF gerçeği] Sol bloğun payı <see cref="ProjectLogGroup"/>'un
-    /// KENDİ <c>ActualWidth</c>'inden OKUNAMAZ.</b> <c>ProjectLogGroup</c>'un ALTI sütunu da Auto'dur; ad
+    /// KENDİ <c>ActualWidth</c>'inden OKUNAMAZ.</b> <c>ProjectLogGroup</c>'un bütün sütunları Auto'dur; ad
     /// kısıtlanmadan ÖNCE (ilk çağrı, ya da <see cref="ClearValue"/>'dan hemen sonra) bu Grid'in DOĞAL
     /// (muhtemelen taşan) <c>DesiredSize</c>'ı devasadır — ve WPF'in Arrange'i <c>Stretch</c> bir öğeyi ASLA
     /// DesiredSize'ının ALTINA küçültmez (yalnız büyütür): <c>ActualWidth</c> bu yüzden verilen hücrenin GERÇEK
@@ -271,8 +258,7 @@ public partial class ConsoleHeader : UserControl
         double leftBlockWidth = RootGrid.ActualWidth - RightBlock.ActualWidth;
         if (leftBlockWidth <= 0) return; // henüz hiç yerleşmedi (ör. gerçek pencere olmadan çağrılan testler)
 
-        double used = OuterWidth(BackButton) + OuterWidth(StatusGlyphIcon) + OuterWidth(StatusNameText)
-            + OuterWidth(DepIssueBadge) + OuterWidth(CycleBadge)
+        double used = OuterWidth(BackButton) + OuterWidth(DepIssueBadge) + OuterWidth(CycleBadge)
             + ProjectNameText.Margin.Left + ProjectNameText.Margin.Right;
         ProjectNameText.MaxWidth = Math.Max(0, leftBlockWidth - used);
     }

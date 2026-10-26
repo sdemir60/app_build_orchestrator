@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Controls;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.ViewModels;
@@ -10,9 +11,12 @@ namespace BuildOrchestrator.Tests.App;
 /// [v1.18.0 review R1 finding 2] Konsol başlığı SEÇİLİ satırı canlı izler, yalnız SEÇİM anını değil.
 /// <c>ShowProjectLog</c> yalnız <c>MainWindow.OnSelectedProjectChangedAsync</c>'ten (kart tıklaması) çağrılır;
 /// 200ms'lik run tick'i yalnız <c>SetLineCount</c>'u sürer (<c>MainWindow.xaml.cs</c> ~290-301). Bu yüzden
-/// seçili bir proje derlenirken bitirirse (Started→Succeeded) ya da dependency-issue/cycle üyeliği SONRADAN
-/// gelirse, başlık eski (bayat) durumda donuyordu — spinner sonsuza dek dönerdi. <c>MainWindow.TrackHeaderRow</c>
+/// dependency-issue/cycle üyeliği SONRADAN gelirse başlık eski (bayat) durumda donuyordu. <c>MainWindow.TrackHeaderRow</c>
 /// bunu satırın kendi <c>PropertyChanged</c>'ine abone olarak kapatır.
+///
+/// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-25]</b> Abonelik eskiden statü glyph'ini ve statü sözcüğünü de
+/// sürerdi (seçili proje derlerken bitirince spinner durur, sözcük "Succeeded" olurdu). Başlık koşu statüsünü artık
+/// göstermez (gerekçe: <see cref="ConsoleHeaderDesignTests"/>'in sınıf özeti); abonelik yalnız iki rozeti tazeler.</para>
 ///
 /// <para><b>Neden <c>SelectProject</c> ÜZERİNDEN değil:</b> <c>MainWindowHost</c>'un ürettiği
 /// <c>EngineHost</c> hiçbir zaman <c>Start()</c> edilmez (gerçek bir Supervisor süreci doğurmak bu testleri
@@ -38,65 +42,41 @@ public class ConsoleHeaderLiveRefreshTests
         return (row, header);
     }
 
+    /// <summary>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-25] Seçili satırın koşu statüsü seçim değişmeden ilerlerken
+    /// (başlar, döngü grubunda sırasını bekler, sıra ona geçer, biter) başlık hiçbir aşamada statü çizmez: glyph/spinner
+    /// yoktur ve hiçbir metin bir statü sözcüğü değildir. Eski iddialar (iki test): başlığın glyph'i ve statü sözcüğü
+    /// satırın kendi <see cref="ProjectRowViewModel.Status"/>'unu canlı izlerdi — proje bitince spinner durur, sözcük
+    /// "Succeeded" olurdu (<c>A_selected_project_finishing_its_build_updates_the_header_without_a_reselect</c>); sırasını
+    /// bekleyen Started döngü üyesi Queued, sıra ona geçince Building yazardı
+    /// (<c>Header_glyph_and_status_word_follow_the_rows_own_Status_including_a_live_IsCompiling_flip</c>).</summary>
     [StaFact]
-    public void A_selected_project_finishing_its_build_updates_the_header_without_a_reselect()
+    public void A_selected_project_moving_through_a_run_never_draws_a_status_in_the_header()
     {
         using var dir = new TempDir();
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null), ("B", null));
         string idA = MainWindowHost.IdOf("A");
-        vm.OnEvent(new BuildOrchestrator.Contracts.Ipc.ProjectStartedEvent("r1", idA, "A"));
-
         var (row, header) = SelectViaHeaderWiring(window, vm, idA);
+        AssertNoRunStatus(header); // koşuya girmemiş (eski başlıkta: kesikli halka + "Discovered")
 
-        // ön-koşul: statü "Building" (spinner dönüyor).
-        Assert.Equal(VisualStatus.Building, header.StatusGlyphIcon.Status);
-        var spinner = Assert.Single(DsResources.Descendants(header.StatusGlyphIcon).OfType<BuildingSpinner>());
-        Assert.Equal(Visibility.Visible, spinner.Visibility);
-
-        // Proje biter — SEÇİM DEĞİŞMEZ (ShowProjectLog/TrackHeaderRow TEKRAR ÇAĞRILMAZ), yalnız satırın kendi
-        // State'i değişir (satırdaki gerçek geçiş yolu — RunViewModel.OnProjectDone).
-        row.State = ProjectRowState.Succeeded;
-
-        Assert.Equal(VisualStatus.Succeeded, header.StatusGlyphIcon.Status);
-        Assert.Equal("Succeeded", header.StatusNameText.Text);
-        Assert.Equal(Visibility.Collapsed, spinner.Visibility); // aynı kontrol örneği — artık dönmüyor
+        vm.OnEvent(new BuildOrchestrator.Contracts.Ipc.ProjectStartedEvent("r1", idA, "A"));
+        AssertNoRunStatus(header); // Building
+        row.CycleWaiting = true;
+        Assert.Equal(GraphStatus.Queued, row.Status); // ön-koşul: satırın kendi statüsü değişti
+        AssertNoRunStatus(header);
+        row.CycleWaiting = false;
+        row.State = ProjectRowState.Succeeded; // satırdaki gerçek geçiş yolu — RunViewModel.OnProjectDone
+        AssertNoRunStatus(header);
+        Assert.Equal("A", header.ProjectNameText.Text);
         GC.KeepAlive(window);
     }
 
-    /// <summary>[Final review I-2 — tek doğruluk kaynağı] Başlığın glyph'i satırın KENDİ
-    /// <see cref="ProjectRowViewModel.Status"/>'unu izler (satır ve graf da onu okur): bir döngü grubunda sırası
-    /// kendisinde olmayan Started üye (<see cref="ProjectRowViewModel.IsCompiling"/> false) satırda Queued'dır,
-    /// başlıkta da Queued olmalıdır — ikinci bir Started→Building eşlemesi başlıkta spinner döndürüyordu. Sıra
-    /// üyeye geçtiğinde (IsCompiling true) başlık seçim değişmeden spinner'a geçer.
-    ///
-    /// <para><b>[DEĞİŞEN KURAL]</b> Statü YAZISI eskiden <c>State</c>'ten (motor sözlüğü, <c>ConsoleStatus.Name</c>)
-    /// geliyordu, yani bu senaryoda glyph Queued gösterirken yazı hâlâ "Building" yazıyordu (State hâlâ Started) —
-    /// ikon ile yazı ayrışıyordu. Kullanıcı kararıyla yazı da <see cref="ProjectRowViewModel.Status"/>'u izler;
-    /// ikon, yazı ve renk artık AYNI kaynaktan (<c>StatusGlyph.LabelFor</c>/<c>BrushKeyFor</c>) okunur.</para></summary>
-    [StaFact]
-    public void Header_glyph_and_status_word_follow_the_rows_own_Status_including_a_live_IsCompiling_flip()
+    private static readonly string[] RunStatusWords = ["Discovered", "Queued", "Building", "Succeeded", "Failed", "Skipped"];
+
+    private static void AssertNoRunStatus(ConsoleHeader header)
     {
-        using var dir = new TempDir();
-        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null), ("B", null));
-        string idA = MainWindowHost.IdOf("A");
-        vm.OnEvent(new BuildOrchestrator.Contracts.Ipc.ProjectStartedEvent("r1", idA, "A"));
-        var rowA = vm.Projects.Single(p => p.Id == idA);
-        rowA.CycleWaiting = true; // Started ama derlenmiyor — satır Queued gösterir
-        Assert.Equal(GraphStatus.Queued, rowA.Status); // ön-koşul: satırın kendi statüsü
-
-        var (row, header) = SelectViaHeaderWiring(window, vm, idA);
-
-        Assert.Equal(VisualStatus.Queued, header.StatusGlyphIcon.Status); // satırla AYNI
-        Assert.Equal("Queued", header.StatusNameText.Text); // yazı da satırla AYNI — State hâlâ Started'dır
-
-        row.CycleWaiting = false; // sıra bu üyeye geçti — seçim DEĞİŞMEZ
-        Assert.True(row.IsCompiling);
-
-        Assert.Equal(VisualStatus.Building, header.StatusGlyphIcon.Status);
-        Assert.Equal("Building", header.StatusNameText.Text);
-        var spinner = Assert.Single(DsResources.Descendants(header.StatusGlyphIcon).OfType<BuildingSpinner>());
-        Assert.Equal(Visibility.Visible, spinner.Visibility);
-        GC.KeepAlive(window);
+        var tree = DsResources.Descendants(header).ToList();
+        Assert.DoesNotContain(tree, e => e is StatusGlyph or BuildingSpinner);
+        Assert.DoesNotContain(tree.OfType<TextBlock>(), t => RunStatusWords.Contains(t.Text));
     }
 
     [StaFact]
@@ -117,6 +97,28 @@ public class ConsoleHeaderLiveRefreshTests
         // Canlı KAYBOLMA: liste aynı satırı temizler (ör. bir sonraki Sync) — rozet de birlikte iner.
         row.DepIssues = null;
         Assert.Equal(Visibility.Collapsed, header.DepIssueBadge.Visibility);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Döngü üyeliği de seçili satıra sonradan gelir (topoloji uzlaştırması) ve gider: rozet seçim değişmeden
+    /// belirir ve iner, tooltip'i satırın döngü cümlesidir. Abonelik yalnız iki rozetin alanlarını dinler
+    /// (<c>MainWindow.OnHeaderTrackedRowChanged</c>); bu test döngü alanını pinler.</summary>
+    [StaFact]
+    public void A_cycle_membership_arriving_or_clearing_on_the_selected_row_toggles_the_badge_live()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null), ("B", null));
+        string idA = MainWindowHost.IdOf("A");
+
+        var (row, header) = SelectViaHeaderWiring(window, vm, idA);
+        Assert.Equal(Visibility.Collapsed, header.CycleBadge.Visibility); // ön-koşul: döngü üyesi değil
+
+        row.InCycle = true;
+        Assert.Equal(Visibility.Visible, header.CycleBadge.Visibility);
+        Assert.Equal(RowWarning.InCycle, header.CycleTooltip.Content);
+
+        row.InCycle = false;
+        Assert.Equal(Visibility.Collapsed, header.CycleBadge.Visibility);
         GC.KeepAlive(window);
     }
 
