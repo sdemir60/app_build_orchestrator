@@ -129,8 +129,8 @@ public partial class ProjectRow : UserControl
         {
             actions.RowMenuContent.Title = ShortName();
             // [design §3.8] Menü açılırken Build/Rebuild/Clean kapısı (üçü de AYNI tek-proje-koşusu kapısı)
-            // koşu kapısından okunur (prototip `busy`).
-            actions.RowMenuContent.SetRunActionsEnabled(CanRunProject());
+            // koşu kapısından okunur (prototip `busy`); menü açıkken kapı değişirse OnRunGateChanged yeniden okur.
+            ApplyRowMenuGate(actions);
             ApplyRightBlock();
         };
         actions.MoreButton.Unchecked += (_, _) => ApplyRightBlock();
@@ -147,6 +147,9 @@ public partial class ProjectRow : UserControl
         {
             actions.ApplyStopStage(run.StopStage);
             PropertyChangedEventManager.AddHandler(run, OnRunStopStageChanged, nameof(RunViewModel.StopStage));
+            // [kullanıcı kararı 2026-10-26] Açık menünün maddeleri koşu kapısını canlı izler: üç madde AYNI kapıdadır ve play'in komutundan
+            // okunur, o komut bildirdiğinde menü yeniden okur. Aynı gerekçeyle zayıf (yukarıdaki StopStage aboneliği).
+            CanExecuteChangedEventManager.AddHandler(run.BuildProjectCommand, OnRunGateChanged);
         }
         actions.RowMenuContent.ItemInvoked += OnRowMenuItem;
         // [design v1.11.0 §9-6] Menünün çapası SATIRIN KENDİSİDİR, ⋯ düğmesi değil (BuildApp.jsx:609
@@ -589,9 +592,16 @@ public partial class ProjectRow : UserControl
     }
 
     /// <summary>Satırın projesi ŞU AN satırdan derlenebilir mi — menünün Build/Rebuild kapısı, play ile AYNI
-    /// komuttan okunur (ikinci bir kural yazılmaz).</summary>
+    /// komuttan okunur (ikinci bir kural yazılmaz). Okuyucuları: menü açılırken (<see cref="ApplyRowMenuGate"/>) ve menü açıkken kapı
+    /// değiştiğinde (<see cref="OnRunGateChanged"/>).</summary>
     private bool CanRunProject() =>
         _vm is { } vm && FindRunViewModel()?.BuildProjectCommand.CanExecute(vm.Id) == true;
+
+    /// <summary>[design §3.8] Menünün Build/Rebuild/Clean maddelerini koşu kapısına (<see cref="CanRunProject"/>) uydurur. Kapı iki zamanda
+    /// okunur ve ikisi de buradan geçer: menü açılırken (⋯'nin <c>Checked</c>'i) ve menü AÇIKKEN kapı her değiştiğinde
+    /// (<see cref="OnRunGateChanged"/>).</summary>
+    private void ApplyRowMenuGate(ProjectRowActions actions) =>
+        actions.RowMenuContent.SetRunActionsEnabled(CanRunProject());
 
     /// <summary>[design §9-6] Menü maddesi seçildi: menü kapanır (BuildMenu deseni), komut satırın projesiyle
     /// çalışır. Satırdan tetiklemek satıra tıklamak DEĞİLDİR — seçim burada değişmez (komut kendi kuralıyla
@@ -968,6 +978,14 @@ public partial class ProjectRow : UserControl
     private void OnRunStopStageChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (_actions is { } actions && sender is RunViewModel run) actions.ApplyStopStage(run.StopStage);
+    }
+
+    /// <summary>[kullanıcı kararı 2026-10-26] Koşu kapısı değişti (<c>BuildProjectCommand.CanExecuteChanged</c> — Rebuild ve Clean aynı kapıdadır).
+    /// Menü AÇIKSA maddeler kapıyı yeniden okur: açıkken bir Sync başlarsa (pencereye dönüşün sessiz Sync'i) açık görünen madde basışı
+    /// sessizce yutardı, Sync bitince de pasif kalırdı. Menü kapalıyken yapılacak iş yoktur — bir sonraki açılış kapıyı zaten okur.</summary>
+    private void OnRunGateChanged(object? sender, EventArgs e)
+    {
+        if (_actions is { } actions && actions.MoreButton.IsChecked == true) ApplyRowMenuGate(actions);
     }
 
     /// <summary>[C1 debt] Seçim RunViewModel'de yaşar; kartın DataContext'i satır VM'idir → ata ağaçta

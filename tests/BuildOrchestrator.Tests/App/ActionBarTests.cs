@@ -9,6 +9,7 @@ using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.App.Services;
+using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Contracts.Ipc;
@@ -671,40 +672,57 @@ public partial class ActionBarTests
     internal static RadioButton ConfigurationItem(ActionBar bar, string configuration) =>
         bar.Segment.Items.OfType<RadioButton>().Single(item => Equals(item.Content, configuration));
 
-    /// <summary>[kullanıcı kararı 2026-10-19] Bir öğenin ortası, çubuğa göre — tıkın indiği nokta. <c>internal</c>:
-    /// <c>WindowReturnClickTests</c> de pencereyi öne getiren tıkı buradan konumlar.</summary>
-    internal static Point CenterIn(ActionBar bar, FrameworkElement element) =>
-        element.TranslatePoint(new Point(element.ActualWidth / 2, element.ActualHeight / 2), bar);
+    /// <summary>[kullanıcı kararı 2026-10-19] Bir öğenin ortası, verilen köke göre — tıkın indiği nokta. <c>internal</c>:
+    /// <c>WindowReturnClickTests</c> de pencereyi öne getiren tıkı buradan konumlar (kök orada pencerenin içerik köküdür).</summary>
+    internal static Point CenterIn(UIElement root, FrameworkElement element) =>
+        element.TranslatePoint(new Point(element.ActualWidth / 2, element.ActualHeight / 2), root);
+
+    /// <summary>[kullanıcı kararı 2026-10-19] Öğenin ortasına inen tık kendi tazelemesini yapar mı — isabet pencerenin yaptığı gibi tek
+    /// isabet testinden alınır (<see cref="ActivatingClick.HitAt"/>) ve çubuğa sorulur.</summary>
+    private static bool StartsOwnRefresh(ActionBar bar, FrameworkElement element) =>
+        bar.StartsOwnRefresh(Assert.IsAssignableFrom<Visual>(ActivatingClick.HitAt(bar, CenterIn(bar, element))));
 
     /// <summary>
-    /// [kullanıcı kararı 2026-10-19] Kendi tazelemesini yapan komutlar (<see cref="ActionBar.StartsOwnRefreshAt"/>): AÇIK Build ve
-    /// Debug|Release'in seçili OLMAYAN öğesi. Pencereyi arka plandan öne getiren tık bunlara iniyorsa pencere dönüşün Sync'ini istemez
-    /// (<c>WindowReturnClickTests</c>). Seçili öğe (geçiş no-op), Sync düğmesi ve bir sayaç chip'i sayılmaz; bir Sync sürerken kapalı
-    /// olan Build ve segment de sayılmaz — kapalı bir öğe isabet almaz, tık hiçbir şey başlatmaz.
+    /// <b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-26, ikinci]</b> Pencereyi arka plandan öne getiren tık, işi bitince ekranın TAMAMINI
+    /// tazeleyen AÇIK bir kontrole iniyorsa dönüşün Sync'i istenmez (<see cref="ActionBar.StartsOwnRefresh"/>, <c>WindowReturnClickTests</c>):
+    /// Build'in birincil yarısı, Debug|Release'in seçili OLMAYAN öğesi, Sync düğmesi ve bakım kutusunun Clean / Optimize düğmeleri. Branch chip'i
+    /// (kullanıcı kararı: tık branch'i doğrudan değiştirmez, kullanıcı seçmeyebilir), sayaç chip'leri, perf chip'i ve seçili öğe (geçiş no-op)
+    /// sayılmaz — açıkken sınanır, yani sayılmamaları kapıdan değil kuraldandır. Bir Sync sürerken sayılanların hepsi kapalıdır ve hiçbiri
+    /// sayılmaz: kapalı öğe isabet almaz, tık hiçbir şey başlatmaz.
+    /// <para>Eski iddia (aynı gün, ilk karar; ad <c>Only_open_controls_that_do_their_own_refresh_count_and_the_branch_chip_does_not</c>): Build'in
+    /// chevron'u, <c>N behind</c> chip'i ve Resolve cycles de sayılır. Değişme gerekçesi: üçü de ekranın tamamını tazelemez — chevron yalnız
+    /// menü açar, kirli ağaçta pull reddedilir ve Sync zincirlenmez, Resolve cycles'ın önizlemesi plan bayrağını yazmaz
+    /// (<c>RunViewModel.PreviewWritesPlanFlag</c>); ara zincir yok, bu üçünde dönüş bugünkü gibi Sync'ler. Daha eski iddia
+    /// (<c>Only_an_open_build_and_the_configuration_not_selected_start_their_own_refresh</c>, kullanıcı kararı 2026-10-19): yalnız açık Build ve
+    /// seçili olmayan Debug|Release sayılır — <b>Sync düğmesi sayılmaz</b>; Sync, Clean ve Optimize kendi işiyle ekranı tazelediği için
+    /// 2026-10-26'da listeye girdi ve ikinci kararda kaldı.</para>
     /// </summary>
     [StaFact]
-    public void Only_an_open_build_and_the_configuration_not_selected_start_their_own_refresh()
+    public void Only_open_controls_whose_own_work_refreshes_the_whole_screen_count()
     {
         var vm = NewVm();
-        VmTopology.Seed(vm);
+        VmTopology.SeedCycle(vm, VmTopology.DefaultProjectId, @"C:\p\b.csproj"); // döngü var: Resolve cycles açık
+        vm.Behind = 2;                                                      // fetch iki commit buldu: N behind görünür
         var (bar, window) = Realize(vm, atMinimumWindowWidth: true);
-        var build = (Button)bar.Split.PrimaryHalf!;
+        var box = bar.MaintenanceBoxControl;
         var debug = ConfigurationItem(bar, "Debug");
-        var release = ConfigurationItem(bar, "Release");
-        Assert.True(build.IsEnabled);                                       // ön-koşul: Build açık
+        FrameworkElement[] own =
+        [
+            bar.Split.PrimaryHalf!, ConfigurationItem(bar, "Release"), bar.SyncButton, box.CleanButton, box.OptimizeButton,
+        ];
+        FrameworkElement[] notOwn =
+        [
+            bar.Split.MenuToggle!, bar.BehindChip, box.ResolveButton, bar.BranchChip, bar.SigmaChip, bar.PerfChip, debug,
+        ];
+        Assert.All(own.Concat(notOwn), element => Assert.True(element.IsEnabled)); // ön-koşul: hepsi açık
         Assert.True(debug.IsChecked);                                       // ön-koşul: Debug seçili
 
-        Assert.True(bar.StartsOwnRefreshAt(CenterIn(bar, build)));
-        Assert.True(bar.StartsOwnRefreshAt(CenterIn(bar, release)));
-        Assert.False(bar.StartsOwnRefreshAt(CenterIn(bar, debug)));
-        Assert.False(bar.StartsOwnRefreshAt(CenterIn(bar, bar.SyncButton)));
-        Assert.False(bar.StartsOwnRefreshAt(CenterIn(bar, bar.SigmaChip)));
+        Assert.All(own, element => Assert.True(StartsOwnRefresh(bar, element), element.Name));
+        Assert.All(notOwn, element => Assert.False(StartsOwnRefresh(bar, element), element.Name));
 
-        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));               // bir Sync sürüyor: ikisi de kapalı
-        Assert.False(build.IsEnabled);                                      // ön-koşul
-        Assert.False(bar.Segment.IsEnabled);
-        Assert.False(bar.StartsOwnRefreshAt(CenterIn(bar, build)));
-        Assert.False(bar.StartsOwnRefreshAt(CenterIn(bar, release)));
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));               // bir Sync sürüyor: sayılanların hepsi kapalı
+        Assert.All(own, element => Assert.False(element.IsEnabled));        // ön-koşul
+        Assert.All(own.Concat(notOwn), element => Assert.False(StartsOwnRefresh(bar, element), element.Name));
         GC.KeepAlive(window);
     }
 

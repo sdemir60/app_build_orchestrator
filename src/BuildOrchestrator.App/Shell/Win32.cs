@@ -13,7 +13,7 @@ internal static class Win32
 
     /// <summary>[kullanıcı kararı 2026-10-19] Etkin olmayan pencereye fareyle basıldı — Windows bunu pencereyi etkinleştirmeden ÖNCE
     /// gönderir, tıkı en son teslim eder. <c>lParam</c>: düşük söz isabet kodu (<see cref="HTCLIENT"/>), yüksek söz basışın fare mesajı
-    /// (<see cref="WM_LBUTTONDOWN"/> — sol el ayarında da mantıksal sol tuş).</summary>
+    /// (<see cref="WM_LBUTTONDOWN"/> — sol el ayarında da mantıksal sol tuş). Çözümü <see cref="ActivatingClick.IsClientLeftPress"/> yapar.</summary>
     public const int WM_MOUSEACTIVATE = 0x0021;
 
     /// <summary>İsabet kodu: istemci alanı (title bar değil).</summary>
