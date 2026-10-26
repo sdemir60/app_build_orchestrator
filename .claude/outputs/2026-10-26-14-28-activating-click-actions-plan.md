@@ -38,6 +38,8 @@ Bilinçli kalan: menüyü açıp seçmeden kapatmak ya da reddedilen pull o dön
 
 ## Global Constraints
 
+> Not: Aşağıdaki iki liste Task 1-2'nin listesidir. Kullanıcının ikinci kararı (Task 3) muaf listeyi daraltır — güncel liste Task 3'tedir.
+
 - **Muaf liste (dönüşün Sync'i istenmez, tık çalışır) — yalnız AÇIK kontrol sayılır:** Build'in birincil yarısı (mevcut),
   Debug|Release'in seçili OLMAYAN öğesi (mevcut), Sync düğmesi, bakım kutusunun Clean / Optimize / Resolve cycles düğmeleri,
   `N behind` chip'i, Build split-button'ın chevron'u (`SplitButton.MenuToggle`), satırda play (`BuildButton`), satırda ⋯
@@ -162,5 +164,46 @@ LocalOnly `PopoverTests` de lokalde koşulur (CI onu koşmaz).
   olduğu), §13.2 segment cümlesi ("the one case") kontrolü, satır menüsü kapısı cümlesi, §22 kod haritası satırı; USER-GUIDE'da
   dönüş anlatılıyorsa. `DocumentationTests` lokalde.
 - Son bütün-branch incelemesi, rebase, push, CI yeşili, develop'a merge, develop CI yeşili, branch silme.
-</content>
-</invoke>
+
+### Task 3: Kullanıcının ikinci kararı — muaf liste daralır + son inceleme düzeltmeleri
+
+**Karar (kullanıcı, 2026-10-26, ikinci):** Ara zincir YOK. Pencereyi öne getiren tıkta bir kontrol ya kendi işlevini doğrudan
+yapar (dönüşün Sync'i istenmez) ya da tık yutulur ve dönüşün Sync'i çalışır (eski hâl). Ölçüt: işi bitince ekranın TAMAMI
+tazelenmiş oluyorsa doğrudan.
+
+- **Doğrudan (muaf) kalır:** Build'in birincil yarısı, Debug|Release'in seçili olmayan öğesi, Sync düğmesi, bakım kutusunun
+  Clean ve Optimize düğmeleri, title bar'da Exit ve `X` (ikisi yalnız uçuşta iş yokken — R7'nin pencere yarısı kalır).
+- **Muaftan ÇIKAR (dönüş bugünkü gibi Sync'ler, ilk tık yutulur):** Resolve cycles (koşunun önizlemesi plan bayrağını yazmaz,
+  öbür satırların "derlenecek" bilgisi eski kalır — `RunViewModel.PreviewWritesPlanFlag`), `N behind` (kirli ağaçta pull reddedilir,
+  Sync zincirlenmez), Build split-button'ın chevron'u (yalnız menü açar), satırda play / ⋯ / sağ basış (tek proje koşusu yalnız
+  hedefi yeniden kararlaştırır — son inceleme I1, `RunCoordinator.cs` ~869-874 `ProjectRunScope`).
+- Değişmeyen: bulgu 12 (açık satır menüsü kapıyı izler) ve R6 yardımcısı (`MainWindowHost.OpenRowMenu`) kalır. Branch chip'i
+  zaten muaf değildi.
+
+**Üretim:**
+- `ActionBar.StartsOwnRefresh`: `PART_Split.MenuToggle` ve `PART_BehindChip` çıkar.
+- `MaintenanceBox.StartsOwnRefresh`: yalnız Clean ve Optimize (Resolve çıkar).
+- `ProjectRow.StartsOwnRefresh` kaldırılır; `MainWindow.StartsOwnRefreshAt`'in satır dalı (görsel-ata döngüsü dahil) kalkar.
+- Sağ basış artık hiçbir yerde sayılmaz: `ActivatingClick.ButtonOf` / `Win32.WM_RBUTTONDOWN` / `OnActivated`'ın tuş parametresi
+  yalnız sol basışa sadeleşir (YAGNI — sade olanı seç; doc'lar uyar).
+- `ActivatingClick.HitAt`'in `ContentElement` dalı KALIR (bir etikete `Run` girerse savunma) ve birim testle pinlenir (son inceleme M1).
+- Doc yorumları: muaf listeyi YALNIZ sahipler sayar (`ActionBar`, `MaintenanceBox`, title bar için `MainWindow`);
+  `MainWindow.ActivatingClick.cs` özeti, `AutoSyncCoordinator.WindowActivatedAsync` ve `RunViewModel.OnWindowActivated` doc'ları
+  listeyi yeniden saymaz, sahiplere işaret eder (son inceleme O1). Muaftan çıkanların neden çıktığı sahiplerin doc'unda tek cümle.
+  `SplitButton.PrimaryHalf` doc'undaki "[test yüzeyi]" etiketi düzeltilir — üretim de okuyor (M4).
+
+**Testler (her biri önce kırmızı):**
+- Muaftan çıkan her kontrol için "dönüş Sync'ler ve kontrol o anda kapanır" pini: Resolve cycles, `N behind`, Build chevron, satır
+  play, satır ⋯, satıra sağ basış. Mevcut kodda muaf oldukları için Sync gitmez → kırmızı. Mevcut
+  `Any_other_return_still_syncs_and_closes_build_at_once` teorisine eklenebilir. Bu branch'te eklenen eski "muaf" testleri (bulgu
+  4-9) bu pinlere dönüşür; doc gerekçeyi taşır (`[kullanıcı kararı 2026-10-26 — ikinci]` + neden).
+- `ActionBarTests` pin'i: açık set Build, seçili olmayan öğe, Sync, Clean, Optimize true; chevron, `N behind`, Resolve, branch, Σ,
+  perf, seçili öğe false; Sync sürerken hepsi false.
+- R7 testi yalnız Exit ve `X` ile kalır + bir Sync uçuştayken de sayılmadıkları varyantı (Task 2 minörü).
+- `HitAt` birim testi: `Run` taşıyan bir `TextBlock`'ta isabet o `TextBlock`'u döndürür (kırmızı: dal geçici silinerek).
+- Test düzeni (son inceleme O3): `MainWindowHost` sınıf özetine `OpenRowMenu` eklenir; menü maddelerinin kilitli/açık üçlü iddiası
+  (`IsEnabled` / `Opacity` / `ToolTip`) `ProjectRowInputTests`'te tek yardımcıya toplanır; `ProjectRowInputTests.cs` ~271-272'deki
+  ham `MouseRightButtonUpEvent` yerine `MouseInput.Release`.
+
+**Doğrulama:** filtre `FullyQualifiedName~WindowReturnClickTests|FullyQualifiedName~ActionBarTests|FullyQualifiedName~ActivatingClickTests|FullyQualifiedName~ProjectRowInputTests|FullyQualifiedName~MaintenanceBoxTests|FullyQualifiedName~RowMenuPlacementTests|FullyQualifiedName~PopoverToggleTests|FullyQualifiedName~HiddenSurfaceTests|FullyQualifiedName~AutoSyncCoordinatorTests`
++ LocalOnly `PopoverTests`.
