@@ -2920,7 +2920,7 @@ public sealed partial class RunViewModel : ObservableObject
         lock (_gate) return _projectText.TryGetValue(projectId, out var sb) ? sb.ToString() : "";
     }
 
-    /// <summary>[D4/Solution B — reseed flicker] MainWindow'un anlatıya dönüş akışının kullandığı tohumlama metodu.
+    /// <summary>[D4/Solution B — reseed flicker] MainWindow'un "Back" akışının kullandığı tohumlama metodu.
     /// Doküman TIKLAMA ANINDA UI thread'inde SENKRON kurulur (başlık ve gövde AYNI karede değişir): bu metot UI
     /// thread'inde çağrılır ve <paramref name="applyNow"/>'ı anlatının TAZE snapshot'ıyla senkron çağırır
     /// (çağıran doğrudan <c>ConsoleView.ShowRunDocument</c>'a verir). Snapshot tam metin DEĞİLDİR: store + o anki satır
@@ -2968,7 +2968,7 @@ public sealed partial class RunViewModel : ObservableObject
         applyNow(snapshot); // [D4 review §1] _gate DIŞINDA — bkz. SeedRunDocument gerekçesi
     }
 
-    /// <summary>Konsolu run dokümanına döndürür (MainWindow'un anlatıya dönüşü: seçim kalktığında).</summary>
+    /// <summary>Konsolu run dokümanına döndürür (MainWindow'daki "Back").</summary>
     public void ShowRun() => ActiveProjectId = null;
 
     /// <summary>[D4 review §3] Kart seçimi değiştiğinde konsolun izleyeceği aksiyonun SAF kararı — MainWindow'un

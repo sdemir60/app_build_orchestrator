@@ -178,5 +178,5 @@ public class VisualStatusTests
     // [DEĞİŞEN KURAL — kullanıcı kararı 2026-10-25] Burada bir de RUN-STORY sözcük tablosu pinliydi
     // (A_run_story_surface_names_the_runs_result: StatusGlyph.RunLabelFor — Queued · Building · Succeeded · Failed ·
     // Skipped · Discovered). Tek okuyucusu konsol başlığının statü sözcüğüydü; sözcük başlıktan kalkınca eşleme de kalktı.
-    // Yeni kural (başlıkta statü yok) ConsoleHeaderDesignTests.The_project_log_header_shows_only_the_project_name_and_the_right_block'ta.
+    // Yeni kural (başlıkta statü yok) ConsoleHeaderDesignTests.The_project_log_header_draws_no_run_status_in_any_row_state'te.
 }

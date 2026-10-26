@@ -3855,7 +3855,7 @@ A cleaned project reads the same `never built`, because its ledger row is gone (
 whose output file is missing from disk (§7.6).
 
 **The slot is not a result column.** The state of the output is carried by the stripe, the dot and the glyph,
-and what this run did by the duration and by the run-story surfaces (the ribbon, the console header, the event
+and what this run did by the duration and by the run-story surfaces (the ribbon, the console, the event
 stream); the slot always answers the same question — *what does this project's output need?* After a Sync that
 answer comes from comparing the stored signature with today's — or, for an output built elsewhere, its time with
 its inputs' (§7.6); after a build it comes from what just happened
@@ -5001,26 +5001,55 @@ lines.
 
 - **The header is one 28 px shell with two mutually exclusive contents**, never two controls. Its outer `Grid` has a
   `*` column and an `Auto` column: the right block (Copy log + `N lines` + `compact`) sits in the `Auto` column and
-  never shrinks. The two contents take turns in the left cell. In the narrative only the caps `CONSOLE` label shows
-  there; on the right, 8 px past `N lines` and in the counter's own type (mono 11, `text-faint`), the `compact` tag
-  shows while the console writes in compact mode (*The compact console keeps the narrative short*, below) — never on a
-  project page, which is always full, and not without a workspace, where the counter is hidden too. On a project page
-  the left cell holds the project's full name and nothing else: mono 12, starting at the panel's inset exactly where
-  the `CONSOLE` label does. The name *is* the left cell's content, left-aligned, so its box is the text's own width — a
-  short name on a wide panel is not stretched (the prototype's name `span` is `white-space: nowrap` with no flex-grow:
-  it shrinks, never grows) — and when the remainder is too narrow it trims with an ellipsis. The right block is sized
-  first, so the name gives way to it, a counter widening from 999 to 1000 or Copy log appearing included, and never
-  runs under it; no width is computed by hand. Copy log is a plain `Ds.IconButton` (22×22, already the design's "sm"
-  size in this app) with no bespoke chrome; its copied-state green tint is written straight to `Foreground` the same
-  way `AboutDialog`'s Copy diagnostics button does, which means a hover during the 1.4 s window can hand control
+  never shrinks. The left content's own inner `Grid` makes **every** column `Auto`, project name included —
+  deliberately not `*`. A `*` column always claims the whole remainder regardless of what its content actually
+  needs, and every `Auto` column after it starts at that column's *full* width rather than at the text's rendered
+  edge; with the name in a `*` column, a wide panel and a short name left a visible gap before the first badge
+  instead of the two sitting flush (the prototype's name `span` is `white-space: nowrap` with no flex-grow — it
+  shrinks, never grows, and its neighbours are always immediately to its right). The real shrink-on-demand behaviour
+  is computed by hand instead: `ApplyProjectNameShrink` reads the *actual* rendered width of Back and whichever badges
+  are visible (each plus its own margin), subtracts their sum from the available
+  space, and caps the name's `MaxWidth` at what's left — recomputed after every `ShowProjectLog`/`RefreshBadges` call,
+  on the right block's own `SizeChanged` (Copy log appearing or disappearing, or the `N lines` text widening from 999
+  to 1000), and on the header's own `SizeChanged` (a live splitter drag). Because WPF only refreshes `ActualWidth`
+  after a layout pass, the method forces one (`UpdateLayout`) before reading its neighbours — the same idiom
+  `ConsoleView`'s scroll-pin logic already uses for the same reason. In the narrative half only the caps `CONSOLE`
+  label shows on the left; on the right, 8 px past `N lines` and in the counter's own type (mono 11, `text-faint`), the
+  `compact` tag shows while the console writes in compact mode (*The compact console keeps the narrative short*,
+  below) — never on a project page, which is always full, and not without a workspace, where the counter is hidden
+  too; since it never shows in the project-log half, it never takes room from the project name. In the project-log
+  half `Back` is a ghost/sm button (`Ds.Button.Ghost.Sm`, 24 px) whose content — the drawn `Icon.Back` arrow plus the
+  word "Back" — is built once in the constructor and bound to the button's own *animated* `Foreground`
+  (`IconVisual.BoundToForeground`), so the icon tracks the same hover fade the label text does; its `-6px` left margin
+  is not a clipping bug and not a full cancellation either — Ghost.Sm's own left padding is 10 px, so `-6` only takes
+  back six of those ten, leaving the icon 4 px further in than the panel's own 10 px inset, not flush with it. The
+  name follows Back 8 px to its right, in mono 12. The header carries **no run status** — no status glyph and no status
+  word: both would repeat what the list and the graph already show — the row's stripe, dot, glyph and decision label
+  (§13.2) and the graph node — and on a project the run has not touched a dashed ring beside the word *Discovered*
+  reads like a loading indicator rather than a state. A dependency-issue badge and a cycle
+  badge can appear **together** (unlike the single triangle a project row shows, which picks one by priority):
+  both are an 8 px `Icon.AlertTri` outline triangle in `Brush.AmberText`, declared directly in XAML as
+  `{DynamicResource}` bindings so they resolve as soon as the header is rooted in a live resource scope even
+  while the badge itself stays collapsed. The dependency-issue tooltip spells out every project by its short
+  name (`RowWarning.DepIssueDetail`, comma-joined — the header has room a row's slot does not, so it never falls
+  back to the row's "+N" abbreviation); the cycle tooltip is the same sentence the row's own triangle uses
+  (`RowWarning.InCycle`), read from the one shared constant rather than retyped. Both tooltips are explicit
+  `ToolTip` objects declared in XAML with `AppTooltip.Side="Bottom"`, so they open below the badge; code-behind
+  only writes their content. Copy log is a plain `Ds.IconButton` (22×22, already the design's "sm" size in this
+  app) with no bespoke chrome; its copied-state green tint is written straight to `Foreground` the same way
+  `AboutDialog`'s Copy diagnostics button does, which means a hover during the 1.4 s window can hand control
   back to the style's own animated brush — an accepted trade-off shared by both buttons.
-- **The project page's header names the project and nothing else.** It carries no back button, no status glyph or
-  run word and no warning badge. Each would repeat what the list and the graph already show — the row's stripe, dot,
-  glyph, decision label and warning triangle (§13.2), and the graph node — and on a project the run has not touched a
-  dashed ring beside the word *Discovered* reads like a loading indicator rather than a state. The way back to the
-  narrative is the selection's own (§13.7): the selected row or node clicked again, the graph's empty background, or
-  Esc. So `ShowProjectLog` takes the project's name, not its row: the header reads nothing a row's change could move
-  and subscribes to no row, and the 200 ms run tick owns only `SetLineCount`.
+- **The header keeps watching the selected row, not just the moment it was selected.** `ShowProjectLog` runs once, on
+  selection; a project already open can still change underneath the reader — a dependency-issue list arriving or
+  clearing, a cycle membership settling — and none of those are selection events.
+  `MainWindow.TrackHeaderRow` subscribes to exactly the one selected `ProjectRowViewModel`'s `PropertyChanged`
+  (swapping the subscription, never stacking two) and calls `ConsoleHeader.RefreshBadges` on `DepIssues`/`InCycle`
+  alone — every other row notification (`State`, `Status`, `Marked`, `Fade`, …) is not the header's concern and is
+  ignored, the same filtered `switch` idiom `ProjectRow.OnVmPropertyChanged` already uses for its own row.
+  `RefreshBadges` touches only the two badges; it does not re-run the project-name/copy-log/mode side of
+  `ShowProjectLog`, so a badge change mid-read cannot reset the reader's clipboard feedback or replay the panel's tilt
+  transition. The 200 ms run tick still owns only `SetLineCount` — badge changes are rare and are pushed the instant
+  they happen rather than polled, so the idle-tick stays allocation-free exactly as before.
 - The document stays **plain text**, so what the user copies is meaningful. Colour comes from an offset-based
   `DocumentColorizingTransformer`, and only lines whose *format is known* get one: the prefixes the application
   itself prints (`[error]`, `warning:` — the engine's notes in a project's log included —, a command line), the
@@ -5054,7 +5083,7 @@ lines.
   previous slice on the first jump to the top. Both documents are swapped in through one path (`SwapDocument`), and the
   swap's own scroll events are not the reader's: assigning the new document clears the text view's scroll data to zero
   before the pin reports where it lands, which the loader, still armed from the old document's position, would read as
-  arriving at the top — a narrative rebuilt over a document at its end, on the return from a project page or from the tray,
+  arriving at the top — a narrative rebuilt over a document at its end, on `Back` or on the return from the tray,
   would prepend a slice nobody asked for and trim it off again — and which the bottom anchor, for a reader who had just
   scrolled, would read as a distance of zero, a reader at the bottom of a document not yet pinned anywhere — so neither
   decides on them: when the swap ends the loader is armed from where the document settled and the anchor follows from
@@ -5089,7 +5118,7 @@ lines.
   short file never yields partial text, because the console computes its stitch from indices. An empty slice is not
   skipped: the console keeps its place and asks for the same slice again on the next scroll to the top, and a document
   whose last slice could not be read starts at the narrative's end, so its indices still match what it shows — the last slice
-  is read again when the narrative is next rebuilt (on the return from a project page or from the tray) or, while the run streams,
+  is read again when the narrative is next rebuilt (on `Back` or on the return from the tray) or, while the run streams,
   once the document is tall enough to scroll away from the top and back, after any live lines trimmed off its top in the
   meantime; a new section discards it with the rest of the narrative. The one
   exception is a store that has fallen behind the document — a narrative cleared while the window was hidden, under a
@@ -5197,7 +5226,7 @@ lines.
   that would cross the top of the narrative's slice loads the previous slice first, so the step stays a whole
   viewport; on a project page, and at the start of the narrative, it stops at the top. Each is a gesture of the reader
   as §13.4 defines it: the vertical keys take the wheel and stop a `⌄ latest` flight, the sideways ones do neither.
-- **Panel transitions are one piece, and they are flat.** Opening a project log and coming back to the narrative
+- **Panel transitions are one piece, and they are flat.** Opening a project log and coming back with `Back`
   both settle the content **up from 14 px below**, fading in, over 340 ms — one movement, not a per-line
   cascade — so a three-line log and a two-hundred-line narrative open at the same rhythm. The movement is a
   `TranslateTransform` and an opacity animation on the block's own container, so the real editor is what
@@ -5266,7 +5295,7 @@ lines.
   **Reclaiming the follow happens after the pin, not before**, for the same reason and it is the whole of the other
   half of that pill. The pill's visibility reads distance-from-bottom alone, so announcing "we are stuck to the bottom
   again" while the editor still holds the *previous* document — at its top — measured a huge distance and showed the
-  pill for exactly as long as the pin took to run. It appeared and vanished on every return to the narrative. Ordered after the pin,
+  pill for exactly as long as the pin took to run. It appeared and vanished on every `Back`. Ordered after the pin,
   the geometry is already right and the distance is zero. The run narrative pins to the **bottom**: the interesting
   thing is the latest line and the panel goes on following the stream. A project log pins to the **top** — the log's
   first line — and **never follows**: what you are looking for in a build log is the first error, and following would
@@ -5282,7 +5311,7 @@ lines.
   count a second time, because a line that arrived between the clear and the bind is already in the store and reaches
   the document as a batch, so a bind that counted it too would show it twice — and resets the document at once, without
   a tilt — the tilt belongs to the mode switch, this is the same panel starting over — and leaves a project log that is
-  on screen alone, since the return to the narrative seeds a fresh one anyway. Batches of the previous operation still in the pump
+  on screen alone, since `Back` seeds the fresh narrative anyway. Batches of the previous operation still in the pump
   are dropped by the same reseed generation a mode switch uses, so nothing from before the clear can land after it.
 - **A hidden window does not write to the document.** While the window is in the tray the pump keeps draining, but the
   shell drops each batch instead of applying it: the text is in the store already, and a document nobody can see is not
@@ -5738,9 +5767,9 @@ resources — no hex, no milliseconds inline.
 
 One canonical gesture: clicking a project row, a graph node or a stream line selects that project **everywhere**
 — the graph pans to the node, the list scrolls to the row, the console switches to that project's log, the
-panel header switches to its project-log half, which names the project (§13.5). Clicking the same element again,
-clicking the graph's empty background, or Esc clears it and follow-mode resumes. Text selection inside the console
-never clears the project selection.
+panel header switches to its project-log half with the `Back` button. Clicking the same element again, clicking the
+graph's empty background, `Back`, or Esc clears it and follow-mode resumes. Text selection inside the console never
+clears the project selection.
 
 Esc is a chain and only ever closes the topmost layer: the exit card (§13.3), which sits above even the dialogs →
 dialog → popover/menu (the action bar's popovers and the title bar's update card) → selection → the running build →
@@ -6061,8 +6090,8 @@ A stopped run's plan belongs to the old configuration, so there is nothing under
 as; the next *Build* starts from the new plan. `queued` is amber, not grey:
 being in the queue is not a result, it is the scope of the operation that is running, and the amber the marking
 wave lit must not go out when the run begins. The mapping lives in one place (`VisualStatuses.For`) and every
-surface reads it; the run-story surfaces map the engine's status on their own through `VisualStatuses.OfRun`,
-which is the only mapping that still yields `skipped`.
+state surface reads it; `skipped` is drawn only by the event stream, a run-story surface, whose skip line takes
+its glyph from the line's own kind.
 
 **Queued reads only the running operation's own plan.** A row is not amber merely because it is dirty
 (`WillBuild`) — `WillBuild` is a standing fact about the project, decided fresh after every Sync and unaware of
