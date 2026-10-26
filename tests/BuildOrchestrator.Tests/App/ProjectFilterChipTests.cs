@@ -1,7 +1,5 @@
 ﻿using System.Windows;
 using System.Windows.Automation;
-using System.Windows.Automation.Peers;
-using System.Windows.Automation.Provider;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using BuildOrchestrator.App;
@@ -230,8 +228,7 @@ public class ProjectFilterChipTests
 
         Assert.True(chip.IsChecked, "görünen chip AKTİF olmalı — Ds.Chip'in amber'ı tamamen buna bağlı");
 
-        var toggle = (IToggleProvider)new ToggleButtonAutomationPeer(chip).GetPattern(PatternInterface.Toggle)!;
-        toggle.Toggle();                                                       // ToggleButton.OnToggle
+        CommandPress.Toggle(chip);                                             // ToggleButton.OnToggle
         Assert.False(chip.IsChecked);                                          // ...IsChecked GERÇEKTEN düştü
         CommandPress.Click(chip);                                              // ...ardından base.OnClick
 

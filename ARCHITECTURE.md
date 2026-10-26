@@ -2686,16 +2686,28 @@ alone (a fetch, a new branch or tag) adds no entry and triggers nothing, and nei
 commit, when there is no reflog yet. `--no-show-signature` keeps a machine that has `log.showSignature` on from mixing
 signature checks into the entries. A return to the window is the second trigger: when more
 than five seconds have passed since the last Sync started or ended, it runs a silent Sync even when HEAD has not
-moved, because files may have been edited elsewhere. The one return that runs nothing is a click that lands on a
-command doing that refresh itself: an enabled *Build*, which plans from disk with the same scan and decisions as a
-Sync, or the Debug/Release item that is not selected, which starts its own Sync (§13.2). Windows activates a window
-in the background before it delivers the click that activated it, so a Sync requested at the activation would close
-that very control under the click and the click would do nothing. The window therefore notes a left press in its
-client area that activates it (`WM_MOUSEACTIVATE`), asks the action bar what lies under that press, and leaves the
-return alone when the answer is one of the two; the click then runs as it would on an active window. A return by
-keyboard, the taskbar or the tray, a click anywhere else and a click on the configuration already selected run the
-silent Sync as above. A press dragged off the button before its release builds nothing and refreshes nothing; the
-next return does.
+moved, because files may have been edited elsewhere. A return runs nothing when the click that brings the window back
+lands on a control whose own work leaves the whole screen refreshed: an enabled *Build*, which plans every project
+from disk with the same scan and decisions as a Sync; the *Sync* button, which is a Sync; *Clean* and *Optimize*,
+which hand over to a Sync when they end; and the Debug/Release item that is not selected, which starts its own Sync
+(§13.2). *Exit* and `X` count too while nothing is in flight: they take the window away, and a Sync started there
+would make an exit with nothing running ask for confirmation (§12.3). There is no middle way: the click either runs
+its own work at once or is spent on bringing the window back while the silent Sync runs — nothing is put off to run
+after the other. Windows activates a window in the background before it delivers the click that activated it, so a
+Sync requested at the activation would close that very control under the click and the click would do nothing. The
+window therefore notes a left press in its client area that activates it (`WM_MOUSEACTIVATE`), hit-tests that point
+once from its root and asks the owner of what lies under it — the action bar, which asks its maintenance box in turn
+— or checks its own two title-bar buttons; when the answer is yes it leaves the return alone and the click runs as it
+would on an active window. A disabled control takes no hit — the hit falls to an enabled ancestor that starts nothing
+— so a click on a control that other work has closed leaves the return as it is: it Syncs, or waits for that work to
+end. Controls whose work refreshes only part of the screen are left out on purpose, and their first click is spent on
+the return: *Resolve cycles* compiles the cycle groups but leaves every row's `WillBuild` as the last Sync decided it
+(§14.3); `N behind` pulls, but a pull refused on a dirty tree chains no Sync; the Build chevron, the branch chip and a
+row's ⋯ or right-click only open a menu the user may close without a choice; and a row's play button runs a
+single-project build that re-decides only its target (§13.2). A return by keyboard, the taskbar or the tray, a click
+anywhere else — the filter and perf chips, a row, the title bar's other buttons — a right press, and a click on the
+configuration already selected run the silent Sync as above. A press dragged off the button before its release, and a
+*Clean* or *Optimize* that fails, refresh nothing; the next return does.
 
 Each trigger is weighed against the HEAD of the last Sync (§5.3, `syncCompleted`), read from the git directory —
 or, in a reftable repository, from git (§10.1):
@@ -3887,7 +3899,9 @@ While the run is in flight the target row's play button turns into a red **Stop*
 hover and drives the same stop command as the action bar; every other row's play button is disabled and its
 tooltip says why (`Build in progress — wait or stop it first`), and the menu's *Build* and *Rebuild* go the same
 way. *Clean* is Visual Studio's project clean — `-t:Clean` on that project — and it locks with the other two
-while a run is in flight. It is not the maintenance box's *Clean* — the workspace reset described under the
+while a run is in flight. An open menu follows that lock as it changes rather than keeping the state it opened with:
+a run or a workspace operation that starts while it is open locks its items at once, and their end unlocks them. It is
+not the maintenance box's *Clean* — the workspace reset described under the
 maintenance box below — and neither is the *Clean* in the Build split menu.
 
 The row's icon buttons are the one place the shared icon-button style is overridden: they hover to
@@ -7770,7 +7784,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Revision text shortening (only a full 40-hex sha is cut to 7) | `Core/Git/RevisionText.cs` |
 | The `N behind` chip's command handler (main repository fast-forward) | `Supervisor/SupervisorHost.cs` |
 | Automatic Sync decision: triggers (HEAD watcher, window activation, end of run), the one pending trigger, the double-Sync check, the interrupt request, the return that a self-refreshing click makes unnecessary | `App/Services/AutoSyncCoordinator.cs` |
-| The click that brings the window back: the activating left press (`WM_MOUSEACTIVATE`), what lies under it (an enabled Build, the configuration not selected) | `App/MainWindow.xaml.cs` (`OnActivated`), `App/Views/ActionBar.xaml.cs` (`StartsOwnRefreshAt`) |
+| The click that brings the window back: the activating left press (`WM_MOUSEACTIVATE`), one hit test from the window's root, the owner of what lies under it (the action bar's Build, Sync and unselected configuration, the maintenance box's Clean and Optimize, the title bar's *Exit* and `X` while nothing is in flight) | `App/MainWindow.ActivatingClick.cs`, `App/Shell/ActivatingClick.cs`, `StartsOwnRefresh` in `App/Views/ActionBar.xaml.cs` and `App/Views/MaintenanceBox.xaml.cs` |
 | The view model's side of it: the port, the interrupted run's summary | `App/ViewModels/RunViewModel.AutoSync.cs` |
 | Git-operation gate: the chip's dot and tooltip, the checkout and pull locks, the 2 s poll, the stuck-lock line | `App/ViewModels/RunViewModel.GitOperation.cs`, `App/Services/IPollTimer.cs` |
 | Sync kinds and their rules (clearing, fetch, transcript, visibility, restarting the plan surface, dropping the decisions) | `App/ViewModels/SyncMode.cs` |
@@ -7850,7 +7864,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Resource strip view: the three cells, their icons, the ghost-text frame, the downward tooltips, the writes gated by the hidden-surface signal, the UI Automation group | `App/Views/ResourceStrip.xaml(.cs)`; icons and measurements in `App/Resources/Icons.xaml` (`Icon.Cpu`, `Icon.MemoryStick`, `Icon.Parallel`) and `Tokens.xaml` (`Size.ResourceStripIcon`, `Size.ResourceStripIconViewBox`, `Thickness.ResourceStripCellGap`, `Thickness.ResourceStripValueGap`); the group's name in `App/AccessibilityNames.cs` |
 | Sticky ribbon: phase, building chips, failure cluster, progress; it listens to the engine state and announces the engine-starting line | `App/Views/StickyRibbon.xaml(.cs)` |
 | Project row: stripe, dot, decision label, hover icons, play/Stop wiring, breath, shake | `App/Views/ProjectRow.xaml(.cs)`, `ProjectRowActions.xaml(.cs)`; label wording `App/ViewModels/DecisionLabel.cs` |
-| Row menu (Build · Rebuild · Clean; ⋯ and right-click) | `App/Views/ProjectRowMenu.xaml(.cs)` |
+| Row menu (Build · Rebuild · Clean; ⋯ and right-click), its items following the run gate while it is open | `App/Views/ProjectRowMenu.xaml(.cs)`, `App/Views/ProjectRow.xaml.cs` |
 | Single-project run commands (build · rebuild · clean), run target and lock pushed to rows | `App/ViewModels/RunViewModel.cs` (`BuildProjectCommand`, `RunTargetId`) |
 | Build-state row removal after a clean | `Core/State/BuildStateStore.cs` (`Remove`) |
 | Row menu placement (row-right inset, row overlap, viewport clamp) | `App/Controls/RowMenuPlacement.cs` |

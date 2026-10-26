@@ -73,7 +73,8 @@ public class SplitButton : Control
 
     public SplitButton() => Loaded += (_, _) => SplitCorners();
 
-    /// <summary>[test yüzeyi] Birincil eylemi taşıyan sol yarım — şablonun <c>PART_Primary</c>'si.</summary>
+    /// <summary>Birincil eylemi taşıyan sol yarım — şablonun <c>PART_Primary</c>'si. Testler okur; üretimde de pencereyi öne getiren tıkın
+    /// Build'e inip inmediği buradan sorulur (<c>ActionBar.StartsOwnRefresh</c>).</summary>
     internal ButtonBase? PrimaryHalf { get; private set; }
 
     /// <summary>[test yüzeyi] Menüyü açan chevron yarımı — şablonun <c>PART_Menu</c>'sü.</summary>

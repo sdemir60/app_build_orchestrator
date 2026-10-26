@@ -25,8 +25,9 @@ namespace BuildOrchestrator.Tests.App;
 ///
 /// <para>[son temizlik · madde 20] Pencere kurmayan testlerin de ortak parçalarını taşır: konsol pompasının iki test biçimi — hiç tick
 /// etmeyen (<see cref="NeverTickingBatcher"/>) ve testin elinde boşaltılan (<see cref="DrainableBatcher"/>, <see cref="DrainPosted"/>) — VM'i ya
-/// da konsolu pencere olmadan kuran testlerin de tek batcher kaynağıdır; pencere kısayolları (<see cref="PressKeyBinding"/>) ve konsol satırı
-/// sayımı (<see cref="Occurrences"/>) da buradadır.</para>
+/// da konsolu pencere olmadan kuran testlerin de tek batcher kaynağıdır; pencere kısayolları (<see cref="PressKeyBinding"/>), konsol satırı
+/// sayımı (<see cref="Occurrences"/>) ve bir proje satırının menüsünü açıp açılmasını bekleme (<see cref="OpenRowMenu"/> — satırı pencereyle
+/// ya da tek başına kuran testlerin ortak bloğu) da buradadır.</para>
 ///
 /// <para><b>İki değişmez burada zorlanır:</b>
 /// (a) motor ASLA doğmaz — var olmayan bir supervisor yolu verilir ve pencere hiç <c>Show()</c> edilmez
@@ -588,5 +589,32 @@ internal static class MainWindowHost
         {
             host.Close();
         }
+    }
+
+    /// <summary>
+    /// Bir proje satırının menüsünü <paramref name="open"/> ile açar, popup'ın GERÇEKTEN açılmasını bekler ve menünün maddelerini verir; menü AÇIK
+    /// kalır, kapatmak çağıranın işidir. "Satır menüsünü aç ve açılmasını bekle" bloğunun TEK yeri: <c>ProjectRowInputTests</c>,
+    /// <c>RowMenuPlacementTests</c> ve <c>WindowReturnClickTests</c> aynı beş satırı beş ayrı yerde taşıyordu (kopya YASAK).
+    /// <para><paramref name="open"/> açma biçimidir ve üretimdeki kapıya varır: ⋯'yi işaretlemek (<c>actions.MoreButton.IsChecked = true</c>),
+    /// ⋯'ye kullanıcı gibi basmak (<see cref="CommandPress.Toggle"/>) ya da satıra sağ bırakmak (<see cref="MouseInput.Release"/>) — hepsi
+    /// ⋯'nin <c>Checked</c>'inden geçer ve menünün kapısı orada okunur (<c>ProjectRow.EnsureActions</c>). Hover bloğu
+    /// (<c>ProjectRow.Actions</c>) açmadan ÖNCE kurulmuş olmalıdır: <c>Opened</c>'a ona abone olunarak beklenir.</para>
+    /// <para>Pompalanır, çünkü <c>IsOpen = true</c> tek başına yetmez: popup'ın kendi penceresi ancak dispatcher pompalanınca doğar ve
+    /// maddeleri menü o pencerede yüklenince kurar — <c>IsOpen</c>'a bakan bir koşul anında doğru çıkar ve hiç pompalamazdı. Menü
+    /// açılmadıysa ön-koşul mesajı bunu söyler.</para>
+    /// </summary>
+    public static List<Border> OpenRowMenu(ProjectRowActions actions, Action open)
+    {
+        ArgumentNullException.ThrowIfNull(actions);
+        ArgumentNullException.ThrowIfNull(open);
+        bool opened = false;
+        void OnOpened(object? sender, EventArgs e) => opened = true;
+        actions.RowMenu.Opened += OnOpened;
+        open();
+        DispatcherPump.PumpUntil(() => opened, TimeSpan.FromSeconds(2));
+        actions.RowMenu.Opened -= OnOpened;
+        Assert.True(opened, "ön-koşul: satır menüsü açılmadı");
+        actions.RowMenuContent.UpdateLayout();
+        return actions.RowMenuContent.Rows.ToList();
     }
 }

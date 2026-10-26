@@ -403,7 +403,7 @@ public partial class MainWindow : Window
         _vm.GitOperationPollTimer = new DispatcherPollTimer(Dispatcher);
         _vm.EnableAutoSync(action => Dispatcher.InvokeAsync(action));
         // (Aynı Activated olayına bağlı öbür kanca — imleç saatinin aktiflik kablajı — ctor'un başındadır: cursorClock.)
-        // [kullanıcı kararı 2026-10-19] Dönüşü bir tık getirdiyse tıkın yeri de gider (OnActivated).
+        // [kullanıcı kararı 2026-10-19] Dönüşü bir sol basış getirdiyse basışın yeri de gider (OnActivated — MainWindow.ActivatingClick.cs).
         Activated += (_, _) => OnActivated(TakeActivatingClick());
 
         _elapsedTimer.Tick += (_, _) => OnElapsedTick();
@@ -1471,40 +1471,6 @@ public partial class MainWindow : Window
         }
         return 0;
     }
-
-    /// <summary>[kullanıcı kararı 2026-10-19] Pencereyi öne getiren sol tık istemci alanına indi — <see cref="MouseActivateWndProc"/>
-    /// kurar, hemen ardından gelen <c>Activated</c> tüketir (<see cref="TakeActivatingClick"/>).</summary>
-    private bool _activatedByClick;
-
-    /// <summary>[kullanıcı kararı 2026-10-19] <c>WM_MOUSEACTIVATE</c>: Windows bunu etkin olmayan pencereye fareyle basılınca,
-    /// pencereyi etkinleştirmeden ÖNCE gönderir — sıra garanti, <c>Activated</c> ondan sonra gelir, tık en son. Yalnız istemci alanına
-    /// sol tık not edilir; mesaj işlenmez, varsayılan cevap (etkinleştir ve tıkı teslim et) değişmez.</summary>
-    private nint MouseActivateWndProc(nint hwnd, int msg, nint wParam, nint lParam, ref bool handled)
-    {
-        if (msg == Win32.WM_MOUSEACTIVATE)
-            _activatedByClick = (lParam & 0xFFFF) == Win32.HTCLIENT && ((lParam >> 16) & 0xFFFF) == Win32.WM_LBUTTONDOWN;
-        return 0;
-    }
-
-    /// <summary>Etkinleşmeyi getiren tıkın alt çubuğa göre konumu; etkinleşme bir tıkla gelmediyse (klavye, görev çubuğu, tepsi,
-    /// title bar) <c>null</c>. İşareti tüketir.</summary>
-    private Point? TakeActivatingClick()
-    {
-        bool byClick = _activatedByClick;
-        _activatedByClick = false;
-        return byClick ? Mouse.GetPosition(Shell.ActionBarControl) : null;
-    }
-
-    /// <summary>
-    /// [kullanıcı kararı 2026-10-19] Pencere öne geldi. Windows arka plandaki pencereye yapılan tıkı pencereyi etkinleştirdikten SONRA
-    /// teslim eder; dönüşün Sync'i burada istenirse tıkın indiği Build'i ya da Debug|Release'i altından kapatır ve tık yutulur. Tık kendi
-    /// tazelemesini yapan bir komuta iniyorsa (<see cref="ActionBar.StartsOwnRefreshAt"/>) dönüşün Sync'i istenmez ve tık normal çalışır;
-    /// başka her dönüş (klavye, görev çubuğu, tepsi, başka bir yere tık) bugünkü gibi Sync'ler.
-    /// internal: test yüzeyi — gösterilmeyen pencerede ne <c>Activated</c> ne <c>WM_MOUSEACTIVATE</c> üretilebilir.
-    /// </summary>
-    /// <param name="clickAt">Etkinleşmeyi getiren tıkın alt çubuğa göre konumu; bir tıkla gelmediyse <c>null</c>.</param>
-    internal void OnActivated(Point? clickAt) =>
-        _vm.OnWindowActivated(clickRefreshes: clickAt is { } at && Shell.ActionBarControl.StartsOwnRefreshAt(at));
 
     /// <summary>[perf B2] Tepsi bildirim yüzeyi: üretimde tepsi ikonunun kendisi (<c>_tray</c>), testte sahte bir
     /// notifier. <c>OnSourceInitialized</c> headless süitte koşmaz, yani gerçek <c>TaskbarIcon</c> kurulmaz ve
