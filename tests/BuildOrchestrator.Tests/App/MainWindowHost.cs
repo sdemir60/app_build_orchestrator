@@ -25,8 +25,9 @@ namespace BuildOrchestrator.Tests.App;
 ///
 /// <para>[son temizlik · madde 20] Pencere kurmayan testlerin de ortak parçalarını taşır: konsol pompasının iki test biçimi — hiç tick
 /// etmeyen (<see cref="NeverTickingBatcher"/>) ve testin elinde boşaltılan (<see cref="DrainableBatcher"/>, <see cref="DrainPosted"/>) — VM'i ya
-/// da konsolu pencere olmadan kuran testlerin de tek batcher kaynağıdır; pencere kısayolları (<see cref="PressKeyBinding"/>) ve konsol satırı
-/// sayımı (<see cref="Occurrences"/>) da buradadır.</para>
+/// da konsolu pencere olmadan kuran testlerin de tek batcher kaynağıdır; pencere kısayolları (<see cref="PressKeyBinding"/>), konsol satırı
+/// sayımı (<see cref="Occurrences"/>) ve bir proje satırının menüsünü açıp açılmasını bekleme (<see cref="OpenRowMenu"/> — satırı pencereyle
+/// ya da tek başına kuran testlerin ortak bloğu) da buradadır.</para>
 ///
 /// <para><b>İki değişmez burada zorlanır:</b>
 /// (a) motor ASLA doğmaz — var olmayan bir supervisor yolu verilir ve pencere hiç <c>Show()</c> edilmez

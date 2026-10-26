@@ -268,8 +268,7 @@ public class ProjectRowInputTests
         var rowVm = new ProjectRowViewModel(RowId, "OSYS.Sales.Core", ProjectRowState.Pending) { NamePrefix = "OSYS." };
         var row = Realize(runVm, rowVm, out var window);
 
-        row.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Right)
-        { RoutedEvent = UIElement.MouseRightButtonUpEvent });
+        MouseInput.Release(row, MouseButton.Right);
 
         var actions = row.Actions!;
         Assert.True(actions.MoreButton.IsChecked);          // ⋯ ile AYNI kapı (popup IsOpen ona bağlıdır)
@@ -299,20 +298,27 @@ public class ProjectRowInputTests
         Assert.Equal(["build", "rebuild", "clean"], ProjectRowMenu.Items.Select(i => i.Kind));
         var rows = menu.Rows.ToList();
         Assert.Equal(3, rows.Count);
-        Assert.All(rows, r => Assert.True(r.IsEnabled));
+        AssertRowMenuItems(rows, locked: false);
         Assert.All(rows, r => Assert.Equal(Cursors.Hand, r.Cursor));
-        Assert.All(rows, r => Assert.Null(r.ToolTip));
 
         menu.SetRunActionsEnabled(false); // bir koşu uçuşta: menü açılır ama maddeler pasiftir
-        Assert.All(rows, r => Assert.False(r.IsEnabled));
-        Assert.All(rows, r => Assert.Equal(BuildOrchestrator.App.AccessibilityNames.BuildBusyTooltip, r.ToolTip));
-        Assert.All(rows, r => Assert.Equal(MenuRowMetrics.DisabledOpacity, r.Opacity));
+        AssertRowMenuItems(rows, locked: true);
         Assert.True(ToolTipService.GetShowOnDisabled(rows[2]));
 
         menu.SetRunActionsEnabled(true);
-        Assert.All(rows, r => Assert.True(r.IsEnabled));
-        Assert.All(rows, r => Assert.Equal(1.0, r.Opacity));
+        AssertRowMenuItems(rows, locked: false);
         GC.KeepAlive(window);
+    }
+
+    /// <summary>Satır menüsünün üç maddesinin kapı hâli: <paramref name="locked"/> iken pasif + <see cref="MenuRowMetrics.DisabledOpacity"/> +
+    /// neden tooltip'i (<c>AccessibilityNames.BuildBusyTooltip</c>); değilken etkin + tam opaklık + tooltip yok. Maddelerin kapısını sınayan
+    /// testlerin TEK iddia yeri — bu üçlü dört testte kopyaydı (kopya YASAK).</summary>
+    private static void AssertRowMenuItems(IReadOnlyCollection<Border> rows, bool locked)
+    {
+        Assert.All(rows, r => Assert.Equal(!locked, r.IsEnabled));
+        Assert.All(rows, r => Assert.Equal(locked ? MenuRowMetrics.DisabledOpacity : 1.0, r.Opacity));
+        if (locked) Assert.All(rows, r => Assert.Equal(BuildOrchestrator.App.AccessibilityNames.BuildBusyTooltip, r.ToolTip));
+        else Assert.All(rows, r => Assert.Null(r.ToolTip));
     }
 
     /// <summary>[§9-6] Menüden Build seçmek satırın projesini derler (kapsamlı komut) ve menüyü kapatır;
@@ -375,9 +381,7 @@ public class ProjectRowInputTests
         var rows = MainWindowHost.OpenRowMenu(actions, () => MouseInput.Release(row, MouseButton.Right));
 
         Assert.Equal(3, rows.Count);
-        Assert.All(rows, r => Assert.False(r.IsEnabled));
-        Assert.All(rows, r => Assert.Equal(MenuRowMetrics.DisabledOpacity, r.Opacity));
-        Assert.All(rows, r => Assert.Equal(BuildOrchestrator.App.AccessibilityNames.BuildBusyTooltip, r.ToolTip));
+        AssertRowMenuItems(rows, locked: true);
 
         rows[0].RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
         { RoutedEvent = UIElement.MouseLeftButtonUpEvent });
@@ -403,13 +407,11 @@ public class ProjectRowInputTests
         var actions = row.Actions!;
         var rows = MainWindowHost.OpenRowMenu(actions, () => MouseInput.Release(row, MouseButton.Right));
         Assert.Equal(3, rows.Count);
-        Assert.All(rows, r => Assert.True(r.IsEnabled)); // ön-koşul: kapı açıkken açıldı, maddeler açık
+        AssertRowMenuItems(rows, locked: false); // ön-koşul: kapı açıkken açıldı, maddeler açık
 
         runVm.OnEvent(new SyncStartedEvent(runVm.RootPath, "main")); // menü AÇIKKEN bir Sync başladı: kapı kapandı
 
-        Assert.All(rows, r => Assert.False(r.IsEnabled));
-        Assert.All(rows, r => Assert.Equal(MenuRowMetrics.DisabledOpacity, r.Opacity));
-        Assert.All(rows, r => Assert.Equal(BuildOrchestrator.App.AccessibilityNames.BuildBusyTooltip, r.ToolTip));
+        AssertRowMenuItems(rows, locked: true);
         actions.MoreButton.IsChecked = false;
         GC.KeepAlive(window);
     }
@@ -429,13 +431,11 @@ public class ProjectRowInputTests
         runVm.OnEvent(new SyncStartedEvent(runVm.RootPath, "main")); // bir Sync sürüyor: kapı kapalı
         var rows = MainWindowHost.OpenRowMenu(actions, () => actions.MoreButton.IsChecked = true);
         Assert.Equal(3, rows.Count);
-        Assert.All(rows, r => Assert.False(r.IsEnabled)); // ön-koşul: kapalı kapıyla açıldı, maddeler pasif
+        AssertRowMenuItems(rows, locked: true); // ön-koşul: kapalı kapıyla açıldı, maddeler pasif
 
         runVm.OnEvent(MainWindowHost.SyncCompleted()); // menü AÇIKKEN Sync bitti: kapı açıldı
 
-        Assert.All(rows, r => Assert.True(r.IsEnabled));
-        Assert.All(rows, r => Assert.Equal(1.0, r.Opacity));
-        Assert.All(rows, r => Assert.Null(r.ToolTip));
+        AssertRowMenuItems(rows, locked: false);
         actions.MoreButton.IsChecked = false;
         GC.KeepAlive(window);
     }
