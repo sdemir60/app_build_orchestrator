@@ -152,18 +152,29 @@ public partial class ActionBar : UserControl
         trigger?.Focus();
     }
 
-    // ---------------------------------------------------------------- [kullanıcı kararı 2026-10-19] pencereyi öne getiren tık
+    // ---------------------------------------------------------------- [kullanıcı kararı 2026-10-19 · 2026-10-26] pencereyi öne getiren tık
     /// <summary>
-    /// Bu isabete inen bir tık kendi tazelemesini yapan bir komutu mu çalıştırır: AÇIK Build düğmesi (koşu diski baştan planlar —
-    /// Sync'in taramasının ve kararlarının aynısı, aynı Core kodu) ya da Debug|Release'in seçili OLMAYAN öğesi (geçiş kendi Sync'ini
-    /// başlatır). Pencereyi arka plandan öne getiren tık buraya iniyorsa pencere dönüşün Sync'ini istemez (<c>MainWindow.OnActivated</c>):
-    /// Windows tıkı pencereyi etkinleştirdikten SONRA teslim eder ve o Sync tıkın indiği düğmeyi altından kapatırdı. Seçili öğe (geçiş
-    /// no-op) ve kapalı bir düğme (tık hiçbir şey başlatmaz) sayılmaz — kapalı öğe isabet almaz, isabet onu taşıyan açık ataya düşer.
+    /// Bu isabete inen bir tık kendi tazelemesini yapan bir kontrolü mü çalıştırır. Pencereyi arka plandan öne getiren tık buraya iniyorsa
+    /// pencere dönüşün Sync'ini istemez (<c>MainWindow.StartsOwnRefreshAt</c>): Windows tıkı pencereyi etkinleştirdikten SONRA teslim eder
+    /// ve o Sync, istendiği ANDA kapattığı kontrolü tıkın altından kapatırdı. Çubuğun saydıkları — yalnız AÇIK olanlar:
+    /// <list type="bullet">
+    /// <item>Build'in birincil yarısı (koşu diski baştan planlar — Sync'in taramasının ve kararlarının aynısı, aynı Core kodu) ve chevron'u
+    /// (menünün maddelerinin hepsi koşudur);</item>
+    /// <item>Sync düğmesi (kendisi tam bir Sync'tir) ve <c>N behind</c> chip'i (başarılı pull Sync zincirler);</item>
+    /// <item>bakım kutusunun üç düğmesi — hangileri olduğunu kutu bilir (<see cref="MaintenanceBox.StartsOwnRefresh"/>);</item>
+    /// <item>Debug|Release'in seçili OLMAYAN öğesi (geçiş kendi Sync'ini başlatır).</item>
+    /// </list>
+    /// Sayılmayanlar: branch chip'i (kullanıcı kararı 2026-10-26 — tık branch'i doğrudan değiştirmez, yalnız popover'ı açar ve kullanıcı
+    /// seçmeyebilir; ekranı tazeleyen bir iş başlatmaz), sayaç chip'leri ve perf chip'i (kendi tazelemesini yapmaz; Sync onları kapatmaz,
+    /// tık yine çalışır), seçili öğe (geçiş no-op). Kapalı bir kontrol de sayılmaz: isabet almaz, isabet onu taşıyan açık ataya düşer ve tık
+    /// hiçbir şey başlatmaz.
     /// </summary>
     /// <param name="hit">Pencerenin tek isabet testinin sonucu (<see cref="Shell.ActivatingClick.HitAt"/>).</param>
     internal bool StartsOwnRefresh(Visual hit)
     {
-        if (PART_Split.PrimaryHalf is { } build && build.IsAncestorOf(hit)) return true;
+        Visual?[] own = [PART_Split.PrimaryHalf, PART_Split.MenuToggle, PART_Sync, PART_BehindChip];
+        if (own.Any(control => control is not null && control.IsAncestorOf(hit))) return true;
+        if (PART_Maintenance.StartsOwnRefresh(hit)) return true;
         return new[] { PART_CfgDebug, PART_CfgRelease }.Any(item => item.IsChecked != true && item.IsAncestorOf(hit));
     }
 

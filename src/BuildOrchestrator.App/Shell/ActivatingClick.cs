@@ -12,9 +12,18 @@ namespace BuildOrchestrator.App.Shell;
 internal static class ActivatingClick
 {
     /// <summary><c>WM_MOUSEACTIVATE</c>'in <c>lParam</c>'ı: düşük söz isabet kodu, yüksek söz basışın fare mesajı. Yalnız istemci alanına
-    /// (<see cref="Win32.HTCLIENT"/>) sol basış (<see cref="Win32.WM_LBUTTONDOWN"/>) bir tuş verir; başka her şey <c>null</c>.</summary>
-    public static MouseButton? ButtonOf(nint lParam) =>
-        (lParam & 0xFFFF) == Win32.HTCLIENT && ((lParam >> 16) & 0xFFFF) == Win32.WM_LBUTTONDOWN ? MouseButton.Left : null;
+    /// (<see cref="Win32.HTCLIENT"/>) basış bir tuş verir: <see cref="Win32.WM_LBUTTONDOWN"/> → sol, <see cref="Win32.WM_RBUTTONDOWN"/> →
+    /// sağ (satırın menüsü). Başka her şey — title bar zemini, orta tuş — <c>null</c>: dönüş bugünkü gibi Sync'ler.</summary>
+    public static MouseButton? ButtonOf(nint lParam)
+    {
+        if ((lParam & 0xFFFF) != Win32.HTCLIENT) return null;
+        return (int)((lParam >> 16) & 0xFFFF) switch
+        {
+            Win32.WM_LBUTTONDOWN => MouseButton.Left,
+            Win32.WM_RBUTTONDOWN => MouseButton.Right,
+            _ => null,
+        };
+    }
 
     /// <summary>Kökün <paramref name="point"/>'teki isabeti. <c>InputHitTest</c> kapalı öğeyi atlar: isabet onu taşıyan açık ataya düşer —
     /// kapalı bir düğmeye inen tık hiçbir şey başlatmaz ve sayılmaz. İsabet bir <see cref="ContentElement"/> ise (ör. bir

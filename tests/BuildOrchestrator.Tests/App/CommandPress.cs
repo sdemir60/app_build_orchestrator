@@ -34,6 +34,12 @@ internal static class CommandPress
     public static void Select(RadioButton item) =>
         ((ISelectionItemProvider)new RadioButtonAutomationPeer(item).GetPattern(PatternInterface.SelectionItem)!).Select();
 
+    /// <summary>[kullanıcı kararı 2026-10-26] Bir aç/kapa düğmesine (Build'in chevron'u, satırın ⋯'si, bir filtre chip'i) kullanıcı gibi
+    /// basar: UI Automation Toggle <c>IsChecked</c>'i SENKRON çevirir — <c>ToggleButton.OnToggle</c>, tıkın yaptığının aynısı (<c>Click</c>
+    /// olayını yükseltmez; onu <see cref="Click"/> yükseltir). Pasif bir düğmede fırlatır (sönük düğmeye basılamaz).</summary>
+    public static void Toggle(System.Windows.Controls.Primitives.ToggleButton button) =>
+        ((IToggleProvider)new ToggleButtonAutomationPeer(button).GetPattern(PatternInterface.Toggle)!).Toggle();
+
     /// <summary>Bir düğmenin <c>Click</c> olayını SENKRON yükseltir — yalnız <c>Click</c> handler'ları koşar (bağlı bir
     /// komut ve bir <c>ToggleButton</c>'ın kendi işaret değişimi koşmaz). Pencere gösterilmeyen kabuk testleri içindir;
     /// orada <see cref="Invoke"/>'un dispatcher'a bıraktığı basış, bir popup'ı da gerçekten açtırırdı. Testlerde

@@ -863,6 +863,23 @@ public partial class ProjectRow : UserControl
     }
 
     /// <summary>
+    /// [kullanıcı kararı 2026-10-26] Bu isabete inen basış satırda kendi tazelemesini yapan bir eylemi mi çalıştırır. Pencereyi arka plandan
+    /// öne getiren basış satıra iniyorsa karar satırındır (<c>MainWindow.StartsOwnRefreshAt</c>) ve pencere dönüşün Sync'ini istemez — Sync
+    /// istendiği ANDA koşu kapısını kapatırdı. Sayılanlar: SAĞ basış, satırın neresine inerse insin (<see cref="OnRowRightClicked"/> menüyü
+    /// açar; maddeleri tek proje koşusudur ve kapılarını menü açılırken okur); sol basışta AÇIK play (yalnız o projeyi derleyen koşu — diski
+    /// baştan planlar) ve ⋯ (aynı menü). Satır gövdesine sol tık bir seçimdir, klasör ve VS ikonları bir şey tazelemez — sayılmaz. Eylem
+    /// bloğu kurulmadıysa (imleç satıra hiç girmedi) sol basışın inebileceği bir eylem de yoktur. Kapalı play isabet almaz.
+    /// </summary>
+    /// <param name="hit">Pencerenin tek isabet testinin sonucu (<see cref="Shell.ActivatingClick.HitAt"/>) — satırın içinde.</param>
+    /// <param name="button">Basışın tuşu.</param>
+    internal bool StartsOwnRefresh(Visual hit, MouseButton button) => button switch
+    {
+        MouseButton.Right => true,
+        MouseButton.Left => _actions is { } actions && (actions.BuildButton.IsAncestorOf(hit) || actions.MoreButton.IsAncestorOf(hit)),
+        _ => false,
+    };
+
+    /// <summary>
     /// Satır menüsünün yerleşimi. Karar <see cref="RowMenuPlacement"/>'tadır; burada yalnız WPF'in ölçüleri
     /// ona verilir ve sonuç çapaya (satırın kökü) göre offset'e çevrilir.
     ///

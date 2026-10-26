@@ -24,12 +24,26 @@ internal static class VmTopology
 
     /// <summary>Verilen (ya da varsayılan) projelerden bir <c>workspaceTopology</c> akıtır: kapı açılır.
     /// Testin KENDİ event'lerinden ÖNCE çağrılmalıdır (topoloji, kendinde olmayan satırları budar).</summary>
-    public static void Seed(RunViewModel vm, params string[] projectIds)
+    public static void Seed(RunViewModel vm, params string[] projectIds) =>
+        Flow(vm, projectIds.Length > 0 ? projectIds : [DefaultProjectId], cycles: []);
+
+    /// <summary>[kullanıcı kararı 2026-10-26] <see cref="Seed"/>'in döngülü hâli: verilen projeler (en az iki) TEK bir döngü oluşturur —
+    /// üyelik motorun yayınladığı gibi topolojinin iki yarısındadır, düğümlerin <c>InCycle</c>'ı ve <c>Cycles</c> listesi. Resolve
+    /// cycles'ın kapısı da açılır (<see cref="RunViewModel.HasCycles"/>).</summary>
+    public static void SeedCycle(RunViewModel vm, params string[] projectIds)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(projectIds.Length, 2, nameof(projectIds));
+        Flow(vm, projectIds, cycles: [projectIds]);
+    }
+
+    /// <summary><see cref="Seed"/> ile <see cref="SeedCycle"/>'ın TEK gövdesi: düğümler build-order'da kurulur, döngü üyeleri
+    /// <c>InCycle</c> taşır.</summary>
+    private static void Flow(RunViewModel vm, string[] ids, IReadOnlyList<IReadOnlyList<string>> cycles)
     {
         ArgumentNullException.ThrowIfNull(vm);
-        var ids = projectIds.Length > 0 ? projectIds : [DefaultProjectId];
+        var members = cycles.SelectMany(cycle => cycle).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var nodes = ids.Select((id, i) => new ProjectNode(
-            id, System.IO.Path.GetFileNameWithoutExtension(id), id, ["Osys"], [], i, null, null, false, null)).ToList();
-        vm.OnEvent(new WorkspaceTopologyEvent(nodes, [], [], []));
+            id, System.IO.Path.GetFileNameWithoutExtension(id), id, ["Osys"], [], i, null, null, members.Contains(id), null)).ToList();
+        vm.OnEvent(new WorkspaceTopologyEvent(nodes, cycles, [], []));
     }
 }
