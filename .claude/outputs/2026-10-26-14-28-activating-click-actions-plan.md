@@ -140,7 +140,20 @@ mevcut çıkış testlerinin dikiş desenine bak (`MainWindowHost.NeutralizeExit
 1. Kapı açıkken açılan menü, açıkken kapı kapanınca (ör. `runVm.IsStarting = true` ya da `SyncStartedEvent`) maddeleri pasifleştirir.
 2. Kapı kapalıyken açılan menü, açıkken kapı açılınca maddeleri açar (kullanıcının gördüğü: Sync bitti, maddeler pasif kaldı).
 
-**Doğrulama:** filtre `FullyQualifiedName~ProjectRowInputTests|FullyQualifiedName~PopoverToggleTests|FullyQualifiedName~RowMenuPlacementTests`;
+**Task 1 incelemesinden eklenenler (kontrolcü kararı R6, R7):**
+- **R6 — tek yardımcı:** "satır menüsünü aç ve açılmasını bekle" bloğu beş yerde kopya (`ProjectRowInputTests.cs` ~332-339,
+  ~380-389, ~477-482; `RowMenuPlacementTests.cs` ~47-52; `WindowReturnClickTests.cs` `OpenedMenuItems` ~95-108 — `RowMenu.Opened`'a
+  abone ol → aç → `PumpUntil` → `"ön-koşul: satır menüsü açılmadı"` → `UpdateLayout` → `Rows.ToList()`). TEK bir ortak test
+  yardımcısına çıkar (açma biçimi parametre: ⋯ işareti ya da sağ tık), beşini ona çevir; davranışsız (etkilenen sınıflar önce ve
+  sonra yeşil). Bu task'ın yeni testleri de onu kullanır.
+- **R7 — kontrol yalnız işi başlayabilecekken sayılır:** satırda ⋯ ve sağ basış yalnız satırın koşu kapısı açıkken
+  (`CanRunProject()` — menünün okuduğu kapı) kendi tazelemesini yapan sayılır; Exit ve `X` yalnız uçuşta iş yokken
+  (`IsOperationInFlight` false — koordinatörün tetiği beklettiği meşguliyet). Aksi hâlde basış tazeleyen bir iş başlatmaz ve dönüşün
+  tetiği bugünkü gibi bekler (iş bitince değerlendirilir). Test (önce kırmızı): bir koşu uçuştayken pencereyi ⋯, satıra sağ basış,
+  Exit ve `X` ile öne getirmek tazelemesiz SAYILMAZ (ör. `window.StartsOwnRefreshAt(...)` false ya da uçtan uca: koşu bitince
+  bekleyen dönüş tetiği sessiz Sync'i gönderir). Kod yeri: `ProjectRow.StartsOwnRefresh`, `MainWindow.StartsOwnRefreshAt`.
+
+**Doğrulama:** filtre `FullyQualifiedName~ProjectRowInputTests|FullyQualifiedName~PopoverToggleTests|FullyQualifiedName~RowMenuPlacementTests|FullyQualifiedName~WindowReturnClickTests|FullyQualifiedName~ActivatingClickTests|FullyQualifiedName~ActionBarTests`;
 LocalOnly `PopoverTests` de lokalde koşulur (CI onu koşmaz).
 
 ## Kontrolcü adımları (alt ajana verilmez)
