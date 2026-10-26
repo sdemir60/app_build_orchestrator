@@ -161,7 +161,7 @@ public partial class ActionBar : UserControl
     /// <list type="bullet">
     /// <item>Build'in birincil yarısı (koşu diski baştan planlar — Sync'in taramasının ve kararlarının aynısı, aynı Core kodu);</item>
     /// <item>Sync düğmesi (kendisi tam bir Sync'tir);</item>
-    /// <item>bakım kutusunun Clean ve Optimize düğmeleri — hangileri olduğunu kutu bilir (<see cref="MaintenanceBox.StartsOwnRefresh"/>);</item>
+    /// <item>bakım kutusunun işi bitince ekranı tazeleyen düğmeleri — hangileri olduğunu kutu söyler (<see cref="MaintenanceBox.StartsOwnRefresh"/>);</item>
     /// <item>Debug|Release'in seçili OLMAYAN öğesi (geçiş kendi Sync'ini başlatır).</item>
     /// </list>
     /// Sayılmayanlar (kullanıcı kararı 2026-10-26, ikinci — ara zincir yok, ekranın tamamını tazelemeyen kontrolde dönüş Sync'ler): Build'in
