@@ -113,8 +113,8 @@ public static class ScrollAnimator
     /// <c>HoldEnd</c>'dir, yani BİTMİŞ bir animasyon DP'yi son hedefinde tutmaya devam eder ve tabanı maskeler.
     /// Panel bu arada başka bir yoldan taşınmışsa (bir doküman takası, düz bir <c>ScrollToVerticalOffset</c>)
     /// tohumlama etkisiz kalır; aynı hedefe açılan yeni animasyon efektif değeri hiç değiştirmez,
-    /// <see cref="OnVerticalOffsetChanged"/> ateşlenmez ve panel YERİNDE kalır. Konsolun proje logundan anlatıya
-    /// dönüşünde (o zamanki <c>← Back</c> jesti) ölçülen kusur buydu: ikinci ve sonraki dönüşler hiç kaydırmıyordu.</para>
+    /// <see cref="OnVerticalOffsetChanged"/> ateşlenmez ve panel YERİNDE kalır. Konsolun <c>← Back</c> jestinde
+    /// ölçülen kusur buydu: ikinci ve sonraki dönüşler hiç kaydırmıyordu.</para>
     ///
     /// <para>Bırakma retarget'ı BOZMAZ: uçuştaki bir animasyon zaten her karede paneli sürdüğü için çağıranın
     /// okuduğu <paramref name="currentOffset"/> o anki görsel konumun ta kendisidir — tohum oraya düşer, sıçrama

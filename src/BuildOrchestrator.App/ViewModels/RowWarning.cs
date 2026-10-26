@@ -19,8 +19,8 @@ namespace BuildOrchestrator.App.ViewModels;
 public static class RowWarning
 {
     /// <summary>[review R1 finding 3 — kopya YASAK] "Dependency issue: " önce satırın <see cref="For"/>'unda
-    /// İKİ, sonra konsol başlığının (2026-10-25'te kalkan) rozet tooltip'inde bir kez daha literal olarak yazılıyordu —
-    /// üçü de AYNI sözcüğü taşıdığı için tek kaynağa indirildi. <b>[Task 4 review — M3]</b> <c>internal</c>: <see
+    /// İKİ, sonra başlığın <see cref="DepIssueDetail"/>'inde bir kez daha literal olarak yazılıyordu — üçü de
+    /// AYNI sözcüğü taşıdığı için tek kaynağa indirildi. <b>[Task 4 review — M3]</b> <c>internal</c>: <see
     /// cref="WaitingForDependencyText"/> de AYNI kelimeyi kullanır — kayıtlı kökler her zaman "FAILED" değildir
     /// (tek-proje koşusunun bayat bıraktığı bir bağımlılık da kök olabilir, bkz. <c>ProjectRunScope</c>),
     /// "Built against a FAILED dependency" iddiası orada yanlıştı.</summary>
@@ -84,5 +84,17 @@ public static class RowWarning
 
         string names = string.Join(", ", dependencyRoots.Select(r => GraphNode.ShortLabel(r, namePrefix)));
         return DepIssuePrefix + names + " — " + HealthyAgainClause;
+    }
+
+    /// <summary>[v1.18.0 §9] Konsol başlığının dep-issue rozeti — satırın "+N" kısaltmasının AKSİNE tam
+    /// listeyi virgülle yazar (prototip <c>BuildApp.jsx:2616</c>: <c>depIssue.map(shortName).join(', ')</c>).
+    /// Kısaltma (<see cref="For"/>) daraltılmış slot içindir; başlığın tooltip'inde yer bol olduğu için
+    /// hiçbir proje adı gizlenmez. Kısa-ad türetimi AYNI otoriteden gelir (<see cref="GraphNode.ShortLabel"/>,
+    /// kopya YASAK).</summary>
+    public static string DepIssueDetail(IReadOnlyList<string> depIssues, string namePrefix)
+    {
+        ArgumentNullException.ThrowIfNull(depIssues);
+        string names = string.Join(", ", depIssues.Select(n => GraphNode.ShortLabel(n, namePrefix)));
+        return DepIssuePrefix + names + " — last successful output referenced";
     }
 }

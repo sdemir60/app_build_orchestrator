@@ -3,38 +3,109 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
              xmlns:app="clr-namespace:BuildOrchestrator.App">
-  <!-- [T56/3a → v1.18.0 §9] Konsol panel başlığı: 28px sabit, 10px yatay padding, zemin surface, alt 1px border-subtle. İki
-       hâl aynı kabuktadır: anlatı (caps "CONSOLE" + sağda N lines, anlatı kompakt yazılıyorsa yanında "compact") ve proje-log
-       (solda proje adı, sağda Copy log + N lines).
+  <!-- [T56/3a → v1.18.0 §9 "Konsol başlığı ve `Back` satırı"] Konsol panel başlığı — README §9 v1.18.0 alt
+       bölümüyle BİREBİR: 28px sabit, 10px yatay padding, öğeler arası 8px, zemin surface, alt 1px
+       border-subtle. İki hâl aynı kabuktadır: anlatı (caps "CONSOLE" + sağda N lines, anlatı kompakt yazılıyorsa yanında
+       "compact") ve proje-log (Back + proje adı + [dep-issue] + [cycle] solda, Copy log + N lines sağda).
 
-       [DEĞİŞEN KURAL — kullanıcı kararı 2026-10-25] Proje-log hâlinin solunda eskiden Back + ad + statü glyph'i + statü
-       sözcüğü + dependency issue / dependency cycle rozetleri dururdu; kullanıcı proje sayfasında bunlara gerek görmedi ve
-       yalnız ad kaldı. Gerekçe ve eski iddialar: ConsoleHeaderDesignTests'in sınıf özeti. Anlatıya dönüş seçimin kendi
-       yollarıdır (aynı satıra/düğüme yeniden tık, grafın boş zemini, Esc).
+       [DEĞİŞEN KURAL — kullanıcı kararı 2026-10-25] Proje-log hâlinde adın sağında eskiden statü glyph'i (13px StatusGlyph)
+       ve koşu statüsü sözcüğü de dururdu; koşuya girmemiş bir projede kesikli halka + "Discovered" bir yükleme göstergesi
+       gibi okunuyordu ve ikisi kalktı. Durum listede ve grafta kalır. Back, ad ve rozetler değişmedi.
 
-       Sol/sağ ayrımı DIŞ Grid'in iki sütunuyladır (* / Auto): sağ blok (Copy log + N lines) HER ZAMAN tam genişliğindedir —
-       asla kırpılmaz. Ad sol sütunun KENDİSİDİR: sütun kalan alanı alır, ad o alanda sola yaslı durur (kutusu metnin doğal
-       genişliğinde, panele gerilmez) ve sığmazsa TextTrimming ile kısalır. Adın yanında başka öğe kalmadığı için genişliğini
-       elle hesaplamaya gerek yoktur. -->
+       Sol/sağ ayrımı DIŞ Grid'in iki sütunuyladır (* / Auto): sağ blok (Copy log + N lines) HER ZAMAN tam
+       genişliğindedir — asla kırpılmaz. Sol taraftaki İÇ Grid'in DÖRT sütunu da Auto'dur (proje adı DAHİL) —
+       "*" BİLEREK kullanılmaz: bir Grid'in "*" sütunu kardeşlerinin ihtiyacından BAĞIMSIZ olarak kalan alanın
+       TAMAMINI alır, bu da geniş bir panelde kısa bir adla bile rozetlerin adın metninden çok
+       sonra, büyük bir boşlukla başlamasına yol açardı (review R1 bulgu 1 — prototipte ad `nowrap` bir
+       `span`dır, asla büyümez, kardeşleri HEMEN takip eder). Gerçek kısalma (panel daraldığında) code-behind
+       elde hesaplanan bir `MaxWidth`'ledir — bkz. ConsoleHeader.xaml.cs `ApplyProjectNameShrink`. -->
   <Border Height="28" Background="{DynamicResource Brush.Surface}"
           BorderBrush="{DynamicResource Brush.BorderSubtle}" BorderThickness="0,0,0,1">
+    <!-- x:Name="RootGrid": ApplyProjectNameShrink kendi 10px yatay Margin'ini BURADAN okur (tek kaynak —
+         C# tarafında ikinci bir "10" sabiti AÇILMAZ). -->
     <Grid x:Name="RootGrid" Margin="10,0">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*" />
         <ColumnDefinition Width="Auto" />
       </Grid.ColumnDefinitions>
 
-      <!-- SOL: moda göre değişen içerik — aynı hücrede iki öğe, yalnız biri görünür. -->
-      <controls:TrackedTextBlock x:Name="ConsoleLabel" Grid.Column="0" Text="Console" VerticalAlignment="Center"
-                                  HorizontalAlignment="Left" />
+      <!-- SOL: moda göre değişen içerik — aynı hücrede iki dal, yalnız biri görünür. -->
+      <Grid Grid.Column="0">
+        <controls:TrackedTextBlock x:Name="ConsoleLabel" Text="Console" VerticalAlignment="Center"
+                                    HorizontalAlignment="Left" />
 
-      <!-- Tam proje adı — Mono 12px. Sol sütunun kalan payına sığmazsa kısalır (TextTrimming). -->
-      <TextBlock x:Name="ProjectNameText" Grid.Column="0" Visibility="Collapsed" VerticalAlignment="Center"
-                 HorizontalAlignment="Left" FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="12"
-                 Foreground="{DynamicResource Brush.TextPrimary}" TextTrimming="CharacterEllipsis" />
+        <Grid x:Name="ProjectLogGroup" Visibility="Collapsed">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />  <!-- Back -->
+            <ColumnDefinition Width="Auto" />  <!-- proje adı: panel daralınca kısalan TEK öğe (MaxWidth kod-tarafı) -->
+            <ColumnDefinition Width="Auto" />  <!-- dependency issue rozeti -->
+            <ColumnDefinition Width="Auto" />  <!-- dependency cycle rozeti -->
+          </Grid.ColumnDefinitions>
+
+          <!-- [README §9 v1.18.0] DS Button ghost/sm (24px yükseklik). İçeriği (Icon.Back + "Back")
+               code-behind kurulur: ikon butonun Foreground'unu İZLER (currentColor — hover'da
+               text-secondary→text-primary birlikte değişir, bkz. ctor). margin-left -6, ghost'un kendi 10px
+               iç boşluğunu optik olarak geri alır — bu tasarımın PARÇASIDIR, kırpma değil. -->
+          <Button x:Name="BackButton" Grid.Column="0" Style="{DynamicResource Ds.Button.Ghost.Sm}"
+                  Margin="-6,0,0,0" VerticalAlignment="Center" Click="OnBackClick"
+                  AutomationProperties.Name="{x:Static app:AccessibilityNames.BackButton}" />
+
+          <!-- Tam proje adı — Mono 12px. Panel daralınca TEK kısalan öğe: MaxWidth code-behind elde hesaplanır
+               (ApplyProjectNameShrink) ve TextTrimming onu ellipsis'e çevirir; XAML'de bir kısıt YOKTUR. -->
+          <TextBlock x:Name="ProjectNameText" Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center"
+                     FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="12"
+                     Foreground="{DynamicResource Brush.TextPrimary}" TextTrimming="CharacterEllipsis" />
+
+          <!-- [README §9] amber KONTUR üçgeni (Icon.AlertTri, 8px) + 11px metin; tooltip code-behind kurulur
+               (RowWarning.DepIssueDetail — tek doğruluk kaynağı, satırın "+N" kısaltmasından AYRI). Data/Stroke/
+               StrokeThickness doğrudan DynamicResource — sabit renk, kod-tarafı IconPaint GEREKMEZ (CopyLogGlyph'in
+               aksine bu ikisi hiç DEĞİŞMEZ); ayrıca bu XAML-yerel bağ, koşulsuz kendi kendine çözülür (Collapsed
+               dalda bile) — code-behind bir tetikleyici (ShowProjectLog) beklemez. -->
+          <StackPanel x:Name="DepIssueBadge" Grid.Column="2" Orientation="Horizontal" Margin="8,0,0,0"
+                      VerticalAlignment="Center" Visibility="Collapsed" Cursor="Arrow">
+            <!-- [final review M-6] tasarım side="bottom" — içerik code-behind'da yazılır. -->
+            <StackPanel.ToolTip>
+              <ToolTip x:Name="DepIssueTooltip" controls:AppTooltip.Side="Bottom" />
+            </StackPanel.ToolTip>
+            <Viewbox Width="8" Height="8" VerticalAlignment="Center">
+              <Canvas Width="24" Height="24">
+                <Path x:Name="DepIssueGlyph" Data="{DynamicResource Icon.AlertTri}"
+                      Stroke="{DynamicResource Brush.AmberText}"
+                      StrokeThickness="{DynamicResource Icon.AlertTri.StrokeThickness}"
+                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+              </Canvas>
+            </Viewbox>
+            <TextBlock Text="dependency issue" Margin="5,0,0,0" FontSize="11"
+                       Foreground="{DynamicResource Brush.AmberText}" />
+          </StackPanel>
+
+          <!-- [README §9] Döngü rozeti — sıradaki uyarı, dep-issue ile AYNI ANDA görünebilir (satırdaki tek
+               üçgenin aksine, başlıkta ikisinin de kendi slotu var). Tooltip metni RowWarning.InCycle'dan
+               (satırın döngü tooltip'iyle AYNI cümle, kopya YASAK). -->
+          <StackPanel x:Name="CycleBadge" Grid.Column="3" Orientation="Horizontal" Margin="8,0,0,0"
+                      VerticalAlignment="Center" Visibility="Collapsed" Cursor="Arrow">
+            <!-- [final review M-6] tasarım side="bottom" — içerik code-behind'da yazılır. -->
+            <StackPanel.ToolTip>
+              <ToolTip x:Name="CycleTooltip" controls:AppTooltip.Side="Bottom" />
+            </StackPanel.ToolTip>
+            <Viewbox Width="8" Height="8" VerticalAlignment="Center">
+              <Canvas Width="24" Height="24">
+                <Path x:Name="CycleGlyph" Data="{DynamicResource Icon.AlertTri}"
+                      Stroke="{DynamicResource Brush.AmberText}"
+                      StrokeThickness="{DynamicResource Icon.AlertTri.StrokeThickness}"
+                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+              </Canvas>
+            </Viewbox>
+            <TextBlock Text="dependency cycle" Margin="5,0,0,0" FontSize="11"
+                       Foreground="{DynamicResource Brush.AmberText}" />
+          </StackPanel>
+        </Grid>
+      </Grid>
 
       <!-- SAĞ: Copy log (yalnız proje-log modunda, log varken) + N lines (TAM tampon uzunluğu — Ek A #23;
-           render dilimi DEĞİL) + compact (yalnız anlatı modunda, kompakt yazılırken). Auto sütunda durur — asla kırpılmaz. -->
+           render dilimi DEĞİL) + compact (yalnız anlatı modunda, kompakt yazılırken). Auto sütunda durur — asla kırpılmaz.
+           x:Name="RightBlock": ApplyProjectNameShrink sol bloğun payını RootGrid.ActualWidth'ten BUNUN GERÇEK genişliğini
+           düşerek hesaplar. -->
       <StackPanel x:Name="RightBlock" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
         <!-- [3b/Ek A #3 → v1.18.0] DS IconButton (22×22, sm ölçüsü zaten budur). İkon fontu YOK: Icon.Copy →
              başarılı kopyada Icon.Check + "Copied" tooltip (1400ms), ikisi de Icons.xaml'den çizilmiş

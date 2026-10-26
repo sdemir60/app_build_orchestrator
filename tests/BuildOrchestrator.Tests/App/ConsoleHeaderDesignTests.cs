@@ -1,35 +1,44 @@
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Shapes;
+using BuildOrchestrator.App;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
+using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.Contracts.Model;
 
 namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
-/// Konsol başlığının GERÇEKTEN realize edilmiş (ekran dışı pencere + ApplyTemplate) hâline dair stil/ölçü/renk iddiaları —
-/// bir Style/DynamicResource'un XAML'de YAZILI olması onun doğru ÇÖZÜLDÜĞÜNÜ kanıtlamaz. <see cref="ConsoleModesTests"/> mod
-/// geçişini ve içerik doldurmayı test eder.
+/// [v1.18.0 §9 "Konsol başlığı ve `Back` satırı"] README'nin "WPF tarafında sık sapan noktalar" kontrol
+/// listesini BİREBİR pinler: Back'in DS Ghost.Sm kabuğu (24px + Icon.Back + margin-left -6),
+/// dependency-issue/cycle rozetlerinin amber renk + tam-liste tooltip'i, öğe aralığının 8px olduğu, panel
+/// daralınca KIRPILAN TEK öğenin proje adı olduğu ve Copy log'un DS IconButton kabuğuna taşındığı.
+/// <see cref="ConsoleModesTests"/> mod geçişini ve içerik doldurmayı test eder; burası GERÇEKTEN realize edilmiş
+/// (ekran dışı pencere + ApplyTemplate) stil/ölçü/renk iddialarını taşır — bir Style/DynamicResource'un XAML'de
+/// YAZILI olması onun doğru ÇÖZÜLDÜĞÜNÜ kanıtlamaz.
 ///
-/// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-25]</b> Proje sayfasının başlığı solda YALNIZ proje adını taşır; sağda
-/// Copy log + <c>N lines</c> kalır. Eski iddialar (v1.18.0 §9 "Konsol başlığı ve <c>Back</c> satırı"): adın solunda Back
-/// (DS Ghost.Sm, 24 px, çizilmiş <c>Icon.Back</c> + "Back", ikon butonun animasyonlu Foreground'unu izler), sağında 13 px
-/// <c>StatusGlyph</c> (building'de dönen spinner, yerleşik durumda halka) + koşu statüsü sözcüğü (<c>StatusGlyph.RunLabelFor</c>:
-/// Discovered · Queued · Building · Succeeded · Failed · Skipped) + amber <c>dependency issue</c> / <c>dependency cycle</c>
-/// rozetleri (kontur üçgeni, tam liste tooltip'leri, ikisi de altta açılır) dururdu; öğeler 8 px aralıklıydı ve adın genişliği
-/// bu kardeşlerin gerçek genişliğinden elle hesaplanırdı (<c>ApplyProjectNameShrink</c>). Başlık seçili satırı da canlı
-/// izlerdi (<c>MainWindow.TrackHeaderRow</c> → <c>RefreshStatus</c>; <c>ConsoleHeaderLiveRefreshTests</c>) ve koşu
-/// statüsü sözcüğünün tablosu <c>VisualStatusTests.A_run_story_surface_names_the_runs_result</c>'ta pinliydi.
-/// Değişme gerekçesi: kullanıcı proje sayfasında bunlara gerek görmedi — koşuya girmemiş bir projede kesikli halka +
-/// "Discovered" bir yükleme göstergesi gibi okunuyordu (bildirim: "proje adının sağında loading ve Discovered görünüyor").
-/// Durum, bağımlılık sorunu ve döngü üyeliği listede (şerit, nokta, glyph, karar etiketi, uyarı üçgeni) ve grafta kalır;
-/// anlatıya dönüş Back olmadan da vardır: aynı satıra ya da düğüme yeniden tıklamak, grafın boş zeminine tıklamak ya da Esc
-/// (ARCHITECTURE §13.7 — <c>GraphClickTests</c>, <c>ProjectRowInputTests</c>, <c>MainWindowInputTests</c>).</para>
+/// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-25]</b> Başlık koşu statüsünü göstermez. Eski iddialar: adın
+/// 8 px sağında 13 px <c>StatusGlyph</c> (building'de kendi spinner'ı döner, yerleşik durumda spinner gizlenip halka
+/// görünür) ve onun sağında koşu statüsü sözcüğü (<c>StatusGlyph.RunLabelFor</c>: Discovered · Queued · Building ·
+/// Succeeded · Failed · Skipped) dururdu. Değişme gerekçesi (bildirim): "proje adının sağında loading ve Discovered
+/// görünüyor" — koşuya girmemiş bir projede kesikli halka + "Discovered" bir yükleme göstergesi gibi okunuyordu; durum
+/// listede ve grafta kalır. Back, adın yeri ve iki rozet bu karardan ETKİLENMEZ: ilk uygulama onları da kaldırmıştı,
+/// kullanıcı yalnız glyph ile sözcüğün kalkmasını istediğini söyledi (2026-10-26) ve olduğu gibi geri geldiler.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class ConsoleHeaderDesignTests
 {
-    /// <summary>[önce parent, sonra içerik] Üretimde <c>ShowProjectLog</c> her zaman zaten pencereye eklenmiş bir başlıkta
-    /// çağrılır; yardımcı bu sırayı izler, çünkü genişlik ve konum iddiaları gerçek bir Measure/Arrange geçişi ister.</summary>
+    /// <summary>[önce parent, sonra içerik] Üretimde <c>ShowProjectLog</c> her zaman zaten pencereye eklenmiş
+    /// bir başlıkta çağrılır. Sırayı TERSİNE çevirip <paramref name="arrange"/>'i (ShowProjectLog) host'a
+    /// bağlanmadan ÖNCE çağırmak <see cref="ConsoleHeader.ApplyProjectNameShrink"/>'in okuduğu kardeş
+    /// <c>ActualWidth</c>'leri (Back/rozetler) sıfır bırakırdı — bunlar ancak GERÇEK bir
+    /// Measure/Arrange geçişinden (yani host'a bağlandıktan) SONRA anlamlı olur. Amber rozet ikonlarının
+    /// geometrisi/rengi kendisi bu sıraya duyarlı DEĞİLDİR (ConsoleHeader.xaml'de düz <c>{DynamicResource}</c>
+    /// — Collapsed dalda bile, ağaca girer girmez çözülür); bu yardımcı yine de üretimin gerçek sırasını
+    /// izler, çünkü ölçü iddiaları (bu dosyanın "dar genişlik" testi) doğru kardeş genişlikleri ister.</summary>
     private static (ConsoleHeader header, Window window, Border host) Realize(
         Action<ConsoleHeader> arrange, double width = 400, double height = 60)
     {
@@ -41,48 +50,149 @@ public class ConsoleHeaderDesignTests
         return (header, window, host);
     }
 
-    /// <summary>Başlık artık satırı hiç almaz, yalnız adı: eskiden başlıkta bir öğe açan durumlar (derleniyor, bağımlılık
-    /// sorunu, döngü üyeliği) ona ulaşamaz. Kırmızı bu testlerde eski imzayla (<c>ShowProjectLog(row, n)</c>), o üç durumu
-    /// birden taşıyan bir satırla gösterildi: başlıkta glyph vardı ve ad Back yüzünden 70,8 px içeride başlıyordu.</summary>
-    private static ConsoleHeader ShowProjectLog(ConsoleHeader header, string name = "OSYS.Sales.Core", int lineCount = 42)
+    private static ConsoleHeader ShowProjectLog(ConsoleHeader header, string name = "OSYS.Sales.Core",
+        ProjectRowState state = ProjectRowState.Succeeded, bool inCycle = false,
+        IReadOnlyList<string>? depIssues = null, string namePrefix = "OSYS.", int lineCount = 42)
     {
-        header.ShowProjectLog(name, lineCount);
+        header.ShowProjectLog(ConsoleHeaderRow.For(name, state, inCycle, depIssues, namePrefix), lineCount);
         return header;
     }
 
-    // ---------------------------------------------------------------- proje sayfası: yalnız ad
+    // ---------------------------------------------------------------- Back: DS Ghost.Sm + ikon + -6 marj
 
-    /// <summary>Başlıkta görünen her şey: soldaki ad ve sağdaki Copy log + <c>N lines</c>. Back, statü glyph'i (ve spinner'ı),
-    /// statü sözcüğü ve iki rozet yoktur — sınıf özetindeki karar.</summary>
     [StaFact]
-    public void The_project_log_header_shows_only_the_project_name_and_the_right_block()
+    public void Back_uses_the_ghost_sm_shell_at_24px_with_the_drawn_arrow_icon()
     {
-        var (header, window, _) = Realize(h => ShowProjectLog(h, lineCount: 42));
+        var (header, window, host) = Realize(h => ShowProjectLog(h));
 
-        var shown = DsResources.Descendants(header).OfType<FrameworkElement>().Where(e => e.IsVisible).ToList();
-        Assert.DoesNotContain(shown, e => e is StatusGlyph or BuildingSpinner);
-        Assert.Equal(new[] { header.CopyLogButton }, shown.OfType<Button>());
-        Assert.Equal(new[] { "OSYS.Sales.Core", "42 lines" }, shown.OfType<TextBlock>().Select(t => t.Text));
-        Assert.False(header.ConsoleLabel.IsVisible);
+        Assert.Same(host.FindResource("Ds.Button.Ghost.Sm"), header.BackButton.Style);
+        Assert.Equal(24.0, header.BackButton.Height);
+        Assert.Equal(new Thickness(-6, 0, 0, 0), header.BackButton.Margin);
+
+        var icon = Assert.Single(DsResources.Descendants(header.BackButton).OfType<Path>());
+        Assert.Same(host.FindResource("Icon.Back"), icon.Data);
+
+        var label = Assert.Single(DsResources.Descendants(header.BackButton).OfType<TextBlock>());
+        Assert.Equal("Back", label.Text);
+
+        Assert.Equal(AccessibilityNames.BackButton, AutomationProperties.GetName(header.BackButton));
         GC.KeepAlive(window);
     }
 
-    /// <summary>Ad, anlatı kipindeki CONSOLE etiketiyle AYNI yerden başlar: panelin iç boşluğundan. Eski iddia: ad Back'in
-    /// 8 px sağındaydı ve glyph/statü/rozetler 8 px aralıkla onu izlerdi (README §9). Back kalkınca o 8 px adı boşluğa
-    /// iterdi; sağ bloktaki 8 px aralık (<c>N lines</c>) aynı kalır.</summary>
+    /// <summary>Eski sapma: Back ikonsuz bir metin butonuydu (<c>Style="{x:Null}"</c>, <c>Content="← Back"</c>
+    /// Unicode karakteri) — dolayısıyla renk sabitti ve hover'da DEĞİŞMİYORDU. Şimdi ikon, DS ghost butonunun
+    /// <b>animasyonlu</b> Foreground'unu izler (currentColor): ctor'da <see cref="IconVisual.BoundToForeground"/>
+    /// ile kurulan bağ ikonun <c>Stroke</c>'unu butonun gerçek <c>Foreground</c>'una bağlar.</summary>
     [StaFact]
-    public void The_project_name_starts_where_the_console_caption_does()
+    public void Back_icon_stroke_is_bound_to_the_buttons_own_foreground_not_a_fixed_brush()
     {
         var (header, window, _) = Realize(h => ShowProjectLog(h));
-        double nameLeft = header.ProjectNameText.TranslatePoint(new Point(0, 0), header.RootGrid).X;
 
-        header.ShowNarrative(0);
-        header.UpdateLayout();
-        double captionLeft = header.ConsoleLabel.TranslatePoint(new Point(0, 0), header.RootGrid).X;
-
-        Assert.Equal(captionLeft, nameLeft, 1);
-        Assert.Equal(8.0, header.LinesText.Margin.Left);
+        var icon = Assert.Single(DsResources.Descendants(header.BackButton).OfType<Path>());
+        var expression = icon.GetBindingExpression(Shape.StrokeProperty);
+        Assert.NotNull(expression);
+        Assert.Same(header.BackButton, expression!.ResolvedSource);
         GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- koşu statüsü yok: ne glyph ne sözcük
+
+    /// <summary>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-25] Satır hangi koşu durumunda olursa olsun başlıkta
+    /// <see cref="StatusGlyph"/> (ve onun <see cref="BuildingSpinner"/>'ı) yoktur; görünen metin Back, ad ve sayaçtır.
+    /// Eski iddialar (iki test): building'de glyph'in kendi spinner'ı 13 px dönerdi
+    /// (<c>Building_status_shows_the_drawn_spinner_not_a_static_glyph</c>); yerleşik durumda spinner gizlenir, halka
+    /// görünürdü (<c>A_settled_status_hides_the_spinner_and_shows_the_status_ring_instead</c>) — ve glyph'in yanında
+    /// statü sözcüğü yazardı. Gerekçe sınıf özetinde.</summary>
+    [StaTheory]
+    [InlineData(ProjectRowState.Pending)]
+    [InlineData(ProjectRowState.Started)]
+    [InlineData(ProjectRowState.Succeeded)]
+    [InlineData(ProjectRowState.Failed)]
+    [InlineData(ProjectRowState.Skipped)]
+    public void The_project_log_header_draws_no_run_status_in_any_row_state(ProjectRowState state)
+    {
+        var (header, window, _) = Realize(h => ShowProjectLog(h, state: state));
+
+        var tree = DsResources.Descendants(header).ToList();
+        Assert.DoesNotContain(tree, e => e is StatusGlyph or BuildingSpinner);
+        var shown = tree.OfType<TextBlock>().Where(t => t.IsVisible).Select(t => t.Text);
+        Assert.Equal(new[] { "Back", "OSYS.Sales.Core", "42 lines" }, shown);
+        GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- dependency-issue / cycle rozetleri
+
+    /// <summary>Eski sapma: rozet KIRMIZIydı (<c>Icon.DepWarn</c> dolu üçgen + <c>Brush.StatusFailText</c>) —
+    /// tasarım amber ister (<c>Icon.AlertTri</c> kontur üçgeni + <c>Brush.AmberText</c>), satırdaki uyarı
+    /// üçgeniyle AYNI dil.</summary>
+    [StaFact]
+    public void Dependency_issue_badge_is_amber_not_red_and_uses_the_outline_triangle()
+    {
+        var (header, window, host) = Realize(h => ShowProjectLog(h,
+            depIssues: ["OSYS.Sales.Data"], namePrefix: "OSYS."));
+
+        Assert.Equal(Visibility.Visible, header.DepIssueBadge.Visibility);
+
+        var icon = Assert.Single(DsResources.Descendants(header.DepIssueBadge).OfType<Path>());
+        Assert.Same(host.FindResource("Icon.AlertTri"), icon.Data);
+        var amber = DsResources.TokenColor(host, "Brush.AmberText");
+        Assert.Equal(amber, DsResources.ColorOf(icon.Stroke));
+
+        var text = Assert.Single(DsResources.Descendants(header.DepIssueBadge).OfType<TextBlock>());
+        Assert.Equal("dependency issue", text.Text);
+        Assert.Equal(amber, DsResources.ColorOf(text.Foreground));
+
+        Assert.Equal("Dependency issue: Sales.Data — last successful output referenced", header.DepIssueTooltip.Content);
+        GC.KeepAlive(window);
+    }
+
+    [StaFact]
+    public void Cycle_badge_is_amber_with_the_outline_triangle_and_the_shared_row_warning_text()
+    {
+        var (header, window, host) = Realize(h => ShowProjectLog(h, inCycle: true));
+
+        Assert.Equal(Visibility.Visible, header.CycleBadge.Visibility);
+
+        var icon = Assert.Single(DsResources.Descendants(header.CycleBadge).OfType<Path>());
+        Assert.Same(host.FindResource("Icon.AlertTri"), icon.Data);
+        Assert.Equal(DsResources.TokenColor(host, "Brush.AmberText"), DsResources.ColorOf(icon.Stroke));
+
+        var text = Assert.Single(DsResources.Descendants(header.CycleBadge).OfType<TextBlock>());
+        Assert.Equal("dependency cycle", text.Text);
+
+        Assert.Equal(RowWarning.InCycle, header.CycleTooltip.Content); // "In a dependency cycle" — satırla AYNI
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[Final review M-6] Tasarım iki rozetin tooltip'ini <c>side="bottom"</c> ister — uygulamanın
+    /// yerleşim mekanizması explicit bir <see cref="ToolTip"/> üzerindeki <see cref="AppTooltip.Side"/>'dır
+    /// (düz metin tooltip varsayılan Top'ta kalır).</summary>
+    [StaFact]
+    public void Both_badge_tooltips_open_below_the_badge()
+    {
+        var (header, window, _) = Realize(h => ShowProjectLog(h, inCycle: true, depIssues: ["OSYS.Sales.Data"]));
+
+        var dep = Assert.IsType<ToolTip>(header.DepIssueBadge.ToolTip);
+        var cycle = Assert.IsType<ToolTip>(header.CycleBadge.ToolTip);
+        Assert.Equal(AppTooltip.Bottom, AppTooltip.GetSide(dep));
+        Assert.Equal(AppTooltip.Bottom, AppTooltip.GetSide(cycle));
+        GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- öğe aralığı 8px
+
+    /// <summary>Eski sapma: aralıklar 5/10 karışıktı (README §9: 8px sabit). [kullanıcı kararı 2026-10-25] Statü glyph'i ve
+    /// statü sözcüğü başlıktan kalktı; onların 8 px'lik aralık iddiası da onlarla birlikte gitti.</summary>
+    [StaFact]
+    public void Project_log_items_are_spaced_eight_pixels_apart()
+    {
+        var header = new ConsoleHeader();
+        ShowProjectLog(header);
+
+        Assert.Equal(8.0, header.ProjectNameText.Margin.Left);
+        Assert.Equal(8.0, header.DepIssueBadge.Margin.Left);
+        Assert.Equal(8.0, header.CycleBadge.Margin.Left);
+        Assert.Equal(8.0, header.LinesText.Margin.Left);
     }
 
     // ---------------------------------------------------------------- compact etiketi (anlatı modu)
@@ -122,16 +232,30 @@ public class ConsoleHeaderDesignTests
         GC.KeepAlive(window);
     }
 
-    // ---------------------------------------------------------------- geniş panel: ad doğal genişliğinde
+    // ---------------------------------------------------------------- geniş panel: kardeşler ada BİTİŞİK durur
 
-    /// <summary>Prototipte (<c>BuildApp.jsx:2612</c>) proje adı <c>white-space: nowrap</c> bir <c>span</c>'dır — KISALIR ama
-    /// asla BÜYÜMEZ. Eski iddia: geniş panelde kısa adın sağındaki statü glyph'i ada bitişik (8 px) dururdu; glyph kalktı.
-    /// Kalan iddia adın kendisidir: geniş bir panelde kutusu metnin doğal genişliğindedir, panele gerilmez.</summary>
+    /// <summary>[review R1 finding 1] Prototipte (<c>BuildApp.jsx:2612</c>) proje adı <c>white-space: nowrap</c>
+    /// bir <c>span</c>'dır — KISALIR ama asla BÜYÜMEZ, ve kardeşi onun HEMEN sağındadır. Eski sapma: ad
+    /// sütunu Grid'in <c>"*"</c>'ıydı — geniş bir panelde KISA bir adla bile "*" sütunu kalan alanın TAMAMINI
+    /// aldığı için kardeş, adın metninden çok sonra, büyük bir boşlukla başlıyordu. Bu test dar DEĞİL geniş
+    /// panelde koşar (bulgunun kendisi geniş panelde ortaya çıkıyordu).
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-25]</b> Adın hemen sağındaki kardeş eskiden statü glyph'iydi
+    /// ve test onun ada bitişikliğini ölçerdi; glyph başlıktan kalktı. Adın sağında artık (varsa) dependency-issue rozeti
+    /// durur — aynı kusur onu da adın metninden uzağa iterdi, bitişiklik onunla ölçülür.</para>
+    ///
+    /// <para><b>[review sonrası ölçüldü] <see cref="TextBlock.ActualWidth"/> BURADA YANILTICIDIR:</b> bir
+    /// <c>"*"</c> sütununda bile <c>TextBlock</c>'un LAYOUT KUTUSU sütunun tam genişliğine gerer (Stretch), ve
+    /// bir SONRAKİ Auto sütun tam o kutunun bittiği yerden başlar — yani kutunun sağ kenarı komşu sütunla
+    /// HER ZAMAN çakışır, hata kutunun İÇİNDEDİR (metin sola yaslı çizilir, kutunun geri kalanı boş kalır).
+    /// Kanıt bu yüzden metnin KENDİ görünür genişliğini (bir <c>probe</c> ile) okur, kutunun
+    /// <c>ActualWidth</c>'ini DEĞİL.</para></summary>
     [StaFact]
-    public void A_wide_panel_draws_a_short_name_at_its_natural_width()
+    public void A_wide_panel_with_a_short_name_keeps_the_badge_snug_against_it()
     {
         const string name = "A";
-        var (header, window, _) = Realize(h => ShowProjectLog(h, name: name, lineCount: 3), width: 600);
+        var (header, window, _) = Realize(h => ShowProjectLog(h, name: name, depIssues: ["OSYS.Sales.Data"], lineCount: 3),
+            width: 600);
 
         var probe = new TextBlock
         {
@@ -139,18 +263,23 @@ public class ConsoleHeaderDesignTests
         };
         probe.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
 
-        Assert.Equal(probe.DesiredSize.Width, header.ProjectNameText.ActualWidth, 1);
+        double nameLeft = header.ProjectNameText.TranslatePoint(new Point(0, 0), header.ProjectLogGroup).X;
+        double visibleTextRight = nameLeft + probe.DesiredSize.Width;
+        double badgeLeft = header.DepIssueBadge.TranslatePoint(new Point(0, 0), header.ProjectLogGroup).X;
+
+        Assert.Equal(8.0, badgeLeft - visibleTextRight, 1); // README §9: öğe aralığı 8px — "büyük boşluk" DEĞİL
         GC.KeepAlive(window);
     }
 
     // ---------------------------------------------------------------- dar genişlik: yalnız proje adı kırpılır
 
-    /// <summary>[README §9] "panel daralınca kısalan TEK öğe proje adıdır (sağdaki sayaç asla kırpılmaz)". Eski sapma: sol
-    /// grup <c>StackPanel</c> olduğu için proje adı HİÇ kırpılmıyordu (panel taşardı). İddia GERÇEK kırpmadır — metnin kendi
-    /// DOĞAL (kısıtlanmamış) genişliği, ekrana yerleşen genişlikten büyük olmalı (<c>WorkspaceLabelTests</c>'in <c>probe</c>
-    /// deseniyle AYNI kanıt biçimi). Eski iddianın Back'e dair yarısı ("Back kırpılmaz") Back'le birlikte kalktı.</summary>
+    /// <summary>[README §9] "panel daralınca kısalan TEK öğe proje adıdır (Back ve sağdaki sayaç asla
+    /// kırpılmaz)". Eski sapma: sol grup <c>StackPanel</c> olduğu için proje adı HİÇ kırpılmıyordu (panel
+    /// taşardı). İddia şimdi GERÇEK kırpmadır — metnin kendi DOĞAL (kısıtlanmamış) genişliği, ekrana yerleşen
+    /// genişlikten büyük olmalı (yalnız "sütun/komşu genişliği farklı" demek yetmez, WorkspaceLabelTests'in
+    /// <c>probe</c> deseniyle AYNI kanıt biçimi — kopya değil, aynı idiom).</summary>
     [StaFact]
-    public void A_narrow_header_really_trims_the_project_name_and_the_line_count_stays_intact()
+    public void A_narrow_header_really_trims_the_project_name_back_and_lines_stay_intact()
     {
         string longName = "OSYS." + new string('P', 60) + ".WorkOrder";
         var (narrow, narrowWindow, _) = Realize(h => ShowProjectLog(h, name: longName, lineCount: 128), width: 320);
@@ -169,32 +298,35 @@ public class ConsoleHeaderDesignTests
         Assert.True(narrow.ProjectNameText.ActualWidth > 0,
             "ad TAMAMEN kayboldu — bu genişlikte hâlâ bir miktar metin görünür olmalıydı (çok agresif kırpma)");
 
-        // N lines TAM kalır — İKİNCİ (geniş) bir gerçekleştirmeyle ActualWidth'e karşı ActualWidth kıyaslanır.
+        // Back ve N lines TAM kalır — İKİNCİ (geniş) bir gerçekleştirmeyle ActualWidth'e karşı ActualWidth
+        // kıyaslanır (DesiredSize Margin'i DAHİL eder, ActualWidth HARİÇ tutar — Back'in -6px marjıyla ikisini
+        // karıştırmak yanlış pozitif/negatif üretirdi).
         var (wide, wideWindow, _) = Realize(h => ShowProjectLog(h, name: longName, lineCount: 128), width: 600);
+        Assert.Equal(wide.BackButton.ActualWidth, narrow.BackButton.ActualWidth, 1);
         Assert.Equal(wide.LinesText.ActualWidth, narrow.LinesText.ActualWidth, 1);
         GC.KeepAlive(narrowWindow);
         GC.KeepAlive(wideWindow);
     }
 
-    /// <summary>[Final review M-1] Sağ blok yalnız Copy log görünürlüğüyle değil, <c>N lines</c> metni genişleyince de
-    /// (999 → 1000) büyür — ad o kadar geri çekilmeli, sağ blokla asla çakışmamalıdır. Eski iddia: adın elle hesaplanan
-    /// <c>MaxWidth</c>'i sağ bloğun büyümesi kadar küçülür. Kardeşler kalkınca adın payını yerleşimin kendisi verir (sol
-    /// sütun kalan alandır); iddia artık mekanizmayı değil sonucu okur: ad kırpılı kalır ve sağ kenarı sağ bloğun sol
-    /// kenarını geçmez.</summary>
+    /// <summary>[Final review M-1] Sağ blok yalnız Copy log görünürlüğüyle değil, <c>N lines</c> metni
+    /// genişleyince de (999 → 1000) büyür — sol bloğun payı daralır ve proje adının <c>MaxWidth</c>'i o kadar
+    /// küçülmelidir. Tetik sağ bloğun KENDİ <c>SizeChanged</c>'idir; aksi halde ad, sağ blokla çakışana dek eski
+    /// payını korurdu.</summary>
     [StaFact]
-    public void Widening_the_line_count_text_never_lets_the_project_name_run_under_it()
+    public void Widening_the_line_count_text_shrinks_the_project_names_MaxWidth_by_the_same_amount()
     {
         string longName = "OSYS." + new string('P', 60) + ".WorkOrder";
         var (header, window, _) = Realize(h => ShowProjectLog(h, name: longName, lineCount: 999), width: 320);
+        double maxBefore = header.ProjectNameText.MaxWidth;
         double rightBefore = header.RightBlock.ActualWidth;
+        Assert.True(double.IsFinite(maxBefore), "test kurgusu: ad kısıtlanmış olmalıydı");
 
         header.SetLineCount(100_000); // Copy log zaten görünür — görünürlük değişmez, yalnız metin genişler
         header.UpdateLayout();
 
-        Assert.True(header.RightBlock.ActualWidth - rightBefore > 1, "test kurgusu: sayaç metni genişlemedi");
-        double nameRight = header.ProjectNameText.TranslatePoint(new Point(header.ProjectNameText.ActualWidth, 0), header.RootGrid).X;
-        double rightLeft = header.RightBlock.TranslatePoint(new Point(0, 0), header.RootGrid).X;
-        Assert.True(nameRight <= rightLeft + 0.5, $"ad sağ bloğun altına taştı: adın sağı {nameRight}px, sağ blok {rightLeft}px'te başlıyor");
+        double rightGrowth = header.RightBlock.ActualWidth - rightBefore;
+        Assert.True(rightGrowth > 1, "test kurgusu: sayaç metni genişlemedi");
+        Assert.Equal(maxBefore - rightGrowth, header.ProjectNameText.MaxWidth, 1);
         GC.KeepAlive(window);
     }
 }

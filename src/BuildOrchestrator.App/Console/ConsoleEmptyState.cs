@@ -14,8 +14,8 @@ namespace BuildOrchestrator.App.Console;
 /// döngüde, ya da hiç derlenmedi.</para>
 ///
 /// <para><b>Metin en çok İKİ satırdır: gerekçe + kanıt.</b> Statüyü yazmaz — onu satır ve graf düğümü zaten gösterir
-/// (konsol başlığı da eskiden koşu statüsünü yazardı; kullanıcı kararıyla 2026-10-25'te yalnız proje adına indi). İlk satır
-/// NEDEN öyle olduğunu söyler; ikinci satır yalnız
+/// (konsol başlığı da eskiden koşu statüsünü yazardı; kullanıcı kararıyla 2026-10-25'te kalktı). İlk satır NEDEN öyle
+/// olduğunu söyler; ikinci satır yalnız
 /// çıktı bu aracın eseri değilse gelir (hiç derlenmedi / dışarıda derlendi). Derlenmekte olan bir projenin tek
 /// satırı vardır: orada kanıt henüz oluşmamıştır, akış birazdan gelecektir.</para>
 ///
