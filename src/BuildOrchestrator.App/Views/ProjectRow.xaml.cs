@@ -877,16 +877,20 @@ public partial class ProjectRow : UserControl
     /// istendiği ANDA koşu kapısını kapatırdı. Sayılanlar: SAĞ basış, satırın neresine inerse insin (<see cref="OnRowRightClicked"/> menüyü
     /// açar; maddeleri tek proje koşusudur ve kapılarını menü açılırken okur, açıkken izler); sol basışta AÇIK play (yalnız o projeyi derleyen koşu — diski
     /// baştan planlar) ve ⋯ (aynı menü). Satır gövdesine sol tık bir seçimdir, klasör ve VS ikonları bir şey tazelemez — sayılmaz. Eylem
-    /// bloğu kurulmadıysa (imleç satıra hiç girmedi) sol basışın inebileceği bir eylem de yoktur. Kapalı play isabet almaz.
+    /// bloğu kurulmadıysa (imleç satıra hiç girmedi) sol basışın inebileceği bir eylem de yoktur.
+    /// <para><b>Hepsi yalnız satırın koşu kapısı açıkken sayılır</b> (<see cref="CanRunProject"/> — menünün okuduğu kapı). Kapalıyken ⋯ ve sağ
+    /// basış yalnız pasif maddeli bir menü açar, tazeleyen bir iş başlatmaz; sayılsalardı dönüşün Sync'i istenmez ve tetik de saklanmazdı,
+    /// oysa iş sürerken tetik bekler ve iş bitince değerlendirilir. Kapalı play zaten isabet almaz; kapı onu da aynı kuralla kapsar.</para>
     /// </summary>
     /// <param name="hit">Pencerenin tek isabet testinin sonucu (<see cref="Shell.ActivatingClick.HitAt"/>) — satırın içinde.</param>
     /// <param name="button">Basışın tuşu.</param>
-    internal bool StartsOwnRefresh(Visual hit, MouseButton button) => button switch
-    {
-        MouseButton.Right => true,
-        MouseButton.Left => _actions is { } actions && (actions.BuildButton.IsAncestorOf(hit) || actions.MoreButton.IsAncestorOf(hit)),
-        _ => false,
-    };
+    internal bool StartsOwnRefresh(Visual hit, MouseButton button) =>
+        CanRunProject() && button switch
+        {
+            MouseButton.Right => true,
+            MouseButton.Left => _actions is { } actions && (actions.BuildButton.IsAncestorOf(hit) || actions.MoreButton.IsAncestorOf(hit)),
+            _ => false,
+        };
 
     /// <summary>
     /// Satır menüsünün yerleşimi. Karar <see cref="RowMenuPlacement"/>'tadır; burada yalnız WPF'in ölçüleri

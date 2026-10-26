@@ -53,13 +53,17 @@ public partial class MainWindow
     /// (<see cref="ActivatingClick.HitAt"/>), isabetin sahibini bulur ve ona sorar — hangi kontrollerin sayıldığını sahibi bilir:
     /// <list type="bullet">
     /// <item>isabet bir proje satırının içindeyse karar satırındır (<see cref="ProjectRow.StartsOwnRefresh"/>: play, ⋯ ve satırın
-    /// neresine inerse insin SAĞ basış);</item>
+    /// neresine inerse insin SAĞ basış — yalnız satırın koşu kapısı açıkken);</item>
     /// <item>değilse yalnız sol basış sayılır: alt çubuk (<see cref="ActionBar.StartsOwnRefresh"/>: Build ve chevron'u, Sync, <c>N behind</c>,
     /// bakım kutusu, seçili olmayan Debug|Release) ve title bar'ın pencereye ait iki düğmesi — Exit (uçuşta iş yoksa hemen kapatır; dönüşün
-    /// sessiz Sync'i iş sayılır ve onay kartını açtırırdı) ve × (pencere kapanıyor ya da tepsiye iniyor, Sync anlamsız).</item>
+    /// sessiz Sync'i iş sayılır ve onay kartını açtırırdı) ve × (pencere kapanıyor ya da tepsiye iniyor, Sync anlamsız); ikisi de yalnız
+    /// uçuşta iş yokken (<see cref="ViewModels.RunViewModel.IsOperationInFlight"/> — koordinatörün tetiği beklettiği meşguliyet).</item>
     /// </list>
-    /// Branch chip'i bilerek yoktur (kullanıcı kararı 2026-10-26): tık branch'i doğrudan değiştirmez, kullanıcı seçmeyebilir. Sağ basış
-    /// yalnız satırda sayılır; başka her yerde dönüş bugünkü gibi Sync'ler.
+    /// Bir kontrol yalnız işi başlayabilecekken sayılır: iş sürerken ⋯ ve sağ basış yalnız pasif maddeli bir menü açar; Exit ve × ise onay kartı
+    /// açar ya da pencereyi tepsiye indirir (<c>WindowCloseRule</c>) — hiçbiri tazeleyen bir iş başlatmaz. Sayılsalardı dönüşün Sync'i istenmez
+    /// ve tetik de saklanmazdı; sayılmadıklarında tetik bugünkü gibi bekler ve iş bitince değerlendirilir. Branch chip'i bilerek yoktur
+    /// (kullanıcı kararı 2026-10-26): tık branch'i doğrudan değiştirmez, kullanıcı seçmeyebilir. Sağ basış yalnız satırda sayılır; başka her
+    /// yerde dönüş bugünkü gibi Sync'ler.
     /// </summary>
     /// <param name="atRoot">Köke (<see cref="RootShell"/>) göre konum.</param>
     /// <param name="button">Basışın tuşu.</param>
@@ -69,6 +73,7 @@ public partial class MainWindow
         for (DependencyObject? node = hit; node is not null; node = VisualTreeHelper.GetParent(node))
             if (node is ProjectRow row) return row.StartsOwnRefresh(hit, button);
         return button == MouseButton.Left
-            && (Shell.ActionBarControl.StartsOwnRefresh(hit) || ExitButton.IsAncestorOf(hit) || CloseButton.IsAncestorOf(hit));
+            && (Shell.ActionBarControl.StartsOwnRefresh(hit)
+                || (!_vm.IsOperationInFlight && (ExitButton.IsAncestorOf(hit) || CloseButton.IsAncestorOf(hit))));
     }
 }

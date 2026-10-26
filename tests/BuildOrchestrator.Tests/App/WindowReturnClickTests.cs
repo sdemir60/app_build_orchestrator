@@ -15,9 +15,10 @@ namespace BuildOrchestrator.Tests.App;
 /// koşu, bakım ve pull komutlarını, Sync düğmesini, Debug|Release'i — tıkın altından kapatır. Tık kendi tazelemesini yapan AÇIK bir
 /// kontrole iniyorsa dönüşün Sync'i istenmez ve tık normal çalışır: alt çubukta Build'in birincil yarısı ve chevron'u, Sync düğmesi,
 /// <c>N behind</c> chip'i, bakım kutusunun Clean / Optimize / Resolve cycles düğmeleri ve Debug|Release'in seçili olmayan öğesi; satırda
-/// play ve ⋯ ile satıra SAĞ basış (satırın neresine olursa olsun); title bar'da Exit ve ×. Başka her dönüş — klavye, görev çubuğu, tepsi,
-/// branch chip'i (kullanıcı kararı: tık branch'i doğrudan değiştirmez, kullanıcı seçmeyebilir), bir sayaç chip'i, seçili configuration,
-/// satır gövdesine sol tık, başka bir yere sağ basış — bugünkü gibi Sync'ler.
+/// play ve ⋯ ile satıra SAĞ basış (satırın neresine olursa olsun); title bar'da Exit ve ×. Satırdakiler yalnız satırın koşu kapısı açıkken,
+/// Exit ve × yalnız uçuşta iş yokken sayılır: iş sürerken basış tazeleyen bir iş başlatmaz, dönüşün tetiği bekler ve iş bitince Sync'ler.
+/// Başka her dönüş — klavye, görev çubuğu, tepsi, branch chip'i (kullanıcı kararı: tık branch'i doğrudan değiştirmez, kullanıcı
+/// seçmeyebilir), bir sayaç chip'i, seçili configuration, satır gövdesine sol tık, başka bir yere sağ basış — bugünkü gibi Sync'ler.
 ///
 /// <para>Ölçülen kusur (kullanıcı bildirimi, iki monitör — 2026-10-19): pencere öbür ekranda açıkken Build'e tıklamak pencereyi öne
 /// getiriyor, dönüşün Sync'i Build'i tıkın altından kapatıyor ve tık hiçbir şey yapmıyordu; Debug|Release'te ilk tık yutuluyor, ikincisi
@@ -38,6 +39,12 @@ public class WindowReturnClickTests
     public enum OtherReturn
     {
         Keyboard, ClickOnAChip, ClickOnTheSelectedConfiguration, ClickOnTheBranchChip, LeftClickOnARowBody, RightPressOnBuild,
+    }
+
+    /// <summary>Kendi tazelemesini yapabilen ama bir iş uçuştayken HİÇBİR işi başlatamayan basışlar: satırın ⋯'si, satıra sağ basış, Exit ve ×.</summary>
+    public enum PressWhileBusy
+    {
+        RowEllipsis, RowRightPress, Exit, Close,
     }
 
     /// <summary>Kullanıcı bir dakika başka pencerede çalıştı: tek projeli, Sync'lenmiş kabuk; gönderimler toplanır, çubuk yüklüdür.
@@ -264,6 +271,44 @@ public class WindowReturnClickTests
     [StaFact]
     public void A_click_on_close_that_brings_the_window_back_requests_no_return_sync() =>
         AfterAMinuteElsewhere((window, _, _, sent) => BringBackByPressingOn(window, sent, window.CloseButton));
+
+    /// <summary>
+    /// <b>[kontrolcü kararı R7] Kontrol yalnız işi başlayabilecekken sayılır.</b> Bir koşu uçuştayken satırın ⋯'si ve satıra sağ basış yalnız
+    /// pasif maddeli bir menü açar; Exit ve × hiçbir tazeleme başlatmaz. Sayılsalardı dönüşün Sync'i istenmez ve tetik de saklanmazdı: koşu
+    /// bitince bekleyen bir şey kalmaz, ekran bayat kalırdı. Sayılmadıklarında dönüş bugünkü gibi davranır — iş sürerken tetik bekler
+    /// (<c>AutoSyncCoordinator</c> meşgulken saklar), koşu bitince değerlendirilir ve sessiz Sync gider. Dört kontrol de AÇIKTIR: sayılmamaları
+    /// kapıdan değil kuraldandır.
+    /// </summary>
+    [StaTheory]
+    [InlineData(PressWhileBusy.RowEllipsis)]
+    [InlineData(PressWhileBusy.RowRightPress)]
+    [InlineData(PressWhileBusy.Exit)]
+    [InlineData(PressWhileBusy.Close)]
+    public void A_press_that_can_start_nothing_while_a_run_is_in_flight_leaves_the_return_refresh_waiting(PressWhileBusy how) =>
+        AfterAMinuteElsewhere((window, vm, _, sent) =>
+        {
+            var row = TheRow(window);
+            var actions = Hover(row);                                       // imleç satırda: ⋯ görünür
+            MainWindowHost.StartBuild(vm, "A");                             // bir koşu uçuşta…
+            DispatcherPump.DrainToIdle();                                   // …yerleşim oturdu
+            Assert.True(vm.IsOperationInFlight);                            // ön-koşul
+            (FrameworkElement Target, MouseButton Button) press = how switch
+            {
+                PressWhileBusy.RowEllipsis => (actions.MoreButton, MouseButton.Left),
+                PressWhileBusy.RowRightPress => (row, MouseButton.Right),
+                PressWhileBusy.Exit => (window.ExitButton, MouseButton.Left),
+                _ => (window.CloseButton, MouseButton.Left),
+            };
+            Assert.True(press.Target.IsEnabled);                            // ön-koşul: kontrol açık
+
+            window.OnActivated(CenterInRoot(window, press.Target), press.Button); // pencere o kontrolün üstünden öne geldi
+            Assert.Empty(sent.OfType<SyncWorkspaceCommand>());              // iş sürüyor: dönüşün Sync'i şimdi gitmez…
+
+            window.TrimGraceAfterFinale = TimeSpan.Zero;                    // koşu sonu trimi zamanlayıcı kurmasın (fixture'ın yaptığı gibi)
+            MainWindowHost.FinishBuild(vm, "A");                            // …koşu bitti
+            DispatcherPump.DrainToIdle();                                   // bekleyen tetik yeniden değerlendirilir
+            Assert.Single(sent.OfType<SyncWorkspaceCommand>());             // …ve dönüşün sessiz Sync'i gitti
+        });
 
     /// <summary>Kural dar kalır: kendi tazelemesini yapmayan her dönüş bugünkü gibi Sync'ler ve Build Sync istendiği ANDA kapanır — klavye,
     /// görev çubuğu, tepsi (basış yok), bir sayaç chip'ine tık, zaten seçili configuration'a tık (geçiş no-op), branch chip'ine tık
