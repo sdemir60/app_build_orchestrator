@@ -2,6 +2,13 @@
 
 Release notes for Build Orchestrator, newest version first. The What's new window in the app reads this file.
 
+## [1.11.5] - 2026-10-26
+
+### Fixed
+
+- When the window is in the background, the first click on Sync, Clean or Optimize runs it right away, as it already did for Build, instead of only bringing the window forward. Exit and the close button act at once too when nothing is running, without asking for confirmation. Buttons whose work refreshes only part of the screen, such as Resolve cycles, N behind, the Build menu arrow, the branch picker and a project row's own buttons, still spend that first click on refreshing the screen.
+- A project row's menu that is open when a Sync starts or ends now locks and unlocks its items with it, instead of keeping the state it opened with.
+
 ## [1.11.4] - 2026-10-26
 
 ### Fixed
