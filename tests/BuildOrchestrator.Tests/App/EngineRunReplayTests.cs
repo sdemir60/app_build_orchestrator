@@ -257,7 +257,7 @@ public class EngineRunReplayTests
 
         var a = Row(vm, "A");
         Assert.Equal(VisualStatus.Current, a.VisualStatus);
-        Assert.Equal("up to date", DecisionLabel.For(a.WillBuild, a.WillBuildReason, a.OwnFilesChanged, a.LocalEdits).Word);
+        Assert.Equal("up to date", DecisionLabel.For(a.WillBuild, a.WillBuildReason, a.OwnFilesChanged, a.LocalEdits, a.LastBuiltConfiguration).Word);
         Assert.Empty(vm.ScopeFor(RunMode.Build));
     }
 }

@@ -2,6 +2,18 @@
 
 Release notes for Build Orchestrator, newest version first. The What's new window in the app reads this file.
 
+## [1.11.3] - 2026-10-26
+
+### Changed
+
+- A project's page in the console shows only the project's name at the top: the back button, the status word and the dependency badges are gone, and the list and the graph still show the status. Click the same row or node again, click an empty part of the graph, or press Esc to return to the run.
+- The tray icon's menu looks like the app's other menus: Stop carries the red square and Exit the power sign.
+
+### Fixed
+
+- After switching between Debug and Release, a project whose own files are unchanged no longer claims a dependency changed: its row and its page say which configuration it was last built in. A project waiting behind a dependency that will be rebuilt says that on its page.
+- The tray icon's menu opens where you clicked, even after the display scale changed while the app was running.
+
 ## [1.11.2] - 2026-10-21
 
 ### Changed

@@ -133,7 +133,8 @@ remove it too.
    ring in place of the dot, a dashed glyph — and every graph node draws a dashed border. Why a row will build
    is readable from the **decision label** at the right end of each row: `modified` (its own files changed,
    `modified · local` when one of them is also dirty in `git status`), `affected` (only a dependency changed,
-   or its copy in a shared folder no longer matches its output), `never built` (never built by this tool, or
+   the project was last built in the other configuration — after a switch from Debug to Release, say, the tooltip
+   reads *last built in Debug* —, or its copy in a shared folder no longer matches its output), `never built` (never built by this tool, or
    its output file is gone), `failed` (failed at this source), or `up to date` — whether because this tool's
    last build still matches or because an output you built elsewhere does; the tooltip says which. The label
    never carries a time: a row answers what the project's output needs, and the minutes behind that answer
@@ -389,12 +390,15 @@ off to see every line; the change applies from the next run, and what is already
 A project's log opens **at the beginning** and stays where you put it — what you are looking for in a build log is
 the first error, not the last line — so it never follows the output and never returns on its own, not even when you
 scroll to the bottom. The `⌄ latest` pill takes you to the end once and appears again when new lines arrive below
-you. The header's `Back` button (an arrow icon and the word "Back") returns you to the run narrative at its end.
+you. The page's header names the project and nothing else — its state stays on its row and its graph node. Click
+the project again (in the list or the graph), click the graph's empty background or press Esc to return to the run
+narrative at its end.
 
 **Every project has a page, log or not.** A skipped project never writes a log file at all — the reason goes
-to the run's decision log — so clicking its card used to look like it did nothing. The page now opens either
-way and answers in two lines: why the project is in the state it is in, and what the tool has on it — the
-commit it was last successfully built at, or that it has never been built.
+to the run's decision log — so its page is written from what the tool knows instead, in at most two lines: why
+the project is in the state it is in and, when its output is not this tool's own, whose it is — never built by
+this tool, or built outside it. A project this tool built gets the first line only: the decision is made from
+its content, so the commit it was built at is not shown.
 
 The dependency graph fits the panel at every size: nodes are unnamed mini squares laid out in build order,
 and the spacing shrinks until they do fit — so there is never a scrollbar and never a part of the graph you

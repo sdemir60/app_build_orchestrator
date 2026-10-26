@@ -167,9 +167,6 @@
          satırının kapat butonu. İki <path>: `M18 6 6 18` + `m6 6 12 12`; ikinci figürün `m`'i mutlak `M`'e çevrilir. -->
     <PathGeometry x:Key="Icon.Close" Figures="M18 6 6 18 M6 6l12 12" />
 
-    <!-- BuildApp.jsx:54 back -->
-    <PathGeometry x:Key="Icon.Back" Figures="m12 19-7-7 7-7 M19 12H5" />
-
     <!-- BuildApp.jsx:67 grip — 6x <circle r="1.4"/> (dolu) -->
     <GeometryGroup x:Key="Icon.Grip">
         <EllipseGeometry Center="9,6" RadiusX="1.4" RadiusY="1.4" />
@@ -386,12 +383,11 @@
     <!-- design-v1.11.0 BuildApp.jsx:83 more — `fill="currentColor" stroke="none"` (grip ile aynı aile) -->
     <sys:Double x:Key="Icon.More.StrokeThickness">0</sys:Double>
 
-    <!-- strokeWidth="2" (BuildApp.jsx:45, :49, :50, :54, :56, :62, :64, :65, :66, :69) -->
+    <!-- strokeWidth="2" (BuildApp.jsx:45, :49, :50, :56, :62, :64, :65, :66, :69) -->
     <sys:Double x:Key="Icon.ArrowDownToLine.StrokeThickness">2</sys:Double>
     <sys:Double x:Key="Icon.Branch.StrokeThickness">2</sys:Double>
     <sys:Double x:Key="Icon.Sync.StrokeThickness">2</sys:Double>
     <sys:Double x:Key="Icon.Search.StrokeThickness">2</sys:Double>
-    <sys:Double x:Key="Icon.Back.StrokeThickness">2</sys:Double>
     <sys:Double x:Key="Icon.Check.StrokeThickness">2</sys:Double>
     <sys:Double x:Key="Icon.ChevUp.StrokeThickness">2</sys:Double>
     <sys:Double x:Key="Icon.Down.StrokeThickness">2</sys:Double>

@@ -197,6 +197,19 @@ public static class OutputEvidence
         reason == WillBuildReason.BuiltOutside && check is { Mode: EvidenceMode.Time, Time: TimeVerdict.Fresh }
             ? check.EvidenceAt : null;
 
+    /// <summary>
+    /// [kullanıcı kararı 2026-10-25] Bu araç dışında derlenmiş proje, KENDİ kontrolünden geçtiği hâlde yeniden derlenecek
+    /// bir bağımlılığın arkasında olduğu için mi derlenecek — <c>IncrementalPlanner</c>'ın Safe zincirlemesi (§7.6 "Behind a
+    /// dependency that will build"). Zincirleme kontrolü yalnız kararın İÇİNDE <see cref="TimeVerdict.DependencyNewer"/>'a
+    /// çeker; önizlemenin elindeki kontrol projenin kendi hükmüdür (<see cref="TimeVerdict.Fresh"/> ya da
+    /// <see cref="TimeVerdict.FedBroken"/>). Gerekçe <see cref="WillBuildReason.OutputStale"/> iken o hüküm taze kalmışsa
+    /// bayatlık kendi girdisinden ya da bir HintPath hedefinden değil, önce derlenecek bağımlılıktan gelir. Sync ve koşu
+    /// önizlemesi bunu buradan okur (tek kaynak).
+    /// </summary>
+    public static bool BehindRebuildingDependency(OutputCheck? check, WillBuildReason? reason) =>
+        reason == WillBuildReason.OutputStale
+        && check is { Mode: EvidenceMode.Time, Time: TimeVerdict.Fresh or TimeVerdict.FedBroken };
+
     private static readonly OutputCheck NoEvidence = new(EvidenceMode.None, false, true, null, null);
 
     private readonly record struct FileStat(long Length, DateTime At);

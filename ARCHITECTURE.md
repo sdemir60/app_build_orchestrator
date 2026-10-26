@@ -776,6 +776,11 @@ Three of these carry the whole model:
   never sets it; it always carries `false`, because that flag describes what Sync last saw in the working tree,
   and a run does not repeat that read. `outputBuiltAt` is the time of the build evidence of a project built
   outside this tool (§7.6), set for that reason only; both previews write it through the same helper.
+  `lastBuiltConfiguration` names the configuration of the project's last successful build when it is not the one
+  this preview was computed for (§7.5), and `behindRebuildingDependency` marks a project built outside this tool
+  whose own check is fresh but which compiles because a dependency in the plan is rebuilt first (§7.6). Both
+  previews write the two through the same helpers, and the row's label and the project page name the reason from
+  them (§13.2, §13.5).
   The three times an item can carry — `lastBuiltAt`, `failedAt` and `outputBuiltAt` — have **no reader on the
   App side today**: no row, label, tooltip or project page prints a time (§13.2). They stay on the wire and in
   the ledger because they are cheap facts the engine already holds and the decision surfaces may want again;
@@ -953,18 +958,26 @@ Sync transcript and the run console. The usual cause is two roots contributing t
 external card (§10.4) pointing at a second copy of something already under the repository root — and the fix
 is the user's: rename one `AssemblyName`, or drop one of the roots.
 
-Not every `HintPath` resolves inside the repository, so each one is classified into one of four buckets:
+Not every `HintPath` resolves inside the repository, and the planner's rule for the rest is binary: a `HintPath`
+whose DLL is in the producer map becomes an edge, and any other adds no edge and is not reported — a package, an
+installed product and a sibling repository's `bin` alike. Registering that sibling as an external root (§10.4)
+turns its DLLs into real edges, because the producer map then spans both roots.
+
+A finer, four-way classification exists in Core as a measurement, not as product output.
+`HintPathClassifier.Classify` sorts every `HintPath` into one of four buckets and reports
+`Edge / (Edge + Unclassified)` — how much of the *repository-internal* reference surface the strategy resolves, the
+external classes being legitimate inputs and so excluded from the denominator:
 
 | Class | Meaning |
 |---|---|
-| `Edge` | Resolved to a producing project in this repository — becomes a graph edge |
+| `Edge` | Resolved to a producing project in this repository — a graph edge |
 | `ExternalThirdParty` | Path rule identifies a package or an installed product |
-| `ExternalPlatformBin` | A platform binary under a `bin` folder with no producer here — typically a sibling repository's. Registering that sibling as an external root (§10.4) turns these into real edges, because the producer map then spans both roots |
-| `Unclassified` | Neither — emitted as a warning line |
+| `ExternalPlatformBin` | A platform binary under a `bin` folder with no producer here — typically a sibling repository's |
+| `Unclassified` | Neither |
 
-The reported health metric is `Edge / (Edge + Unclassified)`: external classes are legitimate inputs and are
-excluded from the denominator, so the number measures what it claims to — how much of the *repository-internal*
-reference surface the strategy resolves.
+Only the test suite runs the classifier and reads its metric; no Sync, run or console line prints a class, a warning
+or the ratio. Optimize reuses two of its path rules — the NuGet `packages` path and the `bin` path — to name the
+references a restore cannot fix (§9.3, §13.2).
 
 ### 6.5 Edges, cycles, build order
 
@@ -1107,7 +1120,11 @@ ledger, which keeps one signature per project — its last successful build's �
 configuration selected before: switching to Release and back to Debug without building in Release in between
 changes nothing, and every project that was up to date still is. The output evidence is the one qualifier
 (§7.6): when the new configuration's output was built elsewhere after the tool's last run of the project, that
-project is in time mode and can read up to date without compiling.
+project is in time mode and can read up to date without compiling. The ledger also records which configuration
+that one signature was built in (§7.5) — not to decide, the signature already does that, but because the
+signature folds the configuration in without naming it: a project stale only because of the switch would
+otherwise read as if a dependency had changed, and with the record its row says it was last built in Debug
+(§13.2).
 
 ### 7.3 Cycles in the signature
 
@@ -1201,8 +1218,8 @@ compile error — is not evidence, and the project reads `NeverBuilt` instead of
 
 ### 7.5 Build state
 
-`build-state.json` is **global**, keyed by project id (the full csproj path), holding the built signature, the
-**built
+`build-state.json` is **global**, keyed by project id (the full csproj path), holding the built signature and the
+configuration it was built in, the **built
 content fingerprint**, the built commit, the last result, the last run timestamp, the last branch, the last
 duration, a flag marking that this success was linked against a failed dependency together with the project
 ids of that dependency issue's roots (§8.3), the signature at which this project's cycle last failed to
@@ -1217,7 +1234,11 @@ to* the signature rather than folded into it because it answers a different ques
 files change?" — and the row's `modified` ↔ `affected` split is the only thing that reads it (§13.2). That last
 field is deliberately *not* folded into the built signature: the built signature means "this was compiled
 successfully", and Fast mode reads it as a frozen upstream baseline — a signature that was never built would be
-taken for a clean one. A project from an external root (§10.4) has the same record under the same key shape, and
+taken for a clean one. The configuration of the last success sits beside the signature for the reason the
+fingerprint does: the signature folds it in but cannot name it, and a row that is stale only because the
+configuration was switched reads it to say so (§7.2, §13.2). Invalidations keep it with the rest of the record,
+and a record that predates the field answers `null`, so its row keeps the general wording until the project
+builds once. A project from an external root (§10.4) has the same record under the same key shape, and
 its built-commit slot means the same thing — except that the revision written there is **its own** working
 copy's, not the repository's, because the repository's HEAD describes a different repository. The last-branch
 slot stays empty for the same reason, and so does the commit when the working copy has no readable revision at
@@ -1323,7 +1344,10 @@ is about to be rebuilt: until that build runs, the dependency's shared copy is s
 dependent's output looks current against it. So in the Safe mode (§7.2) a time-mode project behind an upstream
 project in the plan — directly or transitively — whose build really refreshes that shared copy reads output
 stale from a dependency and is built in the same *Build*; its row reads `affected`, since its own files did not
-change, and not `built outside this tool`.
+change, and not `built outside this tool`. The pull happens inside the decision only — the check the previews
+carry keeps the project's own fresh verdict — so a preview can tell this project from one whose `HintPath` target
+really is newer, and its project page says that one of its dependencies will be rebuilt first rather than that a
+dependency's output is newer (§13.5).
 
 Which upstreams count is the whole rule. A project that will build because its signature moved, because it was
 never built, because it was built against a failed dependency whose roots are unknown, or because its own
@@ -3235,6 +3259,17 @@ outer job (§4.4); a git write that is only slow is cut off the same way (§20).
 that moment every `Closing` really closes. A Windows session that ends closes the application at once, with neither the
 card, the screen nor the tray — Windows does not wait either.
 
+**The tray menu opens where the right-click was, and the application opens it.** Right-clicking the tray icon opens a
+menu with *Stop* (§4.5) and *Exit* (above). The tray library would open it itself, converting the click — physical
+pixels from the shell — into WPF units with a scale factor it caches at the first click on the icon (the left click
+that brings the window back counts) and refreshes only when its hidden message window receives `WM_DPICHANGED`. WPF,
+for its part, rebuilds the menu's popup window on every opening and converts back at the scale of the moment. Once the
+display scale changed with the application running, the two factors disagreed and the menu opened hundreds of pixels
+from the click. The application therefore handles the library's preview event, so the library never opens the menu,
+and opens it itself with `MousePoint` placement: WPF reads the cursor in physical pixels and no cached scale sits
+between the click and the menu. Like the library, it then brings the menu's window to the foreground, without which a
+click elsewhere would not close it. The menu's look is the project row menu's (§13.8).
+
 **A build that runs while the window is away is not invisible.** When the main window is hidden *and* a build is
 in flight (`Starting` / `Running` / `Stopping` — `Syncing` is deliberately out of scope), the product mark
 animates in the bottom-right corner of the primary work area. It appears if the user drops to the tray mid-run
@@ -3695,7 +3730,7 @@ and MSBuild, not invented terms:
 |---|---|
 | `modified` | its own input files changed since the last build — or, for an output built elsewhere, are newer than that output |
 | `modified · local` | same, and at least one of its input files is also dirty in `git status` |
-| `affected` | its own files are unchanged; a dependency changed — for a cycle member that dependency can be a sibling in the same cycle — or its copy in the shared folder no longer matches its build output |
+| `affected` | its own files are unchanged; a dependency changed — for a cycle member that dependency can be a sibling in the same cycle —, it was last built in another configuration, or its copy in the shared folder no longer matches its build output |
 | `never built` | no build output known to this tool: never built successfully, or its output file is missing |
 | `failed` | it failed at this source |
 | `up to date` | it is current — either because this tool's last build still matches, or because an output built outside it does |
@@ -3711,10 +3746,19 @@ Every word maps from the engine's reason (§7.4, §7.6), and the tooltip keeps a
 | output replaced | `affected` | `Its copy in the shared folder does not match its build output` |
 | output stale, own inputs newer | `modified` or `modified · local` | `Its own files are newer than its build output` |
 | signature changed, dependency issue — own files changed | `modified` | `Its own files changed since the last build` (with `local`: `— includes uncommitted edits`) |
+| signature changed, last built in another configuration — own files unchanged | `affected` | `Its own files are unchanged — last built in Debug` (the configuration named) |
 | signature changed, dependency issue, output stale — own files unchanged | `affected` | `Its own files are unchanged — a dependency changed` |
 
+The configuration row exists because the signature folds the configuration in (§7.1): a project the tool last
+built in Debug changes signature when Release is selected even though neither its files nor any dependency
+moved, and calling that a dependency change would send the reader looking in the wrong place. The engine sends
+the configuration of the last success only when it differs from the one the preview was computed for (§5.3,
+§7.5), so the row needs no comparison of its own; a ledger record written before the configuration was recorded
+keeps the general wording.
+
 **No label and no tooltip carries a time.** The slot names a fact, never a clock: the label reads the plan and
-three facts only — the reason, whether the project's own files changed, and whether any of them is dirty.
+four facts only — the reason, whether the project's own files changed, whether any of them is dirty, and the
+configuration of its last build when that is not the selected one.
 `local` is the one tail there is, and a timestamp reaching the row
 changes nothing on screen. Showing the age of the evidence behind the word was considered and rejected: for an
 output built outside this tool there is no age of *this* tool's making, so the row would have shown how long
@@ -4957,60 +5001,26 @@ lines.
 
 - **The header is one 28 px shell with two mutually exclusive contents**, never two controls. Its outer `Grid` has a
   `*` column and an `Auto` column: the right block (Copy log + `N lines` + `compact`) sits in the `Auto` column and
-  never shrinks. The left content's own inner `Grid` makes **every** column `Auto`, project name included —
-  deliberately not `*`. A `*` column always claims the whole remainder regardless of what its content actually
-  needs, and every `Auto` column after it starts at that column's *full* width rather than at the text's rendered
-  edge; with the name in a `*` column, a wide panel and a short name left a visible gap before the status glyph
-  instead of the two sitting flush (the prototype's name `span` is `white-space: nowrap` with no flex-grow — it
-  shrinks, never grows, and its neighbours are always immediately to its right). The real shrink-on-demand behaviour
-  is computed by hand instead: `ApplyProjectNameShrink` reads the *actual* rendered width of Back, the status glyph,
-  the status name and whichever badges are visible (each plus its own margin), subtracts their sum from the available
-  space, and caps the name's `MaxWidth` at what's left — recomputed after every `ShowProjectLog`/`RefreshStatus` call,
-  on the right block's own `SizeChanged` (Copy log appearing or disappearing, or the `N lines` text widening from 999
-  to 1000), and on the header's own `SizeChanged` (a live splitter drag). Because WPF only refreshes `ActualWidth`
-  after a layout pass, the method forces one (`UpdateLayout`) before reading its neighbours — the same idiom
-  `ConsoleView`'s scroll-pin logic already uses for the same reason. In the narrative half only the caps `CONSOLE`
-  label shows on the left; on the right, 8 px past `N lines` and in the counter's own type (mono 11, `text-faint`), the
-  `compact` tag shows while the console writes in compact mode (*The compact console keeps the narrative short*,
-  below) — never on a project page, which is always full, and not without a workspace, where the counter is hidden
-  too; since it never shows in the project-log half, it never takes room from the project name. In the project-log
-  half `Back` is a ghost/sm button (`Ds.Button.Ghost.Sm`, 24 px) whose content — the drawn `Icon.Back` arrow plus the
-  word "Back" — is built once in the constructor and bound to the button's own *animated* `Foreground`
-  (`IconVisual.BoundToForeground`), so the icon tracks the same hover fade the label text does; its `-6px` left margin
-  is not a clipping bug and not a full cancellation either — Ghost.Sm's own left padding is 10 px, so `-6` only takes
-  back six of those ten, leaving the icon 4 px further in than the panel's own 10 px inset, not flush with it. The
-  status glyph is a real `StatusGlyph` control (13 px) rather than a character — `building` draws its own spinning arc
-  through the control's embedded `BuildingSpinner`, every other state draws the dashed/solid ring. The glyph reads the
-  selected row's own `ProjectRowViewModel.Status`, the same value the row and the graph node draw, so the header never
-  keeps a second state-to-glyph mapping: a cycle member that is `Started` but not the one actually compiling shows
-  `Queued` in the row and in the header alike. The status word beside it, and its colour, read the very same table
-  (`StatusGlyph.RunLabelFor`/`BrushKeyFor`) the glyph does rather than a second `ProjectRowState`-keyed
-  vocabulary, so word, colour and glyph are one call and cannot disagree. A dependency-issue badge and a cycle
-  badge can appear **together** (unlike the single triangle a project row shows, which picks one by priority):
-  both are an 8 px `Icon.AlertTri` outline triangle in `Brush.AmberText`, declared directly in XAML as
-  `{DynamicResource}` bindings so they resolve as soon as the header is rooted in a live resource scope even
-  while the badge itself stays collapsed. The dependency-issue tooltip spells out every project by its short
-  name (`RowWarning.DepIssueDetail`, comma-joined — the header has room a row's slot does not, so it never falls
-  back to the row's "+N" abbreviation); the cycle tooltip is the same sentence the row's own triangle uses
-  (`RowWarning.InCycle`), read from the one shared constant rather than retyped. Both tooltips are explicit
-  `ToolTip` objects declared in XAML with `AppTooltip.Side="Bottom"`, so they open below the badge; code-behind
-  only writes their content. Copy log is a plain `Ds.IconButton` (22×22, already the design's "sm" size in this
-  app) with no bespoke chrome; its copied-state green tint is written straight to `Foreground` the same way
-  `AboutDialog`'s Copy diagnostics button does, which means a hover during the 1.4 s window can hand control
+  never shrinks. The two contents take turns in the left cell. In the narrative only the caps `CONSOLE` label shows
+  there; on the right, 8 px past `N lines` and in the counter's own type (mono 11, `text-faint`), the `compact` tag
+  shows while the console writes in compact mode (*The compact console keeps the narrative short*, below) — never on a
+  project page, which is always full, and not without a workspace, where the counter is hidden too. On a project page
+  the left cell holds the project's full name and nothing else: mono 12, starting at the panel's inset exactly where
+  the `CONSOLE` label does. The name *is* the left cell's content, left-aligned, so its box is the text's own width — a
+  short name on a wide panel is not stretched (the prototype's name `span` is `white-space: nowrap` with no flex-grow:
+  it shrinks, never grows) — and when the remainder is too narrow it trims with an ellipsis. The right block is sized
+  first, so the name gives way to it, a counter widening from 999 to 1000 or Copy log appearing included, and never
+  runs under it; no width is computed by hand. Copy log is a plain `Ds.IconButton` (22×22, already the design's "sm"
+  size in this app) with no bespoke chrome; its copied-state green tint is written straight to `Foreground` the same
+  way `AboutDialog`'s Copy diagnostics button does, which means a hover during the 1.4 s window can hand control
   back to the style's own animated brush — an accepted trade-off shared by both buttons.
-- **The header keeps watching the selected row, not just the moment it was selected.** `ShowProjectLog` runs once, on
-  selection; a project already open can still change underneath the reader — a `Started` row reaching `Succeeded`, a
-  dependency-issue list arriving, a cycle membership settling — and none of those are selection events.
-  `MainWindow.TrackHeaderRow` subscribes to exactly the one selected `ProjectRowViewModel`'s `PropertyChanged`
-  (swapping the subscription, never stacking two) and calls `ConsoleHeader.RefreshStatus` on
-  `State`/`Status`/`DepIssues`/`InCycle` alone — `Status` is listed on its own because it can change while `State`
-  does not (a cycle member's compile starting or ending within a round flips `IsCompiling`) — every other row notification
-  (`Marked`, `Fade`, …) is not the header's concern and is ignored, the same filtered `switch` idiom
-  `ProjectRow.OnVmPropertyChanged` already uses for its own row. `RefreshStatus` touches only the glyph, the status
-  word and the two badges; it does not re-run the project-name/copy-log/mode side of `ShowProjectLog`, so a status
-  change mid-read cannot reset the reader's clipboard feedback or replay the panel's tilt transition. The 200 ms run
-  tick still owns only `SetLineCount` — status changes are comparatively rare (a handful per project per run) and are
-  pushed the instant they happen rather than polled, so the idle-tick stays allocation-free exactly as before.
+- **The project page's header names the project and nothing else.** It carries no back button, no status glyph or
+  run word and no warning badge. Each would repeat what the list and the graph already show — the row's stripe, dot,
+  glyph, decision label and warning triangle (§13.2), and the graph node — and on a project the run has not touched a
+  dashed ring beside the word *Discovered* reads like a loading indicator rather than a state. The way back to the
+  narrative is the selection's own (§13.7): the selected row or node clicked again, the graph's empty background, or
+  Esc. So `ShowProjectLog` takes the project's name, not its row: the header reads nothing a row's change could move
+  and subscribes to no row, and the 200 ms run tick owns only `SetLineCount`.
 - The document stays **plain text**, so what the user copies is meaningful. Colour comes from an offset-based
   `DocumentColorizingTransformer`, and only lines whose *format is known* get one: the prefixes the application
   itself prints (`[error]`, `warning:` — the engine's notes in a project's log included —, a command line), the
@@ -5044,7 +5054,7 @@ lines.
   previous slice on the first jump to the top. Both documents are swapped in through one path (`SwapDocument`), and the
   swap's own scroll events are not the reader's: assigning the new document clears the text view's scroll data to zero
   before the pin reports where it lands, which the loader, still armed from the old document's position, would read as
-  arriving at the top — a narrative rebuilt over a document at its end, on `Back` or on the return from the tray,
+  arriving at the top — a narrative rebuilt over a document at its end, on the return from a project page or from the tray,
   would prepend a slice nobody asked for and trim it off again — and which the bottom anchor, for a reader who had just
   scrolled, would read as a distance of zero, a reader at the bottom of a document not yet pinned anywhere — so neither
   decides on them: when the swap ends the loader is armed from where the document settled and the anchor follows from
@@ -5079,7 +5089,7 @@ lines.
   short file never yields partial text, because the console computes its stitch from indices. An empty slice is not
   skipped: the console keeps its place and asks for the same slice again on the next scroll to the top, and a document
   whose last slice could not be read starts at the narrative's end, so its indices still match what it shows — the last slice
-  is read again when the narrative is next rebuilt (on `Back` or on the return from the tray) or, while the run streams,
+  is read again when the narrative is next rebuilt (on the return from a project page or from the tray) or, while the run streams,
   once the document is tall enough to scroll away from the top and back, after any live lines trimmed off its top in the
   meantime; a new section discards it with the rest of the narrative. The one
   exception is a store that has fallen behind the document — a narrative cleared while the window was hidden, under a
@@ -5187,7 +5197,7 @@ lines.
   that would cross the top of the narrative's slice loads the previous slice first, so the step stays a whole
   viewport; on a project page, and at the start of the narrative, it stops at the top. Each is a gesture of the reader
   as §13.4 defines it: the vertical keys take the wheel and stop a `⌄ latest` flight, the sideways ones do neither.
-- **Panel transitions are one piece, and they are flat.** Opening a project log and coming back with `Back`
+- **Panel transitions are one piece, and they are flat.** Opening a project log and coming back to the narrative
   both settle the content **up from 14 px below**, fading in, over 340 ms — one movement, not a per-line
   cascade — so a three-line log and a two-hundred-line narrative open at the same rhythm. The movement is a
   `TranslateTransform` and an opacity animation on the block's own container, so the real editor is what
@@ -5215,9 +5225,12 @@ lines.
   commit is not evidence and is not shown. A project built outside this tool (§7.6) reads `Up to date — built outside this tool.`
   over `Built outside this tool`, since the evidence is someone else's output rather than a build of this
   tool's; the output reasons read `its build output is missing`, `its files are newer than its build output`
-  (or `a dependency's output is newer than its build output`) and `its copy in the shared folder does not match
-  its build output`, and a missing output does not repeat itself on the evidence line, just as never built does
-  not. The status word is not repeated, because the header is already showing it. A project
+  (or `a dependency's output is newer than its build output`, or — for a project whose own check is fresh but
+  which compiles behind a dependency the plan rebuilds, §7.6 — `one of its dependencies will be rebuilt first`)
+  and `its copy in the shared folder does not match its build output`, and a missing output does not repeat
+  itself on the evidence line, just as never built does not. A signature that moved only because the
+  configuration was switched reads `it was last built in Debug`, the configuration named, rather than that the
+  signature changed (§7.2). The status word is not written: the row and the graph node already show the project's state. A project
   that is compiling right now gets one line instead of two: there is no evidence yet, and its output is about
   to arrive. The reason comes from the engine's own vocabulary where there is one — the skip reasons are a
   single shared source, so the page, the event stream and `decision.log` cannot drift apart — and from the
@@ -5227,7 +5240,7 @@ lines.
 - **There is no `build in progress` marker at the end of a project log.** There used to be an amber, blinking
   one. It was set when the page opened and never updated, so a project that finished while its log was on
   screen kept claiming to be building. Two surfaces already answer that question and stay in sync — the
-  header's status glyph and the row itself — and a third, unsynchronised channel is worth less than the times
+  row and the graph node — and a third, unsynchronised channel is worth less than the times
   it is wrong. It was removed rather than wired up.
 - **Each mode is pinned to the end you read it from.** The order is fixed — change the content, pin, then
   animate — and the pin forces a measure on **both** sides of the scroll. Before, because the editor's scroll
@@ -5253,7 +5266,7 @@ lines.
   **Reclaiming the follow happens after the pin, not before**, for the same reason and it is the whole of the other
   half of that pill. The pill's visibility reads distance-from-bottom alone, so announcing "we are stuck to the bottom
   again" while the editor still holds the *previous* document — at its top — measured a huge distance and showed the
-  pill for exactly as long as the pin took to run. It appeared and vanished on every `Back`. Ordered after the pin,
+  pill for exactly as long as the pin took to run. It appeared and vanished on every return to the narrative. Ordered after the pin,
   the geometry is already right and the distance is zero. The run narrative pins to the **bottom**: the interesting
   thing is the latest line and the panel goes on following the stream. A project log pins to the **top** — the log's
   first line — and **never follows**: what you are looking for in a build log is the first error, and following would
@@ -5269,7 +5282,7 @@ lines.
   count a second time, because a line that arrived between the clear and the bind is already in the store and reaches
   the document as a batch, so a bind that counted it too would show it twice — and resets the document at once, without
   a tilt — the tilt belongs to the mode switch, this is the same panel starting over — and leaves a project log that is
-  on screen alone, since `Back` seeds the fresh narrative anyway. Batches of the previous operation still in the pump
+  on screen alone, since the return to the narrative seeds a fresh one anyway. Batches of the previous operation still in the pump
   are dropped by the same reseed generation a mode switch uses, so nothing from before the clear can land after it.
 - **A hidden window does not write to the document.** While the window is in the tray the pump keeps draining, but the
   shell drops each batch instead of applying it: the text is in the store already, and a document nobody can see is not
@@ -5725,9 +5738,9 @@ resources — no hex, no milliseconds inline.
 
 One canonical gesture: clicking a project row, a graph node or a stream line selects that project **everywhere**
 — the graph pans to the node, the list scrolls to the row, the console switches to that project's log, the
-panel header switches to its project-log half with the `Back` button. Clicking the same element again, or
-`Back`, or Esc, clears it and follow-mode resumes. Text selection inside the console never clears the project
-selection.
+panel header switches to its project-log half, which names the project (§13.5). Clicking the same element again,
+clicking the graph's empty background, or Esc clears it and follow-mode resumes. Text selection inside the console
+never clears the project selection.
 
 Esc is a chain and only ever closes the topmost layer: the exit card (§13.3), which sits above even the dialogs →
 dialog → popover/menu (the action bar's popovers and the title bar's update card) → selection → the running build →
@@ -5788,6 +5801,7 @@ styles, and `Controls/` holds the custom elements that a template cannot express
 | Segment | An `ItemsControl` of `RadioButton`s — the `Debug｜Release` control, and the About dialog's tab switch |
 | Input | A `TextBox` style with watermark, prefix and invalid states, in two heights: the default one, and a shorter variant for the 28 px panel-header strip, where the default would fill the strip edge to edge and push its focus ring outside. The template deliberately leaves `PART_ContentHost` without a margin: WPF applies `Padding` to the content host itself, so a template that also binds the padding to a margin indents the caret and the typed text by two paddings instead of one. `DsChrome.IsClearable` is opt-in and only the two search boxes set it (the project filter and the branch search): while the box holds text a 16 px `✕` sits inside the right padding — which is reserved whether or not the `✕` shows, so typing never narrows the text area — and clicking it empties the box through `DsChrome.ClearTextCommand`, a normal edit that the filter binding and `TextChanged` both see. The `✕` is not focusable, so the caret stays in the box |
 | Select | A `ComboBox` template, ported from the design system's `<select>`. It is the library's one component with no live consumer — external-project cards carry no source picker (§10.4) — and is kept so the port does not have to be redone. Same input shell and focus ring as `Ds.Input`; the dropdown carries the same overlay chrome as the popovers, at a smaller radius. The chevron reuses the chip dropdown's existing glyph rather than adding a second copy of the same geometry, and the row hover runs through the same `DsTransition` gate as every other 120 ms colour change in the library — no bespoke entrance animation was added for the popup itself |
+| Context menu | `Ds.ContextMenu` and `Ds.ContextMenu.Item` over the stock `ContextMenu` and `MenuItem` — keyed, not implicit, so text boxes keep their stock menu. The tray menu (§12.3) is the application's only context menu and speaks the project row menu's language: the `Ds.Popover` shell at the row menu's width and padding, 26 px rows with a 13 px icon slot and an 8 px gap — one class holds these measurements for both menus (`MenuRowMetrics`), so the two cannot drift — a 13 px `text-secondary` label, and the row menu's highlight, `surface-raised` through the 120 ms `DsTransition`, for the pointer and the keyboard alike (WPF reports both as `IsHighlighted`); a disabled item fades to 0.45. An item's icon (`IconMenuItem`) is built when its template is applied, inside the menu's tree, so its paint resolves there. Two departures from the popover are deliberate. The shell has no shadow: WPF sizes the popup window to the menu, the overlay shadow is clipped at the window's edge, and what survives is a dark patch in the lower corners outside the rounded border — invisible on the application's own dark surfaces, gray over a light window or taskbar, and the tray menu opens over anything; room for the shadow would move the menu's corner away from the cursor. And there is no pop-in: the menu's own popup follows Windows' menu animation setting, and a second entrance on top of it would play twice |
 | Tooltips | Open with **no delay** and stay until the pointer leaves, on disabled elements too. All three are `ToolTipService` attached properties that WPF reads from the tooltip's *owner*, not from the tooltip — set on the `ToolTip` style they are dead, which is how every tooltip in the app ended up on WPF's ~1 s default and looked like it never appeared. The defaults are overridden once, on `FrameworkElement`'s metadata (`AppTooltipDefaults`) |
 | Scrollbar | An implicit `ScrollBar` style — a 10 px transparent rail, no arrow buttons, and a neutral thumb pill inset by 3 px. The pill reacts to the *rail*, not to itself: a 4 px pill is a poor grab target, so as soon as the pointer enters the 10 px rail the inset flows from 3 px to 1 px — an 8 px pill — and the fill steps once up the neutral ramp; dragging steps once more. Only the pill grows, never the rail, so hovering never re-lays out the content beside it. Being implicit the style crosses template boundaries, so stock and third-party viewers alike (the console editor included) wear it without their XAML knowing; the stock corner square between two bars is neutralised app-wide |
 | Kbd · ProgressBar · Popover · Dialog · Focus visual | Styles over stock elements. A focus ring is a rectangle pushed outside its element by `-(offset + stroke/2)` and rounded by the same amount so it follows the corner — arithmetic XAML cannot do, so `DsChrome.FocusRingOffset` derives both. Its default is `NaN`, not zero: zero is a real offset (the input's ring hugs the edge with no gap) and WPF skips a property's change callback when the assigned value equals the default, which would leave that ring flat against the box and square-cornered |
@@ -5914,7 +5928,8 @@ whole (§13.5).
 This section is the design system. There is no external style sheet, no runtime theming and no second
 authority: the values below are declared once in `Resources/Tokens.xaml` and `Resources/Motion.xaml` so the
 application can consume them, and component-specific measurements sit as named constants on the control that
-draws them. The resource strip is the exception: a guard keeps numeric measurements out of its markup, so its four
+draws them — or, where two components draw the same element, in one class both read: the project row menu and the
+tray menu draw the same menu row and share `MenuRowMetrics` (§13.8). The resource strip is the exception: a guard keeps numeric measurements out of its markup, so its four
 measurements are tokens named for it in `Tokens.xaml` (§14.1). Section §13 gives those per-component values in context.
 
 ### 14.1 Tokens
@@ -5989,20 +6004,16 @@ meets 4.5:1.
 | Up to date | ✓ in a ring | Up to date |
 | Queued | clock | Queued |
 | Building | rotating dashed ring | Building |
-| Succeeded — built by this run | ✓ in a ring | Up to date · *Succeeded* in the console header |
+| Succeeded — built by this run | ✓ in a ring | Up to date |
 | Failed — a compiler failure, in this run or proven by the ledger | ✗ in a ring | Failed |
 | Skipped — run-story surfaces only | — in a ring | Skipped |
 
 Glyph and text are both drawn from the visual status. On the state surfaces — the row glyph's and the graph
 node's screen-reader names — the word names what the surface *shows*, with the same words the filter chips use
 (`StatusGlyph.LabelFor`, which reads the same state bucket as the counters): a skipped up-to-date row is
-announced *Up to date*, never *Skipped*, and a row this run built is *Up to date* too. The console header is a
-run-story surface: its status word names what the engine last said about the project in this run
-(`StatusGlyph.RunLabelFor` — *Succeeded*, *Skipped*, *Discovered* for a project the run has not touched), and
-shares the words it has in common (*Queued*, *Building*, *Failed*) with the state table rather than spelling
-them again. The `—` is a run-story mark: it appears on the event stream's skip line and in the console
-header's run result, never on a list row, a graph node or a counter — a skipped project keeps the colour and
-glyph of its standing.
+announced *Up to date*, never *Skipped*, and a row this run built is *Up to date* too. The `—` is a run-story
+mark: it appears on the event stream's skip line, never on a list row, a graph node or a counter — a skipped
+project keeps the colour and glyph of its standing. The console's project page names no status at all (§13.5).
 
 **One colour channel — the visual status.** The row's stripe, the dot beside the name, the status glyph, the
 graph node's border and the cube inside it are all painted from a single value (`VisualStatus`), and colour
@@ -6176,7 +6187,9 @@ its eraser, gauge or unlink mark for the spinner, in the same 12 px box, so the 
 
 The Build split menu and the project row menu share **one icon family** on a single grid: play, rotate-cw,
 brush. The mapping lives in one place so the two menus cannot drift; the ⋯ that opens the row menu belongs to
-the same family of filled marks as the drag grip. The application icon is a multi-size ICO with the 16 and 24 px rasters hand-corrected;
+the same family of filled marks as the drag grip. The tray menu draws no mark of its own: *Stop* carries the stop
+square the Stop button and the row's stop icon draw (`Icon.Stop` in `status-fail-text`), and *Exit* the title bar
+*Exit* button's Lucide *power* (`Icon.Power`) in the `text-dim` of menu-row icons. The application icon is a multi-size ICO with the 16 and 24 px rasters hand-corrected;
 carets and chevrons are drawn, not typed.
 
 One icon has no literal counterpart in the design source and is marked *derived* in the dictionary, with the
@@ -6578,7 +6591,7 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 | Path | Content | Corruption behaviour |
 |---|---|---|
 | `logs\run-<timestamp>\` | per-run and per-project logs, written by the engine, and `narrative.log`, the run's console narrative, written by the App from the moment `runStarted` names the folder until the next console section opens (§8.5, §13.5); a run's folder is removed at the first engine start more than three days after the run, except the newest run's, which always stays (§8.5) | — |
-| `build-state.json` | per-project signature, commit, result, duration, dependency-issue note with its root project ids, non-convergent cycle signature, the fed outputs learned from the last success (§7.6), the `packages.config` content hash behind the restore decision (§9.3), a cycle member's term, the sibling surfaces it read and the engine fingerprint behind round one's compile decision (§7.5, §8.8); projects from external roots share the file under the same key shape, without a commit or branch (§7.5). A record written before a field existed loads with that field empty | falls back to empty |
+| `build-state.json` | per-project signature and the configuration it was built in, commit, result, duration, dependency-issue note with its root project ids, non-convergent cycle signature, the fed outputs learned from the last success (§7.6), the `packages.config` content hash behind the restore decision (§9.3), a cycle member's term, the sibling surfaces it read and the engine fingerprint behind round one's compile decision (§7.5, §8.8); projects from external roots share the file under the same key shape, without a commit or branch (§7.5). A record written before a field existed loads with that field empty | falls back to empty |
 | `evaluation-cache.json` | csproj evaluation cache; each entry records the schema it was written under, and an entry written under another schema is re-evaluated rather than served (§6.2); an SDK-style entry also records the `Directory.Build.*` files its layout decision read, and is re-evaluated when one of them changes or appears; Optimize removes such entries outright, whatever root they belong to | falls back to empty |
 | `source-hash-cache.json` | source content hashes keyed by path, size and modification time (§7.1) — this is what turns the content decision into one stat pass per run | falls back to empty (the next run re-reads and rebuilds it) |
 | `run-inflight.json` | the ids of the projects the engine has dispatched and not yet reported — written at dispatch, erased at the result, emptied at the end of every run; left non-empty only by an engine that died mid-run, and read once at the next engine start (§8.7). Absent while no run is in flight | an unparsable file is deleted and nothing is recovered; an unreadable one stays for the next start |
@@ -6805,7 +6818,7 @@ A category of tests that assert properties of the *source*, not of a run:
 | Ledger file access (`LedgerStreamingGuardTests`) | the two large ledgers (`evaluation-cache.json`, `source-hash-cache.json`) never turn their file into one string or byte array and never open, create or move it themselves — they read and write through the stream forms of `AtomicFile` (sharing delete on read, retried atomic rename on write); hashing a *source* file is the one exempt read; the rule is shown to catch each bypass and to ignore a comment |
 | Entry point (`EntryPointTests`) | the App starts from the hand-written `Program.Main`, `VelopackApp…Run()` comes before the `App` is created, the uninstall hook removes the startup value, and the `Velopack` library and the `vpk` tool carry one version (§12.1) |
 | Repository hygiene (`RepoHygieneTests`) | the MIT `LICENSE`, the SDK band in `global.json`, the pinned `vpk` tool, the README's badge (the release run of `main`), and the workflows: CI builds and tests every push to `develop`, with no path filter, on the pinned image, leaves `main` to the release and can be called by it; the release runs on pushes to `main` one at a time and is never cancelled, writes only from its publish job, has its guard check the head of `main` and hand the tag on, tags only after the tests and the package and before the upload, and publishes through `package.ps1` (§18); a failed release is re-run once on its failed jobs |
-| User documents (`DocumentationTests`) | README, FEATURES and WHY each have a Turkish mirror (`.tr.md`) with as many sections, and each language links to the other; every WHY item is a FEATURES item with the same title, in the same order; relative links in the user documents, the user guide included, point to files that exist; and no public document — these, the technical reference, the release notes and the working conventions — names the internal product the tool was first built for (the pattern of the code guard above, so the name is defined once) |
+| User documents (`DocumentationTests`) | README, FEATURES and WHY each have a Turkish mirror (`.tr.md`) with as many sections, and each language links to the other; every WHY item names a FEATURES item — its title before the gain dash — in the same order, and every WHY title carries that dash and a short gain while FEATURES titles carry none; relative links in the user documents, the user guide included, point to files that exist; and no public document — these, the technical reference, the release notes and the working conventions — names the internal product the tool was first built for (the pattern of the code guard above, so the name is defined once) |
 | Automation roles (`AutomationRoleTests`) | every `UserControl` of the app declares its automation role through an override in the app assembly — never WPF's default custom type, which the post-layout peer walk re-enumerates on every pass (§15) |
 | One trim definition (`MemoryTrimGuardTests`) | `GC.Collect` is written exactly once in the source, in `Core/Diagnostics/MemoryTrim.cs`; and every `RunCoordinator` the tests construct — an explicit `new`, or a target-typed one — passes a trim seam (`memoryTrim:`, not `null`), so none falls back to the real blocking collection; the rules are shown to catch each form of the call and to ignore prose |
 | One memory read (`MemoryReadGuardTests`) | the process's memory is read in exactly one file, `Core/Diagnostics/MemoryLine.cs` (§11.4): `GetProcessMemoryInfo` (the private bytes; its P/Invoke declaration in `NativeMethods.cs` is the one exempt mention, and the exemption is pinned to still declare the call), `GetGCMemoryInfo` and `GC.GetTotalMemory` are called nowhere else; `Process.PrivateMemorySize64` is written nowhere at all, `MemoryLine` included, because it snapshots every process on the machine; and `GC.GetTotalMemory` is called only with the literal `false` — any other argument may be a hidden full collection, which the `GC.Collect` guard cannot see. The rules are shown to catch each form of the call and to ignore prose |
@@ -6867,7 +6880,9 @@ A headless suite does not resolve XAML at runtime — a full suite once passed g
 not open at all, because a `Double` token was being fed to a `GridLength` in the shell root. The rule that came
 out of that: **any task adding a new XAML root or template also adds a realization test.** A `Window`'s
 `Measure`/`Arrange` does not descend into content without an HWND, so realization tests run against
-`window.Content`.
+`window.Content`. A context menu is realized on its own: WPF lets a `ContextMenu` have a parent only inside its own
+popup, which exists only while the menu is open, so its test merges the application's resource chain into the menu's
+own dictionary, applies its template and measures it as a root (`TrayMenuLookTests`).
 
 Animation behaviour is measured the same way: the harness can drive the live window, take frames through
 `PrintWindow(PW_RENDERFULLCONTENT)`, read state through UI Automation and diff pixels between frames — so
@@ -6935,7 +6950,10 @@ A second group carries the `Measurement` category: probes and measurements that 
 assert rules — the tray overlay's own cost, rendered frames of its loop, the notification call, where the real
 file picker lands, UI latency and memory under each perf profile, the UI thread cost of a build's events while the
 window is hidden, the managed-memory budget of the run narrative, the UI thread cost of landing at the end of a long
-project page, and the content-decision timings. The filter above does **not** exclude them (`!=` admits every other
+project page, and the content-decision timings. One test in the group asserts a rule rather than reading a number,
+because only a real tray shows it: the tray menu opens at the click even when the tray library's cached scale no
+longer matches the screen (`TrayMenuPositionProbeTests`, §12.3). It repeats a reading the mouse moved during and skips
+when the mouse never keeps still. The filter above does **not** exclude them (`!=` admits every other
 category value). The tray, file-picker, hidden-window, memory, perf and page-end probes open real windows and dialogs,
 show balloons, force full collections, press hundreds of keys or saturate every core, so each is gated on an
 environment variable — `BO_PROBE_TRAY`, `BO_PROBE_FILE_DIALOG`, `BO_MEASURE_OVERLAY`, `BO_MEASURE_HIDDEN`,
@@ -7558,6 +7576,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Window shell, layout wiring, shortcut binding | `App/MainWindow.xaml(.cs)`, `App/ShellRoot.xaml(.cs)` |
 | Maximize overflow fix · DWM corners/border · caption glyphs | `App/Shell/MaximizeFix.cs`, `Dwm.cs`, `CaptionGlyphs.cs` |
 | Single instance, tray icon, global hotkeys (table, show/hide decision), shutdown | `App/Shell/SingleInstance.cs`, `AppTrayIcon.cs`, `Hotkey.cs`, `App/Shell/AppShutdown.cs` |
+| Tray menu — opened by the application at the cursor's physical point instead of by the tray library (§12.3); its items and their icons | `App/Shell/AppTrayIcon.cs` (`OpenMenuOurselves`, `OpenMenu`, `CreateMenu`) |
 | Start with Windows — the `Run` value, Task Manager's disabled mark, the state the switch shows, the save-time write, the removal at uninstall (`RemoveForUninstall`) | `App/Services/AutostartService.cs` |
 | Window close decision — `X`, `Alt+F4`, system-menu *Close*, an `Esc` with nothing left to do: close, stay, hide to the tray or ask for a full exit | `App/Shell/WindowCloseRule.cs`; applied in `App/MainWindow.xaml.cs` (`OnClosing`) |
 | Full exit: what is in flight (`ExitWork`), the hard stop of a run and the stop wait (`ExitStopWaitMs`), the jobs cut off and the git writes waited for, the release on engine silence or death, `ExitReady`; the run's progress for the card (`ExitProgress`) | `App/ViewModels/RunViewModel.Exit.cs`; the work kinds and the one rule of which ones the exit waits for: `App/ViewModels/ExitWork.cs` (`ExitWorkRules.Waits`); the hard stop shared with *Stop now*: `RunViewModel.cs` (`SendHardStopAsync`); no Sync once the exit is asked for, and nothing leaves the engine gate: `RunViewModel.cs` (`SyncCoreAsync`), `RunViewModel.Engine.cs` (`EnsureEngineAwakeAsync`) — both read the one flag, `_exitRequested` |
@@ -7806,6 +7825,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Single-project run commands (build · rebuild · clean), run target and lock pushed to rows | `App/ViewModels/RunViewModel.cs` (`BuildProjectCommand`, `RunTargetId`) |
 | Build-state row removal after a clean | `Core/State/BuildStateStore.cs` (`Remove`) |
 | Row menu placement (row-right inset, row overlap, viewport clamp) | `App/Controls/RowMenuPlacement.cs` |
+| Menu-row measurements shared by the row menu and the tray menu · the tray menu's look (`Ds.ContextMenu`, `Ds.ContextMenu.Item`) · a menu item that builds its icon when its template is applied | `App/Controls/MenuRowMetrics.cs`, `App/Resources/Controls.xaml`, `App/Controls/IconMenuItem.cs` |
 | Second press on a popover trigger closes it | `App/Controls/PopoverToggle.cs` |
 | List with cumulative sticky headers and reveal | `App/Controls/StickyLayerList.xaml(.cs)` |
 | Progressive row realization (visible window first, idle slices after; rows are never recycled) with an exact (never estimated) extent | `App/Controls/FixedHeightVirtualizingPanel.cs` |
@@ -7943,7 +7963,7 @@ decided, look at the pure class; when it concerns *how* it was drawn or animated
 |---|---|
 | [`README.md`](README.md) | Entry point: what the tool does, highlights, screenshots (`docs/images/`), quick start, developer commands, document map |
 | [`docs/FEATURES.md`](docs/FEATURES.md) | Every feature, most important first: what it does, how, and the techniques behind it |
-| [`docs/WHY.md`](docs/WHY.md) | What each feature changes: the goal, the common practice without such a tool, and the result here |
+| [`docs/WHY.md`](docs/WHY.md) | What each feature gives: the gain in the heading, the common practice without such a tool, and the result here |
 | [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md) | Requirements, installation and use, screen by screen: shortcuts, updates, state on disk, performance modes, known limits |
 | **`ARCHITECTURE.md`** (this file) | Technical reference: architecture, processes, contracts, algorithms, UI, design system, security boundary, code map |
 | [`CHANGELOG.md`](CHANGELOG.md) | Release notes, embedded in the app as What's new (§18) |

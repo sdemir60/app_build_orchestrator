@@ -21,14 +21,12 @@ public class ConsoleModesTests
 {
     // ---------------------------------------------------------------- başlık modları
 
-    // [v1.18.0 §9] Sol grubun tamamı (Back + ad + statü + rozetler) artık TEK bir konteynerdir
-    // (ProjectLogGroup, Console/ConsoleHeader.xaml) — mod değişince o hücre bir kerede aç/kapa olur; alt
-    // öğelerin KENDİ Visibility'si ayrı ayrı sürülmez. Bu yüzden "gizli mi" iddiası artık gruba, "doğru
-    // dolduruldu mu" iddiası içeriğe (Text/Status/ToolTip) bakar — style/ikon/aralık pinleri
-    // ConsoleHeaderDesignTests'tedir (realize gerektirir).
+    // Sol hücrenin iki içeriği (CONSOLE etiketi / proje adı) aynı hücrede durur, mod değişince biri açılır öbürü kapanır.
+    // "Gizli mi" iddiası bu iki öğeye, "doğru dolduruldu mu" iddiası metne bakar — realize gerektiren konum/stil/kırpma
+    // pinleri ConsoleHeaderDesignTests'tedir.
 
     [StaFact]
-    public void Header_narrative_mode_shows_caps_label_and_hides_the_project_log_group()
+    public void Header_narrative_mode_shows_caps_label_and_hides_the_project_name()
     {
         var header = new ConsoleHeader();
 
@@ -36,77 +34,45 @@ public class ConsoleModesTests
 
         Assert.Equal(ConsoleHeader.HeaderMode.Narrative, header.Mode);
         Assert.Equal(Visibility.Visible, header.ConsoleLabel.Visibility);
-        Assert.Equal(Visibility.Collapsed, header.ProjectLogGroup.Visibility);
+        Assert.Equal(Visibility.Collapsed, header.ProjectNameText.Visibility);
         Assert.Equal("12 lines", header.LinesText.Text);
     }
 
+    /// <summary><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-25]</b> Proje modu adı ve satır sayacını gösterir, başka bir şey
+    /// değil. Eski iddialar: aynı başlık statü sözcüğünü ve glyph'ini (<c>Failed</c>, Started → <c>Building</c>), tam listeli
+    /// tooltip'iyle <c>dependency issue</c> rozetini ve ondan bağımsız <c>dependency cycle</c> rozetini taşırdı; satır
+    /// uyarısızken ikisi de gizlenirdi. Gerekçe ve yapısal pin: <see cref="ConsoleHeaderDesignTests"/>.</summary>
     [StaFact]
-    public void Header_project_log_mode_shows_name_status_and_dep_issue_badge_with_full_names_in_the_tooltip()
+    public void Header_project_log_mode_shows_the_name_and_the_line_count_and_hides_the_caption()
     {
         var header = new ConsoleHeader();
 
-        // [v1.18.0] Tooltip'in TAM listeyi yazdığını (satırın "+N" kısaltmasının AKSİNE) görmek için iki isim.
-        header.ShowProjectLog(ConsoleHeaderRow.For("OSYS.Sales.Core", ProjectRowState.Failed, inCycle: false,
-            depIssues: ["OSYS.Sales.Data", "OSYS.Sales.Contracts"], namePrefix: "OSYS."), 87);
+        header.ShowProjectLog("OSYS.Sales.Core", 87);
 
         Assert.Equal(ConsoleHeader.HeaderMode.ProjectLog, header.Mode);
         Assert.Equal(Visibility.Collapsed, header.ConsoleLabel.Visibility);
-        Assert.Equal(Visibility.Visible, header.ProjectLogGroup.Visibility);
+        Assert.Equal(Visibility.Visible, header.ProjectNameText.Visibility);
         Assert.Equal("OSYS.Sales.Core", header.ProjectNameText.Text);
-        Assert.Equal("Failed", header.StatusNameText.Text);
-        Assert.Equal(VisualStatus.Failed, header.StatusGlyphIcon.Status);
-        Assert.Equal(Visibility.Visible, header.DepIssueBadge.Visibility);
-        Assert.Equal("Dependency issue: Sales.Data, Sales.Contracts — last successful output referenced",
-            header.DepIssueTooltip.Content);
-        Assert.Equal(Visibility.Collapsed, header.CycleBadge.Visibility);
         Assert.Equal("87 lines", header.LinesText.Text);
     }
 
+    /// <summary><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-25]</b> Anlatıya dönüş başlığın işi değildir: başlıkta Back
+    /// yoktur ve <c>BackRequested</c> olayı kalktı (eski iddia: Back'e basmak <c>BackRequested</c>'i fırlatır, MainWindow onu
+    /// <c>SelectProject(null)</c>'a bağlardı). Dönüş seçimin kendi yollarıdır — aynı satıra ya da düğüme yeniden tıklamak,
+    /// grafın boş zemini, Esc (ARCHITECTURE §13.7). Burada kalan iddia modun kendisidir: anlatıya dönüş adı gizler, CONSOLE
+    /// etiketini geri getirir.</summary>
     [StaFact]
-    public void Header_project_log_shows_the_cycle_badge_independently_of_the_dep_issue_badge()
-    {
-        // [v1.18.0] Prototipte (BuildApp.jsx:2615-2628) ikisi de KENDİ koşuluna bağlıdır ve AYNI ANDA
-        // görünebilir — satırdaki tek üçgenin öncelik sırasının (RowWarning.For) AKSİNE.
-        var header = new ConsoleHeader();
-
-        header.ShowProjectLog(ConsoleHeaderRow.For("OSYS.Base", ProjectRowState.Started, inCycle: true,
-            depIssues: null, namePrefix: "OSYS."), 3);
-
-        Assert.Equal(Visibility.Collapsed, header.DepIssueBadge.Visibility);
-        Assert.Equal(Visibility.Visible, header.CycleBadge.Visibility);
-        Assert.Equal(RowWarning.InCycle, header.CycleTooltip.Content);
-        Assert.Equal(VisualStatus.Building, header.StatusGlyphIcon.Status); // Started → Building
-    }
-
-    [StaFact]
-    public void Header_project_log_without_warnings_hides_both_badges_and_switching_back_hides_the_group()
+    public void Switching_back_to_the_narrative_hides_the_name_and_shows_the_caption_again()
     {
         var header = new ConsoleHeader();
+        header.ShowProjectLog("OSYS.Base", 5);
 
-        header.ShowProjectLog(ConsoleHeaderRow.For("OSYS.Base", ProjectRowState.Succeeded, inCycle: false,
-            depIssues: null, namePrefix: ""), 5);
-        Assert.Equal(Visibility.Collapsed, header.DepIssueBadge.Visibility);
-        Assert.Equal(Visibility.Collapsed, header.CycleBadge.Visibility);
-        Assert.Equal("Succeeded", header.StatusNameText.Text);
+        header.ShowNarrative(3);
 
-        header.ShowNarrative(3); // geri dönüş moddu tekrar anlatıya çevirir
         Assert.Equal(ConsoleHeader.HeaderMode.Narrative, header.Mode);
-        Assert.Equal(Visibility.Collapsed, header.ProjectLogGroup.Visibility);
+        Assert.Equal(Visibility.Visible, header.ConsoleLabel.Visibility);
+        Assert.Equal(Visibility.Collapsed, header.ProjectNameText.Visibility);
         Assert.Equal("3 lines", header.LinesText.Text);
-    }
-
-    [StaFact]
-    public void Header_back_button_raises_BackRequested()
-    {
-        var header = new ConsoleHeader();
-        header.ShowProjectLog(ConsoleHeaderRow.For("OSYS.Base", ProjectRowState.Succeeded, inCycle: false,
-            depIssues: null, namePrefix: ""), 0);
-        bool raised = false;
-        header.BackRequested += (_, _) => raised = true;
-
-        CommandPress.Click(header.BackButton);
-
-        Assert.True(raised);
     }
 
     [StaFact]
@@ -156,8 +122,7 @@ public class ConsoleModesTests
         await load.WaitAsync(TimeSpan.FromSeconds(5));
 
         // Tıklama anı: başlık + gövde SENKRON proje-loguna geçer (pump beklenmeden).
-        header.ShowProjectLog(ConsoleHeaderRow.For("A", ProjectRowState.Started, inCycle: false,
-            depIssues: null, namePrefix: ""), vm.GetActiveLineCount());
+        header.ShowProjectLog("A", vm.GetActiveLineCount());
         // [B2 fix 1 · O1] Sayfa logun metnidir, bölünmez (kabuğun kuralı — MainWindow.ProjectDocumentText; eskiden konsolun satır kuralıyla
         // bölünüp görünümde yeniden birleştiriliyordu).
         vm.SeedProjectDocument(projectId, view.PlayCascade); // kabuğun kart seçimi: logun metni olduğu gibi
@@ -475,6 +440,30 @@ public class ConsoleModesTests
                 willBuildReason: WillBuildReason.BuiltOutside)));
     }
 
+    /// <summary>[kullanıcı kararı 2026-10-25] Proje sayfası gerçek sebebi söyler. İmzası yalnız configuration geçişiyle değişmiş
+    /// proje "imza değişti" demez: son derlemesi başka bir configuration'daydı. Bu araç dışında derlenmiş ve kendi kontrolünden
+    /// taze çıkan, ama arkasındaki bağımlılık yeniden derlenecek proje "bir bağımlılığın çıktısı daha yeni" demez — o an daha
+    /// yeni bir çıktı yoktur, bağımlılığı önce yeniden derlenecektir. Olgu yoksa iki cümle de bugünkü gibidir.</summary>
+    [Fact]
+    public void The_page_names_a_configuration_switch_and_a_dependency_that_rebuilds_first()
+    {
+        const string sha = "a3f81c29b4d5e6f708192a3b4c5d6e7f80910a2b"; // araç derledi: kanıt satırı yok, tek satır
+
+        Assert.Equal(["Will build — it was last built in Debug."],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
+                willBuildReason: WillBuildReason.SignatureChanged, currentSha: sha, lastBuiltConfiguration: "Debug")));
+        Assert.Equal(["Will build — the signature changed since the last successful build."],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
+                willBuildReason: WillBuildReason.SignatureChanged, currentSha: sha)));
+
+        Assert.Equal(["Will build — one of its dependencies will be rebuilt first."],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
+                willBuildReason: WillBuildReason.OutputStale, currentSha: sha, behindRebuildingDependency: true)));
+        Assert.Equal(["Will build — a dependency's output is newer than its build output."],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
+                willBuildReason: WillBuildReason.OutputStale, currentSha: sha)));
+    }
+
     /// <summary>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20] Helper'ın iki zaman parametresi
     /// (<c>lastBuiltAt</c>, <c>outputBuiltAt</c>) kalktı: sayfa artık hiçbir yaş yazmadığı için kurulacak bir
     /// zaman da yok.</summary>
@@ -482,9 +471,14 @@ public class ConsoleModesTests
         ProjectRowState state, string? skipReason = null, bool? willBuild = null,
         WillBuildReason? willBuildReason = null, bool inCycle = false, string? currentSha = null,
         bool runActive = false, bool? inRunQueue = null,
-        bool conditional = false, IReadOnlyList<string>? dependencyRoots = null, string namePrefix = "") =>
+        bool conditional = false, IReadOnlyList<string>? dependencyRoots = null, string namePrefix = "",
+        string? lastBuiltConfiguration = null, bool behindRebuildingDependency = false) =>
         new(@"C:\p\a.csproj", "A", state)
         {
+            // [kullanıcı kararı 2026-10-25] Gerekçe cümlesinin iki olgusu: son derlemenin (farklı) configuration'ı ve
+            // önce yeniden derlenecek bağımlılık.
+            LastBuiltConfiguration = lastBuiltConfiguration,
+            BehindRebuildingDependency = behindRebuildingDependency,
             SkipReason = skipReason,
             WillBuild = willBuild,
             WillBuildReason = willBuildReason,

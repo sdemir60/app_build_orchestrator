@@ -344,6 +344,7 @@ public partial class ProjectRow : UserControl
                 PART_Sln.Text = _vm?.SolutionName;
                 break;
             case nameof(ProjectRowViewModel.OwnFilesChanged):
+            case nameof(ProjectRowViewModel.LastBuiltConfiguration): // [kullanıcı kararı 2026-10-25] gerekçe configuration'ı adlandırır
             case nameof(ProjectRowViewModel.WillBuildReason):
             // [DEĞİŞEN KURAL — Task 6, design v1.20.0 §2.4] Etiketin girdileri burada BİTER: LocalEdits
             // (modified · local) da DecisionLabel.For'a girer. Conditional ve DependencyRoots BURADAN kalktı —
@@ -542,7 +543,8 @@ public partial class ProjectRow : UserControl
     {
         var decision = _vm is null
             ? RowDecision.None
-            : DecisionLabel.For(_vm.WillBuild, _vm.WillBuildReason, _vm.OwnFilesChanged, _vm.LocalEdits);
+            : DecisionLabel.For(_vm.WillBuild, _vm.WillBuildReason, _vm.OwnFilesChanged, _vm.LocalEdits,
+                _vm.LastBuiltConfiguration);
 
         PART_DecisionWord.Text = decision.Word;
         PART_DecisionTail.Text = decision.Tail is null ? "" : " · " + decision.Tail;

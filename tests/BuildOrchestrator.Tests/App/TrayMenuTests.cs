@@ -3,11 +3,13 @@ using System.Text.RegularExpressions;
 using System.Windows.Automation.Peers;
 using System.Windows.Automation.Provider;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Tests.Supervisor;
+using H.NotifyIcon;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -126,6 +128,35 @@ public sealed class TrayMenuTests
         var cmd = Assert.Single(sent.OfType<StopRunCommand>());
         Assert.Equal("r1", cmd.RunId);
         Assert.Equal(StopKind.Graceful, cmd.Kind);
+    }
+
+    // ---------------------------------------------------------------- menüyü kim açar
+
+    /// <summary>[tray menu position] Kütüphane menüyü açmaya kalkınca (<c>TaskbarIcon.ShowContextMenu</c> — sağ tıkın kütüphanedeki
+    /// gerçek yolu) menüyü KENDİSİ açmaz, açışı uygulama devralır. Kütüphanenin açışı tık noktasını SAKLADIĞI bir DPI çarpanıyla çevirir;
+    /// ekran ölçüsü uygulama açıkken değişince menü tıktan yüzlerce piksel kayıyordu (gerçek tepsiyle ölçüm:
+    /// <c>TrayMenuPositionProbeTests</c>). Burada kütüphanenin yerleşimi menüye hiç yazılmaz ve uygulamanın açışı bir kez çağrılır.
+    /// <para>Gerçek bir tepsi ikonu kurulmaz: çıplak bir <see cref="TaskbarIcon"/> ne pencere ne tepsi ikonu yaratır (ikisini de
+    /// <c>ForceCreate</c> yapar) — test bu yüzden headless koşar.</para></summary>
+    [StaFact]
+    public void The_app_opens_the_tray_menu_itself_instead_of_the_tray_library()
+    {
+        var menu = AppTrayIcon.CreateMenu(AppTrayIcon.NoRunToStop, () => { });
+        using var icon = new TaskbarIcon { ContextMenu = menu };
+        int opened = 0;
+        AppTrayIcon.OpenMenuOurselves(icon, () => opened++);
+        try
+        {
+            icon.ShowContextMenu(new System.Drawing.Point(100, 100));
+
+            Assert.Equal(1, opened);
+            Assert.False(menu.IsOpen); // kütüphane açmadı
+            Assert.Equal(PlacementMode.MousePoint, menu.Placement); // kütüphanenin noktası menüye yazılmadı: menü imlece bağlı kalır
+        }
+        finally
+        {
+            menu.IsOpen = false;
+        }
     }
 
     // ---------------------------------------------------------------- kablo (kaynak)

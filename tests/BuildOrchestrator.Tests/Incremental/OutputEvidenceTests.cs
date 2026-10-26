@@ -291,6 +291,27 @@ public sealed class OutputEvidenceTests : IDisposable
         Assert.False(OutputEvidence.OwnFilesChanged(check, ledgerAnswer: true));
     }
 
+    /// <summary>[kullanıcı kararı 2026-10-25] Zincirlemenin olgusu (§7.6 "Behind a dependency that will build"): gerekçe
+    /// <c>OutputStale</c> ama projenin KENDİ kontrolü taze — ya da yalnız beslenen kopyası bozuk — ise bayatlık önce
+    /// derlenecek bir bağımlılıktan gelir; planlayıcı kontrolü yalnız kararın içinde <c>DependencyNewer</c>'a çeker. Kendi
+    /// girdisi ya da bir HintPath hedefi gerçekten yeniyse, kontrol defter kipindeyse ya da gerekçe başka bir şeyse olgu
+    /// yoktur.</summary>
+    [Fact]
+    public void Only_a_fresh_own_check_under_an_output_stale_reason_is_behind_a_rebuilding_dependency()
+    {
+        static OutputCheck Time(TimeVerdict verdict) =>
+            new(EvidenceMode.Time, false, verdict != TimeVerdict.FedBroken, verdict, null);
+        var ledger = new OutputCheck(EvidenceMode.Ledger, false, true, null, null);
+
+        Assert.True(OutputEvidence.BehindRebuildingDependency(Time(TimeVerdict.Fresh), WillBuildReason.OutputStale));
+        Assert.True(OutputEvidence.BehindRebuildingDependency(Time(TimeVerdict.FedBroken), WillBuildReason.OutputStale));
+        Assert.False(OutputEvidence.BehindRebuildingDependency(Time(TimeVerdict.DependencyNewer), WillBuildReason.OutputStale));
+        Assert.False(OutputEvidence.BehindRebuildingDependency(Time(TimeVerdict.OwnNewer), WillBuildReason.OutputStale));
+        Assert.False(OutputEvidence.BehindRebuildingDependency(Time(TimeVerdict.Fresh), WillBuildReason.BuiltOutside));
+        Assert.False(OutputEvidence.BehindRebuildingDependency(ledger, WillBuildReason.OutputStale));
+        Assert.False(OutputEvidence.BehindRebuildingDependency(null, WillBuildReason.OutputStale));
+    }
+
     /// <summary>§7-32, §7-33: motor derlerken çöktü / zaman aşımı — kurtarma <c>LastResult=Failed,
     /// LastRunAt=şimdi</c> yazar; yarım yazılmış çıktı ondan eski (ya da eşit) kalır ⇒ zaman kipine GİREMEZ,
     /// defter kipi.</summary>

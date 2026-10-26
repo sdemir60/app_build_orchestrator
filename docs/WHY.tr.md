@@ -2,251 +2,257 @@
 
 # Neden Build Orchestrator
 
-Aracın her parçasının ne için olduğu ve iş gününde neyi değiştirdiği,
-[FEATURES.tr.md](FEATURES.tr.md) ile aynı sırada; her maddenin arkasındaki mekanizma orada anlatılır. Her madde
-amacı, yaygın pratiği ve Build Orchestrator'da bunun yerine ne olduğunu verir.
+Aracın iş gününde neyi değiştirdiği, en önemliden başlayarak. Her başlık bir özelliği, tireden sonra da sana ne
+kazandırdığını söyler; maddeler [FEATURES.tr.md](FEATURES.tr.md) ile aynı sıradadır, her birinin arkasındaki
+mekanizma orada anlatılır. Her başlığın altında: böyle bir araç yokken çok projeli bir .NET çözümünde bu işin genelde
+nasıl gittiği — elle Visual Studio'da, kendi yazılmış bir script'le ya da her geliştiricinin kendi yöntemiyle; genel
+bir resim, belirli bir ekibin kaydı değil — ve Build Orchestrator'da bunun yerine ne olduğu. Büyük bir çözümü
+derlemek çoğu yerde beklenip geçilen bir iştir; burada izlenen bir şeydir.
 
-*Yaygın pratik* satırları, çok projeli bir .NET çözümünün böyle bir araç yokken genelde nasıl derlendiğini anlatır:
-elle Visual Studio'da, kendi yazılmış bir script'le ya da her geliştiricinin kendi yöntemiyle. Genel bir
-resimdir, belirli bir ekibin kaydı değildir.
+## Yalnız değişeni derler — daha az bekleme
 
-## Yalnız değişeni derler
-
-**Amaç:** yalnız gerçekten değişen kısmı beklemek.\
-**Yaygın pratik:** çok projeli bir çözümde bir değişikliğin hangi projelere dokunduğu kolay görülmez; bu yüzden
-çözümün tamamı ya da büyük bir kısmı yeniden derlenir, ya da bir proje atlanır ve eski bir DLL çalışma anında
-ortaya çıkar.\
-**Build Orchestrator'da:** Build yalnız değişen projeleri ve onları kullananları derler; hiçbir şey değişmediyse
-koşu derlenecek bir şey olmadığını söyleyip hemen biter.\
+**Yaygın pratik:** paylaşılan bir kütüphanede tek bir sınıfı düzeltirsin, Build'e basarsın ve bütün zincirin
+derlenmesini izlersin, çünkü hangi projelerin buna gerçekten ihtiyacı olduğunu kimse söyleyemez; ya da yalnız önemli
+sandığını derlersin ve eski bir DLL çalışma anında ortaya çıkar.\
+**Build Orchestrator'da:** daha hiçbir şeye basmadan liste hangi projelerin neden derleneceğini söyler; Build
+onları alır, gerisini atlar, derlenecek hiçbir şey yoksa bunu da söyler. Tek dosyalık bir değişiklik bir kahve
+molasına değil, gerçekten dokunduğu projelere mal olur.\
 `kaynak içeriği hash'i` · `oturumlar arası derleme defteri`
 
-## Bağımlılık sırasıyla, paralel derler
+## Sırayla ve paralel derler — aynı iş, daha kısa sürede
 
-**Amaç:** aynı işi doğru sırayla, boş duracak çekirdekleri de çalıştırarak daha kısa sürede bitirmek.\
-**Yaygın pratik:** projeler birinin aklında ya da bir script'te tutulan sırayla tek tek derlenir; biri bitmeden
-öteki başlamaz, çekirdeklerin çoğu bekler ve yanlış sıra ancak bir sonraki denemede ortaya çıkar.\
-**Build Orchestrator'da:** sıra her seferinde depodan çıkar; birbirine bağlı olmayan projeler aynı anda derlenir,
-kırılan bir proje ilgisiz olanları durdurmaz.\
-`paralel derleme için hazır-küme zamanlayıcı` · `gerçek graf için HintPath haritası`
+**Yaygın pratik:** bir script çözümleri sabit bir sırayla birbiri ardına derler; öncekisi bitmeden hiçbiri
+başlamaz, çekirdeklerin çoğu bekler, ortadaki tek bir kırık proje ilgili ilgisiz arkasındaki her şeyi durdurur.\
+**Build Orchestrator'da:** birbirinden bağımsız projeler, boş duracak çekirdeklerde yan yana derlenir; her biri
+bağımlılıkları bitip bir worker boşalır boşalmaz başlar. Kırık bir proje derlemeyi durdurmaz: ona bağlı olanlar onun
+son sağlam çıktısına karşı yine derlenir ve amber işaret alır, geri kalanı sürer.\
+`paralel derleme için hazır-küme zamanlayıcı` · `tekrarlanabilir koşu için sabit sıra`
 
-## Bağımlılık döngülerini çözer
+## Bağımlılık döngülerini çözer — elle tur atmak yok
 
-**Amaç:** döngüsel referanslı çözümleri hızlıca ve bir ritüele gerek kalmadan derlenebilir tutmak.\
-**Yaygın pratik:** projeler birbirinin DLL'ine referans verdiğinde aynı projeler belli bir sırayla birkaç kez
-derlenir ve hangisinin eski bir DLL'e karşı derlendiği hiçbir zaman tam belli olmaz; sıra zamanla ekipte sözlü bir
-alışkanlığa dönüşür.\
-**Build Orchestrator'da:** döngüdeki projeler tek Build içinde ya da Resolve cycles ile tek başına, gereken en az
-derlemeyle oturur: girdisi değişmeyen üye yeniden derlenmez; sonuç döngünün oturup oturmadığını ya da hangi projenin
+**Yaygın pratik:** projeler birbirinin DLL'ine referans verdiğinde aynı projeler, birinin bir zamanlar çıkardığı
+bir sırayla birkaç kez derlenir; arada bir adım atlanır ve hangi projenin eski bir DLL'e karşı derlendiği hiçbir
+zaman tam belli olmaz.\
+**Build Orchestrator'da:** döngü aynı Build içinde oturur, tek ihtiyacın buysa Resolve cycles ile tek başına da
+oturur; girdisi değişmeyen üye yeniden derlenmez, sonuç döngünün oturup oturmadığını ya da hangi projenin
 durdurduğunu açıkça söyler.\
 `döngü tespiti için Tarjan SCC` · `oturmanın kanıtı API yüzey hash'i` · `yalnız döngü koşusu için Resolve cycles`
 
-## Her projenin neden derleneceğini söyler
+## Bağımlılık grafını kendisi çıkarır — bakımı yapılacak script yok
 
-**Amaç:** "bunu neden derliyor?" sorusunu derleme başlamadan cevaplamak.\
+**Yaygın pratik:** derleme sırası bir script'te, bir wiki sayfasında ya da insanların hafızasında durur; yeni bir
+proje ya da referans eklenince liste eskir, derleme ya kırılır ya da sessizce eski bir DLL'i alır, ta ki biri fark
+edene kadar.\
+**Build Orchestrator'da:** sıra her seferinde deponun kendisinden okunur: bir proje ya da referans ekle, bir sonraki
+Sync onu yerine koymuş olur. Bakımı yapılacak bir şey yoktur; iki projenin birden ürettiği bir DLL de tahmin
+edilmez, adıyla söylenir.\
+`gerçek graf için HintPath haritası` · `saniyeler süren ham XML keşfi`
+
+## Bütün çözüm tek ekranda — her projeye hakimiyet
+
+**Yaygın pratik:** büyük bir derleme akıp giden bir konsoldur; hangi projelerin derlendiği, hangisinin kırıldığı ve
+neyin kaldığı sonradan metinden toparlanır, bekleme de başka bir şeyle geçirilen ölü zamandır.\
+**Build Orchestrator'da:** her proje durumuyla ekrandadır, koşu liste ve grafta olduğu anda akar: derlenen parlar,
+biten yeşile, kırılan her panelde aynı anda kırmızıya döner. Tek satır log okumadan derlemenin nerede olduğunu
+bilirsin; derleme beklemek, izleyip yönettiğin bir işe dönüşür.\
+`graf, liste, konsol ve olaylar için tek pencere` · `her panelde ortak seçim`
+
+## Satırdan derle, aç, göster — düzeltmeye tek tık
+
+**Yaygın pratik:** projenin hangi çözümde olduğunu bulursun, IDE'de açarsın, projeyi Solution Explorer'da arayıp
+derlersin; ya da klasörünü diskte ararsın.\
+**Build Orchestrator'da:** satırdaki düğme bütün koşuyu beklemeden yalnız o projeyi derler; aynı satır çözümünü
+Visual Studio'da ya da klasörünü Explorer'da açar.\
+`hızlı deneme için tek proje koşusu` · `doğru .sln için çözüm eşlemesi`
+
+## Hep elinin altında — derleme bir tuş uzakta
+
+**Yaygın pratik:** bir derleme script'i her seferinde terminalden başlatılır, bitip bitmediğini öğrenmek o
+terminale dönüp bakmayı gerektirir; ayrı bir derleme aracı da her derlemede editörden o pencereye geçmek, komutu
+çalıştırmak ve geri dönmek demektir.\
+**Build Orchestrator'da:** uygulama istersen Windows ile başlar ve tepside bekler; Visual Studio'da çalışırken tek
+kısayol arka planda derlemeyi başlatır, bir başkası bakmak istediğinde pencereyi getirir. Ekran köşesindeki küçük
+işaret derlemenin sürdüğünü gösterir, nasıl bittiğini bir bildirim söyler.\
+`arka plandan derlemek için global hotkey` · `arka planda çalışmak için tepsi ikonu`
+
+## Kendiliğinden Sync — branch geçişinde yalnız fark derlenir
+
+**Yaygın pratik:** branch değiştirdikten ya da pull yaptıktan sonra hangi projelerin etkilendiği belli olmaz; ya
+her şey derlenir ya da akla gelenler.\
+**Build Orchestrator'da:** Visual Studio'da ya da terminalde yapılan commit, pull ya da branch değişikliğinden sonra
+liste birkaç saniye içinde kendiliğinden güncellenir ve sonraki Build yalnız farklı olanı derler; Sync düğmesine
+nadiren gerek kalır.\
+`Sync'e nadiren bastıran HEAD izleme` · `ekranı bozmayan sessiz Sync`
+
+## Makineyi kullanılır tutar — derlerken çalışmaya devam
+
+**Yaygın pratik:** büyük bir çözümü bütün çekirdeklerle aynı anda derlemek makineyi kilitleyebilir: editör takılır,
+tarayıcı donar, içinde olduğun toplantının sesi kesilir; uzun derlemeler bu yüzden öğle arasını ya da gün sonunu
+bekler.\
+**Build Orchestrator'da:** derleme makineden yalnız chip'e tek tıkla ona verdiğin payı alır, bulduğu çekirdeklere
+ve boş belleğe de kendini uydurur; varsayılan profilde editör ve diğer uygulamaların kullanılır kalır, aracın o an
+ne kullandığı title bar'da görünür.\
+`makine payını sınırlayan JOB_OBJECT_CPU_RATE_CONTROL sert tavanı` · `sayfalamaya karşı çekirdeğe ve boş belleğe göre worker bütçesi` · `canlı CPU değeri için QueryInformationJobObject accounting'i`
+
+## Sakin ve erişilebilir tasarım — izlemesi keyifli, okuması kolay
+
+**Yaygın pratik:** derleme, sonuna kadar hiçbir şeyin öne çıkmadığı akan bir konsolda izlenir; birçok araç başarıyı
+ve hatayı yalnız kırmızı ve yeşille ayırır, bunları herkes ayırt edemez; animasyonları da sistemin hareket ayarı ne
+derse desin oynar.\
+**Build Orchestrator'da:** her durum bir renk, bir sembol ve bir kelimeyle söylenir, renk olmadan da okunur; koşu
+liste ve grafta sakin biçimde akar, hareket Windows'un animasyon ayarına uyar, ekran okuyucu her kontrol için bir ad
+ve gerçek bir rol alır. Derlemeyi izlemek eziyet olmaktan çıkar.\
+`tutarlı görünüm için tasarım token'ları` · `erişilebilir hareket için işletim sistemi reduced-motion sinyali` · `ekran okuyucu için UI Automation adları`
+
+## Native bir Windows uygulaması — akıcı pencere, sıkı süreç denetimi
+
+**Yaygın pratik:** derleme yardımcıları genelde komut satırı script'leridir; sırayla derleyebilir ama ne graf, ne
+gerekçe, ne canlı durum gösterir. Web teknolojisiyle yazılmış bir masaüstü aracı bunların hepsini gösterebilir ama
+yanında bir tarayıcı çalışma zamanı getirir ve başlattığı derleyicileri denetlemek için yine native koda ihtiyaç
+duyar.\
+**Build Orchestrator'da:** derleme ne kadar çıktı üretirse üretsin pencere akıcı kalır; uygulama tepside bekler,
+global kısayola cevap verir, kapanınca başlattığı her derleyici de onunla kapanır.\
+`.NET 10 üzerinde WPF, tarayıcı çalışma zamanı yok` · `süreç denetimi için Win32 P/Invoke`
+
+## Boşta hafif, yükte akıcı — gün boyu açık bırak
+
+**Yaygın pratik:** arka planda açık bırakılan geliştirici araçları zamanla bellek ve sürekli biraz işlemci tutar;
+bu yüzden gerektiğinde açılıp sonra kapatılır.\
+**Build Orchestrator'da:** uygulama tepside kalabilir: iş yokken neredeyse hiç işlemci kullanmaz, belleğin çoğunu
+geri verir ve sonraki derlemeye birkaç saniyede hazırdır.\
+`bellek için boşta motor uykusu` · `görünürlüğe bağlı animasyon, boşta sıfıra yakın CPU`
+
+## Her projenin neden derleneceğini söyler — tahmin yok
+
 **Yaygın pratik:** IDE bir projeyi neden yeniden derlediğini ya da neden atladığını söylemez; şüphe olunca her şey
-temizlenip baştan derlenir ya da çıktıda sebep aranır.\
-**Build Orchestrator'da:** her projenin adının yanında tek kelimelik bir gerekçe durur, kırmızı yalnız gerçekten
-derlenmeyen kod için yanar.\
+temizlenip baştan derlenir ya da derleme çıktısında sebep aranır.\
+**Build Orchestrator'da:** her projenin adının yanında, derleme başlamadan, tek kelimelik bir gerekçe durur; kırmızı
+yalnız gerçekten derlenmeyen kod için yanar, bu yüzden kırmızı satır her zaman dikkatini hak eder.\
 `modified ile affected ayrımı için içerik parmak izi` · `kanıta dayalı kırmızı, yanlış alarm yok`
 
-## Bayat bağımlılığı gösterir
+## Bayat bağımlılığı gösterir — gizli bayat DLL yok
 
-**Amaç:** kırık bir bağımlılığa karşı derlenmiş projeyi görünür kılmak ve onu boşuna yeniden derlememek.\
-**Yaygın pratik:** bir kütüphane derlenmediğinde üstündeki projeler onun eski DLL'iyle derlenmeye devam eder,
-uygulama çalışıyor görünür ve sorun geç fark edilir; ya da her denemede bütün zincir yeniden derlenir.\
-**Build Orchestrator'da:** kırık bir bağımlılığın arkasında bekleyen projeler tek bakışta görünür, bağımlılık
-düzelince sonraki Build'e kendiliğinden katılırlar.\
+**Yaygın pratik:** bir kütüphane derlenmediğinde üstündeki projeler onun eski DLL'iyle derlenmeye devam eder;
+uygulama çalışıyor görünür ve sorun çok sonra ortaya çıkar, ya da garantiye almak için her denemede bütün zincir
+yeniden derlenir.\
+**Build Orchestrator'da:** kırık bir bağımlılığın arkasında bekleyen projeler tek bakışta görülen amber bir işaret
+taşır, bağımlılık düzelince sonraki Build'e kendiliğinden katılırlar.\
 `hedefli yeniden derleme için kök notu` · `tek amber uyarı kanalı`
 
-## API değişmediyse bağımlıyı atlar
+## API değişmediyse bağımlıyı atlar — ortak kodda ucuz düzeltme
 
-**Amaç:** alt seviyedeki bir kütüphanede yapılan küçük bir iç değişikliğin üstündeki her şeyi derletmesini önlemek.\
 **Yaygın pratik:** paylaşılan bir kütüphanedeki tek satırlık düzeltme ona bağlı her projeyi yeniden derletir;
 katmanlı bir çözümde bu tek değişiklik uzun bir beklemeye dönüşür.\
 **Build Orchestrator'da:** iç değişiklikte yalnız kütüphanenin kendisi derlenir, üstündeki projeler yeşil kalır;
 public bir imza değişince onlar da derlenir.\
 `derlenmiş çıktının API yüzey hash'i` · `paylaşılan kütüphanede zincirleme derlemeyi kesme`
 
-## Visual Studio ile yan yana
+## Visual Studio ile yan yana — IDE derlemeleri sayılır
 
-**Amaç:** IDE'de yapılan derlemeleri çöpe atmak yerine saymak.\
-**Yaygın pratik:** ayrı bir derleme aracı IDE'nin zaten derlediğini yeniden derler; geliştiriciler sonunda ikisinden
-birini seçer.\
-**Build Orchestrator'da:** Visual Studio'da derlenen projeler yeşil görünür ve atlanır; yalnız Visual Studio'nun
+**Yaygın pratik:** ayrı bir derleme aracı IDE'nin zaten derlediğini yeniden derler; geliştiriciler sonunda birini
+seçip ötekinden kaçınır.\
+**Build Orchestrator'da:** Visual Studio'da derlediğin projeler yeşil görünür ve atlanır; yalnız Visual Studio'nun
 görmediği bir bağımlılık değiştiyse yeniden derlenir.\
 `başkasının çıktısını tanıma` · `bayat kopyayı yakalayan üst zincir`
 
-## Visual Studio'nun derlediği gibi derler
+## Visual Studio'nun derlediği gibi derler — aynı MSBuild, aynı klasörler
 
-**Amaç:** Visual Studio'nun vereceği sonucun aynısını almak.\
-**Yaygın pratik:** farklı bir derleme komutu ya da farklı argümanlar kullanan script'ler "VS'de derleniyor,
+**Yaygın pratik:** farklı bir derleme komutu çağıran ya da farklı argüman geçen script'ler "VS'de derleniyor,
 script'te derlenmiyor" türünden farklar çıkarır; eski .NET Framework projelerinde bu daha sık olur.\
-**Build Orchestrator'da:** projeler Visual Studio'nun derlediği gibi derlenir, eksik paketler yolda kendiliğinden
-gelir, makinede ek bir paket aracı gerekmez.\
+**Build Orchestrator'da:** her proje Visual Studio'nun kullandığı MSBuild.exe ile, aynı klasörlere derlenir; eski
+tip packages.config projeleri yolda restore edilir, makinede ek bir paket aracı gerekmez.\
 `MSBuild'i bulmak için vswhere` · `proje başına ayrı MSBuild.exe süreci`
 
-## Arkada süreç bırakmaz
+## Arkada süreç bırakmaz — kilitli dosya derdi yok
 
-**Amaç:** derleme durduğunda ya da araç kapandığında hiçbir derleyicinin çalışmaya devam etmemesi.\
 **Yaygın pratik:** yarıda kesilen bir derlemeden sonra arkada kalan derleyici süreçleri dosyaları kilitli tutar;
-bunlar Task Manager'da tek tek bulunur ya da makine yeniden başlatılır.\
-**Build Orchestrator'da:** uygulama nasıl kapanırsa kapansın derleyiciler de birkaç saniye içinde onunla kapanır,
-sonraki derleme kilitli bir dosyaya takılmaz.\
+bunlar Task Manager'da tek tek avlanır ya da makine yeniden başlatılır.\
+**Build Orchestrator'da:** uygulama nasıl kapanırsa kapansın, çökse bile, derleyicileri birkaç saniye içinde onunla
+kapanır; sonraki derleme kilitli bir dosyaya takılmaz.\
 `yetim sürece karşı iç içe Job Object` · `zincirleme kapanış için kill-on-close`
 
-## Güvenle durur, kaldığı yerden sürer
+## Güvenle durur, kaldığı yerden sürer — istediğin an dur
 
-**Amaç:** derlemeyi istenen anda bozuk çıktı bırakmadan durdurmak ve oradan devam etmek.\
 **Yaygın pratik:** uzun bir derlemeyi yarıda kesmek yarım yazılmış çıktılar ve hangi projelerin bittiğine dair
-belirsizlik bırakır; güvenmek için sonrasında her şey yeniden derlenir.\
+belirsizlik bırakır; garantiye almak için sonrasında her şey yeniden derlenir.\
 **Build Orchestrator'da:** Stop derlenmekte olan projelerin temiz bitmesine izin verir, yeniden Build'e basınca
 yalnız bitmeyenler derlenir.\
 `tutarlı çıktı için proje sınırında boşaltma` · `doğru devam için kayıt geçersizleme`
 
-## Yarım kalan işi toparlar
+## Yarım kalan işi toparlar — çökme tam derleme istemez
 
-**Amaç:** beklenmedik bir kesintiden sonra neyin derlendiğine dair şüpheyi ortadan kaldırmak.\
-**Yaygın pratik:** makine kilitlenir ya da derleme yarıda öldürülürse yarım yazılmış çıktılar kalır; güvenli yol
-her şeyi temizleyip yeniden derlemektir.\
+**Yaygın pratik:** makine kilitlenir ya da derleme yarıda öldürülürse yarım yazılmış çıktılar kalır; tek güvenli
+yol her şeyi temizleyip yeniden derlemektir.\
 **Build Orchestrator'da:** sonraki açılışta konsol hangi projelerin yeniden derleneceğini söyler ve yalnız onlar
 derlenir.\
 `yarım çıktıyı bulan uçuştaki-iş defteri` · `bozuk dosyaya karşı atomik yazım`
 
-## Çıktı klasörlerine dokunmaz
+## Çıktı klasörlerine dokunmaz — hiçbir şeyi değiştirmeden geç
 
-**Amaç:** aracı kullanmaya başlarken hiçbir şeyin derlendiği ya da dağıtıldığı yeri değiştirmemek.\
 **Yaygın pratik:** bazı derleme script'leri çıktıyı kendi klasörlerine yönlendirir ya da kopyalar; IDE ile script
-farklı yerlere yazınca hangi DLL'in güncel olduğu belirsizleşir.\
+farklı yerlere yazınca hangi DLL'in güncel olduğundan kimse emin olamaz.\
 **Build Orchestrator'da:** çıktı her zaman Visual Studio'nun koyduğu yerdedir; aracı kullanmaya başlamak ya da
-bırakmak çıktı düzeninde hiçbir şeyi değiştirmez.\
+bırakmak çıktı düzeninde hiçbir şeyi değiştirmez; aracı deneyip istediğin an bırakabilirsin, geri alınacak hiçbir
+şey kalmaz.\
 `değişmeyen çıktı yolu, VS ile aynı düzen` · `çıktıyı yalnız okuma`
 
-## Git'e kendiliğinden yazmaz
+## Git'e kendiliğinden yazmaz — branch'in senin kalır
 
-**Amaç:** geçmişine ve commit'lenmemiş işine asla dokunmayan bir derleme aracı.\
 **Yaygın pratik:** güncel olmak için derlemeden önce pull ya da reset yapan script'ler zaman zaman yerel
 değişiklikleri ezer ya da beklenmedik merge'ler bırakır; bu yüzden ekipler derleme script'ine git adımı koymaktan
 çekinir.\
-**Build Orchestrator'da:** depoya yalnız sen bir chip'e tıkladığında ve yalnız güvenli yoldan yazılır; Build ve
-Sync depoyu sadece okur.\
+**Build Orchestrator'da:** branch'in yalnız sen bir chip'e tıkladığında ve yalnız güvenli yoldan hareket eder;
+Build ve Sync çalışma ağacına dokunmaz, harici kopyalar da Build'den önce yalnız Pull before build açıkken
+fast-forward edilir.\
 `denetlenebilirlik için tek git yazıcısı` · `yalnız fast-forward, geçmiş korunur`
 
-## Duruma veya ada göre süzer
+## Duruma veya ada göre süzer — hatalılar tek tıkta
 
-**Amaç:** hatalı projelere, derlenenlere ya da adı bilinen bir projeye tek tıkla ulaşmak.\
 **Yaygın pratik:** uzun bir derleme çıktısında hangi projelerin hata verdiğini bulmak metni kaydırmak ya da aramak
 demektir; henüz neyin derlenmediğini anlamak elle karşılaştırma ister.\
 **Build Orchestrator'da:** bir sayaca tek tık yalnız hatalı ya da yalnız güncel projeleri gösterir, birkaç harf
-yazmak bir projeyi adıyla bulur.\
+yazmak bir projeyi adıyla bulur; graf da geri kalan her şeyi soldurur.\
 `tek tık filtre olarak sayaç chip'leri` · `projeyi hızlı bulmak için ad filtresi`
 
-## Satırdan derle, aç, göster
+## Grafı canlı gösterir — bağımlılıklar tek tıkta
 
-**Amaç:** tek bir projeyi bütün koşuyu beklemeden derlemek ve koduna tek tıkla geçmek.\
-**Yaygın pratik:** tek bir projeyi denemek için IDE'de doğru çözüm açılır, proje Solution Explorer'da bulunup
-derlenir; proje birden çok çözümdeyse ilk iş hangisini açacağını hatırlamaktır.\
-**Build Orchestrator'da:** projenin yanındaki düğme yalnız o projeyi derler; aynı satır çözümünü Visual Studio'da ya
-da klasörünü Explorer'da açar.\
-`hızlı deneme için tek proje koşusu` · `doğru .sln için çözüm eşlemesi`
+**Yaygın pratik:** bir projenin neye bağlı olduğunu ve ona neyin bağlı olduğunu öğrenmek proje dosyalarını tek tek
+açmak ya da ekipte en uzun süredir çalışana sormak demektir.\
+**Build Orchestrator'da:** bir projeye tıkla: doğrudan bağımlılıkları ve onu doğrudan kullananlar bağlantılarıyla
+öne çıkar, döngüye takılmış projeler de hemen göze çarpar.\
+`bağımlılık incelemek için odakla-sığdır` · `her zaman sığan düzen, kaydırma çubuğu yok`
 
-## Bağımlılık grafı
+## Hatayı gösterir, gürültüyü değil — logda arama yok
 
-**Amaç:** yüzlerce projenin birbirine nasıl bağlı olduğunu ve derlemenin nerede durduğunu tek bakışta görmek.\
-**Yaygın pratik:** bir projenin neye bağlı olduğunu ve neyi etkilediğini öğrenmek proje dosyalarını tek tek açmak
-ya da ekipte en uzun süredir çalışana sormak demektir.\
-**Build Orchestrator'da:** bütün çözüm gözünün önünde kalır: bir projeye tıklamak onun kullandıklarını ve onu
-kullananları öne çıkarır; derleme sırasında ve sonrasında hangi projelerin derlendiği, hangilerinin düştüğü ve
-hangilerinin bir döngüde olduğu grafta görünür.\
-`bağımlılık incelemek için odakla-sığdır` · `koşuyu izleten opaklık anlatısı`
-
-## Konsol ve proje logları
-
-**Amaç:** derleme hatasını yüzlerce uyarı satırının arasında aramadan bulmak.\
-**Yaygın pratik:** büyük bir çözümün derleme çıktısı binlerce uyarı satırı taşır; hata kaydırarak, arayarak ya da
-çıktıyı bir dosyaya yapıştırarak bulunur.\
-**Build Orchestrator'da:** konsol hataları tam, uyarıları özet olarak gösterir; bir projeye tıklamak logunu baştan
-açar ve ilk hata hemen önündedir.\
+**Yaygın pratik:** büyük bir çözümün derleme çıktısı sayfalar dolusu uyarı taşır; tek hata kaydırarak, arayarak ya
+da çıktıyı bir editöre yapıştırarak bulunur.\
+**Build Orchestrator'da:** konsol hataları tam, uyarıları kısa bir özet olarak gösterir; kırmızı projeye tıkla,
+logu baştan açılır ve ilk hata hemen önündedir.\
 `uyarı gürültüsünü kesen Compact console` · `hatayı baştan okutan proje sayfası`
 
-## Durum şeridi ve olay akışı
+## Derlemenin neresinde olduğunu hep söyler — kalan süre belli
 
-**Amaç:** derlemenin her an ne yaptığını ve ne kadar kaldığını bilmek.\
-**Yaygın pratik:** konsoldan yapılan derleme bir metin akışı basar; nereye geldiği ya da ne kadar süreceği akan
-yazıdan tahmin edilir.\
+**Yaygın pratik:** komut satırından yapılan derleme bir metin akışı basar; nereye geldiği ya da ne kadar süreceği
+akan yazıdan tahmin edilir.\
 **Build Orchestrator'da:** üstteki satır her zaman fazı, ilerlemeyi ve kalan süreyi verir; oradaki chip'ler o an
-derlenen projeleri, koşu bitince de hatalıları adıyla gösterir, tek tık uzaklıkta.\
+derlenen projeleri, koşu bitince de hatalıları adıyla gösterir; her biri tek tıkla açılır.\
 `kalan süre tahmini` · `hatalıya tek tık götüren chip'ler`
 
-## Her yerden çalışan kısayollar
+## Harici projeler, tek graf — ortak depolar doğru sırada
 
-**Amaç:** editörden ayrılmadan derleme başlatmak.\
-**Yaygın pratik:** ayrı bir derleme aracı ya da script'le her derleme, editörden o pencereye geçmek, komutu
-çalıştırmak ve geri dönmek demektir.\
-**Build Orchestrator'da:** Visual Studio'da çalışırken tek kısayol arka planda derlemeyi başlatır; geçilecek bir
-pencere yoktur, sonuç bildirim olarak gelir.\
-`arka plandan derlemek için global hotkey` · `Visual Studio gibi F5/F6/F7`
-
-## Tepsi, açılışta başlama, bildirimler
-
-**Amaç:** derleme aracının gün boyu hazır olması ama yolu kesmemesi.\
-**Yaygın pratik:** bir derleme script'i her seferinde terminalden başlatılır, bitip bitmediğini öğrenmek o
-terminale geri dönmeyi gerektirir.\
-**Build Orchestrator'da:** uygulama istenirse Windows ile başlar ve tepside bekler; ekran köşesindeki küçük işaret
-derlemenin sürdüğünü gösterir, sonucu bir bildirim söyler.\
-`arka planda çalışmak için tepsi ikonu` · `sonuç için Windows bildirimi`
-
-## Kendiliğinden Sync
-
-**Amaç:** "neyin derleneceği" bilgisini her an depoyla uyumlu tutmak.\
-**Yaygın pratik:** branch değiştirdikten ya da pull yaptıktan sonra hangi projelerin etkilendiği belli olmaz; ya
-her şey derlenir ya da akla gelenler.\
-**Build Orchestrator'da:** Visual Studio'da ya da terminalde yapılan commit veya branch değişikliğinden sonra liste
-birkaç saniye içinde kendiliğinden güncellenir; Sync düğmesine nadiren gerek kalır.\
-`Sync'e nadiren bastıran HEAD izleme` · `ekranı bozmayan sessiz Sync`
-
-## Harici projeler, tek graf
-
-**Amaç:** başka depolarda duran paylaşılan kütüphaneleri ana çözümle birlikte, doğru sırayla derlemek.\
-**Yaygın pratik:** ortak kütüphaneler ayrı bir depodaysa önce o depo güncellenip derlenir, sonra ana çözüm;
-adımlardan biri unutulunca eski bir kütüphaneyle çalışılır.\
-**Build Orchestrator'da:** başka depolardaki projeler aynı listenin en üstünde görünür, önce onlar güncellenip
-derlenir; commit'lenmemiş iş varsa araç güncellemek yerine durur.\
+**Yaygın pratik:** ortak kütüphaneler ayrı bir depodaysa önce o depo güncellenip derlenir, sonra ana çözüm; bir adım
+unutulursa farkında olmadan eski bir kütüphaneyle çalışılır.\
+**Build Orchestrator'da:** başka depolardaki projeler aynı listenin en üstünde görünür ve önce onlar derlenir, açık
+bıraktıysan öncesinde güncellenir; commit'lenmemiş iş varsa araç güncellemek yerine durur.\
 `çok kökten tek grafa tarama` · `her Build öncesi fast-forward güncelleme`
 
-## Bakım: Deep Clean, Optimize, döngüler
+## Bozuk çalışma alanını onarır — yeniden klon yok
 
-**Amaç:** "bende derlenmiyor" durumunu tek tıkla gidermek.\
-**Yaygın pratik:** taze bir klondan, yarım kalmış bir paket indirmesinden ya da karışmış .NET sürümlerinden sonra
-derleme anlaşılmaz hatalar verir; bin ve obj klasörleri elle silinir, paketler yeniden indirilir, bazen depo
-baştan klonlanır.\
-**Build Orchestrator'da:** bir düğme çalışma alanını sıfırlar, diğeri eksik paketleri getirir ve kırık referansları
-adıyla söyler; ardından liste kendiliğinden yenilenir.\
-`temiz çalışma alanı için bin/obj silme` · `"bende derlenmiyor"u düzelten NuGet restore`
-
-## Perf profilleri ve canlı maliyet
-
-**Amaç:** makine derlerken kullanılabilir kalsın.\
-**Yaygın pratik:** büyük bir çözümü bütün çekirdeklerle aynı anda derlemek makineyi kilitleyebilir: editör,
-tarayıcı ve toplantı uygulaması takılır ya da donar; uzun derlemeler bu yüzden bir molayı bekler.\
-**Build Orchestrator'da:** paralellik makinenin çekirdek sayısına ve boş belleğine kendiliğinden uyar, derlemenin
-makineden ne kadar alacağı da tek tık uzaktadır; varsayılan profilde pencere ve diğer uygulamalar akıcı kalır,
-derlemenin kullandığı kaynak title bar'da görünür.\
-`makine payını sınırlayan Job Object CPU sınırı` · `sayfalamaya karşı worker bütçesi` · `canlı şerit için job muhasebesi`
-
-## Boşta hafif, yükte akıcı
-
-**Amaç:** gün boyu açık kalıp makineye yük olmayan bir araç.\
-**Yaygın pratik:** arka planda açık bırakılan geliştirici araçları zamanla yüzlerce megabayt bellek ve sürekli biraz
-işlemci tutar; bu yüzden gerektiğinde açılıp sonra kapatılır.\
-**Build Orchestrator'da:** uygulama tepside kalabilir: iş yokken neredeyse hiç işlemci kullanmaz, belleğin çoğunu
-geri verir ve sonraki derlemeye birkaç saniyede hazırdır.\
-`bellek için boşta motor uykusu` · `görünürlüğe bağlı animasyon, boşta sıfıra yakın CPU`
-
-## Sakin ve erişilebilir tasarım
-
-**Amaç:** derlemeyi izlemeyi bir konsol metni duvarı olmaktan çıkarıp keyifli kılmak.\
-**Yaygın pratik:** derleme, sonuna kadar hiçbir şeyin öne çıkmadığı akan bir konsolda izlenir ve sonuç metnin
-içinden okunur.\
-**Build Orchestrator'da:** her projenin durumu bir renk, bir sembol ve bir kelimeyle gösterilir, koşu liste ve
-grafta sakin biçimde akar, arayüz Windows'un animasyon ve erişilebilirlik ayarlarına uyar.\
-`tutarlı görünüm için tasarım token'ları` · `erişilebilir hareket için işletim sistemi reduced-motion sinyali`
+**Yaygın pratik:** bir branch değişikliğinden, .NET sürümü değişiminden ya da yarım kalmış bir paket indirmesinden
+sonra derleme, asıl sebebin (obj'de başka bir framework'ün artıkları ya da diskte olmayan paketler) yakınından bile
+geçmeyen hatalar verir; bin ve obj elle silinir, paketler yeniden indirilir, bazen depo baştan klonlanır.\
+**Build Orchestrator'da:** Deep Clean tek tıkla her projenin bin ve obj klasörlerini siler, Optimize eksik
+paketleri geri getirir ve hâlâ kırık olanı adıyla söyler; liste kendiliğinden yenilenir, sonraki Build temiz
+başlar. Başka bir framework'ten obj'de kalan NuGet artıkları daha koşu başında, sana bir öğleden sonraya mal
+olmadan işaretlenir.\
+`temiz çalışma alanı için bin/obj silme` · `"bende derlenmiyor"u düzelten NuGet restore` · `koşu başı uyarısı, hiçbir şey silinmez`

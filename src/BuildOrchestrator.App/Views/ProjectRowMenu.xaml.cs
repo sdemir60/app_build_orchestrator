@@ -24,14 +24,8 @@ public partial class ProjectRowMenu : UserControl
     /// <summary>UIA rolü — gerekçe ve ölçüm <see cref="UserControlRolePeer"/>'de.</summary>
     protected override AutomationPeer OnCreateAutomationPeer() => new UserControlRolePeer(this, AutomationControlType.Menu);
 
-    // design-v1.11.0 BuildApp.jsx:608-613 satır ölçüleri — bileşenin KENDİ değerleri, token DEĞİL.
-    private const double RowHeight = 26;
-    private const double IconSlot = 13;
-    private const double RowGap = 8;
-
-    /// <summary>Pasif (koşu uçuşta) maddenin opaklığı — prototipin <c>busy</c> hâli (design-v1.11.0
-    /// BuildApp.jsx:609 <c>opacity: busy ? 0.45 : 1</c>).</summary>
-    internal const double DisabledOpacity = 0.45;
+    // Satır ölçüleri (yükseklik, iç pay, ikon yuvası, boşluk, pasif opaklık) MenuRowMetrics'tedir: tepsinin sağ tık menüsü AYNI
+    // satırı çizer, ölçüler tek kaynaktan okunur.
 
     /// <summary>Menünün maddeleri — Build menüsüyle AYNI üçlü (aynı <c>Kind</c> anahtarları, aynı ikonlar).</summary>
     internal static readonly IReadOnlyList<(string Kind, string Label)> Items =
@@ -83,10 +77,10 @@ public partial class ProjectRowMenu : UserControl
     private Border BuildRow(string kind, string label)
     {
         var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(IconSlot) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(MenuRowMetrics.IconSlot) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-        var icon = IconVisual.Make(this, BuildMenu.IconKeyFor(kind), "Brush.TextDim", IconSlot);
+        var icon = IconVisual.Make(this, BuildMenu.IconKeyFor(kind), "Brush.TextDim", MenuRowMetrics.IconSlot);
         icon.HorizontalAlignment = HorizontalAlignment.Center;
         icon.VerticalAlignment = VerticalAlignment.Center;
         grid.Children.Add(icon);
@@ -94,7 +88,7 @@ public partial class ProjectRowMenu : UserControl
         var text = new TextBlock
         {
             Text = label,
-            Margin = new Thickness(RowGap, 0, 0, 0),
+            Margin = MenuRowMetrics.LabelMargin,
             VerticalAlignment = VerticalAlignment.Center,
         };
         text.SetResourceReference(FontSizeProperty, "FontSize.Sm");
@@ -104,8 +98,8 @@ public partial class ProjectRowMenu : UserControl
 
         var row = new Border
         {
-            Height = RowHeight,
-            Padding = new Thickness(7, 0, 7, 0),
+            Height = MenuRowMetrics.RowHeight,
+            Padding = MenuRowMetrics.RowPadding,
             Child = grid,
         };
         row.SetResourceReference(Border.CornerRadiusProperty, "Radius.Sm");
@@ -122,7 +116,7 @@ public partial class ProjectRowMenu : UserControl
     {
         bool enabled = _runActionsEnabled;
         row.IsEnabled = enabled;
-        row.Opacity = enabled ? 1.0 : DisabledOpacity; // prototip: busy ? 0.45 : 1
+        row.Opacity = enabled ? 1.0 : MenuRowMetrics.DisabledOpacity; // prototip: busy ? 0.45 : 1
         row.Cursor = enabled ? Cursors.Hand : Cursors.Arrow;
         row.ToolTip = enabled ? null : AccessibilityNames.BuildBusyTooltip;
     }

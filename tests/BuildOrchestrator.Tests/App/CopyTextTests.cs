@@ -23,13 +23,13 @@ public class CopyTextTests
 {
     // ---------------------------------------------------------------- [A13/T3a · a8] panel caps başlıkları + ← Back
 
-    /// <summary>[v1.18.0 §9 — DEĞİŞEN KURAL] Back eskiden düz bir Unicode metin butonuydu
-    /// (<c>Content="&#x2190; Back"</c>, tek bir <c>string</c>) — tasarım DS Ghost.Sm + çizilmiş
-    /// <c>Icon.ArrowLeft</c> (Icons.xaml'de zaten <c>Icon.Back</c> adıyla duruyordu) ister. İçerik artık bir
-    /// ikon + metin <c>StackPanel</c>'dır (ConsoleHeader.xaml.cs ctor); "Back" sözcüğü hâlâ BİREBİR ama artık
-    /// o panelin İÇİNDEKİ <c>TextBlock</c>'ta.</summary>
+    /// <summary>Panel başlıklarının metni birebir.
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-25]</b> Test eskiden konsol başlığındaki Back butonunun "Back"
+    /// sözcüğünü de birebir pinlerdi (v1.18.0 §9: DS Ghost.Sm içeriğindeki ikon + metin <c>StackPanel</c>'ın
+    /// <c>TextBlock</c>'u). Back kalktı — proje sayfasının başlığı yalnız adı taşır; gerekçe
+    /// <see cref="ConsoleHeaderDesignTests"/>'in sınıf özetinde.</para></summary>
     [StaFact]
-    public void Panel_caption_labels_and_the_back_button_glyph_text_are_verbatim()
+    public void Panel_caption_labels_are_verbatim()
     {
         var host = DsResources.NewHost();
         var shell = new ShellRoot();
@@ -47,11 +47,6 @@ public class CopyTextTests
         var headers = DsResources.RealizedObjects(shell).OfType<PanelHeader>().Select(h => h.Text).ToList();
         Assert.Contains("PROJECTS", headers);
         Assert.Contains("EVENT STREAM", headers);
-
-        // "Back" — artık DS Ghost.Sm içeriğindeki (ikon + metin StackPanel) TextBlock'ta.
-        var backContent = (System.Windows.Controls.StackPanel)shell.ConsoleHeaderControl.BackButton.Content;
-        var backLabel = backContent.Children.OfType<System.Windows.Controls.TextBlock>().Single();
-        Assert.Equal("Back", backLabel.Text);
 
         GC.KeepAlive(window);
     }

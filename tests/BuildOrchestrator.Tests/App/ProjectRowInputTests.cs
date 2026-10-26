@@ -306,7 +306,7 @@ public class ProjectRowInputTests
         menu.SetRunActionsEnabled(false); // bir koşu uçuşta: menü açılır ama maddeler pasiftir
         Assert.All(rows, r => Assert.False(r.IsEnabled));
         Assert.All(rows, r => Assert.Equal(BuildOrchestrator.App.AccessibilityNames.BuildBusyTooltip, r.ToolTip));
-        Assert.All(rows, r => Assert.Equal(ProjectRowMenu.DisabledOpacity, r.Opacity));
+        Assert.All(rows, r => Assert.Equal(MenuRowMetrics.DisabledOpacity, r.Opacity));
         Assert.True(ToolTipService.GetShowOnDisabled(rows[2]));
 
         menu.SetRunActionsEnabled(true);
@@ -390,7 +390,7 @@ public class ProjectRowInputTests
 
         Assert.Equal(3, rows.Count);
         Assert.All(rows, r => Assert.False(r.IsEnabled));
-        Assert.All(rows, r => Assert.Equal(ProjectRowMenu.DisabledOpacity, r.Opacity));
+        Assert.All(rows, r => Assert.Equal(MenuRowMetrics.DisabledOpacity, r.Opacity));
         Assert.All(rows, r => Assert.Equal(BuildOrchestrator.App.AccessibilityNames.BuildBusyTooltip, r.ToolTip));
 
         rows[0].RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)

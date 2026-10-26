@@ -33,8 +33,9 @@ public enum VisualStatus
     /// <summary>Koşu içinde "az önce derlendi" — <see cref="Current"/> ile aynı fırçalar, ayrı tutulur.</summary>
     Succeeded,
     /// <summary>[design v1.20.0 §1.4 · §5] <b>YALNIZ run-story yüzeyleri</b> için: "bu koşu onu derlemedi"
-    /// (event stream'in atlama satırı, konsol başlığının koşu sonucu). Durum yüzeyleri (satır, node, sayaç)
-    /// bunu HİÇ almaz — <see cref="VisualStatuses.For"/> atlanan projeyi kendi çıktı durumuna düşürür.</summary>
+    /// (event stream'in atlama satırı; konsol başlığı da eskiden koşu sonucunu böyle çizerdi — kullanıcı kararıyla
+    /// 2026-10-25'te kalktı). Durum yüzeyleri (satır, node, sayaç) bunu HİÇ almaz — <see cref="VisualStatuses.For"/>
+    /// atlanan projeyi kendi çıktı durumuna düşürür.</summary>
     Skipped,
 }
 
@@ -73,10 +74,9 @@ public static class VisualStatuses
         _ => OfRun(status),
     };
 
-    /// <summary>[design v1.20.0 §1.4] RUN-STORY yüzeyleri (konsol başlığının koşu sonucu) için koşu statüsü →
-    /// görsel durum — <see cref="GraphStatus"/>'tan <see cref="VisualStatus"/>'a TEK eşleme yeri (kopya
-    /// YASAK; <see cref="For"/> da koşu dallarını buradan okur). Burada <c>Skipped</c> kendisidir (—);
-    /// motorun hakkında konuşmadığı proje <see cref="VisualStatus.Unknown"/>'dır.</summary>
+    /// <summary>[design v1.20.0 §1.4] Koşu statüsü → görsel durum, çıktı durumu okunmadan — <see cref="GraphStatus"/>'tan
+    /// <see cref="VisualStatus"/>'a TEK eşleme yeri (kopya YASAK; <see cref="For"/> koşu dallarını buradan okur). Burada
+    /// <c>Skipped</c> kendisidir (—); motorun hakkında konuşmadığı proje <see cref="VisualStatus.Unknown"/>'dır.</summary>
     public static VisualStatus OfRun(GraphStatus status) => status switch
     {
         GraphStatus.Queued => VisualStatus.Queued,

@@ -2,45 +2,147 @@ English | [Türkçe](FEATURES.tr.md)
 
 # Features
 
-What Build Orchestrator does and how it does it, most important first. Each entry is a short statement, the
-mechanism behind it and a few tags naming the technique. Why each of these matters is in [WHY.md](WHY.md); how
-to use them step by step is in the [User guide](USER-GUIDE.md); the full technical reference is
-[ARCHITECTURE.md](../ARCHITECTURE.md).
+What Build Orchestrator does and how it does it, most important first: the entries you feel on a normal day come
+first. Each entry is a short statement, the mechanism behind it and a few tags naming the technique. Why each of
+these matters is in [WHY.md](WHY.md); how to use them step by step is in the [User guide](USER-GUIDE.md); the full
+technical reference is [ARCHITECTURE.md](../ARCHITECTURE.md).
 
 ## Builds only what changed
 
-**What:** Build compiles only the projects whose sources changed and the projects that depend on them; everything
-else is skipped as up to date.\
+**What:** Change one file and Build compiles that project and the projects that use it, nothing else; everything
+else is skipped as up to date, and when nothing changed the run ends almost at once with nothing to build.\
 **How:** Each project's inputs on disk (the .csproj, its items, the nearest Directory.Build files) are hashed and
 compared with its last successful build. Git is never consulted, an output's timestamp alone never counts as up to
 date, and a deleted or overwritten output is rebuilt even when the sources are the same.\
 `content hash of sources` · `digest cache keyed by size and time` · `output evidence to catch deleted DLLs` · `build ledger across sessions`
 
-## Dependency order, in parallel
+## Builds in order, in parallel
 
 **What:** Projects build in their real dependency order, and projects that do not wait on each other build at the
-same time; a failure holds back only its own dependents.\
-**How:** Every .csproj and .sln under the repository root is read as raw XML, and dependencies come from project
-references and HintPaths alike. Each free worker takes the next project whose dependencies are green, and each
-project runs in its own MSBuild.exe.\
-`HintPath map for the real graph` · `ready-set scheduler for parallel builds` · `raw XML discovery in seconds` · `deterministic order for repeatable runs`
+same time. A failure does not stall the run: the projects that depend on it build against its last good output and
+are flagged, and the rest carry on.\
+**How:** The graph is sorted topologically with a stable tie-break, so the same repository always yields the same
+plan. Each free worker takes the next project whose dependencies have finished, and each project runs in its own
+MSBuild.exe.\
+`ready-set scheduler for parallel builds` · `Kahn topological sort for the build order` · `deterministic order for repeatable runs`
 
 ## Resolves dependency cycles
 
-**What:** Projects that reference each other's output stay in the plan: the cycle builds as one unit, in as few
-rounds as it takes for the APIs they read to settle, and the result says whether it converged.\
-**How:** Cycles are found as strongly connected components and share one signature; Build settles them inside the
-whole run, while Resolve cycles runs only the cycles and the stale projects they need. The first round builds only
-the members that need it, a member builds again only if a sibling API it reads has changed, up to a fixed cap, and
-a group whose broken root still fails is skipped instead of paying for its rounds again.\
+**What:** Circular references do not break the plan. Projects that reference each other's output build together as
+one unit, in as few rounds as it takes for the APIs they read to settle, and the result says plainly whether the
+cycle converged or which project stopped it.\
+**How:** Cycles are found as strongly connected components and share one signature. Build settles them inside the
+whole run, while Resolve cycles, the third button in the maintenance box, runs only the cycles and the stale projects
+they need. The first round builds only the members that need it, a member builds again only if a sibling API it reads
+has changed, up to a fixed cap, and a group whose broken root still fails is skipped instead of paying for its rounds
+again.\
 `Tarjan SCC for cycle detection` · `barriered rounds, no DLL read mid-write` · `API surface hash as proof of convergence` · `Resolve cycles for a cycle-only run`
+
+## Maps dependencies on its own
+
+**What:** Point it at the repository root and it finds every project and how they depend on each other. There is
+no project list to keep by hand and no build order to maintain in a script: a new project or a new reference is in
+the plan at the next Sync.\
+**How:** Every .csproj under the repository root is read as raw XML and every .sln for the projects it lists,
+together with the projects your external cards point to; MSBuild is never evaluated for discovery. Dependencies come
+from HintPaths, matched to the project that produces the DLL, and from ProjectReferences. A DLL built in another
+repository becomes a real dependency once that repository is added as an external card, and a DLL that two projects
+claim is reported by name instead of guessed.\
+`raw XML discovery in seconds` · `HintPath map for the real graph` · `ProjectReference as a second signal` · `evaluation cache keyed by length and time`
+
+## Whole solution on one screen
+
+**What:** The dependency graph, the project list, the console and the event stream share one calm, dark window, so
+the whole solution and the run in progress stay in view: every project's state, what is building now, what failed
+and why. A build stops being a wall of scrolling text and becomes something you watch play out, row by row and node
+by node.\
+**How:** Title bar and status ribbon on top, graph and list on the left, console and event stream on the right, the
+action bar at the bottom; three layouts (Quad, List, Focus) and draggable splitters are remembered. Every panel is
+painted from the same project states, one click selects a project in all of them, and a hidden graph does not draw.\
+`one window for graph, list, console and events` · `one selection across every panel` · `layout modes to choose a focus` · `remembered splitters`
+
+## Row actions: build, open, reveal
+
+**What:** Hovering a row shows Build this project, a menu with Build, Rebuild and Clean, Reveal in Explorer and
+Open in Visual Studio; right-click opens the same menu, and a run started from a row builds that project alone,
+even when nothing changed.\
+**How:** The run is planned in full and cut down to the one project; its dependencies are not built, and a stale
+one is reported on the row and in the log. Open in Visual Studio opens the project's solution in a new Visual
+Studio and asks which one when the project belongs to several; Reveal in Explorer shows the .csproj selected.\
+`single-project runs for quick tries` · `stale-dependency note against hidden DLL risk` · `vswhere to find devenv` · `solution map to open the right .sln`
+
+## Always at hand
+
+**What:** The app can start with Windows and wait in the tray, hidden if you like; from anywhere, Shift+Space shows
+or hides the window and Ctrl+Shift+Space starts a Build without bringing it up. A small animated mark in the screen
+corner shows a build is running, a Windows notification reports the result, and closing the window only hides it in
+the tray.\
+**How:** Start with Windows uses the per-user Run key, so no admin rights are needed. The global shortcuts are
+registered with Windows and work while the window is behind Visual Studio or in the tray. Close to tray, Start with
+Windows, Start minimized to tray and Show notifications live in Settings → General; the tray menu has Stop and Exit,
+clicking the icon brings the window back, and a second launch brings the running window forward.\
+`global hotkeys to build from the background` · `tray icon to work in the background` · `per-user Run key, no admin` · `Windows notification for the result`
+
+## Syncs on its own
+
+**What:** Sync scans the repository and external roots, builds the graph, previews which projects will build and
+measures the distance to the remote, without compiling anything; commits, checkouts, pulls, merges and rebases
+made in a terminal or in Visual Studio refresh it on their own.\
+**How:** A manual Sync fetches refs only, then scans and decides, and carries on with the local HEAD when offline.
+The repository's HEAD is watched with file notifications instead of polling; once git has settled a Sync runs
+by itself, and unless the branch changed it is a quiet one that keeps the console, the selection and the scroll
+position.\
+`ref-only fetch, working tree untouched` · `HEAD watch so Sync is rarely pressed` · `quiet Sync that keeps the screen` · `waits during a half-done merge`
+
+## Keeps the machine usable
+
+**What:** A build does not take the whole machine: by default it leaves processor time and memory for the editor,
+the browser and everything else you have open. The perf chip switches between Full, Balanced (the default) and
+Light, and the resource strip in the middle of the title bar shows what the tool costs right now: CPU, memory and
+parallelism with the profile.\
+**How:** A profile sets the parallelism, and puts a priority class and, except on Full, a hard CPU cap on the job
+that holds only the compilers, so the window, git and Sync stay at full speed. At run start the worker count is
+fitted to the processors and the free memory, leaving a reserve for the rest of the machine. The strip reads the
+processor time from the job's own accounting and the memory as private bytes, without listing the machine's
+processes.\
+`JOB_OBJECT_CPU_RATE_CONTROL hard cap to limit the machine share` · `worker budget by cores and free memory against paging` · `QueryInformationJobObject accounting for the live CPU figure` · `GetProcessMemoryInfo private bytes for the live RAM figure`
+
+## Calm, accessible design
+
+**What:** The interface uses one dark theme with amber as its only accent; colour speaks only about state and every
+state is also said with a glyph and a word, transitions turn instant when Windows animations are off, and screen
+readers and the keyboard are supported.\
+**How:** Colours, sizes, type and motion come from one token system, and the Geist fonts ship with the app. Motion
+follows the Windows animation setting live, and every control reports one accessible name and a real role.\
+`design tokens for a consistent look` · `OS reduced-motion signal for accessible motion` · `UI Automation names for screen readers` · `embedded fonts, same look everywhere`
+
+## A native Windows app
+
+**What:** Build Orchestrator is a Windows desktop application written in WPF, chosen over a WebView2 hybrid,
+Avalonia and WinUI 3. There is no browser runtime inside, and the tray, the notifications, the global shortcuts and
+the control over every compiler it starts are Windows' own.\
+**How:** The interface runs on WPF and .NET 10, and the build engine runs in a separate process, so the window stays
+responsive however much output MSBuild produces. Process control goes straight to Win32: Job Objects and
+CreateProcessW for the compilers, RegisterHotKey for the global shortcuts. The app installs per user with Velopack.\
+`WPF on .NET 10, no browser runtime` · `Win32 P/Invoke for process control` · `engine and UI in separate processes`
+
+## Light idle, smooth under load
+
+**What:** The engine shuts down after a few idle minutes and starts again on the next job; with the window in the
+tray or behind others the app spends next to no CPU, memory is handed back after each operation, and the window
+does not freeze even in runs of hundreds of projects.\
+**How:** Stop the engine when idle (on by default) puts the engine to sleep, and the ribbon says Starting the
+engine when it wakes. Animations nobody can see stop, events are processed in small time slices, and the list
+builds the visible rows first.\
+`idle engine sleep to save memory` · `visibility-bound animation, near-zero idle CPU` · `memory trim after each operation` · `time-sliced events, no frozen UI`
 
 ## Says why each project builds
 
-**What:** Before a run starts, every row says why its project will build (modified, modified · local, affected,
-never built, failed) or that it is up to date, and the tooltip gives the detail.\
+**What:** No more guessing why something rebuilds: before a run starts, every row says why its project will build
+(modified, modified · local, affected, never built, failed) or that it is up to date, and the tooltip gives the
+detail.\
 **How:** Sync previews the decision a full Build would make: modified when the project's own files changed,
-affected when only a dependency did, local when the change is also uncommitted in git. Red only ever means a
+affected when only a dependency or the configuration did, local when the change is also uncommitted in git. Red only ever means a
 compiler error proven for today's source.\
 `content fingerprint for modified vs affected` · `git status for the local mark` · `evidence-based red, no false alarms`
 
@@ -91,11 +193,11 @@ While a Sync, Deep Clean, Optimize, checkout or pull runs, build commands are re
 ## Leaves no orphaned processes
 
 **What:** Whether the app is closed, crashes or is killed from Task Manager, no MSBuild.exe or child of it is left
-behind, and the window stays responsive however much output MSBuild produces.\
-**How:** The app, its build engine and every MSBuild.exe live in nested Windows Job Objects; when the last handle
-closes, Windows ends the whole tree. Each child starts suspended, joins the job and only then runs, so nothing
-escapes in between.\
-`nested Job Objects against orphans` · `kill-on-close for cascading shutdown` · `suspended start to close the gap` · `separate engine for a smooth UI`
+behind.\
+**How:** The build engine and every MSBuild.exe live in nested Windows Job Objects that the app owns; when the app's
+last handle closes, Windows ends the whole tree. Each child starts suspended, joins the job and only then runs, so
+nothing escapes in between.\
+`nested Job Objects against orphans` · `kill-on-close for cascading shutdown` · `suspended start to close the gap`
 
 ## Stops safely, then continues
 
@@ -130,7 +232,8 @@ for, where MSBuild removes the outputs the project itself recorded.\
 ## Never writes to git uninvited
 
 **What:** Sync, Build and background work never write to the repository: pull, reset, switch, rebase, commit and
-push never run on their own, and each of the three moves that do write to git is a click you make.\
+push never run on their own, and each of the three moves that do write to git is your call: a click on a chip, or
+a setting you leave on.\
 **How:** The three write paths (a fast-forward from the N behind chip, a checkout from the branch chip, and updating
 external working copies when you leave that on) live in one file, and a source test forbids git write commands
 anywhere else. Reads such as status, refs and fetch go through a separate path.\
@@ -145,13 +248,15 @@ maintenance, checkout, pull), shows an amber warning if the engine goes silent. 
 decision is yours.\
 `process watch for engine death` · `answer-due windows against false alarms` · `one-click restart`
 
-## One window, four panels
+## Exits without loose ends
 
-**What:** The dependency graph, the project list, the console and the event stream share one window, with three
-layouts (Quad, List, Focus) and draggable splitters that are remembered.\
-**How:** Title bar and status ribbon on top, graph and list on the left, console and event stream on the right, the
-action bar at the bottom. The layout and splitter positions are saved, and a hidden graph does not draw.\
-`everything at a glance` · `layout modes to choose a focus` · `remembered splitters`
+**What:** The power button in the title bar, Ctrl+Q, Exit in the tray and, with Close to tray off, the window's
+close button quit the app: with nothing running it closes at once, otherwise a card says what is running, which
+processes will end and what will be lost.\
+**How:** Stop and exit ends a run with a hard stop and cuts a Sync, Deep Clean or Optimize short, but waits for a
+branch switch or pull so git is never left half-way. A closing screen shows the steps, and the app leaves together
+with its engine and compilers.\
+`one definition of busy for the right choice` · `job process count to show what ends` · `waits for git writes` · `in-flight ledger so the next Build recovers`
 
 ## Project list at a glance
 
@@ -159,8 +264,7 @@ action bar at the bottom. The layout and splitter positions are saved, and a hid
 decision, warning and duration: green is up to date, plain grey will build, red is a compiler error, and a
 building row breathes amber.\
 **How:** Strip, dot, glyph and graph node are all painted from one state value. During a run the list keeps the
-building edge in view until you scroll and returns to it after a few idle seconds, and one click selects the same
-project in every panel.\
+building edge in view until you scroll and returns to it after a few idle seconds.\
 `colour + glyph + text, colour-blind safe` · `one state source for every surface` · `follow mode to track the run` · `sticky layer headers`
 
 ## Filters by status or name
@@ -172,38 +276,28 @@ case-insensitive substring. The failed-project chips in the ribbon open the fail
 filter survives builds and Syncs.\
 `counter chips as one-click filters` · `OR/AND combination for a targeted list` · `name filter to find a project fast`
 
-## Row actions: build, open, reveal
+## Shows the graph, live
 
-**What:** Hovering a row shows Build this project, a menu with Build, Rebuild and Clean, Reveal in Explorer and
-Open in Visual Studio; right-click opens the same menu, and a run started from a row builds that project alone,
-even when nothing changed.\
-**How:** The run is planned in full and cut down to the one project; its dependencies are not built, and a stale
-one is reported on the row and in the log. Open in Visual Studio opens the project's solution in a new Visual
-Studio and asks which one when the project belongs to several; Reveal in Explorer shows the .csproj selected.\
-`single-project runs for quick tries` · `stale-dependency note against hidden DLL risk` · `vswhere to find devenv` · `solution map to open the right .sln`
-
-## The dependency graph
-
-**What:** All projects are drawn as small nodes in build-order bands that always fit the panel; selecting a node
-fits it with its direct dependencies and dependents and draws the links, and a run plays out on the graph as a
-calm play of light.\
+**What:** All projects are drawn as small nodes in build-order bands that always fit the panel. Select a node and it
+is fitted with its direct dependencies and dependents and the links between them; during a run the graph plays out
+as a calm play of light, so you see where the build is without reading a line.\
 **How:** The bands match the list's groups, and there is no permanent web of edges. Every node is painted from the
 same state as its row, so failed projects stay red and projects in a cycle show as amber cubes. During a run
 waiting nodes dim, building ones glow with amber beads around them, and at the end the projects built in this run
 light up one by one.\
 `always-fit layout, no scrollbars` · `focus-and-fit to inspect dependencies` · `opacity story to follow the run` · `shared hover with the list`
 
-## Console and project logs
+## Shows errors, not noise
 
-**What:** The console tells the story of the run as coloured, selectable plain text; Compact console keeps only
-what is useful from each project (errors in full, the first distinct warnings, the rest counted by code), and
-clicking a project turns the console into that project's full log.\
+**What:** The console tells the story of the run as coloured, selectable plain text, and Compact console keeps only
+what is useful from each project: errors in full, the first distinct warnings, the rest counted by code. Clicking a
+project turns the console into that project's full log, opened at the top with the first error in front of you.\
 **How:** Project logs and the console narrative are written to a folder per run on disk. The console keeps a
-bounded number of lines on screen and reloads from disk when you scroll up, and a project page opens at its first
-line, with the first error in front of you.\
+bounded number of lines on screen and reloads from disk when you scroll up, so nothing is lost and the console's
+memory stays bounded however long the run.\
 `disk-first logs, nothing lost` · `Compact console to cut warning noise` · `project page to read an error from the top` · `fixed memory budget for long runs`
 
-## Status ribbon and event stream
+## Says where the build stands
 
 **What:** The ribbon under the title bar always shows what was asked last, the current phase, progress, the time
 left and the error state; the event stream lists the run's events one line each, in order.\
@@ -213,46 +307,13 @@ is amber while work runs and neutral after. Next to it sit the phase line, chips
 place.\
 `persistent label for what was asked last` · `remaining-time estimate` · `failure chips, one click to the failed` · `event stream as the run's timeline`
 
-## Shortcuts that work from anywhere
+## Shortcuts like Visual Studio
 
 **What:** In the window, F5 builds, F6 rebuilds, F7 cleans, Ctrl+F filters, F1 opens About, Esc closes the top
-layer, stops the build or — with nothing left to do — closes the window like X, and Ctrl+Q exits; from anywhere,
-Shift+Space shows or hides the window and Ctrl+Shift+Space starts a Build without bringing it up.\
+layer, stops the build or — with nothing left to do — closes the window like X, and Ctrl+Q exits.\
 **How:** Window and global shortcuts come from one catalogue that also draws About → Shortcuts, the menu badges and
-the tooltips. The global ones are registered with Windows and work while the window is behind Visual Studio or in
-the tray, and the result arrives as a notification.\
-`F5/F6/F7 like Visual Studio` · `global hotkeys to build from the background` · `one shortcut catalogue for consistent text` · `Esc chain for a predictable close`
-
-## Tray, startup and notifications
-
-**What:** The app lives in the tray: closing the window hides it there, a small animated mark in the screen corner
-shows a build is running, and a Windows notification reports the result; it can start with Windows, hidden in the
-tray if you like, and a second launch brings the running window forward.\
-**How:** Close to tray, Start with Windows, Start minimized to tray and Show notifications live in Settings →
-General. Starting with Windows uses the per-user Run key, so no admin rights are needed; the tray menu has Stop and
-Exit, and clicking the icon brings the window back.\
-`tray icon to work in the background` · `corner indicator for progress without the window` · `Windows notification for the result` · `per-user Run key, no admin`
-
-## Exits without loose ends
-
-**What:** The power button in the title bar, Ctrl+Q, Exit in the tray and, with Close to tray off, the window's
-close button quit the app: with nothing running it closes at once, otherwise a card says what is running, which
-processes will end and what will be lost.\
-**How:** Stop and exit ends a run with a hard stop and cuts a Sync, Deep Clean or Optimize short, but waits for a
-branch switch or pull so git is never left half-way. A closing screen shows the steps, and the app leaves together
-with its engine and compilers.\
-`one definition of busy for the right choice` · `job process count to show what ends` · `waits for git writes` · `in-flight ledger so the next Build recovers`
-
-## Syncs on its own
-
-**What:** Sync scans the repository and external roots, builds the graph, previews which projects will build and
-measures the distance to the remote, without compiling anything; commits, checkouts, pulls, merges and rebases
-made in a terminal or in Visual Studio refresh it on their own.\
-**How:** A manual Sync fetches refs only, then scans and decides, and carries on with the local HEAD when offline.
-The repository's HEAD is watched with file notifications instead of polling; once git has settled a Sync runs
-by itself, and unless the branch changed it is a quiet one that keeps the console, the selection and the scroll
-position.\
-`ref-only fetch, working tree untouched` · `HEAD watch so Sync is rarely pressed` · `quiet Sync that keeps the screen` · `waits during a half-done merge`
+the tooltips.\
+`F5/F6/F7 like Visual Studio` · `one shortcut catalogue for consistent text` · `Esc chain for a predictable close`
 
 ## Branch switch and fast-forward pull
 
@@ -274,18 +335,21 @@ itself, and the git working copy is found from the path. With Pull before build 
 order with fetch plus merge --ff-only, and uncommitted work stops the run before it starts.\
 `multi-root scan into one graph` · `HintPath links for the right order` · `fast-forward update before each Build`
 
-## Maintenance: Deep Clean, Optimize, cycles
+## Repairs a broken workspace
 
-**What:** Three buttons next to Sync: Deep Clean (the eraser, whose tooltip says Clean) deletes every project's bin
-and obj folders and the build record so the next Build starts from scratch; Optimize restores missing NuGet
-packages and reports references it cannot fix; Resolve cycles builds only the cycle projects and the stale
-projects they need.\
-**How:** Deep Clean does not call MSBuild: it deletes from the file system, which clears mixed framework leftovers,
-and runs a Sync when done. Optimize also clears stale obj leftovers and dead cache entries without changing any
-build decision, and Resolve cycles leaves downstream projects out on purpose.\
-`bin/obj wipe for a clean workspace` · `NuGet restore to fix "doesn't build here"` · `cache upkeep` · `cycle-only runs for a targeted build`
+**What:** When the workspace will not build for reasons that have nothing to do with the code, two buttons next to
+Sync help fix it. Deep Clean (the eraser, whose tooltip says Clean) deletes every project's bin and obj folders and
+the build record, so the next Build starts from scratch, free of leftovers from another framework (an SDK-style
+project then needs an Optimize before it builds). Optimize brings back missing packages and names the references it
+cannot fix. And every run start already warns when a project's obj holds NuGet leftovers from another framework.\
+**How:** Deep Clean does not call MSBuild: it deletes from the file system, external roots included, and runs a
+Sync when done. Optimize restores old-style packages.config projects whose NuGet HintPath targets are missing and
+every SDK-style project, which cures NETSDK1004 after a fresh clone or a Deep Clean; it then removes NuGet leftovers
+(project.assets.json, *.nuget.g.props, *.nuget.g.targets) from a stale obj in old-style projects only, prunes dead
+ledger entries and names a locked file instead of retrying it. The run-start warning deletes nothing.\
+`bin/obj wipe for a clean workspace` · `NuGet restore to fix "doesn't build here"` · `stale-obj sweep for NuGet leftovers` · `run-start warning, nothing deleted`
 
-## Settings and first run
+## Sets up in one screen
 
 **What:** On first launch the list invites you to set up the workspace; Settings has four sections (General,
 Workspace, External projects, Layers), nothing applies until Save, and the whole setup can be exported to a JSON
@@ -295,7 +359,7 @@ draft and starts a Sync. General holds the switches for startup, build, branches
 notifications.\
 `draft and Save for safe changes` · `JSON export and import for one setup across a team` · `first-run invitation`
 
-## Layers
+## Groups projects into layers
 
 **What:** Regex patterns on project names group the list and the graph into named layers, with non-matching
 projects under Other, and each layer builds before the next one starts.\
@@ -303,26 +367,6 @@ projects under Other, and each layer builds before the next one starts.\
 and by default there are no layers. If the layer order would put a project before one of its dependencies, the run
 starts with a warning instead of blocking.\
 `regex grouping for long project lists` · `first-match rule for predictable layers` · `layer phases for a controlled order` · `reverse-layer warning`
-
-## Performance profiles, live cost
-
-**What:** The perf chip in the action bar switches between three profiles, Full, Balanced (the default) and Light,
-trading build speed for a machine you can keep using; the resource strip in the middle of the title bar shows what
-the tool costs right now: CPU, memory and parallelism with the profile.\
-**How:** A profile sets the parallelism plus a CPU cap and priority on the job that holds only the compilers, so
-the window, git and Sync stay at full speed. At run start the worker count can be trimmed to the CPU count and free
-memory, and the strip reads the job's own accounting cheaply.\
-`Job Object CPU cap to limit the machine share` · `process priority to keep the UI first` · `worker budget against paging` · `job accounting for the live strip`
-
-## Light idle, smooth under load
-
-**What:** The engine shuts down after a few idle minutes and starts again on the next job; with the window in the
-tray or behind others the app spends next to no CPU, memory is handed back after each operation, and the window
-does not freeze even in runs of hundreds of projects.\
-**How:** Stop the engine when idle (on by default) puts the engine to sleep, and the ribbon says Starting the
-engine when it wakes. Animations nobody can see stop, events are processed in small time slices, and the list
-builds the visible rows first.\
-`idle engine sleep to save memory` · `visibility-bound animation, near-zero idle CPU` · `memory trim after each operation` · `time-sliced events, no frozen UI`
 
 ## Installs and updates itself
 
@@ -333,15 +377,6 @@ and About shows the version, the environment and the shortcuts.\
 installs on exit. Every release is tested, packaged, tagged and published by GitHub Actions, and the release notes
 come from the CHANGELOG built into the app.\
 `Velopack for admin-free install and delta updates` · `GitHub Actions to test, package and publish` · `install on exit, no interrupted work` · `CHANGELOG as the single source of notes`
-
-## Calm, accessible design
-
-**What:** The interface uses one dark theme with amber as its only accent; colour speaks only about state and every
-state is also said with a glyph and a word, transitions turn instant when Windows animations are off, and screen
-readers and the keyboard are supported.\
-**How:** Colours, sizes, type and motion come from one token system, and the Geist fonts ship with the app. Motion
-follows the Windows animation setting live, and every control reports one accessible name and a real role.\
-`design tokens for a consistent look` · `OS reduced-motion signal for accessible motion` · `UI Automation names for screen readers` · `embedded fonts, same look everywhere`
 
 ---
 

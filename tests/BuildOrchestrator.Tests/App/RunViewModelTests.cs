@@ -2070,6 +2070,39 @@ public class RunViewModelTests
         Assert.False(row.OwnFilesChanged);
     }
 
+    /// <summary>[kullanıcı kararı 2026-10-25] Önizlemenin iki gerekçe olgusu — son derlemenin (farklı) configuration'ı ve önce
+    /// yeniden derlenecek bağımlılık — satıra taşınır; proje bu koşuda başarıyla derlenince ikisi de düşer: artık şimdiki
+    /// configuration'da derlendi ve beklediği bağımlılık derlendi. Bırakılsaydı satır bir sonraki Sync'e kadar eski sebebi
+    /// söylerdi.</summary>
+    [Fact]
+    public async Task The_preview_reason_facts_reach_the_row_and_a_success_clears_them()
+    {
+        const string a = @"C:\p\a.csproj", y = @"C:\p\y.csproj";
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new BuildPreviewEvent(
+        [
+            new BuildPreviewItem(a, "A", true, null, WillBuildReason.SignatureChanged, OwnFilesChanged: false,
+                LastBuiltConfiguration: "Debug"),
+            new BuildPreviewItem(y, "Y", true, null, WillBuildReason.OutputStale, OwnFilesChanged: false,
+                BehindRebuildingDependency: true),
+        ]));
+
+        var rowA = Assert.Single(vm.Projects, p => p.Id == a);
+        var rowY = Assert.Single(vm.Projects, p => p.Id == y);
+        Assert.Equal("Debug", rowA.LastBuiltConfiguration);
+        Assert.True(rowY.BehindRebuildingDependency);
+
+        foreach (var (id, name) in new[] { (a, "A"), (y, "Y") })
+        {
+            vm.OnEvent(new ProjectStartedEvent("r1", id, name));
+            vm.OnEvent(new ProjectSucceededEvent("r1", id, 120));
+        }
+
+        Assert.Null(rowA.LastBuiltConfiguration);
+        Assert.False(rowY.BehindRebuildingDependency);
+    }
+
     /// <summary>[Task 7 — Faz 3, spec 2026-09-18 §5, P8] Bu araç bir projeyi başarıyla derlediği an, önceki
     /// "bu araç dışında derlendi" gerekçesi ARTIK GEÇERSİZDİR — çıktı şimdi aracın kendi eseri.
     ///
@@ -2150,7 +2183,7 @@ public class RunViewModelTests
 
         var row = Assert.Single(vm.Projects);
         RowDecision Label() => DecisionLabel.For(row.WillBuild, row.WillBuildReason, row.OwnFilesChanged,
-            row.LocalEdits);
+            row.LocalEdits, row.LastBuiltConfiguration);
         var beforeSync = Label();
         Assert.Equal("up to date", beforeSync.Word);
         Assert.False(beforeSync.Stale);
@@ -2235,7 +2268,7 @@ public class RunViewModelTests
 
         var row = Assert.Single(vm.Projects);
         RowDecision Label() => DecisionLabel.For(row.WillBuild, row.WillBuildReason, row.OwnFilesChanged,
-            row.LocalEdits);
+            row.LocalEdits, row.LastBuiltConfiguration);
         var beforeSync = Label();
         // Reason bir disk olgusudur; WaitingForDependency artık UpToDate ile birebir okunur — kapsamın
         // zorlayıp zorlamadığı (Conditional=false, üye tek başına asla koşullu değil) etiketi ETKİLEMEZ.
