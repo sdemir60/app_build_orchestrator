@@ -2,6 +2,12 @@
 
 Release notes for Build Orchestrator, newest version first. The What's new window in the app reads this file.
 
+## [1.11.4] - 2026-10-26
+
+### Fixed
+
+- A project's page in the console shows its Back button and the dependency issue and dependency cycle badges again. 1.11.3 removed them together with the status beside the project's name; only that status stays off the page, since the list and the graph already show it.
+
 ## [1.11.3] - 2026-10-26
 
 ### Changed
