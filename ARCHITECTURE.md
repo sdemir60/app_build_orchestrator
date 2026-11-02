@@ -3317,7 +3317,12 @@ it would make the whole window click-through and kill the click-to-restore.
 When the run ends the overlay does **not** cut off. It finishes the exit phase of the loop it is in — the pieces
 slide away and the last strip dissolves — and the window closes on that frame. After a short breath, so the two
 events do not land on top of each other, an **OS balloon** reports the result, carrying the application's own
-icon. The notification API accepts that icon at exactly one size, the system's large-icon size, and that size
+icon with the result on its bottom-right corner — a filled disc in the colour of the ribbon's progress fill and the
+mark of the line's own status glyph: a green tick for success, a red cross for a failure, and, for a line with no
+glyph (a stopped run), the grey of a skip with the square every Stop in the application wears (`BalloonBadge`).
+Windows does not let a tray notification colour its text, so the icon is the one surface that can say how the run
+ended before a word is read. The badge is read from the same terminal line as the text (below), so the two cannot
+disagree, and it is drawn once per result and kept. The notification API accepts that icon at exactly one size, the system's large-icon size, and that size
 grows with the screen scale (32 px at 100%, 40 at 125%) — so it is not written down anywhere: it is read from the
 tray library's own rule when the icon is first needed. A frame the icon file carries at that size is used as drawn;
 any other size is resampled from the largest frame, because the icon loader only picks the nearest frame and does
@@ -7658,7 +7663,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | …the animated mark itself (loop, static frame) | `App/Controls/TrayBuildIndicator.xaml(.cs)` |
 | …the frameless, non-activating overlay window that carries it | `App/Views/TrayBuildOverlayWindow.xaml(.cs)` |
 | Extended window styles for that overlay (`WS_EX_*`) | `App/Shell/Win32.cs` |
-| The run-result balloon's icon — the size the tray library asks for at the screen's scale, a drawn frame or one resampled from the largest — and the same balloon without the icon when it fails | `App/Shell/AppTrayIcon.cs` (`LoadBalloonIcon`, `ShowWithIconFallback`) |
+| The run-result balloon's icon — the size the tray library asks for at the screen's scale, a drawn frame or one resampled from the largest, the result badge drawn on its corner — and the same balloon without the icon when it fails | `App/Shell/AppTrayIcon.cs` (`LoadBalloonIcon`, `ProductFrame`, `WithBadge`, `ShowWithIconFallback`), `App/Shell/BalloonBadge.cs` (the badge a ribbon line wears) |
 | The hidden-surface signal — one inherited property every screen-only job reads, and the "visible again" test views use to catch up; the window writes it from its own visibility and the Build menu's popup gets it by hand | `App/Controls/HiddenSurface.cs`, `App/MainWindow.HiddenSurface.cs` (`SetSurfaceHidden`), `App/Views/ActionBar.xaml.cs` |
 | The operation-end memory trim — the pure rule (at most one per operation; none while work is in flight or a log reply is awaited; a visible window waits out the end finale, a hidden one the tray indicator of a run that ended hidden), the grace constant and the one-trim bookkeeping | `App/Services/MemoryTrimRule.cs` (`ShouldTrim`, `MarkTrimmed`, `GraceAfterFinale`) |
 | …its scheduling shell — the six signals, the grace timer and the idle queue, the execution that asks again, the hidden and visible routes, the stop on close, the collector seam | `App/MainWindow.HiddenSurface.cs` (`RequestTrimWhenDue`, `ShouldTrimNow`, `TrimIfStillDue`, `OnTrayIndicatorExitFinished`, `StopMemoryTrim`, `MemoryCollector`), the subscriptions in `App/MainWindow.xaml.cs` |

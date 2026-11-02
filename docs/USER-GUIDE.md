@@ -431,7 +431,8 @@ the screen — click it to bring the window back, or click straight through the 
 is underneath. While it is in the tray the window does not redraw itself as the run progresses, and bringing it back
 brings it up to date in a single pass. When the run finishes the mark plays out its last turn, fades, and Windows shows a notification
 with the result — click it to bring the window back too — and the same sentence is waiting in the ribbon when
-you open the window again. A run that finishes while the window is open shows no notification — the ribbon
+you open the window again. The notification's icon tells the result before you read it: a green tick on its
+corner for success, a red cross for a failure, a grey square for a stopped run. A run that finishes while the window is open shows no notification — the ribbon
 already says it. Turn *Show notifications* off and the app shows no Windows notification at all — not the
 result, not the one-time *still running in the tray* note, not the note a Build hotkey press leaves when something
 keeps it from starting, not the warning a second copy of the app gives when it cannot bring the window forward;

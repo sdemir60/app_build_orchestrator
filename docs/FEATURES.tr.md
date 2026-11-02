@@ -74,7 +74,8 @@ hangisi diye sorar; Reveal in Explorer .csproj'u seçili gösterir.\
 
 **Ne yapar:** Uygulama Windows ile başlayıp tepside bekleyebilir, istersen gizli; her yerden Shift+Space pencereyi
 gösterir ya da gizler, Ctrl+Shift+Space pencereyi açmadan Build başlatır. Ekran köşesindeki küçük hareketli işaret
-derleme sürdüğünü gösterir, sonucu Windows bildirimi söyler, pencereyi kapatmak onu yalnızca tepsiye gizler.\
+derleme sürdüğünü gösterir, sonucu Windows bildirimi söyler — tek kelime okumadan ikonu yeşil, kırmızı ya da gri —
+pencereyi kapatmak onu yalnızca tepsiye gizler.\
 **Nasıl:** Windows ile başlama kullanıcıya özel Run kaydını kullanır, yönetici hakkı gerekmez. Global kısayollar
 Windows'a kaydedilir, pencere Visual Studio'nun arkasındayken ya da tepsideyken de çalışır. Close to tray, Start with
 Windows, Start minimized to tray ve Show notifications Settings → General'dadır; tepsi menüsünde Stop ve Exit vardır,

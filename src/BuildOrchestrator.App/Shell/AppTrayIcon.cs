@@ -28,8 +28,8 @@ namespace BuildOrchestrator.App.Shell;
 /// rasterlestirilmiş olandan nettir.</para>
 ///
 /// <para><b>Balloon ikonu ayrıdır:</b> koşu sonucu bildirimi <c>app-icon.ico</c>'dan, kütüphanenin ekran ölçeğine
-/// göre istediği BÜYÜK ölçüde yüklenen ikonu taşır (<see cref="LoadBalloonIcon()"/>). Bildirim penceresi tepsi
-/// kutucuğundan çok daha geniştir; oraya 16px raster koymak ikonu bulanıklaştırır.</para>
+/// göre istediği BÜYÜK ölçüde yüklenen ikonu taşır — köşesinde sonucun rozetiyle (<see cref="LoadBalloonIcon(BalloonBadge)"/>).
+/// Bildirim penceresi tepsi kutucuğundan çok daha geniştir; oraya 16px raster koymak ikonu bulanıklaştırır.</para>
 /// </summary>
 internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
 {
@@ -37,11 +37,11 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
 
     private readonly TaskbarIcon _icon;
 
-    /// <summary>Bildirimin büyük ikonu — ilk bitiş bildiriminde bir KEZ yüklenir ve handle'ı her balloon'a verilir; her
-    /// bildirimde yeniden çözmek gereksiz GDI nesnesi üretirdi. Kurulumda değil ilk bildirimde yüklenir: yükleme düşerse
-    /// tepsi ikonu (ve uygulamanın açılışı) değil yalnız o bildirimin ikonu düşer (<see cref="ShowWithIconFallback"/>).
-    /// <see cref="Dispose"/> bırakır.</summary>
-    private System.Drawing.Icon? _largeIcon;
+    /// <summary>Bildirimin büyük ikonları, sonuç rozeti başına bir tane (en çok üç: başarı, hata, durdurma) — her biri o sonucun ilk
+    /// bitiş bildiriminde bir KEZ yüklenir ve handle'ı sonraki balloon'lara verilir; her bildirimde yeniden çözmek gereksiz GDI nesnesi
+    /// üretirdi. Kurulumda değil ilk bildirimde yüklenir: yükleme düşerse tepsi ikonu (ve uygulamanın açılışı) değil yalnız o bildirimin
+    /// ikonu düşer (<see cref="ShowWithIconFallback"/>). <see cref="Dispose"/> bırakır.</summary>
+    private readonly Dictionary<BalloonBadge, System.Drawing.Icon> _largeIcons = [];
 
     /// <summary>Hiçbir zaman çalıştırılamayan Stop komutu — arkasında RunViewModel/engine olmayan bir tepsi
     /// içindir (ör. ikinci instance'ın geçici balloon tray'i). Kopya YASAK: aynı <c>RelayCommand(() => { },
@@ -146,42 +146,93 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
     }
 
     /// <summary>
-    /// Bildirimin ürün ikonu, kütüphanenin O AN istediği ölçüde. Ölçü bir tercih DEĞİL, API'nin ŞARTIDIR:
+    /// Bildirimin ikonu, kütüphanenin O AN istediği ölçüde. Ölçü bir tercih DEĞİL, API'nin ŞARTIDIR:
     /// <c>H.NotifyIcon</c> özel balloon ikonunu gösterim anında ölçer ve <c>GetSystemMetrics(SM_CXICON)</c>'dan başka her
     /// ölçüyü <see cref="InvalidOperationException"/> ile reddeder — o ölçü ekran ölçeğiyle büyür (%100 → 32, %125 → 40,
     /// %150 → 48). Kural kütüphanenin KENDİ public metodundan okunur (<see cref="IconUtilities.GetRequiredCustomIconSize"/>);
     /// ikinci bir ölçü kuralı YAZILMAZ — eskiden burada sabit 32 vardı ve %125'te her bitiş bildirimi sessizce düşüyordu.
     /// Pin: <c>TrayBalloonIconTests</c>.
     /// </summary>
-    internal static System.Drawing.Icon LoadBalloonIcon() =>
-        LoadBalloonIcon(IconUtilities.GetRequiredCustomIconSize(largeIcon: true));
+    internal static System.Drawing.Icon LoadBalloonIcon(BalloonBadge badge) =>
+        LoadBalloonIcon(IconUtilities.GetRequiredCustomIconSize(largeIcon: true), badge);
 
     /// <summary>
-    /// Gömülü uygulama ikonunu (<see cref="AppIdentity.AppIconUri"/> — adres TEK kaynaktan, pencere ikonu da onu okur)
-    /// TAM <paramref name="size"/> ölçüsünde bir HICON olarak yükler.
+    /// [kullanıcı kararı 2026-11-02] Bitiş bildiriminin ikonu: TAM <paramref name="size"/> ölçüsünde ürün ikonu ve sağ alt köşesinde
+    /// sonucun rozeti (<see cref="BalloonBadge"/>), bir HICON olarak. Kare <see cref="ProductFrame"/>'den gelir, rozet
+    /// <see cref="WithBadge"/>'de çizilir. Sonuç bir ICO akışından <c>System.Drawing.Icon</c>'a verilir: HICON'un sahibi o olur
+    /// (<see cref="System.Drawing.Icon.Dispose()"/> yok eder) ve veriyi ctor'da kendi içine kopyaladığı için akış hemen bırakılabilir.
+    /// </summary>
+    /// <param name="scope">Token sözlüğü; üretimde <c>null</c> — rozetin fırçaları ve işaretin kalınlığı uygulamanın sözlüklerinden çözülür.</param>
+    internal static System.Drawing.Icon LoadBalloonIcon(System.Drawing.Size size, BalloonBadge badge, ResourceDictionary? scope = null)
+    {
+        using var stream = new MemoryStream(SingleFrameIco(WithBadge(ProductFrame(size), badge, scope)));
+        return new System.Drawing.Icon(stream, size);
+    }
+
+    /// <summary>
+    /// Gömülü uygulama ikonunun (<see cref="AppIdentity.AppIconUri"/> — adres TEK kaynaktan, pencere ikonu da onu okur) TAM
+    /// <paramref name="size"/> ölçüsündeki karesi.
     ///
     /// <para><b>ICO o ölçüde bir kare taşıyorsa</b> (32, 48) kare olduğu gibi kullanılır: o ölçüde ayrıca üretilmiş kare,
     /// büyük karenin küçültülmüşünden nettir. <b>Taşımıyorsa</b> (ör. %125'in 40'ı) en büyük kare o ölçüye örneklenir.
     /// Ölçüm: <c>System.Drawing.Icon</c> ÖLÇEKLEMEZ — istenen ölçüye en yakın kareyi olduğu gibi seçer (40 isteyene 32
     /// verir), yani ölçüyü yalnız iletmek kütüphanenin reddini değiştirmez.</para>
-    ///
-    /// <para>Sonuç her iki yolda da bir ICO akışından <c>System.Drawing.Icon</c>'a verilir: HICON'un sahibi o olur
-    /// (<see cref="System.Drawing.Icon.Dispose()"/> yok eder) ve veriyi ctor'da kendi içine kopyaladığı için akış hemen
-    /// bırakılabilir.</para>
     /// </summary>
-    internal static System.Drawing.Icon LoadBalloonIcon(System.Drawing.Size size)
+    internal static BitmapSource ProductFrame(System.Drawing.Size size)
     {
-        byte[] ico = ReadAppIcon();
-        using (var source = new MemoryStream(ico))
-        {
-            var frames = new IconBitmapDecoder(
-                source, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad).Frames;
-            if (!frames.Any(f => f.PixelWidth == size.Width && f.PixelHeight == size.Height))
-                ico = SingleFrameIco(Resample(frames.MaxBy(f => f.PixelWidth)!, size));
-        }
+        using var source = new MemoryStream(ReadAppIcon());
+        var frames = new IconBitmapDecoder(source, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad).Frames;
+        return frames.FirstOrDefault(f => f.PixelWidth == size.Width && f.PixelHeight == size.Height)
+            ?? Resample(frames.MaxBy(f => f.PixelWidth)!, size);
+    }
 
-        using var stream = new MemoryStream(ico);
-        return new System.Drawing.Icon(stream, size);
+    /// <summary>Rozetin ikonun kenarına oranı: ürün işareti okunur kalır, sonuç ilk bakışta seçilir.</summary>
+    private const double BadgeShare = 0.5;
+
+    /// <summary>Rozetin yüzünün çizim kutusu (DIP): daire bu kutuyu doldurur, durum işaretleri de 16 birimliktir.</summary>
+    private const double BadgeFace = 16;
+
+    /// <summary>
+    /// [kullanıcı kararı 2026-11-02] Ürün karesinin sağ alt köşesine sonucun rozetini çizer: <see cref="BalloonBadge.FillBrushKey"/>
+    /// dolgulu bir daire ve içinde işaret. Daireyi ince bir çerçeve, işareti de aynı en koyu yüzey rengi (<c>Brush.SurfaceBase</c>)
+    /// çizer: rozet ürün işaretinden ve bildirimin zemininden ayrılır, işaret dolgunun üstünde okunur. Çizim WPF ağacının kendisidir
+    /// (geometri ve boya semantiği <see cref="IconPaint"/>'ten — ikinci bir çizim kodu yazılmaz) ve ekran dışında, 96 DPI'da
+    /// <see cref="RenderTargetBitmap"/> ile piksele döner: ağaç DIP'te kurulur ve kare ölçüsünde, piksel piksel örtüşür.
+    /// </summary>
+    private static BitmapSource WithBadge(BitmapSource product, BalloonBadge badge, ResourceDictionary? scope)
+    {
+        const string markBrushKey = "Brush.SurfaceBase";
+        int px = product.PixelWidth;
+        var root = new Grid { Width = px, Height = px };
+        if (scope is not null) root.Resources.MergedDictionaries.Add(scope);
+
+        var disc = new System.Windows.Shapes.Ellipse { StrokeThickness = 1 };
+        disc.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, badge.FillBrushKey);
+        disc.SetResourceReference(System.Windows.Shapes.Shape.StrokeProperty, markBrushKey);
+        var mark = new System.Windows.Shapes.Path();
+        IconPaint.Apply(mark, root, badge.MarkIconKey, markBrushKey);
+        var markCanvas = new Canvas { Width = badge.MarkViewBox, Height = badge.MarkViewBox };
+        markCanvas.Children.Add(mark);
+        var face = new Grid { Width = BadgeFace, Height = BadgeFace };
+        face.Children.Add(disc);
+        face.Children.Add(new Viewbox { Margin = new Thickness(badge.MarkInset), Child = markCanvas });
+
+        root.Children.Add(new Image { Source = product, Width = px, Height = px });
+        root.Children.Add(new Viewbox
+        {
+            Width = px * BadgeShare,
+            Height = px * BadgeShare,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Bottom,
+            Child = face,
+        });
+        root.Measure(new Size(px, px));
+        root.Arrange(new Rect(0, 0, px, px));
+        root.UpdateLayout();
+
+        var target = new RenderTargetBitmap(px, px, 96, 96, PixelFormats.Pbgra32);
+        target.Render(root);
+        return new FormatConvertedBitmap(target, PixelFormats.Bgra32, null, 0);
     }
 
     private static byte[] ReadAppIcon()
@@ -269,9 +320,12 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
     /// aynı şeyi söylemek zorundadır. Bildirim o satırı yalnız İKİYE AYIRIR: başı başlık, geri kalanı gövde.</para>
     ///
     /// <para>Neden <see cref="ShowNotification"/> yeniden kullanılmıyor: o Warning ikonuna SABİTLENMİŞTİR ve
-    /// kendi çağıranı (ikinci instance uyarısı) vardır; onu parametreleştirmek mevcut davranışı değiştirirdi.
-    /// Burada ikon HER sonuçta ürünün kendi (büyük) ikonudur — bir OS glyph'i sonucu zaten taşımaz, sonuç
-    /// başlıktaki sözcüktedir ("Completed" / "▸ Stopped" / "Run failed").</para>
+    /// kendi çağıranı (ikinci instance uyarısı) vardır; onu parametreleştirmek mevcut davranışı değiştirirdi.</para>
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-11-02] İkon sonucu taşır.</b> Ürünün kendi (büyük) ikonu, köşesinde satırın
+    /// sonucunun rozetiyle (<see cref="BalloonBadge"/>: başarı yeşil ✓, hata kırmızı ✗, durdurma gri ■). Eski hâl her sonuçta aynı ürün
+    /// ikonuydu ve sonuç yalnız başlıktaki sözcükteydi ("Completed" / "▸ Stopped" / "Run failed") — kullanıcı bildirimi okumadan
+    /// sonucu göremiyordu. OS glyph'leri (bilgi/uyarı/hata) seçilmedi: başarı için birinin karşılığı yoktur ve ürün kimliği kaybolurdu;
+    /// bildirimin metni renklendirilemediği için renk taşıyabilen tek yüzey ikondur.</para>
     /// <para>[P3 · Task 4] Kapı: <c>TrayBuildIndicatorController</c>, balonun TAM gösterileceği anda
     /// <c>notificationsOn()</c>'ı TAZE okur ve yalnız açıksa buraya gelir.</para>
     /// <para>Ürün ikonu düşerse (yüklenemez ya da kütüphane reddeder) bildirim aynı metinle ikonsuz gösterilir
@@ -289,9 +343,16 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
     internal void ShowRunFinishedWithProductIcon(RibbonLine line) => _icon.ShowNotification(
         title: RunFinishedTitle(line),
         message: RunFinishedBody(line),
-        icon: NotificationIcon.None,           // yerini büyük ürün ikonu alır
-        customIconHandle: (_largeIcon ??= LoadBalloonIcon()).Handle,
+        icon: NotificationIcon.None,           // yerini rozetli büyük ürün ikonu alır
+        customIconHandle: LargeIcon(BalloonBadge.For(line)).Handle,
         largeIcon: true);
+
+    /// <summary>Sonucun rozetli büyük ikonu — önbellekten, yoksa yüklenip önbelleğe alınarak (<see cref="_largeIcons"/>).</summary>
+    private System.Drawing.Icon LargeIcon(BalloonBadge badge)
+    {
+        if (!_largeIcons.TryGetValue(badge, out var icon)) _largeIcons[badge] = icon = LoadBalloonIcon(badge);
+        return icon;
+    }
 
     /// <summary>Balloon başlığı = satırın BAŞI (<c>"Completed"</c>, <c>"Run failed"</c>); ayırıcı taşımayan bir
     /// satırda ürün adı. Ayrı ve saf: gerçek bir tepsi ikonu kurmadan sınanabilsin diye (<c>TaskbarIcon</c>
@@ -354,6 +415,7 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
     public void Dispose()
     {
         _icon.Dispose();
-        _largeIcon?.Dispose();
+        foreach (var icon in _largeIcons.Values) icon.Dispose();
+        _largeIcons.Clear();
     }
 }
