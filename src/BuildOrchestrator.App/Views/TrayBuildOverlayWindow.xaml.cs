@@ -1,5 +1,7 @@
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
+using System.Windows.Media;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
@@ -15,9 +17,9 @@ namespace BuildOrchestrator.App.Views;
 /// devredilir — burada animasyon mantığı YOKTUR.</para>
 ///
 /// <para><b>Bilinçli sınır:</b> tepsi birincil görev çubuğundadır, bu yüzden overlay de birincil ekranda
-/// kalır (<see cref="SystemParameters.WorkArea"/> birincil ekranın çalışma alanıdır). Çok monitörlü bir
-/// masaüstünde kullanıcı başka bir ekranda çalışıyor olabilir; gösterge yine tepsinin yanında belirir —
-/// istenen davranış budur, gösterge tepsinin görsel karşılığıdır.</para>
+/// kalır (<see cref="PrimaryScreen"/>). Çok monitörlü bir masaüstünde kullanıcı başka bir ekranda çalışıyor
+/// olabilir; gösterge yine tepsinin yanında belirir — istenen davranış budur, gösterge tepsinin görsel
+/// karşılığıdır.</para>
 /// </summary>
 public partial class TrayBuildOverlayWindow : Window, ITrayBuildIndicatorView
 {
@@ -32,8 +34,8 @@ public partial class TrayBuildOverlayWindow : Window, ITrayBuildIndicatorView
     /// boşluk bırakmadan oturur.</para>
     ///
     /// <para>Tasarım token'ı DEĞİLDİR: bu bileşenin kendi ölçüleridir (Controls.xaml'in "bileşenin KENDİ
-    /// ölçüleri" istisnasıyla aynı statü). DPI hesabı YAPILMAZ: bunlar DIP'tir, PerMonitorV2 altında dönüşümü
-    /// WPF yapar.</para></summary>
+    /// ölçüleri" istisnasıyla aynı statü). Ölçüler DIP'tir ve ekran ölçeğine göre ayrıca büyütülmez: pencerenin boyunu
+    /// PerMonitorV2 altında WPF çevirir. Ekranın ölçeğini yalnız köşe hesabı okur (<see cref="Place"/>).</para></summary>
     internal const double Scale = 0.5;
     internal const double OverlayWidth = TrayBuildIndicator.StageWidth * Scale;
     internal const double OverlayHeight = TrayBuildIndicator.StageHeight * Scale;
@@ -67,14 +69,59 @@ public partial class TrayBuildOverlayWindow : Window, ITrayBuildIndicatorView
     public event Action? RestoreRequested;
 
     /// <summary>
-    /// Verilen çalışma alanının sağ alt köşesi, kenar payıyla.
+    /// Verilen çalışma alanının sağ alt köşesi, kenar payıyla — pencerenin <see cref="Window.Left"/>/<see cref="Window.Top"/>'u olarak.
     ///
     /// <para>Saf ve parametreli: görev çubuğu solda ya da üstte olabilir, o zaman çalışma alanı (0,0)'dan
     /// başlamaz — köşe ekranın kendisinden değil ÇALIŞMA ALANINDAN türemeli, yoksa overlay görev çubuğunun
-    /// altına kayar. Alan dışarıdan verildiği için test edilebilir.</para></summary>
+    /// altına kayar. Alan dışarıdan verildiği için test edilebilir.</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL] İki ölçek ayrıdır.</b> Alan FİZİKSEL pikseldir; ölçü ve paylar DIP'tir ve köşenin bulunduğu ekranın
+    /// ölçeğiyle (<paramref name="screenScale"/>) piksele çevrilir. Sonuç WPF birimine PENCERENİN o anki ölçeğiyle
+    /// (<paramref name="windowScale"/>) geri bölünür, çünkü WPF <c>Left</c>/<c>Top</c>'u o ölçekle piksele çevirir. Eski hâl alanı
+    /// <see cref="SystemParameters.WorkArea"/>'dan, yani DIP olarak alıyordu: WPF o değeri sürecin AÇILIŞTA okuduğu sistem DPI'ıyla
+    /// böler ve tazelemez — ekran ölçüsü uygulama açıkken değişince (laptop %150 ↔ 4K %100) gösterge köşeden yüzlerce piksel kayıyor,
+    /// ölçek büyüdüyse ekranın dışına düşüyordu (ölçüm ve pin: <c>TrayOverlayPositionProbeTests</c>).</para></summary>
     internal static (double Left, double Top) Place(
-        Rect workArea, double width, double height, double rightMargin, double bottomMargin)
-        => (workArea.Right - width - rightMargin, workArea.Bottom - height - bottomMargin);
+        Rect workAreaPx, double screenScale, double windowScale,
+        double width, double height, double rightMargin, double bottomMargin)
+        => ((workAreaPx.Right - (width + rightMargin) * screenScale) / windowScale,
+            (workAreaPx.Bottom - (height + bottomMargin) * screenScale) / windowScale);
+
+    /// <summary>Birincil ekranın çalışma alanı FİZİKSEL pikselde ve o ekranın ölçeği — her çağrıda Win32'den TAZE okunur
+    /// (<c>GetMonitorInfo</c>, <c>GetDpiForMonitor</c>); WPF'in saklı değerlerine bakılmaz. Okunamazsa <c>null</c>.</summary>
+    private static (Rect WorkAreaPx, double Scale)? PrimaryScreen()
+    {
+        nint monitor = Win32.MonitorFromPoint(default, Win32.MONITOR_DEFAULTTOPRIMARY);
+        var info = new Win32.MONITORINFO { cbSize = Marshal.SizeOf<Win32.MONITORINFO>() };
+        if (!Win32.GetMonitorInfo(monitor, ref info)
+            || Win32.GetDpiForMonitor(monitor, Win32.MDT_EFFECTIVE_DPI, out uint dpi, out _) != 0)
+            return null;
+        var work = info.rcWork;
+        return (new Rect(work.Left, work.Top, work.Right - work.Left, work.Bottom - work.Top), dpi / 96.0);
+    }
+
+    /// <summary>Pencereyi birincil ekranın köşesine koyar (<see cref="Place"/>). Ekran okunamazsa pencere son yerinde kalır — bir
+    /// göstergenin yeri yüzünden gösterim düşmez.</summary>
+    private void PlaceInCorner()
+    {
+        if (PrimaryScreen() is not var (workAreaPx, screenScale)) return;
+        var (left, top) = Place(workAreaPx, screenScale, VisualTreeHelper.GetDpi(this).DpiScaleX,
+            OverlayWidth, OverlayHeight, RightMargin, BottomMargin);
+        Left = left;
+        Top = top;
+    }
+
+    /// <summary>
+    /// Pencerenin ölçeği değişti — en son başka ölçekli bir ekrandaydı ya da ekranın ölçeği değişti. <see cref="Place"/> pencerenin
+    /// ESKİ ölçeğiyle hesaplanmışsa sol üst köşe doğru yerdedir ama boy eski ölçektedir; WPF yeni ölçeğe geçince Windows'un önerdiği
+    /// dikdörtgeni uygular. Köşe bu yüzden yeni ölçekle yeniden hesaplanır — kuyruğa bırakılarak, ki WPF'in kendi yerleşiminden SONRA
+    /// koşsun.
+    /// </summary>
+    protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
+    {
+        base.OnDpiChanged(oldDpi, newDpi);
+        Dispatcher.BeginInvoke(PlaceInCorner);
+    }
 
     protected override void OnSourceInitialized(EventArgs e)
     {
@@ -109,12 +156,12 @@ public partial class TrayBuildOverlayWindow : Window, ITrayBuildIndicatorView
     }
 
     /// <summary>Her gösterimde YENİDEN konumlanır — çalışma alanı bu arada değişmiş olabilir (görev çubuğu
-    /// taşınmış, çözünürlük değişmiş, bir ekran eklenmiş).</summary>
+    /// taşınmış, çözünürlük ya da ölçek değişmiş, bir ekran eklenmiş). Konum pencerenin ölçeğine bağlı olduğu için önce pencerenin
+    /// kendisi kurulur (<see cref="WindowInteropHelper.EnsureHandle"/>): ilk gösterimde ölçeği ancak o zaman bilinir.</summary>
     private void Reveal()
     {
-        var (left, top) = Place(SystemParameters.WorkArea, OverlayWidth, OverlayHeight, RightMargin, BottomMargin);
-        Left = left;
-        Top = top;
+        new WindowInteropHelper(this).EnsureHandle();
+        PlaceInCorner();
         Show();
     }
 }

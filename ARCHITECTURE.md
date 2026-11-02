@@ -3390,6 +3390,15 @@ user may be working elsewhere and the indicator still appears next to the tray, 
 phase-driven rather than window-driven, which is what the background-build hotkey below relies on: a build
 started while the window is hidden gets the indicator and the result balloon with no further work.
 
+The corner is worked out again at every showing, and from the screen as it is now: the primary screen's work area in
+physical pixels and that screen's own scale, both read from Windows at that moment, with the overlay's size and margins
+scaled by it. The result is handed to WPF in the overlay window's current scale, and when that scale changes — the
+window last lived on a screen of another scale, or the screen's scale changed — the overlay places itself again.
+WPF's `SystemParameters.WorkArea` is not used: it converts with the scale the process started with and never
+refreshes it, so after a scale change while the application runs — a laptop at 150% and a monitor at 100% trading
+places as the primary screen — it would put the indicator hundreds of pixels inside the screen, or off it
+(`TrayOverlayPositionProbeTests`, §17.5).
+
 **Two global hotkeys** are registered with `RegisterHotKey`, and one table (`GlobalHotkeys`) names each action,
 its registration id and its default gesture. `Shift+Space` shows or hides the window: it hides only a window
 that is really in front — visible, not minimized and active — and brings forward one that is in the tray,
@@ -6993,10 +7002,11 @@ A second group carries the `Measurement` category: probes and measurements that 
 assert rules — the tray overlay's own cost, rendered frames of its loop, the notification call, where the real
 file picker lands, UI latency and memory under each perf profile, the UI thread cost of a build's events while the
 window is hidden, the managed-memory budget of the run narrative, the UI thread cost of landing at the end of a long
-project page, and the content-decision timings. One test in the group asserts a rule rather than reading a number,
-because only a real tray shows it: the tray menu opens at the click even when the tray library's cached scale no
-longer matches the screen (`TrayMenuPositionProbeTests`, §12.3). It repeats a reading the mouse moved during and skips
-when the mouse never keeps still. The filter above does **not** exclude them (`!=` admits every other
+project page, and the content-decision timings. Two tests in the group assert a rule rather than reading a number,
+because only a real window on a real screen shows it: the tray menu opens at the click even when the tray library's
+cached scale no longer matches the screen (`TrayMenuPositionProbeTests`, §12.3) — it repeats a reading the mouse moved
+during and skips when the mouse never keeps still — and the build indicator lands in the primary screen's corner even
+when WPF's cached scale no longer matches the screen (`TrayOverlayPositionProbeTests`, §12.3). The filter above does **not** exclude them (`!=` admits every other
 category value). The tray, file-picker, hidden-window, memory, perf and page-end probes open real windows and dialogs,
 show balloons, force full collections, press hundreds of keys or saturate every core, so each is gated on an
 environment variable — `BO_PROBE_TRAY`, `BO_PROBE_FILE_DIALOG`, `BO_MEASURE_OVERLAY`, `BO_MEASURE_HIDDEN`,
