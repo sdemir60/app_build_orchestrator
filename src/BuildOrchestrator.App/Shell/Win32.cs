@@ -211,4 +211,58 @@ internal static class Win32
     /// <summary>Ekranın O ANKİ ölçeği — çağrı anında okunur, süreç açılışında saklanmaz. Başarıda 0 (S_OK) döner.</summary>
     [DllImport("shcore.dll")]
     public static extern int GetDpiForMonitor(nint hmonitor, int dpiType, out uint dpiX, out uint dpiY);
+
+    // --- bağlı monitörler (ana pencere kapandığı monitörde açılır — WindowMonitor)
+
+    /// <summary><see cref="MONITORINFO"/>'nun ekran kaynağının adını da taşıyan biçimi: <c>szDevice</c> = <c>\\.\DISPLAY1</c>.</summary>
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct MONITORINFOEX
+    {
+        public int cbSize;
+        public RECT rcMonitor;
+        public RECT rcWork;
+        public uint dwFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string szDevice;
+    }
+
+    [DllImport("user32.dll", EntryPoint = "GetMonitorInfoW", CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetMonitorInfo(nint hMonitor, ref MONITORINFOEX lpmi);
+
+    public delegate bool MonitorEnumProc(nint hMonitor, nint hdc, ref RECT lprcMonitor, nint dwData);
+
+    /// <summary>Masaüstündeki her monitör için <paramref name="lpfnEnum"/>'u çağırır (eşzamanlı; temsilci çağrı boyunca yaşar).</summary>
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool EnumDisplayMonitors(nint hdc, nint lprcClip, MonitorEnumProc lpfnEnum, nint dwData);
+
+    /// <summary>Bir ekran kaynağına (<c>\\.\DISPLAY1</c>) bağlı monitör; <see cref="EDD_GET_DEVICE_INTERFACE_NAME"/> ile <c>DeviceID</c>
+    /// monitörün aygıt arayüzü yoludur: <c>\\?\DISPLAY#ACM4200#4&amp;…&amp;UID4165#{…}</c> (model kodu + bağlantının örnek yolu).</summary>
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct DISPLAY_DEVICE
+    {
+        public int cb;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string DeviceName;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceString;
+        public int StateFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceID;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceKey;
+    }
+
+    /// <summary><see cref="EnumDisplayDevices"/> <c>DeviceID</c>'ye aygıt arayüzü yolunu yazsın (yoksa donanım kimliği yazar).</summary>
+    public const int EDD_GET_DEVICE_INTERFACE_NAME = 1;
+
+    /// <summary>Monitör masaüstüne bağlı ve görüntü alıyor (<see cref="DISPLAY_DEVICE.StateFlags"/>).</summary>
+    public const int DISPLAY_DEVICE_ACTIVE = 1;
+
+    [DllImport("user32.dll", EntryPoint = "EnumDisplayDevicesW", CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool EnumDisplayDevices(string? lpDevice, int iDevNum, ref DISPLAY_DEVICE lpDisplayDevice, int dwFlags);
+
+    public const uint SWP_NOZORDER = 0x0004;
+    public const uint SWP_NOACTIVATE = 0x0010;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetWindowPos(nint hWnd, nint hWndInsertAfter, int x, int y, int cx, int cy, uint uFlags);
 }

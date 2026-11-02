@@ -45,6 +45,11 @@ public sealed class UiState
     /// <summary>[T35] Sağ kolon satır split'i (konsol/stream).</summary>
     public double RightPct { get; set; } = 50;
 
+    /// <summary>[pencere monitörü] Ana pencerenin en son gerçekten kapandığı monitörün kimliği (<see cref="WindowMonitor"/>): monitörün aygıt
+    /// arayüzü yolu, çözünürlükten ve ölçekten bağımsız. Açılışta o monitör bağlıysa pencere orada tam ekran açılır; bağlı değilse ya da alan
+    /// yoksa (<c>null</c>) yeri Windows seçer — ana ekran. Yalnız gerçek kapanışta yazılır (<c>MainWindow.OnClosing</c>).</summary>
+    public string? LastMonitor { get; set; }
+
     // ---- İş akışı tercihleri — Settings ve action bar yazar (SeenVersion'ı What's new yazar) ----
     public string? RepositoryRoot { get; set; }
     public string? Configuration { get; set; }

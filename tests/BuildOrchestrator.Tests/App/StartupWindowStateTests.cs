@@ -19,6 +19,11 @@ namespace BuildOrchestrator.Tests.App;
 /// <para>Pencere <c>Show()</c> EDİLMEZ (bkz. <see cref="MainWindowRealizeTests"/> sınıf özeti: gerçek tepsi
 /// ikonu/kısayol/supervisor bir testin yan etkisi olamaz). <c>WindowState</c> HWND'siz de okunur/yazılır —
 /// WPF yalnız görsel karşılığını (WM_SIZE) HWND'ye bağlar.</para>
+///
+/// <para><b>[DEĞİŞEN KURAL — pencere monitörü]</b> ESKİ: pencere HER açılışta doğuştan maximized'dı ve yerini Windows seçiyordu (ana
+/// ekran). Buradaki pin artık hatırlanan monitörü OLMAYAN açılışındır (kayıt yok ya da o monitör bağlı değil). Hatırlanan monitör bağlıysa
+/// pencere NORMAL doğar ve kaynağı kurulunca — gösterilmeden — o monitörde tam ekran yapılır (<see cref="LastMonitorTests"/>): maximized
+/// doğan HWND Windows'un seçtiği ekranda kalırdı (ölçüm: <see cref="WindowMonitorTests"/>). Görünen sonuç iki yolda da tam ekrandır.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class StartupWindowStateTests
