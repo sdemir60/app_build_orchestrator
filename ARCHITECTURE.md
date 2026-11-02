@@ -3180,9 +3180,9 @@ is empty and what lets clicks fall through the same pixels. Consequences that ha
 
 - **Maximize padding correction is mandatory** (`dotnet/wpf#3887`): without it the content overflows the screen
   edge when maximized. It is driven by a `WindowState` dependency-property watcher rather than the `StateChanged`
-  event, for the same reason as the caption glyph below: the window is *born* maximized, and WPF never raises
-  `StateChanged` for a state set before the HWND exists — an event-driven correction would simply never run on
-  the first launch. The same single application point is re-run on `DpiChanged`, because the correction is a
+  event, for the same reason as the caption glyph below: the window is *born* maximized (on a remembered monitor it
+  is born normal and maximized before it is shown — last item), and WPF never raises `StateChanged` for a state set
+  before the HWND exists — an event-driven correction would simply never run on the first launch. The same single application point is re-run on `DpiChanged`, because the correction is a
   device-pixel frame width whose DIP value depends on the scale, and moving a maximized window to a differently
   scaled monitor changes the scale without changing the state.
 - Windows 11 rounded corners come from `DWMWA_WINDOW_CORNER_PREFERENCE`; the 1 px frame from
@@ -3214,6 +3214,30 @@ is empty and what lets clicks fall through the same pixels. Consequences that ha
 - The window opens **maximized**; `Width`/`Height` (1400 × 800) remain as the restore size. Minimum size
   1240 × 620. DPI awareness is PerMonitorV2 (px → DIP 1:1), with `UseLayoutRounding` at the root so hairlines
   stay hairlines.
+- **It opens on the monitor it last closed on** (`Shell/WindowMonitor.cs`, `MainWindow.Monitor.cs`). Only the monitor
+  is remembered, not a size: the window is maximized, so it fills whatever resolution and scale that monitor has now.
+  The identity is the monitor's device interface path (`\\?\DISPLAY#<model>#<connection>#{…}`), which survives
+  resolution and scale changes; a display without one (a virtual display, a remote session) is known by its source
+  name (`\\.\DISPLAY1`). When the full path is not connected, the model code alone is enough — but only when exactly one
+  connected monitor has it, so two identical monitors are never guessed between. When nothing matches, the window is
+  left to Windows as before: born maximized, on the screen Windows picks (the primary). The identity is written to
+  `ui-state.json` (`LastMonitor`) on a real close only — Exit, Restart to update, `X` with *Close to tray* off, the
+  session ending — which all pass the close branch of `OnClosing`; it is read there because in `OnClosed` the window
+  has no handle any more (measured: 0). Hiding to the tray writes nothing: the window is hidden in place and comes back
+  on the same monitor. Only a window shown in this session is read (`IsLoaded`, which hiding does not reset), so a
+  session that started in the tray and was never opened does not replace the monitor the user last saw with the one
+  Windows gave the hidden window that day.
+  The placement was measured with a PerMonitorV2 harness on a 4K primary at 100% and a laptop panel at 150%. A window
+  born maximized stays on the screen Windows chose; `SetWindowPlacement` showed the window on the primary first, moved
+  it afterwards and wrecked the restore rectangle; switching an existing handle to normal left the restore rectangle on
+  the primary, so leaving full screen jumped back. What holds: when its monitor is connected the window is born
+  **normal**; once its source exists — before it is ever visible — its top-left is moved into that monitor's work area
+  without touching the size (Windows and WPF apply the scale change through `WM_DPICHANGED`; passing a size as well
+  scales it twice), then the restore rectangle — 1400 × 800 at that monitor's scale, centred in its work area — is set
+  and the window is maximized. WPF applies the maximize as it shows the window: the first frame is already on that
+  monitor, full screen, at its scale. Starting in the tray takes the same path; while the window stays hidden the
+  maximize padding above still carries the old scale, and WPF's DPI notification on show refreshes it before anything
+  is drawn.
 
 ### 12.3 Single instance, tray, hotkey, autostart
 
@@ -7648,6 +7672,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Argument parsing (`--font-ab`, `--autostart`), tray or window for a Windows start | `App/Shell/StartupArgs.cs` |
 | Window shell, layout wiring, shortcut binding | `App/MainWindow.xaml(.cs)`, `App/ShellRoot.xaml(.cs)` |
 | Maximize overflow fix · DWM corners/border · caption glyphs | `App/Shell/MaximizeFix.cs`, `Dwm.cs`, `CaptionGlyphs.cs` |
+| The monitor the window opens on: the remembered monitor's identity and its model-code fallback, the window born normal and placed on it before its first frame; the monitor recorded on a real close, only from a window shown this session | `App/Shell/WindowMonitor.cs`; `App/MainWindow.Monitor.cs` (`SetupMonitor`, `RememberMonitor` — called from `OnClosing` in `App/MainWindow.xaml.cs`) |
 | Single instance, tray icon, global hotkeys (table, show/hide decision), shutdown | `App/Shell/SingleInstance.cs`, `AppTrayIcon.cs`, `Hotkey.cs`, `App/Shell/AppShutdown.cs` |
 | Tray menu — opened by the application at the cursor's physical point instead of by the tray library (§12.3); its items and their icons | `App/Shell/AppTrayIcon.cs` (`OpenMenuOurselves`, `OpenMenu`, `CreateMenu`) |
 | Start with Windows — the `Run` value, Task Manager's disabled mark, the state the switch shows, the save-time write, the removal at uninstall (`RemoveForUninstall`) | `App/Services/AutostartService.cs` |

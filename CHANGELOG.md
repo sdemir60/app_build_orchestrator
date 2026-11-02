@@ -2,6 +2,12 @@
 
 Release notes for Build Orchestrator, newest version first. The What's new window in the app reads this file.
 
+## [1.11.7] - 2026-11-02
+
+### Changed
+
+- The window opens full screen on the monitor it was on when the app last closed, after Exit, Restart to update or a Windows restart, instead of on the main display, and fills that monitor at whatever resolution or scale it has now. If that monitor is not connected, Windows picks the screen as before. The monitor is remembered from the first time this version closes.
+
 ## [1.11.6] - 2026-11-02
 
 ### Changed

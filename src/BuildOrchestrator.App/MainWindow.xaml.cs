@@ -470,6 +470,7 @@ public partial class MainWindow : Window
         SetupExitButton(); // [Exit] title bar'ın Exit butonu ve onay kartı (MainWindow.Exit.cs)
         SetupUpdatePill(); // [design v1.23.0 §2.12] title bar'ın güncelleme hapı (MainWindow.UpdatePill.cs)
         SetupResourceStrip(); // [design v1.25.0 §2.1] title bar ortasındaki kaynak şeridi: örnekleyici + caption iletimi (MainWindow.ResourceStrip.cs)
+        SetupMonitor(saved); // [pencere monitörü] pencere en son kapandığı monitörde, tam ekran açılır (MainWindow.Monitor.cs)
         _ = RunConsolePumpAsync();
     }
 
@@ -1569,6 +1570,7 @@ public partial class MainWindow : Window
         var action = WindowCloseRule.Decide(_exiting, _vm.ExitPending, ShellSwitches.CloseToTray(_uiState.Load()));
         if (action == CloseAction.Close)
         {
+            RememberMonitor(); // [pencere monitörü] HWND burada hâlâ vardır; OnClosed'da yoktur (MainWindow.Monitor.cs)
             base.OnClosing(e);
             return;
         }
