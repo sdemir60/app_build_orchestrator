@@ -124,6 +124,8 @@ public partial class ActionBar : UserControl
     /// <summary>[design v1.11.0 §2.7-5a] Branch chip'inin solundaki mono workspace etiketi.</summary>
     internal TextBlock WorkspaceLabel => PART_Workspace;
     internal Button SyncButton => PART_Sync;
+    /// <summary>[kullanıcı kararı 2026-11-02] Build'in solundaki Restart engine — yalnız <see cref="RunViewModel.OffersEngineRestart"/>'ta görünür.</summary>
+    internal Button RestartEngineButton => PART_RestartEngine;
     internal MaintenanceBox MaintenanceBoxControl => PART_Maintenance;
     internal Button StopButton => PART_Stop;
     internal SplitButton Split => PART_Split;
@@ -214,6 +216,7 @@ public partial class ActionBar : UserControl
             // [kullanıcı kararı 2026-10-02] Açık Build menüsü, koşu komutunun kapısı kapanınca kapanır (iş menü açıkken başlayabilir).
             _vm.BuildCommand.CanExecuteChanged += OnBuildGateChanged;
         }
+        RefreshRestartEngine(); // kurulumu beklemez (bkz. RefreshRestartEngine)
         RefreshAll();
     }
 
@@ -297,6 +300,9 @@ public partial class ActionBar : UserControl
                 break;
             case nameof(RunViewModel.PerfMode):
                 RefreshPerf();
+                break;
+            case nameof(RunViewModel.OffersEngineRestart):
+                RefreshRestartEngine();
                 break;
         }
     }
@@ -636,10 +642,26 @@ public partial class ActionBar : UserControl
         _syncIcon.Children.Add(IconVisual.BoundToForeground(PART_Sync, "Icon.Sync", LabelIconSize, 24));
         _syncIcon.Children.Add(new TextBlock { Text = "Sync", Margin = new Thickness(IconVisual.LabelGap, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
         PART_Sync.Content = _syncIcon;
+        // [kullanıcı kararı 2026-11-02] Restart engine etiketsizdir: anlamı tooltip söyler — "motor" kelimesi kullanıcıya kendiliğinden bir
+        // şey anlatmaz, tooltip ne yaptığını anlatır. İkon RefreshRestartEngine'de kurulur (rengi duruma bağlı).
+        PART_RestartEngine.ToolTip = AccessibilityNames.RestartEngineTooltip;
         // [Stop now] Stop'un İÇERİĞİ ve UIA adı duruma bağlı (Stop / Stop now / Terminating…) — tek yazıcısı RefreshBuildArea'dır;
         // burada yalnız ilk aşamanın adı kurulur (metinler TEK kaynaktan: StopText).
         AutomationProperties.SetName(PART_Sync, AccessibilityNames.SyncButton);
+        AutomationProperties.SetName(PART_RestartEngine, AccessibilityNames.RestartEngineButton);
         AutomationProperties.SetName(PART_Stop, StopText.ActionBarName(StopStage.Stop));
+    }
+
+    /// <summary>[kullanıcı kararı 2026-11-02] Restart engine yalnız VM'in tek kapısı açıkken yer kaplar (<see cref="RunViewModel.OffersEngineRestart"/>).
+    /// İkonu (saat yönünün tersine dönen ok) şeridin O ANKİ satırının rengini taşır: kapı açıkken o satır motorun ölümü (kırmızı) ya da
+    /// sessizliğidir (amber) — düğme gösterdiği nedene bağlanır, renk ikinci kez seçilmez (<see cref="RunViewModel.RibbonLine"/>).
+    /// Etkinliği komutundan gelir. Kurulmuş içeriğe (<see cref="BuildButtons"/>) dayanmadığı için <c>Loaded</c>'ı beklemez: düğme,
+    /// DataContext bağlandığı andan itibaren VM'i izler.</summary>
+    private void RefreshRestartEngine()
+    {
+        bool offered = _vm?.OffersEngineRestart == true;
+        PART_RestartEngine.Visibility = offered ? Visibility.Visible : Visibility.Collapsed;
+        if (offered) PART_RestartEngine.Content = IconVisual.Make(this, "Icon.Rot", _vm!.RibbonLine.BrushKey, LabelIconSize, 24);
     }
 
     private void RefreshBuildArea()

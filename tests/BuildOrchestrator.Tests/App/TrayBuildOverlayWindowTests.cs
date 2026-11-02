@@ -105,28 +105,36 @@ public sealed class TrayBuildOverlayWindowTests
 
     /// <summary>Çalışma alanının SAĞ ALT köşesi, iki ayrı kenar payıyla. Alan bilerek parametredir: görev
     /// çubuğu solda ya da üstte olabilir ve o zaman çalışma alanı (0,0)'dan başlamaz — köşe hesabı ekranın
-    /// kendisinden değil, çalışma alanından türemeli.</summary>
+    /// kendisinden değil, çalışma alanından türemeli.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL] Alan fizikseldir, iki ölçek ayrıdır.</b> Eski iddia: alan DIP'tir
+    /// (<c>SystemParameters.WorkArea</c>) ve köşe "Right eksi genişlik eksi pay"dır. Değişme gerekçesi: WPF o alanı sürecin açılışta
+    /// okuduğu ölçekle çevirir ve tazelemez; ekran ölçeği uygulama açıkken değişince gösterge köşeden kaydı — ölçüldü
+    /// (<c>TrayOverlayPositionProbeTests</c>, 4K %100 birincil ekran): önbellek %150'de kalmışken 1279 px içeride, %67'de kalmışken
+    /// 1921 px dışarıda, en son %150'lik laptopta gösterilmiş pencerede 1919 px dışarıda. Alan artık fiziksel piksel; ölçü ve paylar
+    /// köşenin ekranının ölçeğiyle büyür, sonuç WPF birimine pencerenin O ANKİ ölçeğiyle bölünür.</para></summary>
     [Theory]
-    // Beklenen köşe testin GÖVDESİNDE, aynı girdiden (workArea) hesaplanır — Place'in kendi formülü
-    // (Right eksi OverlayWidth eksi RightMargin; Bottom eksi OverlayHeight eksi BottomMargin). Elle kopyalanmış
-    // ondalık YOKTUR.
-    // taskbar altta: 1920×1080 ekran, 40px şerit
-    [InlineData(0, 0, 1920, 1040)]
-    // taskbar solda (80px): alan x=80'den başlar — sağ kenar yine ekranın sağı
-    [InlineData(80, 0, 1840, 1080)]
-    // taskbar üstte: alan y=40'tan başlar, alt kenar ekranın altı
-    [InlineData(0, 40, 1920, 1040)]
-    public void Overlay_positions_into_the_bottom_right_of_a_given_work_area(double x, double y, double w, double h)
+    // Beklenenler elle hesaplanmış literallerdir: genişlik 100, yükseklik 50, paylar 4 (sağ) / 12 (alt) DIP.
+    // %100 ekran ve pencere, taskbar altta (1920×1040 alan): sol 1920 − 104 = 1816, üst 1040 − 62 = 978
+    [InlineData(0, 0, 1920, 1040, 1.0, 1.0, 1816, 978)]
+    // taskbar solda (80 px): alan x=80'den başlar — sağ kenar yine 1920
+    [InlineData(80, 0, 1840, 1080, 1.0, 1.0, 1816, 1018)]
+    // taskbar üstte: alan y=40'tan başlar, alt kenar 1080
+    [InlineData(0, 40, 1920, 1040, 1.0, 1.0, 1816, 1018)]
+    // %150 ekran ve pencere (2880×1752 alan): piksel sol 2880 − 156 = 2724, üst 1752 − 93 = 1659; ikisi de / 1,5
+    [InlineData(0, 0, 2880, 1752, 1.5, 1.5, 1816, 1106)]
+    // %150 ekran, pencere hâlâ %100'de: aynı pikseller, WPF onları %100'le çevireceği için bölünmez
+    [InlineData(0, 0, 2880, 1752, 1.5, 1.0, 2724, 1659)]
+    // %100 ekran, pencere hâlâ %150'de (en son laptoptaydı): piksel sol 3840 − 104 = 3736, üst 2112 − 62 = 2050; / 1,5
+    [InlineData(0, 0, 3840, 2112, 1.0, 1.5, 3736 / 1.5, 2050 / 1.5)]
+    public void Overlay_positions_into_the_bottom_right_of_a_given_work_area(
+        double x, double y, double w, double h, double screenScale, double windowScale, double left, double top)
     {
-        var workArea = new Rect(x, y, w, h);
-        var (left, top) = TrayBuildOverlayWindow.Place(
-            workArea, TrayBuildOverlayWindow.OverlayWidth, TrayBuildOverlayWindow.OverlayHeight,
-            TrayBuildOverlayWindow.RightMargin, TrayBuildOverlayWindow.BottomMargin);
+        var (actualLeft, actualTop) = TrayBuildOverlayWindow.Place(
+            new Rect(x, y, w, h), screenScale, windowScale, width: 100, height: 50, rightMargin: 4, bottomMargin: 12);
 
-        Assert.Equal(workArea.Right - TrayBuildOverlayWindow.OverlayWidth - TrayBuildOverlayWindow.RightMargin,
-            left, precision: 10);
-        Assert.Equal(workArea.Bottom - TrayBuildOverlayWindow.OverlayHeight - TrayBuildOverlayWindow.BottomMargin,
-            top, precision: 10);
+        Assert.Equal(left, actualLeft, precision: 10);
+        Assert.Equal(top, actualTop, precision: 10);
     }
 
     /// <summary>

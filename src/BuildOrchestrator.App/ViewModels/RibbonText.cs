@@ -102,8 +102,8 @@ public static class RibbonText
     {
         // [E2/T37 · EngineDiedMessage ÖNCELİĞİ] Engine process öldüyse şerit, HANGİ Phase'de olursa olsun (F3:
         // mid-run ölümde Phase kozmetik olarak Stopped'a çekilse de) bu KALICI KIRMIZI hata metnini gösterir —
-        // Phase YOK SAYILIR. En yüksek öncelik. Banner/toast YOK: kalıcı mod şerit-içidir, "Restart engine"
-        // aksiyonu görünümde (StickyRibbon) eklenir.
+        // Phase YOK SAYILIR. En yüksek öncelik. Banner/toast YOK: kalıcı mod şerit-içidir; "Restart engine" düğmesi alt barda,
+        // Build'in hemen solundadır (ActionBar, RunViewModel.OffersEngineRestart).
         if (engineDiedMessage is { Length: > 0 })
             return new RibbonLine(engineDiedMessage, "Brush.StatusFailText", "failed");
 
@@ -111,7 +111,7 @@ public static class RibbonText
         // durum betimlemesi (faz) DEĞİL, CANLI bir bekleyiştir: alttaki metinlerin hepsi "sistem çalışıyor"
         // varsayar ve o varsayım şu an geçerli değildir. Motor GERÇEKTEN öldüyse (yukarıdaki dal) o bilgi
         // daha kesindir ve üstte kalır. Renk KIRMIZI DEĞİL amber + glyph YOK: bu bir başarısızlık değil —
-        // drain hâlâ meşru olabilir; satır yalnız çıkış kapısını (şerit-içi "Restart engine") gerekçelendirir.
+        // drain hâlâ meşru olabilir; satır yalnız çıkış kapısını (alt bardaki "Restart engine") gerekçelendirir.
         if (engineOverdue is { Length: > 0 })
             return new RibbonLine(engineOverdue, "Brush.AmberText", null);
 

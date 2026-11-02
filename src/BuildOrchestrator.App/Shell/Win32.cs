@@ -190,4 +190,25 @@ internal static class Win32
     [DllImport("user32.dll", EntryPoint = "GetMonitorInfoW")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool GetMonitorInfo(nint hMonitor, ref MONITORINFO lpmi);
+
+    // --- birincil ekran (tepsi build overlay'inin köşesi)
+
+    public const uint MONITOR_DEFAULTTOPRIMARY = 1;
+
+    /// <summary><see cref="GetDpiForMonitor"/>'ın türü: kullanıcının ekran ayarındaki ölçek (%100 → 96, %150 → 144).</summary>
+    public const int MDT_EFFECTIVE_DPI = 0;
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT
+    {
+        public int X, Y;
+    }
+
+    /// <summary>Noktayı içeren ekran; (0,0) her zaman birincil ekranın sol üst köşesidir.</summary>
+    [DllImport("user32.dll")]
+    public static extern nint MonitorFromPoint(POINT pt, uint dwFlags);
+
+    /// <summary>Ekranın O ANKİ ölçeği — çağrı anında okunur, süreç açılışında saklanmaz. Başarıda 0 (S_OK) döner.</summary>
+    [DllImport("shcore.dll")]
+    public static extern int GetDpiForMonitor(nint hmonitor, int dpiType, out uint dpiX, out uint dpiY);
 }

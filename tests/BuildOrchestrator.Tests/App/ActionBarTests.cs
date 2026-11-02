@@ -584,7 +584,10 @@ public partial class ActionBarTests
     /// soluna geçti. Eski iddia gruba altı öğe sayıyordu ve ilk öğeyi branch chip'i sanıyordu.</para>
     /// <para><b>[DEĞİŞEN KURAL — design v1.16.0 §2.7-6a]</b> Branch chip'inin HEMEN SAĞINA <c>N behind</c>
     /// chip'i eklendi. Yeri tesadüfi değildir: mesafe branch'in bir olgusudur ve chip yalnız geride kalınca
-    /// çizilir (varsayılan <c>Collapsed</c>) — grup normalde eskisi gibi görünür.</para></summary>
+    /// çizilir (varsayılan <c>Collapsed</c>) — grup normalde eskisi gibi görünür.</para>
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-11-02]</b> Ayraçla Stop/Build grid'inin arasına <c>Restart engine</c> girdi
+    /// (eski iddia: grup yedi öğedir, ayraçtan hemen sonra Build gelir). Düğme şeritten taşındı ve yalnız motor öldüğünde ya da
+    /// sustuğunda çizilir (varsayılan <c>Collapsed</c>) — sağlıklı bir motorda grup eskisi gibi görünür.</para></summary>
     [StaFact]
     public void The_right_group_orders_workspace_branch_behind_config_perf_a_separator_then_the_build_area()
     {
@@ -593,7 +596,7 @@ public partial class ActionBarTests
 
         var rightGroup = Assert.IsType<StackPanel>(bar.Segment.Parent);
         var rightChildren = rightGroup.Children.Cast<UIElement>().ToList();
-        Assert.Equal(7, rightChildren.Count);
+        Assert.Equal(8, rightChildren.Count);
         Assert.Same(bar.WorkspaceLabel, rightChildren[0]);
         Assert.Same(bar.BranchChip, ((Grid)rightChildren[1]).Children.Cast<UIElement>().First());
         Assert.Same(bar.BehindChip, rightChildren[2]);
@@ -602,7 +605,9 @@ public partial class ActionBarTests
         Assert.Same(bar.PerfChip, rightChildren[4]);
         var rightSeparator = Assert.IsType<Border>(rightChildren[5]);
         Assert.Same(bar.FindResource("Brush.BorderSubtle"), rightSeparator.Background);
-        var buildArea = Assert.IsType<Grid>(rightChildren[6]);
+        Assert.Same(bar.RestartEngineButton, rightChildren[6]);
+        Assert.Equal(Visibility.Collapsed, bar.RestartEngineButton.Visibility); // motor sağlıklıyken çizilmez
+        var buildArea = Assert.IsType<Grid>(rightChildren[7]);
         Assert.Contains(bar.StopButton, buildArea.Children.Cast<UIElement>());
         Assert.Contains(bar.Split, buildArea.Children.Cast<UIElement>());
         GC.KeepAlive(window);

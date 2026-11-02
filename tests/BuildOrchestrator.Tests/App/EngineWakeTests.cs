@@ -289,12 +289,12 @@ public class EngineWakeTests
         Assert.Null(vm.WhyRunCannotStart());
         Assert.True(vm.BuildCommand.CanExecute(null));
         Assert.False(vm.IsEngineUnavailable);
-        Assert.Equal(Visibility.Collapsed, window.Shell.Ribbon.RestartEngineAction.Visibility);
+        Assert.Equal(Visibility.Collapsed, window.Shell.ActionBarControl.RestartEngineButton.Visibility);
 
         _ = vm.SyncCommand.ExecuteAsync(null);
         DispatcherPump.DrainToIdle();
         Assert.Equal(EngineState.Waking, vm.EngineState); // ön-koşul (kırmızının yeri)
-        Assert.Equal(Visibility.Collapsed, window.Shell.Ribbon.RestartEngineAction.Visibility); // pin
+        Assert.Equal(Visibility.Collapsed, window.Shell.ActionBarControl.RestartEngineButton.Visibility); // pin
         waking.SetResult(Woken());
         DispatcherPump.DrainToIdle();
         GC.KeepAlive(window);
@@ -1133,7 +1133,7 @@ public class EngineWakeTests
         Assert.True(vm.EngineRestartable);
         Assert.False(vm.IsEngineUnavailable);
         Assert.Equal(vm.EngineDiedMessage, window.Shell.Ribbon.PhaseText.Text);
-        Assert.Equal(Visibility.Visible, window.Shell.Ribbon.RestartEngineAction.Visibility);
+        Assert.Equal(Visibility.Visible, window.Shell.ActionBarControl.RestartEngineButton.Visibility);
         Assert.True(vm.SyncCommand.CanExecute(null));
         Assert.Equal(console, vm.GetRunDocumentText());
         Assert.Empty(sent.Commands);
@@ -1193,7 +1193,7 @@ public class EngineWakeTests
         Assert.Equal(console, vm.GetRunDocumentText());
         Assert.Equal("Engine stopped unexpectedly (exit -1)", vm.EngineDiedMessage);
         Assert.Equal(vm.EngineDiedMessage, window.Shell.Ribbon.PhaseText.Text);
-        Assert.Equal(Visibility.Visible, window.Shell.Ribbon.RestartEngineAction.Visibility);
+        Assert.Equal(Visibility.Visible, window.Shell.ActionBarControl.RestartEngineButton.Visibility);
         Assert.Equal(EngineState.Dead, vm.EngineState);
         Assert.Empty(sent.Commands);
         Assert.Equal(1, probe.WakeCalls);
@@ -1224,7 +1224,7 @@ public class EngineWakeTests
         DispatcherPump.DrainToIdle();
         await sync;
         Assert.Equal(EngineState.Waking, vm.EngineState); // ön-koşul: uyanma düştü, ölüm sinyali gelmedi — durum askıda
-        Assert.Equal(Visibility.Collapsed, window.Shell.Ribbon.RestartEngineAction.Visibility);
+        Assert.Equal(Visibility.Collapsed, window.Shell.ActionBarControl.RestartEngineButton.Visibility);
         string console = vm.GetRunDocumentText();
 
         await vm.LoadProjectLogAsync(MainWindowHost.IdOf("A")); // sonraki tıklama
@@ -1233,7 +1233,7 @@ public class EngineWakeTests
         Assert.Equal(EngineState.Dead, vm.EngineState);
         Assert.Equal("Engine stopped unexpectedly (wake failed)", vm.EngineDiedMessage); // metnin TEK literal pini (M-5)
         Assert.Equal(vm.EngineDiedMessage, window.Shell.Ribbon.PhaseText.Text);
-        Assert.Equal(Visibility.Visible, window.Shell.Ribbon.RestartEngineAction.Visibility);
+        Assert.Equal(Visibility.Visible, window.Shell.ActionBarControl.RestartEngineButton.Visibility);
         Assert.Empty(sent.Commands);
         Assert.Equal(1, probe.WakeCalls);
         Assert.Equal(console, vm.GetRunDocumentText());

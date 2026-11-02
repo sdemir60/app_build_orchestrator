@@ -199,10 +199,17 @@ public sealed class EnginePreflightTests
         Assert.DoesNotContain("engine restart failed", vm.GetRunDocumentText(), StringComparison.Ordinal);
     }
 
-    /// <summary>[Realize] Şerit GERÇEKTEN kurulur (merge zinciri + ekran dışı pencere): headless suite XAML
-    /// runtime çözümlemesini görmediği için (bkz. <c>c6e9a21</c>) aksiyon görünürlüğü gerçek görsel ağaçta pinlenir.</summary>
+    /// <summary>[Realize] Şerit GERÇEKTEN kurulur (merge zinciri + ekran dışı pencere): headless suite XAML runtime çözümlemesini
+    /// görmediği için (bkz. <c>c6e9a21</c>) satırlar gerçek görsel ağaçta pinlenir. Şerit motorun ölümünü, eksikliğini ve sessizliğini
+    /// ADLANDIRIR; yeniden başlatma düğmesi taşımaz.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-11-02]</b> Eski iddialar (<c>The_realized_ribbon_hides_the_restart_action_only_when_the_engine_is_missing</c>,
+    /// <c>The_realized_ribbon_offers_the_restart_action_when_the_engine_has_gone_silent</c>): "Restart engine" şeridin içindeydi ve bu
+    /// satırlarla birlikte görünürdü. Değişme gerekçesi: kullanıcı Build'e bastığında uyarı şeritte, kurtarma düğmesi de onun yanında —
+    /// pencerenin öbür ucunda — belirdi; düğmenin ne olduğu anlaşılmadı. Düğme alt barda Build'in hemen soluna taşındı, görünürlük kuralı
+    /// değişmedi (ölüm ya da sessizlik, ve yeniden başlatmanın anlamı var) — o kural artık <c>ActionBarTests.Restart_engine_*</c>'tadır.</para></summary>
     [StaFact]
-    public void The_realized_ribbon_hides_the_restart_action_only_when_the_engine_is_missing()
+    public void The_realized_ribbon_names_the_engine_failure_and_carries_no_restart_button_of_its_own()
     {
         var vm = NewVm();
         var host = DsResources.NewHost();
@@ -211,31 +218,17 @@ public sealed class EnginePreflightTests
 
         vm.OnEngineUnavailable(MissingSupervisorPath);
         Assert.Equal(RunViewModel.EngineMissingMessage, ribbon.PhaseText.Text);
-        Assert.Equal(Visibility.Collapsed, ribbon.RestartEngineAction.Visibility);
 
-        vm.OnEngineExited(2); // normal ölüm → aynı kalıcı hata modu, ama aksiyon geri gelir
+        vm.OnEngineExited(2); // normal ölüm → aynı kalıcı hata modu, düğme alt barda açılır
         Assert.Equal("Engine stopped unexpectedly (exit 2)", ribbon.PhaseText.Text);
-        Assert.Equal(Visibility.Visible, ribbon.RestartEngineAction.Visibility);
+        Assert.True(vm.OffersEngineRestart);
 
-        GC.KeepAlive(window);
-    }
+        vm.EngineOverdueMessage = RunViewModel.EngineSilentMessage; // sessizlik satırı ölümün altındadır…
+        vm.EngineDiedMessage = null;                                 // …ölüm kalkınca şerit onu yazar
+        Assert.Equal(RunViewModel.EngineSilentMessage, ribbon.PhaseText.Text);
 
-    /// <summary>Motor YAŞIYOR ama sustu (donmuş run task'ı — ölçülen üretim vakası). Process çıkmadığı için
-    /// <c>EngineDiedMessage</c> HİÇ yazılmaz; aksiyon yalnız ona bağlı kalsaydı kullanıcının tek çıkışı
-    /// uygulamayı kapatmak olurdu. Kapı, sessizlik uyarısıyla birlikte de açılır.</summary>
-    [StaFact]
-    public void The_realized_ribbon_offers_the_restart_action_when_the_engine_has_gone_silent()
-    {
-        var vm = NewVm();
-        var host = DsResources.NewHost();
-        var ribbon = new StickyRibbon { DataContext = vm, AnimationsEnabledProvider = () => false };
-        var window = DsResources.Realize(host, ribbon);
-        Assert.Equal(Visibility.Collapsed, ribbon.RestartEngineAction.Visibility); // ön-koşul
-
-        vm.EngineOverdueMessage = "Engine has stopped responding — no reply for 1m 30s · you can restart it";
-
-        Assert.Equal(vm.EngineOverdueMessage, ribbon.PhaseText.Text);
-        Assert.Equal(Visibility.Visible, ribbon.RestartEngineAction.Visibility);
+        Assert.DoesNotContain(DsResources.RealizedObjects(ribbon).OfType<System.Windows.Controls.Button>(),
+            b => ReferenceEquals(b.Command, vm.RestartEngineCommand));
         GC.KeepAlive(window);
     }
 }

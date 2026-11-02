@@ -6,7 +6,7 @@
   <!--
     [D6/T40+T12+T43-UI] design-v1 ALT AKSIYON BARI (BuildApp.jsx:1543-1615). DataContext bir RunViewModel
     (ShellRoot'tan miras). Bar: Sync · ayraç · 6 sayaç chip'i · esnek boşluk · branch popover chip'i · behind ·
-    Debug|Release segment · perf · ayraç · Build split-button (koşarken Stop).
+    Debug|Release segment · perf · ayraç · Restart engine (yalnız gerektiğinde) · Build split-button (koşarken Stop).
 
     Sayaç chip'leri + branch/perf chip'lerinin İÇERİĞİ (ikon+etiket+değer) ve enable/checked durumu
     KOD-TARAFI (ActionBar.xaml.cs) VM'den sürülür — StickyRibbon deseni. Ölçü/renk token'dan (hardcode YASAK);
@@ -61,6 +61,15 @@
 
         <!-- ayraç -->
         <Border Width="1" Margin="2,10,2,10" Background="{DynamicResource Brush.BorderSubtle}" />
+
+        <!-- [kullanıcı kararı 2026-11-02] Restart engine: Build'in HEMEN SOLUNDA, yalnız gerektiğinde — motor öldü ya da sustu ve yeniden
+             başlatmanın anlamı var (RunViewModel.OffersEngineRestart). Kurtarma eylemi kullanıcının az önce bastığı Build'in yanındadır;
+             nedeni şerit anlatır. ETİKETSİZ kare düğme (24×24, Sync'in çubuk stili): etiketli hâli 132 px tutuyordu ve en dar pencerede
+             (1240) tipik bir iş branch'iyle barı taşırıp sayaç chip'lerini kırpıyordu — ölçüldü; anlam tooltip'tedir (bakım kutusunun
+             kuralı). İkon (rengi şeridin satırından) ve görünürlük kod-tarafı. -->
+        <Button x:Name="PART_RestartEngine" Style="{DynamicResource Ds.Bar.Button.Secondary.Sm}" Margin="8,0,0,0"
+                Width="24" Padding="0" VerticalAlignment="Center" Visibility="Collapsed"
+                Command="{Binding RestartEngineCommand}" />
 
         <!-- Build split-button (koşarken Stop) -->
         <Grid Margin="8,0,0,0" VerticalAlignment="Center">

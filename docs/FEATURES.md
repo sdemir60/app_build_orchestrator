@@ -75,8 +75,8 @@ Studio and asks which one when the project belongs to several; Reveal in Explore
 
 **What:** The app can start with Windows and wait in the tray, hidden if you like; from anywhere, Shift+Space shows
 or hides the window and Ctrl+Shift+Space starts a Build without bringing it up. A small animated mark in the screen
-corner shows a build is running, a Windows notification reports the result, and closing the window only hides it in
-the tray.\
+corner shows a build is running, a Windows notification reports the result — its icon green, red or grey before you
+read a word — and closing the window only hides it in the tray.\
 **How:** Start with Windows uses the per-user Run key, so no admin rights are needed. The global shortcuts are
 registered with Windows and work while the window is behind Visual Studio or in the tray. Close to tray, Start with
 Windows, Start minimized to tray and Show notifications live in Settings → General; the tray menu has Stop and Exit,
@@ -241,8 +241,8 @@ anywhere else. Reads such as status, refs and fetch go through a separate path.\
 
 ## Watches its own engine
 
-**What:** If the build engine dies, hangs or fails to wake, the ribbon names the problem and offers Restart engine;
-when the engine is back it says Engine ready and runs the startup Sync.\
+**What:** If the build engine dies, hangs or fails to wake, the ribbon names the problem and a Restart engine button
+appears right beside Build; when the engine is back it says Engine ready and runs the startup Sync.\
 **How:** The app watches the engine process and, in the moments when an answer is due (run start, stop, Sync,
 maintenance, checkout, pull), shows an amber warning if the engine goes silent. Nothing unlocks on its own; the
 decision is yours.\

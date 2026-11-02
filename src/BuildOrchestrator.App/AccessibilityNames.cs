@@ -41,6 +41,14 @@ public static class AccessibilityNames
     // ---- Action bar: birincil kontroller ----
     public const string SyncButton = "Sync";
 
+    /// <summary>[kullanıcı kararı 2026-11-02] Build'in solundaki, yalnız motor öldüğünde ya da sustuğunda görünen düğme — etiketi de
+    /// UIA adı da budur.</summary>
+    public const string RestartEngineButton = "Restart engine";
+
+    /// <summary>Düğmenin ne yaptığını söyler: derlemeyi yapan ayrı arka plan sürecini (motoru) yenisiyle değiştirir.</summary>
+    public const string RestartEngineTooltip =
+        RestartEngineButton + " — start a fresh build engine; the current one stopped or is not answering";
+
     // ---- Action bar: bakım kutusu (design v1.7.0 §2.7-2) ----
     /// <summary>Üç bakım düğmesinin UIA adı. Düğmeler ikon-yalnızdır (etiket bara sığmıyor), bu yüzden
     /// ekran okuyucunun duyacağı TEK metin budur. Ad DURUMDAN BAĞIMSIZ sabittir — tooltip değişir, ad

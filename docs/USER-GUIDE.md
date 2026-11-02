@@ -431,7 +431,8 @@ the screen — click it to bring the window back, or click straight through the 
 is underneath. While it is in the tray the window does not redraw itself as the run progresses, and bringing it back
 brings it up to date in a single pass. When the run finishes the mark plays out its last turn, fades, and Windows shows a notification
 with the result — click it to bring the window back too — and the same sentence is waiting in the ribbon when
-you open the window again. A run that finishes while the window is open shows no notification — the ribbon
+you open the window again. The notification's icon tells the result before you read it: a green tick on its
+corner for success, a red cross for a failure, a grey square for a stopped run. A run that finishes while the window is open shows no notification — the ribbon
 already says it. Turn *Show notifications* off and the app shows no Windows notification at all — not the
 result, not the one-time *still running in the tray* note, not the note a Build hotkey press leaves when something
 keeps it from starting, not the warning a second copy of the app gives when it cannot bring the window forward;
@@ -450,13 +451,15 @@ forward to show the card; if the work ends while the card is open, it says so an
 engine that stops answering, or dies, does not hold up a branch switch or pull the exit waits for: the app then
 closes anyway.
 
-If the engine ever stops answering — no event at all while a run start, a stop, a Sync, a Clean, an Optimize, a
-branch switch or a pull is still waiting for its answer — the ribbon says so in amber and offers *Restart
-engine*. Nothing unlocks by itself, because a drain can legitimately take minutes; the action is there for the
-case where waiting is no longer the answer. Restarting kills the engine and every `MSBuild.exe` under it, then
-brings a fresh engine up. An engine that cannot be stopped when it goes idle, or cannot be started again when work
-arrives, says so in red — *Engine stopped unexpectedly (idle shutdown failed)* or *(wake failed)* — and offers
-*Restart engine* the same way.
+The engine is the separate background process that runs the builds. If it ever stops answering — no event at all
+while a run start, a stop, a Sync, a Clean, an Optimize, a branch switch or a pull is still waiting for its
+answer — the ribbon says so in amber and a *Restart engine* button appears right beside Build: a square button with
+a circular arrow, whose tooltip says what it does. Nothing unlocks by itself, because a drain can legitimately take
+minutes; the button is there for the case where waiting is no longer the answer. Restarting kills the engine and
+every `MSBuild.exe` under it, then brings a fresh engine up. An engine that dies, cannot be stopped when it goes
+idle, or cannot be started again when work arrives, says so in red — *Engine stopped unexpectedly (exit N)*,
+*(idle shutdown failed)* or *(wake failed)* — and the same button appears, its arrow red. When the supervisor file
+itself is missing there is no button: a restart would not bring the file back, and the ribbon asks for a reinstall.
 
 ## Keyboard shortcuts
 
