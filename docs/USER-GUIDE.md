@@ -451,6 +451,13 @@ forward to show the card; if the work ends while the card is open, it says so an
 engine that stops answering, or dies, does not hold up a branch switch or pull the exit waits for: the app then
 closes anyway.
 
+The next time the app starts — after *Exit*, *Restart to update* or a Windows restart — the window opens full screen on
+the monitor it was on when the app closed: on a laptop with an external monitor it comes back where you left it, and
+fills that monitor whatever its resolution or scale is now. A monitor plugged into another port is still recognised,
+unless two of the same model are connected. If that monitor is not connected, Windows picks the screen — normally the
+main display. A session spent entirely in the tray, with the window never opened, does not change the remembered
+monitor.
+
 The engine is the separate background process that runs the builds. If it ever stops answering — no event at all
 while a run start, a stop, a Sync, a Clean, an Optimize, a branch switch or a pull is still waiting for its
 answer — the ribbon says so in amber and a *Restart engine* button appears right beside Build: a square button with

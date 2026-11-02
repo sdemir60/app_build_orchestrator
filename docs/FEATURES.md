@@ -76,11 +76,14 @@ Studio and asks which one when the project belongs to several; Reveal in Explore
 **What:** The app can start with Windows and wait in the tray, hidden if you like; from anywhere, Shift+Space shows
 or hides the window and Ctrl+Shift+Space starts a Build without bringing it up. A small animated mark in the screen
 corner shows a build is running, a Windows notification reports the result — its icon green, red or grey before you
-read a word — and closing the window only hides it in the tray.\
+read a word — and closing the window only hides it in the tray. Started again, the window opens full screen on the
+monitor it was last closed on.\
 **How:** Start with Windows uses the per-user Run key, so no admin rights are needed. The global shortcuts are
 registered with Windows and work while the window is behind Visual Studio or in the tray. Close to tray, Start with
 Windows, Start minimized to tray and Show notifications live in Settings → General; the tray menu has Stop and Exit,
-clicking the icon brings the window back, and a second launch brings the running window forward.\
+clicking the icon brings the window back, and a second launch brings the running window forward. The monitor is
+remembered by its identity, so a new resolution or scale does not lose it; if it is not connected, Windows picks the
+screen.\
 `global hotkeys to build from the background` · `tray icon to work in the background` · `per-user Run key, no admin` · `Windows notification for the result`
 
 ## Syncs on its own
