@@ -133,7 +133,6 @@ public partial class StickyRibbon : UserControl
     /// yolun kümeye dokunduğu geçişleri sayar.</summary>
     internal int ChipSetChangeCount { get; private set; }
     internal StackPanel FailureCluster => PART_FailureCluster; // testler hatalı chip'leri buradan pinler
-    internal Button RestartEngineAction => PART_RestartEngine;  // [D1] kalıcı hata modunun aksiyonu (görünür/gizli)
 
     // ---------------------------------------------------------------- lifecycle
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -225,14 +224,13 @@ public partial class StickyRibbon : UserControl
             case nameof(RunViewModel.HasWorkspace):
             case nameof(RunViewModel.RootPath):
             // [E2/T37+T10] Engine-died kalıcı hata modu ve Sync-failed KIRMIZI metni faz-metnini EZER (RibbonText
-            // öncelik sırası) → değiştiklerinde metni yeniden kur (Restart engine butonu görünürlüğü de RefreshText'te).
+            // öncelik sırası) → değiştiklerinde metni yeniden kur.
             case nameof(RunViewModel.EngineDiedMessage):
-            case nameof(RunViewModel.EngineRestartable): // [D1] aksiyonun anlamlı olup olmadığı da metinle birlikte tazelenir
             case nameof(RunViewModel.SyncErrorMessage):
             case nameof(RunViewModel.RunErrorMessage): // [runFailed] aynı öncelik zincirinin üçüncü halkası
             case nameof(RunViewModel.CurrentOperation):
             case nameof(RunViewModel.IsMidRunLocked): // pill'in canlılığı koşu kilidine bakar
-            case nameof(RunViewModel.EngineOverdueMessage): // motor sustu: amber satır + "Restart engine" kapısı
+            case nameof(RunViewModel.EngineOverdueMessage): // motor sustu: amber satır (düğme alt barda)
             case nameof(RunViewModel.ExitPending): // [P3 · Task 2] çıkış işi bekliyor: faz değişmese de satır Stopping olur
             case nameof(RunViewModel.EngineState): // [dalga 3 · karar 38] uyanan motor: faz değişmese de satır "Starting the engine…" olur
                 RefreshText();
@@ -281,16 +279,6 @@ public partial class StickyRibbon : UserControl
         // [tray indicator/K-5] Satır artık VM'de üretilir: aynı cümleyi tepsideki bitiş bildirimi de taşır ve
         // iki yerde compose etmek onların sessizce ayrışmasına açık kapı bırakırdı.
         var line = _vm.RibbonLine;
-
-        // [E2/T37] "Restart engine" kalıcı hata modunda görünür (banner/toast YOK — şerit-içi).
-        // [D1] …ve yalnız yeniden başlatmanın ANLAMI varsa: Supervisor çıktısı hiç yoksa (EngineRestartable=false)
-        // aksiyon gizlenir, kullanıcı şeritteki açıklayıcı metni okur (RunViewModel.EngineMissingMessage).
-        // Kapı SESSİZLİK uyarısında da açılır: motor donduğunda process ÇIKMAZ, yani EngineDiedMessage hiç
-        // yazılmaz — aksiyon yalnız ona bağlı kalsaydı kullanıcının tek çıkışı uygulamayı kapatmak olurdu.
-        bool engineNeedsAttention =
-            !string.IsNullOrEmpty(_vm.EngineDiedMessage) || !string.IsNullOrEmpty(_vm.EngineOverdueMessage);
-        PART_RestartEngine.Visibility =
-            engineNeedsAttention && _vm.EngineRestartable ? Visibility.Visible : Visibility.Collapsed;
 
         PART_PhaseText.Text = line.Text;
         PART_PhaseText.SetResourceReference(TextBlock.ForegroundProperty, line.BrushKey);

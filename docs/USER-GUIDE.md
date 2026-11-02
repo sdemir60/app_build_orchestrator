@@ -450,13 +450,15 @@ forward to show the card; if the work ends while the card is open, it says so an
 engine that stops answering, or dies, does not hold up a branch switch or pull the exit waits for: the app then
 closes anyway.
 
-If the engine ever stops answering — no event at all while a run start, a stop, a Sync, a Clean, an Optimize, a
-branch switch or a pull is still waiting for its answer — the ribbon says so in amber and offers *Restart
-engine*. Nothing unlocks by itself, because a drain can legitimately take minutes; the action is there for the
-case where waiting is no longer the answer. Restarting kills the engine and every `MSBuild.exe` under it, then
-brings a fresh engine up. An engine that cannot be stopped when it goes idle, or cannot be started again when work
-arrives, says so in red — *Engine stopped unexpectedly (idle shutdown failed)* or *(wake failed)* — and offers
-*Restart engine* the same way.
+The engine is the separate background process that runs the builds. If it ever stops answering — no event at all
+while a run start, a stop, a Sync, a Clean, an Optimize, a branch switch or a pull is still waiting for its
+answer — the ribbon says so in amber and a *Restart engine* button appears right beside Build: a square button with
+a circular arrow, whose tooltip says what it does. Nothing unlocks by itself, because a drain can legitimately take
+minutes; the button is there for the case where waiting is no longer the answer. Restarting kills the engine and
+every `MSBuild.exe` under it, then brings a fresh engine up. An engine that dies, cannot be stopped when it goes
+idle, or cannot be started again when work arrives, says so in red — *Engine stopped unexpectedly (exit N)*,
+*(idle shutdown failed)* or *(wake failed)* — and the same button appears, its arrow red. When the supervisor file
+itself is missing there is no button: a restart would not bring the file back, and the ribbon asks for a reinstall.
 
 ## Keyboard shortcuts
 

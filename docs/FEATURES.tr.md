@@ -232,8 +232,8 @@ yasaklar. status, ref ve fetch gibi okumalar ayrı yoldan yapılır.\
 
 ## Kendi motorunu izler
 
-**Ne yapar:** Derleme motoru ölür, takılır ya da uyanamazsa şerit sorunu adlandırır ve Restart engine sunar; motor
-dönünce Engine ready der ve açılış Sync'ini çalıştırır.\
+**Ne yapar:** Derleme motoru ölür, takılır ya da uyanamazsa şerit sorunu adlandırır ve Build'in hemen yanında Restart
+engine düğmesi belirir; motor dönünce Engine ready der ve açılış Sync'ini çalıştırır.\
 **Nasıl:** Uygulama motor sürecini izler ve cevap beklenen anlarda (koşu başı, durdurma, Sync, bakım, checkout,
 pull) motor susarsa amber uyarı gösterir. Hiçbir kilit kendiliğinden açılmaz; karar senindir.\
 `motor ölümü için süreç izleme` · `yanlış alarma karşı cevap bekleme pencereleri` · `tek tıkla yeniden başlatma`

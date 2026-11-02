@@ -285,8 +285,9 @@ lowered past the Balanced floor. The "no torn DLL" guarantee is not negotiated a
 
 ### 4.6 Engine failure and restart
 
-The App watches the Supervisor process. If the engine dies, the sticky ribbon enters a persistent error state
-with a *Restart engine* action — there is no banner and no toast. An engine lost while it goes to sleep or while
+The App watches the Supervisor process. If the engine dies, the sticky ribbon enters a persistent error state that
+names the cause, and the action bar offers *Restart engine* right beside Build (§13.2) — there is no banner and no
+toast. An engine lost while it goes to sleep or while
 it wakes reaches the same state, with a cause of its own — a wake that cannot launch the supervisor at all included
 (§4.7). A framing error on either side is treated as unrecoverable: the Supervisor writes `error(framing)` and exits
 with code 2; the App kills the engine, bumps an internal generation counter and raises exactly one `EngineExited`
@@ -3710,7 +3711,7 @@ radius 0, coloured by phase. It runs indeterminate whenever the engine is workin
 denominator — during Sync, and during `starting`, where there is no plan yet and a determinate bar would sit
 frozen at zero while the line above it says work is under way.
 
-Six texts can pre-empt the phase line, in this order: an engine death (with the *Restart engine* action), an
+Six texts can pre-empt the phase line, in this order: an engine death, an
 engine that has gone silent, an exit waiting for the work in flight (§12.3), an engine that is starting, a failed
 Sync, then a failed run. The three failures are red, carry the reason, and persist until the user starts something
 new — a Sync clears the run failure, a run start clears both. Their order is the order of how much is unknown: with
@@ -3728,6 +3729,9 @@ result. It sits above the failures for the same reason the others do, and under 
 which are larger than the wait or end it; the phase lines it covers are ones that assume a running engine. A screen
 reader hears it when it appears and when it goes (§15). A rejected request is not a failure and does not take this
 path — declining a request leaves the `stopped` line standing, because that line is still true.
+
+The death and silence lines carry no button: they say what happened, and the way out — *Restart engine* — sits in the
+action bar right beside Build (below), where the user's eye is after the click that met the dead engine.
 
 An `Esc` while a stop already drains is the hard stop (§4.5): it runs the same command as a press of the *Stop now*
 button, so the console gets one line for it and the button reads *Terminating…*; the phase line itself does not animate.
@@ -4174,6 +4178,17 @@ Stop stops it. The opening wave marks every row, and when it ends the rows read 
 behind: `never built`. It is neither the row menu's project clean nor the box's *Clean*, a different operation
 described below. While a run is in flight the primary button becomes *Stop*, and the
 branch chip and the configuration control lock; the perf chip stays live.
+
+**Restart engine sits right beside Build, and only when it can help.** Between the separator and the Build (or Stop)
+button, a square, unlabelled secondary button — Sync's bar style, 24 px — appears exactly while the engine has died or
+gone silent and a restart can bring it back (`RunViewModel.OffersEngineRestart`): a missing supervisor file is not
+offered one, since a restart would not bring the file back. Its rotate-ccw icon takes the colour of the ribbon line
+that explains it — red for a death, amber for silence — so the button and its reason read as one, and its tooltip
+says what it does: `Restart engine — start a fresh build engine; the current one stopped or is not answering`. It
+carries no label for the maintenance box's reason: labelled it took 132 px, and at the 1240 px minimum an ordinary
+work-branch name then pushed the counter chips off the bar; square, it takes 32 px with its gap, and a full bar —
+three-digit counters, the warning chip, and a work-branch name or `develop` with `N behind` — still fits.
+The ribbon keeps the line that names the cause and carries no button of its own (§4.6).
 
 **The branch chip is a git command, and it is gated like one.** It is enabled only when a workspace is open,
 no run is in flight or being planned, no workspace operation (Sync, Clean, Optimize, a checkout, a pull) is in
@@ -7886,6 +7901,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Automation roles of the app's user controls (never the custom type; source guard) | `App/Controls/UserControlRolePeer.cs` |
 | Event stream rows, glow-once | `App/Views/EventStreamView.xaml(.cs)` |
 | Action bar: sync, counters, chips (the branch chip's amber git-operation dot included), segment, build split button | `App/Views/ActionBar.xaml(.cs)` |
+| *Restart engine* beside Build: its one gate and its icon in the colour of the ribbon line that explains it | `App/ViewModels/RunViewModel.Engine.cs` (`OffersEngineRestart`), `App/Views/ActionBar.xaml.cs` (`RefreshRestartEngine`) |
 | Build menu (Build / Rebuild / Clean) and the shared icon family | `App/Views/BuildMenu.xaml(.cs)` |
 | Maintenance box (Clean / Optimize / Resolve cycles), amber-plus-spinner on the running job | `App/Views/MaintenanceBox.xaml(.cs)` |
 | Amber-plus-spinner on a running Sync (same treatment, action bar) | `App/Views/ActionBar.xaml.cs` (`RefreshSyncBusy`) |

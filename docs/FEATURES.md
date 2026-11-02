@@ -241,8 +241,8 @@ anywhere else. Reads such as status, refs and fetch go through a separate path.\
 
 ## Watches its own engine
 
-**What:** If the build engine dies, hangs or fails to wake, the ribbon names the problem and offers Restart engine;
-when the engine is back it says Engine ready and runs the startup Sync.\
+**What:** If the build engine dies, hangs or fails to wake, the ribbon names the problem and a Restart engine button
+appears right beside Build; when the engine is back it says Engine ready and runs the startup Sync.\
 **How:** The app watches the engine process and, in the moments when an answer is due (run start, stop, Sync,
 maintenance, checkout, pull), shows an amber warning if the engine goes silent. Nothing unlocks on its own; the
 decision is yours.\
