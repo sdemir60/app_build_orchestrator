@@ -1,4 +1,6 @@
+using System.Windows.Media;
 using BuildOrchestrator.App.Shell;
+using BuildOrchestrator.App.ViewModels;
 using H.NotifyIcon.Interop;
 
 namespace BuildOrchestrator.Tests.App;
@@ -36,7 +38,7 @@ public class TrayBalloonIconTests
         // istediği şeyi değil, kendi ortamını raporlar.
         _ = System.IO.Packaging.PackUriHelper.UriSchemePack;
 
-        using var icon = AppTrayIcon.LoadBalloonIcon();
+        using var icon = AppTrayIcon.LoadBalloonIcon(BalloonBadge.Stopped);
 
         Assert.Equal(IconUtilities.GetRequiredCustomIconSize(largeIcon: true), PixelSize(icon));
     }
@@ -60,7 +62,7 @@ public class TrayBalloonIconTests
         _ = System.IO.Packaging.PackUriHelper.UriSchemePack;
         var size = new System.Drawing.Size(px, px);
 
-        using var icon = AppTrayIcon.LoadBalloonIcon(size);
+        using var icon = AppTrayIcon.LoadBalloonIcon(size, BalloonBadge.Stopped, DsResources.NewScope());
 
         Assert.Equal(size, PixelSize(icon));
     }
@@ -104,6 +106,55 @@ public class TrayBalloonIconTests
         Assert.Throws<System.Runtime.InteropServices.COMException>(() => AppTrayIcon.ShowWithIconFallback(
             withProductIcon: () => throw new InvalidOperationException("Custom icon must be {Width=40, Height=40}."),
             withoutIcon: () => throw new System.Runtime.InteropServices.COMException("Show notification failed.")));
+    }
+
+    /// <summary>
+    /// [kullanıcı kararı 2026-11-02] Bildirimin ikonu SONUCU taşır: ürün ikonunun sağ alt köşesinde dolu bir rozet — başarı yeşil, hata
+    /// kırmızı, durdurulan koşu gri. Windows tepsi bildiriminin metni renklendirilemez; sonucu okumadan gösterebilen tek yüzey ikondur.
+    /// Rozet şeridin terminal satırının glyph'inden okunur (başlığı ve gövdeyi veren AYNI satır).
+    /// <para>Örnek nokta rozetin dolu alanıdır: dairenin merkezinin altında, işaretin dışında. Beklenen renk token sözlüğünden okunur,
+    /// ürünün kendi hesabından değil. Ölçeğin istediği ölçüler (32 · 40 · 48) birlikte denenir. Ürün ikonu yerinde kalır: sol üst
+    /// çeyrek düz ürün karesiyle aynıdır.</para>
+    /// </summary>
+    [StaTheory]
+    [InlineData("succeeded", "Brush.StatusSuccess", 32)]
+    [InlineData("failed", "Brush.StatusFail", 32)]
+    [InlineData(null, "Brush.StatusSkipped", 32)]
+    [InlineData("succeeded", "Brush.StatusSuccess", 48)]
+    [InlineData("failed", "Brush.StatusFail", 40)]
+    [InlineData(null, "Brush.StatusSkipped", 40)]
+    public void The_run_result_icon_wears_the_result_colour_on_its_corner(string? glyph, string fillKey, int px)
+    {
+        _ = System.IO.Packaging.PackUriHelper.UriSchemePack;
+        var scope = DsResources.NewScope();
+        var size = new System.Drawing.Size(px, px);
+        var line = new RibbonLine("Completed — 3 succeeded · 0 skipped · 4s", "Brush.StatusSuccessText", glyph);
+
+        using var icon = AppTrayIcon.LoadBalloonIcon(size, BalloonBadge.For(line), scope);
+        using var bitmap = icon.ToBitmap();
+
+        Assert.Equal(size, PixelSize(icon));
+        var expected = ((SolidColorBrush)scope[fillKey]).Color;
+        double badge = px / 2.0; // rozet ikonun yarısı; 16 birimlik kutusunda (8, 13.5) dolu alandadır
+        var seen = bitmap.GetPixel((int)(px - badge + 8 * badge / 16), (int)(px - badge + 13.5 * badge / 16));
+        Assert.True(Near(seen, expected, tolerance: 8), $"badge pixel {seen} is not {fillKey} {expected}");
+        int quarter = px / 4;
+        var product = PixelOf(AppTrayIcon.ProductFrame(size), quarter, quarter);
+        var kept = bitmap.GetPixel(quarter, quarter);
+        Assert.True(kept.A == product.A && Near(kept, product, tolerance: 2), $"product pixel {kept} is not {product}");
+    }
+
+    private static bool Near(System.Drawing.Color seen, Color expected, int tolerance) =>
+        (seen.A == 255 || seen.A == expected.A)
+        && Math.Abs(seen.R - expected.R) <= tolerance && Math.Abs(seen.G - expected.G) <= tolerance && Math.Abs(seen.B - expected.B) <= tolerance;
+
+    /// <summary>Karenin bir pikseli, düz alfayla (BGRA).</summary>
+    private static Color PixelOf(System.Windows.Media.Imaging.BitmapSource frame, int x, int y)
+    {
+        var straight = new System.Windows.Media.Imaging.FormatConvertedBitmap(frame, PixelFormats.Bgra32, null, 0);
+        var bgra = new byte[4];
+        straight.CopyPixels(new System.Windows.Int32Rect(x, y, 1, 1), bgra, 4, 0);
+        return Color.FromArgb(bgra[3], bgra[2], bgra[1], bgra[0]);
     }
 
     /// <summary>HICON'un GERÇEK piksel ölçüsü. <c>FromHandle</c> ölçüyü handle'ın kendi bitmap'inden okur ve handle'ın

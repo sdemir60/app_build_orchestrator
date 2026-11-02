@@ -483,8 +483,8 @@ public sealed partial class RunViewModel
         var lost = EngineState;
         EngineState = EngineState.Dead;
         // [E2/T37 · İngilizce sweep] Şerit kalıcı-hata modu bu metni GÖSTERİR → İngilizce (tüm UI/konsol metni).
-        // [D1] Doğmuş bir motorun ölümü YENİDEN BAŞLATILABİLİR — şerit "Restart engine" aksiyonunu gösterir
-        // (EngineDiedMessage yazan her yol bu bayrağı da yazar; bkz. EngineRestartable).
+        // [D1] Doğmuş bir motorun ölümü YENİDEN BAŞLATILABİLİR — alt bar "Restart engine"i gösterir
+        // (EngineDiedMessage yazan her yol bu bayrağı da yazar; bkz. EngineRestartable, OffersEngineRestart).
         EngineRestartable = true;
         EngineDiedMessage = EngineDiedText(cause);
         if (lost != EngineState.Dead && !InSleepCycle(lost)) ReleaseAfterEngineLoss();
@@ -510,13 +510,13 @@ public sealed partial class RunViewModel
     [NotifyCanExecuteChangedFor(nameof(CleanCommand))]
     [NotifyCanExecuteChangedFor(nameof(OptimizeCommand))]
     [NotifyPropertyChangedFor(nameof(CanSwitchBranch))] // [§6.3] chip kapısının TEK bildirim kaynağı (bkz. CanSwitchBranch)
+    [NotifyPropertyChangedFor(nameof(OffersEngineRestart))]
     private string? _engineDiedMessage;
 
-    /// <summary>[D1] Şeridin kalıcı hata modundaki "Restart engine" aksiyonu ANLAMLI mı? Normal bir motor ölümü
-    /// yeniden başlatılabilir (true); Supervisor çıktısı hiç bulunamadığında (<see cref="OnEngineUnavailable"/>)
-    /// yeniden başlatmak eksik dosyayı geri getirmeyeceği için aksiyon GİZLENİR ve kullanıcı yalnız ne yapması
-    /// gerektiğini anlatan metni görür. <b>Değişmez:</b> <see cref="EngineDiedMessage"/>'ı yazan HER yol bunu da
-    /// yazar (ölüm → true, kurulum eksik → false); mesaj temizlendiğinde değerin önemi kalmaz.</summary>
+    /// <summary>[D1] "Restart engine" ANLAMLI mı? Normal bir motor ölümü yeniden başlatılabilir (true); Supervisor çıktısı hiç
+    /// bulunamadığında (<see cref="OnEngineUnavailable"/>) yeniden başlatmak eksik dosyayı geri getirmeyeceği için düğme GİZLENİR ve
+    /// kullanıcı yalnız şeritteki, ne yapması gerektiğini anlatan metni görür. <b>Değişmez:</b> <see cref="EngineDiedMessage"/>'ı yazan HER
+    /// yol bunu da yazar (ölüm → true, kurulum eksik → false); mesaj temizlendiğinde değerin önemi kalmaz.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsEngineUnavailable))]
     [NotifyCanExecuteChangedFor(nameof(RebuildCommand))]
@@ -530,7 +530,15 @@ public sealed partial class RunViewModel
     [NotifyCanExecuteChangedFor(nameof(CleanCommand))]
     [NotifyCanExecuteChangedFor(nameof(OptimizeCommand))]
     [NotifyPropertyChangedFor(nameof(CanSwitchBranch))] // [§6.3] chip kapısının TEK bildirim kaynağı (bkz. CanSwitchBranch)
+    [NotifyPropertyChangedFor(nameof(OffersEngineRestart))]
     private bool _engineRestartable = true;
+
+    /// <summary>[kullanıcı kararı 2026-11-02] "Restart engine" sunulur mu — alt bardaki düğmenin (Build'in hemen solu) TEK kapısı: motor
+    /// öldü (<see cref="EngineDiedMessage"/>) ya da sustu (<see cref="EngineOverdueMessage"/>) VE yeniden başlatmanın anlamı var
+    /// (<see cref="EngineRestartable"/>). Kapı sessizlikte de açılır: donan motorun süreci çıkmaz, ölüm metni hiç yazılmaz — düğme yalnız
+    /// ona bağlı kalsaydı kullanıcının tek çıkışı uygulamayı kapatmak olurdu. Şerit nedeni anlatan satırı tutar, düğme taşımaz.</summary>
+    public bool OffersEngineRestart =>
+        (EngineDiedMessage is { Length: > 0 } || EngineOverdueMessage is { Length: > 0 }) && EngineRestartable;
 
     /// <summary>[D1 review · A3] Motor ERİŞİLEMEZ: hiç doğamadı (supervisor yok ya da başlatılamıyor) —
     /// <see cref="OnEngineUnavailable"/> bu durumu kurar. Sync/Build/Rebuild bu durumda
@@ -552,7 +560,7 @@ public sealed partial class RunViewModel
         "Engine could not start — the supervisor next to the app would not launch · reinstall required";
 
     /// <summary>Motorun bir GEÇİŞ beklenirken susabileceği en uzun süre. Aşılırsa kullanıcıya çıkış kapısı
-    /// gösterilir (<see cref="EngineOverdueMessage"/> + şeritteki "Restart engine").
+    /// gösterilir (şeritte <see cref="EngineOverdueMessage"/>, alt barda "Restart engine").
     /// <para><b>Neden bu kadar uzun:</b> planlama 177 projelik bir workspace'te on saniyelerce sürebilir ve
     /// graceful drain uçuştaki en uzun <c>MSBuild.exe</c> kadar sürer; ikisi de MEŞRUdur. Eşik "yavaş"ı
     /// değil "hiç konuşmuyor"u yakalamalıdır — motorun HERHANGİ bir event'i saati sıfırlar
@@ -560,8 +568,8 @@ public sealed partial class RunViewModel
     internal const long EngineSilenceThresholdMs = 90_000;
 
     /// <summary>Motor bir geçiş beklenirken <see cref="EngineSilenceThresholdMs"/> boyunca hiç konuşmadı.
-    /// Şerit bunu AMBER gösterir (kırmızı değil: bu bir başarısızlık değil, bir bekleyiştir) ve "Restart
-    /// engine" aksiyonunu açar.
+    /// Şerit bunu AMBER gösterir (kırmızı değil: bu bir başarısızlık değil, bir bekleyiştir); alt bardaki "Restart engine"
+    /// düğmesi açılır (<see cref="OffersEngineRestart"/>).
     ///
     /// <para><b>Neden gerekiyor:</b> ölçülen üretim vakasında motor planlamanın ortasında dondu — App
     /// <c>IsStarting</c>'te, ardından <c>Stopping</c>'te SONSUZA DEK kilitli kaldı ve tek çıkış uygulamayı
@@ -574,7 +582,9 @@ public sealed partial class RunViewModel
     /// <para><b>Otomatik kurtarma YOK:</b> bu bayrak hiçbir kilidi kendiliğinden açmaz — graceful drain
     /// dakikalarca sürebilir ve kilidi açmak, hâlâ koşan bir motora ikinci bir run başlatmaya izin vermek
     /// olurdu. Yalnız kapı gösterilir; açıp açmamak kullanıcının kararıdır.</para></summary>
-    [ObservableProperty] private string? _engineOverdueMessage;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(OffersEngineRestart))]
+    private string? _engineOverdueMessage;
 
     /// <summary>SON MOTOR ETKİNLİĞİNİN zamanı (monotonik) — motorla konuşmanın TEK damgası [idle-memory · dalga 3 · karar 13 · C8: ikinci bir
     /// etkinlik damgası yoktur]. Yazımı tek yerdedir (<see cref="StampEngineActivity"/>). Üç yazan: motordan gelen her olay (<see cref="OnEvent"/>),
@@ -881,7 +891,7 @@ public sealed partial class RunViewModel
 
     // ---------------------------------------------------------------- Restart engine
 
-    /// <summary>[E2/T37] Şeridin kalıcı hata modundaki "Restart engine" aksiyonu: ölmüş engine process'ini yeniden
+    /// <summary>[E2/T37] "Restart engine" (alt barda Build'in solu, <see cref="OffersEngineRestart"/>): ölmüş engine process'ini yeniden
     /// başlatır (<see cref="EngineHost.RestartAsync"/>). Başarılıysa <see cref="EngineDiedMessage"/> temizlenir
     /// (engine geri geldi — bir sonraki runStarted'ı beklemeden, çünkü Restart tek başına da engine sağlığını
     /// kanıtlar). MainWindow'un <c>_engine.EventReceived</c>/<c>EngineExited</c> abonelikleri AYNI EngineHost

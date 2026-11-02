@@ -203,6 +203,12 @@ kebab-case ve **İngilizce** (`scrollbar-restyle-plan` gibi; `plani`/`kayitlari`
   **kümülatiftir**: önceki handoff'takileri taşı + bu oturumdakileri ekle. Bir-iki cümle + "Buradan devam
   edilecek." Ekstra detay ekleme.
 
+## İş takibi (Asana)
+
+İş kayıtları Asana'dadır: **Build Orchestrator** projesi (Personal workspace, project gid `1219391877373223`,
+https://app.asana.com/1/1218658003422418/project/1219391877373223). "Asana'da", "task", "kayıt" dendiğinde bu
+proje kastedilir; ad aramasıyla başka proje seçilmez.
+
 ## Git
 
 - Repo: `sdemir60/app_build_orchestrator` (GitHub). **`develop` günlük iş branch'idir; `main` yalnız sürümleri

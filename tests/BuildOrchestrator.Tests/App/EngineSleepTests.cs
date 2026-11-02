@@ -338,7 +338,7 @@ public class EngineSleepTests
         Assert.Equal(1, sleep.SleepCalls);
         Assert.Equal(console, vm.GetRunDocumentText());
         Assert.Null(vm.EngineDiedMessage);
-        Assert.Equal(Visibility.Collapsed, window.Shell.Ribbon.RestartEngineAction.Visibility);
+        Assert.Equal(Visibility.Collapsed, window.Shell.ActionBarControl.RestartEngineButton.Visibility);
 
         now += IdleAfterMs;
         window.OnElapsedTick();
@@ -376,7 +376,7 @@ public class EngineSleepTests
         Assert.Equal(sleepFailed ? "Engine stopped unexpectedly (idle shutdown failed)" : "Engine stopped unexpectedly (exit 1)",
             vm.EngineDiedMessage);
         Assert.Equal(vm.EngineDiedMessage, window.Shell.Ribbon.PhaseText.Text);
-        Assert.Equal(Visibility.Visible, window.Shell.Ribbon.RestartEngineAction.Visibility);
+        Assert.Equal(Visibility.Visible, window.Shell.ActionBarControl.RestartEngineButton.Visibility);
         Assert.Equal(console, vm.GetRunDocumentText());
 
         now += IdleAfterMs;

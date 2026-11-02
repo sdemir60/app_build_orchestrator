@@ -285,8 +285,9 @@ lowered past the Balanced floor. The "no torn DLL" guarantee is not negotiated a
 
 ### 4.6 Engine failure and restart
 
-The App watches the Supervisor process. If the engine dies, the sticky ribbon enters a persistent error state
-with a *Restart engine* action — there is no banner and no toast. An engine lost while it goes to sleep or while
+The App watches the Supervisor process. If the engine dies, the sticky ribbon enters a persistent error state that
+names the cause, and the action bar offers *Restart engine* right beside Build (§13.2) — there is no banner and no
+toast. An engine lost while it goes to sleep or while
 it wakes reaches the same state, with a cause of its own — a wake that cannot launch the supervisor at all included
 (§4.7). A framing error on either side is treated as unrecoverable: the Supervisor writes `error(framing)` and exits
 with code 2; the App kills the engine, bumps an internal generation counter and raises exactly one `EngineExited`
@@ -3316,7 +3317,12 @@ it would make the whole window click-through and kill the click-to-restore.
 When the run ends the overlay does **not** cut off. It finishes the exit phase of the loop it is in — the pieces
 slide away and the last strip dissolves — and the window closes on that frame. After a short breath, so the two
 events do not land on top of each other, an **OS balloon** reports the result, carrying the application's own
-icon. The notification API accepts that icon at exactly one size, the system's large-icon size, and that size
+icon with the result on its bottom-right corner — a filled disc in the colour of the ribbon's progress fill and the
+mark of the line's own status glyph: a green tick for success, a red cross for a failure, and, for a line with no
+glyph (a stopped run), the grey of a skip with the square every Stop in the application wears (`BalloonBadge`).
+Windows does not let a tray notification colour its text, so the icon is the one surface that can say how the run
+ended before a word is read. The badge is read from the same terminal line as the text (below), so the two cannot
+disagree, and it is drawn once per result and kept. The notification API accepts that icon at exactly one size, the system's large-icon size, and that size
 grows with the screen scale (32 px at 100%, 40 at 125%) — so it is not written down anywhere: it is read from the
 tray library's own rule when the icon is first needed. A frame the icon file carries at that size is used as drawn;
 any other size is resampled from the largest frame, because the icon loader only picks the nearest frame and does
@@ -3389,6 +3395,15 @@ The overlay always sits on the primary screen, because that is where the tray is
 user may be working elsewhere and the indicator still appears next to the tray, which is the intent. It is also
 phase-driven rather than window-driven, which is what the background-build hotkey below relies on: a build
 started while the window is hidden gets the indicator and the result balloon with no further work.
+
+The corner is worked out again at every showing, and from the screen as it is now: the primary screen's work area in
+physical pixels and that screen's own scale, both read from Windows at that moment, with the overlay's size and margins
+scaled by it. The result is handed to WPF in the overlay window's current scale, and when that scale changes — the
+window last lived on a screen of another scale, or the screen's scale changed — the overlay places itself again.
+WPF's `SystemParameters.WorkArea` is not used: it converts with the scale the process started with and never
+refreshes it, so after a scale change while the application runs — a laptop at 150% and a monitor at 100% trading
+places as the primary screen — it would put the indicator hundreds of pixels inside the screen, or off it
+(`TrayOverlayPositionProbeTests`, §17.5).
 
 **Two global hotkeys** are registered with `RegisterHotKey`, and one table (`GlobalHotkeys`) names each action,
 its registration id and its default gesture. `Shift+Space` shows or hides the window: it hides only a window
@@ -3701,7 +3716,7 @@ radius 0, coloured by phase. It runs indeterminate whenever the engine is workin
 denominator — during Sync, and during `starting`, where there is no plan yet and a determinate bar would sit
 frozen at zero while the line above it says work is under way.
 
-Six texts can pre-empt the phase line, in this order: an engine death (with the *Restart engine* action), an
+Six texts can pre-empt the phase line, in this order: an engine death, an
 engine that has gone silent, an exit waiting for the work in flight (§12.3), an engine that is starting, a failed
 Sync, then a failed run. The three failures are red, carry the reason, and persist until the user starts something
 new — a Sync clears the run failure, a run start clears both. Their order is the order of how much is unknown: with
@@ -3719,6 +3734,9 @@ result. It sits above the failures for the same reason the others do, and under 
 which are larger than the wait or end it; the phase lines it covers are ones that assume a running engine. A screen
 reader hears it when it appears and when it goes (§15). A rejected request is not a failure and does not take this
 path — declining a request leaves the `stopped` line standing, because that line is still true.
+
+The death and silence lines carry no button: they say what happened, and the way out — *Restart engine* — sits in the
+action bar right beside Build (below), where the user's eye is after the click that met the dead engine.
 
 An `Esc` while a stop already drains is the hard stop (§4.5): it runs the same command as a press of the *Stop now*
 button, so the console gets one line for it and the button reads *Terminating…*; the phase line itself does not animate.
@@ -4165,6 +4183,17 @@ Stop stops it. The opening wave marks every row, and when it ends the rows read 
 behind: `never built`. It is neither the row menu's project clean nor the box's *Clean*, a different operation
 described below. While a run is in flight the primary button becomes *Stop*, and the
 branch chip and the configuration control lock; the perf chip stays live.
+
+**Restart engine sits right beside Build, and only when it can help.** Between the separator and the Build (or Stop)
+button, a square, unlabelled secondary button — Sync's bar style, 24 px — appears exactly while the engine has died or
+gone silent and a restart can bring it back (`RunViewModel.OffersEngineRestart`): a missing supervisor file is not
+offered one, since a restart would not bring the file back. Its rotate-ccw icon takes the colour of the ribbon line
+that explains it — red for a death, amber for silence — so the button and its reason read as one, and its tooltip
+says what it does: `Restart engine — start a fresh build engine; the current one stopped or is not answering`. It
+carries no label for the maintenance box's reason: labelled it took 132 px, and at the 1240 px minimum an ordinary
+work-branch name then pushed the counter chips off the bar; square, it takes 32 px with its gap, and a full bar —
+three-digit counters, the warning chip, and a work-branch name or `develop` with `N behind` — still fits.
+The ribbon keeps the line that names the cause and carries no button of its own (§4.6).
 
 **The branch chip is a git command, and it is gated like one.** It is enabled only when a workspace is open,
 no run is in flight or being planned, no workspace operation (Sync, Clean, Optimize, a checkout, a pull) is in
@@ -6993,10 +7022,11 @@ A second group carries the `Measurement` category: probes and measurements that 
 assert rules — the tray overlay's own cost, rendered frames of its loop, the notification call, where the real
 file picker lands, UI latency and memory under each perf profile, the UI thread cost of a build's events while the
 window is hidden, the managed-memory budget of the run narrative, the UI thread cost of landing at the end of a long
-project page, and the content-decision timings. One test in the group asserts a rule rather than reading a number,
-because only a real tray shows it: the tray menu opens at the click even when the tray library's cached scale no
-longer matches the screen (`TrayMenuPositionProbeTests`, §12.3). It repeats a reading the mouse moved during and skips
-when the mouse never keeps still. The filter above does **not** exclude them (`!=` admits every other
+project page, and the content-decision timings. Two tests in the group assert a rule rather than reading a number,
+because only a real window on a real screen shows it: the tray menu opens at the click even when the tray library's
+cached scale no longer matches the screen (`TrayMenuPositionProbeTests`, §12.3) — it repeats a reading the mouse moved
+during and skips when the mouse never keeps still — and the build indicator lands in the primary screen's corner even
+when WPF's cached scale no longer matches the screen (`TrayOverlayPositionProbeTests`, §12.3). The filter above does **not** exclude them (`!=` admits every other
 category value). The tray, file-picker, hidden-window, memory, perf and page-end probes open real windows and dialogs,
 show balloons, force full collections, press hundreds of keys or saturate every core, so each is gated on an
 environment variable — `BO_PROBE_TRAY`, `BO_PROBE_FILE_DIALOG`, `BO_MEASURE_OVERLAY`, `BO_MEASURE_HIDDEN`,
@@ -7633,7 +7663,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | …the animated mark itself (loop, static frame) | `App/Controls/TrayBuildIndicator.xaml(.cs)` |
 | …the frameless, non-activating overlay window that carries it | `App/Views/TrayBuildOverlayWindow.xaml(.cs)` |
 | Extended window styles for that overlay (`WS_EX_*`) | `App/Shell/Win32.cs` |
-| The run-result balloon's icon — the size the tray library asks for at the screen's scale, a drawn frame or one resampled from the largest — and the same balloon without the icon when it fails | `App/Shell/AppTrayIcon.cs` (`LoadBalloonIcon`, `ShowWithIconFallback`) |
+| The run-result balloon's icon — the size the tray library asks for at the screen's scale, a drawn frame or one resampled from the largest, the result badge drawn on its corner — and the same balloon without the icon when it fails | `App/Shell/AppTrayIcon.cs` (`LoadBalloonIcon`, `ProductFrame`, `WithBadge`, `ShowWithIconFallback`), `App/Shell/BalloonBadge.cs` (the badge a ribbon line wears) |
 | The hidden-surface signal — one inherited property every screen-only job reads, and the "visible again" test views use to catch up; the window writes it from its own visibility and the Build menu's popup gets it by hand | `App/Controls/HiddenSurface.cs`, `App/MainWindow.HiddenSurface.cs` (`SetSurfaceHidden`), `App/Views/ActionBar.xaml.cs` |
 | The operation-end memory trim — the pure rule (at most one per operation; none while work is in flight or a log reply is awaited; a visible window waits out the end finale, a hidden one the tray indicator of a run that ended hidden), the grace constant and the one-trim bookkeeping | `App/Services/MemoryTrimRule.cs` (`ShouldTrim`, `MarkTrimmed`, `GraceAfterFinale`) |
 | …its scheduling shell — the six signals, the grace timer and the idle queue, the execution that asks again, the hidden and visible routes, the stop on close, the collector seam | `App/MainWindow.HiddenSurface.cs` (`RequestTrimWhenDue`, `ShouldTrimNow`, `TrimIfStillDue`, `OnTrayIndicatorExitFinished`, `StopMemoryTrim`, `MemoryCollector`), the subscriptions in `App/MainWindow.xaml.cs` |
@@ -7876,6 +7906,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Automation roles of the app's user controls (never the custom type; source guard) | `App/Controls/UserControlRolePeer.cs` |
 | Event stream rows, glow-once | `App/Views/EventStreamView.xaml(.cs)` |
 | Action bar: sync, counters, chips (the branch chip's amber git-operation dot included), segment, build split button | `App/Views/ActionBar.xaml(.cs)` |
+| *Restart engine* beside Build: its one gate and its icon in the colour of the ribbon line that explains it | `App/ViewModels/RunViewModel.Engine.cs` (`OffersEngineRestart`), `App/Views/ActionBar.xaml.cs` (`RefreshRestartEngine`) |
 | Build menu (Build / Rebuild / Clean) and the shared icon family | `App/Views/BuildMenu.xaml(.cs)` |
 | Maintenance box (Clean / Optimize / Resolve cycles), amber-plus-spinner on the running job | `App/Views/MaintenanceBox.xaml(.cs)` |
 | Amber-plus-spinner on a running Sync (same treatment, action bar) | `App/Views/ActionBar.xaml.cs` (`RefreshSyncBusy`) |

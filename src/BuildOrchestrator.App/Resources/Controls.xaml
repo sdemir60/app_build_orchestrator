@@ -177,7 +177,8 @@
   </Style>
 
   <!--
-    [design v1.17.0 §9 "Alt barda tek hover dili"] Bar'a özgü Secondary.Sm — tek tüketicisi Sync düğmesidir.
+    [design v1.17.0 §9 "Alt barda tek hover dili"] Bar'a özgü Secondary.Sm — tüketicileri Sync düğmesi ve (kare, etiketsiz)
+    Restart engine düğmesidir (kullanıcı kararı 2026-11-02).
     Nötr hover Ds.Bar.Chip ile AYNI iki-adım dil (zemin neutral-700, kenar neutral-500, metin text-primary —
     zaten Secondary'nin REST foreground'u TextPrimary'dir, bu yüzden görsel olarak metin DEĞİŞMEZ, yalnız zemin
     ve kenar açılır).

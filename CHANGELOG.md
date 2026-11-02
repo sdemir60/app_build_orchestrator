@@ -2,6 +2,17 @@
 
 Release notes for Build Orchestrator, newest version first. The What's new window in the app reads this file.
 
+## [1.11.6] - 2026-11-02
+
+### Changed
+
+- The notification shown when a run finishes tells the result on its icon before you read it: a green tick on its corner for success, a red cross for a failure, a grey square for a stopped run.
+- Restart engine sits right beside Build as a square button with a circular arrow, instead of in the ribbon. It appears only while the engine has stopped or is not answering, and the ribbon names the problem.
+
+### Fixed
+
+- The animated product mark that shows a build running from the tray stays in the bottom-right corner of the screen, even after the display scale or resolution changed while the app was running.
+
 ## [1.11.5] - 2026-10-26
 
 ### Fixed
