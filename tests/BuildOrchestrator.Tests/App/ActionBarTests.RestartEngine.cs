@@ -94,6 +94,10 @@ public partial class ActionBarTests
         vm.OnEvent(new BranchListEvent([new BranchRef(branch, "aaa", IsActive: true, IsRemoteTracking: false)]));
         vm.OnEvent(new SyncCompletedEvent(branch, "b7e91d4", FetchDegraded: false, 150, 0, Behind: behind));
         var (bar, window) = Realize(vm, atMinimumWindowWidth: true);
+        // Bar en dar pencerenin genişliğine KENDİSİ sabitlenir: ekran dışı pencere masaüstünden geniş açılamaz ve CI runner'ının
+        // küçük masaüstünde (1024) 1240 isteği kırpılıyordu — ölçüldü, bar 196 px dar kaldı. Üretimde en dar pencerede bar pencerenin
+        // tam genişliğidir (çerçeve dolgusu yok — TitleBarClusterTests/ResourceStripRealizeTests aynı 1240'ı ölçer).
+        bar.Width = (double)bar.FindResource("Size.WindowMinWidth");
 
         vm.OnEngineExited(2);
         bar.UpdateLayout();
@@ -101,6 +105,7 @@ public partial class ActionBarTests
         var restart = RestartButton(bar, vm);
         Assert.NotNull(restart);
         Assert.Equal(Visibility.Visible, restart.Visibility);
+        Assert.Equal(bar.Width, bar.ActualWidth); // ön-koşul: ölçüm gerçekten en dar genişlikte
         Assert.Equal(behind > 0 ? Visibility.Visible : Visibility.Collapsed, bar.BehindChip.Visibility);
         Assert.Equal(Visibility.Visible, bar.WarnChip.Visibility);
         var rightGroup = (FrameworkElement)((FrameworkElement)bar.Split.Parent).Parent;
