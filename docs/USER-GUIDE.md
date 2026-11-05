@@ -61,7 +61,8 @@ remove it too.
    General. External projects and layers are optional. *Browse…* only stages the folder in the dialog; *Save*
    is what applies it, and on first run, once a root is entered, it reads *Save and sync*. If you already have a
    settings file, *Import settings…* on the invitation opens the dialog and, once it has settled, the file
-   picker, centred over the window.
+   picker. Every folder and file picker the app opens — *Browse…*, *Import*, *Export* — opens centred over the
+   window.
 
    **General** holds switches in six groups — Startup, Build, Branches, Console, Engine and Notifications. *Pull
    before build* (see step 4), *Stash and switch branches* (see step 3), *Compact console* (on by default; see the
@@ -91,6 +92,15 @@ remove it too.
 
    **Layers** start empty. *Add layer* appends a blank row; its inputs show example names and patterns as
    placeholders, never as values.
+
+   **Worktree folder** *(optional, on the Workspace page)* — a second working copy of the repository, next to it,
+   for another branch (`D:\src\myapp-worktree` beside `D:\src\myapp`). It is one path: *Browse…* starts in the
+   folder that holds the repository, and for a new worktree you add its name to the path. When you save, an
+   existing worktree of this repository is simply recorded, and a folder that does not exist yet (or is empty) is
+   created as a git worktree at the repository's current commit, with no branch checked out — pick one on the branch
+   chip afterwards. While it is created the console says so and the buttons wait. A folder that holds something
+   else, sits inside the repository, or is not a full path keeps *Save* disabled, and the line at the bottom of the
+   dialog says why. How to switch to it is in step 3.
 
    Settings can also be exported, imported and cleared from the dialog's footer. All three only change the
    form — nothing is applied until you press *Save*. Saving with the repository root empty — after *Clear*, or
@@ -149,17 +159,34 @@ remove it too.
    refused pull says why in an amber console line and a short line in the event stream. The
    chip is locked while a build, a Sync or another git action is running, and while git itself is in the middle
    of an operation. Offline, the distance is unknown and the chip is not drawn. The tool writes to your
-   repository only when you click: this chip, the branch chip below, and the external working copies of step 4.
+   repository only when you click: this chip, the branch chip below, the external working copies of step 4, and
+   *Save* when it creates the worktree.
 3. **Branch** — the branch chip shows the branch checked out in your working tree. Picking another branch from
    its list checks it out (`git checkout`; a remote branch gets a local tracking branch), then the console
    starts over with a `Switched to <branch> (<sha>) — from <previous>` line and a Sync follows. If the working
    tree has uncommitted changes, *Settings → General → Stash and switch branches* decides:
-   - **off** (default) — nothing happens: the console says, in amber, `warning: N files have uncommitted
-     changes — commit or stash them first`, and the event stream adds `branch switch refused — N uncommitted
-     files`;
+   - **off** (default) — nothing is switched: the console says, in amber, `warning: N files have uncommitted
+     changes — commit or stash them first`, the event stream adds `branch switch refused — N uncommitted
+     files`, and a card above the branch chip asks what to do — *Stash and switch* (stash the changes this once and
+     switch), *Use worktree* (switch that branch in the worktree and go there, leaving your changes where they
+     are; in the worktree the button reads *Use repository*) or *Cancel*. Without a worktree the second button
+     reads *Set up worktree…* and opens Settings on that field. If the other copy has changes too, you are taken
+     there and the card asks again;
    - **on** — the changes, untracked files included, are stashed first (`build-orchestrator: leaving <branch>
      for <target>`) and the console tells you to restore them with `git stash pop`. The tool never pops a
      stash for you.
+
+   A branch can be checked out in one working copy at a time: picking one the other copy holds does nothing, and the
+   console names that copy.
+
+   **The worktree.** Between the repository name and the branch chip sits a small square toggle (two folders). It
+   is lit while you work in the worktree: every Sync, build, Clean, Optimize, pull and branch switch then runs
+   there, and the repository — your changes, an open Visual Studio — stays as it is. Click it to switch; its
+   tooltip says where the next click takes you. Switching starts over like a branch change: the console opens a
+   `Switched to the worktree — <folder>` section, the list and the graph come back for the other copy, and a Sync
+   runs. With no worktree set, the click opens Settings on the *Worktree folder* field, and saving there creates it
+   and goes straight in. The app remembers which copy was open. The toggle is locked while a build, a Sync or
+   another action is running, and it steps aside while *Restart engine* is shown.
 
    Branch changes you make outside the tool are reflected the same way: the chip follows HEAD and the console
    opens a new section. If one happens while a build is running, the build stops gracefully — nothing new
@@ -661,9 +688,13 @@ parallelism cell follows the run at once. The strip only reads: the mode is chan
 - **One repository's history at a time.** External projects join the same graph — real dependency edges,
   the same incremental decision — but the branch, the HEAD watcher and the `N behind` count describe the
   repository root alone. Switching branches does not move an external working copy.
-- **One tree, no build-output isolation between branches.** Every build compiles the working tree, and no
-  output path is changed — neither `OutDir` nor `obj` — for Visual Studio parity, so builds of different
-  branches write their output to the same place. To build another branch, check it out.
+- **No build-output isolation between branches or copies.** Every build compiles a working tree — the repository
+  or its worktree — and no output path is changed, neither `OutDir` nor `obj`, for Visual Studio parity, so builds
+  of different branches, and of the two copies, write their output to the same place. To build another branch,
+  check it out or switch to the worktree. A project whose shared output the other copy replaced is built again;
+  switching copies saves you the stash, not the compilation.
+- **One worktree.** Settings holds one worktree folder. The app creates it but never removes or moves one; if you
+  delete the folder yourself, `git worktree prune` clears git's record of it.
 - **Automatic Syncs do not fetch.** Their `N behind` count is against the last remote state you fetched; press
   *Sync* or pull to refresh it.
 - **A brand-new repository is not watched until its first commit.** The HEAD watcher needs git's reflog, which

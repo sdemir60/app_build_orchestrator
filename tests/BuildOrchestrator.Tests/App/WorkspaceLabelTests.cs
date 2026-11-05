@@ -88,7 +88,7 @@ public class WorkspaceLabelTests
     /// yazılıyor ve branch chip'inin kabı onu almamıştı. Kullanıcı bunu "OSYS branch seçimi ile birleşik
     /// olmuş" diye tarif etti.</para>
     /// <para><b>[DEĞİŞEN KURAL — worktree, kullanıcı kararı 2026-11-05]</b> Eski iddia: etiketin sağ kenarı ile branch chip'inin sol
-    /// kenarı arası 10px. Etiketle chip'in ARASINA Repo ↔ Worktree anahtarı girdi (kullanıcının yerleşimi: "OSYS proje adının sağında,
+    /// kenarı arası 10px. Etiketle chip'in ARASINA Repo ↔ Worktree anahtarı girdi (kullanıcının yerleşimi: "proje adının sağında,
     /// branch'in solunda"). Etiketin 10'luk boşluğu artık anahtara, anahtarınki (barın 8'i) branch chip'ine düşer — ad: eski
     /// <c>The_label_keeps_the_bars_own_gap_between_itself_and_the_branch_chip</c>.</para>
     /// </summary>

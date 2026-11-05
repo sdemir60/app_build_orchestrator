@@ -305,8 +305,8 @@ event that is never coming — the failure mode §4.3 describes, where a wedged 
 `starting` and then on `stopping` forever. So the App also watches for silence, but only inside the windows
 where an answer is owed: a run has been requested and `runStarted` has not arrived, a stop has been requested
 and `runStopped` has not, a Sync has been requested and `syncCompleted` has not, a maintenance job has been
-requested and its own completion — `cleanCompleted` or `optimizeCompleted` — has not, or a checkout or a pull
-has been sent and `checkoutCompleted` or `pullCompleted` has not. The clock is the engine's last activity: any event
+requested and its own completion — `cleanCompleted` or `optimizeCompleted` — has not, or a checkout, a pull or the
+worktree's creation has been sent and `checkoutCompleted`, `pullCompleted` or `worktreeCreated` has not. The clock is the engine's last activity: any event
 it sends, the moment the App starts waiting for an answer, and the engine's ready report. A wake therefore ends with
 a fresh clock — its own duration is never counted as silence — and the idle rule of §4.7 reads the same stamp.
 Crossing the threshold with no activity at all raises an amber ribbon line and reveals the same *Restart engine*
@@ -519,7 +519,7 @@ discriminator whitelist on both hierarchies. An unknown discriminator does not d
 ### 5.2 Commands
 
 `ping` · `shutdown` · `syncWorkspace` · `cleanWorkspace` · `optimizeWorkspace` · `startRun` · `stopRun` ·
-`pullRepository` · `checkoutBranch` · `getProjectLog` · `listBranches` · `setPerfMode` · `debugSpawnChildren`.
+`pullRepository` · `checkoutBranch` · `createWorktree` · `getProjectLog` · `listBranches` · `setPerfMode` · `debugSpawnChildren`.
 
 `debugSpawnChildren` is a test hook for the breakaway probe. It remains part of the contract but is **rejected
 by default** with `error(debugHooksDisabled)`; only a Supervisor started with `--debug-hooks` executes it, and
@@ -527,7 +527,8 @@ the App never passes that flag. Every other command in the list executes in the 
 
 `startRun` carries the run id, the mode, the repository root, the configuration, the parallelism, the
 dependent-propagation mode, the layer patterns, the perf mode name and the external project list. It carries no
-branch: a run always builds the working tree at the repository root, whatever is checked out there (§10.3).
+branch: a run always builds the working tree at the root it is given — the active working copy's, the repository or
+its worktree (§10.6) — whatever is checked out there (§10.3).
 Unknown fields on an incoming line are ignored. Parallelism and
 perf mode are separate fields on purpose: the Supervisor derives cap and priority from the perf name, while
 `parallelism` is the worker count the profile *asks for* — the App resolves it from the same table and the engine
@@ -537,13 +538,20 @@ fits it to the machine at the start of the run (§11.1).
 the checked-out branch or HEAD moves under a run in flight (§8.8): the engine drains exactly as on a graceful
 stop, and in addition it stops standing behind any result that arrives after the request.
 
-`checkoutBranch` carries the repository root, the target — a local branch, or `origin/<name>` with an
-`isRemote` flag — and `stashIfDirty`, the user's *Stash and switch branches* setting (§10.3). The engine runs
+`checkoutBranch` carries the root of the working copy the checkout goes to — the active one, or the other one when
+the branch card says so (§10.3) — the target — a local branch, or `origin/<name>` with an `isRemote` flag — and
+`stashIfDirty`, the user's *Stash and switch branches* setting or the card's *Stash and switch*. The engine runs
 the checkout and answers with `checkoutCompleted`; it writes no console line of its own, because a successful
 checkout opens a new console section and the App has to clear the console before the section's first lines are
 written. While a run holds the slot the command is rejected with `error(checkoutRejected)`; an unexpected
 exception becomes `error(checkoutFailed)`. Like `syncWorkspace` it blocks the command loop until it finishes,
 so a `startRun` that arrives right behind it cannot begin on a half-switched tree.
+
+`createWorktree` carries the repository root and the worktree folder from Settings (§10.6). The engine checks the
+folder again and, only when it does not exist or is empty, runs `git worktree add --detach` in the repository root;
+it answers with `worktreeCreated` and writes no console line of its own. While a run holds the slot it is rejected
+with `error(worktreeRejected)`; an unexpected exception becomes `error(worktreeFailed)`. It blocks the command loop
+like `checkoutBranch`.
 
 `syncWorkspace` carries a **`fetch`** flag. It defaults to true, so an older line fetches as it always did; the
 Syncs the App starts on its own and the Sync that follows a branch change send false, and the engine then
@@ -627,7 +635,7 @@ field existed decodes as null.
 
 Lifecycle: `engineReady` · `pong` · `error` · `debugChildrenSpawned` (the test hook's answer, §5.2).
 Sync: `syncStarted` · `syncProgress` · `syncDiscovery` · `workspaceTopology` · `buildPreview` · `syncCompleted` ·
-`pullCompleted` · `checkoutCompleted`.
+`pullCompleted` · `checkoutCompleted` · `worktreeCreated`.
 Clean: `cleanStarted` · `cleanProgress` · `cleanCompleted`.
 Optimize: `optimizeStarted` · `optimizeProgress` · `optimizeCompleted`.
 Run: `planProgress` · `runStarted` · `projectStarted` · `projectLog` · `projectSucceeded` · `projectFailed` ·
@@ -684,9 +692,13 @@ success and on an unexpected failure). The reason is structured so the event str
 be parsed out of the console's text (§10.5).
 
 `checkoutCompleted` is the whole answer to `checkoutBranch`: a status (`switched`, `alreadyOn`, `dirty`,
-`stashFailed`, `failed`), the branch before and after, the new HEAD on success, the number of dirty paths the
-gate saw, the stash message when a stash was actually made — kept even when the checkout after it failed — and
-git's own detail on failure. The App builds every console line of a branch switch from these fields (§10.3).
+`stashFailed`, `failed`, `checkedOutElsewhere`), the branch before and after, the new HEAD on success, the number of
+dirty paths the gate saw, the stash message when a stash was actually made — kept even when the checkout after it
+failed — and git's own detail on failure, or for `checkedOutElsewhere` the root of the working copy that holds the
+target. The App builds every console line of a branch switch from these fields (§10.3).
+
+`worktreeCreated` is the whole answer to `createWorktree`: the folder, whether the worktree is there now (created,
+or found already this repository's), its HEAD, and the reason when it is not (§10.6).
 
 `projectLogChunk` is the whole answer to `getProjectLog`: the project's log, in chunks of at most 64 K characters
 (§5.1). The engine reads it from the folder of the active run or, when none is active, of the latest run it executed
@@ -1847,8 +1859,9 @@ pass over existing strongly connected components, the other only deletes output,
 updating anyone's working copy (§10.4). The *scan* still covers the external roots in every mode, so the graph
 either run works against is the same graph a Build sees.
 
-**One tree, one identity.** A run always builds the working tree at the repository root — whatever branch is
-checked out there — so a project's id, its full csproj path, is also where it is compiled. Everything flows by
+**One tree, one identity.** A run always builds the working tree at the root it is given — the repository root, or
+its worktree when that copy is open (§10.6), whatever branch is checked out there — so a project's id, its full
+csproj path, is also where it is compiled; the same project in the two copies is two ids. Everything flows by
 that one value: the scheduler, events, the preview, persistence, `decision.log`, log file naming and the MSBuild
 invocation.
 
@@ -2477,18 +2490,20 @@ The complete set of git invocations in the codebase:
 
 | Command | Mutates? |
 |---|---|
-| `rev-parse --verify -q HEAD` · `symbolic-ref -q HEAD` · `status --porcelain -z` · `rev-parse --is-shallow-repository` · `for-each-ref …` · `rev-parse --verify -q refs/{heads,remotes/origin}/<branch>` · `rev-list --count HEAD..<sha>` · `reflog --no-show-signature …` · `rev-parse -q --verify {CHERRY_PICK_HEAD,REVERT_HEAD}` | no |
+| `rev-parse --verify -q HEAD` · `symbolic-ref -q HEAD` · `status --porcelain -z` · `rev-parse --is-shallow-repository` · `for-each-ref …` · `rev-parse --verify -q refs/{heads,remotes/origin}/<branch>` · `rev-list --count HEAD..<sha>` · `reflog --no-show-signature …` · `rev-parse -q --verify {CHERRY_PICK_HEAD,REVERT_HEAD}` · `worktree list --porcelain` | no |
 | `fetch origin <branch> --no-tags` | only `refs/remotes/*` |
 | `merge-base --is-ancestor` · `merge --ff-only` | external working copies when updates are on (§10.4), and the **main repository only when the user clicks the `N behind` chip** (§10.5) |
-| `stash push -u -m <message>` | the main repository, **only** when the user picks a branch on the branch chip, the tree is dirty and *Stash and switch branches* is on (§10.3) |
-| `checkout <branch>` · `checkout --track origin/<name>` | the main repository, **only** when the user picks a branch on the branch chip (§10.3) |
+| `stash push -u -m <message>` | the working copy the checkout goes to, **only** when the user picks a branch on the branch chip and the tree is dirty — with *Stash and switch branches* on, or by choosing *Stash and switch* on the branch card (§10.3) |
+| `checkout <branch>` · `checkout --track origin/<name>` | the active working copy — or the other one when the branch card says so — **only** when the user picks a branch on the branch chip (§10.3) |
+| `worktree add --detach <folder>` | the main repository, **only** when the user saves Settings with a worktree folder that does not exist yet or is empty (§10.6) |
 
 Every write in that table lives in one file, `Core/Git/RepositoryWriter.cs`: the fast-forward
-(`FastForwardUpdater`) and the branch switch (`BranchSwitcher`). Each is a user action with its own gate, and
-none of them runs on its own — not in Sync, not in Build, not from a background task. `reset`, `switch`,
-`pull`, `rebase`, `cherry-pick`, `clean`, `commit`, `push` and `worktree` do not appear anywhere. Two source
-guards pin this (§17.2): one allows mutating verbs in that single file and nowhere else, the other keeps the
-`worktree` verb and every worktree type out of the code and the contract.
+(`FastForwardUpdater`), the branch switch (`BranchSwitcher`) and the worktree's creation (`WorktreeCreator`). Each is a
+user action with its own gate, and none of them runs on its own — not in Sync, not in Build, not from a background
+task. `reset`, `switch`, `pull`, `rebase`, `cherry-pick`, `clean`, `commit` and `push` do not appear anywhere, and
+`worktree` appears in two forms only, `add --detach` and `list`. Two source guards pin this (§17.2): one allows
+mutating verbs in that single file and nowhere else, the other keeps the `worktree` verb to those two forms and the
+contract's worktree surface to the creation command and its result.
 
 Some reads need no process at all. The HEAD watcher and the git-operation gate (§10.3) read the git directory
 as files: `.git` resolved to the real git directory (a folder, or a `gitdir:` file for a linked worktree or a
@@ -2642,9 +2657,9 @@ under a different working copy that this query never sees, and extending the rea
 
 ### 10.3 Branch switching
 
-There is one tree. A run always builds the working tree at the repository root, and the branch chip shows the
-branch checked out there — a fact read from git, never a preference the tool stores. Picking another branch on
-the chip is a real checkout.
+A run always builds the working tree of the active working copy — the repository root, or the worktree when it is
+open (§10.6) — and the branch chip shows the branch checked out there: a fact read from git, never a preference the
+tool stores. Picking another branch on the chip is a real checkout in that copy.
 
 **Checkout from the chip.** Choosing a local branch runs `git checkout <branch>`; choosing `origin/<name>`
 checks out the local `<name>` when one exists and `git checkout --track origin/<name>` when it does not.
@@ -2660,8 +2675,14 @@ fails opens nothing: its line — `warning: switch failed — <git's reason>`, a
 default):
 
 - **Off** — nothing is done. The console says, in amber, `warning: N files have uncommitted changes — commit or
-  stash them first`, and the event stream adds a short amber line, `branch switch refused — N uncommitted files`
-  (§13.2).
+  stash them first`, the event stream adds a short amber line, `branch switch refused — N uncommitted files`
+  (§13.2), and the **branch card** opens over the chip and asks: *Stash and switch* sends the same checkout once with
+  the stash; *Use worktree* (in the worktree, *Use repository*) sends it to the other working copy and, when the branch
+  is checked out there or already was, switches the application to that copy (§10.6) — one section, the copy line
+  first and the branch line after it; when that copy is dirty too, the application still goes there and the card
+  opens again, now offering the way back. Without a worktree the second button reads *Set up worktree…* and opens
+  Settings on that field. *Cancel*, `Esc` and a click outside close it. Its actions wait for the chip's gate, so a
+  card that opens while the switch's Sync runs is answered once that Sync ends.
 - **On** — the changes, untracked files included, are stashed with `git stash push -u -m "build-orchestrator:
   leaving <branch> for <target>"` before the checkout, and the section's first line names that stash and says
   `restore them with git stash pop`. The tool never shows, applies or pops a stash; getting the work back is
@@ -2670,6 +2691,11 @@ default):
 
 The stash setting applies to the branch chip only, never to a pull (§10.5): a pull stays on the branch, and a
 stash nobody restores would look like lost work.
+
+**A branch is open in one working copy at a time.** Git refuses to check out a branch the other copy holds, so the
+switcher asks first (§10.6) and, when the other copy holds the target, does nothing — no stash, no checkout — and
+the console says `warning: <branch> is already checked out in <copy> — a branch can be open in one working copy at a
+time`.
 
 **Changes made outside the tool are reflected.** The HEAD watcher follows `logs/HEAD` in the git directory
 with a Windows file notification — no polling, no work while idle; the repository, the sources and `bin`/`obj`
@@ -2898,6 +2924,53 @@ checkout, a pull already sent — is in flight, while the engine is unavailable,
 stash setting says.
 
 ---
+
+### 10.6 The worktree
+
+The tool can build a second working copy of the repository: one linked worktree the user names in Settings →
+Workspace → *Worktree folder*, normally next to the repository (`D:\src\acme` and `D:\src\acme-worktree`). It is not a
+mode — it is a second root. The repository root (`RootPath`) stays what Settings shows and what `ui-state.json` keeps
+as `RepositoryRoot`, and the worktree is always added from it; the **active root** (`ActiveRoot`) is the copy the
+application works in, the repository root or the worktree folder. Every command to the engine — Sync, every run, the
+branch inventory, Clean, Optimize, a checkout, a pull — and the two git reads that run without the engine (the HEAD
+watcher and the git-operation gate) take the active root; a source guard keeps the repository root out of any command
+but the worktree's own creation (§17.2). The engine never learns which copy it is in: the ledger, the evaluation cache
+and the source-hash cache are keyed by full path, so the two copies are different projects to it, they never read
+each other's records, and a *Clean* in one never reaches the other.
+
+**Switching is a root change.** The toggle in the action bar (§13.2) switches copies. The old copy's rows, topology
+and last Sync go — a project's id is its path, so the worktree's projects are other rows — and a BranchChange Sync
+(§10.2) opens a new section, `Switched to the worktree — D:\src\acme-worktree`, and runs in the new root without a
+fetch: the two copies share one `.git`, so the remote ends are already known. The switch is gated exactly like the
+configuration segment — it starts a Sync — and asks for nothing when there is no worktree to switch to: a folder that
+is not set, is gone, or is no longer this repository's worktree opens Settings on that field instead. Changing the
+repository root, closing the workspace, or changing or clearing the worktree folder while the worktree is open
+returns to the repository copy. The open copy is remembered across restarts, but the worktree reopens only while
+its folder is still this repository's linked worktree.
+
+**Settings creates it.** Whether the folder is usable is one question (`WorktreeFolder.Inspect`), answered from files
+alone: the folder is this repository's linked worktree when its `.git` is a file whose `gitdir:` leads, through that
+git directory's `commondir`, to the repository's own git directory — the same in every ref format. A folder that does
+not exist or is empty can be created; a folder with anything else in it (a separate clone, another repository's
+worktree, files), the repository root itself, a folder inside it or one that holds it (discovery would find the same
+projects twice) and a path that is not fully qualified keep *Save* disabled, and the footer says why. Saved with a
+folder to create, Save adds the worktree — `git worktree add --detach <folder>` run in the repository root
+(`WorktreeCreator`) — before its one Sync: the operation pill reads `CREATING WORKTREE`, the bar's controls are
+closed as for any workspace operation, the console says `Creating the worktree at …` and then `Worktree ready at … —
+detached at <sha>` or why it was not created. The worktree is born detached at the repository's HEAD: git keeps a
+branch open in one working copy at a time, and opening a new branch would be a decision the user did not make; the
+branch is picked afterwards on the chip. The engine checks the folder again before it writes and leaves anything it
+cannot use alone. When Settings was opened from the toggle, a successful Save goes on into the worktree. Exit waits
+for the creation like for any git write (§12.3).
+
+**A branch lives in one copy.** Before a checkout the branch switcher asks git which working copy holds the target
+(`worktree list --porcelain` — asked from git, because a reftable `HEAD` file is only a placeholder): a branch open in
+the other copy is refused before anything is stashed, and the console names that copy. A dirty tree with *Stash and
+switch branches* off opens the branch card (§10.3) and its second choice opens the branch in the other copy.
+
+Both copies build into the same output folders, as any two branches do in one tree (§9.4): a project whose output the
+other copy overwrote reads *output replaced* and is compiled again. Switching copies saves the stash and keeps the
+first copy's files and an open Visual Studio untouched; it does not save compilation.
 
 ## 11. Resource governance
 
@@ -3279,8 +3352,9 @@ and finished projects keep their results. The exit waits for the engine's `runSt
 (`ExitStopWaitMs`) and then goes ahead regardless. A Sync, a Deep Clean and an Optimize have no cancel and are not waited
 for: the shutdown ends them with the engine. Cutting them off is safe — a Deep Clean removes the state before the folders
 (§5.2), a restore cut short is completed by the next Optimize, and the next start syncs anyway (§20 has the one residue an
-interrupted fetch can leave). A checkout and a pull are waited for: git is writing the working tree and `.git/index`, and
-cutting it off would leave a half-switched tree behind a stale `index.lock`. No Sync starts once the exit has been asked
+interrupted fetch can leave). A checkout, a pull and the worktree's creation (§10.6) are waited for: git is writing a
+working tree and its index, and cutting it off would leave a half-switched tree behind a stale `index.lock`, or a
+registered but half-written worktree. No Sync starts once the exit has been asked
 for — neither the automatic one (§10.3), nor the one a checkout or pull chains on completion: each would be new work
 started after the request, only to refresh a window that is closing, and the next start syncs anyway. Requests waiting
 at the gate of a sleeping engine (§4.7) are withdrawn the same way: none is sent and no wake starts, and a waiting Sync
@@ -4189,9 +4263,9 @@ the four keeps its own always-live wrapper — an otherwise invisible `Border` o
 whose `MouseEnter`/`MouseLeave` is what
 actually answers hover in that window; the button's real `IsMouseOver` answers it everywhere else.
 
-The remaining bar carries the **workspace label** (mono, the repository root's folder name, tooltip the root
-itself); the branch chip, which names the branch checked out in the working tree and whose searchable popover
-checks another one out (§10.3); the `N behind` chip (§10.5) — drawn whenever the distance is known and greater
+The remaining bar carries the **workspace label** (mono, the repository root's folder name, tooltip the root the
+application builds — the worktree's while it is open); the **worktree toggle** (below); the branch chip, which names
+the branch checked out in the working tree and whose searchable popover checks another one out (§10.3); the `N behind` chip (§10.5) — drawn whenever the distance is known and greater
 than zero; the `Debug | Release` segment;
 the perf chip; and the Build split-button, whose menu carries exactly three items in every phase: *Build — Only stale
 projects*, *Rebuild — All N projects — cache ignored* and *Clean — Remove build outputs — next build is full*.
@@ -4218,6 +4292,15 @@ carries no label for the maintenance box's reason: labelled it took 132 px, and 
 work-branch name then pushed the counter chips off the bar; square, it takes 32 px with its gap, and a full bar —
 three-digit counters, the warning chip, and a work-branch name or `develop` with `N behind` — still fits.
 The ribbon keeps the line that names the cause and carries no button of its own (§4.6).
+
+**The worktree toggle sits between the workspace label and the branch chip.** A square, unlabelled chip — the bar's
+chip style, 24 px, a two-folder icon — checked (amber) while the worktree is open (§10.6). Its tooltip says what the
+next click does: `Set up a worktree — a second working copy for another branch` while none is set, `Switch to the
+worktree — <folder>`, or `Back to the repository — <root>`. The check follows the view model's copy, not the click:
+the click is undone and the view model decides, so a switch it refuses or a setup it asks for leaves the toggle as
+it was. Its gate is the configuration segment's — the switch starts a Sync. It steps aside while *Restart engine*
+is offered: together the two pushed the fullest bar 3.8 px past the 1240 px minimum (measured), and a switch cannot
+work while the engine is down anyway; the label's tooltip still names the root being built.
 
 **The branch chip is a git command, and it is gated like one.** It is enabled only when a workspace is open,
 no run is in flight or being planned, no workspace operation (Sync, Clean, Optimize, a checkout, a pull) is in
@@ -4573,10 +4656,10 @@ the button or `Ctrl+Q`, an outside click and Esc, and Esc closes it before anyth
 the popup's `IsOpen`), the way the update pill's `IsChecked` carries its card.
 
 The card is three blocks separated by `border` hairlines. The **status** block names the work as a caps label in 11 px
-`text-faint` — `BUILD IN PROGRESS`, likewise for a Rebuild, Resolve, Clean, Deep clean, Optimize, Sync, branch switch or
-pull — with the run's progress in mono on the right (`14/38`: the ribbon's own two counters, absent before the run has a
-plan), and under it one 13 px/500 sentence in `text-primary`: `Exit stops the build, then quits.`, or, for the checkout
-and pull the exit waits for, `Exit waits for the branch switch, then quits.` The **ends on exit** block lists what the
+`text-faint` — `BUILD IN PROGRESS`, likewise for a Rebuild, Resolve, Clean, Deep clean, Optimize, Sync, branch switch,
+pull or worktree setup — with the run's progress in mono on the right (`14/38`: the ribbon's own two counters, absent before the run has a
+plan), and under it one 13 px/500 sentence in `text-primary`: `Exit stops the build, then quits.`, or, for the checkout,
+pull and worktree setup the exit waits for, `Exit waits for the branch switch, then quits.` The **ends on exit** block lists what the
 exit will end: the outer job's processes counted by name (`JobProcessCensus` — each PID is named on its own through
 `ProcessImage`, nothing scans the machine), in 11 px mono with the name in `text-secondary` and `×N` in `text-dim` on
 the right, the largest count first. The engine itself and the console hosts are not listed — they belong to the
@@ -4771,6 +4854,18 @@ required` — and the old repository's state goes with it: the rows fall back to
 branch. Save's one Sync then runs on the new root. The first setup stays silent, because a Sync starts there
 anyway and the note would be noise.
 
+**The worktree folder.** Under the repository root the Workspace page carries *Worktree folder*: the same input and
+*Browse…* (the picker starts in the folder that holds the repository, since the worktree sits next to it), one path —
+a new worktree's name is the path's last part. It is optional, and its rules are §10.6's: while the folder cannot
+be used *Save* is disabled and the footer line says why (`The worktree folder must be outside the repository root`,
+`The worktree folder is not empty and is not a worktree of this repository`, `The worktree folder needs a full path`,
+`The repository root is not a git repository`), ahead of the external-project and layer reasons. A folder to
+create is created by Save before its one Sync; a changed folder writes `Worktree folder → <folder>` (or `Worktree
+folder cleared`) to the console, and when it was the open copy the application returns to the repository first.
+Like the root, the folder waits while a run or a workspace operation is in flight (`Repository change deferred`).
+Opened from the toggle or the branch card because there was no worktree, the dialog lands on the Workspace page with
+the focus in that field, and a successful Save goes on into the worktree. Clear empties it with the root.
+
 **An empty root closes the workspace.** Saved over an open workspace, an empty root takes the window back to the
 first-run screen (§13.2, *No workspace*): the root is cleared — and written to `ui-state.json` as such, so the
 next start opens there too — the phase drops to `Empty`, the plan surface empties (rows, topology, graph), the
@@ -4800,9 +4895,11 @@ wrong file, and the line says `Invalid settings file` while the form stays untou
 invitation opens the dialog first and raises the file picker only once the dialog has landed — its entrance
 (`Duration.Base`) and then a beat (`Duration.Slow`), both read from the motion tokens and counted by the same
 `StepHold` the maintenance steps use, so they are zero under reduced motion. Raised together, the picker covered
-a dialog that was still fading in. If the dialog is closed during the wait, the picker never opens. The picker
-itself — from the invitation and from the footer alike — opens centred over the window, and so over the dialog:
-left alone, Windows places it at the owner's top-left and restores its own last size. The picker is activated
+a dialog that was still fading in. If the dialog is closed during the wait, the picker never opens. Every system picker the application opens — the
+two folder pickers on the Workspace page, Import from the invitation and the footer alike, and Export — opens
+centred over the window, and so over the dialog; they are built in one helper (`SystemPicker`) whose one show call
+sits inside the centring scope, and a source guard keeps every picker in it (§17.2). Left alone, Windows places a
+picker at the owner's top-left and restores its own last size. The picker is activated
 hidden at a first, smaller size and writes its final size and position itself just before it is shown, so a move
 at activation is overwritten; `CenteredDialog` instead borrows the picker's window procedure from activation until
 it is visible and rewrites the position of every placement in between from the final size, then gives the
@@ -6692,7 +6789,7 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 | `source-hash-cache.json` | source content hashes keyed by path, size and modification time (§7.1) — this is what turns the content decision into one stat pass per run | falls back to empty (the next run re-reads and rebuilds it) |
 | `run-inflight.json` | the ids of the projects the engine has dispatched and not yet reported — written at dispatch, erased at the result, emptied at the end of every run; left non-empty only by an engine that died mid-run, and read once at the next engine start (§8.7). Absent while no run is in flight | an unparsable file is deleted and nothing is recovered; an unreadable one stays for the next start |
 | `msbuild\wpf-temporary-assembly.targets`, `msbuild\wpf-temporary-assembly-friend.cs` | the two files behind `-p:CustomBeforeMicrosoftCommonTargets` (§9.2). An engine writes them the first time it resolves `MSBuild.exe` — on its first run or its first Optimize — and only when the content on disk differs from its own; both files carry a fixed, old modification time however they were written (§9.2); the path carries no version, and a missing or edited file is repaired the next time a new engine resolves MSBuild | rewritten from the engine's own copy the next time a new engine resolves MSBuild; if they cannot be written or pinned, builds run without the argument |
-| `ui-state.json` | layout mode + three splits, repository root, configuration, perf mode, layer patterns, external roots (path) and whether to update them (§10.4), whether to stash before a branch switch (§10.3), whether the console is compact (§13.5) and whether an idle engine is stopped (§4.7) — the last two on when the field is absent —, the gestures of the two global hotkeys (show/hide and build, §12.3), *Start with Windows* (`Autostart`) and *Start minimized to tray*, whether closing the window hides to the tray and whether tray notifications are shown (§12.3), tray-balloon-shown, last-seen release-notes version. The branch is not stored: it is whatever is checked out. Fields older versions wrote and this one no longer reads are ignored | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
+| `ui-state.json` | layout mode + three splits, repository root, the worktree folder and whether the worktree was open (§10.6), configuration, perf mode, layer patterns, external roots (path) and whether to update them (§10.4), whether to stash before a branch switch (§10.3), whether the console is compact (§13.5) and whether an idle engine is stopped (§4.7) — the last two on when the field is absent —, the gestures of the two global hotkeys (show/hide and build, §12.3), *Start with Windows* (`Autostart`) and *Start minimized to tray*, whether closing the window hides to the tray and whether tray notifications are shown (§12.3), tray-balloon-shown, last-seen release-notes version. The branch is not stored: it is whatever is checked out. Fields older versions wrote and this one no longer reads are ignored | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
 
 *Start with Windows* additionally writes one `HKCU\...\Run` value, and turning it on removes Task Manager's
 disabled mark for that value under `HKCU\...\Explorer\StartupApproved\Run` when there is one (§12.3).
@@ -6907,8 +7004,10 @@ A category of tests that assert properties of the *source*, not of a run:
 | Modal shell | no dialog file (Settings, About, What's new) carries its own copy of the shared shell's behaviour — scrim and in-dialog clicks, Esc, focus trap, entrance, focus move, the `Ds.Dialog` frame |
 | "What's new in" sentence | the versioned What's new sentence is composed only by `ReleaseNotes` — the title-bar tooltip and About's button both read it |
 | Release notes (`ChangelogTests`) | the App embeds the repository's `CHANGELOG.md` itself; its versions run newest first with real dates, categories appear once each in drawing order, notes are plain text, and the newest version is the running one (§13.3) |
-| Git mutation surface (`NoGitMutationOutsideTheWriterTests`) | a mutating git verb (`merge`, `checkout`, `switch`, `pull`, `rebase`, `cherry-pick`, `stash`, `clean`, `reset`, `commit`, `push`) at the head of an argument list appears only in `Core/Git/RepositoryWriter.cs` (§10.1) |
-| No worktree surface (`NoWorktreeSurfaceTests`) | no `worktree` git verb and no `BaseIntermediateOutputPath` in the source, no branch or worktree field on `startRun`, and no worktree type or discriminator in the contract |
+| Git mutation surface (`NoGitMutationOutsideTheWriterTests`) | a mutating git verb (`merge`, `checkout`, `switch`, `pull`, `rebase`, `cherry-pick`, `stash`, `clean`, `reset`, `commit`, `push`, `worktree`) at the head of an argument list appears only in `Core/Git/RepositoryWriter.cs` (§10.1) |
+| Narrow worktree surface (`NoWorktreeSurfaceTests`) | the `worktree` git verb only in the writer and only as `add --detach` and `list`; no `BaseIntermediateOutputPath` in the source; no branch or worktree field on `startRun`; the contract's worktree types are the creation command and its result alone (§10.6) |
+| Active root (`WorktreeRootGuardTests`) | no engine command in the App is built from the repository root (`RootPath`) but the worktree's creation, and the HEAD watcher and the git-operation gate follow the active root (§10.6) |
+| Centred pickers (`CenteredPickerGuardTests`) | every system picker (folder, open file, save file) is built in `App/Shell/SystemPicker.cs`, whose one show call sits inside the `CenteredDialog` scope (§13.3) |
 | No product name in code (`NoProductNameInCodeTests`) | no identifier under `src` — type, member, enum value, parameter or local — carries the name of the product the tool was first built for; comments and string literals are exempt, and the code inside an interpolation hole is still scanned |
 | Isolated test engines (`SupervisorIsolationGuardTests`) | every test that starts a real Supervisor gives it an isolated cache (`--logs`, or the shared sandbox), so no test reads or recovers the user's own `run-inflight.json` (§16); the engine a test starts comes only from the sandbox — a host built directly on the real executable takes no extra arguments, is never returned by a helper or kept in a non-private field or property, and is never started through a private one |
 | Ledger file access (`LedgerStreamingGuardTests`) | the two large ledgers (`evaluation-cache.json`, `source-hash-cache.json`) never turn their file into one string or byte array and never open, create or move it themselves — they read and write through the stream forms of `AtomicFile` (sharing delete on read, retried atomic rename on write); hashing a *source* file is the one exempt read; the rule is shown to catch each bypass and to ignore a comment |
@@ -7369,9 +7468,14 @@ do, and how the interface works around each — useful to know before attempting
   with everything else, but the branch, the target sha, the HEAD watcher and the `N behind` distance all
   describe the repository root alone. Switching branches does not move an external working copy, and an
   external root's own branch is whatever the user left checked out there.
-- **One tree, no build-output isolation between branches.** Every run builds the working tree, and no output
-  path is changed — neither `OutDir` nor `obj` — for Visual Studio parity, so builds of different branches write
-  to the same place. Building another branch means checking it out (§10.3).
+- **No build-output isolation between branches or copies.** Every run builds a working tree — the repository or
+  its one worktree (§10.6) — and no output path is changed, neither `OutDir` nor `obj`, for Visual Studio parity:
+  builds of different branches, and of the two copies, write to the same place. Building another branch means
+  checking it out (§10.3) or switching to the worktree; a project whose shared copy the other side replaced is
+  compiled again. A replacement of exactly the same length is the one the check accepts (§7.6).
+- **One worktree, and only the tool's own rules for it.** Settings holds one worktree folder. The tool creates it
+  detached and never removes, moves or prunes one; a worktree deleted by hand leaves git's record to
+  `git worktree prune`. While *Restart engine* is offered the worktree toggle steps aside (§13.2).
 - **An interrupt draws its line where it reaches the engine.** A branch change is noticed after git's writes
   settle (1.5 s) and the request then travels over the IPC. A project that finishes inside that window —
   compiled from the old tree, reported before the interrupt landed — is still trusted. The window is short and
@@ -7504,7 +7608,8 @@ do, and how the interface works around each — useful to know before attempting
   deliberately does not add one. The keyboard route to any project is the projects list, which is fully
   traversable and drives the same selection everywhere (§13.7); the graph reflects that selection rather than
   being a second way to reach it.
-- **A full exit's wait for a git write ends on engine silence.** The exit waits for a checkout or a pull (§12.3), but
+- **A full exit's wait for a git write ends on engine silence.** The exit waits for a checkout, a pull or the worktree's
+  creation (§12.3), but
   the silence watchdog (§4.6) releases it once the engine has sent nothing for the threshold, and silence cannot tell a
   wedged engine from one that is busy without a word. A git write that runs longer than that is then cut off by the
   application's shutdown. An engine heartbeat inside those waits — the one a package restore already has — would close
@@ -7828,7 +7933,10 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | All read-only git invocations (HEAD, status, refs, distance, fetch, HEAD's reflog) | `Core/Git/GitService.cs` |
-| The only mutating git surface: the fast-forward (dirty gate → fetch → is-ancestor → `merge --ff-only`, `FastForwardUpdater`) and the branch switch (dirty gate → optional `stash push -u` → `checkout`, `BranchSwitcher`) | `Core/Git/RepositoryWriter.cs` |
+| The only mutating git surface: the fast-forward (dirty gate → fetch → is-ancestor → `merge --ff-only`, `FastForwardUpdater`), the branch switch (the copy holding the target → dirty gate → optional `stash push -u` → `checkout`, `BranchSwitcher`) and the worktree's creation (`worktree add --detach`, `WorktreeCreator`) | `Core/Git/RepositoryWriter.cs` |
+| Whether a worktree folder can be created, is this repository's linked worktree or is something else, and the reason text | `Core/Git/WorktreeFolder.cs` |
+| The two roots (repository and active), the copy switch, the toggle's gate, the worktree's creation from Save and its answer | `App/ViewModels/RunViewModel.Worktree.cs`, texts `App/ViewModels/WorkingCopy.cs` |
+| The branch card: its subject, the three decisions, the checkout to the other copy and its answer | `App/ViewModels/RunViewModel.BranchSwitch.cs`, `RunViewModel.Workspace.cs` (`OnCheckoutCompletedAsync`, `OnOtherCopyCheckoutAsync`), `App/Views/BranchSwitchCard.xaml(.cs)` |
 | Git directory resolution (`.git` folder or `gitdir:` file) | `Core/Git/GitDirectory.cs` |
 | HEAD and its ref read from files (loose, packed, linked-worktree common dir; a reftable placeholder reads as unknown), the format question (reftable or not) and the branch-name rule the git query shares | `Core/Git/HeadReader.cs` |
 | HEAD for the automatic Sync: from the file, or asked from git in a reftable repository | `Core/Git/HeadSource.cs` |
@@ -7942,7 +8050,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Closing the workspace on a Save with an empty root (root, phase, plan and git surface, selection, filter, a new console page) | `App/ViewModels/RunViewModel.ActionBar.cs` (`CloseWorkspace`, `RootOf`), `RunViewModel.Workspace.cs` (`ForgetGitSurface`) |
 | No-workspace look of the panels (header counts, PROJECTS list tools, the console's waiting prompt) | `App/ShellRoot.xaml.cs` (`SetHasWorkspace`; the list tools' one gate `ApplyListTools` is shared with discovery), driven from `HasWorkspace` in `App/MainWindow.xaml.cs` |
 | Discovery blocks and empty views: the list's (list states — the discovery block with the counter and its live region, the empty view) and the graph's (one body block with two texts; body layers and header count behind one gate); their shared icon look, caption and centred column in the interface font | `App/ShellRoot.xaml(.cs)` (`PART_Discovering`, `PART_NoProjects`, `SetDiscovering`, `SetDiscoveryCount`, `SetListInvite`), `App/Graph/GraphView.xaml(.cs)` (`StateBlock`, `SetDiscovering`, `ApplyBodyState`), `App/Resources/Controls.xaml` (`Ds.DiscoveryIcon`, `Ds.DiscoveryBlock`, `Ds.DiscoveryCaption`), wired from the view model in `App/MainWindow.xaml.cs` (`ApplyDiscovery`, `RefreshListInvite`) |
-| Import shortcut's wait before the file picker, and the picker centred over the window | `App/Views/SettingsDialog.xaml.cs` (`OpenForImportAsync`, `ImportPickerDelayMs`), `App/Shell/CenteredDialog.cs`, `App/Shell/DialogPlacement.cs`, `App/Shell/Win32.cs` |
+| Import shortcut's wait before the file picker, and every system picker centred over the window | `App/Views/SettingsDialog.xaml.cs` (`OpenForImportAsync`, `ImportPickerDelayMs`), `App/Shell/SystemPicker.cs`, `App/Shell/CenteredDialog.cs`, `App/Shell/DialogPlacement.cs`, `App/Shell/Win32.cs` |
 | Step hold between an operation and the next (dispatcher timer, zero under reduced motion and while the window is hidden) | `App/Services/StepHold.cs`, `App/ViewModels/RunViewModel.cs` (`OperationHold`) |
 | Branch popover and its base (shared with the update and exit cards) | `App/Views/BranchPopover.xaml(.cs)`, `PopoverBase.cs` |
 | Update card (identity, highlights, decision; the drop-in; *Later*) | `App/Views/UpdateCard.xaml(.cs)` |

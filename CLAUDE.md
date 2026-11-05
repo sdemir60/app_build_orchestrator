@@ -43,12 +43,18 @@ Solution: `BuildOrchestrator.slnx` (kökte).
   karara girmez (git yalnız fetch, branch, checkout ve harici güncelleme içindir); kaynak dosyanın boyut+mtime
   bilgisi içerik kararında yalnız özet önbelleğinin anahtarıdır. Harici köklerden gelen projeler sıradan
   projelerdir (aynı argümanlar, aynı graf, aynı karar).
-- **Git'e araç KENDİLİĞİNDEN yazmaz:** `pull`/`reset`/`switch` hiçbir akışta çalıştırılmaz. Üç istisna da
+- **Git'e araç KENDİLİĞİNDEN yazmaz:** `pull`/`reset`/`switch` hiçbir akışta çalıştırılmaz. Dört istisna da
   kullanıcının açık kararıdır: (a) kayıtlı **harici kökler** — build anında, yalnız kullanıcı güncellemeyi açık
   bıraktıysa, kendi köklerinde ff-only güncelleme (`fetch` + `merge --ff-only`); (b) **ana repo pull** — yalnız
   `N behind` chip'i, yalnız aktif branch, yalnız ff-only, kirli ağaçta ret; (c) **branch chip'inden checkout**
-  — kirli ağaçta ayar karar verir (Stop varsayılan; Stash and switch'te `git stash push -u`). Mutasyon yüzeyi
-  TEK dosyadır: `Core/Git/RepositoryWriter.cs` (kaynak guard'ı).
+  — kirli ağaçta ayar karar verir (Stash and switch açıksa `git stash push -u`; kapalıysa — varsayılan — branch
+  kartı sorar: stash'le ve geç, diğer kopyada aç ya da vazgeç); diğer kopyada açık branch'e geçiş denenmez;
+  (d) **worktree kurulumu** — yalnız Settings Save'de, yalnız ayardaki klasör yoksa ya da boşsa, ana repodan
+  `git worktree add --detach`. Mutasyon yüzeyi TEK dosyadır: `Core/Git/RepositoryWriter.cs` (kaynak guard'ı).
+- **İki kök, tek kural:** `RootPath` Settings'in repo köküdür (kalıcı `RepositoryRoot`, worktree ondan eklenir);
+  motora giden her komut ve HEAD/git kapısı okuması aktif kökü (`ActiveRoot` — repo ya da worktree) taşır, tek
+  istisna worktree'nin kurulumudur (kaynak guard'ı). Worktree bir mod değildir: motor kökü bilmez, kopya geçişi
+  bir kök değişimidir.
 - **stdout yalnız NDJSON;** tüm log/tanı stderr'e.
 - **Planlama Core'da.** İş mantığını App/Supervisor'a sızdırma; Core UI ve process bağımsız test edilebilir kalır.
 - **Velopack yalnız App'te.** Paket referansı, giriş noktası (`Program.Main`) ve güncelleme motoru

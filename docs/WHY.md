@@ -233,6 +233,15 @@ take, is guessed from the scrolling.\
 name the projects building now and, once the run ends, the failed ones, one click away.\
 `remaining-time estimate` · `failure chips, one click to the failed`
 
+## A worktree for another branch — no stash, no lost place
+
+**Common practice:** a review or a hotfix needs another branch while your own change is half done; the change is
+stashed, the branch switched and built, then switched back and unstashed, and the editor reloads the solution both
+ways.\
+**In Build Orchestrator:** one click and the other branch builds in its own folder; your change, your editor and
+your place in the code stay exactly where you left them.\
+`git worktree as a second copy` · `one toggle to switch`
+
 ## External projects, one graph — shared repositories, right order
 
 **Common practice:** when common libraries live in a separate repository, that repository is updated and built
