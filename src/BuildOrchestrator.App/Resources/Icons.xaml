@@ -119,6 +119,10 @@
     <PathGeometry x:Key="Icon.FolderOpen"
                   Figures="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" />
 
+    <!-- [worktree] lucide folders — alt barın Repo ↔ Worktree anahtarı: "ikinci bir çalışma klasörü". Klasör ailesinin kontur kalınlığı. -->
+    <PathGeometry x:Key="Icon.Folders"
+                  Figures="M20 17a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3.9a2 2 0 0 1-1.69-.9l-.81-1.2a2 2 0 0 0-1.67-.9H8a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2Z M2 8v11a2 2 0 0 0 2 2h14" />
+
     <!-- BuildApp.jsx:53 vs — <polyline points="16 18 22 12 16 6"/> + <polyline points="8 6 2 12 8 18"/> -->
     <PathGeometry x:Key="Icon.Vs" Figures="M16 18L22 12L16 6 M8 6L2 12L8 18" />
 
@@ -403,6 +407,7 @@
     <!-- strokeWidth="1.8" (BuildApp.jsx:51, :52, :53, :55, :61, :68) -->
     <sys:Double x:Key="Icon.Folder.StrokeThickness">1.8</sys:Double>
     <sys:Double x:Key="Icon.FolderOpen.StrokeThickness">1.8</sys:Double>
+    <sys:Double x:Key="Icon.Folders.StrokeThickness">1.8</sys:Double>
     <sys:Double x:Key="Icon.Vs.StrokeThickness">1.8</sys:Double>
     <sys:Double x:Key="Icon.Trash.StrokeThickness">1.8</sys:Double>
     <sys:Double x:Key="Icon.Sigma.StrokeThickness">1.8</sys:Double>

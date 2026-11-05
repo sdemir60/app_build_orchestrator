@@ -87,9 +87,13 @@ public class WorkspaceLabelTests
     /// <para><b>Ölçülen kusur:</b> aralık 2px'ti — barın 8'lik öğe-arası boşluğu WPF'te her öğeye ELLE
     /// yazılıyor ve branch chip'inin kabı onu almamıştı. Kullanıcı bunu "OSYS branch seçimi ile birleşik
     /// olmuş" diye tarif etti.</para>
+    /// <para><b>[DEĞİŞEN KURAL — worktree, kullanıcı kararı 2026-11-05]</b> Eski iddia: etiketin sağ kenarı ile branch chip'inin sol
+    /// kenarı arası 10px. Etiketle chip'in ARASINA Repo ↔ Worktree anahtarı girdi (kullanıcının yerleşimi: "OSYS proje adının sağında,
+    /// branch'in solunda"). Etiketin 10'luk boşluğu artık anahtara, anahtarınki (barın 8'i) branch chip'ine düşer — ad: eski
+    /// <c>The_label_keeps_the_bars_own_gap_between_itself_and_the_branch_chip</c>.</para>
     /// </summary>
     [StaFact]
-    public void The_label_keeps_the_bars_own_gap_between_itself_and_the_branch_chip()
+    public void The_label_the_worktree_toggle_and_the_branch_chip_keep_the_bars_own_gaps()
     {
         var vm = NewVm();
         var (bar, window) = Realize(vm);
@@ -97,11 +101,16 @@ public class WorkspaceLabelTests
         bar.UpdateLayout(); // etiket YENİ göründü — yerleşim iddiaları taze bir pass ister
 
         var label = bar.WorkspaceLabel;
+        var toggle = bar.WorktreeToggle;
         double labelRight = label.TranslatePoint(new Point(label.ActualWidth, 0), bar).X;
+        double toggleLeft = toggle.TranslatePoint(new Point(0, 0), bar).X;
+        double toggleRight = toggle.TranslatePoint(new Point(toggle.ActualWidth, 0), bar).X;
         double branchLeft = bar.BranchChip.TranslatePoint(new Point(0, 0), bar).X;
 
         Assert.True(label.ActualWidth > 0, "ön-koşul: workspace etiketi hiç yerleşmedi");
-        Assert.Equal(10.0, branchLeft - labelRight, 3);
+        Assert.True(toggle.ActualWidth > 0, "ön-koşul: worktree anahtarı hiç yerleşmedi");
+        Assert.Equal(10.0, toggleLeft - labelRight, 3);
+        Assert.Equal(8.0, branchLeft - toggleRight, 3);
         GC.KeepAlive(window);
     }
 

@@ -32,6 +32,13 @@
                    FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.2xs}"
                    Foreground="{DynamicResource Brush.TextDim}" />
 
+        <!-- [worktree] Repo ↔ Worktree anahtarı: workspace adının sağında, branch chip'inin solunda (kullanıcının yerleşimi). Bardaki
+             chip'lerin dili (Ds.Bar.Chip — işaretliyken amber: "worktree açık"); ETİKETSİZ kare (24×24, Restart engine'in ölçüsü) —
+             bar en dar pencerede sığmalı, anlamı tooltip söyler (bir sonraki tıkın ne yaptığı). İçerik, işaret, tooltip ve görünürlük
+             kod-tarafı (RefreshWorktreeToggle). -->
+        <ToggleButton x:Name="PART_WorktreeToggle" Style="{DynamicResource Ds.Bar.Chip}" Width="24" Padding="0" Margin="0,0,8,0"
+                      VerticalAlignment="Center" Visibility="Collapsed" />
+
         <!-- branch chip + popover (yukarı açılır) -->
         <Grid VerticalAlignment="Center">
           <ToggleButton x:Name="PART_BranchChip" Style="{DynamicResource Ds.Bar.Chip}" />

@@ -9,6 +9,17 @@ public enum WorkingCopy
     Worktree,
 }
 
+/// <summary>[worktree] Alt bardaki anahtarın metinleri — tooltip bir sonraki tıklamanın ne yapacağını söyler.</summary>
+public static class WorktreeToggleText
+{
+    /// <summary>Repo kopyasında: worktree tanımsızsa kurulum daveti, tanımlıysa worktree'ye geçiş ve yolu; worktree'de: repo'ya dönüş ve
+    /// repo kökü.</summary>
+    public static string Tooltip(WorkingCopy active, string worktreeFolder, string repositoryRoot = "") =>
+        active == WorkingCopy.Worktree ? $"Back to the repository — {repositoryRoot}"
+        : worktreeFolder.Length == 0 ? "Set up a worktree — a second working copy for another branch"
+        : $"Switch to the worktree — {worktreeFolder}";
+}
+
 /// <summary>[worktree] Kopya geçişinin ve worktree kurulumunun konsol ve Settings metinleri — TEK kaynak (kopya YASAK).</summary>
 public static class WorkingCopyText
 {
