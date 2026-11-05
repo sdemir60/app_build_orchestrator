@@ -48,6 +48,7 @@ public static class ExitText
         ExitWork.Sync => "Sync",
         ExitWork.BranchSwitch => "Branch switch",
         ExitWork.Pull => "Pull",
+        ExitWork.WorktreeSetup => "Worktree setup",
         ExitWork.None => ExitLabel,
         _ => throw new ArgumentOutOfRangeException(nameof(work), work, null),
     };
@@ -82,6 +83,7 @@ public static class ExitText
         ExitWork.Sync => "Nothing is lost; the next start syncs again.",
         ExitWork.BranchSwitch => "Cutting git off mid-write could leave the working tree half-switched.",
         ExitWork.Pull => "Cutting git off mid-write could leave the working tree half-updated.",
+        ExitWork.WorktreeSetup => "Cutting git off mid-write could leave the worktree half-created.",
         _ => throw new ArgumentOutOfRangeException(nameof(work), work, null),
     };
 

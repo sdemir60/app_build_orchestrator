@@ -67,6 +67,10 @@ public partial class SettingsDialog : ModalDialog
     public Func<string?>? PickExportPath { get; set; }
     public Func<string?>? PickImportPath { get; set; }
 
+    /// <summary>[worktree] Worktree folder'ın Browse'u: başlangıç klasörünü alır (<see cref="SettingsDraftViewModel.WorktreePickerStart"/>),
+    /// seçilen klasörü döner; iptalde <c>null</c>.</summary>
+    public Func<string?, string?>? PickWorktreeFolder { get; set; }
+
     /// <summary>[P4] Windows'un başlangıç kaydı servisi — MainWindow, DI'dan aldığı TEK örneği verir. Start with Windows
     /// onun gerçek durumundan açılır ve Save kaydı ona ANINDA yazar; <c>null</c> ⇒ Windows yüzeyi yok (yalnız
     /// kalıcılık).</summary>
@@ -84,6 +88,8 @@ public partial class SettingsDialog : ModalDialog
     internal Button Save => SaveButton;
     internal Button CloseButton => CloseSettingsButton;
     internal TextBox RootInput => RepoRootInput;
+    internal TextBox WorktreeInput => WorktreeFolderInput;
+    internal Button WorktreeBrowse => WorktreeBrowseButton;
     internal TextBlock Feedback => FeedbackText;
     internal TextBlock BlockedReason => BlockedReasonText;
     internal ShapePath ClearIcon => ClearGlyph;
@@ -118,12 +124,16 @@ public partial class SettingsDialog : ModalDialog
     private bool IsFirstRun => _run?.HasWorkspace != true;
 
     /// <summary>[design v1.19.0 §2.9] Açılış bölümü: first run'da Workspace (başlamak için gereken tek zorunlu ayar
-    /// orada), sonrasında General.</summary>
-    private SettingsSection OpeningSection => IsFirstRun ? SettingsSection.Workspace : SettingsSection.General;
+    /// orada), sonrasında General. [worktree] Alt bardaki Worktree düğmesinden açılış da Workspace'tir.</summary>
+    private SettingsSection OpeningSection => IsFirstRun || _openedForWorktree ? SettingsSection.Workspace : SettingsSection.General;
+
+    /// <summary>[worktree] Bu açılış worktree kurulumu için mi (<see cref="Open"/>'ın <c>forWorktree</c>'u).</summary>
+    private bool _openedForWorktree;
 
     /// <summary>[design v1.19.0 §2.9] Açılışta odak, açılan sayfanın ilk girdisine gider (Workspace: repository root
-    /// input'u, General: ilk switch) — başlık satırının kapat düğmesine değil.</summary>
-    protected override UIElement InitialFocusScope => Page(OpeningSection);
+    /// input'u, General: ilk switch) — başlık satırının kapat düğmesine değil. [worktree] Worktree kurulumu için açılışta odak
+    /// Worktree folder alanındadır (satırın ilk girdisi).</summary>
+    protected override UIElement InitialFocusScope => _openedForWorktree ? WorktreeFolderRow : Page(OpeningSection);
 
     /// <summary>[D7] Diyaloğu açar: canlı pattern'lerin bir TASLAK kopyasını kurar (SettingsDraftViewModel),
     /// repo yolunu gösterir ve görünür kılar. <paramref name="pickFolder"/> klasör seçici seam'idir (testler
@@ -132,15 +142,22 @@ public partial class SettingsDialog : ModalDialog
     /// to tray, Close to tray, Show notifications) yalnız <see cref="UiState"/>'te yaşar — <see cref="RunViewModel"/>'in
     /// kendi bir yüzü YOKTUR (pull/stash'in
     /// aksine), bu yüzden taslağın <c>saved</c> tohumu <paramref name="run"/>'dan değil <paramref name="store"/>'dan
-    /// gelir.</para></summary>
-    public void Open(RunViewModel run, IUiStateStore store, Func<string?> pickFolder)
+    /// gelir.</para>
+    /// <para>[worktree] <paramref name="forWorktree"/>: alt bardaki Worktree düğmesi (ya da branch kartı) geçilecek bir worktree
+    /// bulamadı — diyalog Workspace sayfasında, odak Worktree folder alanında açılır ve başarılı Save worktree'ye geçer
+    /// (<see cref="SettingsDraftViewModel.SwitchToWorktreeOnSave"/>).</para></summary>
+    public void Open(RunViewModel run, IUiStateStore store, Func<string?> pickFolder, bool forWorktree = false)
     {
         _run = run;
         _store = store;
         _pickFolder = pickFolder;
+        _openedForWorktree = forWorktree;
         _draft = new SettingsDraftViewModel(
             run.LayerPatterns, run.RootPath, run.ExternalProjects, run.UpdateExternals, run.StashOnBranchSwitch,
-            store.Load(), Autostart, run.CompactConsole, run.StopEngineWhenIdle);
+            store.Load(), Autostart, run.CompactConsole, run.StopEngineWhenIdle, run.WorktreeFolder)
+        {
+            SwitchToWorktreeOnSave = forWorktree,
+        };
         DataContext = _draft;
         ResetFeedback();
         // [design v1.19.0 §2.9] Açılış bölümü her açılışta yeniden seçilir (OpeningSection).
@@ -162,7 +179,7 @@ public partial class SettingsDialog : ModalDialog
     /// seçici giriş animasyonunun ortasında diyaloğun üstüne biniyordu (kullanıcı testi).</para></summary>
     public async Task OpenForImportAsync(RunViewModel run, IUiStateStore store, Func<string?> pickFolder)
     {
-        Open(run, store, pickFolder);
+        Open(run, store, pickFolder, forWorktree: false);
         var draft = _draft;
         if (ImportHold is { } hold) await hold(ImportPickerDelayMs);
         if (Visibility != Visibility.Visible || !ReferenceEquals(draft, _draft)) return; // vazgeçildi
@@ -211,6 +228,15 @@ public partial class SettingsDialog : ModalDialog
     {
         if (_pickFolder?.Invoke() is not { Length: > 0 } path || _draft is null) return;
         _draft.RepositoryRoot = path;
+        DisarmClear();
+    }
+
+    // [worktree] Worktree folder'ın Browse'u da YALNIZ taslağa yazar; seçici reponun yanında başlar. Yeni bir worktree için kullanıcı
+    // üst klasörü seçip adı alana kendisi ekler — isim yolun son parçasıdır.
+    private void OnBrowseWorktree(object sender, RoutedEventArgs e)
+    {
+        if (_draft is null || PickWorktreeFolder?.Invoke(_draft.WorktreePickerStart) is not { Length: > 0 } path) return;
+        _draft.WorktreeFolder = path;
         DisarmClear();
     }
 

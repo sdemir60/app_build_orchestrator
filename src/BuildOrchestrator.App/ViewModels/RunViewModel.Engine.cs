@@ -798,6 +798,8 @@ public sealed partial class RunViewModel
         if (!_engineGate.Holds(typeof(CheckoutBranchCommand))) SetCheckoutBusy(false);
         // [§6.1] motor pull ortasında öldüyse pullCompleted gelmez — kapı sızmaz
         if (!_engineGate.Holds(typeof(PullRepositoryCommand))) SetPullBusy(false);
+        // [worktree] motor kurulumun ortasında öldüyse worktreeCreated gelmez — kilit ve bekleyen istek sızmaz
+        if (!_engineGate.Holds(typeof(CreateWorktreeCommand))) ReleaseWorktreeAfterLoss();
         if (_pendingLoad is { } pendingLoad) StopAwaitingReply(pendingLoad); // [idle-memory] log isteğinin cevabı gelmez — gerekçe özette
         // Beklenen geçiş kalmadı → sessizlik uyarısının konusu da kalmadı. (Tick zaten aynı sonuca varırdı;
         // burada YAZILMASININ sebebi, kullanıcının Restart'a bastığı KAREde amber satırın kalkmasıdır.)

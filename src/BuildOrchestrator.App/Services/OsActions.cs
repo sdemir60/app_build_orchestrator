@@ -7,8 +7,10 @@ using BuildOrchestrator.Core.Processes;
 namespace BuildOrchestrator.App.Services;
 
 /// <summary>
-/// [E1/T67] Satır hover ikonlarının OS eylemleri: Reveal in Explorer / Open in Visual Studio / PickFolder.
-/// İki dış dünya dokunuşu TEST SEAM'İ arkasındadır — gerçek Explorer/VS/dialog testte AÇILMAZ:
+/// [E1/T67] Satır hover ikonlarının OS eylemleri: Reveal in Explorer / Open in Visual Studio. Sistem seçicileri burada DEĞİLDİR —
+/// hepsi ortalı açıldıkları tek yardımcıdadır (<c>Shell/SystemPicker.cs</c>; burada duran sahipsiz bir klasör seçici kopyası
+/// kaldırıldı, hiçbir yerden çağrılmıyordu).
+/// İki dış dünya dokunuşu TEST SEAM'İ arkasındadır — gerçek Explorer/VS testte AÇILMAZ:
 /// <list type="bullet">
 /// <item><see cref="IProcessLauncher"/>: fire-and-forget başlatma; <c>explorer.exe /select,"&lt;yol&gt;"</c> ve
 /// <c>devenv "&lt;sln&gt;"</c> tırnak kaçışını gerçek process olmadan doğrulatır.</item>
@@ -32,9 +34,6 @@ public interface IOsActions
     /// Eskiden <c>Task.Run(...).GetAwaiter().GetResult()</c> ile senkron bekleniyordu ve tek bir tıklama
     /// pencereyi 30 saniyeye kadar ölü bırakabiliyordu.</para></summary>
     Task<OpenInVsResult> OpenInVisualStudioAsync(IReadOnlyList<SolutionRef> candidates);
-
-    /// <summary><see cref="Microsoft.Win32.OpenFolderDialog"/> — iptal edilirse null.</summary>
-    string? PickFolder(string? initial);
 }
 
 /// <summary>[E1/T67] Fire-and-forget process başlatma seam'i. Gerçek impl <see cref="ProcessLauncher"/> =
@@ -134,13 +133,6 @@ public sealed class OsActions : IOsActions
             UseShellExecute = false,
         });
         return OpenInVsResult.Opened(solution);
-    }
-
-    public string? PickFolder(string? initial)
-    {
-        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "Select repository root" };
-        if (!string.IsNullOrEmpty(initial)) dialog.InitialDirectory = initial;
-        return dialog.ShowDialog() == true ? dialog.FolderName : null;
     }
 
     /// <summary>vswhere ile devenv.exe tam yolunu çözer; vswhere yoksa / sorgu boş dönerse null

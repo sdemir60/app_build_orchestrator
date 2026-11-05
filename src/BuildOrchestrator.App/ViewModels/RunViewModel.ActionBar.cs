@@ -287,12 +287,19 @@ public sealed partial class RunViewModel
     /// dokunulmaz.</param>
     /// <param name="stopEngineWhenIdle">[idle-memory · dalga 3 / spec §6.4] General'ın "Stop the engine when idle" switch'i — App-içi
     /// tercih (motora gitmez); değer değiştiyse konsola not düşer. <c>null</c> ⇒ dokunulmaz.</param>
+    /// <param name="worktreeFolder">[worktree] Workspace'in Worktree folder alanı (boş = tanımsız); <c>null</c> ⇒ dokunulmaz. Kökle AYNI
+    /// kapıdadır: koşu ya da workspace işi uçuştayken ertelenir. Klasör yoksa ya da boşsa Save onu kurar
+    /// (<see cref="RequestWorktreeAsync"/>) ve Save'in Sync'i kurulumun cevabından SONRA gider; aktif worktree'nin klasörü
+    /// değiştiyse kopya repo'ya döner.</param>
+    /// <param name="switchToWorktree">[worktree] Settings alt bardaki Worktree düğmesinden açıldı: worktree hazırsa (ya da kurulum
+    /// başarılı olunca) Save'in Sync'i worktree'ye geçişin Sync'idir.</param>
     public async Task ApplySettingsAsync(IReadOnlyList<LayerPattern> patterns, string? repositoryRoot,
         IReadOnlyList<ExternalProject> externals, bool? pullExternalsBeforeBuild = null, bool? stashOnBranchSwitch = null,
         IReadOnlyList<string>? settingNotes = null, bool? compactConsole = null,
-        bool? stopEngineWhenIdle = null)
+        bool? stopEngineWhenIdle = null, string? worktreeFolder = null, bool switchToWorktree = false)
     {
         string root = RootOf(repositoryRoot);
+        string? folder = worktreeFolder is null ? null : RootOf(worktreeFolder).Trim();
         if (WorkspaceIdle && root.Length == 0 && HasWorkspace) CloseWorkspace();
         ApplyLayerPatterns(patterns);
         // SIRA: bayrağın notu listeyi TANIMLI görmeli — "harici proje varsa yaz" kuralı yeni listeye bakar.
@@ -305,15 +312,31 @@ public sealed partial class RunViewModel
             foreach (var note in settingNotes) AppendRunLine(note);
         if (!WorkspaceIdle)
         {
-            if (IsRepositoryChange(root)) AppendRunLine(RepositoryChangeDeferredLine(runInFlight: IsMidRunLocked));
+            // [worktree] Worktree klasörü de kök gibi ertelenir: aktif worktree'nin klasörünü koşunun altından değiştirmek koşunun kökünü
+            // değiştirirdi.
+            if (IsRepositoryChange(root) || (folder is not null && IsWorktreeChange(folder)))
+                AppendRunLine(RepositoryChangeDeferredLine(runInFlight: IsMidRunLocked));
             return;
         }
         bool rootChanged = ApplyRepositoryRoot(root);
+        bool copyReturned = folder is not null && ApplyWorktreeFolder(folder);
         if (RootPath.Length == 0) return;
         if (IsEngineUnavailable) return;
+        // [worktree] Klasör kurulmayı bekliyorsa Save'in Sync'i kurulumun cevabından sonra gider (OnWorktreeCreatedAsync); worktree
+        // hazırsa ve Settings alt bardaki düğmeden açıldıysa Save'in Sync'i geçişin Sync'idir.
+        if (WorktreeNeedsCreating)
+        {
+            await RequestWorktreeAsync(planGone: rootChanged || copyReturned, switchAfter: switchToWorktree);
+            return;
+        }
+        if (switchToWorktree && WorktreeReady && ActiveCopy != WorkingCopy.Worktree)
+        {
+            await SwitchCopyCoreAsync(WorkingCopy.Worktree);
+            return;
+        }
         // [D3/T5 · design v1.13.2] Appended — ApplyLayerPatterns/ApplyRepositoryRoot bu Sync'ten HEMEN ÖNCE
         // KENDİ notunu yazdı (bkz. SyncCoreAsync XML doc'u); bir temizlik onu da silerdi.
-        await SyncAfterRootChangeAsync(rootChanged);
+        await SyncAfterRootChangeAsync(rootChanged || copyReturned);
     }
 
     /// <summary>[spec 2026-09-18 §6.2] Settings Save'in Sync'i (<see cref="SyncMode.Appended"/>). Kök GERÇEKTEN

@@ -38,6 +38,69 @@ public sealed class FileDialogCenteringProbeTests(ITestOutputHelper output)
             $"seçici sahibinin merkezinden ({offsetX}, {offsetY}) px sapık açıldı");
     }
 
+    /// <summary>[2026-11-05] Üretimin TEK yardımcısı (<see cref="SystemPicker"/>) üç seçici türünü de sahibinin üzerinde ortalı açıyor mu —
+    /// klasör (repo kökü ve worktree'nin Browse'u), açılacak dosya (Import) ve kaydedilecek dosya (Export). Kapsamın kancası seçicinin
+    /// gizli etkinleşmesine dayanır; tür değişince bu davranış değişseydi ortalama sessizce düşerdi.</summary>
+    [SkippableTheory]
+    [InlineData("folder")]
+    [InlineData("open")]
+    [InlineData("save")]
+    public void Every_system_picker_opens_centred_over_its_owner(string kind)
+    {
+        Skip.IfNot(Environment.GetEnvironmentVariable("BO_PROBE_FILE_DIALOG") == "1",
+            "Opens a real window and a real file dialog — opt in with BO_PROBE_FILE_DIALOG=1.");
+
+        var (log, offsetX, offsetY) = StaThread.RunAsync(() => ProbeHelper(kind), "system-picker-centering-probe").GetAwaiter().GetResult();
+        foreach (string line in log) output.WriteLine(line);
+
+        Assert.True(Math.Abs(offsetX) <= TolerancePx && Math.Abs(offsetY) <= TolerancePx,
+            $"{kind} seçicisi sahibinin merkezinden ({offsetX}, {offsetY}) px sapık açıldı");
+    }
+
+    private static (List<string> Log, int OffsetX, int OffsetY) ProbeHelper(string kind)
+    {
+        var log = new List<string>();
+        var area = SystemParameters.WorkArea;
+        var window = new Window
+        {
+            Left = area.Left + 20, Top = area.Top + 10, Width = area.Width * 0.85, Height = area.Height * 0.94,
+            Title = "system picker probe",
+        };
+        window.Show();
+        nint owner = new WindowInteropHelper(window).Handle;
+        try
+        {
+            Win32.GetWindowRect(owner, out var o);
+            var measured = default(Win32.RECT);
+            var timer = new DispatcherTimer(TimeSpan.FromMilliseconds(500), DispatcherPriority.Normal, (s, _) =>
+            {
+                nint dialog = FindOwnedWindow(owner);
+                if (dialog == 0) return;
+                ((DispatcherTimer)s!).Stop();
+                Win32.GetWindowRect(dialog, out measured);
+                PostMessage(dialog, WmClose, 0, 0);
+            }, window.Dispatcher);
+            timer.Start();
+            _ = kind switch
+            {
+                "folder" => SystemPicker.Folder(window, "probe", null),
+                "open" => SystemPicker.FileToOpen(window, "Settings (*.json)|*.json"),
+                _ => SystemPicker.FileToSave(window, "probe.json", "Settings (*.json)|*.json", ".json"),
+            };
+            timer.Stop();
+            log.Add(Describe("pencere", o));
+            log.Add(Describe(kind + " seçicisi (SystemPicker)", measured));
+            int dx = (measured.Left + measured.Right) / 2 - (o.Left + o.Right) / 2;
+            int dy = (measured.Top + measured.Bottom) / 2 - (o.Top + o.Bottom) / 2;
+            log.Add(string.Format(CultureInfo.InvariantCulture, "  merkez sapması: ({0}, {1}) px", dx, dy));
+            return (log, dx, dy);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
     private static (List<string> Log, int OffsetX, int OffsetY) Probe()
     {
         var log = new List<string>();

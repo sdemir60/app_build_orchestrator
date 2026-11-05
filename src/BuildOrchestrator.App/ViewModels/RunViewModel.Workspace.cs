@@ -563,11 +563,11 @@ public sealed partial class RunViewModel
     /// basış kuyruğa alınmaz.</para></summary>
     private bool WorkspaceBusy => SyncBusy || NonSyncWorkspaceBusy;
 
-    /// <summary>Sync DIŞINDAKİ workspace işleri: Clean, Optimize, checkout ya da pull. <see cref="WorkspaceBusy"/>'nin
-    /// üyelik listesinin TEK yeri — güncelleme kartının Restart kilidi bunları Sync'ten AYRI bir kovada ("görev")
-    /// okur (<see cref="UpdateRestartBlockedReason"/>); yeni bir workspace işi buraya eklenince iki soru birlikte
+    /// <summary>Sync DIŞINDAKİ workspace işleri: Clean, Optimize, checkout, pull ya da [worktree] Settings Save'in worktree kurulumu.
+    /// <see cref="WorkspaceBusy"/>'nin üyelik listesinin TEK yeri — güncelleme kartının Restart kilidi bunları Sync'ten AYRI bir kovada
+    /// ("görev") okur (<see cref="UpdateRestartBlockedReason"/>); yeni bir workspace işi buraya eklenince iki soru birlikte
     /// görür.</summary>
-    private bool NonSyncWorkspaceBusy => CleanBusy || OptimizeBusy || CheckoutBusy || PullBusy;
+    private bool NonSyncWorkspaceBusy => CleanBusy || OptimizeBusy || CheckoutBusy || PullBusy || WorktreeBusy;
 
     /// <summary>[final review M3] Workspace'e yeni bir iş başlatılabilir mi: koşu kilidi yok (<see cref="IsMidRunLocked"/>)
     /// ve workspace işi yok (<see cref="WorkspaceBusy"/>). Settings Save'in kapısı; komut kapıları

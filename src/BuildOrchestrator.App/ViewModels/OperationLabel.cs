@@ -39,6 +39,9 @@ public static class OperationLabel
     /// <summary>[spec 2026-09-18 §6.3] Branch chip'inden checkout (<c>RunViewModel.SelectBranch</c>). Başarıda
     /// zincirlenen Sync pill'i <see cref="Sync"/>'e çevirir; ret/hata pill'i düşürür.</summary>
     public const string Checkout = "SWITCHING BRANCH";
+    /// <summary>[worktree] Settings Save'in worktree kurulumu. Ardından gelen Sync pill'i <see cref="Sync"/>'e çevirir; ret pill'i
+    /// düşürür.</summary>
+    public const string CreatingWorktree = "CREATING WORKTREE";
 
     /// <summary>Bir <c>RunMode</c>'un pill etiketi. Motor modu ile pill sözcüğü arasındaki TEK eşleme yeri —
     /// hedefli (satırdan tetiklenen) bir koşu da dahil, pill'in TEK üreticisi budur (v1.13.2).</summary>

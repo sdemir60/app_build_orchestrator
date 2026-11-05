@@ -219,6 +219,10 @@ public static class AccessibilityNames
     public const string RepositoryRootInput = "Repository root";
     /// <summary>Kök klasörü seçtiren düğme (etiketi Content'in İÇİNDE bir TextBlock).</summary>
     public const string BrowseRepositoryRoot = "Browse for the repository root";
+    /// <summary>[worktree] Worktree folder input'u — watermark bir ÖRNEK yoldur, etiket değil.</summary>
+    public const string WorktreeFolderInput = "Worktree folder";
+    /// <summary>[worktree] Worktree klasörünü seçtiren düğme.</summary>
+    public const string BrowseWorktreeFolder = "Browse for the worktree folder";
     /// <summary>Footer'ın üç ikon-yalnız düğmesi. AYNI metin hem tooltip hem UIA-adı DEĞİLDİR: tooltip kısa
     /// eylemi, ad işlevi tarif eder (chip'lerin kuralının aksine — burada tooltip'ler zaten kısadır).</summary>
     public const string ExportSettings = "Export settings to a file";

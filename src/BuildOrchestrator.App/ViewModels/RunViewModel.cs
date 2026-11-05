@@ -1934,6 +1934,8 @@ public sealed partial class RunViewModel : ObservableObject
             case PullCompletedEvent e: _ = OnPullCompletedAsync(e); break;
             // [spec 2026-09-18 §6.3] Checkout sonucu: başarıda yeni bölüm + Sync zinciri (beklenmez — pompa bloklanmaz).
             case CheckoutCompletedEvent e: _ = OnCheckoutCompletedAsync(e); break;
+            // [worktree] Settings Save'in kurulumunun sonucu: satır + Save'in Sync'i (ya da geçiş) — beklenmez, pompa bloklanmaz.
+            case WorktreeCreatedEvent e: _ = OnWorktreeCreatedAsync(e); break;
             // [clean] Clean yüzeyi — handler'lar RunViewModel.Workspace.cs'te (Sync guard'ın yanında).
             // Satırlar Sync yüzeyine AİT DEĞİLDİR: ayrı bayrak, ayrı kanal.
             case CleanStartedEvent: OnCleanStarted(); break;
@@ -2683,6 +2685,7 @@ public sealed partial class RunViewModel : ObservableObject
         if (TryConsumeCleanFailure(e.Code, e.Message)) return;
         if (TryConsumeOptimizeFailure(e.Code, e.Message)) return;
         if (TryConsumeCheckoutFailure(e.Code)) return;
+        if (TryConsumeWorktreeFailure(e.Code)) return; // [worktree] kurulumun reddi/hatası — run/Sync state'ine dokunmaz
         if (e.Code == RunInProgressCode) IsStarting = false;
         if (!RunEndingErrorCodes.Contains(e.Code)) return; // runInProgress/badCommand/... aktif run'ı ETKİLEMEZ
         // [A5/T69 · Fix wave 1, Finding 2] Sync fazını bırakır ve hatanın KAYNAĞINI ayırt eder: kod Sync'ten

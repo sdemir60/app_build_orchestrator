@@ -11,7 +11,8 @@ namespace BuildOrchestrator.App.Services;
 /// Build kısayolu); Sync, her kipte (<see cref="SyncWorkspaceCommand"/> — Sync düğmesi, pencereye dönüş, commit sonrası, dışarıdan branch
 /// değişimi, Debug/Release, Settings Save'in Sync'i, checkout/pull/Clean/Optimize'a zincirlenen Sync); branch envanteri
 /// (<see cref="ListBranchesCommand"/>); bakım Clean'i (<see cref="CleanWorkspaceCommand"/>); Optimize (<see cref="OptimizeWorkspaceCommand"/>);
-/// checkout (<see cref="CheckoutBranchCommand"/>); pull (<see cref="PullRepositoryCommand"/>); proje logu (<see cref="GetProjectLogCommand"/>).</item>
+/// checkout (<see cref="CheckoutBranchCommand"/>); pull (<see cref="PullRepositoryCommand"/>); [worktree] Settings Save'in worktree kurulumu
+/// (<see cref="CreateWorktreeCommand"/>); proje logu (<see cref="GetProjectLogCommand"/>).</item>
 /// <item><b>Asla uyandırmaz:</b> Stop (<see cref="StopRunCommand"/> — Stop, Stop now, branch kesmesi, çıkıştaki Stop: uyuyan motorda koşu yoktur,
 /// gönderilmemiş koşuyu bekleyen-koşu penceresi komutsuz geri alır); perf chip (<see cref="SetPerfModeCommand"/> — koşu yokken motor onu
 /// zaten yok sayar, uyanan motora giden koşu yeni profili taşır); <see cref="PingCommand"/> (App göndermez — sessizlik bekçisi ping atmaz,
@@ -35,6 +36,7 @@ public static class EngineWakeRule
         [typeof(OptimizeWorkspaceCommand)] = true,
         [typeof(CheckoutBranchCommand)] = true,
         [typeof(PullRepositoryCommand)] = true,
+        [typeof(CreateWorktreeCommand)] = true,
         [typeof(GetProjectLogCommand)] = true,
         [typeof(StopRunCommand)] = false,
         [typeof(SetPerfModeCommand)] = false,
