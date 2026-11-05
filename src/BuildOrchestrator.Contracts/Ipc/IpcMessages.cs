@@ -28,7 +28,18 @@ public static class IpcJson
 [JsonDerivedType(typeof(SetPerfModeCommand), "setPerfMode")]
 [JsonDerivedType(typeof(PullRepositoryCommand), "pullRepository")]
 [JsonDerivedType(typeof(CheckoutBranchCommand), "checkoutBranch")]
+[JsonDerivedType(typeof(CreateWorktreeCommand), "createWorktree")]
 public abstract record IpcCommand;
+
+/// <summary>
+/// [worktree] Settings Save'in worktree oluşturması: ana reponun kökünde <c>git worktree add --detach &lt;Folder&gt;</c>. Yürütme
+/// Core'un <c>WorktreeCreator</c>'ıdır (mutasyon yüzeyi tek dosya, <c>Core/Git/RepositoryWriter.cs</c>); yalnız yok ya da boş bir
+/// klasör oluşturulur, başka her durumda klasöre dokunulmaz. Sonuç <see cref="WorktreeCreatedEvent"/>'tir; konsol satırlarını App
+/// kurar. Bir koşu uçuştayken <c>error(worktreeRejected)</c> ile REDDEDİLİR.
+/// </summary>
+/// <param name="RootPath">Ana reponun kökü (Settings'teki Repository root) — worktree her zaman ana repodan eklenir.</param>
+/// <param name="Folder">Worktree'nin tam yolu (Settings'teki Worktree folder).</param>
+public sealed record CreateWorktreeCommand(string RootPath, string Folder) : IpcCommand;
 
 /// <summary>
 /// [v1.16.0] Ana repoyu uzak ucuna ff-only ilerletir — alt bardaki <c>N behind</c> chip'inin tek tetikleyicisi.
@@ -276,6 +287,7 @@ public sealed record ListBranchesCommand(string RootPath) : IpcCommand;
 [JsonDerivedType(typeof(SyncCompletedEvent), "syncCompleted")]
 [JsonDerivedType(typeof(PullCompletedEvent), "pullCompleted")]
 [JsonDerivedType(typeof(CheckoutCompletedEvent), "checkoutCompleted")]
+[JsonDerivedType(typeof(WorktreeCreatedEvent), "worktreeCreated")]
 [JsonDerivedType(typeof(CleanStartedEvent), "cleanStarted")]
 [JsonDerivedType(typeof(CleanProgressEvent), "cleanProgress")]
 [JsonDerivedType(typeof(CleanCompletedEvent), "cleanCompleted")]
@@ -448,6 +460,12 @@ public sealed record PullCompletedEvent(bool Succeeded, PullRefusalReason? Refus
 /// <param name="Detail">Hata ayrıntısı (İngilizce); gerekmiyorsa null.</param>
 public sealed record CheckoutCompletedEvent(CheckoutStatus Status, string? FromBranch, string? Branch,
     string? Revision, int DirtyCount, string? StashMessage, string? Detail) : IpcEvent;
+/// <summary>[worktree] <see cref="CreateWorktreeCommand"/>'ın sonucu — konsol satırlarının TEK girdisi.</summary>
+/// <param name="Folder">Komutun klasörü (aynen).</param>
+/// <param name="Created">Worktree kuruldu mu.</param>
+/// <param name="Revision">Kurulduysa yeni worktree'nin HEAD sha'sı (detached); aksi hâlde null.</param>
+/// <param name="Detail">Kurulmadıysa nedeni (İngilizce); kurulduysa null.</param>
+public sealed record WorktreeCreatedEvent(string Folder, bool Created, string? Revision, string? Detail) : IpcEvent;
 /// <summary>[clean] <see cref="CleanWorkspaceCommand"/> kabul edildi ve silme başlıyor.</summary>
 public sealed record CleanStartedEvent(string RootPath) : IpcEvent;
 /// <summary>[clean] Clean transkriptinin tek satırı. İmzası <see cref="SyncProgressEvent"/> ile aynıdır ama

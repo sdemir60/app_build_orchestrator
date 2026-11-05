@@ -32,7 +32,8 @@ public sealed record FastForwardResult(FastForwardStatus Status, string? Revisio
 
 /// <summary>
 /// [D7][v1.16.0] Bir git çalışma kopyasını remote'una ilerletir — bu dosyanın (<c>RepositoryWriter.cs</c>)
-/// iki mutasyon yüzeyinden biri, diğeri <see cref="BranchSwitcher"/> (checkout + stash, §6.3/§6.6). Harici
+/// üç mutasyon yüzeyinden biri; diğerleri <see cref="BranchSwitcher"/> (checkout + stash, §6.3/§6.6) ve
+/// <see cref="WorktreeCreator"/> (Settings Save'in worktree'si). Harici
 /// köklerin build öncesi güncellemesi ve ana reponun <c>N behind</c> chip'inden tetiklenen pull'u AYNI
 /// ilkeli buradan geçer.
 ///
@@ -165,7 +166,8 @@ public sealed record CheckoutResult(
 /// bir Supervisor komutundan çağırır.
 ///
 /// <para><b>Sıra:</b> (1) hedef zaten aktif branch ise <see cref="CheckoutStatus.AlreadyOn"/> — git'e HİÇ
-/// dokunulmaz (okuma dahil dirty kontrolü bile çalışmaz). (2) Kir kapısı (<see
+/// dokunulmaz (okuma dahil dirty kontrolü bile çalışmaz). (1b) [worktree] hedef başka bir çalışma kopyasında açıksa
+/// <see cref="CheckoutStatus.CheckedOutElsewhere"/> — kir kapısından ve stash'ten önce, hiçbir şey yazılmaz. (2) Kir kapısı (<see
 /// cref="GitService.GetDirtyPathsAsync"/>): kirli ve <c>stashIfDirty=false</c> → <see
 /// cref="CheckoutStatus.Dirty"/>, hiçbir şey yapılmaz. (3) kirli ve <c>stashIfDirty=true</c> → <c>stash push
 /// -u</c>; başarısızsa <see cref="CheckoutStatus.StashFailed"/>, checkout hiç denenmez. (4) Hedef: yerel ise
@@ -184,6 +186,9 @@ public sealed class BranchSwitcher
     /// <summary>Stash/checkout çalışma ağacını yeniden yazar; büyük bir repoda uzun sürebilir —
     /// <c>FastForwardUpdater</c>'ın merge tavanıyla aynı 5 dakika.</summary>
     private static readonly TimeSpan MutationTimeout = TimeSpan.FromMinutes(5);
+
+    /// <summary>[worktree] Karar sorgusu (hangi kopya hangi branch'te) — <see cref="GitService"/>'in salt-okur tavanıyla aynı.</summary>
+    private static readonly TimeSpan QueryTimeout = TimeSpan.FromSeconds(30);
 
     private readonly IProcessRunner _runner;
     private readonly string _rootPath;
@@ -219,6 +224,11 @@ public sealed class BranchSwitcher
         if (!currentBranch.Success) return Failed(currentBranch.Error);
         if (currentBranch.Value is not null && string.Equals(currentBranch.Value, localName, StringComparison.Ordinal))
             return new CheckoutResult(CheckoutStatus.AlreadyOn, currentBranch.Value, null, 0, null, null);
+
+        // 0b) [worktree] Hedef başka bir çalışma kopyasında açık mı — git aynı branch'i iki kopyada açtırmaz. Kir kapısından ve
+        //     stash'ten ÖNCE: stash'ten sonra düşen checkout kullanıcının değişikliklerini boşuna stash'e gönderirdi.
+        if (await HolderOfAsync(localName, ct) is { } holder)
+            return new CheckoutResult(CheckoutStatus.CheckedOutElsewhere, currentBranch.Value, null, 0, null, holder);
 
         // 1) Kir kapısı.
         var dirty = await _git.GetDirtyPathsAsync(ct);
@@ -272,6 +282,33 @@ public sealed class BranchSwitcher
         return new CheckoutResult(CheckoutStatus.Switched, localName, newHead.Value, dirtyCount, stashMessage, null);
     }
 
+    /// <summary>[worktree] <paramref name="localName"/>'i HEAD'inde tutan BAŞKA çalışma kopyasının kökü (ana kopya ya da bir
+    /// worktree); yoksa ya da sorulamadıysa <c>null</c> — o hâlde karar git'in kendi kuralına kalır. Git'e sorulur
+    /// (<c>worktree list --porcelain</c>), dosyadan okunmaz: reftable biçimli repoda HEAD dosyası yalnız bir yer tutucudur.
+    /// Porcelain biçimi lokalize değildir ve sürümler arasında kararlıdır; kopya bloğu <c>worktree &lt;yol&gt;</c> ile başlar,
+    /// branch'i <c>branch refs/heads/&lt;ad&gt;</c> satırındadır (detached kopyada bu satır yoktur).</summary>
+    private async Task<string?> HolderOfAsync(string localName, CancellationToken ct)
+    {
+        var list = await CommandLineTool.RunAsync(
+            _runner, CommandLineTool.Git, _gitExecutable, ["worktree", "list", "--porcelain"], _rootPath, QueryTimeout, ct);
+        if (!list.Success || list.Value!.ExitCode != 0) return null;
+
+        string self = NormalizePath(_rootPath);
+        string branchLine = "branch refs/heads/" + localName;
+        string? copy = null;
+        foreach (string raw in list.Value.StandardOutput.Split('\n'))
+        {
+            string line = raw.TrimEnd('\r');
+            if (line.StartsWith("worktree ", StringComparison.Ordinal)) copy = NormalizePath(line["worktree ".Length..]);
+            else if (copy is not null && string.Equals(line, branchLine, StringComparison.Ordinal)
+                     && !string.Equals(copy, self, StringComparison.OrdinalIgnoreCase))
+                return copy;
+        }
+        return null;
+    }
+
+    private static string NormalizePath(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+
     /// <summary>Stash mesajının TEK kaynağı (kopya yasak) — konsol satırı ve <c>stash push -m</c> argümanı
     /// AYNI metni kullanır.</summary>
     public static string StashMessage(string from, string to) => $"build-orchestrator: leaving {from} for {to}";
@@ -293,4 +330,67 @@ public sealed class BranchSwitcher
     }
 
     private static CheckoutResult Failed(string? detail) => new(CheckoutStatus.Failed, null, null, 0, null, detail);
+}
+
+/// <param name="Created">Klasörde artık bu reponun worktree'si var mı (kuruldu ya da zaten oradaydı).</param>
+/// <param name="Revision">Worktree varsa HEAD sha'sı; aksi hâlde null.</param>
+/// <param name="Detail">Kurulmadıysa nedeni (İngilizce); kurulduysa null.</param>
+public sealed record WorktreeCreateResult(bool Created, string? Revision, string? Detail);
+
+/// <summary>
+/// [worktree] Settings Save'in worktree oluşturması — bu dosyanın üçüncü mutasyon yüzeyi (<see cref="FastForwardUpdater"/> ve
+/// <see cref="BranchSwitcher"/>'ın yanında; kaynak guard'ları <c>NoGitMutationOutsideTheWriterTests</c> ve
+/// <c>NoWorktreeSurfaceTests</c>).
+///
+/// <para><b>Yalnız kullanıcının açık kararıyla:</b> komut yalnız Settings'te bir worktree klasörü kaydedildiğinde ve klasör yoksa ya
+/// da boşsa gelir; ne Sync, ne Build, ne bir arka plan işi bu sınıfı çağırır.</para>
+///
+/// <para><b>Sıra:</b> (1) klasör yeniden denetlenir (<see cref="WorktreeFolder.Inspect"/>) — App'in kapısıyla motorun yürütmesi
+/// arasında klasör değişmiş olabilir: <c>Creatable</c> değilse git'e hiç dokunulmaz ve neden döner; zaten bu reponun worktree'siyse
+/// iş yapılmış sayılır. (2) Ana repo kökünde <c>git worktree add --detach &lt;klasör&gt;</c>: worktree ana kopyanın HEAD
+/// commit'inde, branch'siz doğar — git aynı branch'i iki kopyada açtırmaz, yeni bir branch açmak da kullanıcının vermediği bir
+/// karar olurdu. (3) Yeni worktree'nin HEAD'i okunur. Hiçbir koşulda exception fırlatmaz; sinyal exit kodudur, lokalize stderr
+/// METNİ ayrıştırılmaz.</para>
+/// </summary>
+public sealed class WorktreeCreator
+{
+    /// <summary>Worktree eklemek tüm ağacı yazar; büyük bir repoda uzun sürebilir — checkout'la aynı 5 dakika.</summary>
+    private static readonly TimeSpan MutationTimeout = TimeSpan.FromMinutes(5);
+
+    private readonly IProcessRunner _runner;
+    private readonly string _repositoryRoot;
+    private readonly string _gitExecutable;
+
+    /// <param name="runner">Process çalıştırıcı.</param>
+    /// <param name="repositoryRoot">Ana reponun kökü — worktree her zaman buradan eklenir.</param>
+    /// <param name="gitExecutable">git yürütülebiliri; testler için değiştirilebilir.</param>
+    public WorktreeCreator(IProcessRunner runner, string repositoryRoot, string gitExecutable = "git")
+    {
+        _runner = runner ?? throw new ArgumentNullException(nameof(runner));
+        _repositoryRoot = repositoryRoot ?? throw new ArgumentNullException(nameof(repositoryRoot));
+        _gitExecutable = string.IsNullOrWhiteSpace(gitExecutable)
+            ? throw new ArgumentException("gitExecutable must not be empty.", nameof(gitExecutable))
+            : gitExecutable;
+    }
+
+    public async Task<WorktreeCreateResult> CreateAsync(string folder, CancellationToken ct = default)
+    {
+        var state = WorktreeFolder.Inspect(_repositoryRoot, folder);
+        if (state == WorktreeFolderState.Linked) return new WorktreeCreateResult(true, await HeadOfAsync(folder, ct), null);
+        if (state != WorktreeFolderState.Creatable) return new WorktreeCreateResult(false, null, WorktreeFolder.Describe(state));
+
+        var add = await CommandLineTool.RunAsync(
+            _runner, CommandLineTool.Git, _gitExecutable, ["worktree", "add", "--detach", folder], _repositoryRoot, MutationTimeout, ct);
+        if (!add.Success) return new WorktreeCreateResult(false, null, add.Error);
+        if (add.Value!.ExitCode != 0)
+            return new WorktreeCreateResult(false, null, CommandLineTool.DescribeFailure(CommandLineTool.Git, add.Value));
+
+        return new WorktreeCreateResult(true, await HeadOfAsync(folder, ct), null);
+    }
+
+    private async Task<string?> HeadOfAsync(string folder, CancellationToken ct)
+    {
+        var head = await new GitService(_runner, folder, _gitExecutable).GetHeadCommitAsync(ct);
+        return head.Success ? head.Value : null;
+    }
 }

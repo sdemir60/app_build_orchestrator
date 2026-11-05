@@ -98,8 +98,9 @@ public sealed class GitTestRepo : IDisposable
     public string CurrentBranchName() => RunGit(RootPath, "symbolic-ref", "--short", "-q", "HEAD").Trim();
 
     /// <summary>
-    /// [Faz 2/T1] Bu repo için AYRI bir dizinde <c>git worktree add</c> ile linked bir worktree açar
-    /// (yalnız fixture — ürün kodu worktree add ASLA çağırmaz) ve worktree kökünün TAM yolunu döner.
+    /// [Faz 2/T1] Bu repo için AYRI bir dizinde <c>git worktree add</c> ile linked bir worktree açar ve worktree kökünün TAM
+    /// yolunu döner. Fixture'ın worktree'si bir branch'te açılır (kullanıcının terminalde kurduğu gibi); ürünün kendi kurduğu
+    /// worktree detached doğar (<c>WorktreeCreator</c>).
     /// <see cref="Core.Git.HeadReader"/>'ın <c>commondir</c> çözümlemesini gerçek bir linked worktree
     /// üzerinde sınamak içindir; <paramref name="branch"/> önceden <see cref="CreateBranch"/> ile
     /// oluşturulmuş, henüz hiçbir yerde checkout edilmemiş bir yerel branch olmalıdır.

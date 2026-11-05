@@ -66,6 +66,18 @@ public static class WorktreeFolder
         }
     }
 
+    /// <summary>Kullanılamayan bir klasörün nedeni — küçük harfle başlayan İngilizce ifade; kullanılabilir durumlarda (<c>Creatable</c>,
+    /// <c>Linked</c>) <c>null</c>. Settings'in Save satırı (baş harfi büyütülerek) ve motorun ret ayrıntısı AYNI metni kullanır.</summary>
+    public static string? Describe(WorktreeFolderState state) => state switch
+    {
+        WorktreeFolderState.Foreign => "the worktree folder is not empty and is not a worktree of this repository",
+        WorktreeFolderState.Nested => "the worktree folder must be outside the repository root",
+        WorktreeFolderState.NotRooted => "the worktree folder needs a full path",
+        WorktreeFolderState.NoRepository => "the repository root is not a git repository",
+        WorktreeFolderState.Unreadable => "the worktree folder cannot be read",
+        _ => null,
+    };
+
     private static string Normalize(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
 
     /// <summary><paramref name="path"/>, <paramref name="ancestor"/>'ın kendisi ya da altındaki bir yol mu — metin öneki değil,
