@@ -499,7 +499,7 @@ public sealed partial class RunViewModel
         SetPullBusy(true); // [spec 2026-09-18 §6.1] kapı GÖNDERİMDEN önce kapanır (checkout'un deseni)
         ArmEngineWatchdog();
         // Gönderim SENKRON düştüyse hiçbir pullCompleted gelmez — pill ve kilit asılı kalmasın.
-        if (!await TrySendAsync(new PullRepositoryCommand(RootPath, Branch), "pullRepository"))
+        if (!await TrySendAsync(new PullRepositoryCommand(ActiveRoot, Branch), "pullRepository"))
         {
             CurrentOperation = null;
             SetPullBusy(false);

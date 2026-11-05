@@ -77,7 +77,7 @@ public sealed partial class RunViewModel
     /// zamanlayıcının açılıp kapanması buradan sürülür — her yoklama aynı yoldan geçer.</summary>
     internal GitOperation RefreshGitOperation()
     {
-        var operation = RootPath.Length == 0 ? GitOperation.None : InspectGitOperation(RootPath);
+        var operation = ActiveRoot.Length == 0 ? GitOperation.None : InspectGitOperation(ActiveRoot);
         TrackStuckLock(operation);
         GitOperation = operation;
         if (operation == GitOperation.None) GitOperationPollTimer?.Stop();

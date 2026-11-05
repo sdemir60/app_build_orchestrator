@@ -188,6 +188,10 @@ public partial class MainWindow : Window
         // İlk-koşuda (kayıtlı repo yok → { Length: > 0 } guard'ı) Phase Empty KALIR ve E2 "Pick a repository"
         // daveti korunur.
         if (saved.RepositoryRoot is { Length: > 0 } repo) _vm.RootPath = repo;
+        // [worktree] Worktree klasörü ve kapanıştaki kopya. Worktree yalnız diskte hâlâ bu reponun linked worktree'siyse açılır
+        // (silinmiş ya da başka bir şeye dönüşmüş bir klasörde açılış Sync'i düşerdi); değilse uygulama repo kopyasında açılır.
+        _vm.WorktreeFolder = saved.WorktreeFolder ?? "";
+        if (saved.WorktreeActive == true && _vm.WorktreeReady) _vm.ActiveCopy = WorkingCopy.Worktree;
         if (saved.Configuration is { } cfg) _vm.Configuration = cfg;
         // [spec 2026-09-18 §1-7] Branch seed EDİLMEZ: değer checkout edilmiş branch'tir ve ilk envanterle okunur.
         if (saved.PerfMode is { } perf) _vm.SetPerfMode(perf);
@@ -1308,8 +1312,8 @@ public partial class MainWindow : Window
         SyncModeButtons(state.Mode);
     }
 
-    /// <summary>[D6 fold] İş akışı tercihi (RepositoryRoot/Configuration/PerfMode/UpdateExternals/StashOnBranchSwitch/
-    /// CompactConsole/StopEngineWhenIdle) değişince kalıcı duruma yazar — yerleşim persist'iyle AYNI desen (Load → muta → Save; düşük frekans).
+    /// <summary>[D6 fold] İş akışı tercihi (RepositoryRoot/WorktreeFolder/açık kopya/Configuration/PerfMode/UpdateExternals/
+    /// StashOnBranchSwitch/CompactConsole/StopEngineWhenIdle) değişince kalıcı duruma yazar — yerleşim persist'iyle AYNI desen (Load → muta → Save; düşük frekans).
     /// [D7 M3] RootPath değişimi (Settings → Save ile uygulanan kök, ilk kurulum dahil)
     /// TEK noktadan buradan persist edilir; açılışta seed edilip hatırlanır.</summary>
     private void OnWorkflowPreferenceChanged(object? sender, PropertyChangedEventArgs e)
@@ -1317,6 +1321,8 @@ public partial class MainWindow : Window
         switch (e.PropertyName)
         {
             case nameof(RunViewModel.RootPath):
+            case nameof(RunViewModel.WorktreeFolder):
+            case nameof(RunViewModel.ActiveCopy):
             case nameof(RunViewModel.Configuration):
             case nameof(RunViewModel.PerfMode):
             case nameof(RunViewModel.UpdateExternals):
@@ -1324,7 +1330,11 @@ public partial class MainWindow : Window
             case nameof(RunViewModel.CompactConsole):
             case nameof(RunViewModel.StopEngineWhenIdle):
                 var s = _uiState.Load();
+                // [worktree] RepositoryRoot hep Settings'in repo köküdür (RootPath) — aktif kök (ActiveRoot) DEĞİL: worktree aktifken
+                // kaydedip yeniden açmak repo kökünü worktree yoluna kaydırırdı.
                 s.RepositoryRoot = _vm.RootPath;
+                s.WorktreeFolder = _vm.WorktreeFolder.Length > 0 ? _vm.WorktreeFolder : null;
+                s.WorktreeActive = _vm.ActiveCopy == WorkingCopy.Worktree;
                 s.Configuration = _vm.Configuration;
                 s.PerfMode = _vm.PerfMode;
                 s.UpdateExternals = _vm.UpdateExternals;

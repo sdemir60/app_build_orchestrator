@@ -51,7 +51,16 @@ public sealed class UiState
     public string? LastMonitor { get; set; }
 
     // ---- İş akışı tercihleri — Settings ve action bar yazar (SeenVersion'ı What's new yazar) ----
+    /// <summary>Settings'teki repo kökü — worktree aktifken de ana kopyanın köküdür (worktree ondan eklenir).</summary>
     public string? RepositoryRoot { get; set; }
+
+    /// <summary>[worktree] Settings → Workspace → <c>Worktree folder</c>; <c>null</c> ya da boş ⇒ worktree tanımsız.</summary>
+    public string? WorktreeFolder { get; set; }
+
+    /// <summary>[worktree] Uygulama kapanırken worktree kopyası mı açıktı. NULLABLE (<see cref="UpdateExternals"/>'ın gerekçesi);
+    /// yok ⇒ repo kopyası. Açılışta yalnız klasör hâlâ bu reponun linked worktree'siyse uygulanır (MainWindow seed'i).</summary>
+    public bool? WorktreeActive { get; set; }
+
     public string? Configuration { get; set; }
 
     /// <summary>[D6 fold — C2] Perf profili ("Full"/"Balanced"/"Light"); <c>null</c> ⇒ VM varsayılanı (Balanced/4).

@@ -63,7 +63,7 @@ public sealed partial class RunViewModel
         SetCheckoutBusy(true); // kapı GÖNDERİMDEN ÖNCE kapanır — ikinci tık ikinci bir checkout kuyruklatırdı
         ArmEngineWatchdog();
         bool sent = await TrySendAsync(
-            new CheckoutBranchCommand(RootPath, branch.Name, branch.IsRemoteTracking, StashOnBranchSwitch), "checkoutBranch");
+            new CheckoutBranchCommand(ActiveRoot, branch.Name, branch.IsRemoteTracking, StashOnBranchSwitch), "checkoutBranch");
         // Gönderim SENKRON düştüyse (motor hazır değil/ölü) hiçbir cevap GELMEYECEK — kilit burada açılmazsa
         // chip kalıcı pasif kalırdı.
         if (!sent)
@@ -344,6 +344,7 @@ public sealed partial class RunViewModel
         // zaten otomatik bir Sync akışı başlar ve not gürültü olurdu. Kapanmış bir workspace'ten sonra girilen kök
         // de ilk kurulumdur.)
         if (RootPath.Length > 0) AppendRunLine(RepositoryRootChangedLine(root));
+        ReturnToRepositoryCopy(); // [worktree] worktree eski reponundur — Save'in Sync'i yeni repo kökünde koşar
         RootPath = root;
         ResetRowsToHollow();
         ForgetLastSync(); // [spec 2026-09-18 §6.1] eski kökün HEAD'i yeni kökte kıyas tabanı olamaz
@@ -386,6 +387,7 @@ public sealed partial class RunViewModel
         CurrentOperation = null;
         SyncErrorMessage = null;
         RunErrorMessage = null;
+        ReturnToRepositoryCopy(); // [worktree] workspace yokken açık bir kopya da yoktur
         RootPath = "";
         ClearPlanSurface();
         ForgetLastSync();

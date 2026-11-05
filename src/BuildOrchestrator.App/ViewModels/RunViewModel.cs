@@ -619,6 +619,7 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(CleanCommand))]
     [NotifyCanExecuteChangedFor(nameof(OptimizeCommand))]
     [NotifyPropertyChangedFor(nameof(CanSwitchBranch))] // [§6.3] chip kapısının TEK bildirim kaynağı (bkz. CanSwitchBranch)
+    [NotifyPropertyChangedFor(nameof(ActiveRoot))] // [worktree] repo kopyasında aktif kök repo köküdür
     private string _rootPath = "";
     [ObservableProperty] private string _configuration = "Debug";
 
@@ -896,7 +897,7 @@ public sealed partial class RunViewModel : ObservableObject
     {
         if (string.IsNullOrEmpty(value)) Phase = AppPhase.Empty;
         else if (Phase == AppPhase.Empty) Phase = AppPhase.Boot;
-        AttachAutoSync(value); // [spec 2026-09-18 §6.1] HEAD izleyicisi kökü izler
+        AttachAutoSync(ActiveRoot); // [spec 2026-09-18 §6.1] HEAD izleyicisi AKTİF kökü izler (worktree: ikinci kök)
         RefreshGitOperation(); // [spec 2026-09-18 §6.4] eski kökün git işlemi yeni kökte anlamsız
     }
 
@@ -1019,7 +1020,7 @@ public sealed partial class RunViewModel : ObservableObject
             // [spec 2026-09-18 §1-1] Koşu daima RootPath'teki çalışma ağacında derlenir: branch/worktree gitmez.
             // [Task 21 · karar 18] Komut uyanmadan SONRA kurulur: uyanma sürerken değiştirilen perf profili koşuyla gider (o sırada perf
             // chip'inin komutu uyanık olmayan motora gönderilmez).
-            var cmd = new StartRunCommand(runId, mode, RootPath, Configuration, Parallelism,
+            var cmd = new StartRunCommand(runId, mode, ActiveRoot, Configuration, Parallelism,
                 DependentMode.Safe, LayerPatterns, PerfMode,
                 ExternalProjectsForWire, UpdateExternals, scopeProjectId);
             // [kaynak şeridi · R2] Koşunun perf modu, motora giden metin olarak, komutun kurulduğu yerde yakalanır; runStarted'ta koşu hücresine devredilir.
@@ -1371,7 +1372,7 @@ public sealed partial class RunViewModel : ObservableObject
             return false;
         }
         bool sent = await SendWithFailureLineAsync(
-            new SyncWorkspaceCommand(RootPath, Branch, LayerPatterns, Configuration, ExternalProjectsForWire,
+            new SyncWorkspaceCommand(ActiveRoot, Branch, LayerPatterns, Configuration, ExternalProjectsForWire,
                 Fetch: mode.Fetches()), SendFailedLine("sync"), pass);
         // Gönderim SENKRON düştüyse (engine hazır değil/ölü) hiçbir syncStarted GELMEYECEK — kapı burada
         // açılmazsa Sync düğmesi kalıcı pasif kalırdı. Envanter komutları yine de GÖNDERİLİR: onlar Sync'in
@@ -1386,7 +1387,7 @@ public sealed partial class RunViewModel : ObservableObject
         // işler ve hatası AYRI bir kodla döner ("branchListFailed", SupervisorHost.cs:138) — RunEndingErrorCodes'ta
         // ve SyncErrorCodes'ta OLMADIĞI için bir Sync hatası gibi yanlış atfedilemez. [round 3] Kapı Sync'in geçişinde soruldu; envanterin
         // devredeceği kayıt yoktur — GatePass.None bunu açıkça söyler (gönderimin geçişi zorunludur).
-        await SendWithFailureLineAsync(new ListBranchesCommand(RootPath), SendFailedLine("listBranches"), GatePass.None);
+        await SendWithFailureLineAsync(new ListBranchesCommand(ActiveRoot), SendFailedLine("listBranches"), GatePass.None);
         return sent;
     }
     // [D1 review · A3] Motor erişilemezken gönderim anlamsız.
@@ -1430,7 +1431,7 @@ public sealed partial class RunViewModel : ObservableObject
         ArmEngineWatchdog();
         // [harici projeler] Kartlar da gider: harici proje sıradan bir projedir, çıktısı da bu workspace'in
         // çıktısıdır. Liste Sync/Build ile AYNI huniden geçer — ikinci bir kaynak açılmaz (kopya YASAK).
-        bool sent = await TrySendAsync(new CleanWorkspaceCommand(RootPath, ExternalProjectsForWire), "clean");
+        bool sent = await TrySendAsync(new CleanWorkspaceCommand(ActiveRoot, ExternalProjectsForWire), "clean");
         if (!sent) ReleaseCleanRequest();
     }
 
@@ -1472,7 +1473,7 @@ public sealed partial class RunViewModel : ObservableObject
         ArmEngineWatchdog();
         // [harici projeler] Kartlar da gider: harici proje sıradan bir projedir, onarımı da bu workspace'in
         // işidir. Liste Sync/Clean/Build ile AYNI huniden geçer — ikinci bir kaynak açılmaz (kopya YASAK).
-        bool sent = await TrySendAsync(new OptimizeWorkspaceCommand(RootPath, ExternalProjectsForWire), "optimize");
+        bool sent = await TrySendAsync(new OptimizeWorkspaceCommand(ActiveRoot, ExternalProjectsForWire), "optimize");
         if (!sent) ReleaseOptimizeRequest();
     }
 
