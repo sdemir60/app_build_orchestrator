@@ -109,6 +109,10 @@ public class UiStateStoreTests
     /// <c>UseWorktree</c> ve <c>WorktreeName</c> artık durum dosyasının alanı DEĞİLDİR (branch değeri her
     /// açılışta checkout edilmiş branch'ten okunur). Eski bir dosya bu alanları taşısa da yüklenir — diğer
     /// alanlar korunur — ve bir sonraki kayıt onları geri YAZMAZ.
+    /// <para><b>[DEĞİŞEN KURAL — worktree, kullanıcı kararı 2026-11-05]</b> Eski iddia: kaydedilen dosyada "Worktree" sözcüğü HİÇ geçmez.
+    /// Settings'in tek worktree'si iki yeni alan getirdi (<c>WorktreeFolder</c>, <c>WorktreeActive</c>) — eski havuz modunun alanları
+    /// değildir. Kuralın konusu eski alanların geri yazılmamasıydı; iddia onlara daraltıldı ve eski değerlerin yeni alanlara SIZMADIĞI
+    /// eklendi (eski bir worktree adı Settings'in klasörü olmaz).</para>
     /// </summary>
     [Fact]
     public void An_old_state_file_with_worktree_fields_still_loads()
@@ -122,11 +126,15 @@ public class UiStateStoreTests
         var loaded = store.Load();
         Assert.Equal(61, loaded.ColPct);
         Assert.Equal("Release", loaded.Configuration);
+        Assert.Null(loaded.WorktreeFolder);
+        Assert.Null(loaded.WorktreeActive);
 
         store.Save(loaded);
         string written = File.ReadAllText(path);
         Assert.DoesNotContain("\"Branch\"", written, StringComparison.Ordinal);
-        Assert.DoesNotContain("Worktree", written, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"UseWorktree\"", written, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"WorktreeName\"", written, StringComparison.Ordinal);
+        Assert.DoesNotContain("feature-x-1", written, StringComparison.Ordinal);
     }
 
     [Fact] // [D6 fold] PerfMode bool→string? göçü: diskteki eski bool token'ı TÜM Load'u devirmemeli (startup wipe YOK).
