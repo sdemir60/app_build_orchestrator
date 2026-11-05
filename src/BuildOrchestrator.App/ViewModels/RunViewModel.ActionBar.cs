@@ -52,25 +52,17 @@ public sealed partial class RunViewModel
     /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-1 → §6.3]</b> Worktree döneminde seçim onu worktree'de
     /// derlenecek HEDEF yapardı; worktree kalkınca (Task 4) seçim bir süre HİÇBİR ŞEY yapmadı. Artık checkout
     /// eder.</para>
+    ///
+    /// <para>[worktree] Checkout aktif kopyada gider (<see cref="ActiveRoot"/>); kirli ağaçta ayar kapalıysa cevap branch kartını açar
+    /// (<see cref="PendingBranchSwitch"/>). Yeni bir seçim açık kartı kapatır — kartın konusu eski seçimdi. Gövde kartın kararlarıyla
+    /// ortaktır (<see cref="RequestCheckoutAsync"/>).</para>
     /// </summary>
     public async Task SelectBranch(BranchRef branch)
     {
         ArgumentNullException.ThrowIfNull(branch);
         if (branch.IsActive) return;
-        if (!RefreshGitWritesAllowed() || !CanSwitchBranch) return; // [spec §6.4] yoklama bayat olabilir
-
-        CurrentOperation = OperationLabel.Checkout;
-        SetCheckoutBusy(true); // kapı GÖNDERİMDEN ÖNCE kapanır — ikinci tık ikinci bir checkout kuyruklatırdı
-        ArmEngineWatchdog();
-        bool sent = await TrySendAsync(
-            new CheckoutBranchCommand(ActiveRoot, branch.Name, branch.IsRemoteTracking, StashOnBranchSwitch), "checkoutBranch");
-        // Gönderim SENKRON düştüyse (motor hazır değil/ölü) hiçbir cevap GELMEYECEK — kilit burada açılmazsa
-        // chip kalıcı pasif kalırdı.
-        if (!sent)
-        {
-            SetCheckoutBusy(false);
-            CurrentOperation = null; // pill "SWITCHING BRANCH"ta asılı kalmasın
-        }
+        SetPendingBranchSwitch(null);
+        await RequestCheckoutAsync(branch, ActiveCopy, StashOnBranchSwitch);
     }
 
     /// <summary>

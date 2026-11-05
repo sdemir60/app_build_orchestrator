@@ -225,6 +225,8 @@ public static class AccessibilityNames
     public const string BrowseWorktreeFolder = "Browse for the worktree folder";
     /// <summary>[worktree] Alt bardaki Repo ↔ Worktree anahtarı — işaretliyken worktree açıktır; ne yapacağını tooltip söyler.</summary>
     public const string WorktreeToggle = "Worktree";
+    /// <summary>[worktree] Branch karar kartı (kirli ağaçta branch değişimi).</summary>
+    public const string BranchSwitchCard = "Branch switch";
     /// <summary>Footer'ın üç ikon-yalnız düğmesi. AYNI metin hem tooltip hem UIA-adı DEĞİLDİR: tooltip kısa
     /// eylemi, ad işlevi tarif eder (chip'lerin kuralının aksine — burada tooltip'ler zaten kısadır).</summary>
     public const string ExportSettings = "Export settings to a file";

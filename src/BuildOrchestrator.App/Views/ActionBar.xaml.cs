@@ -82,6 +82,12 @@ public partial class ActionBar : UserControl
         // gönderim hataları VM içinde run dokümanına düşer (TrySendAsync), bu yüzden fire-and-forget güvenli.
         PART_PerfChip.Click += (_, _) => { _ = _vm?.CyclePerfAsync(); PART_PerfChip.IsChecked = false; };
         PART_WorktreeToggle.Click += OnWorktreeToggleClick; // [worktree] işaret VM'in kopyasını izler — bkz. OnWorktreeToggleClick
+        // [worktree] Branch kartı: Esc ve dışarı tıklama vazgeçmektir; karar VM'dedir, kart yalnız iletir. Kart VM'in konusu düşünce
+        // kapanır — o yoldaki kapanış bir şey yapmaz (konu zaten yok). Dışarı tıklama IsOpen'ın değişiminden okunur, Closed olayından değil:
+        // Closed yalnız gerçekten çizilmiş bir popup'ta ateşlenir.
+        PART_BranchSwitchCard.CloseRequested += () => { CancelBranchSwitch(); PART_BranchChip.Focus(); };
+        DependencyPropertyDescriptor.FromProperty(Popup.IsOpenProperty, typeof(Popup))
+            .AddValueChanged(PART_BranchSwitchPopup, (_, _) => { if (!PART_BranchSwitchPopup.IsOpen) CancelBranchSwitch(); });
         DependencyPropertyDescriptor.FromProperty(SplitButton.IsMenuOpenProperty, typeof(SplitButton))
             .AddValueChanged(PART_Split, (_, _) => { if (PART_Split.IsMenuOpen) PART_BuildMenu.PlayPopIn(); });
         // [design v1.17.0 §9 fix round 1 · I-2] Sync koşarken disabled'dır — kendi IsMouseOver'ı asla true
@@ -126,6 +132,9 @@ public partial class ActionBar : UserControl
     internal TextBlock WorkspaceLabel => PART_Workspace;
     /// <summary>[worktree] Workspace etiketi ile branch chip'i arasındaki Repo ↔ Worktree anahtarı.</summary>
     internal ToggleButton WorktreeToggle => PART_WorktreeToggle;
+    /// <summary>[worktree] Branch karar kartının Popup'ı ve kartın kendisi.</summary>
+    internal System.Windows.Controls.Primitives.Popup BranchSwitchPopup => PART_BranchSwitchPopup;
+    internal BranchSwitchCard BranchSwitchCardControl => PART_BranchSwitchCard;
     internal Button SyncButton => PART_Sync;
     /// <summary>[kullanıcı kararı 2026-11-02] Build'in solundaki Restart engine — yalnız <see cref="RunViewModel.OffersEngineRestart"/>'ta görünür.</summary>
     internal Button RestartEngineButton => PART_RestartEngine;
@@ -208,6 +217,7 @@ public partial class ActionBar : UserControl
         _vm = e.NewValue as RunViewModel;
         // Popup içerikleri (görsel ağaç dışı) DataContext'i güvenilir MİRAS ALMAZ → açıkça bağla.
         PART_BranchPopover.DataContext = _vm;
+        PART_BranchSwitchCard.DataContext = _vm;
         PART_BuildMenu.DataContext = _vm;
         if (_vm is not null)
         {
@@ -314,6 +324,9 @@ public partial class ActionBar : UserControl
             case nameof(RunViewModel.PerfMode):
                 RefreshPerf();
                 break;
+            case nameof(RunViewModel.PendingBranchSwitch):
+                RefreshBranchSwitchCard();
+                break;
             case nameof(RunViewModel.OffersEngineRestart):
                 RefreshRestartEngine();
                 RefreshWorktreeToggle(); // [worktree] anahtar Restart engine'e yer açar
@@ -327,6 +340,7 @@ public partial class ActionBar : UserControl
         RefreshChips();
         RefreshWorkspaceLabel();
         RefreshWorktreeToggle();
+        RefreshBranchSwitchCard();
         RefreshBranch();
         RefreshGitOperation();
         RefreshPerf();
@@ -649,6 +663,22 @@ public partial class ActionBar : UserControl
         PART_WorktreeToggle.IsChecked = _vm?.ActiveCopy == WorkingCopy.Worktree;
         PART_WorktreeToggle.ToolTip = _vm is null ? null : WorktreeToggleText.Tooltip(_vm.ActiveCopy, _vm.WorktreeFolder, _vm.RootPath);
         PART_WorktreeToggle.IsEnabled = _vm?.CanSwitchCopy ?? false;
+    }
+
+    /// <summary>[worktree] Branch kartı VM'in konusu varken açıktır (<see cref="RunViewModel.PendingBranchSwitch"/>); açılırken branch
+    /// popover'ı kapanır — ikisi aynı chip'in üstündedir.</summary>
+    private void RefreshBranchSwitchCard()
+    {
+        if (!_built) return;
+        bool open = _vm?.PendingBranchSwitch is not null;
+        if (open) PART_BranchChip.IsChecked = false;
+        PART_BranchSwitchPopup.IsOpen = open;
+    }
+
+    /// <summary>[worktree] Kart kullanıcı kararı olmadan kapandı (Esc, dışarı tıklama): vazgeçmek. Konu yoksa (karar verildi) no-op.</summary>
+    private void CancelBranchSwitch()
+    {
+        if (_vm?.PendingBranchSwitch is not null) _ = _vm.DecideBranchSwitchAsync(BranchDecision.Cancel);
     }
 
     private void RefreshBranch()

@@ -50,6 +50,15 @@
                                    IsOpen="{Binding IsOpen, ElementName=PART_BranchPopup, Mode=OneWay}" />
             </Border>
           </Popup>
+          <!-- [worktree] Branch karar kartı: aynı chip'in 8px üstünde, popover'la aynı yerleşim. Açık/kapalı VM'in konusundan sürülür
+               (RunViewModel.PendingBranchSwitch — kod-tarafı); dışarı tıklamak vazgeçmektir (Closed → Cancel). Genişlik Exit kartınınki. -->
+          <Popup x:Name="PART_BranchSwitchPopup" Placement="Top" PlacementTarget="{Binding ElementName=PART_BranchChip}"
+                 StaysOpen="False" AllowsTransparency="True" VerticalOffset="-8" PopupAnimation="None">
+            <Border Style="{DynamicResource Ds.Popover}" Width="320">
+              <views:BranchSwitchCard x:Name="PART_BranchSwitchCard"
+                                      IsOpen="{Binding IsOpen, ElementName=PART_BranchSwitchPopup, Mode=OneWay}" />
+            </Border>
+          </Popup>
         </Grid>
 
         <!-- [design v1.16.0 §2.7-6a] "N behind" chip'i: YALNIZ geride kalınca görünür

@@ -84,14 +84,17 @@ public sealed partial class RunViewModel
     /// yeni kopyada hiçbir projeye karşılık gelmez), sonra <see cref="SyncMode.BranchChange"/> Sync'i konsolu temizleyip bölümü
     /// yazar ve yeni kökte koşar.</summary>
     /// <param name="leading">Bölümde geçiş satırından ÖNCE gelen satırlar (kurulumun sonucu) — geçişin konsol temizliği onları silmez.</param>
+    /// <param name="trailing">Geçiş satırından SONRA gelen satırlar (o kopyada yapılan checkout'un sonucu).</param>
     /// <param name="release">Önceki işin yüzeyini bırakan adım: Sync kapıyı DEVRALDIKTAN sonra çağrılır (<see cref="SyncThenReleaseAsync"/>
     /// deseni) — arada düğmeler bir kare bile açılmaz.</param>
-    private async Task SwitchCopyCoreAsync(WorkingCopy copy, IReadOnlyList<string>? leading = null, Action? release = null)
+    private async Task SwitchCopyCoreAsync(WorkingCopy copy, IReadOnlyList<string>? leading = null, IReadOnlyList<string>? trailing = null,
+        Action? release = null)
     {
         ActiveCopy = copy;
         ForgetLastSync(); // eski kopyanın HEAD'i yeni kopyada kıyas tabanı olamaz
         ClearPlanSurface();
-        var sync = SyncCoreAsync(SyncMode.BranchChange, sectionLines: [.. leading ?? [], WorkingCopyText.Switched(copy, ActiveRoot)]);
+        var sync = SyncCoreAsync(SyncMode.BranchChange,
+            sectionLines: [.. leading ?? [], WorkingCopyText.Switched(copy, ActiveRoot), .. trailing ?? []]);
         release?.Invoke();
         await sync;
     }
