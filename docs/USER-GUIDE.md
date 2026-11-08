@@ -163,7 +163,8 @@ remove it too.
    repository only when you click: this chip, the branch chip below, the external working copies of step 4, and
    *Save* when it creates the worktree.
 3. **Branch** — the branch chip shows the branch checked out in your working tree. Picking another branch from
-   its list checks it out (`git checkout`; a remote branch gets a local tracking branch), then the console
+   its list — click it, or type to search, go down to it with `↓` (`↑` goes back) and press `Enter` — checks it
+   out (`git checkout`; a remote branch gets a local tracking branch), then the console
    starts over with a `Switched to <branch> (<sha>) — from <previous>` line and a Sync follows. If the working
    tree has uncommitted changes, *Settings → General → Stash and switch branches* decides:
    - **off** (default) — nothing is switched: the console says, in amber, `warning: N files have uncommitted

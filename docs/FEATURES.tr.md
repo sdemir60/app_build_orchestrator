@@ -94,6 +94,16 @@ HEAD'i yoklama yerine dosya bildirimiyle izlenir; git durulunca kendiliğinden b
 değişmediyse bu, konsolu, seçimi ve kaydırma konumunu koruyan sessiz bir Sync'tir.\
 `yalnız ref fetch, çalışma ağacına dokunmaz` · `Sync'e nadiren bastıran HEAD izleme` · `ekranı bozmayan sessiz Sync` · `yarım merge'de bekleme`
 
+## Başka branch için worktree
+
+**Ne yapar:** Settings'te bir kez adı verilen ikinci bir çalışma kopyası başka bir branch'i yan yana derler: aksiyon
+çubuğundaki anahtar aracı repo ile worktree arasında taşır; değişikliklerin ve açık Visual Studio yerinde kalır.\
+**Nasıl:** Worktree, reponun yanındaki bağlı bir git worktree'sidir; klasör yeniyse Save onu mevcut commit'te, hiçbir
+branch'i checkout etmeden kurar. Geçiş, her komutun ve git okumasının kullandığı kökü değiştirir; iki kopya derleme
+kayıtlarını paylaşmaz. Kirli ağaçta geçiş stash yerine worktree'ye gidebilir ve bir kopyada açık branch diğerinde
+asla checkout edilmez.\
+`git worktree add --detach` · `ikinci kök, aynı motor` · `yola göre anahtarlı derleme kayıtları` · `bir branch, bir çalışma kopyası`
+
 ## Makineyi kullanılır tutar
 
 **Ne yapar:** Derleme makinenin tamamını almaz: varsayılan olarak editöre, tarayıcıya ve açık olan her şeye
@@ -310,22 +320,13 @@ katalogdan gelir.\
 ## Branch değiştirme ve pull
 
 **Ne yapar:** Aksiyon çubuğundaki branch chip'i checkout'lu branch'i gösterir ve aranabilir listeden gerçekten
-değiştirir; geride kalınca beliren N behind chip'i aktif branch'i yalnız fast-forward ile günceller.\
+değiştirir — tıklayarak ya da klavyeyle: ara, aşağı ok, Enter; geride kalınca beliren N behind chip'i aktif branch'i
+yalnız fast-forward ile günceller.\
 **Nasıl:** Remote branch'e yerel tracking branch açılır. Kirli ağaçta geçiş varsayılan olarak sorar — stash'le ve
 geç, worktree'yi kullan ya da vazgeç; Stash and switch branches açıksa değişiklikler (untracked dahil) stash'e alınır
 ve konsolda adlandırılır, araç onları asla pop etmez. Pull, fetch artı merge --ff-only'dir: merge commit yok, rebase yok, kirli ya da ayrışmış ağaçta
 reddeder.\
 `araçtan git checkout` · `kirli ağacı koruyan stash push -u` · `geçmişi koruyan merge --ff-only` · `ucuz geride-kalma sayımı`
-
-## Başka branch için worktree
-
-**Ne yapar:** Settings'te bir kez adı verilen ikinci bir çalışma kopyası başka bir branch'i yan yana derler: aksiyon
-çubuğundaki anahtar aracı repo ile worktree arasında taşır; değişikliklerin ve açık Visual Studio yerinde kalır.\
-**Nasıl:** Worktree, reponun yanındaki bağlı bir git worktree'sidir; klasör yeniyse Save onu mevcut commit'te, hiçbir
-branch'i checkout etmeden kurar. Geçiş, her komutun ve git okumasının kullandığı kökü değiştirir; iki kopya derleme
-kayıtlarını paylaşmaz. Kirli ağaçta geçiş stash yerine worktree'ye gidebilir ve bir kopyada açık branch diğerinde
-asla checkout edilmez.\
-`git worktree add --detach` · `ikinci kök, aynı motor` · `yola göre anahtarlı derleme kayıtları` · `bir branch, bir çalışma kopyası`
 
 ## Harici projeler, tek graf
 
