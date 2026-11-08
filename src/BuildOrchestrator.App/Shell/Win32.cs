@@ -208,6 +208,11 @@ internal static class Win32
     [DllImport("user32.dll")]
     public static extern nint MonitorFromPoint(POINT pt, uint dwFlags);
 
+    /// <summary>İmlecin şu anki yeri — ekran koordinatı, PerMonitorV2 altında fiziksel piksel (tepsi menüsünün açılış noktası).</summary>
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetCursorPos(out POINT lpPoint);
+
     /// <summary>Ekranın O ANKİ ölçeği — çağrı anında okunur, süreç açılışında saklanmaz. Başarıda 0 (S_OK) döner.</summary>
     [DllImport("shcore.dll")]
     public static extern int GetDpiForMonitor(nint hmonitor, int dpiType, out uint dpiX, out uint dpiY);
