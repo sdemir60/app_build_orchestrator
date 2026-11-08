@@ -327,6 +327,12 @@ waits on a restore child it prints a heartbeat line well inside the silence wind
 resets the clock, a heartbeat included, the alarm can only fire on an engine that has genuinely stopped
 talking.
 
+The worktree's creation is the one wait with a longer threshold. `git worktree add` writes the whole tree and the
+engine sends nothing while it runs — the command loop is blocked on git — so for that wait the threshold is the
+creation's own ceiling (the five minutes every git write is capped at, §10.6) plus the usual one: by then the engine
+has stopped git and answered, or it really has stopped answering. The ribbon's line keeps its wording; the time it
+names is a lower bound.
+
 A liveness ping would not have caught the measured case. The coordinator runs a run on a background task and
 `startRun` returns immediately, so the command loop stayed responsive while the run task was frozen — a ping
 would have been answered. The useful question is not whether the engine is alive but whether it is answering
@@ -2490,12 +2496,12 @@ The complete set of git invocations in the codebase:
 
 | Command | Mutates? |
 |---|---|
-| `rev-parse --verify -q HEAD` · `symbolic-ref -q HEAD` · `status --porcelain -z` · `rev-parse --is-shallow-repository` · `for-each-ref …` · `rev-parse --verify -q refs/{heads,remotes/origin}/<branch>` · `rev-list --count HEAD..<sha>` · `reflog --no-show-signature …` · `rev-parse -q --verify {CHERRY_PICK_HEAD,REVERT_HEAD}` · `worktree list --porcelain` | no |
+| `rev-parse --verify -q HEAD` · `symbolic-ref -q HEAD` · `status --porcelain -z` · `rev-parse --is-shallow-repository` · `for-each-ref …` · `rev-parse --verify -q refs/{heads,remotes/origin}/<branch>` · `rev-list --count HEAD..<sha>` · `reflog --no-show-signature …` · `rev-parse -q --verify {CHERRY_PICK_HEAD,REVERT_HEAD}` · `worktree list --porcelain -z` | no |
 | `fetch origin <branch> --no-tags` | only `refs/remotes/*` |
 | `merge-base --is-ancestor` · `merge --ff-only` | external working copies when updates are on (§10.4), and the **main repository only when the user clicks the `N behind` chip** (§10.5) |
 | `stash push -u -m <message>` | the working copy the checkout goes to, **only** when the user picks a branch on the branch chip and the tree is dirty — with *Stash and switch branches* on, or by choosing *Stash and switch* on the branch card (§10.3) |
 | `checkout <branch>` · `checkout --track origin/<name>` | the active working copy — or the other one when the branch card says so — **only** when the user picks a branch on the branch chip (§10.3) |
-| `worktree add --detach <folder>` | the main repository, **only** when the user saves Settings with a worktree folder that does not exist yet or is empty (§10.6) |
+| `worktree add --detach <folder>` | the main repository, **only** when the user saves Settings with a worktree folder that does not exist yet or is empty — and the field changed in that Save, or Settings was opened from the worktree toggle or the branch card (§10.6) |
 
 Every write in that table lives in one file, `Core/Git/RepositoryWriter.cs`: the fast-forward
 (`FastForwardUpdater`), the branch switch (`BranchSwitcher`) and the worktree's creation (`WorktreeCreator`). Each is a
@@ -2939,34 +2945,45 @@ and the source-hash cache are keyed by full path, so the two copies are differen
 each other's records, and a *Clean* in one never reaches the other.
 
 **Switching is a root change.** The toggle in the action bar (§13.2) switches copies. The old copy's rows, topology
-and last Sync go — a project's id is its path, so the worktree's projects are other rows — and a BranchChange Sync
+and last Sync go — a project's id is its path, so the worktree's projects are other rows — and so does its git
+surface: the branch inventory, the checked-out branch and the `N behind` distance, which a detached worktree would
+otherwise inherit from the repository (and Sync would carry as the branch of a detached HEAD). A BranchChange Sync
 (§10.2) opens a new section, `Switched to the worktree — D:\src\acme-worktree`, and runs in the new root without a
 fetch: the two copies share one `.git`, so the remote ends are already known. The switch is gated exactly like the
 configuration segment — it starts a Sync — and asks for nothing when there is no worktree to switch to: a folder that
 is not set, is gone, or is no longer this repository's worktree opens Settings on that field instead. Changing the
 repository root, closing the workspace, or changing or clearing the worktree folder while the worktree is open
-returns to the repository copy. The open copy is remembered across restarts, but the worktree reopens only while
-its folder is still this repository's linked worktree.
+returns to the repository copy, with the same forgetting. Whenever the active root changes an open branch card
+closes: its question was about the old root's tree. The open copy is remembered across restarts, but the worktree
+reopens only while its folder is still this repository's linked worktree.
 
 **Settings creates it.** Whether the folder is usable is one question (`WorktreeFolder.Inspect`), answered from files
 alone: the folder is this repository's linked worktree when its `.git` is a file whose `gitdir:` leads, through that
 git directory's `commondir`, to the repository's own git directory — the same in every ref format. A folder that does
 not exist or is empty can be created; a folder with anything else in it (a separate clone, another repository's
 worktree, files), the repository root itself, a folder inside it or one that holds it (discovery would find the same
-projects twice) and a path that is not fully qualified keep *Save* disabled, and the footer says why. Saved with a
-folder to create, Save adds the worktree — `git worktree add --detach <folder>` run in the repository root
-(`WorktreeCreator`) — before its one Sync: the operation pill reads `CREATING WORKTREE`, the bar's controls are
-closed as for any workspace operation, the console says `Creating the worktree at …` and then `Worktree ready at … —
-detached at <sha>` or why it was not created. The worktree is born detached at the repository's HEAD: git keeps a
-branch open in one working copy at a time, and opening a new branch would be a decision the user did not make; the
-branch is picked afterwards on the chip. The engine checks the folder again before it writes and leaves anything it
-cannot use alone. When Settings was opened from the toggle, a successful Save goes on into the worktree. Exit waits
-for the creation like for any git write (§12.3).
+projects twice) and a path that is not fully qualified keep *Save* disabled, and the footer says why. With the
+repository root left blank nothing is checked: Save closes the workspace (§13.3) and drops the worktree folder with
+it — a worktree belongs to its repository. Save adds the worktree — `git worktree add --detach <folder>` run in the
+repository root (`WorktreeCreator`) — when the folder is one to create and creating it is this Save's business: the
+field changed in this Save, or Settings was opened from the toggle or the branch card. A saved folder that has since
+disappeared is not recreated by a Save that never touched it. The creation comes before Save's one Sync: the
+operation pill reads `CREATING WORKTREE`, the bar's controls are closed as for any workspace operation, the console
+says `Creating the worktree at …` and then `Worktree ready at … (<sha>)` or why it was not created; an unexpected
+engine error counts as a failed creation, and Save's Sync still runs. The worktree is born detached at the
+repository's HEAD: git keeps a branch open in one working copy at a time, and opening a new branch would be a
+decision the user did not make; the branch is picked afterwards on the chip. The engine checks the folder again
+before it writes and leaves anything it cannot use alone. When Settings was opened from the toggle, a successful Save
+goes on into the worktree, and the new section starts with that Save's own notes — the switch clears the console,
+and the notes would otherwise be lost. Exit waits for the creation like for any git write (§12.3); the silence
+watchdog gives the creation its own ceiling first (§4.6).
 
 **A branch lives in one copy.** Before a checkout the branch switcher asks git which working copy holds the target
-(`worktree list --porcelain` — asked from git, because a reftable `HEAD` file is only a placeholder): a branch open in
-the other copy is refused before anything is stashed, and the console names that copy. A dirty tree with *Stash and
-switch branches* off opens the branch card (§10.3) and its second choice opens the branch in the other copy.
+(`worktree list --porcelain -z` — asked from git, because a reftable `HEAD` file is only a placeholder; `-z` leaves
+paths unquoted): a branch open in the other copy is refused before anything is stashed, and the console names that
+copy. A dirty tree with *Stash and switch branches* off opens the branch card (§10.3) and its second choice opens the
+branch in the other copy — unless that copy is mid-merge, mid-rebase or mid-anything in its own git directory, which
+the chip's gate does not see (it reads the active copy): then nothing is sent and the console says why.
 
 Both copies build into the same output folders, as any two branches do in one tree (§9.4): a project whose output the
 other copy overwrote reads *output replaced* and is compiled again. Switching copies saves the stash and keeps the
@@ -4857,14 +4874,17 @@ anyway and the note would be noise.
 **The worktree folder.** Under the repository root the Workspace page carries *Worktree folder*: the same input and
 *Browse…* (the picker starts in the folder that holds the repository, since the worktree sits next to it), one path —
 a new worktree's name is the path's last part. It is optional, and its rules are §10.6's: while the folder cannot
-be used *Save* is disabled and the footer line says why (`The worktree folder must be outside the repository root`,
-`The worktree folder is not empty and is not a worktree of this repository`, `The worktree folder needs a full path`,
-`The repository root is not a git repository`), ahead of the external-project and layer reasons. A folder to
-create is created by Save before its one Sync; a changed folder writes `Worktree folder → <folder>` (or `Worktree
-folder cleared`) to the console, and when it was the open copy the application returns to the repository first.
-Like the root, the folder waits while a run or a workspace operation is in flight (`Repository change deferred`).
-Opened from the toggle or the branch card because there was no worktree, the dialog lands on the Workspace page with
-the focus in that field, and a successful Save goes on into the worktree. Clear empties it with the root.
+be used *Save* is disabled and the footer line says why (`The worktree folder must sit next to the repository, not
+inside it or around it`, `The worktree folder is not empty and is not a worktree of this repository`, `The worktree
+folder needs a full path`, `The repository root is not a git repository`), ahead of the external-project and layer
+reasons; the disk is read once per root and folder, not on every ask. With the root left blank the field is not
+checked at all: that Save closes the workspace and drops the worktree folder too. A folder to create is created by
+Save before its one Sync — when the field changed in that Save or the dialog came from the toggle; a changed folder
+writes `Worktree folder → <folder>` (or `Worktree folder cleared`) to the console, and when it was the open copy the
+application returns to the repository first. Like the root, the folder waits while a run or a workspace operation
+is in flight (`Repository change deferred`). Opened from the toggle or the branch card because there was no
+worktree, the dialog lands on the Workspace page with the focus in that field, and a successful Save goes on into
+the worktree. Clear empties it with the root.
 
 **An empty root closes the workspace.** Saved over an open workspace, an empty root takes the window back to the
 first-run screen (§13.2, *No workspace*): the root is cleared — and written to `ui-state.json` as such, so the
@@ -7611,9 +7631,9 @@ do, and how the interface works around each — useful to know before attempting
 - **A full exit's wait for a git write ends on engine silence.** The exit waits for a checkout, a pull or the worktree's
   creation (§12.3), but
   the silence watchdog (§4.6) releases it once the engine has sent nothing for the threshold, and silence cannot tell a
-  wedged engine from one that is busy without a word. A git write that runs longer than that is then cut off by the
-  application's shutdown. An engine heartbeat inside those waits — the one a package restore already has — would close
-  it.
+  wedged engine from one that is busy without a word. A checkout or a pull that runs longer than that is then cut off
+  by the application's shutdown; the creation is not, because its threshold sits past its own ceiling. An engine
+  heartbeat inside those waits — the one a package restore already has — would close it.
 - **An exit can cut a fetch mid-write.** A Sync is not waited for (§12.3). If its `git fetch` is killed between taking a
   ref's lock and renaming it into place, a `.lock` file stays behind in `.git` and the next fetch of that ref fails
   until the file is removed. The window is short, and the risk was accepted for an exit that does not wait.
@@ -7932,11 +7952,12 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 
 | Behaviour | File |
 |---|---|
-| All read-only git invocations (HEAD, status, refs, distance, fetch, HEAD's reflog) | `Core/Git/GitService.cs` |
-| The only mutating git surface: the fast-forward (dirty gate → fetch → is-ancestor → `merge --ff-only`, `FastForwardUpdater`), the branch switch (the copy holding the target → dirty gate → optional `stash push -u` → `checkout`, `BranchSwitcher`) and the worktree's creation (`worktree add --detach`, `WorktreeCreator`) | `Core/Git/RepositoryWriter.cs` |
+| The read-only git invocations (HEAD, status, refs, distance, fetch, HEAD's reflog) — except the questions that gate a write (`merge-base --is-ancestor`, `worktree list`), which stay beside the write they decide | `Core/Git/GitService.cs` |
+| The only mutating git surface: the fast-forward (dirty gate → fetch → is-ancestor → `merge --ff-only`, `FastForwardUpdater`), the branch switch (the copy holding the target → dirty gate → optional `stash push -u` → `checkout`, `BranchSwitcher`) and the worktree's creation (`worktree add --detach`, `WorktreeCreator`); one timeout pair for all of them (`WriterTimeouts`: a question's, a write's) | `Core/Git/RepositoryWriter.cs` |
+| Which working copy holds a branch — the pure reader of `worktree list --porcelain -z` | `Core/Git/WorktreeList.cs` |
 | Whether a worktree folder can be created, is this repository's linked worktree or is something else, and the reason text | `Core/Git/WorktreeFolder.cs` |
-| The two roots (repository and active), the copy switch, the toggle's gate, the worktree's creation from Save and its answer | `App/ViewModels/RunViewModel.Worktree.cs`, texts `App/ViewModels/WorkingCopy.cs` |
-| The branch card: its subject, the three decisions, the checkout to the other copy and its answer | `App/ViewModels/RunViewModel.BranchSwitch.cs`, `RunViewModel.Workspace.cs` (`OnCheckoutCompletedAsync`, `OnOtherCopyCheckoutAsync`), `App/Views/BranchSwitchCard.xaml(.cs)` |
+| The two roots (repository and active), the copy switch and what a root change forgets (`OnActiveCopyChanged`, `OnActiveRootChanged`), the toggle's gate, the worktree's creation from Save, Save's notes and the creation's answer | `App/ViewModels/RunViewModel.Worktree.cs`, texts `App/ViewModels/WorkingCopy.cs` |
+| The branch card: its subject, the three decisions, the checkout to the other copy (with that copy's git-operation gate) and its answer | `App/ViewModels/RunViewModel.BranchSwitch.cs`, `RunViewModel.Workspace.cs` (`OnCheckoutCompletedAsync`, `OnOtherCopyCheckoutAsync`), `App/Views/BranchSwitchCard.xaml(.cs)` |
 | Git directory resolution (`.git` folder or `gitdir:` file) | `Core/Git/GitDirectory.cs` |
 | HEAD and its ref read from files (loose, packed, linked-worktree common dir; a reftable placeholder reads as unknown), the format question (reftable or not) and the branch-name rule the git query shares | `Core/Git/HeadReader.cs` |
 | HEAD for the automatic Sync: from the file, or asked from git in a reftable repository | `Core/Git/HeadSource.cs` |

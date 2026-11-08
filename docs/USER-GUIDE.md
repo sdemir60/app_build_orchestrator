@@ -96,11 +96,12 @@ remove it too.
    **Worktree folder** *(optional, on the Workspace page)* — a second working copy of the repository, next to it,
    for another branch (`D:\src\myapp-worktree` beside `D:\src\myapp`). It is one path: *Browse…* starts in the
    folder that holds the repository, and for a new worktree you add its name to the path. When you save, an
-   existing worktree of this repository is simply recorded, and a folder that does not exist yet (or is empty) is
-   created as a git worktree at the repository's current commit, with no branch checked out — pick one on the branch
-   chip afterwards. While it is created the console says so and the buttons wait. A folder that holds something
-   else, sits inside the repository, or is not a full path keeps *Save* disabled, and the line at the bottom of the
-   dialog says why. How to switch to it is in step 3.
+   existing worktree of this repository is simply recorded, and a folder you entered that does not exist yet (or is
+   empty) is created as a git worktree at the repository's current commit, with no branch checked out — pick one on
+   the branch chip afterwards. While it is created the console says so and the buttons wait. A folder that holds
+   something else, sits inside the repository, or is not a full path keeps *Save* disabled, and the line at the
+   bottom of the dialog says why. Saving with the repository root cleared closes the workspace and clears this
+   field too. How to switch to it is in step 3.
 
    Settings can also be exported, imported and cleared from the dialog's footer. All three only change the
    form — nothing is applied until you press *Save*. Saving with the repository root empty — after *Clear*, or
@@ -171,7 +172,8 @@ remove it too.
      switch), *Use worktree* (switch that branch in the worktree and go there, leaving your changes where they
      are; in the worktree the button reads *Use repository*) or *Cancel*. Without a worktree the second button
      reads *Set up worktree…* and opens Settings on that field. If the other copy has changes too, you are taken
-     there and the card asks again;
+     there and the card asks again; if git is in the middle of a merge or rebase there, nothing is switched and
+     the console says why;
    - **on** — the changes, untracked files included, are stashed first (`build-orchestrator: leaving <branch>
      for <target>`) and the console tells you to restore them with `git stash pop`. The tool never pops a
      stash for you.
