@@ -24,6 +24,16 @@ public partial class BranchSwitchCard : PopoverBase
         PART_Cancel.Click += (_, _) => Decide(BranchDecision.Cancel);
         PART_OtherCopy.Click += (_, _) => Decide(BranchDecision.OtherCopy);
         PART_Stash.Click += (_, _) => Decide(BranchDecision.Stash);
+        // Diğer kopya düğmesinin etiketi konuya bağlıdır; kart henüz bir konu almadan da (ağaçta, kapalı) düğmenin bir adı olmalı —
+        // ekran okuyucu adsız bir düğme okurdu (AccessibilityTests). Varsayılan, repo kopyasından worktree'ye geçiştir.
+        SetOtherCopyLabel(BranchSwitchText.OtherCopy(WorkingCopy.Repository, worktreeReady: true));
+    }
+
+    /// <summary>Diğer kopya düğmesinin görünen metni ve ekran okuyucu adı — ikisi hep aynı metindir.</summary>
+    private void SetOtherCopyLabel(string label)
+    {
+        PART_OtherCopy.Content = label;
+        AutomationProperties.SetName(PART_OtherCopy, label);
     }
 
     // ---------------------------------------------------------------- test yüzeyi
@@ -57,9 +67,7 @@ public partial class BranchSwitchCard : PopoverBase
         if (Vm is not { PendingBranchSwitch: { } pending } vm) return;
         PART_Sentence.Text = BranchSwitchText.Sentence(pending.DirtyCount, pending.Copy);
         PART_Outcome.Text = BranchSwitchText.Outcome(pending.Target.Name, pending.Copy);
-        string other = BranchSwitchText.OtherCopy(pending.Copy, vm.WorktreeReady);
-        PART_OtherCopy.Content = other;
-        AutomationProperties.SetName(PART_OtherCopy, other);
+        SetOtherCopyLabel(BranchSwitchText.OtherCopy(pending.Copy, vm.WorktreeReady));
         bool open = vm.CanSwitchBranch;
         PART_OtherCopy.IsEnabled = open;
         PART_Stash.IsEnabled = open;
