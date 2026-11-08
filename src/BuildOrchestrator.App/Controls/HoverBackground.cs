@@ -13,12 +13,22 @@ namespace BuildOrchestrator.App.Controls;
 /// </summary>
 internal static class HoverBackground
 {
-    public static void Attach(Border row)
+    private const string RaisedKey = "Brush.SurfaceRaised";
+
+    public static void Attach(Border row) => Attach(row, Colors.Transparent, restKey: null);
+
+    /// <summary>[branch keys] Klavyeyle işaretli satır (<c>BranchPopover</c>'ın ↓/↑ işareti): zemini dururken de hover'ınkidir
+    /// (<c>surface-raised</c>) ve fare çıkınca saydama değil oraya döner — işaret fareyle silinmez. Renk <paramref name="resources"/>'tan, yani
+    /// ağaçta olan bir atadan okunur: satırın kendisi henüz ağaca girmemiştir.</summary>
+    public static void AttachRaised(Border row, FrameworkElement resources) =>
+        Attach(row, resources.TryFindResource(RaisedKey) is SolidColorBrush b ? b.Color : Colors.Transparent, RaisedKey);
+
+    private static void Attach(Border row, Color rest, string? restKey)
     {
-        var brush = new SolidColorBrush(Colors.Transparent); // per-satır lokal fırça (A13.2)
+        var brush = new SolidColorBrush(rest); // per-satır lokal fırça (A13.2)
         row.Background = brush;
-        row.MouseEnter += (_, _) => TransitionTo(row, brush, "Brush.SurfaceRaised");
-        row.MouseLeave += (_, _) => TransitionTo(row, brush, null);
+        row.MouseEnter += (_, _) => TransitionTo(row, brush, RaisedKey);
+        row.MouseLeave += (_, _) => TransitionTo(row, brush, restKey);
     }
 
     private static void TransitionTo(FrameworkElement host, SolidColorBrush brush, string? brushKey)

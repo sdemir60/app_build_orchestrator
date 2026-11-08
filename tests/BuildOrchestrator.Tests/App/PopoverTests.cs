@@ -101,6 +101,133 @@ public class PopoverTests
     private static RunViewModel NewVm() =>
         new(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
 
+    // ---------------------------------------------------------------- [branch keys] klavyeyle seçim
+
+    private static readonly BranchRef[] KeyBranches =
+    [
+        new("main", "aaaaaaaaaaaa", true, false),
+        new("feature/x", "bbbbbbbccccc", false, false),
+        new("feature/y", "cccccccddddd", false, false),
+        new("develop", "dddddddeeeee", false, false),
+    ];
+
+    /// <summary>Popover'ı açık kurar (arama kutusu odaktadır); motora gidecek komutları ve popover'ın kapanma isteklerini toplar.</summary>
+    private static (BranchPopover Popover, List<IpcCommand> Sent, Func<int> Picks, Window Window) OpenForKeys(BranchRef[]? branches = null)
+    {
+        var vm = NewVm();
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+        vm.DebugSendOverride = _ => Task.CompletedTask;
+        vm.OnEvent(new BranchListEvent([.. branches ?? KeyBranches]));
+        var host = DsResources.NewHost();
+        var popover = new BranchPopover { DataContext = vm };
+        var window = DsResources.Realize(host, popover);
+        popover.IsOpen = true;
+        popover.UpdateLayout();
+        int picks = 0;
+        popover.BranchPicked += () => picks++;
+        return (popover, sent, () => picks, window);
+    }
+
+    private static void Press(BranchPopover popover, params Key[] keys)
+    {
+        foreach (var key in keys) KeyInput.Press(popover.SearchBox, key);
+        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(50)); // seçim checkout'u kuyruğa bırakır
+    }
+
+    private static string? CheckedOut(List<IpcCommand> sent) => sent.OfType<CheckoutBranchCommand>().SingleOrDefault()?.Branch;
+
+    /// <summary>
+    /// [branch keys] Aradıktan sonra fareye gitmeden seçim: ↓ ilk eşleşmeyi işaretler, Enter işaretli branch'i seçer — tıklamayla AYNI yol
+    /// (popover kapanır, checkout gider). Kullanıcının tarifi: "aradım, sonra aşağı ok ile inip Enter dediğimde seçsin". Eskiden ok tuşları
+    /// ve Enter arama kutusunda hiçbir şey yapmıyordu.
+    /// </summary>
+    [StaFact]
+    public void After_a_search_Down_then_Enter_checks_out_the_first_match()
+    {
+        var (popover, sent, picks, window) = OpenForKeys();
+        popover.SearchBox.Text = "feature";
+
+        Press(popover, Key.Down, Key.Enter);
+
+        Assert.Equal(1, picks());
+        Assert.Equal("feature/x", CheckedOut(sent));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[branch keys] ↓/↑ işareti eşleşen satırlar arasında gezdirir; son satırda ↓ işareti orada tutar.</summary>
+    [StaTheory]
+    [InlineData(new[] { Key.Down, Key.Down }, "feature/y")]
+    [InlineData(new[] { Key.Down, Key.Down, Key.Up }, "feature/x")]
+    [InlineData(new[] { Key.Down, Key.Down, Key.Down, Key.Down }, "feature/y")]
+    public void Arrows_move_the_highlight_through_the_matches(Key[] keys, string expected)
+    {
+        var (popover, sent, _, window) = OpenForKeys();
+        popover.SearchBox.Text = "feature";
+
+        Press(popover, [.. keys, Key.Enter]);
+
+        Assert.Equal(expected, CheckedOut(sent));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[branch keys] Enter yalnız işaretli bir satırı seçer — yanlışlıkla bir checkout olmasın: işaret yokken, ilk satırda ↑ ile
+    /// arama kutusuna dönüldükten sonra ya da yazmaya devam edilince (sorgu değişince işaret düşer) Enter hiçbir şey seçmez.</summary>
+    [StaFact]
+    public void Enter_picks_nothing_without_a_highlighted_row()
+    {
+        var (popover, sent, picks, window) = OpenForKeys();
+        popover.SearchBox.Text = "feature";
+
+        Press(popover, Key.Enter);
+        Press(popover, Key.Down, Key.Up, Key.Enter);
+        Press(popover, Key.Down);
+        popover.SearchBox.Text = "feature/";
+        Press(popover, Key.Enter);
+
+        Assert.Equal(0, picks());
+        Assert.Empty(sent.OfType<CheckoutBranchCommand>());
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[branch keys] İşaretli satır fareyle üstüne gelinmiş satır gibi çizilir (<c>surface-raised</c> zemin); diğerleri saydam kalır.</summary>
+    [StaFact]
+    public void The_highlighted_row_is_drawn_like_a_hovered_row()
+    {
+        var (popover, _, _, window) = OpenForKeys();
+
+        Press(popover, Key.Down, Key.Down); // main → feature/x
+        popover.UpdateLayout();
+
+        var rows = DsResources.Descendants(popover).OfType<BranchRow>().ToList();
+        Color Background(string name) =>
+            ((SolidColorBrush)((Border)rows.Single(r => r.DataContext is BranchRowItem { Branch.Name: var n } && n == name).Content).Background).Color;
+        var raised = ((SolidColorBrush)popover.FindResource("Brush.SurfaceRaised")).Color;
+        Assert.Equal(raised, Background("feature/x"));
+        Assert.Equal(0, Background("main").A);
+        Assert.Equal(0, Background("feature/y").A);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[branch keys] İşaret görünür satırların altına inince liste kayar: işaretli satır kaydırıcının görünen alanındadır.</summary>
+    [StaFact]
+    public void Moving_down_past_the_visible_rows_scrolls_the_highlight_into_view()
+    {
+        var many = Enumerable.Range(0, 20).Select(i => new BranchRef($"feature/{i:D2}", $"{i:D12}", i == 0, false)).ToArray();
+        var (popover, _, _, window) = OpenForKeys(many);
+
+        Press(popover, Enumerable.Repeat(Key.Down, 12).ToArray()); // feature/11
+        popover.UpdateLayout();
+
+        var scroller = DsResources.Descendants(popover).OfType<ScrollViewer>().Single(s => DsResources.Descendants(s).OfType<BranchRow>().Any());
+        var row = DsResources.Descendants(scroller).OfType<BranchRow>().SingleOrDefault(r => r.DataContext is BranchRowItem { Branch.Name: "feature/11" });
+        Assert.NotNull(row);
+        Rect bounds = row.TransformToAncestor(scroller).TransformBounds(new Rect(row.RenderSize));
+        Assert.True(bounds.Top >= -0.5 && bounds.Bottom <= scroller.ActualHeight + 0.5,
+            $"işaretli satır {bounds.Top:F1}–{bounds.Bottom:F1} px'te, kaydırıcı 0–{scroller.ActualHeight:F1} px gösteriyor.");
+        GC.KeepAlive(window);
+    }
+
     [StaFact]
     public void Branch_popover_filters_case_insensitively_and_resets_its_query_on_close()
     {

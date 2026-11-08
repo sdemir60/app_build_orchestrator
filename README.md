@@ -26,6 +26,9 @@ you follow the whole run live.
   up.
 - **Syncs on its own.** A commit, pull or branch switch refreshes the list within seconds; the next Build compiles only
   what differs.
+- **A worktree for another branch.** A review or a hotfix builds in a second working copy without a stash: your
+  half-done change and the open Visual Studio stay as they are, and one toggle moves every Sync, build and branch
+  switch between the two copies.
 - **Keeps the machine usable.** Performance profiles set how much of the machine a build may take, and the title bar
   shows what the tool costs right now.
 - **Safe by design.** No orphaned MSBuild processes, no git writes uninvited, output exactly where VS puts it, and a

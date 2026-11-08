@@ -84,6 +84,15 @@ everything is rebuilt or only the ones that come to mind.\
 itself within seconds and the next Build compiles only what differs; the Sync button is rarely needed.\
 `HEAD watch so Sync is rarely pressed` · `quiet Sync that keeps the screen`
 
+## A worktree for another branch — no stash, no lost place
+
+**Common practice:** a review or a hotfix needs another branch while your own change is half done; the change is
+stashed, the branch switched and built, then switched back and unstashed, and the editor reloads the solution both
+ways.\
+**In Build Orchestrator:** one click and the other branch builds in its own folder; your change, your editor and
+your place in the code stay exactly where you left them.\
+`git worktree as a second copy` · `one toggle to switch`
+
 ## Keeps the machine usable — keep working while it builds
 
 **Common practice:** a large solution built on every core at once can lock the machine up: the editor stutters, the
@@ -232,15 +241,6 @@ take, is guessed from the scrolling.\
 **In Build Orchestrator:** one line at the top always gives the phase, the progress and the time left; chips there
 name the projects building now and, once the run ends, the failed ones, one click away.\
 `remaining-time estimate` · `failure chips, one click to the failed`
-
-## A worktree for another branch — no stash, no lost place
-
-**Common practice:** a review or a hotfix needs another branch while your own change is half done; the change is
-stashed, the branch switched and built, then switched back and unstashed, and the editor reloads the solution both
-ways.\
-**In Build Orchestrator:** one click and the other branch builds in its own folder; your change, your editor and
-your place in the code stay exactly where you left them.\
-`git worktree as a second copy` · `one toggle to switch`
 
 ## External projects, one graph — shared repositories, right order
 

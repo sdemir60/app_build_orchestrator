@@ -7,10 +7,10 @@ using BuildOrchestrator.Contracts.Model;
 
 namespace BuildOrchestrator.App.Views;
 
-/// <summary>Bir <see cref="BranchPopover"/> satırının modeli: branch'in kendisi + o anki seçili olup olmadığı.
-/// Seçim satırın DIŞINDA hesaplanır (<see cref="RunViewModel.Branch"/> ile karşılaştırma popover'ındır) —
-/// satır yalnız kendisine verileni çizer, ata ağaçtan hiçbir şey ÇEKMEZ (<c>ProjectRow</c> deseni).</summary>
-public sealed record BranchRowItem(BranchRef Branch, bool IsSelected);
+/// <summary>Bir <see cref="BranchPopover"/> satırının modeli: branch'in kendisi + o anki seçili olup olmadığı + klavyeyle işaretli olup
+/// olmadığı (↓/↑ — <c>BranchPopover</c>). Seçim ve işaret satırın DIŞINDA hesaplanır (<see cref="RunViewModel.Branch"/> ile karşılaştırma ve
+/// işaretin yeri popover'ındır) — satır yalnız kendisine verileni çizer, ata ağaçtan hiçbir şey ÇEKMEZ (<c>ProjectRow</c> deseni).</summary>
+public sealed record BranchRowItem(BranchRef Branch, bool IsSelected, bool IsHighlighted = false);
 
 /// <summary>
 /// Branch popover'ının TEK satırı (BuildApp.jsx:859-867). Görseli KOD-tarafı kurulur — <see cref="IconVisual"/>
@@ -86,7 +86,8 @@ public sealed class BranchRow : ContentControl
             Child = grid,
         };
         row.SetResourceReference(Border.CornerRadiusProperty, "Radius.Sm");
-        HoverBackground.Attach(row);
+        if (item.IsHighlighted) HoverBackground.AttachRaised(row, this); // klavye işareti: hover'ın zemini (satır ağaçtadır, kaynak oradan)
+        else HoverBackground.Attach(row);
         return row;
     }
 
