@@ -40,8 +40,10 @@ public static class WorkingCopyText
     /// <summary>Settings Save worktree'yi kurmaya başladı.</summary>
     public static string Creating(string folder) => $"Creating the worktree at {folder}…";
 
-    /// <summary>Worktree kuruldu (ya da zaten oradaydı) — ana kopyanın HEAD'inde, branch'siz.</summary>
-    public static string Created(string folder, string revision) => $"Worktree ready at {folder} — detached at {revision}";
+    /// <summary>Worktree hazır — kuruldu ya da klasör zaten bu reponun worktree'siydi. Revizyon (kısa sha) yalnız biliniyorsa yazılır; "detached"
+    /// denmez: zaten var olan bir worktree bir branch'te olabilir.</summary>
+    public static string Created(string folder, string? revision) =>
+        revision is { Length: > 0 } ? $"Worktree ready at {folder} ({revision})" : $"Worktree ready at {folder}";
 
     /// <summary>Worktree kurulamadı.</summary>
     public static string NotCreated(string reason) => $"warning: worktree not created — {reason}";

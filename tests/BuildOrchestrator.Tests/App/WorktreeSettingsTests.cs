@@ -143,6 +143,39 @@ public class WorktreeSettingsTests
         Assert.Equal(Reason(WorktreeFolderState.NoRepository), draft.SaveBlockedReason);
     }
 
+    /// <summary>Kök boşken worktree denetimi yoktur: boş kök "workspace yok" demektir ve Save workspace'i kapatır — worktree alanı onu
+    /// engellemez (kökü olmayan bir worktree saklanmaz, <see cref="Saving_a_blank_root_closes_the_workspace_and_drops_the_worktree_folder"/>).</summary>
+    [Fact]
+    public void A_blank_repository_root_never_blocks_save_over_the_worktree_folder()
+    {
+        var draft = new SettingsDraftViewModel(null, @"D:\src\acme", worktreeFolder: @"D:\src\acme-worktree") { RepositoryRoot = "" };
+
+        Assert.True(draft.CanSave);
+        Assert.Null(draft.SaveBlockedReason);
+    }
+
+    /// <summary>Save kapısının iki yüzü (düğme ve footer) aynı (kök, klasör) için diski BİR kez okur — kapı her değişimde iki kez, bağlamalar
+    /// da ayrıca sorar. Değer değişince yeniden okunur.</summary>
+    [Fact]
+    public void The_save_gate_reads_the_disk_once_per_root_and_folder()
+    {
+        int reads = 0;
+        var draft = new SettingsDraftViewModel(null, @"D:\src\acme")
+        {
+            InspectWorktreeFolder = (_, _) => { reads++; return WorktreeFolderState.Creatable; },
+        };
+
+        draft.WorktreeFolder = @"D:\src\acme-worktree";
+        _ = draft.CanSave;
+        _ = draft.SaveBlockedReason;
+        _ = draft.CanSave;
+        Assert.Equal(1, reads);
+
+        draft.WorktreeFolder = @"D:\src\acme-other";
+        _ = draft.CanSave;
+        Assert.Equal(2, reads);
+    }
+
     [Fact]
     public void Clear_empties_the_worktree_folder()
     {
@@ -216,8 +249,10 @@ public class WorktreeSettingsTests
         Assert.Equal(repo.RootPath, Assert.Single(sent.OfType<SyncWorkspaceCommand>()).RootPath);
     }
 
-    /// <summary>Alt bardaki Worktree düğmesi worktree yokken Settings'i açar; oradan kaydetmek kurar VE geçer. Geçişin bölümü kurulum
-    /// satırını taşır: konsolu temizleyen geçiş onu silmez.</summary>
+    /// <summary>Alt bardaki Worktree düğmesi worktree yokken Settings'i açar; oradan kaydetmek kurar VE geçer. Geçişin bölümü konsolu
+    /// temizler ama bu Save'in notlarını ve kurulumun sonucunu silmez: ikisi de bölümün geçiş satırından önceki satırlarıdır.
+    /// <para><b>[DEĞİŞEN KURAL — inceleme K3]</b> Eskiden bölüm kurulum satırıyla başlıyordu ve Save'in kendi notları (katman, klasör, General
+    /// anahtarları) geçişin temizliğinde kayboluyordu; aynı Save geçiş yapmadığında o notlar konsolda kalır. Artık bölüm onlarla başlar.</para></summary>
     [Fact]
     public async Task Saving_from_the_worktree_switch_creates_the_worktree_and_switches_to_it()
     {
@@ -234,12 +269,15 @@ public class WorktreeSettingsTests
 
         Assert.Equal(WorkingCopy.Worktree, vm.ActiveCopy);
         Assert.Equal(folder, Assert.Single(sent.OfType<SyncWorkspaceCommand>()).RootPath);
-        var lines = Lines(vm);
-        Assert.Equal(WorkingCopyText.Created(folder, "b7e91d4"), lines[0]);
-        Assert.Equal(WorkingCopyText.Switched(WorkingCopy.Worktree, folder), lines[1]);
+        var lines = Lines(vm).ToList();
+        int note = lines.IndexOf(WorkingCopyText.FolderChanged(folder));
+        int created = lines.IndexOf(WorkingCopyText.Created(folder, "b7e91d4"));
+        int switched = lines.IndexOf(WorkingCopyText.Switched(WorkingCopy.Worktree, folder));
+        Assert.True(note >= 0 && note < created && created + 1 == switched, string.Join(" | ", lines));
         Assert.False(vm.WorktreeBusy);
     }
 
+    /// <summary>Var olan worktree'ye Save'den geçiş: kurulum yok, bölüm Save'in notlarıyla başlar ve geçiş satırı onları izler.</summary>
     [Fact]
     public async Task Saving_an_existing_worktree_from_the_switch_switches_without_creating()
     {
@@ -255,6 +293,76 @@ public class WorktreeSettingsTests
         Assert.Empty(sent.OfType<CreateWorktreeCommand>());
         Assert.Equal(WorkingCopy.Worktree, vm.ActiveCopy);
         Assert.Equal(worktree, Assert.Single(sent.OfType<SyncWorkspaceCommand>()).RootPath);
+        var lines = Lines(vm).ToList();
+        int note = lines.IndexOf(WorkingCopyText.FolderChanged(worktree));
+        int switched = lines.IndexOf(WorkingCopyText.Switched(WorkingCopy.Worktree, worktree));
+        Assert.True(note >= 0 && note < switched, string.Join(" | ", lines));
+    }
+
+    /// <summary>Kurulum yalnız bu Save'in işidir: alan bu Save'de değiştiyse ya da Settings anahtardan/karttan açıldıysa. Kayıtlı klasör
+    /// diskte yoksa (elle silindi) ilgisiz bir Save (ör. bir katman) onu sessizce yeniden kurmaz — Save'in Sync'i normal gider.</summary>
+    [Fact]
+    public async Task An_unrelated_save_does_not_recreate_a_missing_worktree()
+    {
+        using var repo = RepoWithCommit();
+        using var parent = new TempDir();
+        string folder = Path.Combine(parent.Path, "acme-worktree"); // kayıtlı ama diskte yok
+        var sent = new List<IpcCommand>();
+        var vm = NewVm(repo.RootPath, sent, folder);
+        var draft = new SettingsDraftViewModel(null, repo.RootPath, worktreeFolder: folder);
+
+        await draft.CommitAsync(vm, new SettingsDialogHost.FakeStore());
+
+        Assert.Empty(sent.OfType<CreateWorktreeCommand>());
+        Assert.False(vm.WorktreeBusy);
+        Assert.Equal(repo.RootPath, Assert.Single(sent.OfType<SyncWorkspaceCommand>()).RootPath);
+    }
+
+    /// <summary>Kuralın öbür yarısı: Settings alt bardaki anahtardan açıldıysa kayıtlı ama diskte olmayan klasör, alan değişmese de kurulur —
+    /// kullanıcı worktree'ye gitmek istedi.</summary>
+    [Fact]
+    public async Task Saving_from_the_switch_recreates_a_missing_worktree_even_when_the_folder_is_unchanged()
+    {
+        using var repo = RepoWithCommit();
+        using var parent = new TempDir();
+        string folder = Path.Combine(parent.Path, "acme-worktree");
+        var sent = new List<IpcCommand>();
+        var vm = NewVm(repo.RootPath, sent, folder);
+        var draft = new SettingsDraftViewModel(null, repo.RootPath, worktreeFolder: folder) { SwitchToWorktreeOnSave = true };
+
+        await draft.CommitAsync(vm, new SettingsDialogHost.FakeStore());
+
+        Assert.Equal(new CreateWorktreeCommand(repo.RootPath, folder), Assert.Single(sent.OfType<CreateWorktreeCommand>()));
+        Assert.True(vm.WorktreeBusy);
+    }
+
+    /// <summary>Kök boş kaydedilince workspace kapanır ve worktree tanımı da düşer: worktree o reponundur, kökü olmayan bir worktree
+    /// saklansaydı yeni bir kök seçildiğinde başka reponun klasörü Save'i kapatırdı.</summary>
+    [Fact]
+    public async Task Saving_a_blank_root_closes_the_workspace_and_drops_the_worktree_folder()
+    {
+        using var repo = RepoWithCommit();
+        repo.CreateBranch("side");
+        string worktree = repo.AddWorktree("side");
+        var sent = new List<IpcCommand>();
+        var vm = NewVm(repo.RootPath, sent, worktree);
+        var draft = new SettingsDraftViewModel(null, repo.RootPath, worktreeFolder: worktree) { RepositoryRoot = "" };
+
+        await draft.CommitAsync(vm, new SettingsDialogHost.FakeStore());
+
+        Assert.Equal("", vm.RootPath);
+        Assert.Equal("", vm.WorktreeFolder);
+        Assert.Empty(sent.OfType<SyncWorkspaceCommand>());
+    }
+
+    /// <summary>Hazır satırı yalnız bilinen revizyonu söyler ve "detached" iddiası taşımaz: zaten var olan bir worktree bir branch'te olabilir,
+    /// revizyonu okunamamış olabilir.</summary>
+    [Fact]
+    public void The_ready_line_names_the_revision_only_when_known()
+    {
+        Assert.Equal(@"Worktree ready at D:\src\acme-worktree (b7e91d4)", WorkingCopyText.Created(@"D:\src\acme-worktree", "b7e91d4"));
+        Assert.Equal(@"Worktree ready at D:\src\acme-worktree", WorkingCopyText.Created(@"D:\src\acme-worktree", ""));
+        Assert.Equal(@"Worktree ready at D:\src\acme-worktree", WorkingCopyText.Created(@"D:\src\acme-worktree", null));
     }
 
     [Fact]
@@ -306,10 +414,9 @@ public class WorktreeSettingsTests
         Assert.Null(vm.LastSyncHead);
     }
 
-    [Theory]
-    [InlineData("worktreeRejected")]
-    [InlineData("worktreeFailed")]
-    public async Task A_refused_creation_releases_the_buttons_and_sends_no_sync(string code)
+    /// <summary>Motorun reddi (koşu uçuşta — App'in kapısıyla yarışan bir koşu): kilit açılır, Save'in Sync'i de gitmez — motor meşgul.</summary>
+    [Fact]
+    public async Task A_rejected_creation_releases_the_buttons_and_sends_no_sync()
     {
         using var repo = RepoWithCommit();
         using var parent = new TempDir();
@@ -318,12 +425,33 @@ public class WorktreeSettingsTests
         var vm = NewVm(repo.RootPath, sent);
         await new SettingsDraftViewModel(null, repo.RootPath) { WorktreeFolder = folder }.CommitAsync(vm, new SettingsDialogHost.FakeStore());
 
-        vm.OnEvent(new ErrorEvent(code, "A run is in flight — stop it before creating the worktree."));
+        vm.OnEvent(new ErrorEvent("worktreeRejected", "A run is in flight — stop it before creating the worktree."));
 
         Assert.False(vm.WorktreeBusy);
         Assert.Null(vm.CurrentOperation);
         Assert.True(vm.SyncCommand.CanExecute(null));
         Assert.Empty(sent.OfType<SyncWorkspaceCommand>());
+    }
+
+    /// <summary>Motorun beklenmeyen hatası başarısız bir kurulumdur: hata satırı konsoldadır, Save'in ertelenen Sync'i yine gider ve kilit
+    /// Sync kapıyı devraldıktan sonra açılır (<see cref="A_failed_creation_writes_the_reason_and_still_syncs"/>'in aynısı).
+    /// <para><b>[DEĞİŞEN KURAL — inceleme K2]</b> Eskiden <c>worktreeFailed</c> ret gibi ele alınıyordu: kilit açılır, Sync gitmezdi. Ama Save
+    /// tek Sync'ini kurulumun cevabına ertelemişti — kök ya da kopya değiştiyse eski kopyanın planı Sync'siz ekranda kalıyordu.</para></summary>
+    [Fact]
+    public async Task An_engine_failure_during_creation_still_runs_the_save_s_sync()
+    {
+        using var repo = RepoWithCommit();
+        using var parent = new TempDir();
+        string folder = Path.Combine(parent.Path, "acme-worktree");
+        var sent = new List<IpcCommand>();
+        var vm = NewVm(repo.RootPath, sent);
+        await new SettingsDraftViewModel(null, repo.RootPath) { WorktreeFolder = folder }.CommitAsync(vm, new SettingsDialogHost.FakeStore());
+
+        vm.OnEvent(new ErrorEvent("worktreeFailed", "unexpected"));
+
+        Assert.False(vm.WorktreeBusy);
+        Assert.Contains("[error] worktreeFailed: unexpected", Lines(vm));
+        Assert.Equal(repo.RootPath, Assert.Single(sent.OfType<SyncWorkspaceCommand>()).RootPath);
     }
 
     /// <summary>Gönderim düştüyse (motor hazır değil) cevap gelmeyecek: kilit hemen açılır.</summary>

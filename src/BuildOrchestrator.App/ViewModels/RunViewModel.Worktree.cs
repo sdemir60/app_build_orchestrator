@@ -18,10 +18,10 @@ namespace BuildOrchestrator.App.ViewModels;
 /// (proje kimlikleri yola bağlıdır — worktree'nin projeleri başka satırlardır), konsol yeni bir bölüm açar ve yeni kökte
 /// <see cref="SyncMode.BranchChange"/> Sync'i koşar (fetch'siz: <c>.git</c> ortaktır, uzak uçlar zaten bilinir).</para>
 ///
-/// <para><b>Kurulum Settings Save'dedir</b> (<see cref="ApplySettingsAsync"/>): kaydedilen klasör yoksa ya da boşsa motor onu ana
-/// kopyanın HEAD'inde detached kurar (<see cref="CreateWorktreeCommand"/>). Kurulum bir workspace işidir (<see cref="WorktreeBusy"/>:
-/// düğmeler pasif, işlem pill'i, konsol satırı) ve Save'in tek Sync'i kurulumun cevabını bekler; Settings alt bardaki düğmeden
-/// açıldıysa cevap başarılıysa worktree'ye geçilir.</para>
+/// <para><b>Kurulum Settings Save'dedir</b> (<see cref="ApplySettingsAsync"/>): kaydedilen klasör yoksa ya da boşsa — ve alan bu Save'de
+/// değiştiyse ya da Settings alt bardaki düğmeden açıldıysa — motor onu ana kopyanın HEAD'inde detached kurar (<see cref="CreateWorktreeCommand"/>).
+/// Kurulum bir workspace işidir (<see cref="WorktreeBusy"/>: düğmeler pasif, işlem pill'i, konsol satırı) ve Save'in tek Sync'i kurulumun
+/// cevabını bekler; Settings alt bardaki düğmeden açıldıysa cevap başarılıysa worktree'ye geçilir.</para>
 /// </summary>
 public sealed partial class RunViewModel
 {
@@ -141,9 +141,22 @@ public sealed partial class RunViewModel
         bool wasActive = ActiveCopy == WorkingCopy.Worktree;
         ReturnToRepositoryCopy();
         WorktreeFolder = folder;
-        AppendRunLine(WorkingCopyText.FolderChanged(folder));
-        if (wasActive) AppendRunLine(WorkingCopyText.Switched(WorkingCopy.Repository, RootPath));
+        AppendSaveNote(WorkingCopyText.FolderChanged(folder));
+        if (wasActive) AppendSaveNote(WorkingCopyText.Switched(WorkingCopy.Repository, RootPath));
         return wasActive;
+    }
+
+    /// <summary>Uçuştaki Settings Save'in notları (katman, harici liste, General anahtarları, kök, worktree klasörü); Save'in senkron gövdesi
+    /// dışında <c>null</c>. Yazıcısı <see cref="AppendSaveNote"/>.</summary>
+    private List<string>? _saveNotes;
+
+    /// <summary>Settings Save'in konsol notu: konsola yazılır ve Save'in not listesine eklenir. Save worktree'ye geçerse geçişin bölümü konsolu
+    /// temizler; liste bölümün ilk satırları olur (<see cref="SwitchCopyCoreAsync"/>'in <c>leading</c>'i) ve notlar kaybolmaz — aynı Save geçiş
+    /// yapmasaydı konsolda kalacaklardı.</summary>
+    private void AppendSaveNote(string line)
+    {
+        AppendRunLine(line);
+        _saveNotes?.Add(line);
     }
 
     /// <summary>[worktree] Settings Save'in kurulumu uçuşta: istekten cevaba (<see cref="WorktreeCreatedEvent"/> ya da
@@ -151,9 +164,9 @@ public sealed partial class RunViewModel
     /// bu yüzden istek ve uçuş penceresi TEK bayraktır (<see cref="CheckoutBusy"/> deseni).</summary>
     public bool WorktreeBusy { get; private set; }
 
-    /// <summary>Uçuştaki kurulumun Save'den taşıdıkları: plan yüzeyi boşalmalı mı (kök ya da kopya değişti) ve başarıda worktree'ye
-    /// geçilsin mi.</summary>
-    private sealed record PendingWorktree(bool PlanGone, bool SwitchAfter);
+    /// <summary>Uçuştaki kurulumun Save'den taşıdıkları: plan yüzeyi boşalmalı mı (kök ya da kopya değişti), başarıda worktree'ye geçilsin
+    /// mi ve Save'in notları (geçişin bölümü onlarla başlar).</summary>
+    private sealed record PendingWorktree(bool PlanGone, bool SwitchAfter, IReadOnlyList<string> Notes);
 
     private PendingWorktree? _pendingWorktree;
 
@@ -168,9 +181,9 @@ public sealed partial class RunViewModel
 
     /// <summary>Kurulum isteği: konsol satırı, işlem pill'i, meşguliyet ve komut. Gönderim düştüyse (motor hazır değil) cevap
     /// gelmeyecektir — kilit hemen açılır.</summary>
-    private async Task RequestWorktreeAsync(bool planGone, bool switchAfter)
+    private async Task RequestWorktreeAsync(bool planGone, bool switchAfter, IReadOnlyList<string> notes)
     {
-        _pendingWorktree = new PendingWorktree(planGone, switchAfter);
+        _pendingWorktree = new PendingWorktree(planGone, switchAfter, notes);
         AppendRunLine(WorkingCopyText.Creating(WorktreeFolder));
         CurrentOperation = OperationLabel.CreatingWorktree;
         SetWorktreeBusy(true); // kapı GÖNDERİMDEN önce kapanır (checkout'un deseni)
@@ -184,8 +197,9 @@ public sealed partial class RunViewModel
     }
 
     /// <summary>Kurulumun cevabı: sonuç satırı, sonra Save'in Sync'i — başarıda ve Settings alt bardaki düğmeden açıldıysa worktree'ye
-    /// geçişin Sync'i. Kilit, Sync kapıyı devraldıktan SONRA bırakılır (<see cref="SyncThenReleaseAsync"/>). Bekleyen bir istek yoksa
-    /// (motor yeniden başladı, cevap sahipsiz) yalnız satır yazılır ve kilit açılır.</summary>
+    /// geçişin Sync'i (bölüm Save'in notları ve sonuç satırıyla başlar). Kilit, Sync kapıyı devraldıktan SONRA bırakılır
+    /// (<see cref="SyncThenReleaseAsync"/>). Bekleyen bir istek yoksa (motor yeniden başladı, cevap sahipsiz) yalnız satır yazılır ve kilit
+    /// açılır.</summary>
     private async Task OnWorktreeCreatedAsync(WorktreeCreatedEvent e)
     {
         var pending = _pendingWorktree;
@@ -198,10 +212,17 @@ public sealed partial class RunViewModel
         if (pending is null) { AppendRunLine(result); ReleaseWorktree(); return; }
         if (e.Created && pending.SwitchAfter && WorktreeReady)
         {
-            await SwitchCopyCoreAsync(WorkingCopy.Worktree, leading: [result], release: ReleaseWorktree);
+            await SwitchCopyCoreAsync(WorkingCopy.Worktree, leading: [.. pending.Notes, result], release: ReleaseWorktree);
             return;
         }
         AppendRunLine(result);
+        await FinishSaveAsync(pending);
+    }
+
+    /// <summary>Kurulum geçişsiz bitti (başarısız, ya da Settings'ten kuruldu): Save'in ertelenen Sync'i gider — kök ya da kopya değiştiyse
+    /// plan yüzeyi önce boşalır. Kilit, Sync kapıyı devraldıktan SONRA bırakılır.</summary>
+    private async Task FinishSaveAsync(PendingWorktree pending)
+    {
         if (pending.PlanGone) ClearPlanSurface();
         await SyncThenReleaseAsync(ReleaseWorktree, SyncMode.Appended);
     }
@@ -209,21 +230,26 @@ public sealed partial class RunViewModel
     /// <summary>Kurulum kilidini bırakır — <see cref="SyncThenReleaseAsync"/>'e verilen adım.</summary>
     private void ReleaseWorktree() => SetWorktreeBusy(false);
 
-    /// <summary>Dönüş değeri = "bu hata kuruluma aittir, run/Sync state'ine DOKUNMA" (<see cref="TryConsumeCheckoutFailure"/>'ın ikizi):
-    /// motorun reddi (koşu uçuşta) ya da beklenmeyen hata — hata satırı <c>OnError</c>'ın ilk satırıdır, kilit açılır, pill düşer, Sync
-    /// gitmez.</summary>
+    /// <summary>Dönüş değeri = "bu hata kuruluma aittir, run state'ine DOKUNMA" (<see cref="TryConsumeCheckoutFailure"/>'ın ikizi); hata satırı
+    /// <c>OnError</c>'ın ilk satırıdır, pill düşer. Motorun reddi (<c>worktreeRejected</c> — koşu uçuşta) kilidi açar ve Sync göndermez: motor
+    /// meşgul. Beklenmeyen hata (<c>worktreeFailed</c>) başarısız bir kurulumdur: Save'in ertelenen Sync'i yine gider (<see cref="FinishSaveAsync"/>).</summary>
     private bool TryConsumeWorktreeFailure(string code)
     {
         if (!WorktreeErrorCodes.Contains(code) || !WorktreeBusy) return false;
+        var pending = _pendingWorktree;
         _pendingWorktree = null;
-        SetWorktreeBusy(false);
         CurrentOperation = null;
+        if (code == WorktreeFailedCode && pending is not null) _ = FinishSaveAsync(pending);
+        else ReleaseWorktree();
         return true;
     }
 
-    /// <summary>Kurulumun yayınlayabildiği hata kodları: <c>worktreeRejected</c> (koşu uçuşta) ve <c>worktreeFailed</c> (beklenmeyen hata).
-    /// Run-bitiren kodlarla KESİŞMEZ.</summary>
-    private static readonly HashSet<string> WorktreeErrorCodes = new(StringComparer.Ordinal) { "worktreeFailed", "worktreeRejected" };
+    /// <summary>Kurulumun beklenmeyen hatasının kodu.</summary>
+    private const string WorktreeFailedCode = "worktreeFailed";
+
+    /// <summary>Kurulumun yayınlayabildiği hata kodları: <c>worktreeRejected</c> (koşu uçuşta) ve <see cref="WorktreeFailedCode"/> (beklenmeyen
+    /// hata). Run-bitiren kodlarla KESİŞMEZ.</summary>
+    private static readonly HashSet<string> WorktreeErrorCodes = new(StringComparer.Ordinal) { WorktreeFailedCode, "worktreeRejected" };
 
     /// <summary>Motor kurulumun ortasında öldü: cevap gelmeyecek — kilit ve bekleyen istek bırakılır
     /// (<see cref="RunViewModel.ReleaseAfterEngineLoss"/>).</summary>

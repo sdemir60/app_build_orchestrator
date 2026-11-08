@@ -1,6 +1,7 @@
 using System.Globalization;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Git;
 
 namespace BuildOrchestrator.App.ViewModels;
 
@@ -42,6 +43,11 @@ public static class BranchSwitchText
     /// <summary>Diğer kopya düğmesi: repo'dayken worktree (tanımsızsa kurulum), worktree'deyken repo.</summary>
     public static string OtherCopy(WorkingCopy active, bool worktreeReady) =>
         active == WorkingCopy.Worktree ? "Use repository" : worktreeReady ? "Use worktree" : "Set up worktree…";
+
+    /// <summary>"Diğer kopya" kararı o kopyada yarıdaki bir git işlemine takıldı — checkout gönderilmedi. Neden chip'in tooltip'iyle AYNI
+    /// cümledir (<see cref="GitOperationText.Tooltip"/>).</summary>
+    public static string OtherCopyBusy(string branch, WorkingCopy copy, GitOperation operation) =>
+        $"warning: {branch} not opened in {WorkingCopyText.Name(copy)} · {GitOperationText.Tooltip(operation)}";
 }
 
 /// <summary>
@@ -95,6 +101,13 @@ public sealed partial class RunViewModel
     private async Task RequestCheckoutAsync(BranchRef branch, WorkingCopy copy, bool stash)
     {
         if (!RefreshGitWritesAllowed() || !CanSwitchBranch) return; // [spec §6.4] yoklama bayat olabilir
+        // Kapının git işlemi yalnız aktif kökü yoklar; diğer kopyaya giden checkout o kopyanın git dizinine de bakar (her worktree'nin
+        // merge/rebase durumu kendi git dizinindedir) — yarıda bir işlem varsa gönderilmez, konsol nedenini söyler.
+        if (copy != ActiveCopy && InspectGitOperation(CopyRoot(copy)) is var operation && operation != GitOperation.None)
+        {
+            AppendRunLine(BranchSwitchText.OtherCopyBusy(branch.Name, copy, operation));
+            return;
+        }
 
         _checkoutRequest = (branch, copy);
         CurrentOperation = OperationLabel.Checkout;

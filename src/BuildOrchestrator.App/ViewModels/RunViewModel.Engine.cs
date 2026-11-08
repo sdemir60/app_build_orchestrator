@@ -697,9 +697,17 @@ public sealed partial class RunViewModel
     private void EvaluateEngineSilence()
     {
         bool overdue = WaitingOnEngine
-            && _nowMs() - Volatile.Read(ref _lastEngineSignalMs) >= EngineSilenceThresholdMs;
+            && _nowMs() - Volatile.Read(ref _lastEngineSignalMs) >= SilenceThresholdMs;
         EngineOverdueMessage = overdue ? EngineSilentMessage : null;
     }
+
+    /// <summary>[worktree] Bekleyişin sessizlik eşiği: normalde <see cref="EngineSilenceThresholdMs"/>. Worktree kurulumu motorun komut döngüsünü
+    /// bloklar ve <c>git worktree add</c> tüm ağacı yazarken hiçbir olay yazılmaz — eşik kurulumun kendi tavanı
+    /// (<see cref="Core.Git.WorktreeCreator.Timeout"/>) + normal eşiktir: tavanda motor git'i durdurup cevabını yazmış olmalıydı. Şeridin metni
+    /// (<see cref="EngineSilentMessage"/>) değişmez; söylediği süre bir alt sınırdır.</summary>
+    private long SilenceThresholdMs => WorktreeBusy
+        ? (long)Core.Git.WorktreeCreator.Timeout.TotalMilliseconds + EngineSilenceThresholdMs
+        : EngineSilenceThresholdMs;
 
     /// <summary>Şeridin amber satırı. Süre TEK kaynaktan (<see cref="EngineSilenceThresholdMs"/>) biçimlenir —
     /// eşik değişirse metin de değişir. Dil, mevcut kalıcı satırların (<see cref="EngineMissingMessage"/>)

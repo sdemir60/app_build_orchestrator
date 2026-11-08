@@ -180,21 +180,29 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     }
 
     /// <summary>[worktree] Worktree klasörü kullanılamıyorsa Save'in nedeni (<see cref="WorkingCopyText.FolderProblem"/>); boş alan ve
-    /// kullanılabilir klasör (yok/boş ya da bu reponun worktree'si) <c>null</c>. Karar diskten okunur
-    /// (<see cref="Core.Git.WorktreeFolder.Inspect"/>; repo kökü boşsa worktree'nin repo'su da yoktur).</summary>
+    /// kullanılabilir klasör (yok/boş ya da bu reponun worktree'si) <c>null</c>. Karar diskten okunur (<see cref="Core.Git.WorktreeFolder.Inspect"/>),
+    /// (kök, klasör) başına bir kez: Save kapısının iki yüzü (<see cref="CanSave"/>, <see cref="SaveBlockedReason"/>) ve bağlamalar aynı değeri
+    /// ayrı ayrı sorar. Kök boşken denetim yoktur: boş kök "workspace yok" demektir, Save workspace'i kapatır ve worktree tanımını da düşürür
+    /// (<see cref="RunViewModel.ApplySettingsAsync"/>) — alan onu engellememeli.</summary>
     private string? WorktreeBlockedReason
     {
         get
         {
             string folder = WorktreeFolder?.Trim() ?? "";
-            if (folder.Length == 0) return null;
             string root = RepositoryRoot?.Trim() ?? "";
-            var state = root.Length == 0
-                ? Core.Git.WorktreeFolderState.NoRepository
-                : Core.Git.WorktreeFolder.Inspect(root, folder);
-            return WorkingCopyText.FolderProblem(state);
+            if (folder.Length == 0 || root.Length == 0) return null;
+            if (_worktreeCheck is { } last && last.Root == root && last.Folder == folder) return last.Reason;
+            string? reason = WorkingCopyText.FolderProblem(InspectWorktreeFolder(root, folder));
+            _worktreeCheck = (root, folder, reason);
+            return reason;
         }
     }
+
+    /// <summary>Son worktree denetiminin (kök, klasör) anahtarlı cevabı — <see cref="WorktreeBlockedReason"/>'ın önbelleği.</summary>
+    private (string Root, string Folder, string? Reason)? _worktreeCheck;
+
+    /// <summary>[test dikişi] Klasör denetimi — üretimde <see cref="Core.Git.WorktreeFolder.Inspect"/> (diskten).</summary>
+    internal Func<string, string, Core.Git.WorktreeFolderState> InspectWorktreeFolder { get; init; } = Core.Git.WorktreeFolder.Inspect;
 
     /// <summary>Taslak = kayıtlı pattern'lerin DERİN kopyası (Order'a göre; editör sırası = katman sırası).
     /// Kayıtlı katman YOKSA (null ya da boş) taslak BOŞ kurulur — [design v1.19.0 §2.9] ürüne özel bir ön-dolum

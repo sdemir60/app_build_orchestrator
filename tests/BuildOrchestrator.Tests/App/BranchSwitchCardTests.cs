@@ -1,7 +1,9 @@
+using System.IO;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Git;
 using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Tests.Git;
 using BuildOrchestrator.Tests.Supervisor;
@@ -262,6 +264,29 @@ public class BranchSwitchCardTests
         Assert.Null(vm.PendingBranchSwitch);
     }
 
+    /// <summary>"Diğer kopya" kararı o kopyanın git dizinine de bakar: worktree'de yarıda bir rebase varken checkout gönderilmez ve konsol
+    /// nedenini söyler. Chip'in git kapısı (<see cref="RunViewModel.CanSwitchBranch"/>) yalnız aktif kopyayı yoklar — worktree'nin rebase'i
+    /// kendi git dizinindedir (<c>.git/worktrees/&lt;ad&gt;/rebase-merge</c>).</summary>
+    [Fact]
+    public async Task The_other_copy_mid_rebase_refuses_the_checkout_with_a_warning()
+    {
+        var (repo, worktree) = RepoWithWorktree();
+        using var _ = repo;
+        var sent = new List<IpcCommand>();
+        var vm = NewVm(sent, repo.RootPath, worktree);
+        await vm.SelectBranch(FeatureX);
+        vm.OnEvent(new CheckoutCompletedEvent(CheckoutStatus.Dirty, "main", "main", null, 3, null, null));
+        Directory.CreateDirectory(Path.Combine(GitDirectory.Resolve(worktree)!, "rebase-merge"));
+        sent.Clear();
+
+        await vm.DecideBranchSwitchAsync(BranchDecision.OtherCopy);
+
+        Assert.Empty(sent.OfType<CheckoutBranchCommand>());
+        Assert.Equal(BranchSwitchText.OtherCopyBusy("feature/x", WorkingCopy.Worktree, GitOperation.Rebase), Lines(vm)[^1]);
+        Assert.False(vm.CheckoutBusy);
+        Assert.Equal(WorkingCopy.Repository, vm.ActiveCopy);
+    }
+
     /// <summary>Motorun reddettiği checkout'un isteği unutulur: ardından gelen sahipsiz bir cevap (sırası kaymış bir olay) eski isteğin
     /// kopyasına geçirmez — istek diğer kopyaya gitmişti ve cevap "geçti" diyor.</summary>
     [Fact]
@@ -378,5 +403,7 @@ public class BranchSwitchCardTests
         Assert.Equal("Stash and switch", BranchSwitchText.Stash);
         Assert.Equal("warning: feature/x is already checked out in D:\\repo-worktree — a branch can be open in one working copy at a time",
             PlanProgressLines.SwitchRefusedElsewhere("feature/x", @"D:\repo-worktree"));
+        Assert.Equal("warning: feature/x not opened in the worktree · Rebase in progress — finish or abort it in git",
+            BranchSwitchText.OtherCopyBusy("feature/x", WorkingCopy.Worktree, GitOperation.Rebase));
     }
 }
