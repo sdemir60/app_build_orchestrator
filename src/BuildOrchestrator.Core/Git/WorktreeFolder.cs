@@ -1,3 +1,5 @@
+using BuildOrchestrator.Core.Paths;
+
 namespace BuildOrchestrator.Core.Git;
 
 /// <summary>[worktree] Ayardaki worktree klasörünün durumu — <see cref="WorktreeFolder.Inspect"/>'in cevabı.</summary>
@@ -39,24 +41,27 @@ public static class WorktreeFolder
         if (!Path.IsPathFullyQualified(folder) || !Path.IsPathFullyQualified(repositoryRoot))
             return WorktreeFolderState.NotRooted;
 
+        // Kök karşılaştırmasının TEK cevabı RootScope'tur: iki yol da sondaki ayraçla normalize edilir, eşitlik de "ile başlar"a düşer ve
+        // önek tuzağı (acme → acme-worktree) bileşen sınırında kalır.
+        if (RootScope.NormalizeRoot(repositoryRoot) is not { } repo || RootScope.NormalizeRoot(folder) is not { } candidate)
+            return WorktreeFolderState.Unreadable;
+        if (RootScope.Contains(repo, candidate) || RootScope.Contains(candidate, repo)) return WorktreeFolderState.Nested;
+
         try
         {
-            string repo = Normalize(repositoryRoot);
-            string candidate = Normalize(folder);
-            if (IsSameOrInside(candidate, repo) || IsSameOrInside(repo, candidate)) return WorktreeFolderState.Nested;
-
             if (GitDirectory.Resolve(repo) is not { } repoGitDir) return WorktreeFolderState.NoRepository;
 
-            if (File.Exists(candidate)) return WorktreeFolderState.Foreign;
-            if (!Directory.Exists(candidate) || !Directory.EnumerateFileSystemEntries(candidate).Any())
+            string path = Path.TrimEndingDirectorySeparator(candidate);
+            if (File.Exists(path)) return WorktreeFolderState.Foreign;
+            if (!Directory.Exists(path) || !Directory.EnumerateFileSystemEntries(path).Any())
                 return WorktreeFolderState.Creatable;
 
             // Linked worktree'nin işareti bir DOSYADIR; klasör olan .git ayrı bir klondur.
-            if (!File.Exists(Path.Combine(candidate, ".git")) || GitDirectory.Resolve(candidate) is not { } candidateGitDir)
+            if (!File.Exists(Path.Combine(path, ".git")) || GitDirectory.Resolve(path) is not { } candidateGitDir)
                 return WorktreeFolderState.Foreign;
 
-            return string.Equals(Normalize(GitDirectory.ResolveCommon(candidateGitDir)), Normalize(GitDirectory.ResolveCommon(repoGitDir)),
-                    StringComparison.OrdinalIgnoreCase)
+            return string.Equals(RootScope.NormalizeRoot(GitDirectory.ResolveCommon(candidateGitDir)),
+                    RootScope.NormalizeRoot(GitDirectory.ResolveCommon(repoGitDir)), StringComparison.OrdinalIgnoreCase)
                 ? WorktreeFolderState.Linked
                 : WorktreeFolderState.Foreign;
         }
@@ -71,21 +76,11 @@ public static class WorktreeFolder
     public static string? Describe(WorktreeFolderState state) => state switch
     {
         WorktreeFolderState.Foreign => "the worktree folder is not empty and is not a worktree of this repository",
-        WorktreeFolderState.Nested => "the worktree folder must be outside the repository root",
+        WorktreeFolderState.Nested => "the worktree folder must sit next to the repository, not inside it or around it",
         WorktreeFolderState.NotRooted => "the worktree folder needs a full path",
         WorktreeFolderState.NoRepository => "the repository root is not a git repository",
         WorktreeFolderState.Unreadable => "the worktree folder cannot be read",
         _ => null,
     };
 
-    private static string Normalize(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
-
-    /// <summary><paramref name="path"/>, <paramref name="ancestor"/>'ın kendisi ya da altındaki bir yol mu — metin öneki değil,
-    /// yol bileşeni üzerinden (Windows yolları büyük/küçük harf duyarsız). Sürücü kökü (<c>D:\</c>) zaten ayraçla biter.</summary>
-    private static bool IsSameOrInside(string path, string ancestor)
-    {
-        if (string.Equals(path, ancestor, StringComparison.OrdinalIgnoreCase)) return true;
-        string prefix = Path.EndsInDirectorySeparator(ancestor) ? ancestor : ancestor + Path.DirectorySeparatorChar;
-        return path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
-    }
 }

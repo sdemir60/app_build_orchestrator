@@ -60,6 +60,21 @@ public class WorktreeCreatorTests
         Assert.Equal(WorktreeFolderState.Linked, WorktreeFolder.Inspect(repo.RootPath, folder.Path));
     }
 
+    /// <summary>Klasör zaten bu reponun worktree'siyse iş yapılmış sayılır: ikinci bir worktree eklenmez, HEAD'i döner.</summary>
+    [Fact]
+    public async Task An_existing_worktree_of_the_repository_counts_as_ready()
+    {
+        using var repo = RepoWithCommit();
+        repo.CreateBranch("side");
+        string worktree = repo.AddWorktree("side");
+
+        var result = await Creator(repo.RootPath).CreateAsync(worktree);
+
+        Assert.True(result.Created, result.Detail);
+        Assert.Equal(HeadOf(worktree), result.Revision);
+        Assert.Equal(2, WorktreeCount(repo.RootPath)); // ana kopya + mevcut worktree; yenisi yok
+    }
+
     /// <summary>Dolu bir klasöre git hiç çağrılmaz: içerik olduğu gibi kalır, repoya worktree eklenmez.</summary>
     [Fact]
     public async Task A_folder_with_files_is_left_alone()

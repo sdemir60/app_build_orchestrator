@@ -152,6 +152,16 @@ public class WorktreeFolderTests
             WorktreeFolder.Inspect(root.Path, Path.Combine(parent.Path, "acme-worktree")));
     }
 
+    /// <summary>İç içe olma iki yöndedir (klasör repo'nun içinde ya da repo'yu kapsıyor): neden ikisini de söyler. Browse repo'nun
+    /// üst klasöründe açılır; üst klasörü seçip adı eklemeden kaydeden kullanıcıya "dışında olmalı" demek yanlış olurdu — o
+    /// klasör zaten dışarıda.</summary>
+    [Fact]
+    public void The_nested_reason_covers_both_directions()
+    {
+        Assert.Equal("the worktree folder must sit next to the repository, not inside it or around it",
+            WorktreeFolder.Describe(WorktreeFolderState.Nested));
+    }
+
     // ---------------------------------------------------------------- GitDirectory.ResolveCommon
 
     [Fact]

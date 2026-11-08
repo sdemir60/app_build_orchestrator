@@ -30,6 +30,16 @@ public enum FastForwardStatus
 /// bayat olabilir.</param>
 public sealed record FastForwardResult(FastForwardStatus Status, string? Revision, string? Detail, string? Branch = null);
 
+/// <summary>Bu dosyanın iki tavanı — TEK tanım (kopya YASAK). <see cref="Query"/> yazımı kapılayan karar sorgularınındır
+/// (<c>merge-base --is-ancestor</c>, <c>worktree list</c>) ve <see cref="GitService"/>'in salt-okur tavanının kendisidir;
+/// <see cref="Mutation"/> çalışma ağacını yazan komutlarındır (merge, stash, checkout, worktree add) — büyük bir repoda ağacı yazmak
+/// uzun sürebilir.</summary>
+internal static class WriterTimeouts
+{
+    internal static TimeSpan Query => GitService.CommandTimeout;
+    internal static readonly TimeSpan Mutation = TimeSpan.FromMinutes(5);
+}
+
 /// <summary>
 /// [D7][v1.16.0] Bir git çalışma kopyasını remote'una ilerletir — bu dosyanın (<c>RepositoryWriter.cs</c>)
 /// üç mutasyon yüzeyinden biri; diğerleri <see cref="BranchSwitcher"/> (checkout + stash, §6.3/§6.6) ve
@@ -58,13 +68,6 @@ public sealed record FastForwardResult(FastForwardStatus Status, string? Revisio
 /// </summary>
 public sealed class FastForwardUpdater
 {
-    /// <summary>Karar sorgusu için — <see cref="GitService"/>'in salt-okur komutlarıyla aynı tavan.</summary>
-    private static readonly TimeSpan QueryTimeout = TimeSpan.FromSeconds(30);
-
-    /// <summary>Fast-forward merge çalışma ağacını yeniden yazar; büyük bir harici repoda bu uzun sürebilir —
-    /// tavan 5 dakika.</summary>
-    private static readonly TimeSpan MergeTimeout = TimeSpan.FromMinutes(5);
-
     private readonly IProcessRunner _runner;
     private readonly string _rootPath;
     private readonly string _gitExecutable;
@@ -123,7 +126,7 @@ public sealed class FastForwardUpdater
         //    Karar exit kodundan okunur; stderr METNİ ASLA ayrıştırılmaz (lokalize olabilir).
         string trackingRef = $"refs/remotes/origin/{branch.Value}";
         var ancestry = await CommandLineTool.RunAsync(
-            _runner, CommandLineTool.Git, _gitExecutable, ["merge-base", "--is-ancestor", "HEAD", trackingRef], _rootPath, QueryTimeout, ct);
+            _runner, CommandLineTool.Git, _gitExecutable, ["merge-base", "--is-ancestor", "HEAD", trackingRef], _rootPath, WriterTimeouts.Query, ct);
         if (!ancestry.Success) return Failed(ancestry.Error);
 
         if (ancestry.Value!.ExitCode == 1)
@@ -135,7 +138,7 @@ public sealed class FastForwardUpdater
 
         // 5) Tek mutasyon: fast-forward. Merge commit'i üretmesi mümkün değildir (--ff-only).
         var merge = await CommandLineTool.RunAsync(
-            _runner, CommandLineTool.Git, _gitExecutable, ["merge", "--ff-only", trackingRef], _rootPath, MergeTimeout, ct);
+            _runner, CommandLineTool.Git, _gitExecutable, ["merge", "--ff-only", trackingRef], _rootPath, WriterTimeouts.Mutation, ct);
         if (!merge.Success) return Failed(merge.Error);
         if (merge.Value!.ExitCode != 0) return Failed(CommandLineTool.DescribeFailure(CommandLineTool.Git, merge.Value));
 
@@ -183,20 +186,13 @@ public sealed record CheckoutResult(
 /// </summary>
 public sealed class BranchSwitcher
 {
-    /// <summary>Stash/checkout çalışma ağacını yeniden yazar; büyük bir repoda uzun sürebilir —
-    /// <c>FastForwardUpdater</c>'ın merge tavanıyla aynı 5 dakika.</summary>
-    private static readonly TimeSpan MutationTimeout = TimeSpan.FromMinutes(5);
-
-    /// <summary>[worktree] Karar sorgusu (hangi kopya hangi branch'te) — <see cref="GitService"/>'in salt-okur tavanıyla aynı.</summary>
-    private static readonly TimeSpan QueryTimeout = TimeSpan.FromSeconds(30);
-
     private readonly IProcessRunner _runner;
     private readonly string _rootPath;
     private readonly string _gitExecutable;
     private readonly GitService _git;
 
     /// <param name="runner">Process çalıştırıcı.</param>
-    /// <param name="rootPath">Checkout uygulanacak çalışma kopyasının kökü — ana repo.</param>
+    /// <param name="rootPath">Checkout uygulanacak çalışma kopyasının kökü — ana repo ya da [worktree] onun worktree'si.</param>
     /// <param name="gitExecutable">git yürütülebiliri; testler için değiştirilebilir.</param>
     public BranchSwitcher(IProcessRunner runner, string rootPath, string gitExecutable = "git")
     {
@@ -244,7 +240,7 @@ public sealed class BranchSwitcher
         {
             stashMessage = StashMessage(await CurrentLabelAsync(currentBranch.Value, ct), target);
             var stash = await CommandLineTool.RunAsync(
-                _runner, CommandLineTool.Git, _gitExecutable, ["stash", "push", "-u", "-m", stashMessage], _rootPath, MutationTimeout, ct);
+                _runner, CommandLineTool.Git, _gitExecutable, ["stash", "push", "-u", "-m", stashMessage], _rootPath, WriterTimeouts.Mutation, ct);
             if (!stash.Success)
                 return new CheckoutResult(CheckoutStatus.StashFailed, currentBranch.Value, null, dirtyCount, stashMessage, stash.Error);
             if (stash.Value!.ExitCode != 0)
@@ -268,7 +264,7 @@ public sealed class BranchSwitcher
 
         // 4) Tek mutasyon (stash sonrası): checkout.
         var checkout = await CommandLineTool.RunAsync(
-            _runner, CommandLineTool.Git, _gitExecutable, checkoutArgs, _rootPath, MutationTimeout, ct);
+            _runner, CommandLineTool.Git, _gitExecutable, checkoutArgs, _rootPath, WriterTimeouts.Mutation, ct);
         if (!checkout.Success)
             return new CheckoutResult(CheckoutStatus.Failed, currentBranch.Value, null, dirtyCount, stashMessage, checkout.Error);
         if (checkout.Value!.ExitCode != 0)
@@ -283,31 +279,16 @@ public sealed class BranchSwitcher
     }
 
     /// <summary>[worktree] <paramref name="localName"/>'i HEAD'inde tutan BAŞKA çalışma kopyasının kökü (ana kopya ya da bir
-    /// worktree); yoksa ya da sorulamadıysa <c>null</c> — o hâlde karar git'in kendi kuralına kalır. Git'e sorulur
-    /// (<c>worktree list --porcelain</c>), dosyadan okunmaz: reftable biçimli repoda HEAD dosyası yalnız bir yer tutucudur.
-    /// Porcelain biçimi lokalize değildir ve sürümler arasında kararlıdır; kopya bloğu <c>worktree &lt;yol&gt;</c> ile başlar,
-    /// branch'i <c>branch refs/heads/&lt;ad&gt;</c> satırındadır (detached kopyada bu satır yoktur).</summary>
+    /// worktree); yoksa ya da sorulamadıysa <c>null</c> — o hâlde karar git'in kendi kuralına kalır. Git'e sorulur, dosyadan okunmaz:
+    /// reftable biçimli repoda HEAD dosyası yalnız bir yer tutucudur. Bu, yazımı kapılayan bir karar sorgusudur ve yazımla aynı
+    /// dosyada durur (<c>merge-base</c>'in emsali); <c>-z</c> yolları tırnaksız verir, ayrıştırma saf <see cref="WorktreeList"/>'tedir.</summary>
     private async Task<string?> HolderOfAsync(string localName, CancellationToken ct)
     {
         var list = await CommandLineTool.RunAsync(
-            _runner, CommandLineTool.Git, _gitExecutable, ["worktree", "list", "--porcelain"], _rootPath, QueryTimeout, ct);
+            _runner, CommandLineTool.Git, _gitExecutable, ["worktree", "list", "--porcelain", "-z"], _rootPath, WriterTimeouts.Query, ct);
         if (!list.Success || list.Value!.ExitCode != 0) return null;
-
-        string self = NormalizePath(_rootPath);
-        string branchLine = "branch refs/heads/" + localName;
-        string? copy = null;
-        foreach (string raw in list.Value.StandardOutput.Split('\n'))
-        {
-            string line = raw.TrimEnd('\r');
-            if (line.StartsWith("worktree ", StringComparison.Ordinal)) copy = NormalizePath(line["worktree ".Length..]);
-            else if (copy is not null && string.Equals(line, branchLine, StringComparison.Ordinal)
-                     && !string.Equals(copy, self, StringComparison.OrdinalIgnoreCase))
-                return copy;
-        }
-        return null;
+        return WorktreeList.HolderOf(list.Value.StandardOutput, _rootPath, localName);
     }
-
-    private static string NormalizePath(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
 
     /// <summary>Stash mesajının TEK kaynağı (kopya yasak) — konsol satırı ve <c>stash push -m</c> argümanı
     /// AYNI metni kullanır.</summary>
@@ -354,8 +335,9 @@ public sealed record WorktreeCreateResult(bool Created, string? Revision, string
 /// </summary>
 public sealed class WorktreeCreator
 {
-    /// <summary>Worktree eklemek tüm ağacı yazar; büyük bir repoda uzun sürebilir — checkout'la aynı 5 dakika.</summary>
-    private static readonly TimeSpan MutationTimeout = TimeSpan.FromMinutes(5);
+    /// <summary>Kurulumun tavanı — worktree eklemek tüm ağacı yazar (<see cref="WriterTimeouts.Mutation"/>). App'in sessizlik bekçisi
+    /// kurulum sürerken bunu esas alır: motor bu süre boyunca hiçbir olay yazmayabilir.</summary>
+    public static TimeSpan Timeout => WriterTimeouts.Mutation;
 
     private readonly IProcessRunner _runner;
     private readonly string _repositoryRoot;
@@ -380,7 +362,7 @@ public sealed class WorktreeCreator
         if (state != WorktreeFolderState.Creatable) return new WorktreeCreateResult(false, null, WorktreeFolder.Describe(state));
 
         var add = await CommandLineTool.RunAsync(
-            _runner, CommandLineTool.Git, _gitExecutable, ["worktree", "add", "--detach", folder], _repositoryRoot, MutationTimeout, ct);
+            _runner, CommandLineTool.Git, _gitExecutable, ["worktree", "add", "--detach", folder], _repositoryRoot, WriterTimeouts.Mutation, ct);
         if (!add.Success) return new WorktreeCreateResult(false, null, add.Error);
         if (add.Value!.ExitCode != 0)
             return new WorktreeCreateResult(false, null, CommandLineTool.DescribeFailure(CommandLineTool.Git, add.Value));
