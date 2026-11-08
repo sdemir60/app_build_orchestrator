@@ -587,27 +587,31 @@ public partial class ActionBarTests
     /// çizilir (varsayılan <c>Collapsed</c>) — grup normalde eskisi gibi görünür.</para>
     /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-11-02]</b> Ayraçla Stop/Build grid'inin arasına <c>Restart engine</c> girdi
     /// (eski iddia: grup yedi öğedir, ayraçtan hemen sonra Build gelir). Düğme şeritten taşındı ve yalnız motor öldüğünde ya da
-    /// sustuğunda çizilir (varsayılan <c>Collapsed</c>) — sağlıklı bir motorda grup eskisi gibi görünür.</para></summary>
+    /// sustuğunda çizilir (varsayılan <c>Collapsed</c>) — sağlıklı bir motorda grup eskisi gibi görünür.</para>
+    /// <para><b>[DEĞİŞEN KURAL — worktree, kullanıcı kararı 2026-11-05]</b> Workspace adıyla branch chip'inin arasına Repo ↔ Worktree
+    /// anahtarı girdi (eski iddia: grup sekiz öğedir, ad etiketinden hemen sonra branch chip'i gelir). Spec 2026-09-18 §1-1'in kaldırdığı
+    /// worktree chip'i GERİ GELMEDİ: o bir branch hedefi seçerdi; bu anahtar yalnız hangi kopyanın derlendiğini seçer.</para></summary>
     [StaFact]
-    public void The_right_group_orders_workspace_branch_behind_config_perf_a_separator_then_the_build_area()
+    public void The_right_group_orders_workspace_worktree_branch_behind_config_perf_a_separator_then_the_build_area()
     {
         var vm = NewVm();
         var (bar, window) = Realize(vm);
 
         var rightGroup = Assert.IsType<StackPanel>(bar.Segment.Parent);
         var rightChildren = rightGroup.Children.Cast<UIElement>().ToList();
-        Assert.Equal(8, rightChildren.Count);
+        Assert.Equal(9, rightChildren.Count);
         Assert.Same(bar.WorkspaceLabel, rightChildren[0]);
-        Assert.Same(bar.BranchChip, ((Grid)rightChildren[1]).Children.Cast<UIElement>().First());
-        Assert.Same(bar.BehindChip, rightChildren[2]);
+        Assert.Same(bar.WorktreeToggle, rightChildren[1]);
+        Assert.Same(bar.BranchChip, ((Grid)rightChildren[2]).Children.Cast<UIElement>().First());
+        Assert.Same(bar.BehindChip, rightChildren[3]);
         Assert.Equal(Visibility.Collapsed, bar.BehindChip.Visibility);   // geride değilken çizilmez
-        Assert.Same(bar.Segment, rightChildren[3]);
-        Assert.Same(bar.PerfChip, rightChildren[4]);
-        var rightSeparator = Assert.IsType<Border>(rightChildren[5]);
+        Assert.Same(bar.Segment, rightChildren[4]);
+        Assert.Same(bar.PerfChip, rightChildren[5]);
+        var rightSeparator = Assert.IsType<Border>(rightChildren[6]);
         Assert.Same(bar.FindResource("Brush.BorderSubtle"), rightSeparator.Background);
-        Assert.Same(bar.RestartEngineButton, rightChildren[6]);
+        Assert.Same(bar.RestartEngineButton, rightChildren[7]);
         Assert.Equal(Visibility.Collapsed, bar.RestartEngineButton.Visibility); // motor sağlıklıyken çizilmez
-        var buildArea = Assert.IsType<Grid>(rightChildren[7]);
+        var buildArea = Assert.IsType<Grid>(rightChildren[8]);
         Assert.Contains(bar.StopButton, buildArea.Children.Cast<UIElement>());
         Assert.Contains(bar.Split, buildArea.Children.Cast<UIElement>());
         GC.KeepAlive(window);

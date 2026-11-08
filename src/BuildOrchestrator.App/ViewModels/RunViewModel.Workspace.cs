@@ -499,7 +499,7 @@ public sealed partial class RunViewModel
         SetPullBusy(true); // [spec 2026-09-18 §6.1] kapı GÖNDERİMDEN önce kapanır (checkout'un deseni)
         ArmEngineWatchdog();
         // Gönderim SENKRON düştüyse hiçbir pullCompleted gelmez — pill ve kilit asılı kalmasın.
-        if (!await TrySendAsync(new PullRepositoryCommand(RootPath, Branch), "pullRepository"))
+        if (!await TrySendAsync(new PullRepositoryCommand(ActiveRoot, Branch), "pullRepository"))
         {
             CurrentOperation = null;
             SetPullBusy(false);
@@ -563,11 +563,11 @@ public sealed partial class RunViewModel
     /// basış kuyruğa alınmaz.</para></summary>
     private bool WorkspaceBusy => SyncBusy || NonSyncWorkspaceBusy;
 
-    /// <summary>Sync DIŞINDAKİ workspace işleri: Clean, Optimize, checkout ya da pull. <see cref="WorkspaceBusy"/>'nin
-    /// üyelik listesinin TEK yeri — güncelleme kartının Restart kilidi bunları Sync'ten AYRI bir kovada ("görev")
-    /// okur (<see cref="UpdateRestartBlockedReason"/>); yeni bir workspace işi buraya eklenince iki soru birlikte
+    /// <summary>Sync DIŞINDAKİ workspace işleri: Clean, Optimize, checkout, pull ya da [worktree] Settings Save'in worktree kurulumu.
+    /// <see cref="WorkspaceBusy"/>'nin üyelik listesinin TEK yeri — güncelleme kartının Restart kilidi bunları Sync'ten AYRI bir kovada
+    /// ("görev") okur (<see cref="UpdateRestartBlockedReason"/>); yeni bir workspace işi buraya eklenince iki soru birlikte
     /// görür.</summary>
-    private bool NonSyncWorkspaceBusy => CleanBusy || OptimizeBusy || CheckoutBusy || PullBusy;
+    private bool NonSyncWorkspaceBusy => CleanBusy || OptimizeBusy || CheckoutBusy || PullBusy || WorktreeBusy;
 
     /// <summary>[final review M3] Workspace'e yeni bir iş başlatılabilir mi: koşu kilidi yok (<see cref="IsMidRunLocked"/>)
     /// ve workspace işi yok (<see cref="WorkspaceBusy"/>). Settings Save'in kapısı; komut kapıları
@@ -639,9 +639,8 @@ public sealed partial class RunViewModel
     private bool WorkspaceGateOpen => WorkspaceIdle && !IsEngineUnavailable;
 
     /// <summary>[spec 2026-09-18 §6.3] <see cref="CheckoutBusy"/>'nin TEK yazıcısı: değer değiştiğinde chip'in
-    /// kapısını (<see cref="CanSwitchBranch"/>) duyurur. Çağıranlar: gönderim (<see cref="SelectBranch"/>),
-    /// cevap (<see cref="OnCheckoutCompletedAsync"/>, <see cref="TryConsumeCheckoutFailure"/>) ve motor kaybı
-    /// (<see cref="RunViewModel.ReleaseAfterEngineLoss"/> — motor checkout ortasında ölürse kilit sızmaz).</summary>
+    /// kapısını (<see cref="CanSwitchBranch"/>) duyurur. Çağıranlar: gönderim (<see cref="RequestCheckoutAsync"/>) ve bırakma
+    /// (<see cref="ReleaseCheckout"/> — cevap, motorun reddi, düşen gönderim ve motor kaybı; motor checkout ortasında ölürse kilit sızmaz).</summary>
     private void SetCheckoutBusy(bool busy)
     {
         if (CheckoutBusy == busy) return;
@@ -665,9 +664,24 @@ public sealed partial class RunViewModel
     /// için sessiz bir Sync (<see cref="SyncMode.Silent"/>) kararları tazeler [final review M2].
     /// <see cref="CheckoutStatus.AlreadyOn"/> hiçbir şey yazmaz (App aktif branch'e zaten komut göndermez; bu
     /// yalnız envanterin bayat olduğu yarışta gelir).</para>
+    ///
+    /// <para><b>[worktree] Kart ve diğer kopya:</b> kirli ağaç reddi branch kartını açar (<see cref="PendingBranchSwitch"/>). Checkout
+    /// kartın kararıyla DİĞER kopyada gittiyse (<see cref="RunViewModel.RequestCheckoutAsync"/>) geçiş ya da "zaten orada" uygulamayı o
+    /// kopyaya geçirir — bölüm kopya satırıyla açılır, branch satırı ardından gelir; o kopya da kirliyse uygulama yine geçer ve kart orada
+    /// yeniden açılır. Hedef başka bir kopyada açıksa (<see cref="CheckoutStatus.CheckedOutElsewhere"/>) motor hiçbir şey yapmamıştır:
+    /// konsol hangi kopyada açık olduğunu söyler.</para>
     /// </summary>
     private async Task OnCheckoutCompletedAsync(CheckoutCompletedEvent e)
     {
+        var request = _checkoutRequest;
+        _checkoutRequest = null;
+        var copy = request?.Copy ?? ActiveCopy;
+        if (copy != ActiveCopy && e.Status is CheckoutStatus.Switched or CheckoutStatus.AlreadyOn or CheckoutStatus.Dirty)
+        {
+            await OnOtherCopyCheckoutAsync(e, copy, request!.Value.Target);
+            return;
+        }
+
         if (e.Status != CheckoutStatus.Switched)
         {
             CurrentOperation = null;
@@ -678,7 +692,10 @@ public sealed partial class RunViewModel
             {
                 AppendRunLine(PlanProgressLines.SwitchRefusedDirty(e.DirtyCount));
                 PushStream(StreamKind.Warn, null, StreamText.BranchSwitchRefused(e.DirtyCount));
+                if (request is { } refused) SetPendingBranchSwitch(new PendingBranchSwitch(refused.Target, copy, e.DirtyCount));
             }
+            if (e.Status == CheckoutStatus.CheckedOutElsewhere)
+                AppendRunLine(PlanProgressLines.SwitchRefusedElsewhere(request?.Target.Name ?? e.Branch ?? "the branch", e.Detail ?? "another working copy"));
             bool treeChanged = e.Status == CheckoutStatus.Failed && e.StashMessage is not null;
             if (treeChanged) AppendRunLine(PlanProgressLines.StashedBeforeSwitch(e.StashMessage!));
             if (e.Status is CheckoutStatus.Failed or CheckoutStatus.StashFailed)
@@ -693,14 +710,41 @@ public sealed partial class RunViewModel
         // [spec 2026-09-18 §6.2] Yeni bölüm: temizliği ve bölümün ilk satırlarını (stash, switch) BranchChange
         // Sync'i yapar — temizlik önce, not sonra, tek yerde; ardından fetch'siz transkript. Kilit, Sync kapıyı
         // DEVRALDIKTAN SONRA bırakılır (SyncThenReleaseAsync).
+        await SyncThenReleaseAsync(ReleaseCheckout, SyncMode.BranchChange, sectionLines: CheckoutSectionLines(e));
+    }
+
+    /// <summary>Başarılı bir checkout'un bölüm satırları — stash (varsa) ve switch. Aynı kopyada ve diğer kopyada geçişin ORTAK kaynağı.</summary>
+    private static List<string> CheckoutSectionLines(CheckoutCompletedEvent e)
+    {
         List<string> section = [];
         if (e.StashMessage is { } stashed) section.Add(PlanProgressLines.StashedBeforeSwitch(stashed));
         section.Add(PlanProgressLines.SwitchedBranch(e.FromBranch ?? "HEAD", e.Branch ?? "HEAD", ShortSha(e.Revision)));
-        await SyncThenReleaseAsync(ReleaseCheckout, SyncMode.BranchChange, sectionLines: section);
+        return section;
     }
 
-    /// <summary>Checkout kilidini bırakır — <see cref="SyncThenReleaseAsync"/>'e verilen adım.</summary>
-    private void ReleaseCheckout() => SetCheckoutBusy(false);
+    /// <summary>[worktree] Kartın "diğer kopya" kararının cevabı: geçiş, "zaten orada" ya da kirli — üçünde de uygulama o kopyaya geçer
+    /// (kullanıcı oraya gitmek istedi). Bölüm kopya satırıyla açılır; geçişin satırları ya da kir uyarısı ardından gelir. Kirliyse kart o
+    /// kopyada yeniden açılır. Kilit, geçişin Sync'i kapıyı devraldıktan SONRA bırakılır.</summary>
+    private async Task OnOtherCopyCheckoutAsync(CheckoutCompletedEvent e, WorkingCopy copy, BranchRef target)
+    {
+        IReadOnlyList<string> trailing = e.Status switch
+        {
+            CheckoutStatus.Switched => CheckoutSectionLines(e),
+            CheckoutStatus.Dirty => [PlanProgressLines.SwitchRefusedDirty(e.DirtyCount)],
+            _ => [],
+        };
+        await SwitchCopyCoreAsync(copy, trailing: trailing, release: ReleaseCheckout);
+        if (e.Status == CheckoutStatus.Dirty) SetPendingBranchSwitch(new PendingBranchSwitch(target, copy, e.DirtyCount));
+    }
+
+    /// <summary>Checkout'u bırakır — kilit ve uçuştaki isteğin hedefi birlikte. Cevabın (<see cref="SyncThenReleaseAsync"/>'e verilen adım),
+    /// düşen gönderimin, motorun reddinin (<see cref="TryConsumeCheckoutFailure"/>) ve motor kaybının (<see cref="RunViewModel.ReleaseAfterEngineLoss"/>)
+    /// TEK bırakma yolu: istek kilitle birlikte unutulmazsa sonra gelen sahipsiz bir cevap eski isteğin kopyasına geçirir ya da kartını açardı.</summary>
+    private void ReleaseCheckout()
+    {
+        _checkoutRequest = null;
+        SetCheckoutBusy(false);
+    }
 
     /// <summary>[spec 2026-09-18 §6.3] Dönüş değeri = "bu hata checkout'a aittir, run/Sync state'ine DOKUNMA".
     /// <see cref="TryConsumeCleanFailure"/>'ın ikizi: motorun reddi (koşu uçuşta) reddedilen bir checkout gibi
@@ -710,7 +754,7 @@ public sealed partial class RunViewModel
     private bool TryConsumeCheckoutFailure(string code)
     {
         if (!CheckoutErrorCodes.Contains(code) || !CheckoutBusy) return false;
-        SetCheckoutBusy(false);
+        ReleaseCheckout();
         CurrentOperation = null;
         return true;
     }

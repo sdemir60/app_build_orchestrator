@@ -778,6 +778,50 @@ public class IpcMessagesTests
         Assert.DoesNotContain("\"revision\"", JsonSerializer.Serialize(events[1], IpcJson.Options));
     }
 
+    /// <summary>[worktree] Branch başka bir kopyada açık: yeni durum sona eklendi ve camelCase metin olarak gider; Detail o
+    /// kopyanın köküdür.</summary>
+    [Fact]
+    public void A_branch_open_in_another_copy_roundtrips_as_checkedOutElsewhere()
+    {
+        IpcEvent ev = new CheckoutCompletedEvent(CheckoutStatus.CheckedOutElsewhere, "main", "main", null, 0, null, @"D:\src\acme-worktree");
+        string json = JsonSerializer.Serialize(ev, IpcJson.Options);
+
+        Assert.Contains("\"status\":\"checkedOutElsewhere\"", json);
+        Assert.Equal(ev, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+    }
+
+    // ---------------------------------------------------------------- [worktree] oluşturma
+
+    /// <summary>Settings Save'in worktree komutu: ana repo kökü ve klasör — kendi ayrımcısıyla.</summary>
+    [Fact]
+    public void CreateWorktreeCommand_roundtrips_with_its_own_discriminator()
+    {
+        IpcCommand cmd = new CreateWorktreeCommand(@"D:\src\acme", @"D:\src\acme-worktree");
+        string json = JsonSerializer.Serialize(cmd, IpcJson.Options);
+
+        Assert.Contains("\"type\":\"createWorktree\"", json);
+        Assert.Contains("\"folder\":", json);
+        Assert.Equal(cmd, JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
+    }
+
+    /// <summary>Oluşturmanın sonucu: kurulduysa revizyon, kurulmadıysa neden; boş alan yazılmaz.</summary>
+    [Fact]
+    public void WorktreeCreatedEvent_roundtrips_with_its_own_discriminator()
+    {
+        IpcEvent[] events =
+        [
+            new WorktreeCreatedEvent(@"D:\src\acme-worktree", Created: true, "b7e91d4aa", null),
+            new WorktreeCreatedEvent(@"D:\src\acme-worktree", Created: false, null, "the worktree folder needs a full path"),
+        ];
+        foreach (var ev in events)
+        {
+            string json = JsonSerializer.Serialize(ev, IpcJson.Options);
+            Assert.Contains("\"type\":\"worktreeCreated\"", json);
+            Assert.Equal(ev, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+        }
+        Assert.DoesNotContain("\"detail\"", JsonSerializer.Serialize(events[0], IpcJson.Options));
+    }
+
     // ---------------------------------------------------------------- [A5/T69] Sync / branch / topoloji
 
     // App'in branch seçicisini besleyen komut RootPath taşır (Supervisor tek bir repo'ya sabitlenmiş DEĞİLDİR —

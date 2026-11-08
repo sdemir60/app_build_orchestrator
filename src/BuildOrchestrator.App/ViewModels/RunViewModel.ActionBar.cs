@@ -52,25 +52,17 @@ public sealed partial class RunViewModel
     /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-1 → §6.3]</b> Worktree döneminde seçim onu worktree'de
     /// derlenecek HEDEF yapardı; worktree kalkınca (Task 4) seçim bir süre HİÇBİR ŞEY yapmadı. Artık checkout
     /// eder.</para>
+    ///
+    /// <para>[worktree] Checkout aktif kopyada gider (<see cref="ActiveRoot"/>); kirli ağaçta ayar kapalıysa cevap branch kartını açar
+    /// (<see cref="PendingBranchSwitch"/>). Yeni bir seçim açık kartı kapatır — kartın konusu eski seçimdi. Gövde kartın kararlarıyla
+    /// ortaktır (<see cref="RequestCheckoutAsync"/>).</para>
     /// </summary>
     public async Task SelectBranch(BranchRef branch)
     {
         ArgumentNullException.ThrowIfNull(branch);
         if (branch.IsActive) return;
-        if (!RefreshGitWritesAllowed() || !CanSwitchBranch) return; // [spec §6.4] yoklama bayat olabilir
-
-        CurrentOperation = OperationLabel.Checkout;
-        SetCheckoutBusy(true); // kapı GÖNDERİMDEN ÖNCE kapanır — ikinci tık ikinci bir checkout kuyruklatırdı
-        ArmEngineWatchdog();
-        bool sent = await TrySendAsync(
-            new CheckoutBranchCommand(RootPath, branch.Name, branch.IsRemoteTracking, StashOnBranchSwitch), "checkoutBranch");
-        // Gönderim SENKRON düştüyse (motor hazır değil/ölü) hiçbir cevap GELMEYECEK — kilit burada açılmazsa
-        // chip kalıcı pasif kalırdı.
-        if (!sent)
-        {
-            SetCheckoutBusy(false);
-            CurrentOperation = null; // pill "SWITCHING BRANCH"ta asılı kalmasın
-        }
+        SetPendingBranchSwitch(null);
+        await RequestCheckoutAsync(branch, ActiveCopy, StashOnBranchSwitch);
     }
 
     /// <summary>
@@ -135,7 +127,7 @@ public sealed partial class RunViewModel
     private void ApplyLayerPatterns(IReadOnlyList<LayerPattern> patterns)
     {
         LayerPatterns = patterns;
-        AppendRunLine(patterns.Count > 0
+        AppendSaveNote(patterns.Count > 0
             ? $"Layer definitions updated — {patterns.Count} layers"
             : "Layers removed — single project list");
     }
@@ -153,7 +145,7 @@ public sealed partial class RunViewModel
         int previousCount = ExternalProjects.Count;
         ExternalProjects = externals;
         if (externals.Count == previousCount) return; // değişmedi → not YOK
-        AppendRunLine(externals.Count > 0
+        AppendSaveNote(externals.Count > 0
             ? $"External projects → {externals.Count} — built before the repository projects"
             : "External projects cleared");
     }
@@ -172,7 +164,7 @@ public sealed partial class RunViewModel
         bool changed = pull != UpdateExternals;
         UpdateExternals = pull;
         if (!changed || ExternalProjects.Count == 0) return;
-        AppendRunLine(pull
+        AppendSaveNote(pull
             ? "Pull before build on — external working copies update first"
             : "Pull before build off — external working copies are used as they are");
     }
@@ -187,7 +179,7 @@ public sealed partial class RunViewModel
     {
         if (stash == StashOnBranchSwitch) return;
         StashOnBranchSwitch = stash;
-        AppendRunLine(stash
+        AppendSaveNote(stash
             ? "Stash and switch branches on — uncommitted changes are stashed before a branch switch"
             : "Stash and switch branches off — a branch switch stops while there are uncommitted changes");
     }
@@ -204,7 +196,7 @@ public sealed partial class RunViewModel
         // Etiket KATALOGDAN gelir (ShellSwitch.Note deseni): anahtarın adı burada literal yazılmaz. Sonek "from the
         // next run" der — not koşu sürerken de yazılır, değişiklik ise bir sonraki işlemde geçerli olur (spec §6.5).
         string label = GeneralSettingsCatalog.Definition(GeneralSetting.CompactConsole).Label;
-        AppendRunLine(compact
+        AppendSaveNote(compact
             ? $"{label} on — errors, the first warnings of each project and a warning count from the next run"
             : $"{label} off — every MSBuild line is shown from the next run");
     }
@@ -222,7 +214,7 @@ public sealed partial class RunViewModel
         // Etiket KATALOGDAN gelir (ApplyCompactConsole deseni): anahtarın adı burada literal yazılmaz. "Beş dakika" sözcüğü
         // EngineIdleRule.IdleAfter ile testle eşitlenir (kopya YASAK: sayının sahibi o sabittir).
         string label = GeneralSettingsCatalog.Definition(GeneralSetting.StopEngineWhenIdle).Label;
-        AppendRunLine(stopWhenIdle
+        AppendSaveNote(stopWhenIdle
             ? $"{label} on — the engine exits after five idle minutes"
             : $"{label} off — the engine is no longer stopped when idle");
     }
@@ -287,33 +279,69 @@ public sealed partial class RunViewModel
     /// dokunulmaz.</param>
     /// <param name="stopEngineWhenIdle">[idle-memory · dalga 3 / spec §6.4] General'ın "Stop the engine when idle" switch'i — App-içi
     /// tercih (motora gitmez); değer değiştiyse konsola not düşer. <c>null</c> ⇒ dokunulmaz.</param>
+    /// <param name="worktreeFolder">[worktree] Workspace'in Worktree folder alanı (boş = tanımsız); <c>null</c> ⇒ dokunulmaz — boş kökte ise
+    /// her zaman düşer (kökü olmayan bir worktree yoktur). Kökle AYNI kapıdadır: koşu ya da workspace işi uçuştayken ertelenir. Klasör yoksa ya
+    /// da boşsa ve alan bu Save'de değiştiyse (ya da <paramref name="switchToWorktree"/>) Save onu kurar (<see cref="RequestWorktreeAsync"/>) ve
+    /// Save'in Sync'i kurulumun cevabından SONRA gider; aktif worktree'nin klasörü değiştiyse kopya repo'ya döner.</param>
+    /// <param name="switchToWorktree">[worktree] Settings alt bardaki Worktree düğmesinden (ya da branch kartından) açıldı: worktree hazırsa (ya
+    /// da kurulum başarılı olunca) Save'in Sync'i worktree'ye geçişin Sync'idir ve bölüm Save'in notlarıyla başlar.</param>
     public async Task ApplySettingsAsync(IReadOnlyList<LayerPattern> patterns, string? repositoryRoot,
         IReadOnlyList<ExternalProject> externals, bool? pullExternalsBeforeBuild = null, bool? stashOnBranchSwitch = null,
         IReadOnlyList<string>? settingNotes = null, bool? compactConsole = null,
-        bool? stopEngineWhenIdle = null)
+        bool? stopEngineWhenIdle = null, string? worktreeFolder = null, bool switchToWorktree = false)
     {
         string root = RootOf(repositoryRoot);
-        if (WorkspaceIdle && root.Length == 0 && HasWorkspace) CloseWorkspace();
-        ApplyLayerPatterns(patterns);
-        // SIRA: bayrağın notu listeyi TANIMLI görmeli — "harici proje varsa yaz" kuralı yeni listeye bakar.
-        ApplyExternalProjects(externals);
-        if (pullExternalsBeforeBuild is { } pull) ApplyPullExternals(pull);
-        if (stashOnBranchSwitch is { } stash) ApplyStashOnBranchSwitch(stash);
-        if (compactConsole is { } compact) ApplyCompactConsole(compact);
-        if (stopEngineWhenIdle is { } stopIdle) ApplyStopEngineWhenIdle(stopIdle);
-        if (settingNotes is not null)
-            foreach (var note in settingNotes) AppendRunLine(note);
-        if (!WorkspaceIdle)
+        // [worktree] Kökü olmayan bir worktree yoktur: boş kök (workspace kapanıyor) worktree tanımını da düşürür — saklansaydı yeni bir kök
+        // seçildiğinde başka reponun klasörü Save'i kapatırdı.
+        string? folder = root.Length == 0 ? "" : worktreeFolder is null ? null : RootOf(worktreeFolder).Trim();
+        // [worktree] Save'in notları toplanır (AppendSaveNote): Save worktree'ye geçerse geçişin bölümü konsolu temizler ve onlarla başlar.
+        List<string> notes = [];
+        _saveNotes = notes;
+        bool rootChanged, worktreeChanged, copyReturned;
+        try
         {
-            if (IsRepositoryChange(root)) AppendRunLine(RepositoryChangeDeferredLine(runInFlight: IsMidRunLocked));
-            return;
+            if (WorkspaceIdle && root.Length == 0 && HasWorkspace) CloseWorkspace();
+            ApplyLayerPatterns(patterns);
+            // SIRA: bayrağın notu listeyi TANIMLI görmeli — "harici proje varsa yaz" kuralı yeni listeye bakar.
+            ApplyExternalProjects(externals);
+            if (pullExternalsBeforeBuild is { } pull) ApplyPullExternals(pull);
+            if (stashOnBranchSwitch is { } stash) ApplyStashOnBranchSwitch(stash);
+            if (compactConsole is { } compact) ApplyCompactConsole(compact);
+            if (stopEngineWhenIdle is { } stopIdle) ApplyStopEngineWhenIdle(stopIdle);
+            if (settingNotes is not null)
+                foreach (var note in settingNotes) AppendSaveNote(note);
+            if (!WorkspaceIdle)
+            {
+                // [worktree] Worktree klasörü de kök gibi ertelenir: aktif worktree'nin klasörünü koşunun altından değiştirmek koşunun kökünü
+                // değiştirirdi.
+                if (IsRepositoryChange(root) || (folder is not null && IsWorktreeChange(folder)))
+                    AppendRunLine(RepositoryChangeDeferredLine(runInFlight: IsMidRunLocked));
+                return;
+            }
+            rootChanged = ApplyRepositoryRoot(root);
+            worktreeChanged = folder is not null && IsWorktreeChange(folder);
+            copyReturned = folder is not null && ApplyWorktreeFolder(folder);
         }
-        bool rootChanged = ApplyRepositoryRoot(root);
+        finally { _saveNotes = null; }
         if (RootPath.Length == 0) return;
         if (IsEngineUnavailable) return;
+        // [worktree] Klasör kurulmayı bekliyorsa ve kurulum bu Save'in işiyse — alan bu Save'de değişti ya da Settings alt bardaki anahtardan
+        // (ya da karttan) açıldı — Save'in Sync'i kurulumun cevabından sonra gider (OnWorktreeCreatedAsync); kayıtlı ama diskte olmayan bir
+        // klasörü ilgisiz bir Save sessizce yeniden kurmaz. Worktree hazırsa ve Settings anahtardan açıldıysa Save'in Sync'i geçişin Sync'idir.
+        // Geçişin bölümü iki yolda da Save'in notlarıyla başlar.
+        if (WorktreeNeedsCreating && (worktreeChanged || switchToWorktree))
+        {
+            await RequestWorktreeAsync(planGone: rootChanged || copyReturned, switchAfter: switchToWorktree, notes);
+            return;
+        }
+        if (switchToWorktree && WorktreeReady && ActiveCopy != WorkingCopy.Worktree)
+        {
+            await SwitchCopyCoreAsync(WorkingCopy.Worktree, leading: notes);
+            return;
+        }
         // [D3/T5 · design v1.13.2] Appended — ApplyLayerPatterns/ApplyRepositoryRoot bu Sync'ten HEMEN ÖNCE
         // KENDİ notunu yazdı (bkz. SyncCoreAsync XML doc'u); bir temizlik onu da silerdi.
-        await SyncAfterRootChangeAsync(rootChanged);
+        await SyncAfterRootChangeAsync(rootChanged || copyReturned);
     }
 
     /// <summary>[spec 2026-09-18 §6.2] Settings Save'in Sync'i (<see cref="SyncMode.Appended"/>). Kök GERÇEKTEN
@@ -343,7 +371,8 @@ public sealed partial class RunViewModel
         // yüzeyini SyncAfterRootChangeAsync boşaltır). (İlk kurulumda — Empty'den çıkarken — not YAZILMAZ: orada
         // zaten otomatik bir Sync akışı başlar ve not gürültü olurdu. Kapanmış bir workspace'ten sonra girilen kök
         // de ilk kurulumdur.)
-        if (RootPath.Length > 0) AppendRunLine(RepositoryRootChangedLine(root));
+        if (RootPath.Length > 0) AppendSaveNote(RepositoryRootChangedLine(root));
+        ReturnToRepositoryCopy(); // [worktree] worktree eski reponundur — Save'in Sync'i yeni repo kökünde koşar
         RootPath = root;
         ResetRowsToHollow();
         ForgetLastSync(); // [spec 2026-09-18 §6.1] eski kökün HEAD'i yeni kökte kıyas tabanı olamaz
@@ -356,8 +385,11 @@ public sealed partial class RunViewModel
     /// <see cref="ApplyRepositoryRoot"/>'un kapısı ile mid-run erteleme notunun koşulu (<see cref="ApplySettingsAsync"/>)
     /// AYNI soruyu sorar; soru TEK yerde durur (kopya YASAK) — aksi halde iki karşılaştırma zamanla ayrışır ve UI,
     /// motorun yaptığından başka bir şey anlatırdı.</summary>
-    private bool IsRepositoryChange(string root) =>
-        !string.Equals(root, RootPath, StringComparison.OrdinalIgnoreCase);
+    private bool IsRepositoryChange(string root) => !SamePath(root, RootPath);
+
+    /// <summary>İki yol aynı klasör mü — Windows yolları büyük/küçük harf duyarsızdır. Save'in kök ve worktree kapılarının (<see cref="IsRepositoryChange"/>,
+    /// <see cref="IsWorktreeChange"/>) TEK karşılaştırması.</summary>
+    private static bool SamePath(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>[kullanıcı kararı 2026-09-29] Settings'ten gelen kökün normal biçimi: boş ya da yalnız boşluk → boş kök
     /// ("workspace yok"), aksi hâlde olduğu gibi. Save'in kök kararlarının (kapanış, değişim, erteleme notu) TEK girdisi —
@@ -386,6 +418,7 @@ public sealed partial class RunViewModel
         CurrentOperation = null;
         SyncErrorMessage = null;
         RunErrorMessage = null;
+        ReturnToRepositoryCopy(); // [worktree] workspace yokken açık bir kopya da yoktur
         RootPath = "";
         ClearPlanSurface();
         ForgetLastSync();

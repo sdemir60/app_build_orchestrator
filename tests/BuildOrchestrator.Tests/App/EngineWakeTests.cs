@@ -155,6 +155,8 @@ public class EngineWakeTests
     {
         Build, Rebuild, ResolveCycles, MenuClean, TrayHotkey, DeepClean, Optimize,
         SyncButton, WindowReturn, AfterCommit, BranchChange, Configuration, SettingsSave, Checkout, Pull, ProjectLog,
+        /// <summary>[worktree] Settings Save'in worktree kurulumu (klasör yok).</summary>
+        CreateWorktree,
     }
 
     /// <summary>Yolu üretimdeki girişinden BAŞLATIR ve işini döner — beklemez: uyanmayı bekleyen bir yol kapıda uçuştadır. Girişler: komutlar
@@ -186,6 +188,10 @@ public class EngineWakeTests
             case WakingPath.Checkout: return vm.SelectBranch(new BranchRef("feature/x", "bbbbbbbbbbbb", IsActive: false, IsRemoteTracking: false));
             case WakingPath.Pull: return vm.PullRepositoryCommand.ExecuteAsync(null);
             case WakingPath.ProjectLog: return vm.LoadProjectLogAsync(MainWindowHost.IdOf("A"));
+            case WakingPath.CreateWorktree:
+                // Kabuğun kökü sahtedir (diskte repo yok): klasör denetimi "kurulabilir" der — kurulum yolu üretimdeki girişinden sürülür.
+                vm.InspectWorktreeFolder = (_, _) => WorktreeFolderState.Creatable;
+                return vm.ApplySettingsAsync([], vm.RootPath, [], worktreeFolder: vm.RootPath + "-worktree");
             default: throw new ArgumentOutOfRangeException(nameof(path), path, null);
         }
     }
@@ -221,6 +227,7 @@ public class EngineWakeTests
     [InlineData(WakingPath.Checkout, typeof(CheckoutBranchCommand), 0, false)]
     [InlineData(WakingPath.Pull, typeof(PullRepositoryCommand), 0, false)]
     [InlineData(WakingPath.ProjectLog, typeof(GetProjectLogCommand), 0, false)]
+    [InlineData(WakingPath.CreateWorktree, typeof(CreateWorktreeCommand), 0, false)]
     public async Task Every_engine_path_wakes_the_sleeping_engine_first_and_silently(WakingPath path, Type firstCommand, int syncs,
         bool clearsConsole)
     {
@@ -1465,6 +1472,7 @@ public class EngineWakeTests
         new(typeof(OptimizeWorkspaceCommand), WakingPath.Optimize, vm => vm.OptimizeBusy),
         new(typeof(CheckoutBranchCommand), WakingPath.Checkout, vm => vm.CheckoutBusy),
         new(typeof(PullRepositoryCommand), WakingPath.Pull, vm => vm.PullBusy),
+        new(typeof(CreateWorktreeCommand), WakingPath.CreateWorktree, vm => vm.WorktreeBusy), // [worktree] Settings Save'in kurulumu
     ];
 
     /// <summary>Yolun satırı — her yol listede tek satırdadır (<see cref="Every_waking_command_type_is_classified_for_engine_loss"/>).</summary>

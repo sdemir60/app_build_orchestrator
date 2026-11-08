@@ -229,6 +229,42 @@
           </Grid>
           <TextBlock Text="Nothing is discovered without it." Margin="0,9,0,0"
                      FontSize="{DynamicResource FontSize.2xs}" Foreground="{DynamicResource Brush.TextFaint}" />
+
+          <!-- [worktree] İsteğe bağlı ikinci kök: reponun yanında tek bir linked worktree. Repository root'la AYNI kalıp (input +
+               Browse, tek yol alanı — isim yolun son parçasıdır). Save: klasör bu reponun worktree'siyse kaydedilir, yoksa ya da boşsa
+               kurulur, başka bir şeyse Save kapalıdır ve footer nedenini söyler (SettingsDraftViewModel.SaveBlockedReason). Satır
+               adlıdır: alt bardaki Worktree düğmesinden açılışta odak buraya düşer (SettingsDialog.InitialFocusScope). -->
+          <TextBlock Text="WORKTREE FOLDER" Margin="0,22,0,7" Style="{DynamicResource Ds.Settings.CapsHeading}" />
+          <Grid x:Name="WorktreeFolderRow">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBox x:Name="WorktreeFolderInput" Grid.Column="0" VerticalAlignment="Center"
+                     Style="{DynamicResource Ds.Input}"
+                     FontFamily="{x:Static controls:AppFonts.Mono}"
+                     controls:DsChrome.Watermark="D:\src\myapp-worktree"
+                     AutomationProperties.Name="{x:Static app:AccessibilityNames.WorktreeFolderInput}"
+                     Text="{Binding WorktreeFolder, UpdateSourceTrigger=PropertyChanged}" />
+            <Button x:Name="WorktreeBrowseButton" Grid.Column="1" Margin="8,0,0,0" Click="OnBrowseWorktree"
+                    AutomationProperties.Name="{x:Static app:AccessibilityNames.BrowseWorktreeFolder}"
+                    Style="{DynamicResource Ds.Button.Secondary.Md}">
+              <StackPanel Orientation="Horizontal">
+                <Viewbox Width="13" Height="13" Margin="0,0,6,0">
+                  <Canvas Width="24" Height="24">
+                    <Path Data="{DynamicResource Icon.Folder}"
+                          StrokeThickness="{DynamicResource Icon.Folder.StrokeThickness}"
+                          Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                          StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                  </Canvas>
+                </Viewbox>
+                <TextBlock Text="Browse…" VerticalAlignment="Center" />
+              </StackPanel>
+            </Button>
+          </Grid>
+          <TextBlock Margin="0,9,0,0" TextWrapping="Wrap"
+                     FontSize="{DynamicResource FontSize.2xs}" Foreground="{DynamicResource Brush.TextFaint}"
+                     Text="Optional — a second working copy of the repository, next to it, for another branch. Save creates it when the folder does not exist; switch between the two in the bottom bar." />
         </StackPanel>
 
         <!-- ============================ EXTERNAL PROJECTS ============================

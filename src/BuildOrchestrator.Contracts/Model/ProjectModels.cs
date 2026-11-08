@@ -332,6 +332,9 @@ public enum CheckoutStatus
     StashFailed,
     /// <summary>Checkout (stash başarılıysa stash SONRASI) başarısız oldu.</summary>
     Failed,
+    /// <summary>[worktree] Hedef branch başka bir çalışma kopyasında (ana kopya ya da bir worktree) açık — git aynı branch'i
+    /// iki kopyada açtırmaz. Hiçbir şey yapılmadı (stash da); <c>Detail</c> o kopyanın köküdür.</summary>
+    CheckedOutElsewhere,
 }
 
 /// <summary>[Task 7] <c>FastForwardUpdater</c>'ın (<c>Core/Git/RepositoryWriter.cs</c>, <c>FastForwardStatus</c>)

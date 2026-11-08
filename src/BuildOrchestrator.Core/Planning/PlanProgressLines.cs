@@ -125,6 +125,11 @@ public static class PlanProgressLines
     /// olarak akışa düşmez.</para></summary>
     public static string SwitchFailed(string reason) => $"warning: switch failed — {reason}";
 
+    /// <summary>[worktree] Hedef branch başka bir çalışma kopyasında açık: git aynı branch'i iki kopyada açtırmaz, hiçbir şey yapılmadı
+    /// (stash da). <paramref name="copy"/> o kopyanın köküdür. <c>warning:</c> öneki — bkz. <see cref="SwitchRefusedDirty"/>'nin notu.</summary>
+    public static string SwitchRefusedElsewhere(string branch, string copy) =>
+        $"warning: {branch} is already checked out in {copy} — a branch can be open in one working copy at a time";
+
     /// <summary>[spec 2026-09-18 §6.2 · karar 10] Branch değişimiyle kesilen koşunun özeti — koşudan sonra açılan
     /// bölümün İLK satırı (switch satırından önce; branch değişmediyse akışa tek satır). <paramref name="built"/>
     /// kesmeden önce güvenilir biçimde derlenenler, <paramref name="notBuilt"/> koşu kapsamının kalanı. Log klasörü

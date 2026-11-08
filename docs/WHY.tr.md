@@ -238,6 +238,15 @@ akan yazıdan tahmin edilir.\
 derlenen projeleri, koşu bitince de hatalıları adıyla gösterir; her biri tek tıkla açılır.\
 `kalan süre tahmini` · `hatalıya tek tık götüren chip'ler`
 
+## Başka branch için worktree — stash yok, yer kaybı yok
+
+**Yaygın pratik:** bir inceleme ya da acil düzeltme başka bir branch ister, kendi değişiklik ise yarımdır; değişiklik
+stash'e alınır, branch değiştirilip derlenir, sonra geri dönülüp stash açılır ve editör çözümü iki yönde de yeniden
+yükler.\
+**Build Orchestrator'da:** tek tık ve diğer branch kendi klasöründe derlenir; değişikliğin, editörün ve koddaki
+yerin bıraktığın gibi kalır.\
+`ikinci kopya olarak git worktree` · `geçiş için tek anahtar`
+
 ## Harici projeler, tek graf — ortak depolar doğru sırada
 
 **Yaygın pratik:** ortak kütüphaneler ayrı bir depodaysa önce o depo güncellenip derlenir, sonra ana çözüm; bir adım

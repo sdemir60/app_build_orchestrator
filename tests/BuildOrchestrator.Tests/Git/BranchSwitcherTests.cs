@@ -154,6 +154,81 @@ public class BranchSwitcherTests
         Assert.Equal("dirty edit", File.ReadAllText(Path.Combine(repo.RootPath, "a.txt")));
     }
 
+    /// <summary>[worktree] Git aynı branch'i iki çalışma kopyasında açtırmaz. Hedef başka bir kopyada açıksa geçiş HİÇ denenmez —
+    /// kirli ağaç stash'lenmeden: stash'ten sonra checkout'un düşmesi kullanıcının değişikliklerini boşuna stash'e gönderirdi.
+    /// Detay tutan kopyanın köküdür (konsol satırı onu söyler).</summary>
+    [Fact]
+    public async Task A_branch_open_in_another_working_copy_is_refused_before_anything_is_stashed()
+    {
+        using var repo = new GitTestRepo();
+        repo.WriteFile("a.txt", "one");
+        repo.CommitAll("first");
+        repo.CreateBranch("side");
+        string worktree = repo.AddWorktree("side");
+        File.WriteAllText(Path.Combine(repo.RootPath, "a.txt"), "dirty edit");
+        string branchBefore = BranchOf(repo.RootPath);
+
+        var result = await Switcher(repo.RootPath).SwitchAsync("side", isRemote: false, stashIfDirty: true);
+
+        Assert.Equal(CheckoutStatus.CheckedOutElsewhere, result.Status);
+        Assert.Equal(Path.GetFullPath(worktree), Path.GetFullPath(result.Detail!), ignoreCase: true);
+        Assert.Null(result.StashMessage);
+        Assert.Equal("", GitTestRepo.RunGitAt(repo.RootPath, "stash", "list").Trim());
+        Assert.Equal("dirty edit", File.ReadAllText(Path.Combine(repo.RootPath, "a.txt")));
+        Assert.Equal(branchBefore, BranchOf(repo.RootPath));
+    }
+
+    /// <summary>[worktree] Aynı kural worktree'nin içinden de geçerlidir: ana kopyada açık branch worktree'de seçilemez.</summary>
+    [Fact]
+    public async Task The_main_copy_branch_is_refused_inside_the_worktree()
+    {
+        using var repo = new GitTestRepo();
+        repo.WriteFile("a.txt", "one");
+        repo.CommitAll("first");
+        string mainBranch = BranchOf(repo.RootPath);
+        repo.CreateBranch("side");
+        string worktree = repo.AddWorktree("side");
+
+        var result = await Switcher(worktree).SwitchAsync(mainBranch, isRemote: false, stashIfDirty: false);
+
+        Assert.Equal(CheckoutStatus.CheckedOutElsewhere, result.Status);
+        Assert.Equal(Path.GetFullPath(repo.RootPath), Path.GetFullPath(result.Detail!), ignoreCase: true);
+        Assert.Equal("side", BranchOf(worktree));
+    }
+
+    /// <summary>[worktree · reftable] Hangi kopyanın hangi branch'te olduğu git'e sorulur (dosyadan okunmaz): reftable biçimli
+    /// repoda HEAD dosyası yalnız bir yer tutucudur.</summary>
+    [Fact]
+    public async Task A_branch_open_in_another_working_copy_is_refused_in_a_reftable_repository_too()
+    {
+        using var repo = GitTestRepo.Reftable();
+        repo.WriteFile("a.txt", "one");
+        repo.CommitAll("first");
+        repo.CreateBranch("side");
+        repo.AddWorktree("side");
+
+        var result = await Switcher(repo.RootPath).SwitchAsync("side", isRemote: false, stashIfDirty: false);
+
+        Assert.Equal(CheckoutStatus.CheckedOutElsewhere, result.Status);
+    }
+
+    /// <summary>[worktree] Detached HEAD'li bir worktree hiçbir branch'i tutmaz — Save'in kurduğu worktree böyle doğar.</summary>
+    [Fact]
+    public async Task A_detached_worktree_holds_no_branch()
+    {
+        using var repo = new GitTestRepo();
+        repo.WriteFile("a.txt", "one");
+        repo.CommitAll("first");
+        repo.CreateBranch("side");
+        string worktree = repo.AddWorktree("side");
+        GitTestRepo.RunGitAt(worktree, "checkout", "-q", "--detach");
+
+        var result = await Switcher(repo.RootPath).SwitchAsync("side", isRemote: false, stashIfDirty: false);
+
+        Assert.Equal(CheckoutStatus.Switched, result.Status);
+        Assert.Equal("side", BranchOf(repo.RootPath));
+    }
+
     [Fact]
     public async Task A_failed_checkout_after_a_stash_reports_the_stash()
     {

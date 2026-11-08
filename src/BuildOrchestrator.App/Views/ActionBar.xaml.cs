@@ -81,6 +81,13 @@ public partial class ActionBar : UserControl
         // perf momentary; [T20-b] chip artık koşan run'a setPerfMode gönderdiği için VM tarafı async —
         // gönderim hataları VM içinde run dokümanına düşer (TrySendAsync), bu yüzden fire-and-forget güvenli.
         PART_PerfChip.Click += (_, _) => { _ = _vm?.CyclePerfAsync(); PART_PerfChip.IsChecked = false; };
+        PART_WorktreeToggle.Click += OnWorktreeToggleClick; // [worktree] işaret VM'in kopyasını izler — bkz. OnWorktreeToggleClick
+        // [worktree] Branch kartı: Esc ve dışarı tıklama vazgeçmektir; karar VM'dedir, kart yalnız iletir. Kart VM'in konusu düşünce
+        // kapanır — o yoldaki kapanış bir şey yapmaz (konu zaten yok). Dışarı tıklama IsOpen'ın değişiminden okunur, Closed olayından değil:
+        // Closed yalnız gerçekten çizilmiş bir popup'ta ateşlenir.
+        PART_BranchSwitchCard.CloseRequested += () => { CancelBranchSwitch(); PART_BranchChip.Focus(); };
+        DependencyPropertyDescriptor.FromProperty(Popup.IsOpenProperty, typeof(Popup))
+            .AddValueChanged(PART_BranchSwitchPopup, (_, _) => { if (!PART_BranchSwitchPopup.IsOpen) CancelBranchSwitch(); });
         DependencyPropertyDescriptor.FromProperty(SplitButton.IsMenuOpenProperty, typeof(SplitButton))
             .AddValueChanged(PART_Split, (_, _) => { if (PART_Split.IsMenuOpen) PART_BuildMenu.PlayPopIn(); });
         // [design v1.17.0 §9 fix round 1 · I-2] Sync koşarken disabled'dır — kendi IsMouseOver'ı asla true
@@ -123,6 +130,11 @@ public partial class ActionBar : UserControl
     internal ItemsControl Segment => PART_Segment;
     /// <summary>[design v1.11.0 §2.7-5a] Branch chip'inin solundaki mono workspace etiketi.</summary>
     internal TextBlock WorkspaceLabel => PART_Workspace;
+    /// <summary>[worktree] Workspace etiketi ile branch chip'i arasındaki Repo ↔ Worktree anahtarı.</summary>
+    internal ToggleButton WorktreeToggle => PART_WorktreeToggle;
+    /// <summary>[worktree] Branch karar kartının Popup'ı ve kartın kendisi.</summary>
+    internal System.Windows.Controls.Primitives.Popup BranchSwitchPopup => PART_BranchSwitchPopup;
+    internal BranchSwitchCard BranchSwitchCardControl => PART_BranchSwitchCard;
     internal Button SyncButton => PART_Sync;
     /// <summary>[kullanıcı kararı 2026-11-02] Build'in solundaki Restart engine — yalnız <see cref="RunViewModel.OffersEngineRestart"/>'ta görünür.</summary>
     internal Button RestartEngineButton => PART_RestartEngine;
@@ -185,6 +197,7 @@ public partial class ActionBar : UserControl
         if (_built) { RefreshAll(); return; }
         BuildCounterChips();
         BuildBranchChips();
+        BuildWorktreeToggle();
         BuildPerfChip();
         BuildButtons();
         _built = true;
@@ -204,6 +217,7 @@ public partial class ActionBar : UserControl
         _vm = e.NewValue as RunViewModel;
         // Popup içerikleri (görsel ağaç dışı) DataContext'i güvenilir MİRAS ALMAZ → açıkça bağla.
         PART_BranchPopover.DataContext = _vm;
+        PART_BranchSwitchCard.DataContext = _vm;
         PART_BuildMenu.DataContext = _vm;
         if (_vm is not null)
         {
@@ -239,7 +253,9 @@ public partial class ActionBar : UserControl
     /// (workspace + Sync'in kapısı: koşu, Sync, Clean, Optimize, checkout, pull, motor) — bar kapıyı yeniden türetmez.</summary>
     private void RefreshConfigGate()
     {
-        if (_built) PART_Segment.IsEnabled = _vm?.CanSwitchConfiguration ?? false;
+        if (!_built) return;
+        PART_Segment.IsEnabled = _vm?.CanSwitchConfiguration ?? false;
+        PART_WorktreeToggle.IsEnabled = _vm?.CanSwitchCopy ?? false; // [worktree] aynı kapı: geçiş bir Sync başlatır
     }
 
     /// <summary>[T9 fix round 1 · M4] Behind chip'inin tıklanabilirliği = pull komutunun kapısı (CanPullRepository:
@@ -263,6 +279,13 @@ public partial class ActionBar : UserControl
             case nameof(RunViewModel.RootPath):
                 RefreshEnabled();
                 RefreshChips();
+                RefreshWorkspaceLabel();
+                RefreshWorktreeToggle();
+                break;
+            // [worktree] Aktif kopya ve worktree klasörü: anahtarın işareti/tooltip'i ve etiketin tooltip'i (derlenen kök).
+            case nameof(RunViewModel.ActiveCopy):
+            case nameof(RunViewModel.WorktreeFolder):
+                RefreshWorktreeToggle();
                 RefreshWorkspaceLabel();
                 break;
             case nameof(RunViewModel.IsRunning):
@@ -301,8 +324,12 @@ public partial class ActionBar : UserControl
             case nameof(RunViewModel.PerfMode):
                 RefreshPerf();
                 break;
+            case nameof(RunViewModel.PendingBranchSwitch):
+                RefreshBranchSwitchCard();
+                break;
             case nameof(RunViewModel.OffersEngineRestart):
                 RefreshRestartEngine();
+                RefreshWorktreeToggle(); // [worktree] anahtar Restart engine'e yer açar
                 break;
         }
     }
@@ -312,6 +339,8 @@ public partial class ActionBar : UserControl
         if (!_built) return;
         RefreshChips();
         RefreshWorkspaceLabel();
+        RefreshWorktreeToggle();
+        RefreshBranchSwitchCard();
         RefreshBranch();
         RefreshGitOperation();
         RefreshPerf();
@@ -598,8 +627,58 @@ public partial class ActionBar : UserControl
         if (!_built) return;
         string name = TitleBarContext.RepositoryName(_vm?.RootPath ?? "");
         PART_Workspace.Text = name;
-        PART_Workspace.ToolTip = _vm?.RootPath;
+        PART_Workspace.ToolTip = _vm?.ActiveRoot; // [worktree] derlenen kök: repo kopyasında repo kökü, worktree'de worktree
         PART_Workspace.Visibility = name.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    // ---------------------------------------------------------------- [worktree] Repo ↔ Worktree anahtarı
+
+    /// <summary>Anahtarın içeriği: etiketsiz "iki klasör" ikonu chip'in animasyonlu Foreground'unu izler (işaretliyken amber). Pasifken de
+    /// tooltip görünür — WPF pasif öğenin tooltip'ini varsayılan olarak saklar.</summary>
+    private void BuildWorktreeToggle()
+    {
+        PART_WorktreeToggle.Content = IconVisual.BoundToForeground(PART_WorktreeToggle, "Icon.Folders", LabelIconSize, 24);
+        AutomationProperties.SetName(PART_WorktreeToggle, AccessibilityNames.WorktreeToggle);
+        ToolTipService.SetShowOnDisabled(PART_WorktreeToggle, true);
+    }
+
+    /// <summary>Tıklama: <c>ToggleButton</c> işaretini tıkta kendisi çevirir; işaret VM'in kopyasını izlemeli (geçiş reddedilebilir ya da
+    /// kurulum istenebilir) — önce geri alınır, sonra VM'e diğer kopya sorulur. Değişim VM'den <c>ActiveCopy</c> bildirimiyle gelir.</summary>
+    private void OnWorktreeToggleClick(object sender, RoutedEventArgs e)
+    {
+        RefreshWorktreeToggle();
+        if (_vm is null) return;
+        _ = _vm.SwitchCopyAsync(_vm.ActiveCopy.Other());
+    }
+
+    /// <summary>Anahtarın görünürlüğü (workspace varken), işareti (worktree açık), tooltip'i (bir sonraki tık —
+    /// <see cref="WorktreeToggleText.Tooltip"/>) ve kapısı (<see cref="RunViewModel.CanSwitchCopy"/>).
+    /// <para><b>Restart engine görünürken anahtar yer açar:</b> ikisi birlikte en dolu barı en dar pencerede taşırıyordu (ölçüldü: 3,8 px —
+    /// <c>ActionBarTests.With_restart_engine_showing_the_bar_still_fits_the_narrowest_window</c>); motor ölüyken geçişin anlamı da yoktur
+    /// (yeni kökte Sync ister). Derlenen kök o sırada da workspace etiketinin tooltip'indedir.</para></summary>
+    private void RefreshWorktreeToggle()
+    {
+        if (!_built) return;
+        PART_WorktreeToggle.Visibility = _vm is { HasWorkspace: true, OffersEngineRestart: false } ? Visibility.Visible : Visibility.Collapsed;
+        PART_WorktreeToggle.IsChecked = _vm?.ActiveCopy == WorkingCopy.Worktree;
+        PART_WorktreeToggle.ToolTip = _vm is null ? null : WorktreeToggleText.Tooltip(_vm.ActiveCopy, _vm.WorktreeFolder, _vm.RootPath);
+        PART_WorktreeToggle.IsEnabled = _vm?.CanSwitchCopy ?? false;
+    }
+
+    /// <summary>[worktree] Branch kartı VM'in konusu varken açıktır (<see cref="RunViewModel.PendingBranchSwitch"/>); açılırken branch
+    /// popover'ı kapanır — ikisi aynı chip'in üstündedir.</summary>
+    private void RefreshBranchSwitchCard()
+    {
+        if (!_built) return;
+        bool open = _vm?.PendingBranchSwitch is not null;
+        if (open) PART_BranchChip.IsChecked = false;
+        PART_BranchSwitchPopup.IsOpen = open;
+    }
+
+    /// <summary>[worktree] Kart kullanıcı kararı olmadan kapandı (Esc, dışarı tıklama): vazgeçmek. Konu yoksa (karar verildi) no-op.</summary>
+    private void CancelBranchSwitch()
+    {
+        if (_vm?.PendingBranchSwitch is not null) _ = _vm.DecideBranchSwitchAsync(BranchDecision.Cancel);
     }
 
     private void RefreshBranch()

@@ -58,6 +58,8 @@ public class IconGeometryTests
         "Icon.Cpu", "Icon.MemoryStick", "Icon.Parallel",
         // [Exit] Title bar'ın Exit butonu ve kartın "Stop and exit"i — lucide power.
         "Icon.Power",
+        // [worktree] Alt barın Repo ↔ Worktree anahtarı — lucide folders.
+        "Icon.Folders",
     ];
 
     /// <summary>[T60] Tasarımda <c>fill="currentColor" stroke="none"</c> ile verilen (DOLU) ikonlar —

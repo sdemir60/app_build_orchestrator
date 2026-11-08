@@ -39,7 +39,7 @@ public static class HeadReader
         if (IsPlaceholder(refName)) return null;
         string branch = BranchOf(refName);
 
-        string commonDir = ResolveCommonDir(gitDir);
+        string commonDir = GitDirectory.ResolveCommon(gitDir);
         string? sha = ReadLooseRef(commonDir, refName) ?? ReadPackedRef(commonDir, refName);
         return new HeadState(branch, sha);
     }
@@ -84,19 +84,6 @@ public static class HeadReader
         if (!File.Exists(headPath)) return null;
         string content = File.ReadAllText(headPath).Trim();
         return content.Length == 0 ? null : content;
-    }
-
-    /// <summary>Linked worktree'de <c>commondir</c> dosyası ortak <c>.git</c>'e göreli/mutlak yolu taşır;
-    /// dosya yoksa (normal repo) ref'ler zaten <paramref name="gitDir"/>'in kendisindedir.</summary>
-    private static string ResolveCommonDir(string gitDir)
-    {
-        string commonDirFile = Path.Combine(gitDir, "commondir");
-        if (!File.Exists(commonDirFile)) return gitDir;
-
-        string raw = File.ReadAllText(commonDirFile).Trim();
-        if (raw.Length == 0) return gitDir;
-
-        return Path.GetFullPath(Path.IsPathRooted(raw) ? raw : Path.Combine(gitDir, raw));
     }
 
     private static string? ReadLooseRef(string commonDir, string refName)

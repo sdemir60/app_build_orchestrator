@@ -47,6 +47,10 @@ public sealed class NoGitMutationOutsideTheWriterTests
     /// İLK elemanı olarak (<c>["merge", ...]</c>); git fiili her zaman listenin başındadır.
     /// <c>fetch</c> BURADA YOKTUR: yalnız <c>refs/remotes/*</c>'ı günceller ve Sync'in temelidir.
     ///
+    /// <para><b>[DEĞİŞEN KURAL — worktree, kullanıcı kararı 2026-11-05]</b> Listede <c>worktree</c> yoktu: o fiil hiçbir yerde
+    /// geçemezdi (<c>NoWorktreeSurfaceTests</c>). Settings Save artık kullanıcının tanımladığı klasörde detached bir worktree kurar
+    /// (<c>WorktreeCreator</c>); <c>worktree add</c> bir mutasyondur ve öteki yazımlar gibi tek dosyada yaşar. Hangi biçimlerin
+    /// izinli olduğunu (<c>add --detach</c>, <c>list</c>) <c>NoWorktreeSurfaceTests</c> ayrıca çitler.</para>
     /// <para><b>[DEĞİŞEN KURAL]</b> Eski kural HERHANGİ bir <c>"clean"</c>/<c>"reset"</c> string literalini
     /// ihlal sayıyordu. Build menüsünün öğe türleri (<c>new("clean", "Clean", …)</c>, <c>ProjectRowMenu</c>)
     /// aynı sözcükleri UI kimliği olarak taşıyınca guard git'le ilgisi olmayan koda kırmızı verdi. Kural artık
@@ -55,15 +59,16 @@ public sealed class NoGitMutationOutsideTheWriterTests
     /// bu biçimde yazılmaz (<see cref="The_rule_ignores_a_menu_item_kind_that_happens_to_share_the_word"/>).</para>
     /// </summary>
     private static readonly Regex MutatingGitVerb = new(
-        "\\[\\s*\"(?:merge|checkout|switch|pull|rebase|cherry-pick|stash|clean|reset|commit|push)\"",
+        "\\[\\s*\"(?:merge|checkout|switch|pull|rebase|cherry-pick|stash|clean|reset|commit|push|worktree)\"",
         RegexOptions.Compiled);
 
     /// <summary>Mutasyonun MEŞRU olduğu yollar (src köküne göre) ve gerekçeleri.</summary>
     private static readonly IReadOnlyCollection<string> Allowed =
     [
-        // Kod tabanındaki TEK mutasyon dosyası: merge-base kararı + merge --ff-only (§10.4, FastForwardUpdater)
-        // VE branch checkout + stash push (§6.3/§6.6, BranchSwitcher). Hem harici kartlar hem (yalnız
-        // kullanıcı chip'e/branch chip'ine bastığında) ana repo buradan geçer.
+        // Kod tabanındaki TEK mutasyon dosyası: merge-base kararı + merge --ff-only (§10.4, FastForwardUpdater),
+        // branch checkout + stash push (§6.3/§6.6, BranchSwitcher) VE Settings Save'in worktree add --detach'i
+        // (WorktreeCreator). Hem harici kartlar hem (yalnız kullanıcı chip'e/branch chip'ine bastığında ya da
+        // Settings'i kaydettiğinde) ana repo buradan geçer.
         @"BuildOrchestrator.Core\Git\RepositoryWriter.cs",
     ];
 

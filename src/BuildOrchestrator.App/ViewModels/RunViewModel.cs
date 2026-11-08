@@ -619,6 +619,7 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(CleanCommand))]
     [NotifyCanExecuteChangedFor(nameof(OptimizeCommand))]
     [NotifyPropertyChangedFor(nameof(CanSwitchBranch))] // [§6.3] chip kapısının TEK bildirim kaynağı (bkz. CanSwitchBranch)
+    [NotifyPropertyChangedFor(nameof(ActiveRoot))] // [worktree] repo kopyasında aktif kök repo köküdür
     private string _rootPath = "";
     [ObservableProperty] private string _configuration = "Debug";
 
@@ -896,8 +897,9 @@ public sealed partial class RunViewModel : ObservableObject
     {
         if (string.IsNullOrEmpty(value)) Phase = AppPhase.Empty;
         else if (Phase == AppPhase.Empty) Phase = AppPhase.Boot;
-        AttachAutoSync(value); // [spec 2026-09-18 §6.1] HEAD izleyicisi kökü izler
-        RefreshGitOperation(); // [spec 2026-09-18 §6.4] eski kökün git işlemi yeni kökte anlamsız
+        // [spec 2026-09-18 §6.1 · §6.4 · worktree] HEAD izleyicisi ve git işlem kapısı AKTİF köke taşınır, açık branch kartı kapanır —
+        // kopya değişimiyle ortak adımlar tek yerde.
+        OnActiveRootChanged();
     }
 
     public RunViewModel(EngineHost engine, ConsoleBatcher console, Func<string> newRunId, Func<long>? nowMs = null,
@@ -1016,10 +1018,11 @@ public sealed partial class RunViewModel : ObservableObject
         {
             // [T20-b/K11] PerfMode de gider: paralellik (Parallelism) ve cap/priority (PerfMode) AYNI profil
             // satırının iki yarısıdır — Supervisor cap'i o addan çözer, worker sayısını YENİDEN türetmez.
-            // [spec 2026-09-18 §1-1] Koşu daima RootPath'teki çalışma ağacında derlenir: branch/worktree gitmez.
+            // [spec 2026-09-18 §1-1 · worktree] Koşu daima aktif kökün (ActiveRoot — repo ya da worktree) çalışma ağacında derlenir: branch
+            // gitmez, motor hangi kopyada olduğunu bilmez.
             // [Task 21 · karar 18] Komut uyanmadan SONRA kurulur: uyanma sürerken değiştirilen perf profili koşuyla gider (o sırada perf
             // chip'inin komutu uyanık olmayan motora gönderilmez).
-            var cmd = new StartRunCommand(runId, mode, RootPath, Configuration, Parallelism,
+            var cmd = new StartRunCommand(runId, mode, ActiveRoot, Configuration, Parallelism,
                 DependentMode.Safe, LayerPatterns, PerfMode,
                 ExternalProjectsForWire, UpdateExternals, scopeProjectId);
             // [kaynak şeridi · R2] Koşunun perf modu, motora giden metin olarak, komutun kurulduğu yerde yakalanır; runStarted'ta koşu hücresine devredilir.
@@ -1371,7 +1374,7 @@ public sealed partial class RunViewModel : ObservableObject
             return false;
         }
         bool sent = await SendWithFailureLineAsync(
-            new SyncWorkspaceCommand(RootPath, Branch, LayerPatterns, Configuration, ExternalProjectsForWire,
+            new SyncWorkspaceCommand(ActiveRoot, Branch, LayerPatterns, Configuration, ExternalProjectsForWire,
                 Fetch: mode.Fetches()), SendFailedLine("sync"), pass);
         // Gönderim SENKRON düştüyse (engine hazır değil/ölü) hiçbir syncStarted GELMEYECEK — kapı burada
         // açılmazsa Sync düğmesi kalıcı pasif kalırdı. Envanter komutları yine de GÖNDERİLİR: onlar Sync'in
@@ -1386,7 +1389,7 @@ public sealed partial class RunViewModel : ObservableObject
         // işler ve hatası AYRI bir kodla döner ("branchListFailed", SupervisorHost.cs:138) — RunEndingErrorCodes'ta
         // ve SyncErrorCodes'ta OLMADIĞI için bir Sync hatası gibi yanlış atfedilemez. [round 3] Kapı Sync'in geçişinde soruldu; envanterin
         // devredeceği kayıt yoktur — GatePass.None bunu açıkça söyler (gönderimin geçişi zorunludur).
-        await SendWithFailureLineAsync(new ListBranchesCommand(RootPath), SendFailedLine("listBranches"), GatePass.None);
+        await SendWithFailureLineAsync(new ListBranchesCommand(ActiveRoot), SendFailedLine("listBranches"), GatePass.None);
         return sent;
     }
     // [D1 review · A3] Motor erişilemezken gönderim anlamsız.
@@ -1430,7 +1433,7 @@ public sealed partial class RunViewModel : ObservableObject
         ArmEngineWatchdog();
         // [harici projeler] Kartlar da gider: harici proje sıradan bir projedir, çıktısı da bu workspace'in
         // çıktısıdır. Liste Sync/Build ile AYNI huniden geçer — ikinci bir kaynak açılmaz (kopya YASAK).
-        bool sent = await TrySendAsync(new CleanWorkspaceCommand(RootPath, ExternalProjectsForWire), "clean");
+        bool sent = await TrySendAsync(new CleanWorkspaceCommand(ActiveRoot, ExternalProjectsForWire), "clean");
         if (!sent) ReleaseCleanRequest();
     }
 
@@ -1472,7 +1475,7 @@ public sealed partial class RunViewModel : ObservableObject
         ArmEngineWatchdog();
         // [harici projeler] Kartlar da gider: harici proje sıradan bir projedir, onarımı da bu workspace'in
         // işidir. Liste Sync/Clean/Build ile AYNI huniden geçer — ikinci bir kaynak açılmaz (kopya YASAK).
-        bool sent = await TrySendAsync(new OptimizeWorkspaceCommand(RootPath, ExternalProjectsForWire), "optimize");
+        bool sent = await TrySendAsync(new OptimizeWorkspaceCommand(ActiveRoot, ExternalProjectsForWire), "optimize");
         if (!sent) ReleaseOptimizeRequest();
     }
 
@@ -1933,6 +1936,8 @@ public sealed partial class RunViewModel : ObservableObject
             case PullCompletedEvent e: _ = OnPullCompletedAsync(e); break;
             // [spec 2026-09-18 §6.3] Checkout sonucu: başarıda yeni bölüm + Sync zinciri (beklenmez — pompa bloklanmaz).
             case CheckoutCompletedEvent e: _ = OnCheckoutCompletedAsync(e); break;
+            // [worktree] Settings Save'in kurulumunun sonucu: satır + Save'in Sync'i (ya da geçiş) — beklenmez, pompa bloklanmaz.
+            case WorktreeCreatedEvent e: _ = OnWorktreeCreatedAsync(e); break;
             // [clean] Clean yüzeyi — handler'lar RunViewModel.Workspace.cs'te (Sync guard'ın yanında).
             // Satırlar Sync yüzeyine AİT DEĞİLDİR: ayrı bayrak, ayrı kanal.
             case CleanStartedEvent: OnCleanStarted(); break;
@@ -2682,6 +2687,7 @@ public sealed partial class RunViewModel : ObservableObject
         if (TryConsumeCleanFailure(e.Code, e.Message)) return;
         if (TryConsumeOptimizeFailure(e.Code, e.Message)) return;
         if (TryConsumeCheckoutFailure(e.Code)) return;
+        if (TryConsumeWorktreeFailure(e.Code)) return; // [worktree] kurulumun reddi/hatası — run/Sync state'ine dokunmaz
         if (e.Code == RunInProgressCode) IsStarting = false;
         if (!RunEndingErrorCodes.Contains(e.Code)) return; // runInProgress/badCommand/... aktif run'ı ETKİLEMEZ
         // [A5/T69 · Fix wave 1, Finding 2] Sync fazını bırakır ve hatanın KAYNAĞINI ayırt eder: kod Sync'ten

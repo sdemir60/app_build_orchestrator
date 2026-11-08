@@ -98,6 +98,7 @@ public sealed partial class RunViewModel
         }
         : CheckoutBusy ? ExitWork.BranchSwitch
         : PullBusy ? ExitWork.Pull
+        : WorktreeBusy ? ExitWork.WorktreeSetup
         : CleanBusy ? ExitWork.DeepClean
         : OptimizeBusy ? ExitWork.Optimize
         : SyncBusy ? ExitWork.Sync

@@ -235,10 +235,10 @@ for, where MSBuild removes the outputs the project itself recorded.\
 ## Never writes to git uninvited
 
 **What:** Sync, Build and background work never write to the repository: pull, reset, switch, rebase, commit and
-push never run on their own, and each of the three moves that do write to git is your call: a click on a chip, or
-a setting you leave on.\
-**How:** The three write paths (a fast-forward from the N behind chip, a checkout from the branch chip, and updating
-external working copies when you leave that on) live in one file, and a source test forbids git write commands
+push never run on their own, and each of the four moves that do write to git is your call: a click on a chip, a
+setting you leave on, or saving a worktree folder.\
+**How:** The four write paths (a fast-forward from the N behind chip, a checkout from the branch chip, updating
+external working copies when you leave that on, and creating the worktree you name in Settings) live in one file, and a source test forbids git write commands
 anywhere else. Reads such as status, refs and fetch go through a separate path.\
 `single git writer for auditability` · `source guard against accidental writes` · `fast-forward only, history kept` · `ref-only fetch, working tree untouched`
 
@@ -322,11 +322,22 @@ the tooltips.\
 
 **What:** The branch chip in the action bar shows the checked-out branch and switches it for real from a searchable
 list; when you fall behind, an N behind chip updates the current branch by fast-forward only.\
-**How:** A remote branch gets a local tracking branch. A switch on a dirty tree is refused by default; with Stash
-and switch branches on, changes (untracked ones included) are stashed and named in the console, and the tool never
-pops them. The pull is a fetch plus merge --ff-only: no merge commits, no rebases, refused on a dirty or diverged
+**How:** A remote branch gets a local tracking branch. A switch on a dirty tree asks by default — stash and switch,
+use the worktree, or cancel; with Stash and switch branches on, changes (untracked ones included) are stashed and
+named in the console, and the tool never pops them. The pull is a fetch plus merge --ff-only: no merge commits, no rebases, refused on a dirty or diverged
 tree.\
 `git checkout from the tool` · `stash push -u to protect a dirty tree` · `merge --ff-only, history kept` · `cheap behind count`
+
+## A worktree for another branch
+
+**What:** A second working copy of the repository, named once in Settings, builds another branch side by side: a
+toggle in the action bar moves the tool between the repository and the worktree, while your changes and an open
+Visual Studio stay where they are.\
+**How:** The worktree is a linked git worktree next to the repository; Save creates it at the current commit, with
+no branch checked out, when the folder is new. Switching changes the root every command and git read use, and the
+two copies never share build records. A switch on a dirty tree can go to the worktree instead of stashing, and a
+branch open in one copy is never checked out in the other.\
+`git worktree add --detach` · `second root, same engine` · `build records keyed by path` · `one branch, one working copy`
 
 ## External projects, one graph
 

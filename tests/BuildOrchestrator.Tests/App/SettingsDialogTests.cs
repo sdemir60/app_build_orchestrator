@@ -784,8 +784,10 @@ public class SettingsDialogViewTests
         var sent = new List<IpcCommand>();
         run.DebugOnCommandSent = sent.Add;
 
+        // [worktree] Sayfada iki Browse… vardır (repo kökü ve worktree klasörü): düğme UIA adıyla seçilir.
         var browse = DsResources.RealizedObjects(dialog).OfType<Button>()
-            .Single(b => b.Content is StackPanel panel
+            .Single(b => System.Windows.Automation.AutomationProperties.GetName(b) == BuildOrchestrator.App.AccessibilityNames.BrowseRepositoryRoot
+                         && b.Content is StackPanel panel
                          && panel.Children.OfType<TextBlock>().Any(t => t.Text == "Browse…"));
         CommandPress.Click(browse);
         dialog.UpdateLayout();

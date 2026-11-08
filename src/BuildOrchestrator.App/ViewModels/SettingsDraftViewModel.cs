@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
+using System.IO;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
@@ -157,6 +158,52 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// açılırken canlı <see cref="RunViewModel.RootPath"/> ile başlar.</summary>
     [ObservableProperty] private string? _repositoryRoot;
 
+    /// <summary>[worktree] Settings → Workspace → <c>Worktree folder</c>: reponun yanındaki tek linked worktree'nin tam yolu; boş =
+    /// tanımsız. Diyalog açılırken canlı <see cref="RunViewModel.WorktreeFolder"/> ile başlar; Save'e kadar yalnız taslaktır.</summary>
+    [ObservableProperty] private string? _worktreeFolder;
+
+    /// <summary>[worktree] Diyalog alt bardaki Worktree düğmesinden (ya da branch kartından) açıldı: başarılı Save worktree'ye geçer —
+    /// klasör yoksa kurulduktan sonra.</summary>
+    public bool SwitchToWorktreeOnSave { get; set; }
+
+    /// <summary>[worktree] Worktree folder'ın Browse'unun başlangıç klasörü: worktree reponun YANINDA durur — tanımlı bir worktree
+    /// varsa onun üst klasörü, yoksa repo kökünün üst klasörü; tam yol yoksa <c>null</c> (seçici kendi yerini seçer).</summary>
+    public string? WorktreePickerStart =>
+        ParentOf(WorktreeFolder) ?? ParentOf(RepositoryRoot);
+
+    private static string? ParentOf(string? path)
+    {
+        string trimmed = path?.Trim() ?? "";
+        return trimmed.Length > 0 && Path.IsPathFullyQualified(trimmed)
+            ? Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(trimmed))
+            : null;
+    }
+
+    /// <summary>[worktree] Worktree klasörü kullanılamıyorsa Save'in nedeni (<see cref="WorkingCopyText.FolderProblem"/>); boş alan ve
+    /// kullanılabilir klasör (yok/boş ya da bu reponun worktree'si) <c>null</c>. Karar diskten okunur (<see cref="Core.Git.WorktreeFolder.Inspect"/>),
+    /// (kök, klasör) başına bir kez: Save kapısının iki yüzü (<see cref="CanSave"/>, <see cref="SaveBlockedReason"/>) ve bağlamalar aynı değeri
+    /// ayrı ayrı sorar. Kök boşken denetim yoktur: boş kök "workspace yok" demektir, Save workspace'i kapatır ve worktree tanımını da düşürür
+    /// (<see cref="RunViewModel.ApplySettingsAsync"/>) — alan onu engellememeli.</summary>
+    private string? WorktreeBlockedReason
+    {
+        get
+        {
+            string folder = WorktreeFolder?.Trim() ?? "";
+            string root = RepositoryRoot?.Trim() ?? "";
+            if (folder.Length == 0 || root.Length == 0) return null;
+            if (_worktreeCheck is { } last && last.Root == root && last.Folder == folder) return last.Reason;
+            string? reason = WorkingCopyText.FolderProblem(InspectWorktreeFolder(root, folder));
+            _worktreeCheck = (root, folder, reason);
+            return reason;
+        }
+    }
+
+    /// <summary>Son worktree denetiminin (kök, klasör) anahtarlı cevabı — <see cref="WorktreeBlockedReason"/>'ın önbelleği.</summary>
+    private (string Root, string Folder, string? Reason)? _worktreeCheck;
+
+    /// <summary>[test dikişi] Klasör denetimi — üretimde <see cref="Core.Git.WorktreeFolder.Inspect"/> (diskten).</summary>
+    internal Func<string, string, Core.Git.WorktreeFolderState> InspectWorktreeFolder { get; init; } = Core.Git.WorktreeFolder.Inspect;
+
     /// <summary>Taslak = kayıtlı pattern'lerin DERİN kopyası (Order'a göre; editör sırası = katman sırası).
     /// Kayıtlı katman YOKSA (null ya da boş) taslak BOŞ kurulur — [design v1.19.0 §2.9] ürüne özel bir ön-dolum
     /// yoktur; yeni satırlar yalnız placeholder gösterir (<see cref="LayerPlaceholders"/>). Save'e basılmadıkça ne
@@ -178,12 +225,14 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// <param name="autostart">[P4] Windows'un başlangıç kaydı — verildiyse Start with Windows kayıtlı tercihten DEĞİL
     /// Windows'un gerçek durumundan (<see cref="AutostartService.State"/>) tohumlanır ve <see cref="CommitAsync"/> kaydı
     /// anında yazar.</param>
+    /// <param name="worktreeFolder">[worktree] Canlı worktree klasörünün taslak kopyası; <c>null</c> ⇒ boş.</param>
     public SettingsDraftViewModel(IReadOnlyList<LayerPattern>? initial, string? repositoryRoot,
         IReadOnlyList<ExternalProject>? initialExternals = null, bool? pullExternalsBeforeBuild = null,
         bool? stashOnBranchSwitch = null, UiState? saved = null, AutostartService? autostart = null,
-        bool? compactConsole = null, bool? stopEngineWhenIdle = null)
+        bool? compactConsole = null, bool? stopEngineWhenIdle = null, string? worktreeFolder = null)
     {
         _repositoryRoot = repositoryRoot;
+        _worktreeFolder = worktreeFolder;
         _openedWithoutWorkspace = string.IsNullOrWhiteSpace(repositoryRoot);
         GeneralGroups = BuildGeneralGroups();
         if (pullExternalsBeforeBuild is { } pull) PullExternalsBeforeBuild = pull;
@@ -226,7 +275,8 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// <see cref="CanSave"/> bundan türer — iki özellik aynı koşulları iki kez yazmaz. Öncelik tasarımın sırasıdır:
     /// harici path → katman adı → desen (kullanıcı hangi sayfada olursa olsun ilk engeli okur).</summary>
     public string? SaveBlockedReason =>
-        Externals.Any(x => x.Path.Trim().Length == 0) ? ExternalPathRequiredReason
+        WorktreeBlockedReason is { } worktree ? worktree
+        : Externals.Any(x => x.Path.Trim().Length == 0) ? ExternalPathRequiredReason
         : Layers.Any(r => r.Name.Trim().Length == 0) ? LayerNameRequiredReason
         : Layers.Any(r => r.RegexInvalid) ? InvalidPatternReason
         : null;
@@ -259,8 +309,16 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     public const string SaveLabel = "Save";
     public const string SaveAndSyncLabel = "Save and sync";
 
-    // Kök, Save düğmesinin etiketini sürer — değiştiğinde düğmenin haberi olmalı.
-    partial void OnRepositoryRootChanged(string? value) => OnPropertyChanged(nameof(SaveButtonLabel));
+    // Kök, Save düğmesinin etiketini sürer — değiştiğinde düğmenin haberi olmalı. [worktree] Worktree klasörünün denetimi de köke
+    // bakar: kapı yeniden sorulur.
+    partial void OnRepositoryRootChanged(string? value)
+    {
+        OnPropertyChanged(nameof(SaveButtonLabel));
+        NotifySaveGate();
+    }
+
+    // [worktree] Klasör her değiştiğinde Save kapısı ve footer'ın nedeni yeniden sorulur.
+    partial void OnWorktreeFolderChanged(string? value) => NotifySaveGate();
 
     // ---------------------------------------------------------------- [design v1.10.0 §2.9] Export / Import / Clear
 
@@ -318,6 +376,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     public void ClearAll()
     {
         RepositoryRoot = null;
+        WorktreeFolder = null; // [worktree] kökü olmayan bir worktree yoktur
         // [§2.9] General anahtarları (pull dahil) VARSAYILANINA döner — kapanmaz.
         foreach (var row in _generalRows.Values) row.IsOn = row.Definition.Default;
         for (int i = Layers.Count - 1; i >= 0; i--) RemoveLayer(Layers[i]);
@@ -385,7 +444,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
             ? ShellSwitches.StartWithWindows(state) : GeneralRow(s).IsOn));
         store.Save(state);
         await run.ApplySettingsAsync(patterns, RepositoryRoot, externals, PullExternalsBeforeBuild, StashOnBranchSwitch, settingNotes,
-            CompactConsole, StopEngineWhenIdle);
+            CompactConsole, StopEngineWhenIdle, worktreeFolder: WorktreeFolder?.Trim() ?? "", switchToWorktree: SwitchToWorktreeOnSave);
     }
 
     /// <summary>Katalogdan satırları kurar; bağımlı satırın etkinliğini üst anahtara, pull satırını

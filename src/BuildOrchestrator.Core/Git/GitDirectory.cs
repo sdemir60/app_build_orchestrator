@@ -28,4 +28,19 @@ public static class GitDirectory
 
         return Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(root, path));
     }
+
+    /// <summary>Bir git dizininin ORTAK dizini: linked worktree'de <c>commondir</c> dosyası ana reponun <c>.git</c>'ine göreli
+    /// ya da mutlak yolu taşır; dosya yoksa (normal repo) ortak dizin <paramref name="gitDir"/>'in kendisidir. Ref'ler
+    /// (<see cref="HeadReader"/>) ve bir klasörün hangi repoya ait olduğu (<see cref="WorktreeFolder.Inspect"/>) buradan
+    /// okunur — tek tanım (kopya YASAK).</summary>
+    public static string ResolveCommon(string gitDir)
+    {
+        string commonDirFile = Path.Combine(gitDir, "commondir");
+        if (!File.Exists(commonDirFile)) return gitDir;
+
+        string raw = File.ReadAllText(commonDirFile).Trim();
+        if (raw.Length == 0) return gitDir;
+
+        return Path.GetFullPath(Path.IsPathRooted(raw) ? raw : Path.Combine(gitDir, raw));
+    }
 }
