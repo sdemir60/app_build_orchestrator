@@ -70,7 +70,7 @@ public sealed record GitRepoState
 /// </summary>
 public sealed class GitService(IProcessRunner runner, string repoRoot, string gitExecutable = "git")
 {
-    private static readonly TimeSpan CommandTimeout = TimeSpan.FromSeconds(30);
+    internal static readonly TimeSpan CommandTimeout = TimeSpan.FromSeconds(30);
 
     private readonly IProcessRunner _runner = runner ?? throw new ArgumentNullException(nameof(runner));
     private readonly string _repoRoot = repoRoot ?? throw new ArgumentNullException(nameof(repoRoot));

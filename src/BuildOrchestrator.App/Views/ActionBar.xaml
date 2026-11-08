@@ -32,6 +32,13 @@
                    FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.2xs}"
                    Foreground="{DynamicResource Brush.TextDim}" />
 
+        <!-- [worktree] Repo ↔ Worktree anahtarı: workspace adının sağında, branch chip'inin solunda (kullanıcının yerleşimi). Bardaki
+             chip'lerin dili (Ds.Bar.Chip — işaretliyken amber: "worktree açık"); ETİKETSİZ kare (24×24, Restart engine'in ölçüsü) —
+             bar en dar pencerede sığmalı, anlamı tooltip söyler (bir sonraki tıkın ne yaptığı). İçerik, işaret, tooltip ve görünürlük
+             kod-tarafı (RefreshWorktreeToggle). -->
+        <ToggleButton x:Name="PART_WorktreeToggle" Style="{DynamicResource Ds.Bar.Chip}" Width="24" Padding="0" Margin="0,0,8,0"
+                      VerticalAlignment="Center" Visibility="Collapsed" />
+
         <!-- branch chip + popover (yukarı açılır) -->
         <Grid VerticalAlignment="Center">
           <ToggleButton x:Name="PART_BranchChip" Style="{DynamicResource Ds.Bar.Chip}" />
@@ -41,6 +48,15 @@
             <Border Style="{DynamicResource Ds.Popover}" Width="272">
               <views:BranchPopover x:Name="PART_BranchPopover"
                                    IsOpen="{Binding IsOpen, ElementName=PART_BranchPopup, Mode=OneWay}" />
+            </Border>
+          </Popup>
+          <!-- [worktree] Branch karar kartı: aynı chip'in 8px üstünde, popover'la aynı yerleşim. Açık/kapalı VM'in konusundan sürülür
+               (RunViewModel.PendingBranchSwitch — kod-tarafı); dışarı tıklamak vazgeçmektir (Closed → Cancel). Genişlik Exit kartınınki. -->
+          <Popup x:Name="PART_BranchSwitchPopup" Placement="Top" PlacementTarget="{Binding ElementName=PART_BranchChip}"
+                 StaysOpen="False" AllowsTransparency="True" VerticalOffset="-8" PopupAnimation="None">
+            <Border Style="{DynamicResource Ds.Popover}" Width="320">
+              <views:BranchSwitchCard x:Name="PART_BranchSwitchCard"
+                                      IsOpen="{Binding IsOpen, ElementName=PART_BranchSwitchPopup, Mode=OneWay}" />
             </Border>
           </Popup>
         </Grid>

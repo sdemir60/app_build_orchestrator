@@ -188,6 +188,10 @@ public partial class MainWindow : Window
         // İlk-koşuda (kayıtlı repo yok → { Length: > 0 } guard'ı) Phase Empty KALIR ve E2 "Pick a repository"
         // daveti korunur.
         if (saved.RepositoryRoot is { Length: > 0 } repo) _vm.RootPath = repo;
+        // [worktree] Worktree klasörü ve kapanıştaki kopya. Worktree yalnız diskte hâlâ bu reponun linked worktree'siyse açılır
+        // (silinmiş ya da başka bir şeye dönüşmüş bir klasörde açılış Sync'i düşerdi); değilse uygulama repo kopyasında açılır.
+        _vm.WorktreeFolder = saved.WorktreeFolder ?? "";
+        if (saved.WorktreeActive == true && _vm.WorktreeReady) _vm.ActiveCopy = WorkingCopy.Worktree;
         if (saved.Configuration is { } cfg) _vm.Configuration = cfg;
         // [spec 2026-09-18 §1-7] Branch seed EDİLMEZ: değer checkout edilmiş branch'tir ve ilk envanterle okunur.
         if (saved.PerfMode is { } perf) _vm.SetPerfMode(perf);
@@ -210,6 +214,7 @@ public partial class MainWindow : Window
         _vm.CompactConsole = saved.CompactConsole ?? GeneralSettingsCatalog.DefaultOf(GeneralSetting.CompactConsole);
         _vm.StopEngineWhenIdle = saved.StopEngineWhenIdle ?? GeneralSettingsCatalog.DefaultOf(GeneralSetting.StopEngineWhenIdle);
         _vm.PropertyChanged += OnWorkflowPreferenceChanged;
+        _vm.WorktreeSetupRequested += OnWorktreeSetupRequested; // [worktree] geçilecek worktree yok → Settings, alanında
 
         // [design v1.11.0 §2.1] Title bar'ın mono bağlam metni (OSYS · main · main-2) KALDIRILDI — başlık
         // yalnız markayı taşır. Branch/worktree zaten alt bardaki chip'lerdeydi; geriye kalan tek yeni bilgi
@@ -1138,14 +1143,24 @@ public partial class MainWindow : Window
     private void OnLayoutFocus(object sender, RoutedEventArgs e) => Shell.SetMode(LayoutMode.Focus);
 
     /// <summary>[D7/T66] Dişli → Settings modal diyaloğunu açar: canlı katman pattern'lerinin bir taslak
-    /// kopyasını kurar + repo yolunu gösterir. Klasör seçici (<see cref="PickFolder"/>) enjekte edilir (E1'in
-    /// IOsActions.PickFolder'ı gelene dek <c>OpenFolderDialog</c> doğrudan; testler bu seam'i by-pass eder).</summary>
+    /// kopyasını kurar + repo yolunu gösterir. Klasör seçici (<see cref="PickFolder"/>) enjekte edilir (testler bu seam'i
+    /// by-pass eder).</summary>
     /// <para>[About] Bir modal zaten açıksa no-op — iki modal aynı anda duramaz.</para>
     private void OnSettings(object sender, RoutedEventArgs e)
     {
         if (AnyDialogOpen) return;
         WireSettingsPickers();
         SettingsOverlay.Open(_vm, _uiState, PickFolder);
+    }
+
+    /// <summary>[worktree] Worktree'ye geçilmek istendi ama geçilecek worktree yok (<see cref="RunViewModel.WorktreeSetupRequested"/> —
+    /// alt bardaki düğme ya da branch kartı): Settings Workspace sayfasında, odak Worktree folder alanında açılır; Save worktree'yi
+    /// gerekirse kurar ve ona geçer. Bir modal zaten açıksa no-op.</summary>
+    private void OnWorktreeSetupRequested(object? sender, EventArgs e)
+    {
+        if (AnyDialogOpen) return;
+        WireSettingsPickers();
+        SettingsOverlay.Open(_vm, _uiState, PickFolder, forWorktree: true);
     }
 
     /// <summary>[design v1.10.0 §2.4 · kullanıcı kararı 2026-09-29] First run davetindeki <c>Import settings…</c>:
@@ -1158,31 +1173,15 @@ public partial class MainWindow : Window
         _ = SettingsOverlay.OpenForImportAsync(_vm, _uiState, PickFolder);
     }
 
-    /// <summary>[design v1.10.0 §2.9] Export/Import dosya seçicileri — diyalogun seam'lerine gerçek Win32
-    /// diyalogları bağlanır (testler bu yolu by-pass eder, <see cref=PickFolder/> deseniyle AYNI).</summary>
+    /// <summary>[design v1.10.0 §2.9 · worktree] Settings'in dosya ve klasör seçicileri — diyalogun seam'lerine gerçek sistem
+    /// seçicileri bağlanır (testler bu yolu by-pass eder, <see cref="PickFolder"/> deseniyle AYNI). [kullanıcı kararı 2026-09-29 ·
+    /// 2026-11-05] Hepsi pencerenin — dolayısıyla Settings diyaloğunun — üzerinde ortalı açılır (<see cref="SystemPicker"/>).</summary>
     private void WireSettingsPickers()
     {
         SettingsOverlay.PickExportPath ??= () =>
-        {
-            var dialog = new Microsoft.Win32.SaveFileDialog
-            {
-                FileName = ViewModels.SettingsFile.FileName,
-                Filter = ViewModels.SettingsFile.FileFilter,
-                DefaultExt = ".json",
-            };
-            return dialog.ShowDialog(this) == true ? dialog.FileName : null;
-        };
-        SettingsOverlay.PickImportPath ??= () =>
-        {
-            var dialog = new Microsoft.Win32.OpenFileDialog
-            {
-                Filter = ViewModels.SettingsFile.FileFilter,
-                CheckFileExists = true,
-            };
-            // [kullanıcı kararı 2026-09-29] Seçici pencerenin — dolayısıyla Settings diyaloğunun — üzerinde ortalanır.
-            using (CenteredDialog.Over(this))
-                return dialog.ShowDialog(this) == true ? dialog.FileName : null;
-        };
+            SystemPicker.FileToSave(this, ViewModels.SettingsFile.FileName, ViewModels.SettingsFile.FileFilter, ".json");
+        SettingsOverlay.PickImportPath ??= () => SystemPicker.FileToOpen(this, ViewModels.SettingsFile.FileFilter);
+        SettingsOverlay.PickWorktreeFolder ??= startIn => SystemPicker.Folder(this, WorktreePickerTitle, startIn);
         // [kullanıcı kararı 2026-09-29] Import kısayolunda seçiciden önceki bekleme — adımlar arası beklemeyle AYNI
         // saat (azaltılmış harekette sıfır). Davet yalnız workspace yokken görünür; o sırada bekleyen bir bakım
         // adımı olamaz, yani saat paylaşımı birbirini kesmez.
@@ -1241,14 +1240,12 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>[D7 · K10] Repo kökü seçici — <c>Microsoft.Win32.OpenFolderDialog</c> (E1'den önce doğrudan).
-    /// İptal edilirse null.</summary>
-    private string? PickFolder()
-    {
-        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "Select repository root" };
-        if (_vm.RootPath.Length > 0) dialog.InitialDirectory = _vm.RootPath;
-        return dialog.ShowDialog(this) == true ? dialog.FolderName : null;
-    }
+    /// <summary>[D7 · K10] Repo kökü seçici — pencerenin üzerinde ortalı (<see cref="SystemPicker"/>). İptal edilirse null.</summary>
+    private string? PickFolder() => SystemPicker.Folder(this, RepositoryPickerTitle, _vm.RootPath);
+
+    /// <summary>İki klasör seçicisinin başlıkları.</summary>
+    private const string RepositoryPickerTitle = "Select repository root";
+    private const string WorktreePickerTitle = "Select worktree folder";
 
     // [design v1.8.0 §2.4] "Choose Folder" yolu KALDIRILDI: boş durum artık doğrudan bir klasör seçici
     // açmıyor, Settings'e yönlendiriyor ve kök orada (taslakta) düzenleniyor — uygulanması Save'e ertelenir
@@ -1308,8 +1305,8 @@ public partial class MainWindow : Window
         SyncModeButtons(state.Mode);
     }
 
-    /// <summary>[D6 fold] İş akışı tercihi (RepositoryRoot/Configuration/PerfMode/UpdateExternals/StashOnBranchSwitch/
-    /// CompactConsole/StopEngineWhenIdle) değişince kalıcı duruma yazar — yerleşim persist'iyle AYNI desen (Load → muta → Save; düşük frekans).
+    /// <summary>[D6 fold] İş akışı tercihi (RepositoryRoot/WorktreeFolder/açık kopya/Configuration/PerfMode/UpdateExternals/
+    /// StashOnBranchSwitch/CompactConsole/StopEngineWhenIdle) değişince kalıcı duruma yazar — yerleşim persist'iyle AYNI desen (Load → muta → Save; düşük frekans).
     /// [D7 M3] RootPath değişimi (Settings → Save ile uygulanan kök, ilk kurulum dahil)
     /// TEK noktadan buradan persist edilir; açılışta seed edilip hatırlanır.</summary>
     private void OnWorkflowPreferenceChanged(object? sender, PropertyChangedEventArgs e)
@@ -1317,6 +1314,8 @@ public partial class MainWindow : Window
         switch (e.PropertyName)
         {
             case nameof(RunViewModel.RootPath):
+            case nameof(RunViewModel.WorktreeFolder):
+            case nameof(RunViewModel.ActiveCopy):
             case nameof(RunViewModel.Configuration):
             case nameof(RunViewModel.PerfMode):
             case nameof(RunViewModel.UpdateExternals):
@@ -1324,7 +1323,11 @@ public partial class MainWindow : Window
             case nameof(RunViewModel.CompactConsole):
             case nameof(RunViewModel.StopEngineWhenIdle):
                 var s = _uiState.Load();
+                // [worktree] RepositoryRoot hep Settings'in repo köküdür (RootPath) — aktif kök (ActiveRoot) DEĞİL: worktree aktifken
+                // kaydedip yeniden açmak repo kökünü worktree yoluna kaydırırdı.
                 s.RepositoryRoot = _vm.RootPath;
+                s.WorktreeFolder = _vm.WorktreeFolder.Length > 0 ? _vm.WorktreeFolder : null;
+                s.WorktreeActive = _vm.ActiveCopy == WorkingCopy.Worktree;
                 s.Configuration = _vm.Configuration;
                 s.PerfMode = _vm.PerfMode;
                 s.UpdateExternals = _vm.UpdateExternals;

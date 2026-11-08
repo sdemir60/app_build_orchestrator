@@ -182,6 +182,29 @@ public sealed class EngineSilenceWatchdogTests
         Assert.Null(vm.EngineOverdueMessage);
     }
 
+    /// <summary>[worktree] Kurulum motorun komut döngüsünü bloklar ve <c>git worktree add</c> tüm ağacı yazarken hiçbir olay yazılmaz — büyük bir
+    /// repoda bu dakikalar sürer. Bekçi kurulum sürerken motorun kendi tavanını (<see cref="Core.Git.WorktreeCreator.Timeout"/>) ve ardından
+    /// normal eşiği bekler: tavanda motor git'i durdurup cevabını yazmış olmalıydı; o da gelmediyse motor gerçekten susmuştur.</summary>
+    [Fact]
+    public async Task A_long_worktree_creation_waits_for_the_engine_s_own_ceiling()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var (vm, clock) = NewVm(engine);
+        vm.InspectWorktreeFolder = (_, _) => Core.Git.WorktreeFolderState.Creatable;
+        vm.DebugSendOverride = _ => Task.CompletedTask;
+        await vm.ApplySettingsAsync([], @"D:\repo", [], worktreeFolder: @"D:\repo-worktree");
+        Assert.True(vm.WorktreeBusy); // ön-koşul: kurulum uçuşta
+
+        long ceiling = (long)Core.Git.WorktreeCreator.Timeout.TotalMilliseconds + RunViewModel.EngineSilenceThresholdMs;
+        clock.Advance(ceiling - 1);
+        vm.TickElapsed();
+        Assert.Null(vm.EngineOverdueMessage);
+
+        clock.Advance(1);
+        vm.TickElapsed();
+        Assert.Equal(RunViewModel.EngineSilentMessage, vm.EngineOverdueMessage);
+    }
+
     /// <summary>Sync'in ilerleme satırları da saati sıfırlar: yavaş ama KONUŞAN bir Sync (büyük fetch)
     /// asla uyarı üretmez.</summary>
     [Fact]

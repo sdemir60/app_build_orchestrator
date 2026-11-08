@@ -2,6 +2,17 @@
 
 Release notes for Build Orchestrator, newest version first. The What's new window in the app reads this file.
 
+## [1.12.0] - 2026-11-08
+
+### Added
+
+- A worktree lets you build another branch while the repository, with your changes and an open Visual Studio, stays as it is. Name its folder on the Workspace page of Settings: an existing worktree of the repository is recorded, and a folder that does not exist yet is created when you save, at the repository's current commit with no branch checked out. The toggle between the repository name and the branch chip moves every Sync, build, Clean, Optimize, pull and branch switch there and back, and the app remembers which copy was open.
+- With Stash and switch branches off, picking a branch while the working tree has uncommitted changes opens a card above the branch chip: stash the changes this once and switch, switch that branch in the other copy and go there, or cancel. A branch is checked out in one copy at a time; picking the one the other copy holds changes nothing, and the console names that copy.
+
+### Changed
+
+- Browse… and Export settings open their pickers centred over the window, as Import settings already did.
+
 ## [1.11.7] - 2026-11-02
 
 ### Changed

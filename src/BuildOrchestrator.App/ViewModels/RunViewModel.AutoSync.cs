@@ -35,7 +35,7 @@ public sealed partial class RunViewModel : IAutoSyncPort
     {
         _autoSync ??= new AutoSyncCoordinator(this, postToUi,
             readHead is null ? null : gitDir => Task.FromResult(readHead(gitDir)), newWatcher);
-        _autoSync.Attach(RootPath);
+        _autoSync.Attach(ActiveRoot);
     }
 
     /// <summary>Kabuk kapanıyor ya da [P3 · Task 2] tam çıkış istendi (<see cref="RequestExit"/>): izleyici
@@ -57,7 +57,7 @@ public sealed partial class RunViewModel : IAutoSyncPort
         if (_autoSync is { } autoSync) _ = autoSync.WindowActivatedAsync(clickRefreshes);
     }
 
-    /// <summary>Kök değişti: izleyici yeni köke taşınır (<c>OnRootPathChanged</c>).</summary>
+    /// <summary>Aktif kök değişti: izleyici yeni köke taşınır (<c>OnRootPathChanged</c>, [worktree] <c>OnActiveCopyChanged</c>).</summary>
     private void AttachAutoSync(string root) => _autoSync?.Attach(root);
 
     /// <summary>[spec 2026-09-18 §6.2] Dışarıdan gelen branch değişimi: checkout'un cevabıyla AYNI yol

@@ -21,6 +21,8 @@ public enum ExitWork
     BranchSwitch,
     /// <summary><c>N behind</c> chip'inin pull'u — git çalışma ağacına yazar, beklenir.</summary>
     Pull,
+    /// <summary>[worktree] Settings Save'in worktree kurulumu — git yeni çalışma ağacını yazar, beklenir.</summary>
+    WorktreeSetup,
 }
 
 /// <summary>
@@ -31,6 +33,7 @@ public enum ExitWork
 public static class ExitWorkRules
 {
     /// <summary>Çıkış bu işi kesmez, BEKLER: git çalışma ağacına ve <c>.git/index</c>'e yazıyor — yarıda kesilen bir checkout ağacı yarı
-    /// değiştirilmiş ve <c>index.lock</c>'lu bırakırdı (kullanıcı kararı 2026-10-19). Diğer her iş kesilir.</summary>
-    public static bool Waits(this ExitWork work) => work is ExitWork.BranchSwitch or ExitWork.Pull;
+    /// değiştirilmiş ve <c>index.lock</c>'lu bırakırdı (kullanıcı kararı 2026-10-19). [worktree] Worktree kurulumu da git'in yazdığı bir
+    /// ağaçtır: yarıda kesilen kurulum kayıtlı ama eksik bir worktree bırakırdı. Diğer her iş kesilir.</summary>
+    public static bool Waits(this ExitWork work) => work is ExitWork.BranchSwitch or ExitWork.Pull or ExitWork.WorktreeSetup;
 }

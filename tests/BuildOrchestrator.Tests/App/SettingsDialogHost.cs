@@ -52,9 +52,12 @@ internal static class SettingsDialogHost
     /// <param name="autostart">[P4] Diyaloğun Windows başlangıç kaydı servisi — verilirse (ör.
     /// <see cref="FakeAutostartRegistry.Service"/>) Start with Windows onun gerçek durumundan açılır ve Save kaydı
     /// ona yazar; <c>null</c> ⇒ Windows yüzeyi yok (üretimdeki gibi gerçek registry ASLA kurulmaz).</param>
+    /// <param name="forWorktree">[worktree] Diyalog alt bardaki Worktree düğmesinden açılıyor (worktree yok): Workspace sayfası,
+    /// odak Worktree folder alanında, başarılı Save worktree'ye geçer.</param>
     public static (SettingsDialog dialog, RunViewModel run, FakeStore store, IDisposable scope) OpenRealized(
         Action<RunViewModel>? configure = null, Func<string?>? pickFolder = null,
-        double windowWidth = 1000, double windowHeight = 700, UiState? saved = null, AutostartService? autostart = null)
+        double windowWidth = 1000, double windowHeight = 700, UiState? saved = null, AutostartService? autostart = null,
+        bool forWorktree = false)
     {
         var engine = new EngineHost(TestPaths.SupervisorExe);
         var run = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
@@ -67,7 +70,7 @@ internal static class SettingsDialogHost
         var store = new FakeStore();
         if (saved is not null) store.Save(saved);
         dialog.Autostart = autostart;
-        dialog.Open(run, store, pickFolder ?? (() => null));
+        dialog.Open(run, store, pickFolder ?? (() => null), forWorktree);
         dialog.UpdateLayout(); // Visibility Collapsed→Visible sonrası GERÇEK arrange
 
         return (dialog, run, store, new Scope(engine, window));

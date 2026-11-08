@@ -201,7 +201,8 @@ public class AccessibilityTests
         var inputs = DsResources.RealizedObjects(dialog).OfType<TextBox>().ToList();
         // [DEĞİŞEN KURAL — design v1.8.0 §2.9] Diyalogda ARTIK ÜÇ input var: katman satırının iki alanı ve
         // WORKSPACE bölümünün mono repository-root input'u (eskiden düzenlenemez bir etiketti).
-        Assert.Equal(3, inputs.Count); // ön-koşul: satır kuruldu (yoksa aşağıdaki iddialar vakum olurdu)
+        // [DEĞİŞEN KURAL — worktree, kullanıcı kararı 2026-11-05] Dördüncüsü Workspace'in worktree-folder input'udur (eski iddia: üç).
+        Assert.Equal(4, inputs.Count); // ön-koşul: satır kuruldu (yoksa aşağıdaki iddialar vakum olurdu)
         var byWatermark = inputs.ToDictionary(t => DsChrome.GetWatermark(t)!, AutomationProperties.GetName,
             StringComparer.Ordinal);
         // [DEĞİŞEN KURAL — design v1.19.0 §2.9] Watermark'lar ürün-bağımsız placeholder'lardır: ad kutusu satır
@@ -209,6 +210,7 @@ public class AccessibilityTests
         Assert.Equal(AccessibilityNames.LayerName, byWatermark["Core"]);
         Assert.Equal(AccessibilityNames.LayerPattern, byWatermark[@"^MyApp\.(Core|Common)\."]);
         Assert.Equal(AccessibilityNames.RepositoryRootInput, byWatermark[@"D:\src\myapp"]);
+        Assert.Equal(AccessibilityNames.WorktreeFolderInput, byWatermark[@"D:\src\myapp-worktree"]);
     }
 
     // ------------------------------------------------------------------ live region

@@ -156,7 +156,6 @@ public class OsActionsTests
         public void RevealInExplorer(string path) => RevealedPath = path;
         public Task<OpenInVsResult> OpenInVisualStudioAsync(IReadOnlyList<SolutionRef> candidates)
         { OpenedCandidates = candidates; return Task.FromResult(NextOpenResult); }
-        public string? PickFolder(string? initial) => null;
     }
 
     private static ProjectNode Node(string id, string name, params string[] solutionNames) =>

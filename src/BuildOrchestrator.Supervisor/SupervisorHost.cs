@@ -134,6 +134,8 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
                 await PullRepositoryAsync(p, ct); break;
             case CheckoutBranchCommand c:
                 await CheckoutBranchAsync(c, ct); break;
+            case CreateWorktreeCommand w:
+                await CreateWorktreeAsync(w, ct); break;
             default:
                 await writer.WriteAsync(new ErrorEvent("unknownCommand", cmd.GetType().Name), ct); break;
         }
@@ -266,6 +268,36 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
             // BranchSwitcher git hatalarını zaten tipli sonuca çevirir; buraya yalnız GERÇEKTEN beklenmeyen bir
             // hata düşer. IPC sınırını exception ASLA geçmemeli — App bu kodla chip kilidini açar.
             await writer.WriteAsync(new ErrorEvent("checkoutFailed", ex.Message), ct);
+        }
+    }
+
+    /// <summary>
+    /// [worktree] Settings Save'in worktree oluşturması. Yürütme <see cref="WorktreeCreator"/>'dır (klasörü yeniden denetler, yalnız
+    /// yok ya da boş klasörde <c>worktree add --detach</c>); mutasyon yüzeyi o dosyada kalır.
+    ///
+    /// <para><b>Konsol satırı YAZILMAZ</b> — checkout'un deseni: tek çıktı <see cref="WorktreeCreatedEvent"/>'tir, satırları App
+    /// kurar. <b>Kapı:</b> bir koşu uçuştaysa <c>worktreeRejected</c>. Checkout gibi komut döngüsünü BLOKLAR: ağaç yazılırken
+    /// gelen bir Sync ya da koşu yarım bir klasörde başlamamalıdır.</para>
+    /// </summary>
+    private async Task CreateWorktreeAsync(CreateWorktreeCommand cmd, CancellationToken ct)
+    {
+        if (coordinator.IsRunActive)
+        {
+            await writer.WriteAsync(
+                new ErrorEvent("worktreeRejected", "A run is in flight — stop it before creating the worktree."), ct);
+            return;
+        }
+
+        try
+        {
+            var result = await new WorktreeCreator(new ProcessRunner(), cmd.RootPath).CreateAsync(cmd.Folder, ct);
+            await writer.WriteAsync(new WorktreeCreatedEvent(cmd.Folder, result.Created, result.Revision, result.Detail), ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // WorktreeCreator git hatalarını zaten veriye çevirir; buraya yalnız GERÇEKTEN beklenmeyen bir hata düşer. IPC sınırını
+            // exception ASLA geçmemeli — App bu kodla işin kilidini açar.
+            await writer.WriteAsync(new ErrorEvent("worktreeFailed", ex.Message), ct);
         }
     }
 
