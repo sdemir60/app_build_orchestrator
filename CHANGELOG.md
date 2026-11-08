@@ -2,6 +2,14 @@
 
 Release notes for Build Orchestrator, newest version first. The What's new window in the app reads this file.
 
+## [1.12.1] - 2026-11-09
+
+### Fixed
+
+- Right-clicking the tray icon opens its menu above the taskbar instead of partly behind it, so Exit is always within reach, whatever the display's resolution or scale.
+- The card that opens above the branch chip when the working tree has uncommitted changes shows all three of its buttons; Cancel is no longer cut off at the card's edge.
+- A branch name too long for its row in the branch picker ends in an ellipsis before the commit or the active badge instead of running over them.
+
 ## [1.12.0] - 2026-11-08
 
 ### Added
