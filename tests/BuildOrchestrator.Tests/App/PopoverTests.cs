@@ -56,6 +56,48 @@ public class PopoverTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>
+    /// [branch row] Satıra sığmayan bir branch adı sağdaki kısa sha'nın (aktif branch'te <c>active</c> rozetinin) ÜSTÜNE taşmaz: ad, onlardan
+    /// önce <c>…</c> ile kısalır. Popover gerçek kabuğunda (alt barın 272 px'lik <c>Ds.Popover</c>'ı) açılır ve ölçülür.
+    ///
+    /// <para><b>Kusur:</b> ad, ikonla birlikte YATAY bir <see cref="StackPanel"/>'in içindeydi. Yatay panel çocuğunu genişlik sınırı vermeden
+    /// ölçer: adın <c>CharacterEllipsis</c> kırpması hiç devreye girmez, ad tam boyunda yerleşir ve satırın sağ sütununa — sha'nın ya da
+    /// rozetin üstüne — taşar.</para>
+    /// </summary>
+    [StaTheory]
+    [InlineData(false)] // sağda kısa sha
+    [InlineData(true)]  // sağda "active" rozeti
+    public void A_long_branch_name_ends_in_an_ellipsis_before_the_rows_right_column(bool active)
+    {
+        const string longName = "feature/a-branch-name-long-enough-to-run-past-the-right-column";
+        var vm = NewVm();
+        vm.OnEvent(new BranchListEvent([
+            new BranchRef("main", "aaaaaaaaaaaa", !active, false),
+            new BranchRef(longName, "bbbbbbbccccc", active, false),
+        ]));
+        var host = DsResources.NewHost();
+        var bar = new ActionBar { DataContext = vm };
+        var window = DsResources.Realize(host, bar, 1200, 200);
+        var popup = bar.BranchPopup;
+        popup.IsOpen = true;
+        var shell = (Border)popup.Child;
+        shell.UpdateLayout();
+
+        var row = DsResources.Descendants(shell).OfType<BranchRow>().Single(r => r.DataContext is BranchRowItem { Branch.Name: longName });
+        var texts = DsResources.Descendants(row).OfType<TextBlock>().ToList();
+        var name = texts.Single(t => t.Text == longName);
+        FrameworkElement right = active
+            ? (FrameworkElement)VisualTreeHelper.GetParent(texts.Single(t => t.Text == "active")) // rozetin kendisi (çerçevesiyle)
+            : texts.Single(t => t.Text == RunViewModel.Short7("bbbbbbbccccc"));
+        double nameRight = name.TransformToAncestor(row).Transform(new Point(name.ActualWidth, 0)).X;
+        double rightLeft = right.TransformToAncestor(row).Transform(default).X;
+
+        Assert.True(nameRight <= rightLeft,
+            $"ad {nameRight:F1} px'te bitiyor, sağ sütun {rightLeft:F1} px'te başlıyor — ad {nameRight - rightLeft:F1} px üstüne biniyor.");
+        popup.IsOpen = false;
+        GC.KeepAlive(window);
+    }
+
     private static RunViewModel NewVm() =>
         new(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
 

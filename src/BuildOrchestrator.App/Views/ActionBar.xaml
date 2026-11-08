@@ -51,10 +51,13 @@
             </Border>
           </Popup>
           <!-- [worktree] Branch karar kartı: aynı chip'in 8px üstünde, popover'la aynı yerleşim. Açık/kapalı VM'in konusundan sürülür
-               (RunViewModel.PendingBranchSwitch — kod-tarafı); dışarı tıklamak vazgeçmektir (Closed → Cancel). Genişlik Exit kartınınki. -->
+               (RunViewModel.PendingBranchSwitch — kod-tarafı); dışarı tıklamak vazgeçmektir (Closed → Cancel). Kabuk Exit kartınınki gibi
+               dolgusuzdur (bloklar kendi dolgusunu taşır, aralarındaki çizgi kenardan kenara uzanır). Genişlik 360: alttaki üç buton en uzun
+               etiketle (Cancel · Set up worktree… · Stash and switch) 315 px ister; Exit kartının 320'sinde iç alan 286 kalıyor ve Cancel
+               kartın sol kenarında kesiliyordu (pin: BranchSwitchCardTests.Every_action_fits_inside_the_card_whatever_the_second_button_says). -->
           <Popup x:Name="PART_BranchSwitchPopup" Placement="Top" PlacementTarget="{Binding ElementName=PART_BranchChip}"
                  StaysOpen="False" AllowsTransparency="True" VerticalOffset="-8" PopupAnimation="None">
-            <Border Style="{DynamicResource Ds.Popover}" Width="320">
+            <Border Style="{DynamicResource Ds.Popover}" Width="360" Padding="0">
               <views:BranchSwitchCard x:Name="PART_BranchSwitchCard"
                                       IsOpen="{Binding IsOpen, ElementName=PART_BranchSwitchPopup, Mode=OneWay}" />
             </Border>

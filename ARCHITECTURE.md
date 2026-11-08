@@ -3398,6 +3398,15 @@ and opens it itself with `MousePoint` placement: WPF reads the cursor in physica
 between the click and the menu. Like the library, it then brings the menu's window to the foreground, without which a
 click elsewhere would not close it. The menu's look is the project row menu's (§13.8).
 
+**The tray menu never covers the taskbar.** WPF keeps a context menu inside the work area only when the point it
+opens at lies inside that area; otherwise the bound is the whole monitor. A right-click on the tray icon is a point
+on the taskbar, so the menu would open upward with its bottom edge level with the cursor and its last row — *Exit* —
+under the taskbar. Before every opening the application therefore moves the opening point to the nearest point of
+the work area of the screen under the cursor (`KeepOffTheTaskbar`): the shift is computed in physical pixels and
+converted with that screen's scale, read at that moment — the scale WPF itself uses once the menu's window stands on
+that screen. WPF then applies its own rule, and the menu opens with its bottom edge on the taskbar's top edge, level
+with the click. A click inside the work area is not moved, and a shift never outlives its opening.
+
 **A build that runs while the window is away is not invisible.** When the main window is hidden *and* a build is
 in flight (`Starting` / `Running` / `Stopping` — `Syncing` is deliberately out of scope), the product mark
 animates in the bottom-right corner of the primary work area. It appears if the user drops to the tray mid-run
@@ -7165,11 +7174,13 @@ A second group carries the `Measurement` category: probes and measurements that 
 assert rules — the tray overlay's own cost, rendered frames of its loop, the notification call, where the real
 file picker lands, UI latency and memory under each perf profile, the UI thread cost of a build's events while the
 window is hidden, the managed-memory budget of the run narrative, the UI thread cost of landing at the end of a long
-project page, and the content-decision timings. Two tests in the group assert a rule rather than reading a number,
-because only a real window on a real screen shows it: the tray menu opens at the click even when the tray library's
-cached scale no longer matches the screen (`TrayMenuPositionProbeTests`, §12.3) — it repeats a reading the mouse moved
-during and skips when the mouse never keeps still — and the build indicator lands in the primary screen's corner even
-when WPF's cached scale no longer matches the screen (`TrayOverlayPositionProbeTests`, §12.3). The filter above does **not** exclude them (`!=` admits every other
+project page, and the content-decision timings. Two probes in the group assert rules rather than reading a number,
+because only a real window on a real screen shows them. The tray menu's (`TrayMenuPositionProbeTests`, §12.3) checks
+that the menu opens at the click even when the tray library's cached scale no longer matches the screen, and on the
+taskbar's edge rather than under it when the click is on the taskbar — for that reading it moves the mouse onto the
+taskbar and puts it back; it repeats a reading the mouse moved during and skips when the mouse never keeps still. The
+build indicator's (`TrayOverlayPositionProbeTests`, §12.3) checks that the indicator lands in the primary screen's
+corner even when WPF's cached scale no longer matches the screen. The filter above does **not** exclude them (`!=` admits every other
 category value). The tray, file-picker, hidden-window, memory, perf and page-end probes open real windows and dialogs,
 show balloons, force full collections, press hundreds of keys or saturate every core, so each is gated on an
 environment variable — `BO_PROBE_TRAY`, `BO_PROBE_FILE_DIALOG`, `BO_MEASURE_OVERLAY`, `BO_MEASURE_HIDDEN`,
@@ -7799,7 +7810,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Maximize overflow fix · DWM corners/border · caption glyphs | `App/Shell/MaximizeFix.cs`, `Dwm.cs`, `CaptionGlyphs.cs` |
 | The monitor the window opens on: the remembered monitor's identity and its model-code fallback, the window born normal and placed on it before its first frame; the monitor recorded on a real close, only from a window shown this session | `App/Shell/WindowMonitor.cs`; `App/MainWindow.Monitor.cs` (`SetupMonitor`, `RememberMonitor` — called from `OnClosing` in `App/MainWindow.xaml.cs`) |
 | Single instance, tray icon, global hotkeys (table, show/hide decision), shutdown | `App/Shell/SingleInstance.cs`, `AppTrayIcon.cs`, `Hotkey.cs`, `App/Shell/AppShutdown.cs` |
-| Tray menu — opened by the application at the cursor's physical point instead of by the tray library (§12.3); its items and their icons | `App/Shell/AppTrayIcon.cs` (`OpenMenuOurselves`, `OpenMenu`, `CreateMenu`) |
+| Tray menu — opened by the application at the cursor's physical point instead of by the tray library, that point pulled into the work area so the menu never covers the taskbar (§12.3); its items and their icons | `App/Shell/AppTrayIcon.cs` (`OpenMenuOurselves`, `OpenMenu`, `KeepOffTheTaskbar`, `AnchorInWorkArea`, `CreateMenu`) |
 | Start with Windows — the `Run` value, Task Manager's disabled mark, the state the switch shows, the save-time write, the removal at uninstall (`RemoveForUninstall`) | `App/Services/AutostartService.cs` |
 | Window close decision — `X`, `Alt+F4`, system-menu *Close*, an `Esc` with nothing left to do: close, stay, hide to the tray or ask for a full exit | `App/Shell/WindowCloseRule.cs`; applied in `App/MainWindow.xaml.cs` (`OnClosing`) |
 | Full exit: what is in flight (`ExitWork`), the hard stop of a run and the stop wait (`ExitStopWaitMs`), the jobs cut off and the git writes waited for, the release on engine silence or death, `ExitReady`; the run's progress for the card (`ExitProgress`) | `App/ViewModels/RunViewModel.Exit.cs`; the work kinds and the one rule of which ones the exit waits for: `App/ViewModels/ExitWork.cs` (`ExitWorkRules.Waits`); the hard stop shared with *Stop now*: `RunViewModel.cs` (`SendHardStopAsync`); no Sync once the exit is asked for, and nothing leaves the engine gate: `RunViewModel.cs` (`SyncCoreAsync`), `RunViewModel.Engine.cs` (`EnsureEngineAwakeAsync`) — both read the one flag, `_exitRequested` |

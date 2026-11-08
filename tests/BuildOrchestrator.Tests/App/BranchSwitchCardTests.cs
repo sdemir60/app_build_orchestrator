@@ -1,4 +1,8 @@
 using System.IO;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Media;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
@@ -387,6 +391,71 @@ public class BranchSwitchCardTests
 
         Assert.Null(vm.PendingBranchSwitch);
         Assert.Empty(sent.OfType<CheckoutBranchCommand>().Skip(1)); // vazgeçmek bir şey göndermez
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Kartı alt barın gerçek kabuğunda açar: VM'in konusuyla (kirli ağaç), barın kendi açışıyla.</summary>
+    private static async Task<(BuildOrchestrator.App.Views.ActionBar Bar, Border Shell, BuildOrchestrator.App.Views.BranchSwitchCard Card, Window Window)>
+        OpenInTheBar()
+    {
+        var vm = NewVm([]);
+        var host = DsResources.NewHost();
+        var bar = new BuildOrchestrator.App.Views.ActionBar { DataContext = vm };
+        var window = DsResources.Realize(host, bar, 1200, 200);
+        await vm.SelectBranch(FeatureX);
+        vm.OnEvent(new CheckoutCompletedEvent(CheckoutStatus.Dirty, "main", "main", null, 3, null, null));
+        Assert.True(bar.BranchSwitchPopup.IsOpen); // ön-koşul: bar kartı açtı
+        var shell = (Border)bar.BranchSwitchPopup.Child;
+        shell.UpdateLayout();
+        return (bar, shell, (BuildOrchestrator.App.Views.BranchSwitchCard)shell.Child, window);
+    }
+
+    /// <summary>
+    /// [branch card layout] Kartın kabuğu Exit kartınınki gibi dolgusuzdur: blokların kendi dolgusu vardır ve aralarındaki 1 px çizgi kartın bir
+    /// kenarından ötekine uzanır (Exit ve güncelleme kartlarının ailesi, kartın kendi başlık yorumu: "Kabuk (Ds.Popover, 320px, dolgu 0)").
+    /// <para><b>Kusur:</b> alt bardaki kabuk <c>Ds.Popover</c>'ın varsayılan 8 px dolgusunu taşıyordu (<c>Padding="0"</c> yazılmamıştı): çizgi
+    /// iki yandan 8 px içeride kalıyor, butonlara kalan genişlik 16 px daralıyordu.</para>
+    /// </summary>
+    [StaFact]
+    public async Task The_cards_shell_has_no_padding_like_the_exit_cards()
+    {
+        var (bar, shell, _, window) = await OpenInTheBar();
+
+        Assert.Equal(new Thickness(0), shell.Padding);
+
+        bar.BranchSwitchPopup.IsOpen = false;
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [branch card layout] Alttaki üç buton — <c>Cancel</c>, diğer kopya, <c>Stash and switch</c> — ikinci butonun her etiketinde kartın içine
+    /// sığar: satır yerinden fazlasını istemez ve her buton bloğun dolgusunun içinde kalır. Kart alt barın gerçek kabuğunda açılır; ikinci
+    /// butonun etiketi, yazılabildiği her metne çekilir (<see cref="BranchSwitchText.OtherCopy"/>) — en uzunu taşmamalıdır.
+    /// <para><b>Kusur:</b> sağa yaslı yatay satır yerine sığmayınca WPF onu sola taşırır ve taşanı kırpar: <c>Cancel</c> kartın sol kenarında
+    /// kesiliyordu.</para>
+    /// </summary>
+    [StaTheory]
+    [InlineData(WorkingCopy.Repository, true)]  // Use worktree
+    [InlineData(WorkingCopy.Repository, false)] // Set up worktree…
+    [InlineData(WorkingCopy.Worktree, true)]    // Use repository
+    public async Task Every_action_fits_inside_the_card_whatever_the_second_button_says(WorkingCopy copy, bool worktreeReady)
+    {
+        var (bar, shell, card, window) = await OpenInTheBar();
+        card.OtherCopyButton.Content = BranchSwitchText.OtherCopy(copy, worktreeReady);
+        shell.UpdateLayout();
+
+        var row = (FrameworkElement)VisualTreeHelper.GetParent(card.CancelButton);
+        Rect slot = ((Visual)VisualTreeHelper.GetParent(row)).TransformToAncestor(shell).TransformBounds(LayoutInformation.GetLayoutSlot(row));
+        Assert.True(row.DesiredSize.Width <= slot.Width + 0.5,
+            $"'{card.OtherCopyButton.Content}': butonlar {row.DesiredSize.Width:F1} px istiyor, kart {slot.Width:F1} px veriyor.");
+        foreach (var button in new[] { card.CancelButton, card.OtherCopyButton, card.StashButton })
+        {
+            Rect bounds = button.TransformToAncestor(shell).TransformBounds(new Rect(button.RenderSize));
+            Assert.True(bounds.Left >= slot.Left - 0.5 && bounds.Right <= slot.Right + 0.5,
+                $"'{button.Content}' {bounds.Left:F1}–{bounds.Right:F1} px'te, kartın buton alanı {slot.Left:F1}–{slot.Right:F1} px.");
+        }
+
+        bar.BranchSwitchPopup.IsOpen = false;
         GC.KeepAlive(window);
     }
 

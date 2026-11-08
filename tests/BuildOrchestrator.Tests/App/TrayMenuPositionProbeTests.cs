@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows;
@@ -22,8 +23,14 @@ namespace BuildOrchestrator.Tests.App;
 /// <para><b>Sonda ne kurar:</b> ekran değişikliğinin kendisi bir testte yapılamaz, geride bıraktığı durum yapılabilir — kütüphanenin
 /// saklı çarpanı ekranla artık tutmaz (<see cref="LibraryDpiFactor"/>). Ardından kabuğun <c>NOTIFYICON_VERSION_4</c> sağ tık mesajını
 /// gerçek tepsi ikonunun mesaj penceresine gönderir (wParam = imlecin yeri, lParam = <c>WM_RBUTTONUP</c>) ve açılan menünün popup
-/// penceresinin ekrandaki yerini ölçer: köşelerinden biri tık noktasında olmalıdır (hangisi olduğu ekran kenarına ve Windows'un el
-/// tercihine göre değişir).</para>
+/// penceresinin ekrandaki yerini ölçer: köşelerinden biri açılış noktasında olmalıdır (hangisi olduğu ekran kenarına ve Windows'un el
+/// tercihine göre değişir). Açılış noktası tık noktasıdır; imleç görev çubuğundaysa onun çalışma alanına çekilmiş hâli
+/// (<see cref="AppTrayIcon.AnchorInWorkArea"/>).</para>
+///
+/// <para><b>[DEĞİŞEN KURAL — 2026-11-09]</b> ESKİ İDDİA: köşelerinden biri TIK NOKTASINDADIR, imleç nerede olursa olsun. GEREKÇE: görev
+/// çubuğundaki tıkta o köşe görev çubuğunun içine düşüyor ve menünün alt satırı (Exit) görev çubuğunun altında kalıyordu — ölçüldü (%125):
+/// 69 px'lik menünün 30 px'i. Menü artık görev çubuğunun kenarında açılır; imleç çalışma alanının içindeyse iddia eskisiyle aynıdır
+/// (<see cref="The_tray_menu_stays_above_the_taskbar_when_the_click_is_on_it"/>).</para>
 ///
 /// <para>Varsayılan koşuda ÇALIŞMAZ (<c>BO_PROBE_TRAY=1</c> yoksa <c>Skip</c>): gerçek bir tepsi ikonu kurar, imlecin yanında bir menü
 /// açar ve onu öne getirir.</para>
@@ -62,7 +69,86 @@ public sealed class TrayMenuPositionProbeTests(ITestOutputHelper output)
         Assert.True(probe.Distance <= Tolerance, probe.Report);
     }
 
+    /// <summary>
+    /// [tray menu above the taskbar] Tepsi ikonuna sağ tıkta imleç görev çubuğunun ÜSTÜNDEDİR; menü yine de görev çubuğuna binmez:
+    /// pencerenin tamamı çalışma alanında, alt kenarı görev çubuğunun üst kenarında, yatayda bir kenarı tık noktasındadır.
+    ///
+    /// <para><b>Kusur:</b> menü imlecin noktasında açılır (<c>MousePoint</c>). WPF bir bağlam menüsünü görev çubuğundan YALNIZ açıldığı
+    /// nokta çalışma alanının içindeyse uzak tutar (<c>Popup.GetScreenBounds</c>: nokta dışarıdaysa sınır monitörün tamamıdır). Görev
+    /// çubuğundaki tıkta menü yukarı açılır ama alt kenarı imlecin hizasında kalır; alt satırı (Exit) görev çubuğunun altına girer.</para>
+    ///
+    /// <para><b>Sonda ne kurar:</b> imleci birincil ekranın görev çubuğuna (dikeyde ortası, yatayda tepsi tarafı) taşır, kabuğun sağ tık
+    /// mesajını gerçek tepsi ikonuna gönderir, açılan menünün penceresini ölçer ve imleci eski yerine koyar. Görev çubuğu birincil ekranın
+    /// altında değilse (gizlenen görev çubuğu, başka kenar) sonda atlanır.</para>
+    /// </summary>
+    [SkippableFact]
+    public void The_tray_menu_stays_above_the_taskbar_when_the_click_is_on_it()
+    {
+        Skip.IfNot(Environment.GetEnvironmentVariable("BO_PROBE_TRAY") == "1",
+            "Creates a real tray icon, moves the mouse onto the taskbar and opens the menu there — opt in with BO_PROBE_TRAY=1.");
+
+        var probe = StaThread.RunAsync(() => RightClickOnTheTaskbar(), "tray-menu-taskbar").GetAwaiter().GetResult();
+        output.WriteLine(probe.Report);
+
+        Skip.If(probe.SkipReason is not null, probe.SkipReason);
+        Skip.If(probe.MouseKeptMoving, "The mouse moved during every attempt — keep it still while the probe runs.");
+        Assert.True(probe.Ok, probe.Report);
+    }
+
     private sealed record Probe(double Distance, bool MouseKeptMoving, string Report);
+
+    private sealed record TaskbarProbe(bool Ok, bool MouseKeptMoving, string? SkipReason, string Report)
+    {
+        public static TaskbarProbe Skipped(string reason) => new(false, false, reason, reason);
+    }
+
+    private static TaskbarProbe RightClickOnTheTaskbar()
+    {
+        _ = System.IO.Packaging.PackUriHelper.UriSchemePack; // bkz. RightClickAfterScaleChange
+
+        var info = new Win32.MONITORINFO { cbSize = Marshal.SizeOf<Win32.MONITORINFO>() };
+        if (!Win32.GetMonitorInfo(Win32.MonitorFromPoint(default, Win32.MONITOR_DEFAULTTOPRIMARY), ref info))
+            return TaskbarProbe.Skipped("The primary screen could not be read.");
+        var (screen, work) = (info.rcMonitor, info.rcWork);
+        if (work.Bottom >= screen.Bottom)
+            return TaskbarProbe.Skipped("The taskbar is not docked at the bottom of the primary screen (hidden or on another edge).");
+        var click = new Win32.POINT { X = work.Right - 160, Y = (work.Bottom + screen.Bottom) / 2 };
+
+        using var tray = new AppTrayIcon(AppTrayIcon.NoRunToStop);
+        TaskbarIcon icon = tray.IconForTest;
+        ContextMenu menu = icon.ContextMenu ?? throw new InvalidOperationException("The tray icon has no menu.");
+        Win32.GetCursorPos(out var before);
+        Opened? opened;
+        try
+        {
+            int attempt = 0;
+            do
+            {
+                SetCursorPos(click.X, click.Y);
+                opened = OpenOnce(icon, menu);
+            }
+            while (opened is { MouseMoved: true } && ++attempt < Attempts);
+        }
+        finally
+        {
+            SetCursorPos(before.X, before.Y); // imleç kullanıcınındır: sonda onu bulduğu yere bırakır
+        }
+
+        string where = string.Create(CultureInfo.InvariantCulture,
+            $"screen ({screen.Left},{screen.Top})-({screen.Right},{screen.Bottom}), work area ({work.Left},{work.Top})-({work.Right},{work.Bottom}), " +
+            $"click ({click.X},{click.Y})");
+        if (opened is null) return new TaskbarProbe(false, false, null, $"The tray menu did not open ({where}).");
+
+        var r = opened.Menu;
+        bool insideWorkArea = r.Left >= work.Left && r.Top >= work.Top && r.Right <= work.Right && r.Bottom <= work.Bottom;
+        bool onTheTaskbarEdge = work.Bottom - r.Bottom <= Tolerance;
+        bool atTheClick = Math.Abs(r.Left - click.X) <= Tolerance || Math.Abs(r.Right - click.X) <= Tolerance;
+        return new TaskbarProbe(insideWorkArea && onTheTaskbarEdge && atTheClick, opened.MouseMoved, null, string.Create(CultureInfo.InvariantCulture,
+            $"{where}, menu ({r.Left},{r.Top})-({r.Right},{r.Bottom}): " +
+            $"{(r.Bottom > work.Bottom ? $"covers the taskbar by {r.Bottom - work.Bottom} px" : "clear of the taskbar")}, " +
+            $"{work.Bottom - r.Bottom} px above its edge, {(atTheClick ? "an edge at the click" : "no edge at the click")}" +
+            $"{(opened.MouseMoved ? $", the mouse moved to ({opened.AfterOpen.X},{opened.AfterOpen.Y})" : "")}"));
+    }
 
     private static Probe RightClickAfterScaleChange(double staleRatio)
     {
@@ -89,31 +175,44 @@ public sealed class TrayMenuPositionProbeTests(ITestOutputHelper output)
         }
     }
 
-    /// <summary>Kabuğun sağ tık mesajını bir kez gönderir, açılan menünün yerini ölçer ve menüyü kapatır. İmleç mesajdan ölçüme kadar
+    /// <summary>Kabuğun sağ tık mesajını bir kez gönderir, açılan menünün yerini açılış noktasına göre ölçer. İmleç mesajdan ölçüme kadar
     /// <see cref="Tolerance"/>'tan fazla kıpırdadıysa sonuç "fare kıpırdadı" diye işaretlenir.</summary>
     private static Probe RightClickOnce(TaskbarIcon icon, ContextMenu menu, double fresh, double staleRatio)
     {
-        string scale = string.Create(System.Globalization.CultureInfo.InvariantCulture,
-            $"screen factor {fresh:F3}, cached factor {fresh * staleRatio:F3}");
+        string scale = string.Create(CultureInfo.InvariantCulture, $"screen factor {fresh:F3}, cached factor {fresh * staleRatio:F3}");
+        if (OpenOnce(icon, menu) is not { } opened) return new Probe(double.PositiveInfinity, false, $"The tray menu did not open ({scale}).");
+
+        var (r, click) = (opened.Menu, opened.Click);
+        var anchor = WindowMonitor.Of(Win32.MonitorFromPoint(click, Win32.MONITOR_DEFAULTTONEAREST)) is { } screen
+            ? AppTrayIcon.AnchorInWorkArea(click, screen.WorkArea)
+            : click;
+        double distance = NearestCorner(r, anchor);
+        return new Probe(distance, opened.MouseMoved, string.Create(CultureInfo.InvariantCulture,
+            $"{scale}, click ({click.X},{click.Y}), anchor ({anchor.X},{anchor.Y}), menu ({r.Left},{r.Top})-({r.Right},{r.Bottom}), " +
+            $"nearest corner {distance:F0} px{(opened.MouseMoved ? $", the mouse moved to ({opened.AfterOpen.X},{opened.AfterOpen.Y})" : "")}"));
+    }
+
+    /// <summary>Açılan menünün penceresi (fiziksel px), mesajın taşıdığı tık noktası, ölçüm anındaki imleç ve imlecin arada kıpırdayıp
+    /// kıpırdamadığı.</summary>
+    private sealed record Opened(Win32.RECT Menu, Win32.POINT Click, Win32.POINT AfterOpen, bool MouseMoved);
+
+    /// <summary>Kabuğun sağ tık mesajını imlecin o anki yeriyle bir kez gönderir, açılan menünün penceresini ölçer ve menüyü kapatır;
+    /// menü açılmazsa <c>null</c>. İki sondanın ortak adımı.</summary>
+    private static Opened? OpenOnce(TaskbarIcon icon, ContextMenu menu)
+    {
         try
         {
-            GetCursorPos(out var click);
+            Win32.GetCursorPos(out var click);
             Win32.SendMessage(icon.TrayIcon.WindowHandle, MessageWindow.CallbackMessageId,
                 (nint)((click.Y << 16) | (click.X & 0xFFFF)), WM_RBUTTONUP);
 
             DispatcherPump.PumpUntil(() => PopupHandle(menu) is nint h && Win32.IsWindowVisible(h), TimeSpan.FromSeconds(2));
             DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(200)); // yerleşim bir layout turunda oturur
-            GetCursorPos(out var afterOpen);
+            Win32.GetCursorPos(out var afterOpen);
 
-            if (PopupHandle(menu) is not nint popup || !Win32.IsWindowVisible(popup))
-                return new Probe(double.PositiveInfinity, false, $"The tray menu did not open ({scale}).");
-
+            if (PopupHandle(menu) is not nint popup || !Win32.IsWindowVisible(popup)) return null;
             Win32.GetWindowRect(popup, out var r);
-            double distance = NearestCorner(r, click);
-            bool moved = Distance(click, afterOpen) > Tolerance;
-            return new Probe(distance, moved, string.Create(System.Globalization.CultureInfo.InvariantCulture,
-                $"{scale}, click ({click.X},{click.Y}), menu ({r.Left},{r.Top})-({r.Right},{r.Bottom}), " +
-                $"nearest corner {distance:F0} px{(moved ? $", the mouse moved to ({afterOpen.X},{afterOpen.Y})" : "")}"));
+            return new Opened(r, click, afterOpen, Distance(click, afterOpen) > Tolerance);
         }
         finally
         {
@@ -122,17 +221,17 @@ public sealed class TrayMenuPositionProbeTests(ITestOutputHelper output)
         }
     }
 
-    private static double Distance(POINT a, POINT b) => Math.Sqrt(Math.Pow(a.X - b.X, 2) + Math.Pow(a.Y - b.Y, 2));
+    private static double Distance(Win32.POINT a, Win32.POINT b) => Math.Sqrt(Math.Pow(a.X - b.X, 2) + Math.Pow(a.Y - b.Y, 2));
 
     private static nint? PopupHandle(ContextMenu menu) =>
         PresentationSource.FromVisual(menu) is HwndSource { Handle: not 0 } source ? source.Handle : null;
 
-    private static double NearestCorner(Win32.RECT r, POINT p)
+    private static double NearestCorner(Win32.RECT r, Win32.POINT p)
     {
         double best = double.PositiveInfinity;
         foreach (int x in new[] { r.Left, r.Right })
             foreach (int y in new[] { r.Top, r.Bottom })
-                best = Math.Min(best, Distance(new POINT { X = x, Y = y }, p));
+                best = Math.Min(best, Distance(new Win32.POINT { X = x, Y = y }, p));
         return best;
     }
 
@@ -165,14 +264,9 @@ public sealed class TrayMenuPositionProbeTests(ITestOutputHelper output)
         }
     }
 
-    [StructLayout(LayoutKind.Sequential)]
-    private struct POINT
-    {
-        public int X;
-        public int Y;
-    }
-
+    /// <summary>İmleci taşır — yalnız sondanın işidir (görev çubuğuna tık); uygulama imleci hiçbir zaman taşımaz, bu yüzden
+    /// <see cref="Win32"/>'ye girmez.</summary>
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetCursorPos(out POINT point);
+    private static extern bool SetCursorPos(int x, int y);
 }

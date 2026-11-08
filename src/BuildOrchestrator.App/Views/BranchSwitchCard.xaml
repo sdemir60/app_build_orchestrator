@@ -1,5 +1,5 @@
 <!-- [worktree] Branch karar kartı: branch chip'inden seçilen branch'e geçiş kirli ağaçta durunca açılır. Kök taban tipi PopoverBase'tir
-     (IsOpen + giriş + Esc + VM takası orada). Kabuk (Ds.Popover, 320px, dolgu 0) ve yerleşim (branch chip'inin 8px üstü, Popup) ActionBar.xaml'
+     (IsOpen + giriş + Esc + VM takası orada). Kabuk (Ds.Popover, 360px, dolgu 0) ve yerleşim (branch chip'inin 8px üstü, Popup) ActionBar.xaml'
      dedir; burada yalnız gövde vardır: iki blok, aralarında 1px border — Exit kartının ailesi (ExitCard.xaml). İçerik
      RunViewModel.PendingBranchSwitch'tir (BranchSwitchCard.xaml.cs RefreshContent); metinler BranchSwitchText'ten. -->
 <views:PopoverBase x:Class="BuildOrchestrator.App.Views.BranchSwitchCard"
