@@ -648,7 +648,7 @@ public partial class ActionBar : UserControl
     {
         RefreshWorktreeToggle();
         if (_vm is null) return;
-        _ = _vm.SwitchCopyAsync(_vm.ActiveCopy == WorkingCopy.Worktree ? WorkingCopy.Repository : WorkingCopy.Worktree);
+        _ = _vm.SwitchCopyAsync(_vm.ActiveCopy.Other());
     }
 
     /// <summary>Anahtarın görünürlüğü (workspace varken), işareti (worktree açık), tooltip'i (bir sonraki tık —

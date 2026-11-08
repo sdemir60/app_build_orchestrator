@@ -9,6 +9,14 @@ public enum WorkingCopy
     Worktree,
 }
 
+/// <summary>[worktree] Kopyanın karşısı — alt bardaki anahtar ve branch kartı AYNI cevabı buradan alır.</summary>
+public static class WorkingCopyExtensions
+{
+    /// <summary>Repo ↔ worktree.</summary>
+    public static WorkingCopy Other(this WorkingCopy copy) =>
+        copy == WorkingCopy.Worktree ? WorkingCopy.Repository : WorkingCopy.Worktree;
+}
+
 /// <summary>[worktree] Alt bardaki anahtarın metinleri — tooltip bir sonraki tıklamanın ne yapacağını söyler.</summary>
 public static class WorktreeToggleText
 {

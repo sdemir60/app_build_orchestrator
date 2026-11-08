@@ -225,6 +225,76 @@ public class BranchSwitchCardTests
         Assert.Null(vm.PendingBranchSwitch);
     }
 
+    /// <summary>Kartın konusu bir kopyanın kirli ağacıdır: kopya değişince (alt bardaki geçiş) kart kapanır — açık kalsaydı kararı yeni
+    /// kopyaya uygulanırdı.</summary>
+    [Fact]
+    public async Task Switching_the_copy_closes_an_open_card()
+    {
+        var (repo, worktree) = RepoWithWorktree();
+        using var _ = repo;
+        var sent = new List<IpcCommand>();
+        var vm = NewVm(sent, repo.RootPath, worktree);
+        await vm.SelectBranch(FeatureX);
+        vm.OnEvent(new CheckoutCompletedEvent(CheckoutStatus.Dirty, "main", "main", null, 3, null, null));
+        Assert.NotNull(vm.PendingBranchSwitch);
+
+        await vm.SwitchCopyAsync(WorkingCopy.Worktree);
+
+        Assert.Equal(WorkingCopy.Worktree, vm.ActiveCopy);
+        Assert.Null(vm.PendingBranchSwitch);
+    }
+
+    /// <summary>Repo kökü değişince ya da workspace kapanınca da kart kapanır: konusu eski kökün ağacıydı.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_new_repository_root_or_a_closed_workspace_closes_an_open_card(bool close)
+    {
+        using var other = new GitTestRepo();
+        var sent = new List<IpcCommand>();
+        var vm = NewVm(sent);
+        await vm.SelectBranch(FeatureX);
+        vm.OnEvent(new CheckoutCompletedEvent(CheckoutStatus.Dirty, "main", "main", null, 3, null, null));
+        Assert.NotNull(vm.PendingBranchSwitch);
+
+        await vm.ApplySettingsAsync([], close ? "" : other.RootPath, []);
+
+        Assert.Null(vm.PendingBranchSwitch);
+    }
+
+    /// <summary>Motorun reddettiği checkout'un isteği unutulur: ardından gelen sahipsiz bir cevap (sırası kaymış bir olay) eski isteğin
+    /// kopyasına geçirmez — istek diğer kopyaya gitmişti ve cevap "geçti" diyor.</summary>
+    [Fact]
+    public async Task A_stray_answer_after_a_rejected_checkout_does_not_switch_the_copy()
+    {
+        var (repo, worktree) = RepoWithWorktree();
+        using var _ = repo;
+        var sent = new List<IpcCommand>();
+        var vm = NewVm(sent, repo.RootPath, worktree);
+        await vm.SelectBranch(FeatureX);
+        vm.OnEvent(new CheckoutCompletedEvent(CheckoutStatus.Dirty, "main", "main", null, 3, null, null));
+        await vm.DecideBranchSwitchAsync(BranchDecision.OtherCopy);
+        vm.OnEvent(new ErrorEvent("checkoutRejected", "A run is in flight — stop it before switching branches."));
+
+        vm.OnEvent(new CheckoutCompletedEvent(CheckoutStatus.Switched, "side", "feature/x", FullSha, 0, null, null));
+
+        Assert.Equal(WorkingCopy.Repository, vm.ActiveCopy);
+    }
+
+    /// <summary>Motor checkout'un ortasında ölünce de istek unutulur: yeniden başlayan motordan gelen sahipsiz bir cevap kart açmaz.</summary>
+    [Fact]
+    public async Task A_stray_answer_after_losing_the_engine_opens_no_card()
+    {
+        var sent = new List<IpcCommand>();
+        var vm = NewVm(sent);
+        await vm.SelectBranch(FeatureX);
+        vm.OnEngineExited(1);
+
+        vm.OnEvent(new CheckoutCompletedEvent(CheckoutStatus.Dirty, "main", "main", null, 3, null, null));
+
+        Assert.Null(vm.PendingBranchSwitch);
+    }
+
     /// <summary>Kartın düğme kapısı branch chip'ininkidir: geçişin Sync'i uçuşta açılan kart (diğer kopya da kirliydi) iş bitene dek
     /// beklemeye alınır — basılan karar sessizce düşmez.</summary>
     [Fact]

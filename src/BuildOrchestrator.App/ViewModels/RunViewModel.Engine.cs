@@ -794,8 +794,8 @@ public sealed partial class RunViewModel
         // bayrak sızarsa yeniden başlatılan motorda da düğmeler kilitli kalırdı.
         if (!_engineGate.Holds(typeof(CleanWorkspaceCommand))) ReleaseCleanSurface();
         if (!_engineGate.Holds(typeof(OptimizeWorkspaceCommand))) ReleaseOptimizeSurface();
-        // [§6.3] motor checkout ortasında öldüyse cevap gelmez — chip kilidi sızmaz
-        if (!_engineGate.Holds(typeof(CheckoutBranchCommand))) SetCheckoutBusy(false);
+        // [§6.3] motor checkout ortasında öldüyse cevap gelmez — chip kilidi ve isteğin hedefi sızmaz
+        if (!_engineGate.Holds(typeof(CheckoutBranchCommand))) ReleaseCheckout();
         // [§6.1] motor pull ortasında öldüyse pullCompleted gelmez — kapı sızmaz
         if (!_engineGate.Holds(typeof(PullRepositoryCommand))) SetPullBusy(false);
         // [worktree] motor kurulumun ortasında öldüyse worktreeCreated gelmez — kilit ve bekleyen istek sızmaz

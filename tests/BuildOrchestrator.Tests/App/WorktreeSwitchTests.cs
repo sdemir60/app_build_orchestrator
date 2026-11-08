@@ -117,6 +117,33 @@ public class WorktreeSwitchTests
         Assert.Null(vm.LastSyncHead);
     }
 
+    /// <summary>Ürünün kurduğu worktree detached doğar: checkout edilmiş bir branch'i yoktur. Geçiş repo kopyasının git yüzeyini (branch
+    /// envanteri, checkout edilmiş branch, <c>N behind</c>) unutur — yoksa chip repo'nun branch'ini gösterir ve Sync onu detached HEAD'in
+    /// yedek branch'i diye taşırdı (motor o branch'in uzak ucunu hedef sanardı).</summary>
+    [Fact]
+    public async Task Switching_to_a_detached_worktree_forgets_the_repository_branch()
+    {
+        using var repo = new GitTestRepo();
+        repo.WriteFile("a.txt", "one");
+        repo.CommitAll("first");
+        string worktree = repo.AddDetachedWorktree();
+        var vm = NewVm(repo.RootPath, worktree);
+        vm.OnEvent(new BranchListEvent([new BranchRef("main", "aaaaaaaaaaaa", IsActive: true, IsRemoteTracking: false)]));
+        vm.OnEvent(new SyncStartedEvent(repo.RootPath, "main"));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0, Behind: 2, ActiveBranch: "main"));
+        Assert.Equal("main", vm.Branch);
+        Assert.Equal(2, vm.Behind);
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        await vm.SwitchCopyAsync(WorkingCopy.Worktree);
+
+        Assert.Equal("", vm.Branch);
+        Assert.Empty(vm.Branches);
+        Assert.Null(vm.Behind);
+        Assert.Equal("", Assert.Single(sent.OfType<SyncWorkspaceCommand>()).Branch);
+    }
+
     [Fact]
     public async Task An_unconfigured_worktree_asks_for_setup_and_sends_nothing()
     {

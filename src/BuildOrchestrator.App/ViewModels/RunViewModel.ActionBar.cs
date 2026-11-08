@@ -372,8 +372,11 @@ public sealed partial class RunViewModel
     /// <see cref="ApplyRepositoryRoot"/>'un kapısı ile mid-run erteleme notunun koşulu (<see cref="ApplySettingsAsync"/>)
     /// AYNI soruyu sorar; soru TEK yerde durur (kopya YASAK) — aksi halde iki karşılaştırma zamanla ayrışır ve UI,
     /// motorun yaptığından başka bir şey anlatırdı.</summary>
-    private bool IsRepositoryChange(string root) =>
-        !string.Equals(root, RootPath, StringComparison.OrdinalIgnoreCase);
+    private bool IsRepositoryChange(string root) => !SamePath(root, RootPath);
+
+    /// <summary>İki yol aynı klasör mü — Windows yolları büyük/küçük harf duyarsızdır. Save'in kök ve worktree kapılarının (<see cref="IsRepositoryChange"/>,
+    /// <see cref="IsWorktreeChange"/>) TEK karşılaştırması.</summary>
+    private static bool SamePath(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>[kullanıcı kararı 2026-09-29] Settings'ten gelen kökün normal biçimi: boş ya da yalnız boşluk → boş kök
     /// ("workspace yok"), aksi hâlde olduğu gibi. Save'in kök kararlarının (kapanış, değişim, erteleme notu) TEK girdisi —

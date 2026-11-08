@@ -897,8 +897,9 @@ public sealed partial class RunViewModel : ObservableObject
     {
         if (string.IsNullOrEmpty(value)) Phase = AppPhase.Empty;
         else if (Phase == AppPhase.Empty) Phase = AppPhase.Boot;
-        AttachAutoSync(ActiveRoot); // [spec 2026-09-18 §6.1] HEAD izleyicisi AKTİF kökü izler (worktree: ikinci kök)
-        RefreshGitOperation(); // [spec 2026-09-18 §6.4] eski kökün git işlemi yeni kökte anlamsız
+        // [spec 2026-09-18 §6.1 · §6.4 · worktree] HEAD izleyicisi ve git işlem kapısı AKTİF köke taşınır, açık branch kartı kapanır —
+        // kopya değişimiyle ortak adımlar tek yerde.
+        OnActiveRootChanged();
     }
 
     public RunViewModel(EngineHost engine, ConsoleBatcher console, Func<string> newRunId, Func<long>? nowMs = null,
@@ -1017,7 +1018,8 @@ public sealed partial class RunViewModel : ObservableObject
         {
             // [T20-b/K11] PerfMode de gider: paralellik (Parallelism) ve cap/priority (PerfMode) AYNI profil
             // satırının iki yarısıdır — Supervisor cap'i o addan çözer, worker sayısını YENİDEN türetmez.
-            // [spec 2026-09-18 §1-1] Koşu daima RootPath'teki çalışma ağacında derlenir: branch/worktree gitmez.
+            // [spec 2026-09-18 §1-1 · worktree] Koşu daima aktif kökün (ActiveRoot — repo ya da worktree) çalışma ağacında derlenir: branch
+            // gitmez, motor hangi kopyada olduğunu bilmez.
             // [Task 21 · karar 18] Komut uyanmadan SONRA kurulur: uyanma sürerken değiştirilen perf profili koşuyla gider (o sırada perf
             // chip'inin komutu uyanık olmayan motora gönderilmez).
             var cmd = new StartRunCommand(runId, mode, ActiveRoot, Configuration, Parallelism,

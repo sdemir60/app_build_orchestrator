@@ -277,7 +277,8 @@ public class WorktreeSettingsTests
     }
 
     /// <summary>Aktif worktree'nin klasörü değişir ya da silinirse çalışılan kopya artık o değildir: kopya Repo'ya döner, Save'in Sync'i
-    /// repo kökünde koşar ve eski kopyanın planı gider.</summary>
+    /// repo kökünde koşar ve eski kopyanın planı gider. Worktree'nin son Sync'i de unutulur: HEAD'i repo kopyasında kıyas tabanı olsaydı ilk
+    /// HEAD tetiği sahte bir "Switched to" bölümü açardı (alt bardaki geçişle aynı kural).</summary>
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -293,6 +294,7 @@ public class WorktreeSettingsTests
         await vm.SwitchCopyAsync(WorkingCopy.Worktree);
         vm.OnEvent(new SyncStartedEvent(worktree, "side"));
         vm.OnEvent(new SyncCompletedEvent("side", "sha1234", false, 0, 0));
+        Assert.NotNull(vm.LastSyncHead);
         sent.Clear();
 
         var draft = new SettingsDraftViewModel(null, repo.RootPath, worktreeFolder: worktree) { WorktreeFolder = clear ? "" : otherWorktree };
@@ -301,6 +303,7 @@ public class WorktreeSettingsTests
         Assert.Equal(WorkingCopy.Repository, vm.ActiveCopy);
         Assert.Equal(clear ? "" : otherWorktree, vm.WorktreeFolder);
         Assert.Equal(repo.RootPath, Assert.Single(sent.OfType<SyncWorkspaceCommand>()).RootPath);
+        Assert.Null(vm.LastSyncHead);
     }
 
     [Theory]

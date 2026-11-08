@@ -105,10 +105,17 @@ public sealed class GitTestRepo : IDisposable
     /// üzerinde sınamak içindir; <paramref name="branch"/> önceden <see cref="CreateBranch"/> ile
     /// oluşturulmuş, henüz hiçbir yerde checkout edilmemiş bir yerel branch olmalıdır.
     /// </summary>
-    public string AddWorktree(string branch)
+    public string AddWorktree(string branch) => AddWorktreeWith(path => ["worktree", "add", "-q", path, branch]);
+
+    /// <summary>[worktree] Ana kopyanın HEAD commit'inde DETACHED bir linked worktree — ürünün Settings Save'de kurduğunun aynısı
+    /// (<c>worktree add --detach</c>, <c>WorktreeCreator</c>): checkout edilmiş bir branch'i yoktur.</summary>
+    public string AddDetachedWorktree() => AddWorktreeWith(path => ["worktree", "add", "-q", "--detach", path]);
+
+    /// <summary>İki worktree kurucusunun ortak gövdesi: geçici klasör, git komutu ve temizlik kaydı.</summary>
+    private string AddWorktreeWith(Func<string, string[]> args)
     {
         string worktreePath = Path.Combine(Path.GetTempPath(), "gitsvc-wt-" + Guid.NewGuid().ToString("N"));
-        RunGit(RootPath, "worktree", "add", "-q", worktreePath, branch);
+        RunGit(RootPath, args(worktreePath));
         _extraDirsToClean.Add(worktreePath);
         return worktreePath;
     }

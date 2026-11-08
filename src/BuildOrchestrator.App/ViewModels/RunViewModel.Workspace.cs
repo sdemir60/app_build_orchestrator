@@ -639,9 +639,8 @@ public sealed partial class RunViewModel
     private bool WorkspaceGateOpen => WorkspaceIdle && !IsEngineUnavailable;
 
     /// <summary>[spec 2026-09-18 §6.3] <see cref="CheckoutBusy"/>'nin TEK yazıcısı: değer değiştiğinde chip'in
-    /// kapısını (<see cref="CanSwitchBranch"/>) duyurur. Çağıranlar: gönderim (<see cref="SelectBranch"/>),
-    /// cevap (<see cref="OnCheckoutCompletedAsync"/>, <see cref="TryConsumeCheckoutFailure"/>) ve motor kaybı
-    /// (<see cref="RunViewModel.ReleaseAfterEngineLoss"/> — motor checkout ortasında ölürse kilit sızmaz).</summary>
+    /// kapısını (<see cref="CanSwitchBranch"/>) duyurur. Çağıranlar: gönderim (<see cref="RequestCheckoutAsync"/>) ve bırakma
+    /// (<see cref="ReleaseCheckout"/> — cevap, motorun reddi, düşen gönderim ve motor kaybı; motor checkout ortasında ölürse kilit sızmaz).</summary>
     private void SetCheckoutBusy(bool busy)
     {
         if (CheckoutBusy == busy) return;
@@ -738,8 +737,14 @@ public sealed partial class RunViewModel
         if (e.Status == CheckoutStatus.Dirty) SetPendingBranchSwitch(new PendingBranchSwitch(target, copy, e.DirtyCount));
     }
 
-    /// <summary>Checkout kilidini bırakır — <see cref="SyncThenReleaseAsync"/>'e verilen adım.</summary>
-    private void ReleaseCheckout() => SetCheckoutBusy(false);
+    /// <summary>Checkout'u bırakır — kilit ve uçuştaki isteğin hedefi birlikte. Cevabın (<see cref="SyncThenReleaseAsync"/>'e verilen adım),
+    /// düşen gönderimin, motorun reddinin (<see cref="TryConsumeCheckoutFailure"/>) ve motor kaybının (<see cref="RunViewModel.ReleaseAfterEngineLoss"/>)
+    /// TEK bırakma yolu: istek kilitle birlikte unutulmazsa sonra gelen sahipsiz bir cevap eski isteğin kopyasına geçirir ya da kartını açardı.</summary>
+    private void ReleaseCheckout()
+    {
+        _checkoutRequest = null;
+        SetCheckoutBusy(false);
+    }
 
     /// <summary>[spec 2026-09-18 §6.3] Dönüş değeri = "bu hata checkout'a aittir, run/Sync state'ine DOKUNMA".
     /// <see cref="TryConsumeCleanFailure"/>'ın ikizi: motorun reddi (koşu uçuşta) reddedilen bir checkout gibi
@@ -749,7 +754,7 @@ public sealed partial class RunViewModel
     private bool TryConsumeCheckoutFailure(string code)
     {
         if (!CheckoutErrorCodes.Contains(code) || !CheckoutBusy) return false;
-        SetCheckoutBusy(false);
+        ReleaseCheckout();
         CurrentOperation = null;
         return true;
     }

@@ -40,10 +40,10 @@ public sealed partial class RunViewModel
     /// <summary>Motora giden her komutun ve git okumasının kökü: worktree aktifse worktree klasörü, değilse repo kökü.</summary>
     public string ActiveRoot => ActiveCopy == WorkingCopy.Worktree && WorktreeFolder.Length > 0 ? WorktreeFolder : RootPath;
 
-    /// <summary>Alt bardaki anahtarın kapısı — Debug|Release segment'iyle aynı soru (<see cref="CanSwitchConfiguration"/>): geçiş kendi
-    /// Sync'ini başlatır, bu yüzden koşu, Sync ya da başka bir workspace işi uçuştayken ve motor erişilemezken kapalıdır. Bildirimi
+    /// <summary>Alt bardaki anahtarın kapısı — Debug|Release segment'inin kapısının KENDİSİ (<see cref="CanSwitchConfiguration"/>): geçiş
+    /// kendi Sync'ini başlatır, bu yüzden koşu, Sync ya da başka bir workspace işi uçuştayken ve motor erişilemezken kapalıdır. Bildirimi
     /// Sync komutununkidir (<c>SyncCommand.CanExecuteChanged</c>).</summary>
-    public bool CanSwitchCopy => HasWorkspace && CanSync();
+    public bool CanSwitchCopy => CanSwitchConfiguration;
 
     /// <summary>Worktree'ye geçiş istendi ama geçilecek bir worktree yok (tanımsız, diskte değil ya da bu reponun değil): kabuk
     /// Settings'i Worktree folder alanında açar.</summary>
@@ -79,8 +79,8 @@ public sealed partial class RunViewModel
         await SwitchCopyCoreAsync(copy);
     }
 
-    /// <summary>Geçişin TEK gövdesi (kapısız — çağıran sorar): kopya değişir (izleyici ve git kapısı yeni köke taşınır —
-    /// <see cref="OnActiveCopyChanged"/>), son Sync ve plan yüzeyi unutulur (<see cref="ClearPlanSurface"/>: eski kopyanın satırları
+    /// <summary>Geçişin TEK gövdesi (kapısız — çağıran sorar): kopya değişir (son Sync, git yüzeyi ve kart unutulur, izleyici ve git kapısı
+    /// yeni köke taşınır — <see cref="OnActiveCopyChanged"/>), plan yüzeyi boşalır (<see cref="ClearPlanSurface"/>: eski kopyanın satırları
     /// yeni kopyada hiçbir projeye karşılık gelmez), sonra <see cref="SyncMode.BranchChange"/> Sync'i konsolu temizleyip bölümü
     /// yazar ve yeni kökte koşar.</summary>
     /// <param name="leading">Bölümde geçiş satırından ÖNCE gelen satırlar (kurulumun sonucu) — geçişin konsol temizliği onları silmez.</param>
@@ -91,7 +91,6 @@ public sealed partial class RunViewModel
         Action? release = null)
     {
         ActiveCopy = copy;
-        ForgetLastSync(); // eski kopyanın HEAD'i yeni kopyada kıyas tabanı olamaz
         ClearPlanSurface();
         var sync = SyncCoreAsync(SyncMode.BranchChange,
             sectionLines: [.. leading ?? [], WorkingCopyText.Switched(copy, ActiveRoot), .. trailing ?? []]);
@@ -99,11 +98,26 @@ public sealed partial class RunViewModel
         await sync;
     }
 
-    /// <summary>Aktif kök değişti: HEAD izleyicisi ve git işlem kapısı yeni köke taşınır (<c>OnRootPathChanged</c>'in ikizi).</summary>
+    /// <summary>Aktif kopya değişti — kopyayı değiştiren HER yolun (alt bardaki geçiş, kurulumdan sonra geçiş, diğer kopyada checkout,
+    /// klasör ya da kök değişiminde ve workspace kapanırken repo'ya dönüş) yan etkileri TEK yerde. Eski kopyanın son Sync'i unutulur
+    /// (HEAD'i yeni kopyada kıyas tabanı olsaydı ilk HEAD tetiği sahte bir "Switched to" bölümü açardı) ve git yüzeyi de (branch envanteri,
+    /// checkout edilmiş branch, <c>N behind</c>): detached bir worktree'de repo'nun branch'i chip'te kalır ve Sync onu yedek branch diye
+    /// taşırdı. Ardından kök değişiminin ortak adımları (<see cref="OnActiveRootChanged"/>).</summary>
     partial void OnActiveCopyChanged(WorkingCopy value)
+    {
+        ForgetLastSync();
+        ForgetGitSurface();
+        OnActiveRootChanged();
+    }
+
+    /// <summary>Aktif kök değişti — repo kökü (<c>OnRootPathChanged</c>) ya da kopya (<see cref="OnActiveCopyChanged"/>): HEAD izleyicisi
+    /// ve git işlem kapısı yeni köke taşınır, açık branch kartı kapanır (konusu eski kökün kirli ağacıydı; açık kalsaydı kararı yeni köke
+    /// uygulanırdı).</summary>
+    private void OnActiveRootChanged()
     {
         AttachAutoSync(ActiveRoot);
         RefreshGitOperation();
+        SetPendingBranchSwitch(null);
     }
 
     /// <summary>Kopyayı Sync'siz repo'ya döndürür — repo kökünün değişmesi (worktree eski reponundur), workspace'in kapanması ve
@@ -115,9 +129,9 @@ public sealed partial class RunViewModel
 
     // ---------------------------------------------------------------- Settings Save
 
-    /// <summary>Settings'ten gelen klasör GERÇEKTEN farklı mı (Windows yolları büyük/küçük harf duyarsız) — Save'in uygulama kapısı ve
-    /// mid-run erteleme notunun koşulu aynı soruyu sorar.</summary>
-    private bool IsWorktreeChange(string folder) => !string.Equals(folder, WorktreeFolder, StringComparison.OrdinalIgnoreCase);
+    /// <summary>Settings'ten gelen klasör GERÇEKTEN farklı mı (<see cref="SamePath"/>) — Save'in uygulama kapısı ve mid-run erteleme notunun
+    /// koşulu aynı soruyu sorar.</summary>
+    private bool IsWorktreeChange(string folder) => !SamePath(folder, WorktreeFolder);
 
     /// <summary>Settings Save: yeni worktree klasörünü uygular ve konsola not düşer. Aktif kopya worktree idiyse artık o değildir:
     /// kopya repo'ya döner ve <c>true</c> döner — çağıranın Sync'i plan yüzeyini boşaltır (eski kopyanın satırları).</summary>

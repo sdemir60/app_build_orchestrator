@@ -37,15 +37,11 @@ public static class BranchSwitchText
 
     /// <summary>Kararın sonuç satırı: iki seçeneğin ne yaptığı.</summary>
     public static string Outcome(string branch, WorkingCopy copy) =>
-        $"Stash them and switch here, or open {branch} in {WorkingCopyText.Name(Other(copy))} and leave this copy as it is.";
+        $"Stash them and switch here, or open {branch} in {WorkingCopyText.Name(copy.Other())} and leave this copy as it is.";
 
     /// <summary>Diğer kopya düğmesi: repo'dayken worktree (tanımsızsa kurulum), worktree'deyken repo.</summary>
     public static string OtherCopy(WorkingCopy active, bool worktreeReady) =>
         active == WorkingCopy.Worktree ? "Use repository" : worktreeReady ? "Use worktree" : "Set up worktree…";
-
-    /// <summary>Repo ↔ worktree.</summary>
-    public static WorkingCopy Other(WorkingCopy copy) =>
-        copy == WorkingCopy.Worktree ? WorkingCopy.Repository : WorkingCopy.Worktree;
 }
 
 /// <summary>
@@ -73,14 +69,15 @@ public sealed partial class RunViewModel
     }
 
     /// <summary>Kartın kararı. Kapı branch chip'ininkidir (<see cref="CanSwitchBranch"/>): kapalıyken (ör. geçişin Sync'i uçuşta) karar
-    /// beklemeye alınmaz ama kart da kapanmaz — kullanıcı iş bitince yeniden basar. Vazgeçmek her zaman kapatır.</summary>
+    /// beklemeye alınmaz ama kart da kapanmaz — kullanıcı iş bitince yeniden basar. Vazgeçmek her zaman kapatır. Kararın kopyası kartın
+    /// konusundaki kopyadır (kart kök değişince kapanır — <see cref="OnActiveRootChanged"/>): stash o kopyada, "diğer kopya" onun karşısında.</summary>
     public async Task DecideBranchSwitchAsync(BranchDecision decision)
     {
         if (PendingBranchSwitch is not { } pending) return;
         if (decision == BranchDecision.Cancel) { SetPendingBranchSwitch(null); return; }
         if (!CanSwitchBranch) return;
 
-        var other = BranchSwitchText.Other(ActiveCopy);
+        var other = pending.Copy.Other();
         if (decision == BranchDecision.OtherCopy && other == WorkingCopy.Worktree && !WorktreeReady)
         {
             SetPendingBranchSwitch(null);
@@ -89,7 +86,7 @@ public sealed partial class RunViewModel
         }
 
         SetPendingBranchSwitch(null);
-        if (decision == BranchDecision.Stash) await RequestCheckoutAsync(pending.Target, ActiveCopy, stash: true);
+        if (decision == BranchDecision.Stash) await RequestCheckoutAsync(pending.Target, pending.Copy, stash: true);
         else await RequestCheckoutAsync(pending.Target, other, StashOnBranchSwitch);
     }
 
@@ -109,8 +106,7 @@ public sealed partial class RunViewModel
         // chip kalıcı pasif kalırdı.
         if (!sent)
         {
-            _checkoutRequest = null;
-            SetCheckoutBusy(false);
+            ReleaseCheckout();
             CurrentOperation = null; // pill "SWITCHING BRANCH"ta asılı kalmasın
         }
     }
