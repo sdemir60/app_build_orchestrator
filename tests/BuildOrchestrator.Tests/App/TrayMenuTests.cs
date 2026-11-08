@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.RegularExpressions;
+using System.Windows;
 using System.Windows.Automation.Peers;
 using System.Windows.Automation.Provider;
 using System.Windows.Controls;
@@ -157,6 +158,102 @@ public sealed class TrayMenuTests
         {
             menu.IsOpen = false;
         }
+    }
+
+    // ---------------------------------------------------------------- görev çubuğu tıkı
+
+    /// <summary>Ölçülen ekran (<c>TrayMenuPositionProbeTests</c>): 2880×1800 %125, altta 60 px görev çubuğu — çalışma alanı 1740'ta biter.</summary>
+    private static DisplayMonitor Laptop(double scale = 1.25) => new("test", new Int32Rect(0, 0, 2880, 1740), scale);
+
+    private static Win32.POINT At(int x, int y) => new() { X = x, Y = y };
+
+    /// <summary>[tray menu above the taskbar] İmleç çalışma alanının içindeyse (ör. gizli simgeler kutusundaki bir ikon) menü tık
+    /// noktasında açılır: kaydırma yoktur.</summary>
+    [StaFact]
+    public void A_click_inside_the_work_area_opens_the_menu_at_the_click()
+    {
+        var menu = AppTrayIcon.CreateMenu(AppTrayIcon.NoRunToStop, () => { });
+
+        AppTrayIcon.KeepOffTheTaskbar(menu, At(1200, 900), Laptop());
+
+        Assert.Equal(0, menu.HorizontalOffset);
+        Assert.Equal(0, menu.VerticalOffset);
+    }
+
+    /// <summary>[tray menu above the taskbar] Görev çubuğundaki tıkta açılış noktası görev çubuğunun üst kenarına çekilir: kaydırma
+    /// fiziksel pikselde (1770 → 1740, 30 px) hesaplanır ve WPF birimine ekranın ölçeğiyle çevrilir — %125'te 24, %150'de 20. Yatay
+    /// kaydırma yoktur: menü tıkın hizasında kalır. Eskiden kaydırma yoktu ve menünün alt kenarı imlecin hizasında, görev çubuğunun
+    /// içinde kalıyordu (gerçek tepsiyle ölçüm: <c>TrayMenuPositionProbeTests</c>).</summary>
+    [StaTheory]
+    [InlineData(1.25, -24)]
+    [InlineData(1.5, -20)]
+    [InlineData(1.0, -30)]
+    public void A_click_on_the_taskbar_pulls_the_menus_anchor_up_to_the_taskbars_edge(double scale, double expected)
+    {
+        var menu = AppTrayIcon.CreateMenu(AppTrayIcon.NoRunToStop, () => { });
+
+        AppTrayIcon.KeepOffTheTaskbar(menu, At(2720, 1770), Laptop(scale));
+
+        Assert.Equal(0, menu.HorizontalOffset);
+        Assert.Equal(expected, menu.VerticalOffset, 9);
+    }
+
+    /// <summary>[tray menu above the taskbar] Kaydırma her açılışta yeniden yazılır: görev çubuğundaki bir tıkın kaydırması menüde kalıp
+    /// sonraki, çalışma alanındaki tıkta menüyü tıktan uzağa açmaz.</summary>
+    [StaFact]
+    public void A_later_click_inside_the_work_area_drops_an_earlier_taskbar_shift()
+    {
+        var menu = AppTrayIcon.CreateMenu(AppTrayIcon.NoRunToStop, () => { });
+        AppTrayIcon.KeepOffTheTaskbar(menu, At(2720, 1770), Laptop());
+        Assert.NotEqual(0, menu.VerticalOffset); // ön-koşul: görev çubuğu tıkı kaydırdı
+
+        AppTrayIcon.KeepOffTheTaskbar(menu, At(1200, 900), Laptop());
+
+        Assert.Equal(0, menu.HorizontalOffset);
+        Assert.Equal(0, menu.VerticalOffset);
+    }
+
+    /// <summary>[tray menu above the taskbar] Ekran okunamazsa menü yine açılır, tık noktasında: önceki bir kaydırma da kalmaz.</summary>
+    [StaFact]
+    public void An_unreadable_screen_opens_the_menu_at_the_click()
+    {
+        var menu = AppTrayIcon.CreateMenu(AppTrayIcon.NoRunToStop, () => { });
+        AppTrayIcon.KeepOffTheTaskbar(menu, At(2720, 1770), Laptop());
+
+        AppTrayIcon.KeepOffTheTaskbar(menu, At(2720, 1770), screen: null);
+
+        Assert.Equal(0, menu.HorizontalOffset);
+        Assert.Equal(0, menu.VerticalOffset);
+    }
+
+    /// <summary>[tray menu above the taskbar] Açılış noktası tık noktasının çalışma alanındaki en yakın noktasıdır — görev çubuğu hangi
+    /// kenarda olursa olsun, ekran sol üst köşede olmasa da (ikinci ekran negatif koordinatta). Alanın sağ ve alt kenarı dışlayıcıdır
+    /// (Win32 <c>RECT</c>): nokta tam kenara çekilir ve menü görev çubuğunun kenarına oturur.</summary>
+    [Theory]
+    [InlineData(2720, 1770, 0, 0, 2880, 1740, 2720, 1740)]          // altta görev çubuğu
+    [InlineData(500, 20, 0, 48, 1920, 1032, 500, 48)]                // üstte
+    [InlineData(20, 500, 60, 0, 1860, 1080, 60, 500)]                // solda
+    [InlineData(1900, 500, 0, 0, 1860, 1080, 1860, 500)]             // sağda
+    [InlineData(-500, 1050, -1920, 0, 1920, 1032, -500, 1032)]       // soldaki ikinci ekran, altta görev çubuğu
+    [InlineData(1200, 900, 0, 0, 2880, 1740, 1200, 900)]             // alanın içinde: kendisi
+    public void The_menus_anchor_is_the_nearest_point_of_the_work_area(
+        int x, int y, int left, int top, int width, int height, int expectedX, int expectedY)
+    {
+        var anchor = AppTrayIcon.AnchorInWorkArea(At(x, y), new Int32Rect(left, top, width, height));
+
+        Assert.Equal((expectedX, expectedY), (anchor.X, anchor.Y));
+    }
+
+    /// <summary>[kaynak] Menüyü açan TEK yol (<c>OpenMenu</c>) açılış noktasını menü açılmadan HEMEN önce çalışma alanına çeker. Kural
+    /// kaynağın kendisinde pinlenir çünkü <c>OpenMenu</c> gerçek bir tepsi ikonu ister (headless süitte kurulamaz); gerçek açılışı
+    /// <c>TrayMenuPositionProbeTests.The_tray_menu_stays_above_the_taskbar_when_the_click_is_on_it</c> ölçer.</summary>
+    [Fact]
+    public void The_menu_is_kept_off_the_taskbar_right_before_every_opening()
+    {
+        string source = File.ReadAllText(Path.Combine(RepoPaths.AppSrcRoot, "Shell", "AppTrayIcon.cs"));
+
+        Assert.Single(new Regex(@"KeepOffTheTaskbar\(menu,[^;]*\);\s*menu\.IsOpen = true;").Matches(source));
+        Assert.Single(new Regex(@"menu\.IsOpen = true;").Matches(source));
     }
 
     // ---------------------------------------------------------------- kablo (kaynak)

@@ -112,7 +112,8 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
 
         // [tray menu position] Menü imlecin olduğu yerde açılır: WPF imlecin yerini FİZİKSEL pikselde okur ve menü penceresini o anki
         // ekran ölçeğiyle kurar — arada saklanan bir ölçek yoktur (bkz. OpenMenuOurselves). ContextMenu'nün varsayılanı da budur;
-        // açık yazılır çünkü doğruluk ona bağlıdır.
+        // açık yazılır çünkü doğruluk ona bağlıdır. İmleç görev çubuğunun üstündeyse açılış noktası çalışma alanına çekilir
+        // (KeepOffTheTaskbar, her açılışta).
         var menu = new ContextMenu { Placement = PlacementMode.MousePoint };
         menu.SetResourceReference(FrameworkElement.StyleProperty, "Ds.ContextMenu");
         menu.Items.Add(stopItem);
@@ -136,14 +137,57 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
             open();
         };
 
-    /// <summary>Menüyü açar; yerleşimi menünün kendisindedir (<see cref="CreateMenu"/>: imlecin fiziksel noktası). Menü öne getirilir —
-    /// getirilmezse dışarı tıklanınca kapanmaz; kütüphanenin kendi açışındaki adımın aynısı, popup'ın penceresi yoksa mesaj penceresiyle.</summary>
+    /// <summary>Menüyü açar; yerleşimi menünün kendisindedir (<see cref="CreateMenu"/>: imlecin fiziksel noktası), imleç görev çubuğundaysa
+    /// açılış noktası önce çalışma alanına çekilir (<see cref="KeepOffTheTaskbar"/>). Menü öne getirilir — getirilmezse dışarı tıklanınca
+    /// kapanmaz; kütüphanenin kendi açışındaki adımın aynısı, popup'ın penceresi yoksa mesaj penceresiyle.</summary>
     private void OpenMenu(ContextMenu menu)
     {
+        DisplayMonitor? screen = Win32.GetCursorPos(out var cursor)
+            ? WindowMonitor.Of(Win32.MonitorFromPoint(cursor, Win32.MONITOR_DEFAULTTONEAREST))
+            : null;
+        KeepOffTheTaskbar(menu, cursor, screen);
         menu.IsOpen = true;
         WindowUtilities.SetForegroundWindow(
             PresentationSource.FromVisual(menu) is HwndSource { Handle: not 0 } popup ? popup.Handle : _icon.TrayIcon.WindowHandle);
     }
+
+    /// <summary>
+    /// [tray menu above the taskbar] Menünün açılış noktasını imlecin ekranının çalışma alanına çeker: <see cref="ContextMenu.HorizontalOffset"/>
+    /// ve <see cref="ContextMenu.VerticalOffset"/> imleç noktasını (<see cref="PlacementMode.MousePoint"/>) alanın en yakın noktasına
+    /// (<see cref="AnchorInWorkArea"/>) kaydırır; imleç alanın içindeyse kaydırma sıfırdır. Her açılışta yeniden yazılır: önceki bir görev
+    /// çubuğu tıkının kaydırması menüde kalmaz.
+    ///
+    /// <para><b>Neden:</b> WPF bir bağlam menüsünü görev çubuğundan uzak tutar (sınırı çalışma alanıdır) ama YALNIZ açıldığı nokta çalışma
+    /// alanının içindeyse; nokta dışarıdaysa sınır monitörün tamamıdır (<c>Popup.GetScreenBounds</c>). Tepsiye sağ tıkta imleç görev
+    /// çubuğunun üstündedir: menü yukarı açılıyor ama alt kenarı imlecin hizasında kalıyor, alt satırı (Exit) görev çubuğunun altına
+    /// giriyordu — ölçüldü (%125): 69 px'lik menünün 30 px'i. Nokta alanın kenarına çekilince WPF kendi kuralını uygular: menü alanın
+    /// içinde, alt kenarı görev çubuğunun üst kenarında, yatayda tık noktasında açılır (pin: <c>TrayMenuPositionProbeTests</c>).</para>
+    ///
+    /// <para><b>Ölçek:</b> kaydırma fiziksel pikselde hesaplanır ve WPF birimine imlecin ekranının O ANKİ ölçeğiyle çevrilir — her açılışta
+    /// Win32'den taze okunur (<see cref="WindowMonitor.Of"/>), saklanmaz. WPF kaydırmayı menü penceresinin ölçeğiyle piksele geri çevirir;
+    /// pencere imlecin ekranında açıldığı için iki ölçek aynıdır. Ekran okunamazsa (<paramref name="screen"/> <c>null</c>) kaydırma sıfırdır:
+    /// menü yine açılır.</para>
+    /// </summary>
+    internal static void KeepOffTheTaskbar(ContextMenu menu, Win32.POINT cursorPx, DisplayMonitor? screen)
+    {
+        Vector shift = default;
+        if (screen is { } s)
+        {
+            var anchor = AnchorInWorkArea(cursorPx, s.WorkArea);
+            shift = new Vector((anchor.X - cursorPx.X) / s.Scale, (anchor.Y - cursorPx.Y) / s.Scale);
+        }
+        menu.HorizontalOffset = shift.X;
+        menu.VerticalOffset = shift.Y;
+    }
+
+    /// <summary>İmleç noktasının (fiziksel px) çalışma alanındaki en yakın noktası — içerideyse kendisi. Alanın sağ ve alt kenarı
+    /// dışlayıcıdır (Win32 <c>RECT</c>): görev çubuğu tıkı alt kenara çekilir, WPF'in "alanın içinde mi" sorusu kenarı dahil sayar ve
+    /// menünün alt kenarı görev çubuğunun üst kenarına oturur.</summary>
+    internal static Win32.POINT AnchorInWorkArea(Win32.POINT cursorPx, Int32Rect workAreaPx) => new()
+    {
+        X = Math.Clamp(cursorPx.X, workAreaPx.X, workAreaPx.X + workAreaPx.Width),
+        Y = Math.Clamp(cursorPx.Y, workAreaPx.Y, workAreaPx.Y + workAreaPx.Height),
+    };
 
     /// <summary>
     /// Bildirimin ikonu, kütüphanenin O AN istediği ölçüde. Ölçü bir tercih DEĞİL, API'nin ŞARTIDIR:

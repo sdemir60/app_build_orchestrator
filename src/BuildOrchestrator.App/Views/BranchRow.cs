@@ -41,21 +41,28 @@ public sealed class BranchRow : ContentControl
 
     private void Rebuild() => Content = DataContext is BranchRowItem item ? BuildVisual(item) : null;
 
+    /// <summary>Satır üç sütundur: ikon · ad · sha ya da <c>active</c> rozeti. Ad ORTA sütundadır ve kalan genişliği alır; sığmazsa sağ
+    /// sütundan <see cref="RowGap"/> önce <c>…</c> ile kısalır. Ad eskiden ikonla birlikte yatay bir <see cref="StackPanel"/>'deydi: yatay
+    /// panel çocuğunu genişlik sınırı vermeden ölçer, kırpma hiç devreye girmez ve uzun ad sha'nın üstüne taşardı (ölçüldü: 272 px'lik
+    /// popover'da 270 px; pin: <c>PopoverTests.A_long_branch_name_ends_in_an_ellipsis_before_the_rows_right_column</c>).</summary>
     private FrameworkElement BuildVisual(BranchRowItem item)
     {
         var branch = item.Branch;
-        var panel = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         // ikon: seçilide amber ✓, değilse branch ikonu (BuildApp.jsx:863).
         var icon = IconVisual.Make(this, item.IsSelected ? "Icon.Check" : "Icon.Branch",
             item.IsSelected ? "Brush.AmberText" : "Brush.TextDim", IconSlot);
         icon.VerticalAlignment = VerticalAlignment.Center;
-        panel.Children.Add(icon);
+        grid.Children.Add(icon);
 
         var name = new TextBlock
         {
             Text = branch.Name,
-            Margin = new Thickness(RowGap, 0, 0, 0),
+            Margin = new Thickness(RowGap, 0, RowGap, 0),
             VerticalAlignment = VerticalAlignment.Center,
             FontFamily = AppFonts.Mono,
             TextTrimming = TextTrimming.CharacterEllipsis,
@@ -63,18 +70,13 @@ public sealed class BranchRow : ContentControl
         name.SetResourceReference(FontSizeProperty, "FontSize.Xs");
         name.SetResourceReference(TextBlock.ForegroundProperty,
             item.IsSelected ? "Brush.TextPrimary" : "Brush.TextSecondary");
-        panel.Children.Add(name);
-
-        var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        Grid.SetColumn(panel, 0);
-        grid.Children.Add(panel);
+        Grid.SetColumn(name, 1);
+        grid.Children.Add(name);
 
         // aktif branch → "active" rozeti; diğerleri → mono 7-hane SHA (BuildApp.jsx:865-867).
         FrameworkElement trailing = branch.IsActive ? ActiveBadge() : ShaText(branch.Sha);
         trailing.VerticalAlignment = VerticalAlignment.Center;
-        Grid.SetColumn(trailing, 1);
+        Grid.SetColumn(trailing, 2);
         grid.Children.Add(trailing);
 
         var row = new Border
