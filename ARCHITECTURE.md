@@ -1134,7 +1134,7 @@ once, because every stored signature was computed by the old one.
 
 A first index reports itself for its whole length, by one rule shared by Sync and a run's planning
 (`IndexingReport`). An index of fewer than 500 missing files (`SourceHashCache.NoisyPrefillThreshold`) is the routine
-price of a few edited files and reports nothing; a larger one opens with
+price of a few edited files and reports nothing; one of 500 or more opens with
 `Indexing N source files — later runs reuse the index`, adds `indexing source files — {done}/{total} · {elapsed}`
 about every ten seconds while it runs, and closes with `Indexed N source files in {elapsed}`. The reads run on worker
 threads while the calling thread wakes every 500 ms to pass the count on, so the report itself stays on one thread
@@ -2986,8 +2986,8 @@ watcher and the git-operation gate) take the active root; a source guard keeps t
 but the worktree's own creation (§17.2). The engine never learns which copy it is in: the ledger, the evaluation cache
 and the source-hash cache are keyed by full path, so the two copies are different projects to it, they never read
 each other's records, and a *Clean* in one never reaches the other. The first Sync in a new worktree therefore reads
-every source file of that copy once — the first index of §7.1, counted on the ribbon and noted on the console every
-ten seconds — and from then on its Syncs read only what changed, as in the repository.
+every source file of that copy once — the first index of §7.1, which on any sizeable copy is counted on the ribbon and
+noted on the console every ten seconds — and from then on its Syncs read only what changed, as in the repository.
 
 **Switching is a root change.** The toggle in the action bar (§13.2) switches copies. The old copy's rows, topology
 and last Sync go — a project's id is its path, so the worktree's projects are other rows — and so does its git
@@ -3404,8 +3404,8 @@ restored if it was closed while minimized — because the card cannot show on a 
 turn of its own, since WPF refuses `Show` while a close is in progress, and the turn asks again: if the work ended
 meanwhile the application closes without the card, and if an exit is already under way it does nothing. *Work in flight*
 is the workspace's one question (`WorkspaceIdle`): a run — its planning and opening choreography included — a Sync (the
-silent one included), a Deep Clean, an Optimize, a checkout or a pull; `RunViewModel.ExitWork` names which one, for the
-card.
+silent one included), a Deep Clean, an Optimize, a checkout, a pull or the worktree's creation; `RunViewModel.ExitWork`
+names which one, for the card.
 
 *Stop and exit* on the card is what stops it, and how depends on the work. A run is stopped hard (§4.5) — or, still in
 its opening choreography or waiting for its engine to wake with nothing sent, withdrawn (§14.5) — so its in-flight
@@ -6041,9 +6041,9 @@ second. While a stop drains — the user's own or a branch switch's — Esc is t
 *Stop now* takes (§4.5). A Sync, a Deep Clean, an Optimize, a checkout, the worktree's creation or a pull — the
 workspace work the ribbon tells (§13.2) — cannot be stopped; Esc during one writes a single console line saying so,
 in the pill's word (`sync can't be stopped — it will finish on its own`), once per job. A silent Sync is invisible,
-and Esc says nothing about it. Once Esc has nothing left to close or stop —
-nothing the user can see is running, the hard stop has gone out, or the job's line is written — it closes the window:
-it makes the very call the title bar's `X` makes, so the window's one close rule decides (§12.3). With *Close to tray*
+and Esc says nothing about it. Once Esc has nothing left to close or stop — nothing the user can see is running, the
+hard stop has gone out, or the job's line is written — it closes the window: it makes the very call the title bar's
+`X` makes, so the window's one close rule decides (§12.3). With *Close to tray*
 on the window hides to the tray; with it off it is a full exit — at once with nothing in flight, through the
 confirmation card otherwise. Esc itself never stops work the way *Exit* does: a drain or a Sync carries on — in the
 tray, or under the card until the user answers it. Right-clicking a row is not a selection gesture — it opens the row
@@ -7120,6 +7120,8 @@ A category of tests that assert properties of the *source*, not of a run:
 | Resource strip source (`ResourceStripGuardTests`) | the strip's markup carries no raw colour and no numeric measurement — every size is a token (§14.1) —, no animation, transition, trigger or clock in the markup or the code-behind, no pointer reaction, cursor, button or accent colour, and no `{Binding}`: its values are written from code under the hidden-surface gate (§13.2); its root declares no background and exactly its three cells a transparent one (§12.2); the window's code hands a drag to the native caption — its native calls, the closing `WM_LBUTTONUP` included, are pinned to still be there — and never calls `Window.DragMove` (§12.2); its ghost texts are the Core constants and are never retyped; the tokens, icons, fonts and colours it reads are read by key, and its four measurements are the design's numbers, each defined once. Every rule is shown against a planted violation |
 | One engine gate (`EngineGateGuardTests`) | every request to the engine passes the gate of §4.7 and nothing walks around it: `SendWithFailureLineAsync(` is called only from the four methods that ask the gate first (`TrySendAsync`, `BeginRunAsync`, `SyncCoreAsync`, `LoadProjectLogAsync`); `SendToEngineAsync(` only from `SendWithFailureLineAsync`, and the host's `SendAsync(` — through any reference — only from `SendToEngineAsync`; a request is registered with the gate (`EngineGate.Enter`, whatever the receiver) only from `EnsureEngineAwakeAsync`, and every call of the gate holds its pass with `using`; the gate questions that `ReleaseAfterEngineLoss` asks are exactly the list of window-holding types the loss theory walks; and the branch inventory never asks the gate. The scans read code only — comments and string literals are skipped — and the call-form rules each have a proof test that catches their form of bypass. Two things stay for review: a send made inside an allowed method without asking the gate, and an allowed method bound to a delegate and called from elsewhere |
 | One infinite bottom request (`ConsoleBottomRequestGuardTests`) | the console asks for an infinite bottom (`ScrollToEnd(`) only in the mode switch's pin, `PinAfterModeSwitch`; the follow's and End's request is finite and vertical (§13.4). The scan reads code only, proves first that the pin still asks for it, and is shown to see a request outside the pin and to ignore a comment, a literal and a brace inside the pin |
+| One busy list (`ExitWorkGuardTests`) | the workspace's busy list is written once (`WorkspaceBusy`, `NonSyncWorkspaceBusy`) and both chains that name the work read every member of it: the exit's (`ExitWork` falls to `None` only through `WorkspaceIdle`, and `ExitWorkInFlight` names each busy flag; §12.3) and the ribbon's (`WorkInFlight`, `SyncBusy` included; §13.2) — a job added to the list and forgotten in a chain fails the suite, since a job that does not exist yet cannot be tested by behaviour |
+| One IO degree (`IoParallelismGuardTests`) | file IO parallelism is spelled once (`IoParallelism.Degree`): no source file writes the degree as a literal in a `WithDegreeOfParallelism` or `MaxDegreeOfParallelism`, the content-hash cache and the run binder read the constant itself, and the scan is shown to catch code and ignore comments and text |
 | No literal default (`GeneralSettingChainTests.No_workflow_setting_starts_from_a_literal_default`) | none of the four workflow preferences starts from a literal in the source: not the view model's field (written with `true` or `false`, or left unset), not the draft's or the apply call's parameter, not the window's seed from a key-less state (`?? true`); the catalog row is the one default (§13.3). The wire records of the contracts keep their own field defaults, which only say how a line without the field reads, and lie outside the rule. The rule is shown to catch each form, and to ignore a comment, a string and a field that reads the catalog |
 
 **A guard's coverage claim has its own proof.** A whole-`src` guard that claims to read every production project asserts

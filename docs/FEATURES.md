@@ -316,9 +316,9 @@ memory stays bounded however long the run.\
 **What:** The ribbon under the title bar always shows what was asked last, the current phase, progress, the time
 left and the error state; the event stream lists the run's events one line each, in order.\
 **How:** A persistent operation label (SYNC, BUILD, REBUILD, CLEAN, DEEP CLEAN, OPTIMIZE, RESOLVE, SWITCHING BRANCH,
-CREATING WORKTREE) is amber while work runs and neutral after. Next to it sit the phase line, chips for the projects
-building now (and, once the run ends, for the failed ones) and a thin progress bar; urgent warnings take the phase
-line's place.\
+CREATING WORKTREE) is amber while work runs and neutral after. Next to it sit the phase line — during a Sync, the
+step it is on and, while a first index runs, the files counted so far —, chips for the projects building now (and,
+once the run ends, for the failed ones) and a thin progress bar; urgent warnings take the phase line's place.\
 `persistent label for what was asked last` · `remaining-time estimate` · `failure chips, one click to the failed` · `event stream as the run's timeline`
 
 ## Shortcuts like Visual Studio

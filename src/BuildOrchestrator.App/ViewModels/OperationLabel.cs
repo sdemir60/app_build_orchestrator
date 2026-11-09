@@ -55,9 +55,9 @@ public static class OperationLabel
 
     /// <summary>[şerit işlemi] Uçuştaki workspace işinin (<see cref="RibbonWork"/>) pill sözcüğü; iş yoksa <c>null</c>. Esc'in
     /// "durdurulamaz" satırı işi bununla adlandırır (<c>RunViewModel.UnstoppableOperation</c>). Pill'in KENDİ sözcüğü bu eşlemeden
-    /// okunmaz: istek yerlerinde <c>CurrentOperation</c>'a doğrudan yazılır; iki yolun aynı sözcüğü verdiği testle pinlidir
-    /// (her iş için pill metni = <c>ForWork(WorkInFlight)</c>). Pull, pill'de zincirlendiği Sync'le tek işlemdir:
-    /// <see cref="Sync"/>.</summary>
+    /// okunmaz: istek yerlerinde <c>CurrentOperation</c>'a doğrudan yazılır. İki yolun aynı sözcüğü verdiği checkout, checkout'tan Sync'e
+    /// devir, Deep Clean, Optimize ve worktree kurulumu için testle pinlidir (pill metni = <c>ForWork(WorkInFlight)</c>); pull'da yalnız
+    /// eşleme pinlidir. Pull, pill'de zincirlendiği Sync'le tek işlemdir: <see cref="Sync"/>.</summary>
     public static string? ForWork(RibbonWork work) => work switch
     {
         RibbonWork.Sync or RibbonWork.Pull => Sync,
