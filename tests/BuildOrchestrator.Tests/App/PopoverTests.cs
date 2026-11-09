@@ -1,6 +1,7 @@
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using BuildOrchestrator.App.Console;
@@ -58,7 +59,8 @@ public class PopoverTests
 
     /// <summary>
     /// [branch row] Satıra sığmayan bir branch adı sağdaki kısa sha'nın (aktif branch'te <c>active</c> rozetinin) ÜSTÜNE taşmaz: ad, onlardan
-    /// önce <c>…</c> ile kısalır. Popover gerçek kabuğunda (alt barın 272 px'lik <c>Ds.Popover</c>'ı) açılır ve ölçülür.
+    /// önce <c>…</c> ile kısalır. Popover gerçek kabuğunda (<see cref="OpenInTheBarShell"/>) açılır ve ölçülür; ön-koşul ad GERÇEKTEN
+    /// satırdan uzundur — kabuk genişleyip ad sığsaydı test boşa geçerdi.
     ///
     /// <para><b>Kusur:</b> ad, ikonla birlikte YATAY bir <see cref="StackPanel"/>'in içindeydi. Yatay panel çocuğunu genişlik sınırı vermeden
     /// ölçer: adın <c>CharacterEllipsis</c> kırpması hiç devreye girmez, ad tam boyunda yerleşir ve satırın sağ sütununa — sha'nın ya da
@@ -69,23 +71,15 @@ public class PopoverTests
     [InlineData(true)]  // sağda "active" rozeti
     public void A_long_branch_name_ends_in_an_ellipsis_before_the_rows_right_column(bool active)
     {
-        const string longName = "feature/a-branch-name-long-enough-to-run-past-the-right-column";
-        var vm = NewVm();
-        vm.OnEvent(new BranchListEvent([
+        const string longName = "feature/a-branch-name-long-enough-to-run-past-the-right-column-of-a-row";
+        var (shell, popup, window) = OpenInTheBarShell(
             new BranchRef("main", "aaaaaaaaaaaa", !active, false),
-            new BranchRef(longName, "bbbbbbbccccc", active, false),
-        ]));
-        var host = DsResources.NewHost();
-        var bar = new ActionBar { DataContext = vm };
-        var window = DsResources.Realize(host, bar, 1200, 200);
-        var popup = bar.BranchPopup;
-        popup.IsOpen = true;
-        var shell = (Border)popup.Child;
-        shell.UpdateLayout();
+            new BranchRef(longName, "bbbbbbbccccc", active, false));
 
         var row = DsResources.Descendants(shell).OfType<BranchRow>().Single(r => r.DataContext is BranchRowItem { Branch.Name: longName });
         var texts = DsResources.Descendants(row).OfType<TextBlock>().ToList();
         var name = texts.Single(t => t.Text == longName);
+        Assert.True(NaturalWidth(name) > name.ActualWidth, "ön-koşul: ad satıra sığmayacak kadar uzun olmalı");
         FrameworkElement right = active
             ? (FrameworkElement)VisualTreeHelper.GetParent(texts.Single(t => t.Text == "active")) // rozetin kendisi (çerçevesiyle)
             : texts.Single(t => t.Text == RunViewModel.Short7("bbbbbbbccccc"));
@@ -97,6 +91,91 @@ public class PopoverTests
         popup.IsOpen = false;
         GC.KeepAlive(window);
     }
+
+    /// <summary>
+    /// [wide branch popover] Uzun bir branch adı da çoğu zaman TAM görünür: 48 karakterlik bir ad, sağında kısa sha ya da <c>active</c>
+    /// rozeti varken, kısalmadan satıra sığar. Popover gerçek kabuğunda (<see cref="OpenInTheBarShell"/>) açılır ve ölçülür.
+    ///
+    /// <para><b>Kusur (kullanıcı, 2026-11-09):</b> "branch isimleri çok uzun". 272 px'lik kabukta ad sütunu ~23 karakter alıyordu (Geist Mono
+    /// 12 px ≈ 7,2 px/karakter); gerçek, 300 branch'lik bir repoda adların yalnız %21'i tam görünüyordu (ortanca 39 karakter, %90'ı 62'ye
+    /// kadar). 480 px'lik kabuk ~52 karakter alır (%80). 48 o sınırın bir payla altındadır: kabuk daralırsa test düşer.</para>
+    /// </summary>
+    [StaTheory]
+    [InlineData(false)] // sağda kısa sha
+    [InlineData(true)]  // sağda "active" rozeti
+    public void A_48_character_branch_name_shows_in_full(bool active)
+    {
+        const string name48 = "feature/a-branch-name-of-forty-eight-characters1";
+        Assert.Equal(48, name48.Length);
+        var (shell, popup, window) = OpenInTheBarShell(
+            new BranchRef("main", "aaaaaaaaaaaa", !active, false),
+            new BranchRef(name48, "bbbbbbbccccc", active, false));
+
+        var name = DsResources.Descendants(shell).OfType<TextBlock>().Single(t => t.Text == name48);
+        double needed = NaturalWidth(name);
+
+        Assert.True(needed <= name.ActualWidth + 0.5,
+            $"ad {needed:F1} px istiyor, satırda {name.ActualWidth:F1} px'i var — … ile kısalıyor.");
+        popup.IsOpen = false;
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [wide branch popover] Liste kaymadan önce 12 satır gösterir: yüzlerce branch'i olan bir repoda bir bakışta görünen pay büyür.
+    ///
+    /// <para><b>Eski kural:</b> 7 satır (196 px, BuildApp.jsx:839). Kullanıcı popover'ı daha geniş ve daha uzun istedi (2026-11-09).</para>
+    /// </summary>
+    [StaFact]
+    public void Twelve_rows_show_before_the_list_scrolls()
+    {
+        var many = Enumerable.Range(0, 20).Select(i => new BranchRef($"feature/{i:D2}", $"{i:D12}", i == 0, false)).ToArray();
+        var (shell, popup, window) = OpenInTheBarShell(many);
+
+        var scroller = RowScroller(shell);
+        int whole = DsResources.Descendants(scroller).OfType<BranchRow>()
+            .Select(r => r.TransformToAncestor(scroller).TransformBounds(new Rect(r.RenderSize)))
+            .Count(b => b.Top >= -0.5 && b.Bottom <= scroller.ActualHeight + 0.5);
+
+        Assert.Equal(12, whole);
+        popup.IsOpen = false;
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Popover'ı alt barın GERÇEK kabuğunda (ActionBar'ın <c>Ds.Popover</c> Border'ı) açık kurar: genişliği kabuk verir, satırlar
+    /// orada ölçülür.</summary>
+    private static (Border Shell, Popup Popup, Window Window) OpenInTheBarShell(params BranchRef[] branches)
+    {
+        var vm = NewVm();
+        vm.OnEvent(new BranchListEvent([.. branches]));
+        var host = DsResources.NewHost();
+        var bar = new ActionBar { DataContext = vm };
+        var window = DsResources.Realize(host, bar, 1200, 200);
+        var popup = bar.BranchPopup;
+        popup.IsOpen = true;
+        var shell = (Border)popup.Child;
+        shell.UpdateLayout();
+        return (shell, popup, window);
+    }
+
+    /// <summary>Metnin kısalmadan istediği genişlik: aynı yazı tipiyle sınırsız alanda ölçülen, ağaca girmeyen bir kopya.</summary>
+    private static double NaturalWidth(TextBlock text)
+    {
+        var probe = new TextBlock
+        {
+            Text = text.Text,
+            FontFamily = text.FontFamily,
+            FontSize = text.FontSize,
+            FontWeight = text.FontWeight,
+            FontStyle = text.FontStyle,
+            FontStretch = text.FontStretch,
+        };
+        probe.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        return probe.DesiredSize.Width;
+    }
+
+    /// <summary>Satırları taşıyan kaydırıcı — arama kutusunun kendi kaydırıcısı değil.</summary>
+    private static ScrollViewer RowScroller(DependencyObject root) =>
+        DsResources.Descendants(root).OfType<ScrollViewer>().Single(s => DsResources.Descendants(s).OfType<BranchRow>().Any());
 
     private static RunViewModel NewVm() =>
         new(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
@@ -209,18 +288,21 @@ public class PopoverTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>[branch keys] İşaret görünür satırların altına inince liste kayar: işaretli satır kaydırıcının görünen alanındadır.</summary>
+    /// <summary>[branch keys] İşaret görünür satırların altına inince liste kayar: işaretli satır kaydırıcının görünen alanındadır. İşaret
+    /// görünen satırların çok altına iner (40 branch'te 30. satır) ve ön-koşul listenin GERÇEKTEN kaymasıdır: eski girdi (20 branch'te 12. satır)
+    /// liste 12 satır gösterince kaydırmadan görünür kalıyordu, test boşa geçerdi (<see cref="Twelve_rows_show_before_the_list_scrolls"/>).</summary>
     [StaFact]
     public void Moving_down_past_the_visible_rows_scrolls_the_highlight_into_view()
     {
-        var many = Enumerable.Range(0, 20).Select(i => new BranchRef($"feature/{i:D2}", $"{i:D12}", i == 0, false)).ToArray();
+        var many = Enumerable.Range(0, 40).Select(i => new BranchRef($"feature/{i:D2}", $"{i:D12}", i == 0, false)).ToArray();
         var (popover, _, _, window) = OpenForKeys(many);
 
-        Press(popover, Enumerable.Repeat(Key.Down, 12).ToArray()); // feature/11
+        Press(popover, Enumerable.Repeat(Key.Down, 30).ToArray()); // feature/29
         popover.UpdateLayout();
 
-        var scroller = DsResources.Descendants(popover).OfType<ScrollViewer>().Single(s => DsResources.Descendants(s).OfType<BranchRow>().Any());
-        var row = DsResources.Descendants(scroller).OfType<BranchRow>().SingleOrDefault(r => r.DataContext is BranchRowItem { Branch.Name: "feature/11" });
+        var scroller = RowScroller(popover);
+        Assert.True(scroller.VerticalOffset > 0, "ön-koşul: liste kaymalıydı — işaret görünen satırların altına inmedi");
+        var row = DsResources.Descendants(scroller).OfType<BranchRow>().SingleOrDefault(r => r.DataContext is BranchRowItem { Branch.Name: "feature/29" });
         Assert.NotNull(row);
         Rect bounds = row.TransformToAncestor(scroller).TransformBounds(new Rect(row.RenderSize));
         Assert.True(bounds.Top >= -0.5 && bounds.Bottom <= scroller.ActualHeight + 0.5,
@@ -491,7 +573,7 @@ public class PopoverTests
         GC.KeepAlive(window);
     }
 
-    // [A13/T3 fix-1 · B7] b1 ("ActionBar popover kabuğu 272px") ARTIK ActionBarTests'te: kalem ActionBar'ın
+    // [A13/T3 fix-1 · B7] b1 (ActionBar'ın popover kabuğunun genişliği) ARTIK ActionBarTests'te: kalem ActionBar'ın
     // KENDİ kabuğuna aittir (ActionBar.xaml), bu dosya ise BranchPopover kontrolünündür; test burada dururken
     // ActionBarTests.Realize'ı inline kopyalıyordu.
 }

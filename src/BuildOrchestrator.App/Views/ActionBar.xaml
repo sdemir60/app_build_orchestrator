@@ -39,13 +39,15 @@
         <ToggleButton x:Name="PART_WorktreeToggle" Style="{DynamicResource Ds.Bar.Chip}" Width="24" Padding="0" Margin="0,0,8,0"
                       VerticalAlignment="Center" Visibility="Collapsed" />
 
-        <!-- branch chip + popover (yukarı açılır) -->
+        <!-- branch chip + popover (yukarı açılır). Kabuk 480 px (tasarımın 272'si kullanıcı kararıyla genişledi): gerçek repolarda branch
+             adları uzundur ve 272'de ad sütunu ~23 karakter alıyordu; 480 ~52 karakter alır, adların çoğu kısalmadan görünür
+             (pin: PopoverTests.A_48_character_branch_name_shows_in_full). -->
         <Grid VerticalAlignment="Center">
           <ToggleButton x:Name="PART_BranchChip" Style="{DynamicResource Ds.Bar.Chip}" />
           <Popup x:Name="PART_BranchPopup" Placement="Top" PlacementTarget="{Binding ElementName=PART_BranchChip}"
                  StaysOpen="False" AllowsTransparency="True" VerticalOffset="-8" PopupAnimation="None"
                  IsOpen="{Binding IsChecked, ElementName=PART_BranchChip, Mode=TwoWay}">
-            <Border Style="{DynamicResource Ds.Popover}" Width="272">
+            <Border Style="{DynamicResource Ds.Popover}" Width="480">
               <views:BranchPopover x:Name="PART_BranchPopover"
                                    IsOpen="{Binding IsOpen, ElementName=PART_BranchPopup, Mode=OneWay}" />
             </Border>
