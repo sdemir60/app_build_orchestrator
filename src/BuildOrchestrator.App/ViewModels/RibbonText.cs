@@ -1,4 +1,5 @@
 ﻿using System.Globalization;
+using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Core.Formatting;
 using BuildOrchestrator.Core.Incremental;
 
@@ -41,6 +42,43 @@ public readonly record struct RibbonLine(string Text, string BrushKey, string? G
 }
 
 /// <summary>
+/// [sync ilerlemesi] Uçuştaki Sync'in şeride giden ilerlemesi: motorun son bildirdiği adım (<see cref="SyncStepEvent"/>) ve
+/// keşfin o ana kadar bulduğu proje sayısı (<see cref="SyncDiscoveryEvent"/>). Saf DATA; hiçbir WPF türü taşımaz. Satırı
+/// <see cref="RibbonText.SyncLine"/> kurar; <c>default</c> = Sync başladı ama henüz adım yok.
+/// </summary>
+/// <param name="Step">Motorun son bildirdiği adım; <c>null</c> = henüz adım gelmedi (<see cref="RibbonText.SyncStarting"/>).</param>
+/// <param name="Branch">Yalnız <see cref="SyncStep.Fetching"/>'de anlamlı: fetch edilen branch (bilinmiyorsa <c>null</c>).</param>
+/// <param name="Done">Yalnız <see cref="SyncStep.Indexing"/>'de anlamlı: o ana kadar özetlenen dosya sayısı (kümülatif).</param>
+/// <param name="Total">Yalnız <see cref="SyncStep.Indexing"/>'de anlamlı: özetlenecek toplam dosya sayısı.</param>
+/// <param name="ProjectsFound">Keşfin o ana kadar bulduğu proje sayısı (ana repo + harici) — analiz satırı okur; adım
+/// değişse de korunur.</param>
+public readonly record struct SyncProgressView(SyncStep? Step, string? Branch, int Done, int Total, int ProjectsFound);
+
+/// <summary>
+/// [şerit işlemi] Pill'in sözcüğüyle uçuşta duran, kullanıcıya görünen workspace işi: şerit bu iş sürerken pill'i amber yakar, çubuğu
+/// belirsiz sürer ve satırı o işi anlatır (<see cref="RibbonText.Compose"/>); pill sözcüğü <see cref="OperationLabel.ForWork"/>'ten. Saf
+/// DATA; hiçbir WPF türü taşımaz. Değeri VM üretir (<c>RunViewModel.WorkInFlight</c>): koşu kilidi varken ve görünmeyen sessiz Sync'te
+/// <see cref="None"/>'dır — koşu kendi faz satırlarıyla anlatılır, sessiz Sync ekranda bir işlem değildir.
+/// </summary>
+public enum RibbonWork
+{
+    /// <summary>Uçuşta görünür bir workspace işi yok.</summary>
+    None,
+    /// <summary>Görünür Sync — Sync düğmesi ya da bir işin zincirlediği Sync; satırı adımını izler (<see cref="RibbonText.SyncLine"/>).</summary>
+    Sync,
+    /// <summary>Branch chip'inden checkout.</summary>
+    Checkout,
+    /// <summary><c>N behind</c> chip'inin ff-only pull'u.</summary>
+    Pull,
+    /// <summary>Settings Save'in worktree kurulumu.</summary>
+    CreatingWorktree,
+    /// <summary>Bakım kutusunun Clean'i — keşfedilen projelerin <c>bin</c>/<c>obj</c>'i silinir.</summary>
+    DeepClean,
+    /// <summary>Bakım kutusunun Optimize'ı — workspace onarımı.</summary>
+    Optimize,
+}
+
+/// <summary>
 /// [D2/T38+T39+T70] Sticky şeridin SAF metin/ilerleme mantığı (design-v1 <c>BuildApp.jsx:752-776</c> birebir
 /// portu). UI'sız, statik, tüm biçimleme <see cref="CultureInfo.InvariantCulture"/> (Türkçe Windows'ta
 /// <c>4,2s</c>/<c>~35s</c> tuzağı VM'e sızmasın). 11 faz-metni satırı burada üretilir; şerit görünümü
@@ -61,15 +99,73 @@ public static class RibbonText
     /// yönlendirdi: eksik olan bir SEÇİM değil bir AYARDIR.</para></summary>
     public const string NotConfigured = "Not configured — repository root not set";
 
-    /// <summary>Fetch'li bir Sync uçuştayken (Sync düğmesi, açılış, pull, bakım devri, Settings Save).</summary>
-    public const string SyncingWithFetch = "▸ Sync — git fetch origin…";
+    /// <summary>[sync ilerlemesi] Görünür bir Sync başladı ama motor henüz bir adım bildirmedi. Her Sync bununla açılır:
+    /// fetch'siz bir Sync (branch değişimi) <see cref="SyncStep.Fetching"/> göndermez, yani şerit ağa çıkıldığını ancak
+    /// motor söylerse söyler.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Satır eskiden Sync boyunca SABİTTİ ve onu Sync'in kipi seçiyordu (fetch'li
+    /// <c>▸ Sync — git fetch origin…</c>, fetch'siz <c>▸ Sync…</c>). Ölçüm: ilk worktree Sync'i 55 sn sürdü (51 sn'si ilk
+    /// indeksleme); satır bu süre boyunca sabitti — fetch'li Sync'te fetch bitmişken de "git fetch" diyordu.</para></summary>
+    public const string SyncStarting = "▸ Sync…";
 
-    /// <summary>[spec 2026-09-18 §6.2] Fetch'siz bir Sync uçuştayken (branch değişimi) — şerit ağa çıkıldığını
-    /// iddia etmez.</summary>
-    public const string SyncingWithoutFetch = "▸ Sync…";
+    /// <summary>[sync ilerlemesi] Motor uzak ucu getiriyor (<see cref="SyncStep.Fetching"/>). Branch bilinmiyorsa yalnız
+    /// <c>origin</c> söylenir.</summary>
+    public static string SyncFetching(string? branch) =>
+        branch is { Length: > 0 }
+            ? string.Format(CultureInfo.InvariantCulture, "▸ Sync — fetching origin/{0}…", branch)
+            : "▸ Sync — fetching origin…";
+
+    /// <summary>[sync ilerlemesi] Motor taramadan will-build'e kadar olan analizi koşuyor (<see cref="SyncStep.Analyzing"/>).
+    /// Keşif henüz proje bulmadıysa çalışma alanı anılır; sayı varsa o söylenir (tekilde "project").</summary>
+    /// <param name="projects">Keşfin o ana kadar bulduğu proje sayısı (<see cref="SyncProgressView.ProjectsFound"/>).</param>
+    public static string SyncAnalyzing(int projects) => projects switch
+    {
+        <= 0 => "▸ Sync — analyzing the workspace…",
+        1 => "▸ Sync — analyzing 1 project…",
+        _ => string.Format(CultureInfo.InvariantCulture, "▸ Sync — analyzing {0} projects…", projects),
+    };
+
+    /// <summary>[sync ilerlemesi] İlk indeksleme sürüyor (<see cref="SyncStep.Indexing"/>): özetlenen dosya sayısı paydasıyla.
+    /// Sayılar düz tamsayıdır (binlik ayırıcı yok) — çubuk aynı oranı çizer.</summary>
+    public static string SyncIndexing(int done, int total) =>
+        string.Format(CultureInfo.InvariantCulture, "▸ Sync — indexing source files · {0}/{1}", done, total);
+
+    /// <summary>[sync ilerlemesi] Görünür Sync'in satırı — adımın TEK eşlemesi: adım yok → <see cref="SyncStarting"/>,
+    /// <see cref="SyncStep.Fetching"/> → <see cref="SyncFetching"/>, <see cref="SyncStep.Analyzing"/> →
+    /// <see cref="SyncAnalyzing"/>, <see cref="SyncStep.Indexing"/> → <see cref="SyncIndexing"/>.</summary>
+    public static string SyncLine(SyncProgressView sync) => sync.Step switch
+    {
+        SyncStep.Fetching => SyncFetching(sync.Branch),
+        SyncStep.Analyzing => SyncAnalyzing(sync.ProjectsFound),
+        SyncStep.Indexing => SyncIndexing(sync.Done, sync.Total),
+        _ => SyncStarting,
+    };
 
     /// <summary>[idle-memory · dalga 3 · karar 38] Uyuyan motor uyanırken (VM'in motor durumu <c>Waking</c>) — metnin TEK yeri.</summary>
     public const string StartingTheEngine = "▸ Starting the engine…";
+
+    /// <summary>[şerit işlemi] Branch chip'inden checkout uçuşta (<see cref="RibbonWork.Checkout"/>): hedef branch'in adıyla; hedef
+    /// bilinmiyorsa yalnız iş söylenir.</summary>
+    public static string Switching(string? branch) =>
+        branch is { Length: > 0 }
+            ? string.Format(CultureInfo.InvariantCulture, "▸ Switching to {0}…", branch)
+            : "▸ Switching branch…";
+
+    /// <summary>[şerit işlemi] <c>N behind</c> chip'inin pull'u uçuşta (<see cref="RibbonWork.Pull"/>): ilerletilen uzak uçla
+    /// (<c>origin/{branch}</c>); branch bilinmiyorsa yalnız iş söylenir.</summary>
+    public static string Pulling(string? branch) =>
+        branch is { Length: > 0 }
+            ? string.Format(CultureInfo.InvariantCulture, "▸ Pulling origin/{0}…", branch)
+            : "▸ Pulling…";
+
+    /// <summary>[şerit işlemi] Settings Save'in worktree kurulumu uçuşta (<see cref="RibbonWork.CreatingWorktree"/>).</summary>
+    public const string CreatingTheWorktree = "▸ Creating the worktree…";
+
+    /// <summary>[şerit işlemi] Bakım kutusunun Clean'i uçuşta (<see cref="RibbonWork.DeepClean"/>, pill <c>DEEP CLEAN</c>) — ne sildiğini
+    /// söyler.</summary>
+    public const string DeepCleaning = "▸ Deep clean — removing bin and obj…";
+
+    /// <summary>[şerit işlemi] Bakım kutusunun Optimize'ı uçuşta (<see cref="RibbonWork.Optimize"/>) — ne yaptığını söyler.</summary>
+    public const string Optimizing = "▸ Optimize — repairing the workspace…";
 
     /// <summary>[T38] 11 koşulun her biri için TEK satır (design-v1 <c>BuildApp.jsx:752-770</c> birebir).</summary>
     /// <param name="phase">Uygulama fazı.</param>
@@ -86,19 +182,28 @@ public static class RibbonText
     /// <param name="etaMs">Yumuşatılmış ETA (ms) — yoksa <c>null</c>.</param>
     /// <param name="checkDurMs">All-clean check koşusunun süresi (done+allClean satırında; <c>fmtDur</c> biçimi).</param>
     /// <param name="warnings">Derleyici warning sayısı (done satırlarında, dep-uyarıları HARİÇ).</param>
-    /// <param name="syncFetches">[spec 2026-09-18 §6.2] Uçuştaki Sync fetch ediyor mu — Syncing satırını seçer
-    /// (<see cref="SyncingWithFetch"/> / <see cref="SyncingWithoutFetch"/>).</param>
     /// <param name="exitPending">[P3 · Task 2] Güvenli çıkış uçuştaki işi bekliyor mu (<see cref="RunViewModel.ExitPending"/>)
     /// — satır fazdan bağımsız Stopping satırıdır (<see cref="StoppingLine"/>).</param>
     /// <param name="engineWaking">[idle-memory · dalga 3 · karar 38] Uyuyan motor uyanıyor mu (VM'in motor durumu <c>Waking</c>) — satır
     /// <see cref="StartingTheEngine"/>'dir; yeri öncelik zincirinde aşağıda.</param>
+    /// <param name="sync">[sync ilerlemesi] Uçuştaki Sync'in motordan gelen adımı ve keşif sayısı — yalnız
+    /// <see cref="AppPhase.Syncing"/> satırı ve görünür Sync işi (<see cref="RibbonWork.Sync"/>) okur (<see cref="SyncLine"/>); sessiz Sync ne
+    /// bu faza geçer ne de bir iştir, onun adımları şeride çıkmaz.</param>
+    /// <param name="work">[şerit işlemi] Pill'in sözcüğüyle uçuştaki workspace işi (<c>RunViewModel.WorkInFlight</c>): satır o işi anlatır.
+    /// Motor metinleri, çıkış bekleyişi ve uyanma satırı onun ÜSTÜNDE; Sync/koşu hataları ve faz satırları ALTINDA kalır.</param>
+    /// <param name="workTarget">[şerit işlemi] Hedefli işin hedefi — checkout'un ve pull'un branch'i; bilinmiyorsa <c>null</c> (satır yalnız
+    /// işi söyler).</param>
+    /// <param name="cleaning">[şerit işlemi] Koşu bir <c>-t:Clean</c> koşusu mu (<c>RunMode.Clean</c>): Running satırının fiili
+    /// <c>Cleaning</c>'dir — hiçbir şey derlemeyen bir koşu için "Building" yalan olurdu.</param>
     public static RibbonLine Compose(AppPhase phase, bool hasWorkspace, bool allClean, RunCounters c,
                                      int willBuild, int finishedOfWillBuild, int totalProjects,
                                      long elapsedMs, long? etaMs, long? checkDurMs, int warnings,
                                      string? engineDiedMessage = null, string? syncError = null,
                                      string? runError = null, string? engineOverdue = null,
                                      bool resolvingCycles = false, int cycleRound = 0, int cycleRoundCap = 0,
-                                     bool syncFetches = true, bool exitPending = false, bool engineWaking = false)
+                                     bool exitPending = false, bool engineWaking = false,
+                                     SyncProgressView sync = default,
+                                     RibbonWork work = RibbonWork.None, string? workTarget = null, bool cleaning = false)
     {
         // [E2/T37 · EngineDiedMessage ÖNCELİĞİ] Engine process öldüyse şerit, HANGİ Phase'de olursa olsun (F3:
         // mid-run ölümde Phase kozmetik olarak Stopped'a çekilse de) bu KALICI KIRMIZI hata metnini gösterir —
@@ -123,7 +228,7 @@ public static class RibbonText
             return StoppingLine(phase == AppPhase.Stopping ? c.Building : 0, finishedOfWillBuild, willBuild);
 
         // [idle-memory · dalga 3 · karar 38] Uyuyan motor uyanıyor: bir komut kapıda motorun başlamasını bekliyor. CANLI bir bekleyiştir —
-        // Sync/koşu hatası (geçmişe ait olgu) ve faz satırları ("motor çalışıyor" varsayar; uyanmayı bekleyen Sync'in fetch satırı henüz doğru
+        // Sync/koşu hatası (geçmişe ait olgu) ve faz satırları ("motor çalışıyor" varsayar; uyanmayı bekleyen Sync'in satırı henüz doğru
         // değil) onun ALTINDADIR. Ölüm/erişilemezlik metinleri, motor sessizliği ve çıkış bekleyişi ÜSTTE kalır: uyanmadan büyük ya da onu
         // kesen olgulardır. Biçim şeridin faz satırlarınınki: ▸, ikincil metin rengi, glyph yok — sonuç değil bekleyiş.
         if (engineWaking)
@@ -131,6 +236,13 @@ public static class RibbonText
 
         if (!hasWorkspace)
             return new RibbonLine(NotConfigured, "Brush.TextFaint", null);
+
+        // [şerit işlemi] Pill'in işi uçuşta: satır O işi anlatır. Sync/koşu hatası geçmişe ait bir olgudur, faz satırları da önceki işlemin
+        // özetidir ("Completed — …"; Deep Clean'in boşalttığı yüzeyde "▸ Waiting for Sync — …") — ikisi de süren işin ALTINDA kalır ve iş
+        // bitince geri gelir. Motor metinleri, çıkış bekleyişi ve uyanma ÜSTTE kalır: işi kesen ya da bekleten olgulardır. Biçim faz
+        // satırlarınınki: ▸, ikincil metin rengi, glyph yok — sonuç değil, süren iş.
+        if (WorkLine(work, workTarget, sync) is { } workText)
+            return new RibbonLine(workText, "Brush.TextSecondary", null);
 
         // [E2/T10] Son Sync başarısız oldu (repo seçili): KIRMIZI "Sync failed — {reason}" — faz-metninin önüne
         // geçer (retry = Sync; başarılı Sync ya da yeni Sync başlangıcı temizler). Engine-died'dan sonra gelir.
@@ -153,7 +265,7 @@ public static class RibbonText
                 return new RibbonLine("▸ Waiting for Sync — project states appear after Sync", "Brush.TextDim", null);
 
             case AppPhase.Syncing:
-                return new RibbonLine(syncFetches ? SyncingWithFetch : SyncingWithoutFetch, "Brush.TextSecondary", null);
+                return new RibbonLine(SyncLine(sync), "Brush.TextSecondary", null);
 
             case AppPhase.Idle:
                 if (totalProjects == 0) // [E2/T10] repo Sync'lendi ama hiç proje yok (0-proje state)
@@ -201,8 +313,10 @@ public static class RibbonText
                             "▸ Resolving cycles · preparing dependencies · {0}/{1} · {2}",
                             finishedOfWillBuild, willBuild, DurationFormat.Elapsed(elapsedMs)),
                         "Brush.TextSecondary", "building");
+                // [şerit işlemi] Bir -t:Clean koşusu hiçbir şey derlemez: fiil işin kendisidir. Biçim ve ETA eki TEK — yalnız fiil seçilir.
                 return new RibbonLine(
-                    string.Format(CultureInfo.InvariantCulture, "▸ Building {0}/{1} · {2}{3}",
+                    string.Format(CultureInfo.InvariantCulture, "▸ {0} {1}/{2} · {3}{4}",
+                        cleaning ? "Cleaning" : "Building",
                         finishedOfWillBuild, willBuild, DurationFormat.Elapsed(elapsedMs),
                         EtaSuffix(etaMs, willBuild, finishedOfWillBuild, c) ?? ""),
                     "Brush.TextSecondary", null);
@@ -277,6 +391,19 @@ public static class RibbonText
                 return new RibbonLine(NotConfigured, "Brush.TextFaint", null);
         }
     }
+
+    /// <summary>[şerit işlemi] Uçuştaki işin satırı — iş ile satır arasındaki TEK eşleme; iş yoksa <c>null</c>. Görünür Sync'in satırı adımını
+    /// izler (<see cref="SyncLine"/>): Sync'in istek penceresi de (motor henüz <c>syncStarted</c> demedi) aynı satırı okur.</summary>
+    private static string? WorkLine(RibbonWork work, string? target, SyncProgressView sync) => work switch
+    {
+        RibbonWork.Sync => SyncLine(sync),
+        RibbonWork.Checkout => Switching(target),
+        RibbonWork.Pull => Pulling(target),
+        RibbonWork.CreatingWorktree => CreatingTheWorktree,
+        RibbonWork.DeepClean => DeepCleaning,
+        RibbonWork.Optimize => Optimizing,
+        _ => null,
+    };
 
     /// <summary>
     /// [Stopping · P3 · Task 2] Stopping satırının TEK yeri — faz dalı (<see cref="AppPhase.Stopping"/>) ve tam çıkışın

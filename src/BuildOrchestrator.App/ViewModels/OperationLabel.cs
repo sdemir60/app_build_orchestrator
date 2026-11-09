@@ -3,9 +3,9 @@ namespace BuildOrchestrator.App.ViewModels;
 /// <summary>
 /// [design v1.11.0 §2.2 · §9-9] Sticky şeridin solundaki <b>kalıcı işlem pill'inin</b> metni — TEK kaynak.
 ///
-/// <para>Pill "ne yapmıştım?" sorusunu tek bakışta bitirir: koşarken amber yanar, bitince nötrleşir ama
-/// <b>bir sonraki işleme kadar KALIR</b>. Faz metni anlıktır (bir sonraki faz üzerine yazar), pill ise son
-/// işlemin kimliğidir.</para>
+/// <para>Pill "ne yapmıştım?" sorusunu tek bakışta bitirir: işlemi uçuştayken amber yanar (koşu, görünür Sync ve
+/// workspace işleri — <see cref="ForWork"/>), bitince nötrleşir ama <b>bir sonraki işleme kadar KALIR</b>. Faz metni
+/// anlıktır (bir sonraki faz üzerine yazar), pill ise son işlemin kimliğidir.</para>
 ///
 /// <para>Etiketler caps ve mono'dur; pill <b>yalnız etiketi</b> taşır — hedef adı hiçbir işlemde eklenmez.</para>
 ///
@@ -51,5 +51,20 @@ public static class OperationLabel
         Contracts.Ipc.RunMode.Cycles => Resolve,
         Contracts.Ipc.RunMode.Clean => Clean,
         _ => Build,
+    };
+
+    /// <summary>[şerit işlemi] Uçuştaki workspace işinin (<see cref="RibbonWork"/>) pill sözcüğü; iş yoksa <c>null</c>. Esc'in
+    /// "durdurulamaz" satırı işi bununla adlandırır (<c>RunViewModel.UnstoppableOperation</c>). Pill'in KENDİ sözcüğü bu eşlemeden
+    /// okunmaz: istek yerlerinde <c>CurrentOperation</c>'a doğrudan yazılır; iki yolun aynı sözcüğü verdiği testle pinlidir
+    /// (her iş için pill metni = <c>ForWork(WorkInFlight)</c>). Pull, pill'de zincirlendiği Sync'le tek işlemdir:
+    /// <see cref="Sync"/>.</summary>
+    public static string? ForWork(RibbonWork work) => work switch
+    {
+        RibbonWork.Sync or RibbonWork.Pull => Sync,
+        RibbonWork.Checkout => Checkout,
+        RibbonWork.CreatingWorktree => CreatingWorktree,
+        RibbonWork.DeepClean => DeepClean,
+        RibbonWork.Optimize => Optimize,
+        _ => null,
     };
 }

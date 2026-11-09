@@ -135,22 +135,123 @@ public sealed class SourceHashCacheTests : IDisposable
         Assert.NotNull(cache.HashOf(path));       // hesaplama düşmez
     }
 
+    /// <summary>Prefill'in gözlemciye söylediklerini sırayla yazar (zaman damgası olmayan, deterministik metin).</summary>
+    private sealed class RecordingObserver : IPrefillObserver
+    {
+        public List<string> Calls { get; } = [];
+        public void Started(int total) => Calls.Add($"Started({total})");
+        public void Progress(int done, int total, long elapsedMs) => Calls.Add($"Progress({done},{total},{elapsedMs})");
+        public void Finished(int total, long elapsedMs) => Calls.Add($"Finished({total},{elapsedMs})");
+    }
+
+    /// <summary>
+    /// [DEĞİŞEN KURAL] Eski sözleşme: <c>Prefill(paths, Action&lt;int&gt; announce)</c> yalnız eksik sayıyı okuma
+    /// başlamadan bir kez bildirirdi; bu test onu pinliyordu. Yeni sözleşme: gözlemci (<see cref="IPrefillObserver"/>)
+    /// başlangıcın yanında ilerlemeyi ve bitişi de taşır — çünkü ilk indeksleme (23 bin dosya, ~51 sn) tek bir
+    /// sayıdan sonra sessiz kalıyordu. "Eksik sayı bir kez bildirilir, ikinci geçiş hiçbir şey bildirmez ve okumaz"
+    /// iddiası aynen korunur; yalnız bildirimin biçimi değişti.
+    /// </summary>
     [Fact]
-    public void prefill_announces_the_missing_count_once_and_only_reads_what_is_missing()
+    public void prefill_tells_the_observer_the_missing_count_once_and_only_reads_what_is_missing()
     {
         var old = DateTime.UtcNow.AddHours(-1);
         var files = Enumerable.Range(0, 5).Select(i => WriteFile($"f{i}.cs", $"class F{i} {{}}", old)).ToList();
 
+        // Tik ve saat sabit: Progress'in kaç kez çağrıldığı bu testin konusu değil (aşağıdaki testler pinler).
+        var cache = new SourceHashCache(CachePath) { PrefillTick = work => { work.Wait(); return true; }, PrefillElapsedMs = () => 0 };
+        var observer = new RecordingObserver();
+
+        Assert.Equal(5, cache.Prefill(files, observer));
+        Assert.Equal(["Started(5)", "Finished(5,0)"], observer.Calls);
+
+        // İkinci geçişte hepsi önbellekte: ne bildirim yapılır ne dosya okunur.
+        observer.Calls.Clear();
+        Assert.Equal(0, cache.Prefill(files, observer));
+        Assert.Empty(observer.Calls);
+    }
+
+    /// <summary>İlk indeksleme sürerken gözlemci her tikte sayıyı alır, bitiş EN SON gelir. Kapı: hash işi tik 2'ye
+    /// kadar bekler, böylece "iş sürerken" ve "iş bitti" anları saat/uyku olmadan deterministik kurulur.</summary>
+    [Fact]
+    public void prefill_reports_progress_while_it_hashes_and_finishes_last()
+    {
+        var files = Enumerable.Range(0, 3).Select(i => WriteFile($"f{i}.cs", $"class F{i} {{}}", OldStamp)).ToList();
+        using var gate = new ManualResetEventSlim();
+        var clock = new Queue<long>([1_000, 2_000]);
+        int ticks = 0;
+        var observer = new RecordingObserver();
+
         var cache = new SourceHashCache(CachePath);
-        var announced = new List<int>();
+        cache.PrefillHasher = path => { gate.Wait(TimeSpan.FromSeconds(30)); return cache.HashOf(path); };
+        cache.PrefillElapsedMs = clock.Dequeue;
+        cache.PrefillTick = work =>
+        {
+            if (++ticks == 1) return false;     // iş sürüyor: hiçbir dosya bitmedi
+            gate.Set();
+            work.Wait();
+            return true;                        // iş bitti
+        };
 
-        Assert.Equal(5, cache.Prefill(files, announced.Add));
-        Assert.Equal([5], announced);
+        Assert.Equal(3, cache.Prefill(files, observer));
 
-        // İkinci geçişte hepsi önbellekte: ne satır yazılır ne dosya okunur.
-        announced.Clear();
-        Assert.Equal(0, cache.Prefill(files, announced.Add));
-        Assert.Empty(announced);
+        Assert.Equal(["Started(3)", "Progress(0,3,1000)", "Finished(3,2000)"], observer.Calls);
+    }
+
+    /// <summary>Soğuk ilk indekslemede 23 bin dosya ~51 sn sürer ve eskiden defter en sonda bir kez yazılırdı: yarıda
+    /// kesilen indeksleme sıfırdan başlardı. Şimdi Prefill sürerken her <see cref="SourceHashCache.PrefillFlushIntervalMs"/>
+    /// defteri diske alır.</summary>
+    [Fact]
+    public void prefill_saves_what_it_has_hashed_while_it_is_still_running()
+    {
+        string a = WriteFile("a.cs", "class A {}", OldStamp);
+        string b = WriteFile("b.cs", "class B {}", OldStamp);
+        string c = WriteFile("c.cs", "class C {}", OldStamp);
+        using var gate = new ManualResetEventSlim();
+        using var aAndBHashed = new CountdownEvent(2);
+        int ticks = 0, clockReads = 0;
+        bool aOnDisk = false, bOnDisk = false, cOnDisk = true;
+
+        var cache = new SourceHashCache(CachePath);
+        cache.PrefillHasher = path =>
+        {
+            if (path == c) gate.Wait(TimeSpan.FromSeconds(30));          // c, tik 2'ye kadar yarım kalır
+            string? hash = cache.HashOf(path);
+            if (path != c) aAndBHashed.Signal();
+            return hash;
+        };
+        cache.PrefillElapsedMs = () => SourceHashCache.PrefillFlushIntervalMs * ++clockReads;
+        cache.PrefillTick = work =>
+        {
+            if (++ticks == 1) { aAndBHashed.Wait(TimeSpan.FromSeconds(30)); return false; }   // a ve b bitti, c sürüyor
+
+            var onDisk = new SourceHashCache(CachePath);                 // başka bir okuyucunun gördüğü defter
+            (aOnDisk, bOnDisk, cOnDisk) = (onDisk.IsCached(a), onDisk.IsCached(b), onDisk.IsCached(c));
+            gate.Set();
+            work.Wait();
+            return true;
+        };
+
+        Assert.Equal(3, cache.Prefill([a, b, c]));
+
+        Assert.True(aOnDisk);
+        Assert.True(bOnDisk);
+        Assert.False(cOnDisk);
+    }
+
+    /// <summary>Gözlemci eklenince iptalin türü DEĞİŞMEMELİ: çağıranlar (ör. Sync'in <c>ComputeWillBuild</c>'ı)
+    /// <c>ex is not OperationCanceledException</c> ile iptali hatadan ayırır; bitiş de iptalde bildirilmez.</summary>
+    [Fact]
+    public void prefill_cancellation_still_surfaces_as_operation_canceled()
+    {
+        var files = Enumerable.Range(0, 5).Select(i => WriteFile($"f{i}.cs", $"class F{i} {{}}", OldStamp)).ToList();
+        using var canceled = new CancellationTokenSource();
+        canceled.Cancel();
+        var observer = new RecordingObserver();
+        var cache = new SourceHashCache(CachePath);
+
+        Assert.ThrowsAny<OperationCanceledException>(() => cache.Prefill(files, observer, canceled.Token));
+
+        Assert.DoesNotContain(observer.Calls, call => call.StartsWith("Finished", StringComparison.Ordinal));
     }
 
     [Fact]

@@ -23,7 +23,9 @@ public class WorktreeSettingsTests
 {
     private const string FullSha = "b7e91d4a0c1f2e3d4c5b6a7980716253443526a1";
 
-    private static GitTestRepo RepoWithCommit()
+    /// <summary>Bir commit'li gerçek repo — worktree kurulumu testlerinin ORTAK fixture'ı (<see cref="EscStopTests"/> da bunu
+    /// çağırır; kopyası yoktur).</summary>
+    internal static GitTestRepo RepoWithCommit()
     {
         var repo = new GitTestRepo();
         repo.WriteFile("a.txt", "one");
@@ -31,8 +33,9 @@ public class WorktreeSettingsTests
         return repo;
     }
 
-    /// <summary>Gönderimi başarılı bir VM — komutlar <paramref name="sent"/>'e düşer, cevabı test verir.</summary>
-    private static RunViewModel NewVm(string root, List<IpcCommand> sent, string worktree = "")
+    /// <summary>Gönderimi başarılı bir VM — komutlar <paramref name="sent"/>'e düşer, cevabı test verir. Ortak host
+    /// (<see cref="EscStopTests"/> da çağırır).</summary>
+    internal static RunViewModel NewVm(string root, List<IpcCommand> sent, string worktree = "")
     {
         var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1")
         {
@@ -220,6 +223,7 @@ public class WorktreeSettingsTests
         Assert.False(vm.SyncCommand.CanExecute(null));      // butonlar pasif
         Assert.False(vm.CanSwitchCopy);
         Assert.Equal(OperationLabel.CreatingWorktree, vm.CurrentOperation);
+        Assert.Equal(OperationLabel.ForWork(vm.WorkInFlight), vm.CurrentOperation); // pill sözcüğü = Esc'in adlandırdığı iş
         Assert.Equal(WorkingCopyText.Creating(folder), Lines(vm)[^1]);
 
         vm.OnEvent(new WorktreeCreatedEvent(folder, Created: true, FullSha, null));

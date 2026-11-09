@@ -9,6 +9,7 @@ using System.Windows.Media.Animation;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.Contracts.Ipc;
 
 namespace BuildOrchestrator.App.Views;
 
@@ -22,7 +23,8 @@ namespace BuildOrchestrator.App.Views;
 /// ve <c>AnimationsEnabled</c> BAŞLATMA ANINDA taze okunur; template-trigger Storyboard İMKANSIZ. Determinate
 /// genişlik geçişi <c>Duration.Base</c> + <c>KeySpline.EaseStandard</c> (prototip <c>transition: width
 /// var(--duration-base) var(--ease-standard)</c>); belirsiz mod (<c>ds-progress-indet</c>, _ds_bundle.js:493-495)
-/// 1.4s <c>KeySpline.EaseInOut</c> ile TranslateX -110%→320%, 30fps, YALNIZ <see cref="AppPhase.Syncing"/>.
+/// 1.4s <c>KeySpline.EaseInOut</c> ile TranslateX -110%→320%, 30fps — <see cref="AppPhase.Syncing"/>/<see cref="AppPhase.Starting"/>
+/// fazında ve uçuştaki bir workspace işinde (<see cref="RunViewModel.WorkInFlight"/>); ilk indekslemenin sayılı dolgusu hariç.
 /// İndikatör dolgusu per-instance brush (A13.2).</para>
 ///
 /// <para><b>Chip stratejisi (A13.2):</b> building (≤4) ve failed (≤3 + "+N more") şeritleri KÜÇÜK ve
@@ -229,6 +231,9 @@ public partial class StickyRibbon : UserControl
             case nameof(RunViewModel.SyncErrorMessage):
             case nameof(RunViewModel.RunErrorMessage): // [runFailed] aynı öncelik zincirinin üçüncü halkası
             case nameof(RunViewModel.CurrentOperation):
+            // [şerit işlemi] Uçuştaki workspace işi: pill canlanır, satır o işi anlatır, çubuk belirsiz süpürür. Faz çoğu zaman
+            // DEĞİŞMEZ (checkout, pull, kurulum) — duyuru anahtarı yine fazdır, iş girmez.
+            case nameof(RunViewModel.WorkInFlight):
             case nameof(RunViewModel.IsMidRunLocked): // pill'in canlılığı koşu kilidine bakar
             case nameof(RunViewModel.EngineOverdueMessage): // motor sustu: amber satır (düğme alt barda)
             case nameof(RunViewModel.ExitPending): // [P3 · Task 2] çıkış işi bekliyor: faz değişmese de satır Stopping olur
@@ -243,6 +248,13 @@ public partial class StickyRibbon : UserControl
             case nameof(RunViewModel.ElapsedMs):
             case nameof(RunViewModel.EtaMs):
                 RefreshText();
+                break;
+            // [sync ilerlemesi] Motorun bildirdiği Sync adımı: satır değişir (fetch/analiz/indexing) ve indexing'de çubuk
+            // sayıyla dolar. Faz DEĞİŞMEZ — elapsed tick'i gibi ekran okuyucuya duyurulmaz (indeksleme sayısı saniyede
+            // iki kez ilerler).
+            case nameof(RunViewModel.SyncProgress):
+                RefreshText();
+                RefreshProgress();
                 break;
             case nameof(RunViewModel.Counters):
             case nameof(RunViewModel.DepIssueCount):
@@ -288,13 +300,18 @@ public partial class StickyRibbon : UserControl
 
     /// <summary>
     /// [design v1.11.0 §2.2 · §9-9] Kalıcı işlem pill'i: <c>SYNC</c> · <c>BUILD</c> · <c>REBUILD</c> ·
-    /// <c>RESOLVE</c>… Mono, caps, 19px, 1px çerçeve. <b>Koşarken amber</b> (amber-soft zemin, amber-border,
+    /// <c>RESOLVE</c>… Mono, caps, 19px, 1px çerçeve. <b>İşi uçuştayken amber</b> (amber-soft zemin, amber-border,
     /// amber-text); bitince nötrleşir (şeffaf zemin, border-strong, text-dim) ama <b>bir sonraki işleme kadar
     /// KALIR</b> — "ne yapmıştım?" sorusu tek bakışta biter.
     ///
-    /// <para>Gösterge pill'in İÇİNDE, metnin hemen sağında (6px): koşarken amber spinner, bittiğinde faz
+    /// <para>Gösterge pill'in İÇİNDE, metnin hemen sağında (6px): iş sürerken amber spinner, bittiğinde faz
     /// metninin sonuç glyph'i (✓/✗). Pill varken faz metninin kendi glyph'i ÇİZİLMEZ — aynı işaret satırda
     /// iki kez durmaz.</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — şerit işlemi]</b> Pill eskiden yalnız koşuda ve görünür Sync'te (faz Syncing) canlanırdı:
+    /// checkout, pull, worktree kurulumu, Deep Clean ve Optimize boyunca — ve Sync'in istek penceresinde — nötr kalır, önceki
+    /// koşunun ✓/✗'ini taşıyabilirdi; yanındaki satır da önceki işlemi anlatıyordu. Kullanıcı kararı: pill'in işi uçuştayken pill
+    /// amber + spinner, satır o işi anlatır (<see cref="RunViewModel.WorkInFlight"/>).</para>
     /// </summary>
     private void RefreshOpPill(string? phaseGlyph)
     {
@@ -306,8 +323,10 @@ public partial class StickyRibbon : UserControl
 
         if (hasPill)
         {
-            // Canlı = motor bu işlem için çalışıyor (Sync dahil; koşunun açılışı ve kendisi IsMidRunLocked'tır).
-            bool live = (_vm?.IsMidRunLocked ?? false) || _vm?.Phase == AppPhase.Syncing;
+            // Canlı = motor pill'in işi için çalışıyor: koşunun açılışı ve kendisi (IsMidRunLocked), görünür Sync (faz Syncing) ya da
+            // uçuştaki bir workspace işi (WorkInFlight — checkout, pull, worktree kurulumu, Deep Clean, Optimize, Sync'in istek penceresi).
+            bool live = (_vm?.IsMidRunLocked ?? false) || _vm?.Phase == AppPhase.Syncing
+                || (_vm?.WorkInFlight ?? RibbonWork.None) != RibbonWork.None;
             PART_OpText.Text = op;
             // Nötr hâlde zemin YOKTUR (prototip: `background: transparent`) — bir token değil, dolgusuzluk.
             if (live) PART_OpPill.SetResourceReference(Border.BackgroundProperty, "Brush.AmberSoft");
@@ -368,10 +387,25 @@ public partial class StickyRibbon : UserControl
     {
         if (_vm is null) return;
 
+        // [sync ilerlemesi] İlk indeksleme sürerken motor sayıyı PAYDASIYLA bildirir: ölçülebilir bir oran vardır, çubuk
+        // belirsiz değil, amber dolguyla Done/Total kadar dolar (satır aynı sayıyı söyler). Sync'in diğer adımlarında payda
+        // yoktur — aşağıdaki belirsiz dal. Kapı faza bakar: sessiz Sync Syncing'e geçmez, adımı çubuğa çıkmaz.
+        if (_vm.Phase == AppPhase.Syncing && _vm.SyncProgress is { Step: SyncStep.Indexing, Total: > 0 } indexing)
+        {
+            if (_isIndeterminate) { _isIndeterminate = false; StopIndeterminate(); }
+            SetIndicatorColor(RibbonText.FillBrushKeyFor("building")); // belirsiz moddaki dolguyla aynı (FILL.building)
+            _lastFraction = Math.Clamp((double)indexing.Done / indexing.Total, 0.0, 1.0);
+            AnimateIndicatorWidth(_lastFraction * PART_ProgressTrack.ActualWidth);
+            return;
+        }
+
         // [planlama görünürlüğü] Starting, Syncing ile AYNI kefede: motor çalışıyor ama henüz PLAN yok, yani
         // ölçülebilir bir yüzde de yok. Determinate bırakılsaydı çubuk willBuild==0 yüzünden %0'da DONAR ve
         // "▸ Starting" metniyle çelişirdi — hareketsiz çubuk, takılmış bir uygulamanın en güçlü işaretidir.
-        if (_vm.Phase is AppPhase.Syncing or AppPhase.Starting)
+        // [şerit işlemi] Uçuştaki workspace işi de (checkout, pull, worktree kurulumu, Deep Clean, Optimize, Sync'in istek penceresi)
+        // ölçülebilir bir oran taşımaz: çubuk belirsiz süpürür — pill'in spinner'ı ve satırla aynı "iş sürüyor" sinyali; önceki
+        // koşunun dolgusu iş boyunca durmaz.
+        if (_vm.Phase is AppPhase.Syncing or AppPhase.Starting || _vm.WorkInFlight != RibbonWork.None)
         {
             if (!_isIndeterminate) { _isIndeterminate = true; ApplyIndeterminate(); }
             return;
@@ -415,8 +449,8 @@ public partial class StickyRibbon : UserControl
     }
 
     /// <summary>[Belirsiz mod] 35% genişlikte amber bir indikatörü TranslateX -110%→320% ile 1.4s EaseInOut,
-    /// 30fps, sonsuz süpürür (yalnız Syncing). Reduced-motion'da ve görünmezken (ARCHITECTURE §14.5) sweep kurulmaz —
-    /// statik 35% bar kalır.</summary>
+    /// 30fps, sonsuz süpürür (kapı <see cref="RefreshProgress"/>'te: Syncing/Starting ve uçuştaki iş). Reduced-motion'da ve
+    /// görünmezken (ARCHITECTURE §14.5) sweep kurulmaz — statik 35% bar kalır.</summary>
     private void ApplyIndeterminate()
     {
         double trackW = PART_ProgressTrack.ActualWidth;
