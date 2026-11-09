@@ -43,7 +43,7 @@ public sealed class BranchRow : ContentControl
 
     /// <summary>Satır üç sütundur: ikon · ad · sha ya da <c>active</c> rozeti. Ad ORTA sütundadır ve kalan genişliği alır; sığmazsa sağ
     /// sütundan <see cref="RowGap"/> önce <c>…</c> ile kısalır. Ad eskiden ikonla birlikte yatay bir <see cref="StackPanel"/>'deydi: yatay
-    /// panel çocuğunu genişlik sınırı vermeden ölçer, kırpma hiç devreye girmez ve uzun ad sha'nın üstüne taşardı (ölçüldü: 272 px'lik
+    /// panel çocuğunu genişlik sınırı vermeden ölçer, kırpma hiç devreye girmez ve uzun ad sha'nın üstüne taşardı (ölçüldü: o zamanki 272 px'lik
     /// popover'da 270 px; pin: <c>PopoverTests.A_long_branch_name_ends_in_an_ellipsis_before_the_rows_right_column</c>).</summary>
     private FrameworkElement BuildVisual(BranchRowItem item)
     {
