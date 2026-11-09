@@ -147,7 +147,7 @@ kadarki tüm değişiklikler dokümanlara işlenir.
   FEATURES listeler, USER-GUIDE ve ARCHITECTURE ayrıntılandırır; aynı şey iki yerde ayrıntısıyla tekrarlanmaz.
 - **FEATURES / WHY kalıbı:** iki doküman da grup başlığı olmayan düz bir `##` listesidir, en önemliden
   başlayarak — sıradan bir günde hissedilen maddeler (yalnız değişeni derler, paralel, döngüler, graf keşfi, tek
-  ekran, satır eylemleri, hep elinin altında, kendiliğinden Sync, makine) önde, sonra tasarım ve uygulamanın
+  ekran, satır eylemleri, hep elinin altında, kendiliğinden Sync, worktree, makine) önde, sonra tasarım ve uygulamanın
   kendisi, sonra karar, güvenlik, ekran ve depo maddeleri. FEATURES madde başlığı ≤5 kelime; WHY başlığı = aynı
   ad + ` — ` + kazanım (≤6 kelime; `Builds only what changed — less waiting`), okuyan "neden kullanayım" sorusunu
   başlıkları tarayarak cevaplar. FEATURES'ta `**What:**` + `**How:**`, WHY'da `**Common practice:**` +

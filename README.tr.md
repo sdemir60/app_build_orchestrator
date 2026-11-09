@@ -25,6 +25,9 @@ izletir.
 - **Hep elinin altında.** Windows ile başlar, tepside bekler; global kısayol pencereyi açmadan derler.
 - **Kendiliğinden Sync.** Commit, pull ya da branch değişikliği listeyi birkaç saniyede tazeler; sonraki Build yalnız
   farklı olanı derler.
+- **Başka branch için worktree.** İnceleme ya da acil düzeltme, stash'e gerek kalmadan ikinci bir çalışma kopyasında
+  derlenir: yarım kalan değişikliğin ve açık Visual Studio olduğu gibi kalır; tek anahtar her Sync'i, derlemeyi ve
+  branch geçişini iki kopya arasında taşır.
 - **Makineyi kullanılır tutar.** Perf profilleri derlemenin makineden ne kadar alacağını belirler, title bar aracın o
   anki maliyetini gösterir.
 - **Tasarımı gereği güvenli.** Arkada MSBuild süreci kalmaz, git'e davetsiz yazılmaz, çıktı tam VS'nin koyduğu

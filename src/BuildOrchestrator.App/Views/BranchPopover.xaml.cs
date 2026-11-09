@@ -1,10 +1,12 @@
-﻿using System.Collections.Specialized;
+﻿using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Model;
@@ -14,8 +16,8 @@ namespace BuildOrchestrator.App.Views;
 /// <summary>
 /// [D6/T40] Branch popover (BuildApp.jsx:830-852). DataContext bir <see cref="RunViewModel"/>'dir; branch listesi
 /// <see cref="RunViewModel.Branches"/>'ten okunur. Arama BÜYÜK/küçük harf duyarsız alt-dize filtreler; kapanınca
-/// (<see cref="IsOpen"/>=false) sorgu SIFIRLANIR. Bir satıra tıklamak <see cref="RunViewModel.SelectBranch"/>'i
-/// çağırır ve <see cref="BranchPicked"/>'i yayar
+/// (<see cref="IsOpen"/>=false) sorgu SIFIRLANIR. Bir satıra tıklamak — ya da arama kutusundan ↓/↑ ile işaretleyip Enter'a basmak
+/// (<see cref="OnSearchKeyDown"/>) — <see cref="RunViewModel.SelectBranch"/>'i çağırır ve <see cref="BranchPicked"/>'i yayar
 /// (ActionBar popover'ı kapatır).
 ///
 /// <para><b>[W2]</b> <see cref="IsOpen"/> DP'si + açılış (tazele → pop-in → odağı içeri) + Esc →
@@ -32,10 +34,18 @@ public partial class BranchPopover : PopoverBase
     /// <summary>Bir branch seçildiğinde — ActionBar popover'ı kapatır.</summary>
     public event Action? BranchPicked;
 
+    /// <summary>Görünen satırlar (aramaya uyanlar). Gözlenebilir koleksiyondur: klavye işareti yer değiştirince yalnız iki satır
+    /// değişir (<see cref="MoveHighlight"/>) — liste baştan kurulmaz, sanallaştırma yalnız o iki satırın kabını tazeler.</summary>
+    private ObservableCollection<BranchRowItem> _rows = [];
+
+    /// <summary>[branch keys] Klavyeyle işaretli satırın sırası; <c>-1</c> = işaret yok (odak arama kutusunda, Enter bir şey seçmez).</summary>
+    private int _highlight = -1;
+
     public BranchPopover()
     {
         InitializeComponent();
         PART_Search.TextChanged += (_, _) => RefreshRows();
+        PART_Search.PreviewKeyDown += OnSearchKeyDown;
         PART_Rows.AddHandler(MouseLeftButtonUpEvent, new MouseButtonEventHandler(OnRowClicked), handledEventsToo: true);
         AutomationProperties.SetName(PART_Search, AccessibilityNames.BranchFilter);
     }
@@ -88,10 +98,12 @@ public partial class BranchPopover : PopoverBase
         VisibleBranches = list;
 
         // Seçim satırın DIŞINDA hesaplanır (BranchRow ata ağaçtan hiçbir şey çekmez). Atama O(1)'dir: hangi
-        // satırın GERÇEKTEN kurulacağına sanallaştırılmış panel karar verir (yalnız görünür olanlar).
-        PART_Rows.ItemsSource = list
-            .Select(b => new BranchRowItem(b, string.Equals(b.Name, Vm?.Branch, StringComparison.Ordinal)))
-            .ToList();
+        // satırın GERÇEKTEN kurulacağına sanallaştırılmış panel karar verir (yalnız görünür olanlar). Liste değişince
+        // klavye işareti düşer: işaretli satır artık başka bir branch olabilir ve Enter onu seçmemeli.
+        _highlight = -1;
+        _rows = new ObservableCollection<BranchRowItem>(list
+            .Select(b => new BranchRowItem(b, string.Equals(b.Name, Vm?.Branch, StringComparison.Ordinal))));
+        PART_Rows.ItemsSource = _rows;
 
         if (list.Count == 0)
         {
@@ -117,5 +129,51 @@ public partial class BranchPopover : PopoverBase
         BranchPicked?.Invoke();  // popover'ı kapat (BuildApp.jsx:1337 setBranchPop(false))
         // Checkout async'tir (gönderim + motorun cevabı); tıklama onu beklemez, sonucu konsol ve chip anlatır.
         _ = Vm?.SelectBranch(branch);
+    }
+
+    /// <summary>
+    /// [branch keys] Fareye gitmeden seçim — odak arama kutusundayken: ↓ ilk satırı, sonra bir alttakini işaretler (son satırda durur); ↑ bir
+    /// üsttekini, ilk satırda işareti kaldırıp arama kutusuna döner; Enter işaretli satırı tıklamayla AYNI yoldan seçer (<see cref="Pick"/>).
+    /// İşaret yokken Enter hiçbir şey yapmaz — yanlışlıkla bir checkout gitmesin. Yazmak işareti düşürür (<see cref="RefreshRows"/>).
+    /// Tuşlar tünelleyen önizlemede yakalanır: arama kutusu ok tuşlarını kendi imlecine harcamadan.
+    /// </summary>
+    private void OnSearchKeyDown(object sender, KeyEventArgs e)
+    {
+        switch (e.Key)
+        {
+            case Key.Down:
+                MoveHighlight(Math.Min(_highlight + 1, _rows.Count - 1));
+                e.Handled = true;
+                break;
+            case Key.Up:
+                MoveHighlight(Math.Max(_highlight - 1, -1));
+                e.Handled = true;
+                break;
+            case Key.Enter when _highlight >= 0:
+                Pick(_rows[_highlight].Branch);
+                e.Handled = true;
+                break;
+        }
+    }
+
+    /// <summary>İşareti <paramref name="index"/>'e taşır (<c>-1</c> = kaldır): yalnız eski ve yeni satır değişir, yeni satır görünür alana
+    /// kaydırılır.</summary>
+    private void MoveHighlight(int index)
+    {
+        if (index == _highlight) return;
+        if (_highlight >= 0) _rows[_highlight] = _rows[_highlight] with { IsHighlighted = false };
+        _highlight = index;
+        if (index < 0) return;
+        _rows[index] = _rows[index] with { IsHighlighted = true };
+        ScrollIntoView(index);
+    }
+
+    /// <summary>Satırı kaydırıcının görünen alanına getirir. Kaydırma satır birimindedir (sanallaştırılmış panel, <c>CanContentScroll</c>):
+    /// ofset ilk görünen satırın sırası, görünüm yüksekliği sığan satır sayısıdır.</summary>
+    private void ScrollIntoView(int index)
+    {
+        if (VisualTreeHelper.GetChildrenCount(PART_Rows) == 0 || VisualTreeHelper.GetChild(PART_Rows, 0) is not ScrollViewer scroller) return;
+        if (index < scroller.VerticalOffset) scroller.ScrollToVerticalOffset(index);
+        else if (index + 1 > scroller.VerticalOffset + scroller.ViewportHeight) scroller.ScrollToVerticalOffset(index + 1 - scroller.ViewportHeight);
     }
 }

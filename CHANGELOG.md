@@ -2,6 +2,16 @@
 
 Release notes for Build Orchestrator, newest version first. The What's new window in the app reads this file.
 
+## [1.13.0] - 2026-11-09
+
+### Added
+
+- The branch picker works from the keyboard: type to narrow the list, press Down to highlight the first match and the arrow keys to move between branches, and Enter switches to the highlighted branch as a click would. Enter does nothing while no branch is highlighted.
+
+### Changed
+
+- Right-clicking the tray icon opens its menu where you clicked again, drawn in front of the taskbar, instead of lifting it above the taskbar's edge.
+
 ## [1.12.1] - 2026-11-09
 
 ### Fixed
