@@ -1,8 +1,12 @@
+using System.IO;
 using System.Windows;
 using System.Windows.Input;
 using BuildOrchestrator.App;
+using BuildOrchestrator.App.Services;
+using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
+using BuildOrchestrator.Tests.Git;
 using BuildOrchestrator.Tests.Supervisor;
 
 namespace BuildOrchestrator.Tests.App;
@@ -11,7 +15,7 @@ namespace BuildOrchestrator.Tests.App;
 /// [kullanıcı kararı 2026-09-29] Esc zincirinin koşu katmanı, pencerenin GERÇEK Esc bağlamasından sürülür
 /// (<see cref="MainWindowInputTests"/> deseni): hiçbir katman açık değilken Esc çalışan Build/Rebuild/Clean'i durdurur
 /// (graceful); durdurma zaten sürerken tekrar Esc hard stop gönderir ("Stop now"), üçüncü Esc hiçbir şey göndermez;
-/// durdurulamayan bir iş (Sync, Deep Clean, Optimize, checkout, pull) sürerken konsola tek satır düşer — aynı işte
+/// durdurulamayan bir iş (Sync, Deep Clean, Optimize, checkout, worktree kurulumu, pull) sürerken konsola tek satır düşer — aynı işte
 /// yalnız ilk basışta. Görünmeyen sessiz Sync'te Esc bir şey söylemez. [kullanıcı kararı 2026-10-20] Esc'in koşuda yapacak işi
 /// kalmayınca (hard gitti, satır yazıldı, görünen iş yok) pencereyi × gibi kapatır — ×'in iki dalı (tepsi / onay kartı)
 /// <see cref="CloseToTrayTests"/>'te.
@@ -168,6 +172,31 @@ public class EscStopTests
 
         Assert.Equal(1, MainWindowHost.Occurrences(vm.GetRunDocumentText(), RunViewModel.EscCannotStopLine(OperationLabel.DeepClean)));
         GC.KeepAlive(window);
+    }
+
+    /// <summary>[şerit işlemi] Settings Save'in worktree kurulumu da kullanıcıya görünen, durdurulamayan bir iştir (pill
+    /// <c>CREATING WORKTREE</c> canlı, düğmeler pasif): Esc nedenini bir kez söyler, aynı işte tekrar istenen not satır eklemez. Düzenek
+    /// <see cref="WorktreeSettingsTests"/>'inkidir — gönderim başarılı, kurulumun cevabı henüz gelmedi. Satırın metni burada bir kez
+    /// pinlenir.
+    /// <para>KIRMIZI: kurulum Esc'in "durdurulamaz" listesinde değildi — zincir <see cref="EscRunState.Idle"/> okuyordu (Esc pencereyi
+    /// × gibi kapatırdı, neden yazılmazdı).</para></summary>
+    [Fact]
+    public async Task Esc_while_the_worktree_is_created_explains_once()
+    {
+        using var repo = WorktreeSettingsTests.RepoWithCommit();
+        using var parent = new TempDir();
+        var vm = WorktreeSettingsTests.NewVm(repo.RootPath, []); // gönderim başarılı: kurulum motorun cevabına dek uçuşta
+        var draft = new SettingsDraftViewModel(null, repo.RootPath) { WorktreeFolder = Path.Combine(parent.Path, "acme-worktree") };
+        await draft.CommitAsync(vm, new SettingsDialogHost.FakeStore());
+        Assert.True(vm.WorktreeBusy); // ön-koşul: kurulum uçuşta
+
+        Assert.Equal(EscRunState.Unstoppable, vm.EscRunState);
+        vm.NoteEscCannotStop();
+        vm.NoteEscCannotStop();
+
+        Assert.Equal(1, MainWindowHost.Occurrences(vm.GetRunDocumentText(),
+            "creating worktree can't be stopped — it will finish on its own"));
+        Assert.Equal(EscRunState.UnstoppableExplained, vm.EscRunState);
     }
 
     /// <summary>Sessiz Sync kullanıcıya görünmez (pill yazılmaz, transkript akmaz) — Esc onun hakkında konuşmaz;

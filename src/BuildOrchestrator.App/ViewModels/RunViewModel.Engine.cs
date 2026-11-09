@@ -668,7 +668,7 @@ public sealed partial class RunViewModel
     /// uyarmak kullanıcıyı sağlıklı bir build'i öldürmeye davet ederdi.
     ///
     /// <para><b>Sync neden dahil:</b> o da tam olarak bir bekleyiştir ve motor orada donduğunda şerit
-    /// sonsuza dek "▸ Sync — git fetch origin…" gösteriyor, "Restart engine" kapısı HİÇ görünmüyordu — tek
+    /// sonsuza dek "▸ Sync — …" gösteriyor, "Restart engine" kapısı HİÇ görünmüyordu — tek
     /// çıkış uygulamayı kapatmaktı. Üstelik Sync düğmesi artık uçuşta bir Sync varken kilitli olduğundan
     /// (<see cref="CanSync"/>) donmuş bir Sync'ten çıkışın TEK yolu bu kapıdır. Yanlış alarm riski yok:
     /// Sync'in git çağrıları 30 sn'de zaman aşımına uğrar (<c>GitService.CommandTimeout</c>), yani

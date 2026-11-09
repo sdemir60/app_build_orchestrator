@@ -2,6 +2,18 @@
 
 Release notes for Build Orchestrator, newest version first. The What's new window in the app reads this file.
 
+## [1.14.0] - 2026-11-09
+
+### Added
+
+- The ribbon says what a Sync is doing: fetching from the remote, analyzing the projects with their count, or indexing source files with a running count, and the thin bar under it fills while the files are indexed.
+- On a large repository, the first Sync of a new worktree or a fresh clone reads every source file once; the console reports its progress about every ten seconds and ends with how long it took. Its work is saved as it goes, so closing the app halfway through resumes from the last save instead of starting over.
+
+### Changed
+
+- The operation label at the left of the ribbon lights up with its spinner for every action while it runs, Deep Clean, Optimize, branch switches, worktree creation and pulls included, and the line beside it says what that action is doing instead of showing the previous action's result.
+- A Clean from the Build menu or a project's menu counts the projects it cleans instead of saying Building, and Esc during worktree creation explains that it cannot be stopped, as it does for a branch switch or a pull.
+
 ## [1.13.1] - 2026-11-09
 
 ### Changed

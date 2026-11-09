@@ -37,7 +37,8 @@ public enum EscRunState
     /// <summary>[kullanıcı kararı 2026-10-20] Hard stop gitti (<c>Terminating…</c>): koşu kendi kendine biter, durdurulacak bir şey
     /// kalmadı.</summary>
     Terminating,
-    /// <summary>Kullanıcıya görünen, durdurulamayan bir workspace işi sürüyor (Sync, Deep Clean, Optimize, checkout, pull).</summary>
+    /// <summary>Kullanıcıya görünen, durdurulamayan bir workspace işi sürüyor (Sync, Deep Clean, Optimize, checkout, worktree kurulumu,
+    /// pull — <c>RunViewModel.WorkInFlight</c>).</summary>
     Unstoppable,
     /// <summary>[kullanıcı kararı 2026-10-20] Durdurulamayan iş sürüyor ve nedeni bu işte zaten yazıldı: anlatılacak bir şey kalmadı.</summary>
     UnstoppableExplained,

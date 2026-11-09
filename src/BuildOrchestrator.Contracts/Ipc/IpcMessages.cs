@@ -284,6 +284,7 @@ public sealed record ListBranchesCommand(string RootPath) : IpcCommand;
 [JsonDerivedType(typeof(SyncStartedEvent), "syncStarted")]
 [JsonDerivedType(typeof(SyncProgressEvent), "syncProgress")]
 [JsonDerivedType(typeof(SyncDiscoveryEvent), "syncDiscovery")]
+[JsonDerivedType(typeof(SyncStepEvent), "syncStep")]
 [JsonDerivedType(typeof(SyncCompletedEvent), "syncCompleted")]
 [JsonDerivedType(typeof(PullCompletedEvent), "pullCompleted")]
 [JsonDerivedType(typeof(CheckoutCompletedEvent), "checkoutCompleted")]
@@ -404,6 +405,27 @@ public sealed record SyncProgressEvent(string Line, string Level) : IpcEvent;
 /// <param name="ExternalProjects">O ana kadar çözülen harici köklerden gelen tekil proje kimlikleri (üst üste
 /// binen kartlar bir projeyi iki kez saymaz).</param>
 public sealed record SyncDiscoveryEvent(int RepositoryProjects, int ExternalProjects) : IpcEvent;
+
+/// <summary>[sync ilerlemesi] Sync'in o an hangi adımda olduğu; NDJSON'a camelCase METİN olarak yazılır
+/// (<c>"indexing"</c>). <see cref="Fetching"/> uzak ucu getirir, <see cref="Analyzing"/> taramadan will-build'e kadar
+/// olan analizdir, <see cref="Indexing"/> ise analizin İÇİNDE koşan ve sayısı olan ilk indekslemedir.</summary>
+public enum SyncStep { Fetching, Analyzing, Indexing }
+
+/// <summary>[sync ilerlemesi] Sync'in adımı — App'in şerit metni YALNIZ bunu okur. Motor adım değiştirdiğinde bir tane
+/// gönderir: fetch edecekse <see cref="SyncStep.Fetching"/> (fetch satırından hemen önce), analize geçince
+/// <see cref="SyncStep.Analyzing"/>; yalnız GÜRÜLTÜLÜ bir indeks (soğuk, eşiği aşan ilk indeksleme) sürerken
+/// <see cref="SyncStep.Indexing"/> sayısıyla gelir ve bittiğinde <see cref="SyncStep.Analyzing"/> yeniden gönderilir.
+/// Sıcak bir cache ya da küçük bir değişiklik <see cref="SyncStep.Indexing"/> göndermez.
+/// <para><c>syncProgress</c>'ten AYRI bir kanaldır (<see cref="SyncDiscoveryEvent"/> gibi): o konsola düşen bir metin
+/// satırıdır; adı ve sayıyı oradan geri ayrıştırmak aynı bilgiyi ikinci bir biçimde tanımlamak olurdu. Konsol
+/// satırları bu olaydan bağımsız aynen yazılır.</para></summary>
+/// <param name="Branch">Yalnız <see cref="SyncStep.Fetching"/>'de: fetch edilen branch. Diğer adımlarda <c>null</c>
+/// (JSON'a yazılmaz).</param>
+/// <param name="Done">Yalnız <see cref="SyncStep.Indexing"/>'de: o ana kadar özetlenen dosya sayısı. KÜMÜLATİF
+/// (delta değil — idempotent), azalmaz; diğer adımlarda 0.</param>
+/// <param name="Total">Yalnız <see cref="SyncStep.Indexing"/>'de: özetlenecek toplam dosya sayısı; diğer adımlarda 0.</param>
+public sealed record SyncStepEvent(SyncStep Step, string? Branch = null, int Done = 0, int Total = 0) : IpcEvent;
+
 /// <summary>[planlama görünürlüğü] Her run'da, <see cref="RunStartedEvent"/>'ten ÖNCE koşan
 /// planlama penceresinin adım satırı (tarama → graf → topo → incremental → MSBuild
 /// çözümü). Satır metinleri <c>Core.Planning.PlanProgressLines</c>'tan gelir — Sync'in yazdıklarıyla AYNI

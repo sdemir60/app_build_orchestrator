@@ -76,19 +76,20 @@ public sealed partial class RunViewModel
     /// <summary>
     /// [Exit] Çıkışın şu an durduracağı (ya da bekleyeceği) iş — onay kartı ve kapanış ekranı bunu anlatır. <see cref="ExitWork.None"/>
     /// "uçuşta iş yok"un tek tanımından gelir (<see cref="WorkspaceIdle"/>): kabuk o zaman kartsız kapanır. İş varsa
-    /// <see cref="WorkInFlight"/> onu adlandırır.
+    /// <see cref="ExitWorkInFlight"/> onu adlandırır.
     /// <para>[inceleme Ö2] Eskiden <c>None</c> adlandırma zincirinin sonundan düşüyordu — meşguliyet listesine eklenen ama zincire eklenmeyen
     /// bir iş <c>None</c> okunur ve kabuk "iş yok" deyip onaysız kapanırdı. Liste tek yerdedir (<see cref="WorkspaceBusy"/>,
     /// <see cref="NonSyncWorkspaceBusy"/>); her üyesinin adlandırıldığını kaynak guard'ı pinler (<c>ExitWorkGuardTests</c>).</para>
     /// </summary>
-    public ExitWork ExitWork => WorkspaceIdle ? ExitWork.None : WorkInFlight;
+    public ExitWork ExitWork => WorkspaceIdle ? ExitWork.None : ExitWorkInFlight;
 
     /// <summary>Uçuştaki işin adı — yalnız <see cref="WorkspaceIdle"/> değilken sorulur. Koşu kilit sürdükçe kendi moduyla okunur; mod pill
     /// etiketinden gelir (<see cref="CurrentOperation"/> — tıklamada <see cref="OperationLabel.ForRunMode"/> ile yazılır ve kilit boyunca
     /// koşunundur: kilit varken başka işlem başlayamaz), çünkü <c>runStarted</c>'a kadar motorun modu henüz yoktur. Workspace işleri kendi
     /// bayraklarıyla okunur (pill sessiz Sync'i ve pull'u ayrı göstermez); git yazımı önce sorulur. Hiçbiri değilse liste ile zincir
-    /// ayrışmıştır: sessiz bir "iş yok" yerine yüksek sesle düşer.</summary>
-    private ExitWork WorkInFlight =>
+    /// ayrışmıştır: sessiz bir "iş yok" yerine yüksek sesle düşer. Şeridin okuduğu iş (<see cref="WorkInFlight"/>) ayrı bir sorudur: o yalnız
+    /// kullanıcıya görünen workspace işini sayar (koşu ve sessiz Sync orada yoktur), burası çıkışın beklediği HER işi adlandırır.</summary>
+    private ExitWork ExitWorkInFlight =>
         IsMidRunLocked ? CurrentOperation switch
         {
             OperationLabel.Rebuild => ExitWork.Rebuild,

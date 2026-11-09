@@ -16,6 +16,12 @@ namespace BuildOrchestrator.Core.Workspace;
 /// göre TAM ANALİZ YALNIZ SYNC'te koşar;
 /// Build'in örtük Sync'i evaluation-cache sayesinde ucuzdur.
 ///
+/// <para><b>[sync ilerlemesi] Adım olayları:</b> akış şeride hangi adımda olduğunu <see cref="SyncStepEvent"/> ile söyler —
+/// gerçekten fetch edilecekse fetch satırından hemen önce <see cref="SyncStep.Fetching"/> (branch'iyle), uzak uç ölçülünce
+/// taramadan önce <see cref="SyncStep.Analyzing"/>, eşiği geçen bir ilk indeksleme sürerken sayısıyla
+/// <see cref="SyncStep.Indexing"/> (<see cref="IndexingReport"/>) ve o bitince yeniden <see cref="SyncStep.Analyzing"/>.
+/// Konsol satırları (<see cref="SyncProgressEvent"/>) bu olaylardan bağımsızdır ve değişmez.</para>
+///
 /// <para><b>K1 (mutlak):</b> git adımı YALNIZ <see cref="GitService.FetchRefOnlyAsync"/>'tir. checkout / pull /
 /// merge / switch / reset ASLA çağrılmaz; aktif branch, HEAD ve working tree bu servisle DEĞİŞMEZ. Geri kalan
 /// tüm git kullanımı salt-okurdur (HEAD, dirty paths, ls-tree). Bkz. <c>SyncWorkspaceServiceTests</c>.</para>
@@ -116,6 +122,10 @@ public sealed class SyncWorkspaceService(
         // Hedef hiç çözülemediyse (commit'siz repo) satır BASILMAZ — yarım bir satır üretmek yerine sessiz kalınır.
         if (head.Value is not null)
             emit(Info(PlanProgressLines.HeadDistance(RevisionText.Short(head.Value), behind, branch)));
+
+        // [sync ilerlemesi] Uzak uç ölçüldü (ya da hiç ölçülmedi): bundan sonrası analizdir. HEAD satırı olmasa da
+        // (commit'siz repo) basılır — adım, satırın değil, analizin başladığını söyler. syncProgress'ten AYRI kanal.
+        emit(new SyncStepEvent(SyncStep.Analyzing));
 
         // --- 2) tarama + plan. [v7 A5/N1] granular adım satırları fetch satırından SONRA, dim/info tonunda.
         // [planlama görünürlüğü] Adım metinleri PlanProgressLines'tan gelir: AYNI satırları Supervisor'ın
@@ -228,7 +238,8 @@ public sealed class SyncWorkspaceService(
     /// <summary>
     /// §3.1 satır 1-2: uzak uç ve yerel HEAD'in ondan mesafesi.
     /// <para><b><paramref name="fetch"/>=true:</b> ref-only fetch (K1) — ağ yoksa hata YUTULUR, uyarı basılır,
-    /// hedef yerel HEAD'e düşer ve mesafe bilinmez.</para>
+    /// hedef yerel HEAD'e düşer ve mesafe bilinmez. Fetch'ten hemen önce şeride <see cref="SyncStep.Fetching"/> adımı
+    /// (branch'iyle) gider; fetch'siz ve boş branch'li yollar bu adımı göndermez.</para>
     /// <para><b><paramref name="fetch"/>=false</b> [spec 2026-09-18 §6.2]: ağa çıkılmaz ve fetch satırı yazılmaz;
     /// mesafe son bilinen uzak uca (<c>refs/remotes/origin/&lt;branch&gt;</c>) göre yerelde hesaplanır. Uzak ref
     /// yoksa hedef yerel HEAD'dir ve mesafe bilinmez — bu bir hata değildir, degrade bayrağı kurulmaz.</para>
@@ -245,6 +256,9 @@ public sealed class SyncWorkspaceService(
         string? targetSha;
         if (fetch)
         {
+            // [sync ilerlemesi] Şerit adımı konsol satırından HEMEN önce ve fetch edilen branch'i taşır. Yalnız gerçekten
+            // fetch edilecekse gelir: boş branch yukarıda döner, fetch=false aşağıdaki else dalına düşer.
+            emit(new SyncStepEvent(SyncStep.Fetching, Branch: branch));
             emit(Cmd($"git fetch origin {branch}"));
             var result = await git.FetchRefOnlyAsync(branch, ct);
             if (result.Degraded)
@@ -306,12 +320,17 @@ public sealed class SyncWorkspaceService(
 
             // [D1] Karar diskteki içerikten gelir: harici kökler ve ana repo AYNI yoldan geçer, git hiçbir
             // terime girmez. Girdi kümesi bir kez toplanır, eksik özetler bir kez (paralel) okunur; iki
-            // bağlama geçişi de aynı önbelleği paylaşır.
+            // bağlama geçişi de aynı önbelleği paylaşır. İlk indekslemenin satırlarını (açılış, kalp atışı, kapanış)
+            // IndexingReport yazar — eşik ve zamanlama kuralı tek yerde, run yoluyla ortak.
+            // [sync ilerlemesi] Aynı rapor sayıyı da yapısal olarak verir (SyncStepEvent.Indexing — şerit bunu okur,
+            // metni geri ayrıştırmaz). İndeksleme analizin İÇİNDE koşar: gürültülü bir indeks gösterildiyse
+            // (Reported) bittiğinde adım yeniden Analyzing'e döner; sessiz (eşik altı) indekslemede adım hiç değişmez.
+            var indexing = new IndexingReport(
+                line => emit(Info(line)),
+                (done, total) => emit(new SyncStepEvent(SyncStep.Indexing, Done: done, Total: total)));
             var binder = new IncrementalRunBinder(plan, evaluatedById, cmd.RootPath, hashes);
-            binder.Prefill(files =>
-            {
-                if (files >= SourceHashCache.NoisyPrefillThreshold) emit(Info(PlanProgressLines.IndexingSources(files)));
-            });
+            binder.Prefill(indexing);
+            if (indexing.Reported) emit(new SyncStepEvent(SyncStep.Analyzing));
 
             // Idle'daki will-dot'ların kaynağı BURASIDIR ve onlar bir sonraki DÜZ Build'i tarif eder. Build kirli SCC
             // gruplarını da derlediği için kapı Build'in kendi kararını okur (CycleCompilation — tek kaynak): kirli

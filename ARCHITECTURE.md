@@ -313,9 +313,11 @@ Crossing the threshold with no activity at all raises an amber ribbon line and r
 action.
 
 Sync earns its place in that list twice over. It is a wait like the others — an engine wedged mid-Sync leaves
-the ribbon on `▸ Sync — git fetch origin…` with no way out — and it is now the only way out, because the Sync
-button is itself disabled while a Sync is in flight (§13.2). Nor does the window produce false alarms: every
-read-only git call is capped at 30 seconds, so an engine that crosses the silence threshold is not slow, it
+the ribbon on the Sync's step line (`▸ Sync — analyzing N projects…`, §10.2) with no way out — and it is now the
+only way out, because the Sync button is itself disabled while a Sync is in flight (§13.2). Nor does the window
+produce false alarms: every read-only git call is capped at 30 seconds, and the longest step of a Sync that is
+not a git call — a first index (§7.1) — reports its count as it advances and writes a console line every ten
+seconds, each of them an event that resets the clock; an engine that crosses the silence threshold is not slow, it
 has stopped answering.
 
 The two maintenance jobs are in the list for the same reason, and Optimize most of all. While either is in
@@ -449,11 +451,11 @@ choreography, so there the command goes out as soon as the engine is awake.
 
 **What the user sees.** While the state is Waking the ribbon reads `▸ Starting the engine…`, in a phase line's style
 and without a glyph. It is a live wait, so it ranks under the engine's death, its silence and the exit's Stopping line
-and over the failed Sync and the failed run (§13.2); it is announced when it appears and when it goes (§15). About →
-Environment shows the engine PID as `asleep` while the state is Asleep — the process is gone, but the engine is not
-unknown — and `—` when there is no PID at all (§13.3). Nothing else changes on screen: the first command after an idle
-sleep simply waits for the engine to start. *Restart engine* is not offered for any of this; it belongs to the death
-and silence lines.
+and over the work in flight, the failed Sync and the failed run (§13.2); it is announced when it appears and when it
+goes (§15). About → Environment shows the engine PID as `asleep` while the state is Asleep — the process is gone, but
+the engine is not unknown — and `—` when there is no PID at all (§13.3). Nothing else changes on screen: the first
+command after an idle sleep simply waits for the engine to start. *Restart engine* is not offered for any of this; it
+belongs to the death and silence lines.
 
 **When a sleep or a wake fails** the engine is lost, and how it is reported depends on what was lost.
 
@@ -640,8 +642,8 @@ field existed decodes as null.
 ### 5.3 Events
 
 Lifecycle: `engineReady` · `pong` · `error` · `debugChildrenSpawned` (the test hook's answer, §5.2).
-Sync: `syncStarted` · `syncProgress` · `syncDiscovery` · `workspaceTopology` · `buildPreview` · `syncCompleted` ·
-`pullCompleted` · `checkoutCompleted` · `worktreeCreated`.
+Sync: `syncStarted` · `syncProgress` · `syncDiscovery` · `syncStep` · `workspaceTopology` · `buildPreview` ·
+`syncCompleted` · `pullCompleted` · `checkoutCompleted` · `worktreeCreated`.
 Clean: `cleanStarted` · `cleanProgress` · `cleanCompleted`.
 Optimize: `optimizeStarted` · `optimizeProgress` · `optimizeCompleted`.
 Run: `planProgress` · `runStarted` · `projectStarted` · `projectLog` · `projectSucceeded` · `projectFailed` ·
@@ -656,6 +658,18 @@ after every external root that resolved to projects (§10.2). It is its own disc
 the same count a second time. It carries no denominator and no source name; the total is the sum of the two
 fields and is not put on the wire. Only Sync sends it — Clean, Optimize and a run's planning resolve the same
 workspace without it.
+
+`syncStep` names the step a Sync is on, and it is what the ribbon's Sync line follows (§10.2). `fetching` carries the
+branch and comes right before the fetch's console line, only when the Sync really fetches; `analyzing` comes once
+the remote end has been measured — or skipped — and before the scan, and again when a reported first index ends;
+`indexing` carries `done` and `total` and comes only while a first index large enough to be reported runs (§7.1):
+at zero when it starts, whenever the count moves — at most twice a second, since the engine looks every 500 ms —
+and at the total when it ends. A warm cache or a small change sends no `indexing` at all. The step is camelCase
+text on the wire; `branch` is written only with `fetching`, the two counts are zero on the other steps, and `done`
+is cumulative, like `syncDiscovery`'s numbers, so it never goes back. It is its own discriminator for the reason
+`syncDiscovery` is: the console lines stay exactly as they are, and reading the step and the count back out of
+them would define both a second time. Only Sync sends it; a run's planning writes the same index lines (§8.6) and
+no step.
 
 `planProgress` is the only run event that precedes `runStarted`; it carries the planning steps of the run
 (§8.6). It stays separate from `syncProgress` because the App treats that one as part of a Sync
@@ -1114,8 +1128,20 @@ depend on thread order (input lists are sorted, fingerprint terms are sorted), a
 
 The first pass on a **cold** disk is the one-time exception: ~8.9 ms per file sequentially, ~1.9 ms with 16-way
 parallel reads — the dominant cost is per-file open overhead (on-access scanning), not throughput — so a full
-first index of that repository takes about 40 s and is announced on the console. Upgrading to this formula
-rebuilds everything once, because every stored signature was computed by the old one.
+first index of that repository takes about 40 s. Each working copy pays it once — a fresh clone, or a new worktree
+on its first Sync (§10.6) — because the cache is keyed by full path. Upgrading to this formula rebuilds everything
+once, because every stored signature was computed by the old one.
+
+A first index reports itself for its whole length, by one rule shared by Sync and a run's planning
+(`IndexingReport`). An index of fewer than 500 missing files (`SourceHashCache.NoisyPrefillThreshold`) is the routine
+price of a few edited files and reports nothing; one of 500 or more opens with
+`Indexing N source files — later runs reuse the index`, adds `indexing source files — {done}/{total} · {elapsed}`
+about every ten seconds while it runs, and closes with `Indexed N source files in {elapsed}`. The reads run on worker
+threads while the calling thread wakes every 500 ms to pass the count on, so the report itself stays on one thread
+and needs no lock; the same report hands Sync its running count, which reaches the ribbon as `syncStep` (§5.3,
+§10.2). About every ten seconds the calling thread also writes what has been hashed so far to
+`source-hash-cache.json` (§16), so an index cut short — the application closed, the engine restarted — resumes
+from its last save instead of starting over. An index that fails or is cancelled writes no closing line.
 
 Transitivity is not coded separately. Because upstream signatures are produced by a memoized DFS, each already
 contains its own upstreams recursively.
@@ -1776,9 +1802,10 @@ failed so far in the current run. The persisted last duration (§7.5) plays no p
 estimate, not only the first one: until a project has succeeded or failed there is nothing to average, and the
 ribbon shows progress and elapsed time without one.
 
-The estimate has one surface, the suffix of the ribbon's `Building` line: `▸ Building {n}/{m} · {elapsed}` followed
-by `· ~Ns left` or `· almost done`, shown while something is building or waiting and an estimate exists. While a
-cycle group is in rounds — in a `Build` or a `Cycles` run alike — the ribbon reads `▸ Resolving cycles · round
+The estimate has one surface, the suffix of the ribbon's `Building` line: `▸ Building {n}/{m} · {elapsed}` — in a
+`Clean` run, which compiles nothing, `▸ Cleaning {n}/{m} · {elapsed}` — followed by `· ~Ns left` or `· almost done`,
+shown while something is building or waiting and an estimate exists. While a cycle group is in rounds — in a
+`Build` or a `Cycles` run alike — the ribbon reads `▸ Resolving cycles · round
 {r}/{cap} · {n}/{m} · {elapsed}` instead and carries no estimate suffix. `{n}/{m}` counts a member of a group in rounds
 from the moment its compile in the round ends (`cycleMemberHeld`); a member a later round recompiles leaves the count
 until it is held again, so the bar steps back by the members that round recompiles and never claims more than the
@@ -1883,7 +1910,9 @@ Two details that are easy to get wrong and are pinned:
 turns each into a `planProgress` event on the same FIFO channel as everything else, so they all reach the App
 before `runStarted`. Lines that mark work about to begin — an external update, the incremental pass — are
 written *before* it, because those are the long steps and they produce no count of their own; lines that report
-a count are written after the step that produced it. Every run plans, so every run has these lines.
+a count are written after the step that produced it. A first index inside the incremental pass is the one step that
+reports while it runs: its opening, ten-second and closing lines are the ones Sync writes, from the same rule
+(§7.1). Every run plans, so every run has these lines.
 
 This repeats the work Sync already did, and that is correct: the working tree may have changed since, and
 the external update and MSBuild resolution only exist on this path. What was wrong was doing it *silently* —
@@ -2604,6 +2633,17 @@ one stream line is `synced after commit` for a commit, and `synced · N projects
 when N, counted as the rows whose output status or decision label moved between the request and the answer, is
 above zero.
 
+**The ribbon names the step.** The line beside a visible Sync's pill follows the step the engine reports
+(`syncStep`, §5.3), not the Sync's kind: `▸ Sync…` from the request until the first step arrives;
+`▸ Sync — fetching origin/<branch>…` while the fetch runs, which a Sync that does not fetch never shows;
+`▸ Sync — analyzing the workspace…`, which reads `▸ Sync — analyzing N projects…` as soon as discovery has counted
+any — the total of the `syncDiscovery` reports, taken whether or not the discovery blocks are open; and
+`▸ Sync — indexing source files · {done}/{total}` while a first index runs (§7.1), with the 2 px bar under it
+filling amber with the same count instead of sweeping (§13.2), until the analysis line returns. Every Sync starts
+with no step — at its request and again when the engine starts it — so the last step of an earlier Sync, one cut
+short mid-index included, is never shown. A silent Sync receives its steps like any other and shows none of them:
+the ribbon reads the step only while a visible Sync is in flight.
+
 **The Sync button, a branch change and a configuration switch start the screen over; the other kinds refresh it
 in place.** A Manual, BranchChange or ConfigurationChange Sync (`SyncModeRules.RestartsPlanSurface`) blanks the
 project list and the graph at the request, in the same moment as the console and the event stream. Only the
@@ -2669,13 +2709,14 @@ tool stores. Picking another branch on the chip is a real checkout in that copy.
 
 **Checkout from the chip.** Choosing a local branch runs `git checkout <branch>`; choosing `origin/<name>`
 checks out the local `<name>` when one exists and `git checkout --track origin/<name>` when it does not.
-`origin/HEAD` is not offered — it is a pointer, not a branch. Nothing changes on screen until the engine
-answers: the chip is locked from the click, the operation pill reads `SWITCHING BRANCH`, and the console is not
-cleared
-at the click. A successful checkout opens a new section through a BranchChange Sync (§10.2) whose first lines
-are the stash line when there was one and `Switched to <branch> (<sha>) — from <previous>`. A checkout that
-fails opens nothing: its line — `warning: switch failed — <git's reason>`, amber like every `warning:` line
-(§13.5) — is appended under the console as it stands.
+`origin/HEAD` is not offered — it is a pointer, not a branch. Until the engine answers, the list, the graph and the
+console stay as they are — the console is not cleared at the click — while the chip is locked from the click and the
+ribbon tells the switch: the operation pill reads `SWITCHING BRANCH`, amber with its spinner, beside
+`▸ Switching to <branch>…` (§13.2). A successful checkout opens a new section through a BranchChange Sync
+(§10.2) whose first lines are the stash line when there was one and
+`Switched to <branch> (<sha>) — from <previous>`. A checkout that fails opens nothing: its line —
+`warning: switch failed — <git's reason>`, amber like every `warning:` line (§13.5) — is appended under the console
+as it stands.
 
 **A dirty tree is the user's setting to decide.** Settings → General → *Stash and switch branches* (off by
 default):
@@ -2911,7 +2952,9 @@ rewrites no history, makes no merge decision, refuses to touch a dirty tree, and
 Clicking it runs the same principled sequence the external roots use (`FastForwardUpdater` in
 `Core/Git/RepositoryWriter.cs`): dirty gate → ref-only fetch → "am I strictly behind?" → `merge --ff-only`.
 What is advanced is always the branch checked out in the working tree, and the lines name the branch the engine
-reads there — the name the command carries is only what the App last knew. Every outcome is a console line — the
+reads there — the name the command carries is only what the App last knew. While it runs, the operation pill reads
+`SYNC`, amber with its spinner — the pull and the Sync it chains are one operation (§13.2) — beside
+`▸ Pulling origin/<branch>…`. Every outcome is a console line — the
 fast-forward range on success, and on
 refusal an amber `warning: pull refused — …` line with the reason and the fix (`uncommitted changes … commit or
 stash them first`, `local branch has diverged … reconcile it manually`, `HEAD is not on a branch`). A refusal
@@ -2942,7 +2985,9 @@ branch inventory, Clean, Optimize, a checkout, a pull — and the two git reads 
 watcher and the git-operation gate) take the active root; a source guard keeps the repository root out of any command
 but the worktree's own creation (§17.2). The engine never learns which copy it is in: the ledger, the evaluation cache
 and the source-hash cache are keyed by full path, so the two copies are different projects to it, they never read
-each other's records, and a *Clean* in one never reaches the other.
+each other's records, and a *Clean* in one never reaches the other. The first Sync in a new worktree therefore reads
+every source file of that copy once — the first index of §7.1, which on any sizeable copy is counted on the ribbon and
+noted on the console every ten seconds — and from then on its Syncs read only what changed, as in the repository.
 
 **Switching is a root change.** The toggle in the action bar (§13.2) switches copies. The old copy's rows, topology
 and last Sync go — a project's id is its path, so the worktree's projects are other rows — and so does its git
@@ -2968,15 +3013,16 @@ it — a worktree belongs to its repository. Save adds the worktree — `git wor
 repository root (`WorktreeCreator`) — when the folder is one to create and creating it is this Save's business: the
 field changed in this Save, or Settings was opened from the toggle or the branch card. A saved folder that has since
 disappeared is not recreated by a Save that never touched it. The creation comes before Save's one Sync: the
-operation pill reads `CREATING WORKTREE`, the bar's controls are closed as for any workspace operation, the console
-says `Creating the worktree at …` and then `Worktree ready at … (<sha>)` or why it was not created; an unexpected
-engine error counts as a failed creation, and Save's Sync still runs. The worktree is born detached at the
+operation pill reads `CREATING WORKTREE`, amber with its spinner, beside `▸ Creating the worktree…` (§13.2), the
+bar's controls are closed as for any workspace operation, the console says `Creating the worktree at …` and then
+`Worktree ready at … (<sha>)` or why it was not created; an unexpected engine error counts as a failed creation, and
+Save's Sync still runs. The worktree is born detached at the
 repository's HEAD: git keeps a branch open in one working copy at a time, and opening a new branch would be a
 decision the user did not make; the branch is picked afterwards on the chip. The engine checks the folder again
 before it writes and leaves anything it cannot use alone. When Settings was opened from the toggle, a successful Save
 goes on into the worktree, and the new section starts with that Save's own notes — the switch clears the console,
-and the notes would otherwise be lost. Exit waits for the creation like for any git write (§12.3); the silence
-watchdog gives the creation its own ceiling first (§4.6).
+and the notes would otherwise be lost. Exit waits for the creation like for any git write (§12.3), `Esc` cannot stop
+it and says so (§13.7), and the silence watchdog gives the creation its own ceiling first (§4.6).
 
 **A branch lives in one copy.** Before a checkout the branch switcher asks git which working copy holds the target
 (`worktree list --porcelain -z` — asked from git, because a reftable `HEAD` file is only a placeholder; `-z` leaves
@@ -3358,8 +3404,8 @@ restored if it was closed while minimized — because the card cannot show on a 
 turn of its own, since WPF refuses `Show` while a close is in progress, and the turn asks again: if the work ended
 meanwhile the application closes without the card, and if an exit is already under way it does nothing. *Work in flight*
 is the workspace's one question (`WorkspaceIdle`): a run — its planning and opening choreography included — a Sync (the
-silent one included), a Deep Clean, an Optimize, a checkout or a pull; `RunViewModel.ExitWork` names which one, for the
-card.
+silent one included), a Deep Clean, an Optimize, a checkout, a pull or the worktree's creation; `RunViewModel.ExitWork`
+names which one, for the card.
 
 *Stop and exit* on the card is what stops it, and how depends on the work. A run is stopped hard (§4.5) — or, still in
 its opening choreography or waiting for its engine to wake with nothing sent, withdrawn (§14.5) — so its in-flight
@@ -3809,23 +3855,26 @@ that projects exist but the filter hides them; *No projects* there would send th
 instead of clearing the filter.
 
 **Sticky ribbon.** On the left a **persistent operation pill** — `SYNC` · `BUILD` · `REBUILD` · `CLEAN` ·
-`DEEP CLEAN` · `OPTIMIZE` · `RESOLVE` — mono, caps, 19 px, one-pixel border. `CLEAN` is a `-t:Clean` run —
-the Build menu's over every project or the row menu's on one — and `DEEP CLEAN` the maintenance box's workspace
-reset — two words because they are two different operations. It lights amber while a run or a Sync is in
-flight and goes neutral when they finish; the two maintenance jobs write their word at the click and leave the
-pill neutral, because neither
-opens a phase of its own — their live state is told by their own button in the maintenance box and by the
-console transcript. The `SYNC` a maintenance job chains overwrites `DEEP CLEAN` or `OPTIMIZE`. A branch
-switch from the branch chip writes `SWITCHING BRANCH` at the click; the Sync a successful checkout chains
-overwrites it with `SYNC`, and a refused or failed one drops it. A pull from the `N behind` chip writes `SYNC`
-from the start, since the pull and its Sync are one operation. A Sync the application starts on its own — a
-commit, a return to the window (§10.2) — writes nothing: the pill keeps the last thing the user asked for. It
-*stays* until the next operation begins: the phase
-line is momentary, the pill is the identity of what was last asked for. The progress indicator lives inside
-it, six pixels right of the text — a spinner while live, the result glyph when done; the phase line does not
-draw a second one.
+`DEEP CLEAN` · `OPTIMIZE` · `RESOLVE` · `SWITCHING BRANCH` · `CREATING WORKTREE` — mono, caps, 19 px, one-pixel
+border. `CLEAN` is a `-t:Clean` run — the Build menu's over every project or the row menu's on one — and
+`DEEP CLEAN` the maintenance box's workspace reset — two words because they are two different operations. An
+operation writes its word when it is requested, and the pill lights amber for as long as that work is in flight and
+goes neutral when it ends: a run from the click to its end, and, from its request to its end, every piece of
+workspace work on screen — a visible Sync (§10.2), a Deep Clean, an Optimize, a branch switch, the worktree's
+creation, a pull. Which of those is in flight is one answer (`RunViewModel.WorkInFlight`) that the pill, the line
+beside it, the progress bar and `Esc` (§13.7) all read; a run is not part of it, since it has phase lines of its own.
+The `SYNC` a maintenance job chains overwrites `DEEP CLEAN` or `OPTIMIZE`, and the pill stays lit through the
+hand-over. A branch switch from the branch chip writes `SWITCHING BRANCH`; the Sync a successful checkout chains
+overwrites it with `SYNC`, and a refused or failed one drops it. The worktree's creation writes
+`CREATING WORKTREE`, and Save's Sync after it overwrites it with `SYNC` (§10.6). A pull from the `N behind` chip
+writes `SYNC` from the start, since the pull and its Sync are one operation. A Sync the application starts on its
+own — a commit, a return to the window (§10.2) — writes nothing and lights nothing: the pill keeps the last thing
+the user asked for. It *stays* until the next operation begins: the phase line is momentary, the pill is the
+identity of what was last asked for. The progress indicator lives inside it, six pixels right of the text — a
+spinner while live, the result glyph when done; the phase line does not draw a second one.
 
-Then one mono line describing the phase, plus 20 px chips for the projects currently building (at most four,
+Then one mono line describing the phase — a `-t:Clean` run counts what it cleans, `▸ Cleaning n/m`, where a build
+reads `▸ Building n/m` (§8.4) — plus 20 px chips for the projects currently building (at most four,
 then `+N`), plus — only when there are failures — the failing chips on the right: the first three, and a
 `+N more` chip that applies the `failed` filter. The cluster is run story and lists every failure of this
 run, but the filter it opens is the `✗` state filter: it lists the rows shown red. A failure without evidence
@@ -3835,12 +3884,15 @@ already in the completion line, and the ribbon should not say a number twice. Gl
 line and 10 px inside chips. There is no dismissible banner: a failure summary that can be dismissed is a
 failure summary that will be missed. Underneath, a 2 px progress bar,
 radius 0, coloured by phase. It runs indeterminate whenever the engine is working without a measurable
-denominator — during Sync, and during `starting`, where there is no plan yet and a determinate bar would sit
-frozen at zero while the line above it says work is under way.
+denominator — during a visible Sync; during `starting`, where there is no plan yet and a determinate bar would sit
+frozen at zero while the line above it says work is under way; and while any workspace work is in flight, so the
+last run's fill never stands under a line that tells other work. The one step with a denominator is a Sync's first
+index (§7.1): while the engine counts it, the bar leaves the sweep and fills amber to the same `done/total` the line
+names, and it sweeps again when the analysis line returns.
 
-Six texts can pre-empt the phase line, in this order: an engine death, an
-engine that has gone silent, an exit waiting for the work in flight (§12.3), an engine that is starting, a failed
-Sync, then a failed run. The three failures are red, carry the reason, and persist until the user starts something
+Seven texts can pre-empt the phase line, in this order: an engine death, an engine that has gone silent, an exit
+waiting for the work in flight (§12.3), an engine that is starting, the workspace work in flight, a failed Sync,
+then a failed run. The three failures are red, carry the reason, and persist until the user starts something
 new — a Sync clears the run failure, a run start clears both. Their order is the order of how much is unknown: with
 no engine nothing can be retried, and with no Sync the project states themselves are stale. The silence line sits
 below the death and above the failures because it describes the *present*: the failures are facts about something
@@ -3852,10 +3904,21 @@ count while a build drains, `▸ Stopping — wrapping up` otherwise — since a
 for never moves the phase to `stopping`, and a close that left the ribbon unchanged would read as unheard. The
 starting line, `▸ Starting the engine…`, is a live wait as well: it shows while a sleeping engine wakes for a request
 (§4.7), in a phase line's style — the `▸`, the secondary text colour, no glyph, since it reports a wait and not a
-result. It sits above the failures for the same reason the others do, and under the death, the silence and the exit,
-which are larger than the wait or end it; the phase lines it covers are ones that assume a running engine. A screen
-reader hears it when it appears and when it goes (§15). A rejected request is not a failure and does not take this
-path — declining a request leaves the `stopped` line standing, because that line is still true.
+result. It sits above the work in flight — work that waits for the wake has not begun — and above the failures for
+the same reason the others do, and under the death, the silence and the exit, which are larger than the wait or end
+it; the phase lines it covers are ones that assume a running engine. A screen reader hears it when it appears and
+when it goes (§15). A rejected request is not a failure and does not take this path — declining a request leaves
+the `stopped` line standing, because that line is still true.
+
+The work's line tells the pill's work while it is in flight (`RunViewModel.WorkInFlight`, above), in a phase line's
+style — the `▸`, the secondary text colour, no glyph, since the work is under way: `▸ Switching to <branch>…`,
+`▸ Creating the worktree…`, `▸ Pulling origin/<branch>…`, `▸ Deep clean — removing bin and obj…`,
+`▸ Optimize — repairing the workspace…`, or a visible Sync's step line from its request on (§10.2). It sits above
+the failures because it is the present and the user has just started it, while a failure is a fact about something
+that already ended, and above the phase line, which still describes what came before — the previous run's
+summary, or the waiting line of a plan a job has just emptied; when the work ends, the chain shows whatever is
+left, a failure the work did not clear included. It sits under the engine texts, the exit and the starting line,
+which interrupt the work or hold it up.
 
 The death and silence lines carry no button: they say what happened, and the way out — *Restart engine* — sits in the
 action bar right beside Build (below), where the user's eye is after the click that met the dead engine.
@@ -4424,8 +4487,10 @@ behaves identically**, and for the reason that generalises the rule: an operatio
 plan takes the old one down with the click, not with the reply — and an Optimize ends in a Sync. A Sync on its
 own does not take the plan down: it replaces decisions, not the plan's structure (§10.2).
 The phase moves
-to `Boot` for the duration — the project states are no longer known, and the ribbon's phase line says it is waiting
-for a Sync — and both panels show their empty views (*No projects*, *No graph*; §13.2). That is the job's own stretch, before any
+to `Boot` for the duration — the project states are no longer known; the ribbon tells the job itself meanwhile
+(`▸ Deep clean — removing bin and obj…`, `▸ Optimize — repairing the workspace…`), and `Boot`'s own line, waiting
+for a Sync, shows only if the job ends without one — and both panels show their empty views (*No projects*,
+*No graph*; §13.2). That is the job's own stretch, before any
 Sync: the moment the chained Sync is requested, both
 panels switch to their discovery blocks and the list counts the projects as they are found, until the topology
 fills them in (§10.2). A repository change does exactly this for the same reason; a branch change does not — its
@@ -5973,11 +6038,12 @@ dialog → popover/menu (the action bar's popovers and the title bar's update ca
 the window. With nothing else open, Esc stops a Build, Rebuild or
 Clean gracefully (§4.5) — so a selection made mid-run is dropped by the first Esc and the build stopped by the
 second. While a stop drains — the user's own or a branch switch's — Esc is the hard stop, the same step pressing
-*Stop now* takes (§4.5). A Sync, a Deep Clean, an Optimize, a checkout or a pull
-cannot be stopped; Esc during one writes a single console line saying so (`sync can't be stopped — it will finish on its own`),
-once per job. A silent Sync is invisible, and Esc says nothing about it. Once Esc has nothing left to close or stop —
-nothing the user can see is running, the hard stop has gone out, or the job's line is written — it closes the window:
-it makes the very call the title bar's `X` makes, so the window's one close rule decides (§12.3). With *Close to tray*
+*Stop now* takes (§4.5). A Sync, a Deep Clean, an Optimize, a checkout, the worktree's creation or a pull — the
+workspace work the ribbon tells (§13.2) — cannot be stopped; Esc during one writes a single console line saying so,
+in the pill's word (`sync can't be stopped — it will finish on its own`), once per job. A silent Sync is invisible,
+and Esc says nothing about it. Once Esc has nothing left to close or stop — nothing the user can see is running, the
+hard stop has gone out, or the job's line is written — it closes the window: it makes the very call the title bar's
+`X` makes, so the window's one close rule decides (§12.3). With *Close to tray*
 on the window hides to the tray; with it off it is a full exit — at once with nothing in flight, through the
 confirmation card otherwise. Esc itself never stops work the way *Exit* does: a drain or a Sync carries on — in the
 tray, or under the card until the user answers it. Right-clicking a row is not a selection gesture — it opens the row
@@ -6819,7 +6885,7 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 | `logs\run-<timestamp>\` | per-run and per-project logs, written by the engine, and `narrative.log`, the run's console narrative, written by the App from the moment `runStarted` names the folder until the next console section opens (§8.5, §13.5); a run's folder is removed at the first engine start more than three days after the run, except the newest run's, which always stays (§8.5) | — |
 | `build-state.json` | per-project signature and the configuration it was built in, commit, result, duration, dependency-issue note with its root project ids, non-convergent cycle signature, the fed outputs learned from the last success (§7.6), the `packages.config` content hash behind the restore decision (§9.3), a cycle member's term, the sibling surfaces it read and the engine fingerprint behind round one's compile decision (§7.5, §8.8); projects from external roots share the file under the same key shape, without a commit or branch (§7.5). A record written before a field existed loads with that field empty | falls back to empty |
 | `evaluation-cache.json` | csproj evaluation cache; each entry records the schema it was written under, and an entry written under another schema is re-evaluated rather than served (§6.2); an SDK-style entry also records the `Directory.Build.*` files its layout decision read, and is re-evaluated when one of them changes or appears; Optimize removes such entries outright, whatever root they belong to | falls back to empty |
-| `source-hash-cache.json` | source content hashes keyed by path, size and modification time (§7.1) — this is what turns the content decision into one stat pass per run | falls back to empty (the next run re-reads and rebuilds it) |
+| `source-hash-cache.json` | source content hashes keyed by path, size and modification time (§7.1) — this is what turns the content decision into one stat pass per run; while a long first index runs it is also written about every ten seconds, so an index cut short resumes from its last save | falls back to empty (the next run re-reads and rebuilds it) |
 | `run-inflight.json` | the ids of the projects the engine has dispatched and not yet reported — written at dispatch, erased at the result, emptied at the end of every run; left non-empty only by an engine that died mid-run, and read once at the next engine start (§8.7). Absent while no run is in flight | an unparsable file is deleted and nothing is recovered; an unreadable one stays for the next start |
 | `msbuild\wpf-temporary-assembly.targets`, `msbuild\wpf-temporary-assembly-friend.cs` | the two files behind `-p:CustomBeforeMicrosoftCommonTargets` (§9.2). An engine writes them the first time it resolves `MSBuild.exe` — on its first run or its first Optimize — and only when the content on disk differs from its own; both files carry a fixed, old modification time however they were written (§9.2); the path carries no version, and a missing or edited file is repaired the next time a new engine resolves MSBuild | rewritten from the engine's own copy the next time a new engine resolves MSBuild; if they cannot be written or pinned, builds run without the argument |
 | `ui-state.json` | layout mode + three splits, repository root, the worktree folder and whether the worktree was open (§10.6), configuration, perf mode, layer patterns, external roots (path) and whether to update them (§10.4), whether to stash before a branch switch (§10.3), whether the console is compact (§13.5) and whether an idle engine is stopped (§4.7) — the last two on when the field is absent —, the gestures of the two global hotkeys (show/hide and build, §12.3), *Start with Windows* (`Autostart`) and *Start minimized to tray*, whether closing the window hides to the tray and whether tray notifications are shown (§12.3), tray-balloon-shown, last-seen release-notes version. The branch is not stored: it is whatever is checked out. Fields older versions wrote and this one no longer reads are ignored | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
@@ -7054,6 +7120,8 @@ A category of tests that assert properties of the *source*, not of a run:
 | Resource strip source (`ResourceStripGuardTests`) | the strip's markup carries no raw colour and no numeric measurement — every size is a token (§14.1) —, no animation, transition, trigger or clock in the markup or the code-behind, no pointer reaction, cursor, button or accent colour, and no `{Binding}`: its values are written from code under the hidden-surface gate (§13.2); its root declares no background and exactly its three cells a transparent one (§12.2); the window's code hands a drag to the native caption — its native calls, the closing `WM_LBUTTONUP` included, are pinned to still be there — and never calls `Window.DragMove` (§12.2); its ghost texts are the Core constants and are never retyped; the tokens, icons, fonts and colours it reads are read by key, and its four measurements are the design's numbers, each defined once. Every rule is shown against a planted violation |
 | One engine gate (`EngineGateGuardTests`) | every request to the engine passes the gate of §4.7 and nothing walks around it: `SendWithFailureLineAsync(` is called only from the four methods that ask the gate first (`TrySendAsync`, `BeginRunAsync`, `SyncCoreAsync`, `LoadProjectLogAsync`); `SendToEngineAsync(` only from `SendWithFailureLineAsync`, and the host's `SendAsync(` — through any reference — only from `SendToEngineAsync`; a request is registered with the gate (`EngineGate.Enter`, whatever the receiver) only from `EnsureEngineAwakeAsync`, and every call of the gate holds its pass with `using`; the gate questions that `ReleaseAfterEngineLoss` asks are exactly the list of window-holding types the loss theory walks; and the branch inventory never asks the gate. The scans read code only — comments and string literals are skipped — and the call-form rules each have a proof test that catches their form of bypass. Two things stay for review: a send made inside an allowed method without asking the gate, and an allowed method bound to a delegate and called from elsewhere |
 | One infinite bottom request (`ConsoleBottomRequestGuardTests`) | the console asks for an infinite bottom (`ScrollToEnd(`) only in the mode switch's pin, `PinAfterModeSwitch`; the follow's and End's request is finite and vertical (§13.4). The scan reads code only, proves first that the pin still asks for it, and is shown to see a request outside the pin and to ignore a comment, a literal and a brace inside the pin |
+| One busy list (`ExitWorkGuardTests`) | the workspace's busy list is written once (`WorkspaceBusy`, `NonSyncWorkspaceBusy`) and both chains that name the work read every member of it: the exit's (`ExitWork` falls to `None` only through `WorkspaceIdle`, and `ExitWorkInFlight` names each busy flag; §12.3) and the ribbon's (`WorkInFlight`, `SyncBusy` included; §13.2) — a job added to the list and forgotten in a chain fails the suite, since a job that does not exist yet cannot be tested by behaviour |
+| One IO degree (`IoParallelismGuardTests`) | file IO parallelism is spelled once (`IoParallelism.Degree`): no source file writes the degree as a literal in a `WithDegreeOfParallelism` or `MaxDegreeOfParallelism`, the content-hash cache and the run binder read the constant itself, and the scan is shown to catch code and ignore comments and text |
 | No literal default (`GeneralSettingChainTests.No_workflow_setting_starts_from_a_literal_default`) | none of the four workflow preferences starts from a literal in the source: not the view model's field (written with `true` or `false`, or left unset), not the draft's or the apply call's parameter, not the window's seed from a key-less state (`?? true`); the catalog row is the one default (§13.3). The wire records of the contracts keep their own field defaults, which only say how a line without the field reads, and lie outside the rule. The rule is shown to catch each form, and to ignore a comment, a string and a field that reads the catalog |
 
 **A guard's coverage claim has its own proof.** A whole-`src` guard that claims to read every production project asserts
@@ -7902,7 +7970,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Signature computation | `Core/Incremental/BuildSignature.cs` |
 | Propagation, Safe/Fast, SCC composite hash, content fingerprint | `Core/Incremental/IncrementalPlanner.cs` |
 | The input set of a project (declared items, folder sweep, `Directory.Build.*`) | `Core/Incremental/ProjectInputs.cs` |
-| Content-hash cache keyed by size and mtime, parallel first fill, written only when dirty as a stream | `Core/Incremental/SourceHashCache.cs` |
+| Content-hash cache keyed by size and mtime, parallel first fill — its reads on worker threads, the calling thread's 500 ms tick that reports progress and saves what it has every ten seconds (`Prefill`, `PrefillTickMs`, `PrefillFlushIntervalMs`) —, written only when dirty as a stream | `Core/Incremental/SourceHashCache.cs` |
+| The first index's report, one rule for Sync and a run's planning: the 500-file threshold, the opening, ten-second and closing lines, the running count Sync sends as `syncStep` (`IndexingReport`, `IPrefillObserver`) | `Core/Incremental/IndexingReport.cs`; the line texts in `Core/Planning/PlanProgressLines.cs` (`IndexingSources`, `IndexingHeartbeat`, `IndexedSources`) |
 | Input collection (files and swept folders), path terms, the two binding passes, output checks per node (`ChecksFor`, `OutputsById`), a cycle member's time check leaving out its siblings' outputs (`ExcludingSameCycleSiblings`) | `Core/Incremental/IncrementalRunBinder.cs` |
 | Output evidence: evidence paths and fed candidates, ledger/time mode, time verdict, cycle groups, learning fed outputs, `modified` ↔ `affected` and `outputBuiltAt` helpers | `Core/Incremental/OutputEvidence.cs` |
 | API surface hash of a managed output (declarations only — no IL/MVID/generated names; version counts only under a strong name) | `Core/Incremental/ApiSurfaceHash.cs` |
@@ -7992,7 +8061,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Configuration switch: the segment's gate, the Sync it starts and its section line, the decisions dropped when that Sync starts | `App/ViewModels/RunViewModel.cs` (`SetConfiguration`, `ConfigurationChangedLine`), `RunViewModel.ActionBar.cs` (`CanSwitchConfiguration`), `RunViewModel.Workspace.cs` (`OnSyncStarted`), `App/Views/ActionBar.xaml.cs` (`RefreshConfigGate`) |
 | The legacy pool folder and its one-line hint | `Core/Paths/LegacyWorktreePool.cs` |
 | Command execution wrapper and result shape | `Core/Processes/CommandLineTool.cs`, `Core/Git/GitMessages.cs` |
-| Sync flow (fetch or last known remote → analysis → events), the per-source `syncDiscovery` emit | `Core/Workspace/SyncWorkspaceService.cs` |
+| Sync flow (fetch or last known remote → analysis → events), the per-source `syncDiscovery` emit, the `syncStep` emits (fetching, analyzing, a first index's count) | `Core/Workspace/SyncWorkspaceService.cs` |
 | Clean flow (merged scan incl. external roots → per-root state reset → `bin`/`obj` deletion → summary), the delete permission gate | `Core/Workspace/CleanWorkspaceService.cs` |
 | Link-safe recursive deletion: a link is removed as the link it is and never entered, the root's own link check, and each caller keeps its own error policy (Clean best-effort, the run-log sweep strict) | `Core/Paths/LinkSafeTree.cs` |
 | Optimize flow (merged scan → per-project restore → unresolved-reference report → old-style stale-`obj` removal → ledger prune → temp sweep → summary), the restore heartbeat, the collected restore output and its error extraction, the summary terms shared with the stream line | `Core/Workspace/OptimizeWorkspaceService.cs` |
@@ -8039,12 +8108,13 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 |---|---|
 | Run state, rows, counters, commands | `App/ViewModels/RunViewModel*.cs` |
 | The resource strip's state: the CPU and RAM texts and tooltips from a sample (`ApplyResourceSample`); the parallelism cell and the CPU tooltip from the chip, the counter and the run (`RefreshStrip`), with the mode a run started with (`CaptureStripRunMode` when the start command is built, `BeginStripRun` at `runStarted`, handed back when `IsRunning` falls), the run's count and the reduction reason; the one text → mode fallback (`ModeFor`) | `App/ViewModels/RunViewModel.ResourceStrip.cs`; `ModeFor` in `RunViewModel.cs` |
-| Ribbon phase lines and ETA display, with the texts that pre-empt them in their order — the engine-starting line included | `App/ViewModels/RibbonText.cs` |
+| Ribbon phase lines and ETA display, with the texts that pre-empt them in their order — the engine-starting line and the work in flight included; a visible Sync's step line (`SyncLine`, from `SyncProgressView`), the work lines (`RibbonWork` → `WorkLine`) and the `Cleaning` verb of a `-t:Clean` run | `App/ViewModels/RibbonText.cs` |
+| The workspace work in flight — the one answer the pill's live state, the line beside it, the bar's sweep and `Esc`'s can't-be-stopped line read — and its target (`WorkInFlight`, `WorkTarget`); a Sync's step and count as the ribbon reads them, cleared at every Sync's request and start (`SyncProgress`, `OnSyncStep`; the count from `OnSyncDiscovery`) | `App/ViewModels/RunViewModel.Workspace.cs`, `RunViewModel.Discovery.cs`, `RunViewModel.Esc.cs` (`UnstoppableOperation`) |
 | The Stop button's three stages and their labels, shared by the action bar, the tray item and the row icon | `App/ViewModels/StopText.cs` |
 | Event stream composition and wording | `App/ViewModels/StreamComposer.cs`, `StreamText.cs`, `StreamEventViewModel.cs` |
 | Filter rule, chip labels and active-chip colours (multi-select set) | `App/ViewModels/ProjectFilter.cs` |
 | Warning-triangle text (one line, strongest reason wins) | `App/ViewModels/RowWarning.cs` |
-| Operation pill wording (`SYNC` · `BUILD` · `REBUILD` · `CLEAN` · `DEEP CLEAN` · `OPTIMIZE` · `RESOLVE` · `SWITCHING BRANCH`) | `App/ViewModels/OperationLabel.cs` |
+| Operation pill wording (`SYNC` · `BUILD` · `REBUILD` · `CLEAN` · `DEEP CLEAN` · `OPTIMIZE` · `RESOLVE` · `SWITCHING BRANCH` · `CREATING WORKTREE`), a run mode's word (`ForRunMode`) and the word of the work in flight (`ForWork`) | `App/ViewModels/OperationLabel.cs` |
 | Status counters | `App/ViewModels/RunCounters.cs` |
 | Layer grouping — the list's groups and the graph's bands, one rule (from topology only — no regex in the App) | `App/ViewModels/LayerGrouping.cs` |
 | Graph feed construction | `App/ViewModels/GraphBinder.cs` |
@@ -8061,7 +8131,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Resource strip view: the three cells, their icons, the ghost-text frame, the downward tooltips, the writes gated by the hidden-surface signal, the UI Automation group | `App/Views/ResourceStrip.xaml(.cs)`; icons and measurements in `App/Resources/Icons.xaml` (`Icon.Cpu`, `Icon.MemoryStick`, `Icon.Parallel`) and `Tokens.xaml` (`Size.ResourceStripIcon`, `Size.ResourceStripIconViewBox`, `Thickness.ResourceStripCellGap`, `Thickness.ResourceStripValueGap`); the group's name in `App/AccessibilityNames.cs` |
-| Sticky ribbon: phase, building chips, failure cluster, progress; it listens to the engine state and announces the engine-starting line | `App/Views/StickyRibbon.xaml(.cs)` |
+| Sticky ribbon: phase, building chips, failure cluster, progress; the pill lit while a run, a visible Sync or any work in flight runs (`RefreshOpPill`), the bar sweeping while work runs without a denominator and filling while a Sync's first index counts (`RefreshProgress`); it listens to the engine state and announces the engine-starting line | `App/Views/StickyRibbon.xaml(.cs)` |
 | Project row: stripe, dot, decision label, hover icons, play/Stop wiring, breath, shake | `App/Views/ProjectRow.xaml(.cs)`, `ProjectRowActions.xaml(.cs)`; label wording `App/ViewModels/DecisionLabel.cs` |
 | Row menu (Build · Rebuild · Clean; ⋯ and right-click), its items following the run gate while it is open | `App/Views/ProjectRowMenu.xaml(.cs)`, `App/Views/ProjectRow.xaml.cs` |
 | Single-project run commands (build · rebuild · clean), run target and lock pushed to rows | `App/ViewModels/RunViewModel.cs` (`BuildProjectCommand`, `RunTargetId`) |

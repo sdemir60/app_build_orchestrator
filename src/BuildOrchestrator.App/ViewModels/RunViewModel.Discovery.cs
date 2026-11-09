@@ -72,9 +72,12 @@ public sealed partial class RunViewModel
     }
 
     /// <summary>Motorun kümülatif keşif raporu: değerler o ana kadarki toplamlardır (delta DEĞİL), App son geleni
-    /// okur. Keşif açık değilse (sessiz Sync, topolojiden sonra) yok sayılır — ekranda gösterecek bir blok yoktur.</summary>
+    /// okur. Keşif açık değilse (sessiz Sync, topolojiden sonra) blok sayacı yok sayılır — ekranda gösterecek bir blok yoktur.
+    /// <para>[sync ilerlemesi] Şeridin analiz satırı (<see cref="SyncProgress"/>) toplamı kapıdan ÖNCE alır: blok yalnız liste
+    /// boşken açılır ama Sync satırı her görünür Sync'te sayıyı söyler.</para></summary>
     private void OnSyncDiscovery(SyncDiscoveryEvent e)
     {
+        SyncProgress = SyncProgress with { ProjectsFound = e.RepositoryProjects + e.ExternalProjects };
         if (!IsDiscovering) return;
         DiscoveredRepositoryProjects = e.RepositoryProjects;
         DiscoveredExternalProjects = e.ExternalProjects;

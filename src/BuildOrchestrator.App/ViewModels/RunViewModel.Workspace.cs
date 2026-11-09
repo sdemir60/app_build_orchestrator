@@ -245,6 +245,9 @@ public sealed partial class RunViewModel
     private void OnSyncStarted()
     {
         _syncInFlight = true;
+        // [sync ilerlemesi] Şeridin adımı yalnız bu Sync'in olaylarından gelir: faz Syncing'e geçmeden ÖNCE sıfırlanır ki
+        // şerit fazın bildiriminde önceki Sync'in son adımını (ör. hatayla yarıda kalmış bir indekslemeyi) okumasın.
+        SyncProgress = default;
         // [spec 2026-09-18 §6.2 · review I1/I2] Sessiz Sync ekranda bir işlem olarak GÖRÜNMEZ: faz Syncing'e
         // geçmez (şerit Sync ilerlemesi göstermez, önceki işlemin pill'i canlanmaz) ve kötü haber silinmez —
         // önceki koşunun "Run failed — …" metni ve Sync hatası durur (Sync hatası başarıyla bitince kalkar).
@@ -252,7 +255,7 @@ public sealed partial class RunViewModel
         {
             SyncErrorMessage = null; // [E2/T10] retry başladı — önceki Sync hatası şeritten kalkar
             // [runFailed] Önceki run'ın hata gerekçesi de kalkar: aksi halde KIRMIZI "Run failed — …" satırı, Sync
-            // ilerlemesini ("▸ Sync — git fetch origin…") kullanıcı yeni bir run başlatana kadar gizlerdi.
+            // ilerlemesini ("▸ Sync — …") kullanıcı yeni bir run başlatana kadar gizlerdi.
             RunErrorMessage = null;
             Phase = AppPhase.Syncing;
         }
@@ -297,6 +300,8 @@ public sealed partial class RunViewModel
         OnPropertyChanged(nameof(CleanBusy));
         OnPropertyChanged(nameof(OptimizeBusy));
         OnPropertyChanged(nameof(SyncBusy));
+        // [şerit işlemi] Şeridin pill'i, çubuğu ve satırı uçuştaki işi okur — iş bu bayraklardan türer, her geçişi buradan geçer.
+        OnPropertyChanged(nameof(WorkInFlight));
         // [spec 2026-09-18 §6.3] Branch chip'inin kapısı da bu üç meşgul yüzeyi okur — aynı geçişte duyurulur.
         OnPropertyChanged(nameof(CanSwitchBranch));
         // [spec 2026-09-18 §6.1 · P3] Meşgulken bekletilen kendiliğinden Sync tetiği ve bekleyen çıkış aynı geçişte
@@ -305,8 +310,9 @@ public sealed partial class RunViewModel
     }
 
     /// <summary>[clean guard] Motor cevap verdi: nöbet istek bayrağından uçuş bayrağına GEÇER. Faz
-    /// DEĞİŞMEZ — Clean için yeni bir <see cref="AppPhase"/> AÇILMAZ, anlatı konsol satırlarıyla taşınır
-    /// (şerit bu iş boyunca dinlenme fazını göstermeye devam eder; kullanıcının baktığı yer konsoldur).
+    /// DEĞİŞMEZ — Clean için yeni bir <see cref="AppPhase"/> AÇILMAZ; anlatı konsol satırlarıyla taşınır, şerit ise
+    /// işi uçuştaki iş olarak anlatır (<see cref="WorkInFlight"/>: pill amber, satır <see cref="RibbonText.DeepCleaning"/>) —
+    /// istek anından bitişe dek, bu geçişten bağımsız.
     ///
     /// <para>Ekranı boşaltan yer burası DEĞİLDİR: liste, graf ve konsol TIKLAMA ANINDA temizlenir
     /// (<c>RunViewModel.CleanAsync</c> → <c>ClearPlanSurface</c>) — kullanıcı kararı, gerekçe orada.</para></summary>
@@ -416,7 +422,8 @@ public sealed partial class RunViewModel
     private static readonly HashSet<string> CleanErrorCodes = new(StringComparer.Ordinal) { "cleanFailed", "cleanRejected" };
 
     /// <summary>[optimize guard] Motor cevap verdi: nöbet istek bayrağından uçuş bayrağına GEÇER. Clean gibi
-    /// Optimize de yeni bir <see cref="AppPhase"/> AÇMAZ — anlatı konsol satırlarıyla taşınır.</summary>
+    /// Optimize de yeni bir <see cref="AppPhase"/> AÇMAZ — anlatı konsol satırlarıyla taşınır, şerit işi uçuştaki iş olarak
+    /// anlatır (<see cref="WorkInFlight"/>, satır <see cref="RibbonText.Optimizing"/>).</summary>
     private void OnOptimizeStarted()
     {
         _optimizeRequested = false;
@@ -568,6 +575,35 @@ public sealed partial class RunViewModel
     /// ("görev") okur (<see cref="UpdateRestartBlockedReason"/>); yeni bir workspace işi buraya eklenince iki soru birlikte
     /// görür.</summary>
     private bool NonSyncWorkspaceBusy => CleanBusy || OptimizeBusy || CheckoutBusy || PullBusy || WorktreeBusy;
+
+    /// <summary>
+    /// [şerit işlemi] Pill'in sözcüğüyle uçuşta duran, kullanıcıya GÖRÜNEN workspace işi: şerit bu iş sürerken pill'i amber yakar, çubuğu
+    /// belirsiz sürer ve satırı o işi anlatır (<see cref="RibbonText.Compose"/>); Esc'in "durdurulamaz" satırı da bunu okur
+    /// (<see cref="UnstoppableOperation"/>). İstek anından cevaba dek sürer — her bayrak istek penceresini kapsar.
+    /// <para>Koşu kilidi varken <see cref="RibbonWork.None"/>: koşu kendi faz satırlarıyla anlatılır. Sessiz Sync sayılmaz — ekranda bir işlem
+    /// değildir (faz Syncing'e geçmez, pill yazılmaz). Bir iş Sync'e devrederken (<see cref="SyncThenReleaseAsync"/>) iki bayrak bir an birlikte
+    /// açıktır: Sync en sondadır, satır devreden işi bırakılana dek anlatır.</para>
+    /// <para><b>BİLDİRİMLİDİR:</b> değeri değiştiren her meşgul bayrağı <see cref="NotifySyncGatedCommands"/>'dan geçer ve bildirim oradan
+    /// atılır; koşu kilidinin geçişini şerit ayrıca dinler (<c>IsMidRunLocked</c>).</para>
+    /// </summary>
+    public RibbonWork WorkInFlight =>
+        IsMidRunLocked ? RibbonWork.None
+        : CleanBusy ? RibbonWork.DeepClean
+        : OptimizeBusy ? RibbonWork.Optimize
+        : CheckoutBusy ? RibbonWork.Checkout
+        : WorktreeBusy ? RibbonWork.CreatingWorktree
+        : PullBusy ? RibbonWork.Pull
+        : SyncBusy && _syncMode.IsVisible() ? RibbonWork.Sync
+        : RibbonWork.None;
+
+    /// <summary>[şerit işlemi] Uçuştaki hedefli işin hedefi — şerit satırı onu adıyla söyler: checkout'un hedef branch'i (isteğin kendisinden;
+    /// cevap gelince unutulur), pull'un branch'i (ilerletilen <c>origin/{branch}</c>). Diğer işlerde ve hedef bilinmiyorsa <c>null</c>.</summary>
+    internal string? WorkTarget => WorkInFlight switch
+    {
+        RibbonWork.Checkout => _checkoutRequest?.Target.Name,
+        RibbonWork.Pull => Branch.Length > 0 ? Branch : null,
+        _ => null,
+    };
 
     /// <summary>[final review M3] Workspace'e yeni bir iş başlatılabilir mi: koşu kilidi yok (<see cref="IsMidRunLocked"/>)
     /// ve workspace işi yok (<see cref="WorkspaceBusy"/>). Settings Save'in kapısı; komut kapıları
@@ -848,13 +884,15 @@ public sealed partial class RunViewModel
         HasWorkspace && CanSync() && await SyncCoreAsync(SyncMode.Silent, reason);
 
     /// <summary>Bir Sync istenirken kipini kurar (<see cref="SyncCoreAsync"/>): sessiz kipte karar anlık görüntüsü
-    /// ALINIR (istek anı — motorun cevabından önceki ekran), başlangıç saati her kipte yazılır.</summary>
+    /// ALINIR (istek anı — motorun cevabından önceki ekran), başlangıç saati her kipte yazılır. [sync ilerlemesi] Şeridin
+    /// Sync adımı (<see cref="SyncProgress"/>) her istekte sıfırlanır: önceki Sync'in son adımı yenisine taşınmaz.</summary>
     private void BeginSyncMode(SyncMode mode, SilentSyncReason reason)
     {
         _syncMode = mode;
         _silentReason = reason;
         _silentBaseline = null;
         if (mode == SyncMode.Silent) _silentBaseline = DecisionKeys();
+        SyncProgress = default;
     }
 
     /// <summary>Uçuştaki Sync'in kipini bırakır — tamamlanma, Sync'e ait hata ve motor kaybı yolları.
@@ -874,6 +912,32 @@ public sealed partial class RunViewModel
         if (!_syncMode.ShowsTranscript() && e.Level is not ("warn" or "error")) return;
         AppendRunLine(e.Line);
     }
+
+    /// <summary>[sync ilerlemesi] Uçuştaki Sync'in motordan gelen adımı ve keşfin o ana kadar bulduğu proje sayısı — şeridin
+    /// Sync satırı (<see cref="RibbonText.SyncLine"/>) ve indexing çubuğu (<c>StickyRibbon</c>) bunu okur. Gözlemlenebilirdir:
+    /// her değişim <c>PropertyChanged</c> yayar. Her Sync adımsız başlar: istek anında (<see cref="BeginSyncMode"/>) ve motorun
+    /// başlangıç olayında (<see cref="OnSyncStarted"/>) <c>default</c>'a döner.
+    /// <para>Sessiz Sync'in adımları da buraya yazılır ama ekrana çıkmaz: şerit bu değeri yalnız faz
+    /// <see cref="AppPhase.Syncing"/> iken okur ve sessiz Sync o faza geçmez. Hatayla yarıda kalan bir indekslemenin ardından
+    /// <see cref="SyncStep.Analyzing"/> gelmez; bayat adımı bir sonraki Sync'in başı siler.</para></summary>
+    public SyncProgressView SyncProgress
+    {
+        get => _syncProgress;
+        private set => SetProperty(ref _syncProgress, value);
+    }
+
+    /// <summary><see cref="SyncProgress"/>'in alanı — yalnız özelliğin setter'ı yazar (bildirim oradadır).</summary>
+    private SyncProgressView _syncProgress;
+
+    /// <summary>[sync ilerlemesi] Motorun bildirdiği Sync adımı (<see cref="SyncStepEvent"/>): fetch branch'ini, indeksleme
+    /// sayısını ve paydasını yazar; analiz yalnız adımı değiştirir — keşfin sayısı (<see cref="SyncProgressView.ProjectsFound"/>,
+    /// <see cref="OnSyncDiscovery"/> yazar) korunur.</summary>
+    private void OnSyncStep(SyncStepEvent e) => SyncProgress = e.Step switch
+    {
+        SyncStep.Fetching => SyncProgress with { Step = SyncStep.Fetching, Branch = e.Branch },
+        SyncStep.Indexing => SyncProgress with { Step = SyncStep.Indexing, Done = e.Done, Total = e.Total },
+        _ => SyncProgress with { Step = e.Step }, // Analyzing
+    };
 
     /// <summary>Satır başına karar anahtarı: çıktı durumu (<see cref="ProjectRowViewModel.Standing"/>) + karar
     /// etiketi (<see cref="DecisionLabel"/>, satırın gördüğü AYNI sözcük ve kuyruk). "Değişti" = bu anahtar farklı.</summary>
@@ -986,7 +1050,7 @@ public sealed partial class RunViewModel
 
     /// <summary>
     /// [A5/T69] Başarısız bir Sync yalnız <c>planFailed</c> yayınlar — <c>syncCompleted</c> GELMEZ. Faz burada
-    /// bırakılmazsa Syncing'de ASILI kalır (şerit sonsuza dek "▸ Sync — git fetch origin…" gösterir). Geri
+    /// bırakılmazsa Syncing'de ASILI kalır (şerit sonsuza dek "▸ Sync — …" gösterir). Geri
     /// düşülecek faz, ELDE bir topoloji olup olmamasıdır: varsa önceki Sync'in sonucu hâlâ geçerlidir (Idle),
     /// yoksa repo henüz hiç sync'lenmemiştir (Boot).
     ///

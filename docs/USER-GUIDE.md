@@ -114,6 +114,16 @@ remove it too.
    state and *Build*, *Rebuild*, *Resolve cycles*, the row actions and `F5` are disabled until it finishes, so
    nothing waits behind it. A Clean, an Optimize, a branch switch or a pull closes them the same way.
 
+   The ribbon at the top says which step the Sync is on — `▸ Sync — fetching origin/main…`, then
+   `▸ Sync — analyzing 31 projects…` — while the pill at its left reads `SYNC` in amber with a spinner until it is
+   done (the quiet automatic Syncs described below leave both alone). Every other action lights the pill the same
+   way, and the line beside it says what is happening: `▸ Switching to feature/x…`, `▸ Pulling origin/main…`,
+   `▸ Creating the worktree…`, `▸ Deep clean — removing bin and obj…`, `▸ Optimize — repairing the workspace…`.
+   The first Sync of a working copy also reads every source file once to index it. On a large repository that takes
+   a while, so the ribbon counts the files (`▸ Sync — indexing source files · 3500/12000`), its thin bar fills as
+   they go, and the console adds a line about every ten seconds. What is indexed is saved as it goes, so if the app
+   is closed halfway the next Sync does not start over. Later Syncs reuse the index and read only what changed.
+
    If two projects produce the same assembly name, Sync warns and names both: a reference to that DLL cannot be
    resolved to one producer, so its dependency edge is dropped and nothing waits for it. Rename one of them, or
    drop one of the roots that contributes it.
@@ -187,9 +197,12 @@ remove it too.
    there, and the repository — your changes, an open Visual Studio — stays as it is. Click it to switch; its
    tooltip says where the next click takes you. Switching starts over like a branch change: the console opens a
    `Switched to the worktree — <folder>` section, the list and the graph come back for the other copy, and a Sync
-   runs. With no worktree set, the click opens Settings on the *Worktree folder* field, and saving there creates it
-   and goes straight in. The app remembers which copy was open. The toggle is locked while a build, a Sync or
-   another action is running, and it steps aside while *Restart engine* is shown.
+   runs. The first time, that Sync indexes every source file of the new copy once (step 2) — on a large repository
+   this takes a while, with the ribbon counting the files and the console noting the progress about every ten
+   seconds — and after that a Sync there is as quick as in the repository. With no worktree set, the click opens
+   Settings on the *Worktree folder* field, and saving there creates it and goes straight in. The app remembers
+   which copy was open. The toggle is locked while a build, a Sync or another action is running, and it steps aside
+   while *Restart engine* is shown.
 
    Branch changes you make outside the tool are reflected the same way: the chip follows HEAD and the console
    opens a new section. If one happens while a build is running, the build stops gracefully — nothing new
@@ -525,11 +538,11 @@ rather than mysterious.
 
 `Esc` stops a Build, Rebuild or Clean the way *Stop* does — the projects in flight finish and the next Build
 carries on from there. Pressing it while a stop drains — yours, or one a branch switch started — is *Stop now*: the
-in-flight compiles are terminated at once. A Sync, Deep Clean, Optimize, branch switch or pull cannot be stopped;
-`Esc` during one writes a single console line saying so. Once `Esc` has nothing left to close or stop — nothing is
-running, *Stop now* has gone out, or that line is written — it closes the window just as `X` does: with *Close to
-tray* on the app drops to the tray and any work carries on; with it off the app quits, asking first with the exit
-card if work is still running. Unlike *Exit*, it never stops anything itself.
+in-flight compiles are terminated at once. A Sync, Deep Clean, Optimize, branch switch, worktree creation or pull
+cannot be stopped; `Esc` during one writes a single console line saying so. Once `Esc` has nothing left to close or
+stop — nothing is running, *Stop now* has gone out, or that line is written — it closes the window just as `X` does:
+with *Close to tray* on the app drops to the tray and any work carries on; with it off the app quits, asking first
+with the exit card if work is still running. Unlike *Exit*, it never stops anything itself.
 
 Disabled commands stay disabled when triggered by a shortcut — the key never bypasses the button's state.
 `F1` toggles About and works even while another dialog is open: About opens on top, and Esc closes the topmost

@@ -676,15 +676,18 @@ public sealed partial class RunViewModel : ObservableObject
     /// kez duyurulması olurdu.</para>
     ///
     /// <para><b>Bilinen boşluk (kablo):</b> <c>warnings: 0</c> — App derleyici-warning sayısını izlemiyor
-    /// (<c>RunCompletedEvent</c> taşımıyor). Satır bu yüzden " · N warnings" ekini hiç üretmez.</para></summary>
+    /// (<c>RunCompletedEvent</c> taşımıyor). Satır bu yüzden " · N warnings" ekini hiç üretmez.</para>
+    /// <para>[şerit işlemi] <c>cleaning</c> koşunun modundan okunur ve gözlemlenebilir değildir: mod <c>runStarted</c>'ta fazdan ÖNCE yazılır
+    /// (<see cref="OnRunStarted"/>), Running satırı onu fazın bildirimiyle okur.</para></summary>
     public RibbonLine RibbonLine => RibbonText.Compose(
         Phase, HasWorkspace, AllClean, Counters,
         WillBuildCount, FinishedOfWillBuild, Counters.Total,
         ElapsedMs, EtaMs, checkDurMs: ElapsedMs, warnings: 0,
         engineDiedMessage: EngineDiedMessage, syncError: SyncErrorMessage,
-        runError: RunErrorMessage, engineOverdue: EngineOverdueMessage, syncFetches: _syncMode.Fetches(),
+        runError: RunErrorMessage, engineOverdue: EngineOverdueMessage,
         resolvingCycles: IsResolvingCycles, cycleRound: CycleRound, cycleRoundCap: CycleRoundCap,
-        exitPending: ExitPending, engineWaking: EngineState == EngineState.Waking);
+        exitPending: ExitPending, engineWaking: EngineState == EngineState.Waking, sync: SyncProgress,
+        work: WorkInFlight, workTarget: WorkTarget, cleaning: RunIsClean);
 
     // [Fix wave 1, Finding 1] RelayCommand'ların CanExecuteChanged'ı YALNIZ NotifyCanExecuteChangedFor
     // (veya elle NotifyCanExecuteChanged()) ile ateşlenir — CommunityToolkit CommandManager.RequerySuggested'a
@@ -1924,8 +1927,11 @@ public sealed partial class RunViewModel : ObservableObject
             // [A5/T69] Sync yüzeyi — handler'lar RunViewModel.Workspace.cs'te
             case SyncStartedEvent: OnSyncStarted(); break;
             case SyncProgressEvent e: OnSyncProgress(e); break; // [spec §6.2] sessiz kip transkripti gizler
-            // [design v1.24.0] Keşfin kümülatif proje sayacı — yalnız keşif bloğu açıkken sayılır (RunViewModel.Discovery.cs).
+            // [design v1.24.0] Keşfin kümülatif proje sayacı — yalnız keşif bloğu açıkken sayılır (RunViewModel.Discovery.cs);
+            // [sync ilerlemesi] şeridin analiz satırı sayıyı her zaman alır.
             case SyncDiscoveryEvent e: OnSyncDiscovery(e); break;
+            // [sync ilerlemesi] Motorun bildirdiği Sync adımı — şeridin Sync satırı ve indexing çubuğu (RunViewModel.Workspace.cs).
+            case SyncStepEvent e: OnSyncStep(e); break;
             // [planlama görünürlüğü] Motorun planlama adımları. AppendRunLine DIŞINDA hiçbir şeye dokunmaz:
             // faz zaten Starting'tir (BeginRunAsync yazdı) ve bu satırlar Sync yüzeyine (_syncInFlight) AİT
             // DEĞİLDİR — oraya bağlanırsa Rebuild/Cycles planlama boyunca sessizce kilitlenirdi.

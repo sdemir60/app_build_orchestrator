@@ -26,17 +26,12 @@ public partial class RunViewModel
             ? (_escCannotStopNoted ? EscRunState.UnstoppableExplained : EscRunState.Unstoppable)
         : EscRunState.Idle;
 
-    /// <summary>Durdurulamayan ve kullanıcıya GÖRÜNEN workspace işinin pill etiketi (<see cref="OperationLabel"/>); yoksa
-    /// <c>null</c>. Sessiz Sync görünmez — Esc kullanıcının başlatmadığı bir işi anlatmasın diye sayılmaz. Pull, pill'de
-    /// zincirlendiği Sync'le tek işlemdir ve <see cref="OperationLabel.Sync"/> okunur.</summary>
-    internal string? UnstoppableOperation =>
-        IsMidRunLocked ? null
-        : CleanBusy ? OperationLabel.DeepClean
-        : OptimizeBusy ? OperationLabel.Optimize
-        : CheckoutBusy ? OperationLabel.Checkout
-        : PullBusy ? OperationLabel.Sync
-        : SyncBusy && _syncMode.IsVisible() ? OperationLabel.Sync
-        : null;
+    /// <summary>Durdurulamayan ve kullanıcıya GÖRÜNEN workspace işinin pill etiketi; yoksa <c>null</c>. İş şeridin okuduğu işin
+    /// kendisidir (<see cref="WorkInFlight"/> — Sync, Deep Clean, Optimize, checkout, worktree kurulumu, pull), sözcüğü
+    /// <see cref="OperationLabel.ForWork"/>'ten: şeridin canlı anlattığı her iş Esc'te de "durdurulamaz"dır. Sessiz Sync görünmez —
+    /// Esc kullanıcının başlatmadığı bir işi anlatmasın diye sayılmaz. Pull, pill'de zincirlendiği Sync'le tek işlemdir ve
+    /// <see cref="OperationLabel.Sync"/> okunur.</summary>
+    internal string? UnstoppableOperation => OperationLabel.ForWork(WorkInFlight);
 
     /// <summary>Bu meşguliyet döneminde "durdurulamaz" satırı yazıldı mı — workspace boşalınca
     /// (<see cref="ResetEscNoteWhenIdle"/>) sıfırlanır, yani satır aynı işte yalnız ilk basışta düşer; sonraki basışlar
