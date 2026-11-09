@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
 using BuildOrchestrator.Core.Io;
@@ -24,7 +25,8 @@ namespace BuildOrchestrator.Core.Incremental;
 ///
 /// <para><b>İlk geçiş paraleldir.</b> Soğuk diskte bedel dosya BAŞINA açılış giderindedir (on-access tarama);
 /// ölçümde sıralı okuma dosya başına 8,89 ms, 16 kanallı paralel okuma 1,86 ms sürdü. Bu yüzden ilk doldurma
-/// <see cref="Prefill"/> ile paralel koşar ve kullanıcıya bir satır yazılır.</para>
+/// <see cref="Prefill"/> ile paralel koşar; ilerlemesi gözlemciye (<see cref="IndexingReport"/> kullanıcıya satır
+/// yazar) bildirilir ve defter sürerken ara kayıt alınır.</para>
 ///
 /// <para>Bozuk/eksik önbellek dosyası sessizce boş kabul edilir; kaydetme atomiktir (temp + rename) ve IO
 /// hatasında yutulur — önbellek SALT bir optimizasyondur, kaybı yalnız bir sonraki koşuda yeniden okumaya
@@ -48,7 +50,7 @@ public sealed class SourceHashCache
     public static readonly TimeSpan RacyWindow = TimeSpan.FromSeconds(2);
 
     /// <summary>Konsola "ilk indeksleme" satırı yazmaya değecek dosya sayısı — altındaki her şey sessizdir
-    /// (her koşuda değişen birkaç dosya için satır yazmak gürültü olurdu).</summary>
+    /// (her koşuda değişen birkaç dosya için satır yazmak gürültü olurdu). Eşiği <see cref="IndexingReport"/> uygular.</summary>
     public const int NoisyPrefillThreshold = 500;
 
     private sealed record Entry(long Length, long MtimeTicks, string Hash);
@@ -152,13 +154,23 @@ public sealed class SourceHashCache
 
     /// <summary>
     /// Önbellekte olmayan dosyaların özetlerini PARALEL hesaplar. Önce ucuz bir stat geçişiyle eksik küme
-    /// bulunur (bu sayı <paramref name="announce"/>'a verilir, satırı yazma kararı çağıranındır), sonra
+    /// bulunur (bu sayı <paramref name="observer"/>'a verilir, satırı yazma kararı gözlemcinindir), sonra
     /// yalnız o küme okunur.
+    ///
+    /// <para><b>İş başka thread'lerde, döngü çağıranda:</b> hash işi <c>Task.Run</c> içinde koşar; çağıran thread
+    /// her <see cref="PrefillTickMs"/>'de bir uyanıp ilerlemeyi gözlemciye bildirir ve
+    /// <see cref="PrefillFlushIntervalMs"/>'de bir defteri diske alır. Gözlemci bu yüzden HEP çağıran thread'de
+    /// çalışır (kilit gerekmez) ve soğuk ilk indeksleme (~51 sn) yarıda kesilirse o ana kadarki özetler kaybolmaz.</para>
+    ///
+    /// <para><b>Hata türleri değişmez:</b> işin sonucu <c>GetResult()</c> ile alınır — gövde hatası
+    /// <see cref="AggregateException"/> (Parallel.ForEach'in kendi türü), iptal <see cref="OperationCanceledException"/>
+    /// olarak çıkar; bekleme fırlatmaz (<see cref="Task.WaitAny(Task[], int)"/>). Hata/iptalde
+    /// <see cref="IPrefillObserver.Finished"/> çağrılmaz.</para>
     /// </summary>
-    /// <param name="announce">Eksik dosya sayısı — okuma BAŞLAMADAN çağrılır (kullanıcı beklemenin nedenini
-    /// önceden görsün). Sayı 0 ise hiç çağrılmaz.</param>
+    /// <param name="observer">Okuma BAŞLAMADAN (<see cref="IPrefillObserver.Started"/>, yalnız eksik &gt; 0 ise), iş
+    /// sürerken her tikte, bitince bildirilir (kullanıcı beklemenin nedenini görsün).</param>
     /// <returns>Gerçekten okunup özetlenen dosya sayısı.</returns>
-    public int Prefill(IEnumerable<string> paths, Action<int>? announce = null, CancellationToken ct = default)
+    public int Prefill(IEnumerable<string> paths, IPrefillObserver? observer = null, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(paths);
 
@@ -169,15 +181,56 @@ public sealed class SourceHashCache
             .ToList();
         if (missing.Count == 0) return 0;
 
-        announce?.Invoke(missing.Count);
+        observer?.Started(missing.Count);
 
-        Parallel.ForEach(
+        var clock = Stopwatch.StartNew();
+        var elapsedMs = PrefillElapsedMs ?? (() => clock.ElapsedMilliseconds);
+        var tick = PrefillTick ?? (work => Task.WaitAny([work], PrefillTickMs) >= 0);
+        var hasher = PrefillHasher ?? HashOf;
+
+        int done = 0;
+        var worker = Task.Run(() => Parallel.ForEach(
             missing,
             new ParallelOptions { MaxDegreeOfParallelism = IoParallelism.Degree, CancellationToken = ct },
-            path => HashOf(path));
+            path =>
+            {
+                hasher(path);
+                Interlocked.Increment(ref done);
+            }));
 
+        long nextFlushMs = PrefillFlushIntervalMs;
+        while (!tick(worker))
+        {
+            long elapsed = elapsedMs();                       // tik başına TEK okuma: Progress ve ara kayıt aynı anı görür
+            observer?.Progress(Volatile.Read(ref done), missing.Count, elapsed);
+            if (elapsed >= nextFlushMs)
+            {
+                Flush();                                      // bu ana kadar özetlenenler diske: yarıda kesilen indeksleme kaldığı yerden sürer
+                nextFlushMs = elapsed + PrefillFlushIntervalMs;
+            }
+        }
+
+        worker.GetAwaiter().GetResult();                      // iş hatayla/iptalle bittiyse burada (bugünkü türle) fırlar
+        observer?.Finished(missing.Count, elapsedMs());
         return missing.Count;
     }
+
+    /// <summary>[D8] Prefill döngüsünün tik aralığı: ilerleme bu sıklıkla bildirilir, bitiş en geç bu kadar gecikmeyle fark edilir.</summary>
+    internal const int PrefillTickMs = 500;
+
+    /// <summary>Prefill sürerken defterin diske alınma aralığı (ms) — ilk ve sonraki sınırlar arasındaki süre.</summary>
+    internal const long PrefillFlushIntervalMs = 10_000;
+
+    /// <summary>[D8] Prefill döngüsünün bir tiki: iş bitene kadar bekler, <c>true</c> = iş bitti. Üretimde null →
+    /// <see cref="PrefillTickMs"/> zaman aşımlı, fırlatmayan bekleme (testte kapıyla elle sürülür).</summary>
+    internal Func<Task, bool>? PrefillTick { get; set; }
+
+    /// <summary>[D8] Prefill'in başından beri geçen süre (ms) — Progress/ara kayıt/Finished buradan okunur.
+    /// Üretimde null → gerçek <see cref="Stopwatch"/>.</summary>
+    internal Func<long>? PrefillElapsedMs { get; set; }
+
+    /// <summary>[D8] Dosya başına iş (testte kapıda bekletilir). Üretimde null → <see cref="HashOf"/>.</summary>
+    internal Func<string, string?>? PrefillHasher { get; set; }
 
     /// <summary>
     /// Önbelleği diske yazar (atomik temp + rename). Racy girdiler DIŞARIDA bırakılır. Değişen bir girdi yoksa

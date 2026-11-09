@@ -306,12 +306,10 @@ public sealed class SyncWorkspaceService(
 
             // [D1] Karar diskteki içerikten gelir: harici kökler ve ana repo AYNI yoldan geçer, git hiçbir
             // terime girmez. Girdi kümesi bir kez toplanır, eksik özetler bir kez (paralel) okunur; iki
-            // bağlama geçişi de aynı önbelleği paylaşır.
+            // bağlama geçişi de aynı önbelleği paylaşır. İlk indekslemenin satırlarını (açılış, kalp atışı, kapanış)
+            // IndexingReport yazar — eşik ve zamanlama kuralı tek yerde, run yoluyla ortak.
             var binder = new IncrementalRunBinder(plan, evaluatedById, cmd.RootPath, hashes);
-            binder.Prefill(files =>
-            {
-                if (files >= SourceHashCache.NoisyPrefillThreshold) emit(Info(PlanProgressLines.IndexingSources(files)));
-            });
+            binder.Prefill(new IndexingReport(line => emit(Info(line))));
 
             // Idle'daki will-dot'ların kaynağı BURASIDIR ve onlar bir sonraki DÜZ Build'i tarif eder. Build kirli SCC
             // gruplarını da derlediği için kapı Build'in kendi kararını okur (CycleCompilation — tek kaynak): kirli

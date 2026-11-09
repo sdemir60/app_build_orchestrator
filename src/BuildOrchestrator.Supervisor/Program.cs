@@ -193,10 +193,7 @@ public static class Program
             string? branch = branchResult.Success ? branchResult.Value : null;
 
             var binder = new IncrementalRunBinder(plan, evaluatedById, cmd.RootPath, hashes);
-            binder.Prefill(files =>
-            {
-                if (files >= SourceHashCache.NoisyPrefillThreshold) progress(PlanProgressLines.IndexingSources(files));
-            });
+            binder.Prefill(new IndexingReport(progress));
 
             var state = stateStore.Load();
             // [Faz 3/Task 6 — spec 2026-09-18 §5] Çıktı kanıtı karara girer — Sync'in Safe geçişiyle AYNI

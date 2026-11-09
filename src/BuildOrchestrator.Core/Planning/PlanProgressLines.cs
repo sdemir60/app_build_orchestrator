@@ -1,5 +1,6 @@
 using System.Globalization;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Formatting;
 
 namespace BuildOrchestrator.Core.Planning;
 
@@ -61,6 +62,18 @@ public static class PlanProgressLines
     /// "3 dosya okundu" demek gürültü olurdu.
     /// </summary>
     public static string IndexingSources(int files) => $"Indexing {files} source files — later runs reuse the index";
+
+    /// <summary>
+    /// İlk indeksleme sürerken yaklaşık her 10 saniyede bir yazılan "hâlâ çalışıyor" satırı — onlarca saniyelik
+    /// sessizlik donmuş bir araca benzer. Sayı o ana kadar özetlenen dosyadır, süre indekslemenin başından beri
+    /// geçendir (<see cref="Incremental.IndexingReport"/> zamanlamayı yönetir).
+    /// </summary>
+    public static string IndexingHeartbeat(int done, int total, long elapsedMs)
+        => $"indexing source files — {done}/{total} · {DurationFormat.Elapsed(elapsedMs)}";
+
+    /// <summary>İlk indeksleme bitti — <see cref="IndexingSources"/> satırının kapanışı: kaç dosya, ne kadar sürdü.</summary>
+    public static string IndexedSources(int files, long elapsedMs)
+        => $"Indexed {files} source files in {DurationFormat.Elapsed(elapsedMs)}";
 
     // --- Ana repo: kullanıcının tetiklediği ff-only pull (v1.16.0) --------------------------------
     // Metinler İKİ şeyi birden söyler: ne YAPILDI ve ne YAPILMADI. Korkulan şey merge/rebase olduğu için

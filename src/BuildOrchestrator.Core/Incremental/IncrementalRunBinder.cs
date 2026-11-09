@@ -92,10 +92,11 @@ public sealed class IncrementalRunBinder
     /// Bağlamadan ÖNCE çağrılır: aksi hâlde ilk geçiş tek tek, sıralı okunurdu — ölçümde soğuk diskte dosya
     /// başına 8,89 ms yerine 1,86 ms.
     /// </summary>
-    /// <param name="announce">Okunacak dosya sayısı, okuma başlamadan önce (konsol satırı için).</param>
-    public int Prefill(Action<int>? announce = null, CancellationToken ct = default)
+    /// <param name="observer">İndekslemenin başlangıcı, ilerlemesi ve bitişi (konsol satırı için —
+    /// <see cref="IndexingReport"/>).</param>
+    public int Prefill(IPrefillObserver? observer = null, CancellationToken ct = default)
     {
-        int read = _hashes.Prefill(InputPaths, announce, ct);
+        int read = _hashes.Prefill(InputPaths, observer, ct);
 
         // Fingerprint'ler de BURADA, proje başına paralel ısıtılır. Ölçüldü: sıcak önbellekte bile bedelin
         // yarısı stat geçişiydi ve bağlama DFS'i tek iş parçacığında ilerlediği için o geçiş seri koşuyordu
