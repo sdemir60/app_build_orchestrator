@@ -304,9 +304,9 @@ konsolun belleği sınırlı kalır.\
 
 **Ne yapar:** Title bar'ın altındaki şerit en son ne istendiğini, o anki fazı, ilerlemeyi, kalan süreyi ve hata
 durumunu her zaman gösterir; olay akışı koşunun olaylarını sırayla, her biri tek satır listeler.\
-**Nasıl:** Kalıcı işlem etiketi (SYNC, BUILD, REBUILD, CLEAN, DEEP CLEAN, OPTIMIZE, RESOLVE, SWITCHING BRANCH) iş
-sürerken amber, bitince nötrdür. Yanında faz satırı, o an derlenen projelerin (koşu bitince hatalıların) chip'leri
-ve ince ilerleme çubuğu durur; acil uyarılar faz satırının yerine geçer.\
+**Nasıl:** Kalıcı işlem etiketi (SYNC, BUILD, REBUILD, CLEAN, DEEP CLEAN, OPTIMIZE, RESOLVE, SWITCHING BRANCH,
+CREATING WORKTREE) iş sürerken amber, bitince nötrdür. Yanında faz satırı, o an derlenen projelerin (koşu bitince
+hatalıların) chip'leri ve ince ilerleme çubuğu durur; acil uyarılar faz satırının yerine geçer.\
 `"son ne istendi" için kalıcı etiket` · `kalan süre tahmini` · `hatalıya tek tık götüren chip'ler` · `koşunun zaman çizelgesi olarak olay akışı`
 
 ## Visual Studio gibi kısayollar
