@@ -48,10 +48,12 @@ public sealed class ExitWorkGuardTests
         Assert.True(unnamed.Count == 0, "ExitWork'ün adlandırmadığı meşguliyet: " + string.Join(", ", unnamed));
     }
 
-    /// <summary>İşi adlandıran zincir — <c>ExitWork</c>'ün kendisi ya da onun çağırdığı <c>WorkInFlight</c>.</summary>
+    /// <summary>İşi adlandıran zincir — <c>ExitWork</c>'ün kendisi ya da onun çağırdığı <c>ExitWorkInFlight</c>.
+    /// <para>[şerit işlemi] Zincirin adı eskiden <c>WorkInFlight</c>'tı; o ad şeridin okuduğu işe (<c>RunViewModel.WorkInFlight</c>,
+    /// <c>RibbonWork</c>) geçti. Guard aynı gövdeyi okur — yalnız aradığı ad değişti.</para></summary>
     private static string ExitWorkNamingBody()
     {
-        var match = Regex.Match(Source("RunViewModel.Exit.cs"), @"private ExitWork WorkInFlight\s*=>(?<body>[^;]*);");
+        var match = Regex.Match(Source("RunViewModel.Exit.cs"), @"private ExitWork ExitWorkInFlight\s*=>(?<body>[^;]*);");
         return match.Success ? match.Groups["body"].Value : ExitWorkBody();
     }
 }

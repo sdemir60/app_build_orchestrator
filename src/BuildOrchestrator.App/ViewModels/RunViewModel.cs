@@ -676,7 +676,9 @@ public sealed partial class RunViewModel : ObservableObject
     /// kez duyurulması olurdu.</para>
     ///
     /// <para><b>Bilinen boşluk (kablo):</b> <c>warnings: 0</c> — App derleyici-warning sayısını izlemiyor
-    /// (<c>RunCompletedEvent</c> taşımıyor). Satır bu yüzden " · N warnings" ekini hiç üretmez.</para></summary>
+    /// (<c>RunCompletedEvent</c> taşımıyor). Satır bu yüzden " · N warnings" ekini hiç üretmez.</para>
+    /// <para>[şerit işlemi] <c>cleaning</c> koşunun modundan okunur ve gözlemlenebilir değildir: mod <c>runStarted</c>'ta fazdan ÖNCE yazılır
+    /// (<see cref="OnRunStarted"/>), Running satırı onu fazın bildirimiyle okur.</para></summary>
     public RibbonLine RibbonLine => RibbonText.Compose(
         Phase, HasWorkspace, AllClean, Counters,
         WillBuildCount, FinishedOfWillBuild, Counters.Total,
@@ -684,7 +686,8 @@ public sealed partial class RunViewModel : ObservableObject
         engineDiedMessage: EngineDiedMessage, syncError: SyncErrorMessage,
         runError: RunErrorMessage, engineOverdue: EngineOverdueMessage,
         resolvingCycles: IsResolvingCycles, cycleRound: CycleRound, cycleRoundCap: CycleRoundCap,
-        exitPending: ExitPending, engineWaking: EngineState == EngineState.Waking, sync: SyncProgress);
+        exitPending: ExitPending, engineWaking: EngineState == EngineState.Waking, sync: SyncProgress,
+        work: WorkInFlight, workTarget: WorkTarget, cleaning: _currentRunMode == RunMode.Clean);
 
     // [Fix wave 1, Finding 1] RelayCommand'ların CanExecuteChanged'ı YALNIZ NotifyCanExecuteChangedFor
     // (veya elle NotifyCanExecuteChanged()) ile ateşlenir — CommunityToolkit CommandManager.RequerySuggested'a

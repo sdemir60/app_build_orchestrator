@@ -254,6 +254,21 @@ public class RibbonTextTests
         Assert.StartsWith("▸ Building 7/14 · 24s", line.Text, StringComparison.Ordinal);
     }
 
+    /// <summary>[şerit işlemi] Bir <c>-t:Clean</c> koşusu (Build menüsünün ve satır menüsünün Clean'i) hiçbir şey derlemez: Running
+    /// satırının fiili işin kendisidir. Satır Building satırının biçimidir — yalnız fiil değişir.
+    /// <para>KIRMIZI: Clean koşusu da <c>▸ Building 3/177 · 12s</c> okuyordu.</para></summary>
+    [Fact]
+    public void A_clean_run_counts_what_it_cleans()
+    {
+        var line = RibbonText.Compose(AppPhase.Running, true, allClean: false, Counters(building: 1),
+            willBuild: 177, finishedOfWillBuild: 3, totalProjects: 177, elapsedMs: 12_000, etaMs: null, checkDurMs: null, warnings: 0,
+            cleaning: true);
+
+        Assert.Equal("▸ Cleaning 3/177 · 12s", line.Text);
+        Assert.Equal("Brush.TextSecondary", line.BrushKey);
+        Assert.Null(line.Glyph);
+    }
+
     // [Task 12 PİN · öncelik pini] allClean kontrolü switch'te resolvingCycles'tan ÖNCE gelir (RibbonText.cs:
     // 156-164): bir Cycles koşusu "her şey temiz" önizlemesiyle açılırsa şerit hâlâ "Checking" der, cycles
     // metnini hiç üretmez.
@@ -382,6 +397,63 @@ public class RibbonTextTests
         }
         Assert.Equal(With(waking: false, overdue: RunViewModel.EngineSilentMessage), With(waking: true, overdue: RunViewModel.EngineSilentMessage));
         Assert.Equal(With(waking: false, exitPending: true), With(waking: true, exitPending: true));
+    }
+
+    // ---------------------------------------------------------------- [şerit işlemi] uçuştaki iş
+
+    /// <summary>[şerit işlemi] Pill'in işi uçuştayken satır O işi anlatır: önceki işlemin sonuç satırı (burada başarılı bir koşunun
+    /// <c>Completed — …</c>'ı) işin satırına yer bırakır — ikincil metin rengi, glyph'siz (sonuç değil, süren bir iş). Hedefli işler
+    /// hedefini söyler (checkout'un branch'i, pull'un uzak ucu); hedef bilinmiyorsa yalnız iş. Metinlerin TEK literal pini.
+    /// <para>KIRMIZI: satır işi yok sayıyordu — checkout, pull, worktree kurulumu, Deep Clean ve Optimize boyunca önceki işlemin satırı
+    /// (<c>Completed — …</c>; Deep Clean/Optimize'ın boşalttığı yüzeyde <c>▸ Waiting for Sync — …</c>) duruyordu.</para></summary>
+    [Theory]
+    [InlineData(RibbonWork.Checkout, "feature/x", "▸ Switching to feature/x…")]
+    [InlineData(RibbonWork.Checkout, null, "▸ Switching branch…")]
+    [InlineData(RibbonWork.Pull, "main", "▸ Pulling origin/main…")]
+    [InlineData(RibbonWork.Pull, null, "▸ Pulling…")]
+    [InlineData(RibbonWork.CreatingWorktree, null, "▸ Creating the worktree…")]
+    [InlineData(RibbonWork.DeepClean, null, "▸ Deep clean — removing bin and obj…")]
+    [InlineData(RibbonWork.Optimize, null, "▸ Optimize — repairing the workspace…")]
+    public void A_workspace_operation_in_flight_replaces_the_previous_result_line(RibbonWork work, string? target, string expected)
+    {
+        RibbonLine With(RibbonWork w) => RibbonText.Compose(AppPhase.Done, true, allClean: false, Counters(succeeded: 12, skipped: 2),
+            willBuild: 12, finishedOfWillBuild: 12, totalProjects: 14, elapsedMs: 24_000, etaMs: null, checkDurMs: null, warnings: 0,
+            work: w, workTarget: target);
+        Assert.StartsWith("Completed — ", With(RibbonWork.None).Text, StringComparison.Ordinal); // ön-koşul: işsiz satır koşunun sonucu
+
+        var line = With(work);
+
+        Assert.Equal(expected, line.Text);
+        Assert.Equal("Brush.TextSecondary", line.BrushKey);
+        Assert.Null(line.Glyph);
+    }
+
+    /// <summary>[şerit işlemi] Kötü haber satırları geçmişe aittir: koşu hatası (<c>Run failed — …</c>) ve Sync hatası
+    /// (<c>Sync failed — …</c>) uçuştaki işe yer bırakır ve iş bitince geri gelir — kullanıcı hatanın ardından Deep Clean'e ya da Sync'e
+    /// bastıysa satır o tıklamanın işini anlatır.
+    /// <para>KIRMIZI: hata satırı işi ezerdi — Deep Clean boyunca <c>Run failed — msbuild crashed</c> duruyordu.</para></summary>
+    [Fact]
+    public void A_run_failure_gives_way_to_the_operation_in_flight()
+    {
+        RibbonLine With(RibbonWork work, string? syncError = null) =>
+            RibbonText.Compose(AppPhase.Boot, true, false, Counters(), 10, 3, 14, 0, null, null, 0,
+                syncError: syncError, runError: "msbuild crashed", work: work);
+
+        Assert.Equal(RibbonText.DeepCleaning, With(RibbonWork.DeepClean).Text);
+        Assert.Equal("Run failed — msbuild crashed", With(RibbonWork.None).Text);
+        Assert.Equal(RibbonText.SyncStarting, With(RibbonWork.Sync, syncError: "fetch failed").Text);
+    }
+
+    /// <summary>[şerit işlemi · PİN] Uyanan motor işin ÜSTÜNDEDİR: uyanmayı bekleyen bir Sync'in satırı henüz doğru değildir (motor
+    /// çalışmıyor) — şerit motorun başladığını söyler, işin satırı uyanma bitince gelir. PİN: işi yok sayan kod da yeşildir; bu test iş
+    /// dalının uyanmanın önüne konmasını yakalar.</summary>
+    [Fact]
+    public void The_engine_waking_line_still_comes_before_an_operation()
+    {
+        var line = RibbonText.Compose(AppPhase.Idle, true, false, Counters(), 3, 0, 14, 0, null, null, 0,
+            engineWaking: true, work: RibbonWork.Sync);
+
+        Assert.Equal(RibbonText.StartingTheEngine, line.Text);
     }
 
     /// <summary>Eski metin <c>▸ Stopped — 3/10 · rest queued</c> idi. "queued" SÜRDÜRÜLEBİLİRLİK ima ediyordu

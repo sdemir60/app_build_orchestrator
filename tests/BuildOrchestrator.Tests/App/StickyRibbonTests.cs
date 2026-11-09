@@ -860,6 +860,88 @@ public class StickyRibbonTests
         GC.KeepAlive(window);
     }
 
+    // ---------------------------------------------------------------- [şerit işlemi] pill her işte canlı
+
+    private static readonly BranchRef FeatureX = new("feature/x", "bbbbbbbbbbbb", IsActive: false, IsRemoteTracking: false);
+
+    /// <summary>Biten başarılı bir koşunun şeridi — sonraki işin devraldığı zemin: pill <c>BUILD</c> nötr ve ✓ taşır, satır
+    /// <c>Completed — …</c> der. Dönen metin o satırdır.</summary>
+    private static (StickyRibbon Ribbon, Window Window, string Completed) RibbonAfterASucceededRun(RunViewModel vm)
+    {
+        var (ribbon, window) = Realize(vm);
+        SetTopology(vm, (@"C:\p\a.csproj", "A"));
+        StartRun(vm, (@"C:\p\a.csproj", "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 100));
+        Assert.Equal(Visibility.Visible, ribbon.OpGlyph.Visibility);                                   // ön-koşul: pill ✓
+        Assert.Equal(BuildOrchestrator.App.Controls.VisualStatus.Succeeded, ribbon.OpGlyph.Status);
+        Assert.StartsWith("Completed — ", ribbon.PhaseText.Text, StringComparison.Ordinal);
+        return (ribbon, window, ribbon.PhaseText.Text);
+    }
+
+    /// <summary>[şerit işlemi] Branch chip'inden checkout uçuştayken pill işi adlandırır ve AMBER yanar (amber-soft zemin, spinner;
+    /// önceki koşunun ✓'i gizlenir), satır nereye geçildiğini söyler, çubuk belirsiz süpürür. Checkout kirli ağaçta durursa (Sync
+    /// zincirlenmez) pill düşer ve satır koşunun sonucuna döner.
+    /// <para>KIRMIZI: checkout boyunca pill nötrdü ve önceki koşunun ✓'ini taşıyordu, satır <c>Completed — …</c> diyordu, çubuk
+    /// koşunun dolgusunda duruyordu.</para></summary>
+    [StaFact]
+    public async Task A_branch_switch_lights_the_pill_and_says_where_it_is_going()
+    {
+        var vm = NewVm();
+        var (ribbon, window, completed) = RibbonAfterASucceededRun(vm);
+        vm.DebugSendOverride = _ => Task.CompletedTask; // gönderim başarılı: checkout motorun cevabına dek uçuşta
+
+        await vm.SelectBranch(FeatureX);
+
+        Assert.Equal(OperationLabel.Checkout, ribbon.OpText.Text);
+        Assert.Same(ribbon.FindResource("Brush.AmberSoft"), ribbon.OpPill.Background);
+        Assert.Equal(Visibility.Visible, ribbon.OpSpinner.Visibility);
+        Assert.Equal(Visibility.Collapsed, ribbon.OpGlyph.Visibility);
+        Assert.Equal(RibbonText.Switching("feature/x"), ribbon.PhaseText.Text);
+        Assert.True(ribbon.IsIndeterminate);
+
+        vm.OnEvent(new CheckoutCompletedEvent(CheckoutStatus.Dirty, "main", "main", null, 3, null, null));
+
+        Assert.Equal(Visibility.Collapsed, ribbon.OpPill.Visibility); // reddedilen checkout pill'i düşürür
+        Assert.Equal(completed, ribbon.PhaseText.Text);
+        Assert.False(ribbon.IsIndeterminate);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[şerit işlemi] Geçen checkout'un zincirlediği Sync işi devralır: pill <c>SYNC</c>'e döner ve canlı kalır, satır Sync'in
+    /// satırıdır — motor henüz <c>syncStarted</c> demeden de (istek penceresi).
+    /// <para>KIRMIZI: istek penceresinde faz henüz Syncing değildi — pill nötrdü, satır önceki koşunun sonucunu okuyordu.</para></summary>
+    [StaFact]
+    public async Task A_checkout_that_hands_over_to_its_sync_leaves_the_sync_line()
+    {
+        var vm = NewVm();
+        var (ribbon, window, _) = RibbonAfterASucceededRun(vm);
+        vm.DebugSendOverride = _ => Task.CompletedTask;
+        await vm.SelectBranch(FeatureX);
+
+        vm.OnEvent(new CheckoutCompletedEvent(CheckoutStatus.Switched, "main", "feature/x",
+            "b7e91d4a0c1f2e3d4c5b6a7980716253443526a1", 0, null, null));
+
+        Assert.Equal(OperationLabel.Sync, ribbon.OpText.Text);
+        Assert.Same(ribbon.FindResource("Brush.AmberSoft"), ribbon.OpPill.Background); // canlı
+        Assert.Equal(Visibility.Visible, ribbon.OpSpinner.Visibility);
+        Assert.Equal(RibbonText.SyncStarting, ribbon.PhaseText.Text);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[şerit işlemi] Uçuştaki işin pill sözcüğü — iş ile sözcük arasındaki TEK eşleme (Esc'in "durdurulamaz" satırı bunu
+    /// okur). Pull, pill'de zincirlendiği Sync'le tek işlemdir: <c>SYNC</c>. İş yoksa sözcük de yoktur.</summary>
+    [Theory]
+    [InlineData(RibbonWork.None, null)]
+    [InlineData(RibbonWork.Sync, OperationLabel.Sync)]
+    [InlineData(RibbonWork.Pull, OperationLabel.Sync)]
+    [InlineData(RibbonWork.Checkout, OperationLabel.Checkout)]
+    [InlineData(RibbonWork.CreatingWorktree, OperationLabel.CreatingWorktree)]
+    [InlineData(RibbonWork.DeepClean, OperationLabel.DeepClean)]
+    [InlineData(RibbonWork.Optimize, OperationLabel.Optimize)]
+    public void Each_workspace_operation_writes_its_own_word_into_the_pill(RibbonWork work, string? expected)
+        => Assert.Equal(expected, OperationLabel.ForWork(work));
+
     /// <summary>Etiket işlemi AYIRT EDER: Rebuild ve Resolve kendi sözcüklerini yazar.</summary>
     [StaTheory]
     [InlineData(RunMode.Rebuild, OperationLabel.Rebuild)]

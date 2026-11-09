@@ -3664,6 +3664,48 @@ public class RunViewModelTests
         Assert.Equal(opBefore, vm.CurrentOperation);
     }
 
+    /// <summary>[şerit işlemi] Bakım kutusunun iki işi şeritte kendini anlatır: tıklamadan motorun cevabına dek (istek penceresi dahil)
+    /// uçuştaki iş <see cref="RibbonWork.DeepClean"/> / <see cref="RibbonWork.Optimize"/>'dır ve satır o işin satırıdır.
+    /// <para>KIRMIZI: tıklama plan yüzeyini boşaltıp fazı Boot'a aldığı için satır iş boyunca <c>▸ Waiting for Sync — …</c>
+    /// diyordu.</para></summary>
+    [Fact]
+    public async Task Deep_clean_and_optimize_say_what_they_do_on_the_ribbon()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe); // hiç başlatılmadı — gönderimi dikiş tutar
+        RunViewModel HeldVm()
+        {
+            var held = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+            held.DebugSendOverride = _ => Task.CompletedTask; // gönderim başarılı: iş motorun cevabına dek uçuşta
+            return held;
+        }
+        var clean = HeldVm();
+        var optimize = HeldVm();
+        Assert.Equal(RibbonWork.None, clean.WorkInFlight); // ön-koşul: tıklamadan önce iş yok
+
+        await clean.CleanCommand.ExecuteAsync(null);
+        await optimize.OptimizeCommand.ExecuteAsync(null);
+
+        Assert.Equal(RibbonWork.DeepClean, clean.WorkInFlight);
+        Assert.Equal(RibbonText.DeepCleaning, clean.RibbonLine.Text);
+        Assert.Equal(RibbonWork.Optimize, optimize.WorkInFlight);
+        Assert.Equal(RibbonText.Optimizing, optimize.RibbonLine.Text);
+    }
+
+    /// <summary>[şerit işlemi] Build menüsünün Clean'i (<c>RunMode.Clean</c>) hiçbir şey derlemez: koşu sürerken şerit temizlediğini sayar.
+    /// <para>KIRMIZI: Clean koşusu <c>▸ Building 0/2 · …</c> okuyordu.</para></summary>
+    [Fact]
+    public async Task A_clean_run_reads_cleaning_on_the_ribbon()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe); // hiç başlatılmadı — OnEvent motora dokunmaz
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(A, "A", 0), Node(B, "B", 1)], [], [], []));
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Clean, TotalProjects: 2, Parallelism: 4, "Debug"));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(A, "A", true), new BuildPreviewItem(B, "B", true)]));
+
+        Assert.StartsWith("▸ Cleaning 0/", vm.RibbonLine.Text, StringComparison.Ordinal);
+    }
+
     /// <summary>[review M1] Gönderimi düşen bir Sync kipini bırakır (sonraki transkript satırı gizlenmez) ve
     /// başlangıç zamanı YAZMAZ — hiçbir Sync başlamadı; başarılı gönderim yazar.
     /// <para><b>[DEĞİŞEN KURAL — final review I1]</b> Eskiden düşen gönderimde de <c>true</c> dönerdi (yalnız kapı
