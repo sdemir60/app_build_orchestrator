@@ -393,7 +393,7 @@ public partial class StickyRibbon : UserControl
         if (_vm.Phase == AppPhase.Syncing && _vm.SyncProgress is { Step: SyncStep.Indexing, Total: > 0 } indexing)
         {
             if (_isIndeterminate) { _isIndeterminate = false; StopIndeterminate(); }
-            SetIndicatorColor("Brush.Amber"); // belirsiz moddaki dolguyla aynı (FILL.building)
+            SetIndicatorColor(RibbonText.FillBrushKeyFor("building")); // belirsiz moddaki dolguyla aynı (FILL.building)
             _lastFraction = Math.Clamp((double)indexing.Done / indexing.Total, 0.0, 1.0);
             AnimateIndicatorWidth(_lastFraction * PART_ProgressTrack.ActualWidth);
             return;

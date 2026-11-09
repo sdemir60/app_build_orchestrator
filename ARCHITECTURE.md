@@ -315,7 +315,7 @@ action.
 Sync earns its place in that list twice over. It is a wait like the others — an engine wedged mid-Sync leaves
 the ribbon on the Sync's step line (`▸ Sync — analyzing N projects…`, §10.2) with no way out — and it is now the
 only way out, because the Sync button is itself disabled while a Sync is in flight (§13.2). Nor does the window
-produce false alarms: every read-only git call is capped at 30 seconds, and the one long step of a Sync that is
+produce false alarms: every read-only git call is capped at 30 seconds, and the longest step of a Sync that is
 not a git call — a first index (§7.1) — reports its count as it advances and writes a console line every ten
 seconds, each of them an event that resets the clock; an engine that crosses the silence threshold is not slow, it
 has stopped answering.
@@ -451,11 +451,11 @@ choreography, so there the command goes out as soon as the engine is awake.
 
 **What the user sees.** While the state is Waking the ribbon reads `▸ Starting the engine…`, in a phase line's style
 and without a glyph. It is a live wait, so it ranks under the engine's death, its silence and the exit's Stopping line
-and over the failed Sync and the failed run (§13.2); it is announced when it appears and when it goes (§15). About →
-Environment shows the engine PID as `asleep` while the state is Asleep — the process is gone, but the engine is not
-unknown — and `—` when there is no PID at all (§13.3). Nothing else changes on screen: the first command after an idle
-sleep simply waits for the engine to start. *Restart engine* is not offered for any of this; it belongs to the death
-and silence lines.
+and over the work in flight, the failed Sync and the failed run (§13.2); it is announced when it appears and when it
+goes (§15). About → Environment shows the engine PID as `asleep` while the state is Asleep — the process is gone, but
+the engine is not unknown — and `—` when there is no PID at all (§13.3). Nothing else changes on screen: the first
+command after an idle sleep simply waits for the engine to start. *Restart engine* is not offered for any of this; it
+belongs to the death and silence lines.
 
 **When a sleep or a wake fails** the engine is lost, and how it is reported depends on what was lost.
 

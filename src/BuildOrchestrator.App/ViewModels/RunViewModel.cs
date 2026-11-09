@@ -687,7 +687,7 @@ public sealed partial class RunViewModel : ObservableObject
         runError: RunErrorMessage, engineOverdue: EngineOverdueMessage,
         resolvingCycles: IsResolvingCycles, cycleRound: CycleRound, cycleRoundCap: CycleRoundCap,
         exitPending: ExitPending, engineWaking: EngineState == EngineState.Waking, sync: SyncProgress,
-        work: WorkInFlight, workTarget: WorkTarget, cleaning: _currentRunMode == RunMode.Clean);
+        work: WorkInFlight, workTarget: WorkTarget, cleaning: RunIsClean);
 
     // [Fix wave 1, Finding 1] RelayCommand'ların CanExecuteChanged'ı YALNIZ NotifyCanExecuteChangedFor
     // (veya elle NotifyCanExecuteChanged()) ile ateşlenir — CommunityToolkit CommandManager.RequerySuggested'a

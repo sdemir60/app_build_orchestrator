@@ -183,13 +183,9 @@ public class EscStopTests
     [Fact]
     public async Task Esc_while_the_worktree_is_created_explains_once()
     {
-        using var repo = new GitTestRepo();
-        repo.WriteFile("a.txt", "one");
-        repo.CommitAll("first");
+        using var repo = WorktreeSettingsTests.RepoWithCommit();
         using var parent = new TempDir();
-        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1")
-            { RootPath = repo.RootPath };
-        vm.DebugSendOverride = _ => Task.CompletedTask; // gönderim başarılı: kurulum motorun cevabına dek uçuşta
+        var vm = WorktreeSettingsTests.NewVm(repo.RootPath, []); // gönderim başarılı: kurulum motorun cevabına dek uçuşta
         var draft = new SettingsDraftViewModel(null, repo.RootPath) { WorktreeFolder = Path.Combine(parent.Path, "acme-worktree") };
         await draft.CommitAsync(vm, new SettingsDialogHost.FakeStore());
         Assert.True(vm.WorktreeBusy); // ön-koşul: kurulum uçuşta

@@ -849,11 +849,7 @@ public class StickyRibbonTests
     public void The_phase_glyph_is_not_drawn_next_to_the_pill()
     {
         var vm = NewVm();
-        var (ribbon, window) = Realize(vm);
-        SetTopology(vm, (@"C:\p\a.csproj", "A"));
-        StartRun(vm, (@"C:\p\a.csproj", "A"));
-        vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100));
-        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 100));
+        var (ribbon, window, _) = RibbonAfterASucceededRun(vm);
 
         Assert.Equal(Visibility.Visible, ribbon.OpGlyph.Visibility);
         Assert.Equal(Visibility.Collapsed, ribbon.PhaseGlyph.Visibility);
@@ -894,6 +890,7 @@ public class StickyRibbonTests
         await vm.SelectBranch(FeatureX);
 
         Assert.Equal(OperationLabel.Checkout, ribbon.OpText.Text);
+        Assert.Equal(OperationLabel.ForWork(vm.WorkInFlight), ribbon.OpText.Text); // pill sözcüğü = Esc'in adlandırdığı iş
         Assert.Same(ribbon.FindResource("Brush.AmberSoft"), ribbon.OpPill.Background);
         Assert.Equal(Visibility.Visible, ribbon.OpSpinner.Visibility);
         Assert.Equal(Visibility.Collapsed, ribbon.OpGlyph.Visibility);
@@ -923,14 +920,17 @@ public class StickyRibbonTests
             "b7e91d4a0c1f2e3d4c5b6a7980716253443526a1", 0, null, null));
 
         Assert.Equal(OperationLabel.Sync, ribbon.OpText.Text);
+        Assert.Equal(OperationLabel.ForWork(vm.WorkInFlight), ribbon.OpText.Text); // pill sözcüğü = Esc'in adlandırdığı iş
         Assert.Same(ribbon.FindResource("Brush.AmberSoft"), ribbon.OpPill.Background); // canlı
         Assert.Equal(Visibility.Visible, ribbon.OpSpinner.Visibility);
         Assert.Equal(RibbonText.SyncStarting, ribbon.PhaseText.Text);
         GC.KeepAlive(window);
     }
 
-    /// <summary>[şerit işlemi] Uçuştaki işin pill sözcüğü — iş ile sözcük arasındaki TEK eşleme (Esc'in "durdurulamaz" satırı bunu
-    /// okur). Pull, pill'de zincirlendiği Sync'le tek işlemdir: <c>SYNC</c>. İş yoksa sözcük de yoktur.</summary>
+    /// <summary>[şerit işlemi] <see cref="OperationLabel.ForWork"/>'ün eşlemesi — Esc'in "durdurulamaz" satırı işi bununla adlandırır.
+    /// Pill'in kendi sözcüğü istek yerlerinde yazılır; ikisinin aynı sözcüğü verdiği iş başına testlerde ayrıca bağlıdır (checkout ve
+    /// Sync burada, Deep Clean/Optimize <c>RunViewModelTests</c>'te, worktree kurulumu <c>WorktreeSettingsTests</c>'te). Pull, pill'de
+    /// zincirlendiği Sync'le tek işlemdir: <c>SYNC</c>. İş yoksa sözcük de yoktur.</summary>
     [Theory]
     [InlineData(RibbonWork.None, null)]
     [InlineData(RibbonWork.Sync, OperationLabel.Sync)]
@@ -939,7 +939,7 @@ public class StickyRibbonTests
     [InlineData(RibbonWork.CreatingWorktree, OperationLabel.CreatingWorktree)]
     [InlineData(RibbonWork.DeepClean, OperationLabel.DeepClean)]
     [InlineData(RibbonWork.Optimize, OperationLabel.Optimize)]
-    public void Each_workspace_operation_writes_its_own_word_into_the_pill(RibbonWork work, string? expected)
+    public void For_work_maps_each_workspace_operation_to_its_pill_word(RibbonWork work, string? expected)
         => Assert.Equal(expected, OperationLabel.ForWork(work));
 
     /// <summary>Etiket işlemi AYIRT EDER: Rebuild ve Resolve kendi sözcüklerini yazar.</summary>

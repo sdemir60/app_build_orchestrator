@@ -3664,6 +3664,91 @@ public class RunViewModelTests
         Assert.Equal(opBefore, vm.CurrentOperation);
     }
 
+    /// <summary>Yarıda kesilmiş bir indeksleme: görünür bir Sync <c>Indexing 300/600</c> adımına gelir, sonra <c>planFailed</c> ile
+    /// biter. Hata Sync'in adımını ÖNCEKİ Sync'in son adımı olarak VM'de bırakır; yeni Sync bunu taşımamalıdır.</summary>
+    private static RunViewModel VmWithAnInterruptedIndexing(EngineHost engine)
+    {
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        vm.OnEvent(new SyncStepEvent(SyncStep.Analyzing));
+        vm.OnEvent(new SyncStepEvent(SyncStep.Indexing, Done: 300, Total: 600));
+        Assert.Equal(RibbonText.SyncIndexing(300, 600), vm.RibbonLine.Text); // ön-koşul: şerit sayıyı okuyor
+
+        vm.OnEvent(new ErrorEvent("planFailed", "workspace is unreadable"));
+
+        Assert.False(vm.SyncBusy); // ön-koşul: kesilen Sync bitti
+        Assert.Equal("workspace is unreadable", vm.SyncErrorMessage);
+        return vm;
+    }
+
+    /// <summary>[sync ilerlemesi] Yeni bir Sync <b>başladığında</b> (<c>syncStarted</c>) şeridin adımı sıfırlanır: kesilen indekslemenin
+    /// <c>· 300/600</c>'ü yeni Sync'in satırında görünmez, çubuk da (yalnız <c>Indexing</c> + payda varken dolar) belirsiz sürer.
+    /// Motorun kendi başlattığı bir Sync'te App'in isteği yoktur (<c>syncStarted</c> tek sıfırlama noktasıdır).
+    /// <para>KIRMIZI (<c>OnSyncStarted</c>'taki sıfırlama geçici olarak silinince; kod doğruydu): satır
+    /// <c>▸ Sync — indexing source files · 300/600</c> okurdu.</para></summary>
+    [Fact]
+    public async Task A_started_sync_does_not_carry_the_interrupted_syncs_indexing_count()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe); // hiç başlatılmadı — OnEvent motora dokunmaz
+        var vm = VmWithAnInterruptedIndexing(engine);
+
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+
+        Assert.Equal(RibbonText.SyncStarting, vm.RibbonLine.Text);
+        Assert.Null(vm.SyncProgress.Step); // şerit çubuğu yalnız Step=Indexing ve Total>0'da doldurur: burada belirsiz süpürür
+    }
+
+    /// <summary>[sync ilerlemesi] Yeni bir Sync <b>istendiğinde</b> da (istek penceresi: <c>syncStarted</c> henüz gelmedi) adım sıfırdır:
+    /// pencerede şerit zaten Sync'i anlatır (<see cref="RibbonWork.Sync"/>) ve bayat <c>· 300/600</c>'ü okurdu. Sıfırlama
+    /// <c>syncStarted</c>'a bırakılsaydı bu pencere açık kalırdı.
+    /// <para>KIRMIZI (<c>BeginSyncMode</c>'daki sıfırlama geçici olarak silinince; kod doğruydu): istek penceresinde satır
+    /// <c>· 300/600</c> okurdu.</para></summary>
+    [Fact]
+    public async Task A_requested_sync_does_not_carry_the_interrupted_syncs_indexing_count()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = VmWithAnInterruptedIndexing(engine);
+        vm.DebugSendOverride = _ => Task.CompletedTask; // gönderim başarılı: istek motorun syncStarted'ına dek uçuşta
+
+        await vm.SyncCommand.ExecuteAsync(null);
+
+        Assert.True(vm.SyncBusy); // ön-koşul: istek penceresindeyiz
+        Assert.Equal(RibbonWork.Sync, vm.WorkInFlight);
+        Assert.Equal(RibbonText.SyncStarting, vm.RibbonLine.Text);
+        Assert.Null(vm.SyncProgress.Step);
+
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main")); // başlangıç da aynı satırda kalır
+        Assert.Equal(RibbonText.SyncStarting, vm.RibbonLine.Text);
+    }
+
+    /// <summary>[şerit işlemi] Düşmüş bir koşunun kırmızı <c>Run failed — …</c> satırı durur; üstüne bir checkout gelince şerit o işi
+    /// anlatır (<see cref="RibbonText.Switching"/>), iş sürerken hata satırı ezilir. Checkout kirli ağaçta reddedilince (Sync
+    /// zincirlenmez) iş biter ve satır yeniden koşunun hatasıdır — hata iş boyunca silinmez, yalnız örtülür.
+    /// <para>KIRMIZI (geçici mutasyonla; kod doğruydu): checkout <c>WorkInFlight</c> zincirinden çıkarılınca satır iş boyunca
+    /// <c>Run failed — …</c> kalırdı; checkout isteği <c>RunErrorMessage</c>'ı silince red sonrası satır <c>▸ Ready — …</c>
+    /// okurdu.</para></summary>
+    [Fact]
+    public async Task A_checkout_covers_a_failed_runs_line_and_gives_it_back_when_refused()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe); // hiç başlatılmadı — gönderimi dikiş tutar
+        var vm = SyncedTwoRowVm(engine);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug"));
+        vm.OnEvent(new ErrorEvent("runFailed", "msbuild crashed"));
+        string failed = vm.RibbonLine.Text;
+        Assert.StartsWith("Run failed — ", failed, StringComparison.Ordinal); // ön-koşul: kırmızı hata satırı
+        vm.DebugSendOverride = _ => Task.CompletedTask; // gönderim başarılı: checkout motorun cevabına dek uçuşta
+
+        await vm.SelectBranch(new BranchRef("feature/x", "bbbbbbbbbbbb", false, false));
+
+        Assert.True(vm.CheckoutBusy); // ön-koşul
+        Assert.Equal(RibbonText.Switching("feature/x"), vm.RibbonLine.Text);
+
+        vm.OnEvent(new CheckoutCompletedEvent(CheckoutStatus.Dirty, "main", "main", null, 3, null, null));
+
+        Assert.False(vm.CheckoutBusy);
+        Assert.Equal(failed, vm.RibbonLine.Text);
+    }
+
     /// <summary>[şerit işlemi] Bakım kutusunun iki işi şeritte kendini anlatır: tıklamadan motorun cevabına dek (istek penceresi dahil)
     /// uçuştaki iş <see cref="RibbonWork.DeepClean"/> / <see cref="RibbonWork.Optimize"/>'dır ve satır o işin satırıdır.
     /// <para>KIRMIZI: tıklama plan yüzeyini boşaltıp fazı Boot'a aldığı için satır iş boyunca <c>▸ Waiting for Sync — …</c>
@@ -3687,8 +3772,10 @@ public class RunViewModelTests
 
         Assert.Equal(RibbonWork.DeepClean, clean.WorkInFlight);
         Assert.Equal(RibbonText.DeepCleaning, clean.RibbonLine.Text);
+        Assert.Equal(OperationLabel.ForWork(clean.WorkInFlight), clean.CurrentOperation); // pill sözcüğü = Esc'in adlandırdığı iş
         Assert.Equal(RibbonWork.Optimize, optimize.WorkInFlight);
         Assert.Equal(RibbonText.Optimizing, optimize.RibbonLine.Text);
+        Assert.Equal(OperationLabel.ForWork(optimize.WorkInFlight), optimize.CurrentOperation);
     }
 
     /// <summary>[şerit işlemi] Build menüsünün Clean'i (<c>RunMode.Clean</c>) hiçbir şey derlemez: koşu sürerken şerit temizlediğini sayar.

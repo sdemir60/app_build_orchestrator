@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Discovery;
+using BuildOrchestrator.Core.Formatting;
 using BuildOrchestrator.Core.Git;
 using BuildOrchestrator.Core.Incremental;
 using BuildOrchestrator.Core.Planning;
@@ -98,12 +99,18 @@ public class SyncWorkspaceServiceTests
 
     /// <summary>Tek SDK-style proje + onun klasöründe <see cref="LargeProjectSourceFiles"/> küçük <c>.cs</c> dosyası: soğuk
     /// bir cache'te girdi kümesi <see cref="SourceHashCache.NoisyPrefillThreshold"/>'u aşar, yani ilk indeksleme
-    /// RAPORLANIR (bkz. <see cref="IndexingReport"/>).</summary>
+    /// RAPORLANIR (bkz. <see cref="IndexingReport"/>).
+    /// <para><b>Racy pencere:</b> dosyalar şimdiki mtime ile yazılırsa soğuk Sync'in sonundaki <c>Flush</c>, mtime'ı son
+    /// <see cref="SourceHashCache.RacyWindow"/> içinde kalan girdileri diske YAZMAZ — hızlı bir makinede yüzlerce girdi
+    /// pencerede kalır ve "sıcak" Sync onları yeniden indeksler (duvar saatine bağlı kırmızı). Bu yüzden proje klasörü eski
+    /// bir zamana damgalanır (<see cref="EvidenceTimes.Stamp"/>, sleep yok); içerik değişmediği için <c>git status</c> temiz
+    /// kalır.</para></summary>
     private static void WriteLargeSourceProject(GitTestRepo repo)
     {
         WriteSdkProject(repo, "Big");
         for (int i = 0; i < LargeProjectSourceFiles; i++)
             repo.WriteFile(Path.Combine("src", "Big", $"File{i}.cs"), $"public class File{i} {{ }}");
+        EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src", "Big"), []);
     }
 
     /// <summary>Eşiğin <b>üstünde</b> kalmanın payı: girdi kümesi ayrıca proje dosyasını ve proje sınıfını da içerir.</summary>
@@ -388,9 +395,18 @@ public class SyncWorkspaceServiceTests
         Assert.Contains(events.Skip(lastIndexingAt + 1), e => e is SyncStepEvent { Step: SyncStep.Analyzing });
 
         Assert.Contains(Progress(events), e => e.Line == PlanProgressLines.IndexingSources(total));
-        Assert.Contains(Progress(events),
-            e => e.Line.StartsWith($"Indexed {total} source files in ", StringComparison.Ordinal));
+        string closingPrefix = IndexedSourcesPrefix(total);
+        Assert.Contains(Progress(events), e => e.Line.StartsWith(closingPrefix, StringComparison.Ordinal));
     }
+
+    /// <summary><see cref="PlanProgressLines.IndexedSources"/> satırının süreye kadar olan kısmı — süre koşuya göre
+    /// değiştiği için satır önekle aranır; önek ürün satırından TÜRER (metin testte kopyalanmaz).</summary>
+    private static string IndexedSourcesPrefix(int files) =>
+        PlanProgressLines.IndexedSources(files, 0)[..^DurationFormat.Elapsed(0).Length];
+
+    /// <summary>Ürün satırının ilk sözcüğü ve boşluğu (ör. "Indexing ") — sayıdan bağımsız "bu bir indeksleme satırı"
+    /// ayrımı için; sözcük <see cref="PlanProgressLines"/>'tan okunur.</summary>
+    private static string LeadingWord(string line) => line[..(line.IndexOf(' ') + 1)];
 
     /// <summary>[sync ilerlemesi] Sıcak bir cache'te (aynı cache kökü, ikinci Sync) indekslenecek dosya kalmaz: ne
     /// <c>Indexing</c> olayı ne <c>Indexing</c>/<c>Indexed</c> satırı çıkar — şerit yalnız gerçekten uzun süren işi söyler.
@@ -413,10 +429,12 @@ public class SyncWorkspaceServiceTests
         await ServiceFor(repo.RootPath, cacheRoot).RunAsync(
             new SyncWorkspaceCommand(repo.RootPath, branch, Fetch: false), warm.Add, CancellationToken.None);
 
+        string indexingWord = LeadingWord(PlanProgressLines.IndexingSources(0));
+        string indexedWord = LeadingWord(PlanProgressLines.IndexedSources(0, 0));
         Assert.DoesNotContain(warm, e => e is SyncStepEvent { Step: SyncStep.Indexing });
         Assert.DoesNotContain(Progress(warm), e =>
-            e.Line.StartsWith("Indexing ", StringComparison.OrdinalIgnoreCase)
-            || e.Line.StartsWith("Indexed ", StringComparison.OrdinalIgnoreCase));
+            e.Line.StartsWith(indexingWord, StringComparison.OrdinalIgnoreCase)
+            || e.Line.StartsWith(indexedWord, StringComparison.OrdinalIgnoreCase));
         Assert.Equal([SyncStep.Analyzing], warm.OfType<SyncStepEvent>().Select(e => e.Step).ToList());
     }
 

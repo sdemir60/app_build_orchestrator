@@ -53,9 +53,11 @@ public static class OperationLabel
         _ => Build,
     };
 
-    /// <summary>[şerit işlemi] Uçuştaki workspace işinin (<see cref="RibbonWork"/>) pill sözcüğü — iş ile sözcük arasındaki TEK eşleme; iş
-    /// yoksa <c>null</c>. Esc'in "durdurulamaz" satırı bunu okur (<c>RunViewModel.UnstoppableOperation</c>). Pull, pill'de zincirlendiği
-    /// Sync'le tek işlemdir: <see cref="Sync"/>.</summary>
+    /// <summary>[şerit işlemi] Uçuştaki workspace işinin (<see cref="RibbonWork"/>) pill sözcüğü; iş yoksa <c>null</c>. Esc'in
+    /// "durdurulamaz" satırı işi bununla adlandırır (<c>RunViewModel.UnstoppableOperation</c>). Pill'in KENDİ sözcüğü bu eşlemeden
+    /// okunmaz: istek yerlerinde <c>CurrentOperation</c>'a doğrudan yazılır; iki yolun aynı sözcüğü verdiği testle pinlidir
+    /// (her iş için pill metni = <c>ForWork(WorkInFlight)</c>). Pull, pill'de zincirlendiği Sync'le tek işlemdir:
+    /// <see cref="Sync"/>.</summary>
     public static string? ForWork(RibbonWork work) => work switch
     {
         RibbonWork.Sync or RibbonWork.Pull => Sync,
