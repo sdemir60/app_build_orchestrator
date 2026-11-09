@@ -16,6 +16,12 @@ namespace BuildOrchestrator.Core.Workspace;
 /// göre TAM ANALİZ YALNIZ SYNC'te koşar;
 /// Build'in örtük Sync'i evaluation-cache sayesinde ucuzdur.
 ///
+/// <para><b>[sync ilerlemesi] Adım olayları:</b> akış şeride hangi adımda olduğunu <see cref="SyncStepEvent"/> ile söyler —
+/// gerçekten fetch edilecekse fetch satırından hemen önce <see cref="SyncStep.Fetching"/> (branch'iyle), uzak uç ölçülünce
+/// taramadan önce <see cref="SyncStep.Analyzing"/>, eşiği geçen bir ilk indeksleme sürerken sayısıyla
+/// <see cref="SyncStep.Indexing"/> (<see cref="IndexingReport"/>) ve o bitince yeniden <see cref="SyncStep.Analyzing"/>.
+/// Konsol satırları (<see cref="SyncProgressEvent"/>) bu olaylardan bağımsızdır ve değişmez.</para>
+///
 /// <para><b>K1 (mutlak):</b> git adımı YALNIZ <see cref="GitService.FetchRefOnlyAsync"/>'tir. checkout / pull /
 /// merge / switch / reset ASLA çağrılmaz; aktif branch, HEAD ve working tree bu servisle DEĞİŞMEZ. Geri kalan
 /// tüm git kullanımı salt-okurdur (HEAD, dirty paths, ls-tree). Bkz. <c>SyncWorkspaceServiceTests</c>.</para>
@@ -232,7 +238,8 @@ public sealed class SyncWorkspaceService(
     /// <summary>
     /// §3.1 satır 1-2: uzak uç ve yerel HEAD'in ondan mesafesi.
     /// <para><b><paramref name="fetch"/>=true:</b> ref-only fetch (K1) — ağ yoksa hata YUTULUR, uyarı basılır,
-    /// hedef yerel HEAD'e düşer ve mesafe bilinmez.</para>
+    /// hedef yerel HEAD'e düşer ve mesafe bilinmez. Fetch'ten hemen önce şeride <see cref="SyncStep.Fetching"/> adımı
+    /// (branch'iyle) gider; fetch'siz ve boş branch'li yollar bu adımı göndermez.</para>
     /// <para><b><paramref name="fetch"/>=false</b> [spec 2026-09-18 §6.2]: ağa çıkılmaz ve fetch satırı yazılmaz;
     /// mesafe son bilinen uzak uca (<c>refs/remotes/origin/&lt;branch&gt;</c>) göre yerelde hesaplanır. Uzak ref
     /// yoksa hedef yerel HEAD'dir ve mesafe bilinmez — bu bir hata değildir, degrade bayrağı kurulmaz.</para>

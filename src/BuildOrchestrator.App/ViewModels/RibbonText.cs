@@ -56,7 +56,8 @@ public readonly record struct SyncProgressView(SyncStep? Step, string? Branch, i
 
 /// <summary>
 /// [şerit işlemi] Pill'in sözcüğüyle uçuşta duran, kullanıcıya görünen workspace işi: şerit bu iş sürerken pill'i amber yakar, çubuğu
-/// belirsiz sürer ve satırı o işi anlatır (<see cref="RibbonText.Compose"/>); pill sözcüğü <see cref="OperationLabel.ForWork"/>'ten. Saf
+/// belirsiz sürer ve satırı o işi anlatır (<see cref="RibbonText.Compose"/>). Pill'in sözcüğü istek yerlerinde <c>CurrentOperation</c>'a
+/// yazılır; işin sözcüğe eşlemesi (Esc'in "durdurulamaz" satırı için) <see cref="OperationLabel.ForWork"/>'tedir. Saf
 /// DATA; hiçbir WPF türü taşımaz. Değeri VM üretir (<c>RunViewModel.WorkInFlight</c>): koşu kilidi varken ve görünmeyen sessiz Sync'te
 /// <see cref="None"/>'dır — koşu kendi faz satırlarıyla anlatılır, sessiz Sync ekranda bir işlem değildir.
 /// </summary>

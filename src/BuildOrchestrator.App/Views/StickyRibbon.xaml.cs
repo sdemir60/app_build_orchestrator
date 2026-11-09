@@ -459,7 +459,7 @@ public partial class StickyRibbon : UserControl
         double indW = trackW * IndeterminateWidthFraction;
         PART_ProgressIndicator.BeginAnimation(WidthProperty, null);
         PART_ProgressIndicator.Width = indW;
-        SetIndicatorColor("Brush.Amber"); // FILL.building (_ds_bundle.js:499)
+        SetIndicatorColor(RibbonText.FillBrushKeyFor("building")); // FILL.building (_ds_bundle.js:499) — indexing dolgusuyla tek kaynak
 
         // [perf A7] Görünmezken süpürme KURULMAZ. Kapı burada, çağıranlarda değil: RefreshProgress ve OnTrackSizeChanged
         // tepsideyken de çağırır — yalnız IsVisibleChanged'de durdurmak saati bir sonraki çağrıda geri kurardı

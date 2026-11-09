@@ -539,10 +539,10 @@ rather than mysterious.
 `Esc` stops a Build, Rebuild or Clean the way *Stop* does — the projects in flight finish and the next Build
 carries on from there. Pressing it while a stop drains — yours, or one a branch switch started — is *Stop now*: the
 in-flight compiles are terminated at once. A Sync, Deep Clean, Optimize, branch switch, worktree creation or pull
-cannot be stopped; `Esc` during one writes a single console line saying so. Once `Esc` has nothing left to close or stop — nothing is
-running, *Stop now* has gone out, or that line is written — it closes the window just as `X` does: with *Close to
-tray* on the app drops to the tray and any work carries on; with it off the app quits, asking first with the exit
-card if work is still running. Unlike *Exit*, it never stops anything itself.
+cannot be stopped; `Esc` during one writes a single console line saying so. Once `Esc` has nothing left to close or
+stop — nothing is running, *Stop now* has gone out, or that line is written — it closes the window just as `X` does:
+with *Close to tray* on the app drops to the tray and any work carries on; with it off the app quits, asking first
+with the exit card if work is still running. Unlike *Exit*, it never stops anything itself.
 
 Disabled commands stay disabled when triggered by a shortcut — the key never bypasses the button's state.
 `F1` toggles About and works even while another dialog is open: About opens on top, and Esc closes the topmost
