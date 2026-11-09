@@ -1,4 +1,5 @@
 ﻿using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.Contracts.Ipc;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -39,12 +40,45 @@ public class RibbonTextTests
         Assert.Null(line.Glyph);
     }
 
+    /// <summary>[sync ilerlemesi] Sync başladı ama motor henüz bir adım bildirmedi: şerit yalnız Sync'in başladığını söyler,
+    /// ikincil metin renginde, glyph'siz. Sabitin metni bir kez pinlenir.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eski satır Sync boyunca SABİTTİ ve onu Sync'in kipi seçiyordu: fetch'li Sync'te
+    /// <c>▸ Sync — git fetch origin…</c>, fetch'siz Sync'te (branch değişimi) <c>▸ Sync…</c>. Ölçüm: ilk worktree Sync'i
+    /// 55 sn sürdü (51 sn'si ilk indeksleme); satır bu süre boyunca sabitti — fetch'li Sync'te fetch bitmişken de "git fetch"
+    /// diyordu. Satır artık motorun bildirdiği adımı söyler (<see cref="The_sync_line_names_the_engine_step"/>); adım
+    /// gelmeden önce her Sync bu satırı okur.</para></summary>
     [Fact]
-    public void Syncing_line_shows_the_git_fetch_message_in_secondary_text()
+    public void A_sync_with_no_step_yet_reads_sync_in_secondary_text()
     {
+        Assert.Equal("▸ Sync…", RibbonText.SyncStarting); // metnin TEK literal pini
+
         var line = RibbonText.Compose(AppPhase.Syncing, true, false, Counters(),
             0, 0, 14, 0, null, null, 0);
-        Assert.Equal("▸ Sync — git fetch origin…", line.Text);
+
+        Assert.Equal(RibbonText.SyncStarting, line.Text);
+        Assert.Equal("Brush.TextSecondary", line.BrushKey);
+        Assert.Null(line.Glyph);
+    }
+
+    /// <summary>[sync ilerlemesi] Sync satırı motorun bildirdiği adımı söyler: fetch'te uzak branch'i (bilinmiyorsa yalnız
+    /// <c>origin</c>), analizde keşfin o ana kadar bulduğu proje sayısını (henüz yoksa "the workspace", tekilde "project"),
+    /// ilk indekslemede özetlenen dosya sayısını paydasıyla — indeksleme sürerken proje sayısı satıra girmez. Sayılar düz
+    /// tamsayıdır (binlik ayırıcı yok). Metinlerin TEK literal pini.</summary>
+    [Theory]
+    [InlineData(SyncStep.Fetching, "main", 0, 0, 0, "▸ Sync — fetching origin/main…")]
+    [InlineData(SyncStep.Fetching, null, 0, 0, 0, "▸ Sync — fetching origin…")]
+    [InlineData(SyncStep.Analyzing, null, 0, 0, 0, "▸ Sync — analyzing the workspace…")]
+    [InlineData(SyncStep.Analyzing, null, 0, 0, 1, "▸ Sync — analyzing 1 project…")]
+    [InlineData(SyncStep.Analyzing, null, 0, 0, 177, "▸ Sync — analyzing 177 projects…")]
+    [InlineData(SyncStep.Indexing, null, 11633, 23266, 177, "▸ Sync — indexing source files · 11633/23266")]
+    public void The_sync_line_names_the_engine_step(SyncStep step, string? branch, int done, int total, int projectsFound,
+        string expected)
+    {
+        var sync = new SyncProgressView(step, branch, done, total, projectsFound);
+
+        var line = RibbonText.Compose(AppPhase.Syncing, true, false, Counters(), 0, 0, 14, 0, null, null, 0, sync: sync);
+
+        Assert.Equal(expected, line.Text);
         Assert.Equal("Brush.TextSecondary", line.BrushKey);
     }
 

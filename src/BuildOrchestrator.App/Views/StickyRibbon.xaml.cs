@@ -9,6 +9,7 @@ using System.Windows.Media.Animation;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.Contracts.Ipc;
 
 namespace BuildOrchestrator.App.Views;
 
@@ -244,6 +245,13 @@ public partial class StickyRibbon : UserControl
             case nameof(RunViewModel.EtaMs):
                 RefreshText();
                 break;
+            // [sync ilerlemesi] Motorun bildirdiği Sync adımı: satır değişir (fetch/analiz/indexing) ve indexing'de çubuk
+            // sayıyla dolar. Faz DEĞİŞMEZ — elapsed tick'i gibi ekran okuyucuya duyurulmaz (indeksleme sayısı saniyede
+            // iki kez ilerler).
+            case nameof(RunViewModel.SyncProgress):
+                RefreshText();
+                RefreshProgress();
+                break;
             case nameof(RunViewModel.Counters):
             case nameof(RunViewModel.DepIssueCount):
                 // Counters = kompozisyon proxy'si: statü değişiminde (tick'te DEĞİL) tetiklenir → metin + progress.
@@ -367,6 +375,18 @@ public partial class StickyRibbon : UserControl
     private void RefreshProgress()
     {
         if (_vm is null) return;
+
+        // [sync ilerlemesi] İlk indeksleme sürerken motor sayıyı PAYDASIYLA bildirir: ölçülebilir bir oran vardır, çubuk
+        // belirsiz değil, amber dolguyla Done/Total kadar dolar (satır aynı sayıyı söyler). Sync'in diğer adımlarında payda
+        // yoktur — aşağıdaki belirsiz dal. Kapı faza bakar: sessiz Sync Syncing'e geçmez, adımı çubuğa çıkmaz.
+        if (_vm.Phase == AppPhase.Syncing && _vm.SyncProgress is { Step: SyncStep.Indexing, Total: > 0 } indexing)
+        {
+            if (_isIndeterminate) { _isIndeterminate = false; StopIndeterminate(); }
+            SetIndicatorColor("Brush.Amber"); // belirsiz moddaki dolguyla aynı (FILL.building)
+            _lastFraction = Math.Clamp((double)indexing.Done / indexing.Total, 0.0, 1.0);
+            AnimateIndicatorWidth(_lastFraction * PART_ProgressTrack.ActualWidth);
+            return;
+        }
 
         // [planlama görünürlüğü] Starting, Syncing ile AYNI kefede: motor çalışıyor ama henüz PLAN yok, yani
         // ölçülebilir bir yüzde de yok. Determinate bırakılsaydı çubuk willBuild==0 yüzünden %0'da DONAR ve

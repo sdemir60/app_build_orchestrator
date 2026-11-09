@@ -245,14 +245,17 @@ public class StickyRibbonTests
 
     /// <summary>[P3 · Task 2] Güvenli çıkış uçuştaki bir Sync'i beklemeye başladığında şerit metni YENİLENİR: faz
     /// değişmez (hâlâ Syncing), değişen tek şey <see cref="RunViewModel.ExitPending"/>'tir — şerit onu dinlemezse
-    /// bekleyiş boyunca eski "▸ Sync" satırında kalır ve kapatma tıklaması kaybolmuş görünür.</summary>
+    /// bekleyiş boyunca eski "▸ Sync" satırında kalır ve kapatma tıklaması kaybolmuş görünür.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Ön-koşul eskiden fetch'li Sync'in sabit satırıydı (<c>▸ Sync — git fetch origin…</c>);
+    /// o satır Sync boyunca değişmiyordu (ölçüm: ilk worktree Sync'i 55 sn aynı satır). Sync satırı artık motorun adımını
+    /// izler ve adım gelmeden <see cref="RibbonText.SyncStarting"/>'dir. İddia aynı.</para></summary>
     [StaFact]
     public void The_ribbon_redraws_when_the_exit_starts_waiting()
     {
         var vm = NewVm();
         var (ribbon, window) = Realize(vm);
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main")); // çıkışın bekleyeceği iş
-        Assert.Equal(RibbonText.SyncingWithFetch, ribbon.PhaseText.Text); // ön-koşul
+        Assert.Equal(RibbonText.SyncStarting, ribbon.PhaseText.Text); // ön-koşul
 
         vm.RequestExit();
 
@@ -283,6 +286,33 @@ public class StickyRibbonTests
         vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 0, 0)); // → Idle
         Assert.False(ribbon.IsIndeterminate);
         Assert.False(DependencyPropertyHelper.GetValueSource(ribbon.IndicatorTranslate, TranslateTransform.XProperty).IsAnimated);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[sync ilerlemesi] İlk indeksleme sürerken çubuk belirsiz DEĞİLDİR: motor sayıyı paydasıyla bildirir, yani
+    /// ölçülebilir bir oran vardır — çubuk amber dolguyla <c>Done/Total</c> kadar dolar ve satır sayıyı söyler. İndeksleme
+    /// bitip analiz sürerken payda yine yoktur: çubuk belirsiz moda döner.
+    /// <para>KIRMIZI: Sync boyunca çubuk hep belirsizdi (51 sn'lik ilk indeksleme dahil), adım olayı yok sayılıyordu.</para></summary>
+    [StaFact]
+    public void While_the_sync_indexes_the_progress_bar_fills_with_the_count()
+    {
+        var vm = NewVm();
+        var (ribbon, window) = Realize(vm);
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        Assert.True(ribbon.IsIndeterminate); // Sync başında payda yok
+
+        vm.OnEvent(new SyncStepEvent(SyncStep.Indexing, Done: 150, Total: 600));
+
+        double track = ribbon.ProgressTrack.ActualWidth;
+        Assert.True(track > 0, "ön-koşul: iz ölçülmüş olmalı");
+        Assert.Equal(RibbonText.SyncIndexing(150, 600), ribbon.PhaseText.Text);
+        Assert.False(ribbon.IsIndeterminate);
+        Assert.Equal(0.25 * track, ribbon.ProgressIndicator.Width, 3);
+        var fill = Assert.IsType<SolidColorBrush>(ribbon.ProgressIndicator.Background);
+        Assert.Equal(((SolidColorBrush)ribbon.FindResource("Brush.Amber")).Color, fill.Color);
+
+        vm.OnEvent(new SyncStepEvent(SyncStep.Analyzing));
+        Assert.True(ribbon.IsIndeterminate);
         GC.KeepAlive(window);
     }
 

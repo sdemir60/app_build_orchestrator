@@ -25,8 +25,8 @@ namespace BuildOrchestrator.Tests.App;
 /// kendiliğinden açmak, hâlâ koşan bir motora ikinci bir run başlatmaya izin vermek demekti.</para>
 ///
 /// <para><b>[DEĞİŞEN KURAL] Sync penceresi SONRADAN eklendi.</b> Eskiden kapsam iki pencereydi ve Sync
-/// dışarıdaydı; ölçülen bedel: motor Sync ortasında donduğunda şerit sonsuza dek "▸ Sync — git fetch
-/// origin…" gösteriyor, "Restart engine" kapısı HİÇ görünmüyordu — tek çıkış uygulamayı kapatmaktı. Sync de
+/// dışarıdaydı; ölçülen bedel: motor Sync ortasında donduğunda şerit sonsuza dek "▸ Sync — …" gösteriyor,
+/// "Restart engine" kapısı HİÇ görünmüyordu — tek çıkış uygulamayı kapatmaktı. Sync de
 /// tam olarak bir geçiş bekleyişidir; üstelik Sync düğmesi artık uçuşta bir Sync varken kilitli olduğundan
 /// (bkz. <c>RunViewModelStateTests</c> Sync guard bölümü) donmuş bir Sync'ten çıkışın TEK yolu bu kapıdır.
 /// Sync'in git çağrıları 30 sn'de zaman aşımına uğrar (<c>GitService.CommandTimeout</c>), yani 90 sn'lik
@@ -93,7 +93,7 @@ public sealed class EngineSilenceWatchdogTests
     }
 
     /// <summary>[DEĞİŞEN KURAL — Sync penceresi] Motor Sync ORTASINDA donarsa da çıkış kapısı gösterilir.
-    /// Eskiden bu pencere kapsam dışıydı: şerit sonsuza dek "▸ Sync — git fetch origin…" der, "Restart
+    /// Eskiden bu pencere kapsam dışıydı: şerit sonsuza dek "▸ Sync — …" der, "Restart
     /// engine" hiç görünmezdi.</summary>
     [Fact]
     public async Task A_silent_engine_during_a_sync_offers_the_escape_hatch()

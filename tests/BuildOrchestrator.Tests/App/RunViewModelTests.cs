@@ -2761,7 +2761,7 @@ public class RunViewModelTests
     }
 
     // Başarısız bir Sync (ör. kök bir git repo'su değil) syncCompleted YAYINLAMAZ — yalnız planFailed gelir.
-    // Faz Syncing'de ASILI KALMAMALIDIR, aksi halde şerit sonsuza dek "▸ Sync — git fetch origin…" gösterirdi.
+    // Faz Syncing'de ASILI KALMAMALIDIR, aksi halde şerit sonsuza dek "▸ Sync — …" gösterirdi.
     [Fact]
     public async Task A_failed_sync_releases_the_syncing_phase_instead_of_hanging_there()
     {
@@ -3531,8 +3531,8 @@ public class RunViewModelTests
         while (posted.TryDequeue(out var action)) action();
     }
 
-    /// <summary>[review I1] Sessiz Sync şeritte de görünmez: faz <c>Syncing</c>'e geçmez (şerit "▸ Sync — git
-    /// fetch…" demez), önceki işlemin pill'i canlanmaz; bitince faz olduğu yerde kalır.</summary>
+    /// <summary>[review I1] Sessiz Sync şeritte de görünmez: faz <c>Syncing</c>'e geçmez (şerit "▸ Sync — …" demez),
+    /// önceki işlemin pill'i canlanmaz; bitince faz olduğu yerde kalır.</summary>
     [Fact]
     public async Task A_silent_sync_keeps_the_phase_and_the_pill_is_not_live()
     {
@@ -3578,7 +3578,11 @@ public class RunViewModelTests
         Assert.Equal(ribbonBefore, vm.RibbonLine.Text);
     }
 
-    /// <summary>[review I1] Branch değişiminin Sync'i fetch etmez — şerit de fetch iddia etmez.</summary>
+    /// <summary>[review I1] Branch değişiminin Sync'i fetch etmez — şerit de fetch iddia etmez.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Satırı eskiden Sync'in KİPİ seçiyordu: fetch'siz kip <c>▸ Sync…</c>, diğerleri Sync
+    /// boyunca sabit <c>▸ Sync — git fetch origin…</c>. Ölçüm: ilk worktree Sync'i 55 sn sürdü, satır bu süre boyunca sabitti. Satırı
+    /// artık motorun bildirdiği adım seçer; fetch etmeyen bir Sync <see cref="SyncStep.Fetching"/> göndermez, satır
+    /// başlangıçta <see cref="RibbonText.SyncStarting"/>'dir.</para></summary>
     [Fact]
     public async Task A_branch_change_sync_does_not_claim_a_fetch_on_the_ribbon()
     {
@@ -3591,8 +3595,73 @@ public class RunViewModelTests
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "feature/x"));
 
         Assert.Equal(AppPhase.Syncing, vm.Phase);
-        Assert.DoesNotContain("git fetch", vm.RibbonLine.Text, StringComparison.Ordinal);
-        Assert.Equal(RibbonText.SyncingWithoutFetch, vm.RibbonLine.Text);
+        Assert.DoesNotContain("fetch", vm.RibbonLine.Text, StringComparison.Ordinal);
+        Assert.Equal(RibbonText.SyncStarting, vm.RibbonLine.Text);
+    }
+
+    /// <summary>[sync ilerlemesi] Görünür bir Sync boyunca şerit motorun bildirdiği adımı izler: başlangıç, fetch, analiz,
+    /// keşfin bulduğu proje sayısı, ilk indekslemenin sayısı, indeksleme bitince yeniden analiz (sayı korunur) ve bitişte
+    /// Ready. Proje sayısı keşif bloğu açık olmasa da şeride gider — blok yalnız liste boşken açılır, Sync her zaman sayar.
+    /// <para>KIRMIZI: satır Sync boyunca sabitti (<c>▸ Sync — git fetch origin…</c>), adım olayları yok sayılıyordu.</para></summary>
+    [Fact]
+    public async Task The_ribbon_follows_the_sync_steps_the_engine_reports()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe); // hiç başlatılmadı — OnEvent motora dokunmaz
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        Assert.Equal(RibbonText.SyncStarting, vm.RibbonLine.Text);
+
+        vm.OnEvent(new SyncStepEvent(SyncStep.Fetching, Branch: "main"));
+        Assert.Equal(RibbonText.SyncFetching("main"), vm.RibbonLine.Text);
+
+        vm.OnEvent(new SyncStepEvent(SyncStep.Analyzing));
+        Assert.Equal(RibbonText.SyncAnalyzing(0), vm.RibbonLine.Text);
+
+        vm.OnEvent(new SyncDiscoveryEvent(177, 0));
+        Assert.False(vm.IsDiscovering); // ön-koşul: keşif bloğu açık değil
+        Assert.Equal(RibbonText.SyncAnalyzing(177), vm.RibbonLine.Text);
+
+        vm.OnEvent(new SyncStepEvent(SyncStep.Indexing, Done: 0, Total: 600));
+        Assert.Equal(RibbonText.SyncIndexing(0, 600), vm.RibbonLine.Text);
+
+        vm.OnEvent(new SyncStepEvent(SyncStep.Indexing, Done: 300, Total: 600));
+        Assert.Equal(RibbonText.SyncIndexing(300, 600), vm.RibbonLine.Text);
+
+        vm.OnEvent(new SyncStepEvent(SyncStep.Analyzing));
+        Assert.Equal(RibbonText.SyncAnalyzing(177), vm.RibbonLine.Text);
+
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(A, "A", 0), Node(B, "B", 1)], [], [], []));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 2, 0));
+        Assert.StartsWith("▸ Ready", vm.RibbonLine.Text, StringComparison.Ordinal);
+    }
+
+    /// <summary>[sync ilerlemesi] Sessiz Sync'in adımları şeride çıkmaz: sessiz Sync ekranda bir işlem olarak görünmez (faz
+    /// <c>Syncing</c>'e geçmez), motor ilk indekslemeyi sayarak bildirse de şerit önceki işin satırında, pill önceki işlemde
+    /// kalır.
+    /// <para>Ön-koşul bilerek BİTMİŞ bir koşudur (düşmüş koşu değil): düşmüş koşunun kırmızı <c>Run failed — …</c> satırı
+    /// faz satırlarını zaten ezer ve faza bakmadan Sync satırını gösteren bir hatayı gizleyebilirdi.</para></summary>
+    [Fact]
+    public async Task A_silent_sync_leaves_the_ribbon_alone_while_it_indexes()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
+        var vm = SyncedTwoRowVm(engine);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug"));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 1, 0, 500));
+        string? opBefore = vm.CurrentOperation;
+        Assert.NotNull(opBefore); // ön-koşul: önceki işlemin pill'i
+        string ribbonBefore = vm.RibbonLine.Text;
+
+        Assert.True(await vm.SyncSilentlyAsync(SilentSyncReason.Refresh));
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        vm.OnEvent(new SyncStepEvent(SyncStep.Analyzing));
+        vm.OnEvent(new SyncDiscoveryEvent(2, 0));
+        vm.OnEvent(new SyncStepEvent(SyncStep.Indexing, Done: 0, Total: 600));
+        vm.OnEvent(new SyncStepEvent(SyncStep.Indexing, Done: 300, Total: 600));
+
+        Assert.Equal(ribbonBefore, vm.RibbonLine.Text);
+        Assert.Equal(opBefore, vm.CurrentOperation);
     }
 
     /// <summary>[review M1] Gönderimi düşen bir Sync kipini bırakır (sonraki transkript satırı gizlenmez) ve
