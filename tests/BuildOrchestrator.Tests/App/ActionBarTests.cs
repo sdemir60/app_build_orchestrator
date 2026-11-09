@@ -896,9 +896,14 @@ public partial class ActionBarTests
 
     // ---------------------------------------------------------------- [A13/T3b · b1] popover kabukları
 
-    /// <summary>[A13/T3b · b1] design-v1 README §2.8: <c>"Branch (272px)"</c> — OTORİTE LİTERALİ. Ölçülen,
-    /// ActionBar'ın KENDİ sarmalayıcı Border'ıdır (<c>Ds.Popover</c> stilli, <c>Width="272"</c>, ActionBar.xaml)
-    /// — <see cref="BranchPopover"/> kontrolünün kendi genişliği DEĞİL (bu ikisi FARKLI kavramlardır).
+    /// <summary>[A13/T3b · b1] Branch popover'ının kabuğu 480 px'tir. Ölçülen, ActionBar'ın KENDİ sarmalayıcı Border'ıdır
+    /// (<c>Ds.Popover</c> stilli, <c>Width="480"</c>, ActionBar.xaml) — <see cref="BranchPopover"/> kontrolünün kendi genişliği DEĞİL (bu
+    /// ikisi FARKLI kavramlardır).
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-11-09]</b> Eski iddia: design-v1 README §2.8 <c>"Branch (272px)"</c> — otorite
+    /// literali (ad: <c>Action_bar_wraps_the_branch_popover_in_design_v1s_272_pixel_shell</c>). Kullanıcı "branch isimleri çok uzun" dedi:
+    /// 272 px'te ad sütunu ~23 karakter alıyordu ve gerçek, 300 branch'lik bir repoda adların yalnız %21'i tam görünüyordu; 480 px ~52
+    /// karakter alır (%80). Davranış pini: <c>PopoverTests.A_48_character_branch_name_shows_in_full</c>.</para>
     ///
     /// <para>[fix-1 · B7] Test <c>PopoverTests</c>'ten BURAYA taşındı (kalem ActionBar'ındır) ve oradaki inline
     /// <see cref="Realize"/> kopyası silindi. [fix-1 · C8] Açılan her popup KAPATILIR: <c>StaysOpen="False"</c> +
@@ -908,19 +913,19 @@ public partial class ActionBarTests
     /// <c>Action_bar_wraps_the_branch_and_worktree_popovers_in_design_v1s_272_and_300_pixel_shells</c>);
     /// popover kalktı.</para></summary>
     [StaFact]
-    public void Action_bar_wraps_the_branch_popover_in_design_v1s_272_pixel_shell()
+    public void Action_bar_wraps_the_branch_popover_in_a_480_pixel_shell()
     {
         var vm = NewVm();
         var (bar, window) = Realize(vm);
 
         var branchBorder = PopoverShellBorder(bar.BranchPopoverControl);
-        Assert.Equal(272.0, branchBorder.Width);
+        Assert.Equal(480.0, branchBorder.Width);
 
         // Realize zorunlu (kural 5): Popup içeriği yalnız IsOpen=true iken ölçülüp yerleşir — gerçek açılış
         // olmadan ActualWidth hep 0 kalırdı (bu yüzden literal DP okumak TEK BAŞINA yetmezdi).
         bar.BranchChip.IsChecked = true;
         DispatcherPump.PumpUntil(() => branchBorder.ActualWidth > 0, TimeSpan.FromSeconds(2));
-        Assert.Equal(272.0, branchBorder.ActualWidth);
+        Assert.Equal(480.0, branchBorder.ActualWidth);
         bar.BranchChip.IsChecked = false; // simetri: açılan popup kapatılır (fix-1 · C8)
 
         GC.KeepAlive(window);

@@ -4587,7 +4587,8 @@ closes on outside clicks drops its `IsOpen` while the press is still travelling,
 re-checks the trigger and reopens it — the gesture cancels itself out and the popover cannot be closed by
 the control that opened it. One gate (`PopoverToggle`) closes that window for all six popovers — branch, the
 Build chevron, the row menu, the Open-in-VS chooser, the update card and the exit card. Rows inside them are 28 px. The branch popover is
-272 px wide and carries a search box; picking a row is a checkout (§10.3), picking the active branch does
+480 px wide, so most branch names show in full, lists twelve rows before it scrolls, and carries a search box; picking a row is a
+checkout (§10.3), picking the active branch does
 nothing, and the remote `origin/HEAD` pointer is not listed. A row can be picked without the mouse: from the search
 box `↓` marks the first row and `↓`/`↑` move the mark (it stops at the last row; `↑` on the first one clears it), and
 `Enter` picks the marked row exactly as a click would. With no row marked `Enter` does nothing, so a stray key never
