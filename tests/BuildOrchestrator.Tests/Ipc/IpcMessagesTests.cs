@@ -728,6 +728,29 @@ public class IpcMessagesTests
         Assert.Equal(ev, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
     }
 
+    /// <summary>[sync ilerlemesi] Sync'in hangi adımda olduğunu söyleyen yapısal olay kendi discriminator'ıyla taşınır;
+    /// adım camelCase METİN olarak yazılır (<c>"indexing"</c>), sayı olarak değil. <c>syncProgress</c> YENİDEN KULLANILMAZ:
+    /// o, konsola düşen bir METİN satırıdır; adı ve sayıyı oradan geri ayrıştırmak aynı bilgiyi ikinci bir biçimde
+    /// tanımlamak olurdu. Sayılar kümülatiftir; branch yalnız <c>Fetching</c>'de dolar (diğerlerinde JSON'a yazılmaz).</summary>
+    [Fact]
+    public void SyncStepEvent_round_trips_with_a_camel_case_step()
+    {
+        IpcEvent indexing = new SyncStepEvent(SyncStep.Indexing, Done: 120, Total: 600);
+        string json = JsonSerializer.Serialize(indexing, IpcJson.Options);
+        Assert.Contains("\"type\":\"syncStep\"", json);
+        Assert.Contains("\"step\":\"indexing\"", json);
+        Assert.Contains("\"done\":120", json);
+        Assert.Contains("\"total\":600", json);
+        Assert.DoesNotContain("\"branch\"", json);
+        Assert.Equal(indexing, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+
+        IpcEvent fetching = new SyncStepEvent(SyncStep.Fetching, Branch: "main");
+        string fetchingJson = JsonSerializer.Serialize(fetching, IpcJson.Options);
+        Assert.Contains("\"step\":\"fetching\"", fetchingJson);
+        Assert.Contains("\"branch\":\"main\"", fetchingJson);
+        Assert.Equal(fetching, JsonSerializer.Deserialize<IpcEvent>(fetchingJson, IpcJson.Options));
+    }
+
     /// <summary>[planlama görünürlüğü] Run planlaması (Build'e basıldığında koşan tarama/graf/incremental
     /// pencresi) kendi ilerleme satırlarını yayınlar. <c>syncProgress</c> YENİDEN KULLANILMAZ: App onu Sync
     /// transkriptinin parçası sayar (<c>_syncInFlight</c> penceresinin dili), bir run'ın planlaması ise

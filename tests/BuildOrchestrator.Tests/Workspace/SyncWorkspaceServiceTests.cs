@@ -96,6 +96,19 @@ public class SyncWorkspaceServiceTests
         repo.WriteFile(SlnName, string.Concat(names.Select((n, i) =>
             $"Project(\"{{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}}\") = \"{n}\", \"src\\{n}\\{n}.csproj\", \"{{{i + 1}}}\"\nEndProject\n")));
 
+    /// <summary>Tek SDK-style proje + onun klasöründe <see cref="LargeProjectSourceFiles"/> küçük <c>.cs</c> dosyası: soğuk
+    /// bir cache'te girdi kümesi <see cref="SourceHashCache.NoisyPrefillThreshold"/>'u aşar, yani ilk indeksleme
+    /// RAPORLANIR (bkz. <see cref="IndexingReport"/>).</summary>
+    private static void WriteLargeSourceProject(GitTestRepo repo)
+    {
+        WriteSdkProject(repo, "Big");
+        for (int i = 0; i < LargeProjectSourceFiles; i++)
+            repo.WriteFile(Path.Combine("src", "Big", $"File{i}.cs"), $"public class File{i} {{ }}");
+    }
+
+    /// <summary>Eşiğin <b>üstünde</b> kalmanın payı: girdi kümesi ayrıca proje dosyasını ve proje sınıfını da içerir.</summary>
+    private const int LargeProjectSourceFiles = SourceHashCache.NoisyPrefillThreshold + 20;
+
     /// <summary>İzole bir cache kökü — kullanıcının GERÇEK evaluation-cache/build-state dosyaları ASLA kirletilmez.</summary>
     private static string NewCacheRoot() => Directory.CreateTempSubdirectory("bo-sync-cache-").FullName;
 
@@ -294,6 +307,117 @@ public class SyncWorkspaceServiceTests
         Assert.True(startedAt == 0 && fetchAt > startedAt && discoveryAt > fetchAt && topologyAt > discoveryAt,
             $"sıra bekleniyor: syncStarted < fetch < syncDiscovery < workspaceTopology; gelen: started={startedAt}, "
             + $"fetch={fetchAt}, discovery={discoveryAt}, topology={topologyAt}");
+    }
+
+    /// <summary>
+    /// [sync ilerlemesi] Sync gerçekten fetch ediyorsa şeride önce <c>Fetching(branch)</c>, sonra analize geçtiğini
+    /// söyler: sıra <c>Fetching</c> &lt; <c>git fetch origin {branch}</c> konsol satırı &lt; <c>Analyzing</c> &lt;
+    /// ilk <see cref="SyncDiscoveryEvent"/>. Adım <c>syncProgress</c>'ten AYRI bir kanaldır; konsol satırları aynen kalır.
+    /// </summary>
+    [Fact]
+    public async Task A_fetching_sync_names_its_fetch_step_then_moves_to_the_analysis()
+    {
+        using var origin = new GitTestRepo();
+        WriteWorkspace(origin);
+        origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
+        string cloneRoot = origin.CloneFull();
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, NewCacheRoot())
+            .RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add, CancellationToken.None);
+
+        var fetching = Assert.Single(events.OfType<SyncStepEvent>(), e => e.Step == SyncStep.Fetching);
+        Assert.Equal(branch, fetching.Branch);
+        var analyzing = Assert.Single(events.OfType<SyncStepEvent>(), e => e.Step == SyncStep.Analyzing);
+
+        int fetchingAt = events.IndexOf(fetching);
+        int fetchLineAt = events.IndexOf(LineStartingWith(events, "git fetch origin "));
+        int analyzingAt = events.IndexOf(analyzing);
+        int discoveryAt = events.FindIndex(e => e is SyncDiscoveryEvent);
+        Assert.True(fetchingAt >= 0 && fetchLineAt > fetchingAt && analyzingAt > fetchLineAt && discoveryAt > analyzingAt,
+            "sıra bekleniyor: Fetching < git fetch satırı < Analyzing < syncDiscovery; gelen: "
+            + $"fetching={fetchingAt}, fetchLine={fetchLineAt}, analyzing={analyzingAt}, discovery={discoveryAt}");
+    }
+
+    /// <summary>[sync ilerlemesi] Fetch'siz Sync (kendiliğinden Sync, branch değişimi) ağa çıkmaz — şeride de "fetching"
+    /// DENMEZ: ilk adım doğrudan <c>Analyzing</c>'dir. Küçük bir çalışma alanı indekslemeyi de raporlamaz.</summary>
+    [Fact]
+    public async Task A_sync_without_fetch_reports_no_fetch_step()
+    {
+        using var origin = new GitTestRepo();
+        WriteWorkspace(origin);
+        origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
+        string cloneRoot = origin.CloneFull();
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, NewCacheRoot())
+            .RunAsync(new SyncWorkspaceCommand(cloneRoot, branch, Fetch: false), events.Add, CancellationToken.None);
+
+        Assert.Equal([SyncStep.Analyzing], events.OfType<SyncStepEvent>().Select(e => e.Step).ToList());
+    }
+
+    /// <summary>
+    /// [sync ilerlemesi] Soğuk bir cache'te eşiği aşan ilk indeksleme şeride sayısını verir: <c>Indexing</c> olayları
+    /// <c>(0, total)</c> ile başlar, <c>(total, total)</c> ile biter ve <c>Done</c> hiç azalmaz; sonuncunun ardından
+    /// <c>Analyzing</c>'e DÖNER (indeksleme analizin bir alt adımıdır). Konsol satırları değişmez: açılış ve kapanış satırı
+    /// yine yazılır. Toplam 520 değil "eşik ve üstü" diye sınanır — girdi kümesi proje dosyasını da içerir.
+    /// </summary>
+    [Fact]
+    public async Task A_first_index_reports_its_progress_and_returns_to_the_analysis()
+    {
+        using var repo = new GitTestRepo();
+        WriteLargeSourceProject(repo);
+        repo.CommitAll("c1");
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(repo.RootPath, NewCacheRoot()).RunAsync(
+            new SyncWorkspaceCommand(repo.RootPath, repo.CurrentBranchName(), Fetch: false), events.Add, CancellationToken.None);
+
+        var indexing = events.OfType<SyncStepEvent>().Where(e => e.Step == SyncStep.Indexing).ToList();
+        Assert.NotEmpty(indexing);
+        int total = indexing[0].Total;
+        Assert.True(total >= SourceHashCache.NoisyPrefillThreshold, $"toplam eşiği aşmalı; gelen: {total}");
+        Assert.Equal(0, indexing[0].Done);
+        Assert.All(indexing, e => Assert.Equal(total, e.Total));
+        Assert.Equal(total, indexing[^1].Done);
+        Assert.Equal(indexing.Select(e => e.Done).Order().ToList(), indexing.Select(e => e.Done).ToList());
+
+        int lastIndexingAt = events.FindLastIndex(e => e is SyncStepEvent { Step: SyncStep.Indexing });
+        Assert.Contains(events.Skip(lastIndexingAt + 1), e => e is SyncStepEvent { Step: SyncStep.Analyzing });
+
+        Assert.Contains(Progress(events), e => e.Line == PlanProgressLines.IndexingSources(total));
+        Assert.Contains(Progress(events),
+            e => e.Line.StartsWith($"Indexed {total} source files in ", StringComparison.Ordinal));
+    }
+
+    /// <summary>[sync ilerlemesi] Sıcak bir cache'te (aynı cache kökü, ikinci Sync) indekslenecek dosya kalmaz: ne
+    /// <c>Indexing</c> olayı ne <c>Indexing</c>/<c>Indexed</c> satırı çıkar — şerit yalnız gerçekten uzun süren işi söyler.
+    /// Ön koşul: ilk Sync indekslemeyi raporlamıştır (aksi hâlde ikinci iddia boşa geçerdi).</summary>
+    [Fact]
+    public async Task A_warm_index_reports_no_indexing_step()
+    {
+        using var repo = new GitTestRepo();
+        WriteLargeSourceProject(repo);
+        repo.CommitAll("c1");
+        string branch = repo.CurrentBranchName();
+        string cacheRoot = NewCacheRoot();
+
+        var cold = new List<IpcEvent>();
+        await ServiceFor(repo.RootPath, cacheRoot).RunAsync(
+            new SyncWorkspaceCommand(repo.RootPath, branch, Fetch: false), cold.Add, CancellationToken.None);
+        Assert.Contains(cold, e => e is SyncStepEvent { Step: SyncStep.Indexing });
+
+        var warm = new List<IpcEvent>();
+        await ServiceFor(repo.RootPath, cacheRoot).RunAsync(
+            new SyncWorkspaceCommand(repo.RootPath, branch, Fetch: false), warm.Add, CancellationToken.None);
+
+        Assert.DoesNotContain(warm, e => e is SyncStepEvent { Step: SyncStep.Indexing });
+        Assert.DoesNotContain(Progress(warm), e =>
+            e.Line.StartsWith("Indexing ", StringComparison.OrdinalIgnoreCase)
+            || e.Line.StartsWith("Indexed ", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal([SyncStep.Analyzing], warm.OfType<SyncStepEvent>().Select(e => e.Step).ToList());
     }
 
     // [Fix wave 1 — Finding 5] Tamamen temiz workspace, design-v1'in AYRI satırını basar

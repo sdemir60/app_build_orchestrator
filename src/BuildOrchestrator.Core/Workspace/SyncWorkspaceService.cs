@@ -117,6 +117,10 @@ public sealed class SyncWorkspaceService(
         if (head.Value is not null)
             emit(Info(PlanProgressLines.HeadDistance(RevisionText.Short(head.Value), behind, branch)));
 
+        // [sync ilerlemesi] Uzak uç ölçüldü (ya da hiç ölçülmedi): bundan sonrası analizdir. HEAD satırı olmasa da
+        // (commit'siz repo) basılır — adım, satırın değil, analizin başladığını söyler. syncProgress'ten AYRI kanal.
+        emit(new SyncStepEvent(SyncStep.Analyzing));
+
         // --- 2) tarama + plan. [v7 A5/N1] granular adım satırları fetch satırından SONRA, dim/info tonunda.
         // [planlama görünürlüğü] Adım metinleri PlanProgressLines'tan gelir: AYNI satırları Supervisor'ın
         // BuildRunPlan'ı da yayınlar (Build'e basıldığında planlama yeniden koşar) — metin iki yerde
@@ -245,6 +249,9 @@ public sealed class SyncWorkspaceService(
         string? targetSha;
         if (fetch)
         {
+            // [sync ilerlemesi] Şerit adımı konsol satırından HEMEN önce ve fetch edilen branch'i taşır. Yalnız gerçekten
+            // fetch edilecekse gelir: boş branch yukarıda döner, fetch=false aşağıdaki else dalına düşer.
+            emit(new SyncStepEvent(SyncStep.Fetching, Branch: branch));
             emit(Cmd($"git fetch origin {branch}"));
             var result = await git.FetchRefOnlyAsync(branch, ct);
             if (result.Degraded)
@@ -308,8 +315,15 @@ public sealed class SyncWorkspaceService(
             // terime girmez. Girdi kümesi bir kez toplanır, eksik özetler bir kez (paralel) okunur; iki
             // bağlama geçişi de aynı önbelleği paylaşır. İlk indekslemenin satırlarını (açılış, kalp atışı, kapanış)
             // IndexingReport yazar — eşik ve zamanlama kuralı tek yerde, run yoluyla ortak.
+            // [sync ilerlemesi] Aynı rapor sayıyı da yapısal olarak verir (SyncStepEvent.Indexing — şerit bunu okur,
+            // metni geri ayrıştırmaz). İndeksleme analizin İÇİNDE koşar: gürültülü bir indeks gösterildiyse
+            // (Reported) bittiğinde adım yeniden Analyzing'e döner; sessiz (eşik altı) indekslemede adım hiç değişmez.
+            var indexing = new IndexingReport(
+                line => emit(Info(line)),
+                (done, total) => emit(new SyncStepEvent(SyncStep.Indexing, Done: done, Total: total)));
             var binder = new IncrementalRunBinder(plan, evaluatedById, cmd.RootPath, hashes);
-            binder.Prefill(new IndexingReport(line => emit(Info(line))));
+            binder.Prefill(indexing);
+            if (indexing.Reported) emit(new SyncStepEvent(SyncStep.Analyzing));
 
             // Idle'daki will-dot'ların kaynağı BURASIDIR ve onlar bir sonraki DÜZ Build'i tarif eder. Build kirli SCC
             // gruplarını da derlediği için kapı Build'in kendi kararını okur (CycleCompilation — tek kaynak): kirli
