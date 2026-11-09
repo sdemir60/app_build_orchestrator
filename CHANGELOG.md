@@ -2,6 +2,12 @@
 
 Release notes for Build Orchestrator, newest version first. The What's new window in the app reads this file.
 
+## [1.13.1] - 2026-11-09
+
+### Changed
+
+- The branch picker is wider and taller: most branch names show in full instead of ending in an ellipsis, and twelve branches are in view before the list scrolls.
+
 ## [1.13.0] - 2026-11-09
 
 ### Added
