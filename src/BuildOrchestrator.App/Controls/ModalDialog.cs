@@ -2,6 +2,7 @@ using System.Collections;
 using System.Windows.Automation.Peers;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 
@@ -110,6 +111,9 @@ public class ModalDialog : UserControl
         {
             _frame.MouseLeftButtonDown += OnFramePressed;
             _frame.SizeChanged += OnFrameSizeChanged;
+            // Kayan gövdelerin kenar solması (EdgeFade) zemine karışır: zemin çerçevenindir ve kalıtımla dialogun
+            // içindeki her şeride iner — dialoglar rengi kendileri vermez.
+            SetBinding(EdgeFade.FillProperty, new Binding(nameof(Border.Background)) { Source = _frame });
         }
         ApplyHostClamp();
     }
