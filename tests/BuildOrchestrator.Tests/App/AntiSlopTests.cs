@@ -68,10 +68,10 @@ public sealed class AntiSlopTests
 
     /// <summary>
     /// Gradyan yasağının KOD tarafı: bir fırça C#'tan da kurulabilir, XAML taraması tek başına bunu görmezdi.
-    /// Tek istisna kayan içeriğin kenardaki solma şerididir (<c>Controls/EdgeFade.cs</c>, What's new — kullanıcı
-    /// kararı): kendi rengi yoktur, altındaki zeminin rengini opaktan saydama rampalar, yalnız alfa değişir; durağan
-    /// hâlde zeminden ayırt edilemez (<c>NotesDialogTests.Text_scrolled_above_the_lists_top_line_fades_out_toward_the_header_hairline</c>).
-    /// Yasağın hedefi bir yüzeyi süsleyen gradyandır; içeriğin kenarda solması değil.
+    /// Tek istisna kayan içeriğin kenardaki solma şerididir (<c>Controls/EdgeFade.cs</c>, modalların kayan gövdeleri —
+    /// kullanıcı kararı): kendi rengi yoktur, altındaki zeminin rengini opaktan saydama rampalar, yalnız alfa değişir;
+    /// şerit boşken zeminden ayırt edilemez (<c>EdgeFadeTests</c>). Yasağın hedefi bir yüzeyi süsleyen gradyandır;
+    /// içeriğin kenarda solması değil.
     /// </summary>
     [Fact]
     public void No_code_builds_a_gradient_except_the_edge_fade()

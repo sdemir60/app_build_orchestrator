@@ -75,6 +75,40 @@ public class AboutDialogTests
     private static ScrollViewer EnvironmentTabScroller(ScrollViewer valueCell) =>
         DsResources.Ancestors(valueCell).OfType<ScrollViewer>().First();
 
+    // ---------------------------------------------------------------- kenar solması
+
+    /// <summary>About sekmesinin kayan paneli (açılışta seçili olan).</summary>
+    private static ScrollViewer AboutTabScroller(BuildOrchestrator.App.Views.AboutDialog dialog) =>
+        dialog.Body.Children.OfType<ScrollViewer>().Single(s => s.IsVisible);
+
+    /// <summary>Sekme paneli de What's new'in gövdesiyle aynı kuralla solar: içeriğin 14px üst boşluğu bir solma
+    /// şerididir — yukarı kayan yazı sekmelerin altındaki çizgide kesik durmaz, durağan üst çizgisinden itibaren zemine
+    /// karışarak kaybolur; durağan hâlde şerit zeminden ayırt edilemez. Ölçüm ve iddia ortak düzenektedir
+    /// (<see cref="EdgeFadeProbe"/>); diğer iki sekmenin de açık olduğu kabuk kuralıdır (DialogShellTests).</summary>
+    [StaFact]
+    public void The_about_tab_fades_text_scrolled_into_its_top_inset()
+    {
+        var (dialog, _, scope) = AboutDialogHost.OpenRealized();
+        using (scope)
+        {
+            var tab = AboutTabScroller(dialog);
+            EdgeFadeProbe.AssertTopBandFades(tab, EdgeFadeProbe.InsertProbe(tab), DsResources.ColorOf(dialog.Frame.Background), 14);
+        }
+    }
+
+    /// <summary>Alt kenar: içeriğin 20px alt boşluğu solma şerididir — footer çizgisine inen yazı orada kesik durmaz,
+    /// zemine karışarak kaybolur; panel sona kaydırılınca şeritte yalnız boşluk kalır.</summary>
+    [StaFact]
+    public void The_about_tab_fades_text_running_into_its_bottom_inset()
+    {
+        var (dialog, _, scope) = AboutDialogHost.OpenRealized();
+        using (scope)
+        {
+            var tab = AboutTabScroller(dialog);
+            EdgeFadeProbe.AssertBottomBandFades(tab, EdgeFadeProbe.InsertProbe(tab), DsResources.ColorOf(dialog.Frame.Background), 20);
+        }
+    }
+
     // ---------------------------------------------------------------- kabuk
 
     /// <summary>

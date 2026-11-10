@@ -56,47 +56,42 @@
        (içerik viewport'un 22px altında kesilirdi). Sticky sol kolonun ofseti ScrollChanged'de yazılır
        (NotesDialog.xaml.cs, StickyColumn).
 
-       [DEĞİŞEN KURAL] Listenin 22px üst boşluğu bir SOLMA ŞERİDİDİR (TopFade). ESKİDEN içerik o boş şeridi tam
-       görünür hâlde geçip başlık çizgisinde kesik duruyordu — kaybolma yazının başladığı çizgide değil, 22px yukarıda
-       başlıyordu (kullanıcının ekran görüntüsü). Artık yazı durağan üst çizgisinden itibaren dialog zeminine karışarak
-       solar, başlık çizgisinde kaybolur; durağan hâlde şerit boştur ve zeminden ayırt edilemez. Şerit yalnız içerik
-       alanını örter (genişliği viewport'un), scrollbar'ın hapı solmaz; yüksekliğin tek kaynağı listenin üst
-       boşluğudur, rengi dialog çerçevesinin zemininden bağlanır (NotesDialog.xaml.cs). -->
-  <Grid>
-    <ScrollViewer x:Name="Body" VerticalScrollBarVisibility="Auto" ScrollChanged="OnBodyScrollChanged">
-      <StackPanel x:Name="BodyList" Margin="18,22,18,24">
-        <StackPanel x:Name="WhatsNewRows" />
-        <!-- [v1.19.0 §2.11] Katlı kısım: sürüm bloklarıyla AYNI 84/26 grid'in SAĞ kolonunda; üstte 22px + 1px
-             border-subtle + 14px. Blok yalnız katlanacak sürüm varken görünür (kod-tarafı, BuildWhatsNew).
-             Butonun sol margin'i -10, Ds.Button.Ghost.Sm'nin kendi 10px yatay padding'ini iptal eder — etiket
-             madde kolonuyla hizalanır. -->
-        <Border x:Name="EarlierVersionsBlock" Visibility="Collapsed" Margin="0,22,0,0" Padding="0,14,0,0"
-                BorderThickness="0,1,0,0" BorderBrush="{DynamicResource Brush.BorderSubtle}">
-          <!-- Kolonlar (84 · 26 · kalan) kod-tarafında sürüm bloklarıyla AYNI yardımcıdan kurulur
-               (NotesDialog.AddBlockColumns — tek tanım yeri). -->
-          <Grid x:Name="EarlierVersionsGrid">
-            <Button x:Name="EarlierVersionsButton" Grid.Column="2" HorizontalAlignment="Left" Margin="-10,0,0,0"
-                    Click="OnShowEarlierVersions"
-                    AutomationProperties.Name="Show earlier versions"
-                    Style="{DynamicResource Ds.Button.Ghost.Sm}">
-              <StackPanel Orientation="Horizontal">
-                <Viewbox Width="13" Height="13" Margin="0,0,6,0" VerticalAlignment="Center">
-                  <Canvas Width="24" Height="24">
-                    <Path Data="{DynamicResource Icon.Down}"
-                          StrokeThickness="{DynamicResource Icon.Down.StrokeThickness}"
-                          Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
-                          StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
-                  </Canvas>
-                </Viewbox>
-                <TextBlock x:Name="EarlierVersionsLabel" VerticalAlignment="Center" />
-              </StackPanel>
-            </Button>
-          </Grid>
-        </Border>
-      </StackPanel>
-    </ScrollViewer>
-    <controls:EdgeFade x:Name="TopFade" VerticalAlignment="Top" HorizontalAlignment="Left"
-                       Width="{Binding ViewportWidth, ElementName=Body}"
-                       Height="{Binding Margin.Top, ElementName=BodyList}" />
-  </Grid>
+       [DEĞİŞEN KURAL] Listenin üst (22px) ve alt (24px) boşlukları SOLMA ŞERİTLERİDİR (EdgeFade.Insets — üç modalın
+       ortak parçası). ESKİDEN içerik o boş şeritleri tam görünür hâlde geçip başlığın ve footer'ın çizgisinde kesik
+       duruyordu — kaybolma yazının başladığı çizgide değil, çizginin kendisinde oluyordu (kullanıcının ekran
+       görüntüsü). Artık yazı, durağan hâldeki çizgisinden itibaren dialog zeminine karışarak solar, kenarda kaybolur;
+       şerit boşken zeminden ayırt edilemez. Sticky sol kolon üst şeridin altına, listenin üst çizgisine yapışır. -->
+  <ScrollViewer x:Name="Body" VerticalScrollBarVisibility="Auto" ScrollChanged="OnBodyScrollChanged"
+                controls:EdgeFade.Insets="True">
+    <StackPanel x:Name="BodyList" Margin="18,22,18,24">
+      <StackPanel x:Name="WhatsNewRows" />
+      <!-- [v1.19.0 §2.11] Katlı kısım: sürüm bloklarıyla AYNI 84/26 grid'in SAĞ kolonunda; üstte 22px + 1px
+           border-subtle + 14px. Blok yalnız katlanacak sürüm varken görünür (kod-tarafı, BuildWhatsNew).
+           Butonun sol margin'i -10, Ds.Button.Ghost.Sm'nin kendi 10px yatay padding'ini iptal eder — etiket
+           madde kolonuyla hizalanır. -->
+      <Border x:Name="EarlierVersionsBlock" Visibility="Collapsed" Margin="0,22,0,0" Padding="0,14,0,0"
+              BorderThickness="0,1,0,0" BorderBrush="{DynamicResource Brush.BorderSubtle}">
+        <!-- Kolonlar (84 · 26 · kalan) kod-tarafında sürüm bloklarıyla AYNI yardımcıdan kurulur
+             (NotesDialog.AddBlockColumns — tek tanım yeri). -->
+        <Grid x:Name="EarlierVersionsGrid">
+          <Button x:Name="EarlierVersionsButton" Grid.Column="2" HorizontalAlignment="Left" Margin="-10,0,0,0"
+                  Click="OnShowEarlierVersions"
+                  AutomationProperties.Name="Show earlier versions"
+                  Style="{DynamicResource Ds.Button.Ghost.Sm}">
+            <StackPanel Orientation="Horizontal">
+              <Viewbox Width="13" Height="13" Margin="0,0,6,0" VerticalAlignment="Center">
+                <Canvas Width="24" Height="24">
+                  <Path Data="{DynamicResource Icon.Down}"
+                        StrokeThickness="{DynamicResource Icon.Down.StrokeThickness}"
+                        Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                        StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                </Canvas>
+              </Viewbox>
+              <TextBlock x:Name="EarlierVersionsLabel" VerticalAlignment="Center" />
+            </StackPanel>
+          </Button>
+        </Grid>
+      </Border>
+    </StackPanel>
+  </ScrollViewer>
 </controls:ModalDialog>

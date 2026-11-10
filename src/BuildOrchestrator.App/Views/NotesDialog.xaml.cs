@@ -1,6 +1,5 @@
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Data;
 using System.Windows.Media;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
@@ -43,15 +42,6 @@ public partial class NotesDialog : ModalDialog
     {
         InitializeComponent();
         AddBlockColumns(EarlierVersionsGrid);
-    }
-
-    /// <summary>Üst solma şeridinin (<c>TopFade</c>) rengi dialog çerçevesinin zeminidir (<c>Ds.Dialog</c>): şerit
-    /// boşken zeminden ayırt edilemez, altından geçen yazı ona karışarak solar. Renk kopyalanmaz, çerçeveye
-    /// bağlanır — çerçeve kabuğun şablonuyla doğduğu için bağ burada kurulur.</summary>
-    public override void OnApplyTemplate()
-    {
-        base.OnApplyTemplate();
-        TopFade.SetBinding(EdgeFade.FillProperty, new Binding(nameof(Border.Background)) { Source = Frame });
     }
 
     /// <summary>[design v1.13.0 §2.11] Diyalog GÖRÜLDÜ — title bar'daki notes butonunun okunmadı noktası
