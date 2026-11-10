@@ -4803,6 +4803,20 @@ is logically parented to the dialog and WPF value inheritance follows the logica
 re-implements any of this; a source guard keeps it that way. Because every opening passes through the shell, it
 is also the one place that announces it (`Opened`) — the window closes the update card there.
 
+**Every scrolling body of the three modals fades at its insets.** A body's content carries its own top and bottom
+margins, which scroll with it, and over each lies a strip as tall as that inset, ramping the frame's surface colour
+from opaque at the edge to clear at the line where the content rests (`EdgeFade`). Text scrolled up starts to fade
+the moment it crosses that line and is gone by the hairline under the head or the tabs; text running on below the
+fold fades the same way toward the footer's hairline. Neither is cut at full strength against a line, and at rest a
+strip covers only empty inset, so it cannot be told from the surface; scrolled to the end, the last line does not
+fade. The strips sit in the content cell of the scroller's own template, so they never cover the scrollbar and they
+hide with a hidden tab panel, and they take no pointer input, so the wheel and clicks reach the content beneath. The
+shell hands its frame surface down by inheritance, so no dialog names a colour, and a scroller opts in with one
+attribute (`EdgeFade.Insets`); a guard asserts that every scroller declared in a modal does. The fade is a strip
+over the content rather than an opacity mask on the scrolling presenter: a mask draws the content into a layer of
+its own, and the live composition bleeds that layer's edge pixels one pixel outward — a faint mark beside every
+version number, date and chip in What's new's left column, which an off-screen render does not show.
+
 The Settings dialog is a fixed 880 × 576 px, split into two panes under a head row that carries the title and a
 close button taking the same path as *Cancel*. Down the left runs a 196 px **section rail** on the `surface`
 tone — a step darker than the dialog, which is what makes the two panes read as two — listing **General**,
@@ -5108,14 +5122,7 @@ it on the left, and on the right a single mono version chip — 20 px tall, `sur
 hairline, the installed version in 12 px `text-secondary`. Because the dialog's height is fixed, the body simply
 takes what the head and footer leave and scrolls inside itself, so an *Earlier versions* button that unfolds
 the whole history never pushes the dialog past the window; the scrolling list is inset 22 px top, 18 px sides and
-24 px bottom. The top inset is also where the notes leave. A strip as tall as the inset lies over the content area —
-not over the scrollbar — and ramps the dialog's own surface colour from opaque at the head's hairline to clear at the
-line where the list starts (`EdgeFade`). Text scrolled up starts to fade the moment it crosses that line and is gone
-by the hairline, rather than running on at full strength and being cut against it; at rest the strip covers only the
-empty inset and cannot be told from the surface. The fade is a strip over the content, not an opacity mask on the
-scrolling presenter: a mask draws the content into a layer of its own, and the live composition bleeds that layer's
-edge pixels one pixel outward — a faint mark beside every version number, date and chip in the left column, which an
-off-screen render does not show.
+24 px bottom, and the top and bottom insets are where the notes fade in and out (the shell's edge fades, above).
 
 Each version is a **two-column block**: an 84 px identity column, a 26 px gap, and the notes. The identity column
 stacks the mono version number, the date 6 px below it in 11 px `text-faint`, and — on the running version — a
@@ -6550,7 +6557,7 @@ the drawn box and not just the figure count.
 The chevron is the one gradient that carries a colour of its own, and it too is a single shared brush. Flat surfaces
 are the rule and a guard enforces it in markup and in code alike, with two file-scoped exemptions. One is the mark's
 dictionary: flattening a logo would mean redrawing it, and source artwork is transferred verbatim. The other is the
-scroll-edge fade of What's new (`EdgeFade`, §13.3), which ramps only the alpha of the surface it lies on — at rest it
+scroll-edge fade of the modals (`EdgeFade`, §13.3), which ramps only the alpha of the surface it lies on — at rest it
 cannot be told from that surface, and in motion it is the text that fades, not a surface that is shaded. The chevron is amber — the same accent the
 interface uses — which is deliberate: the brand speaks the interface's palette. The cost is that the mark
 carries accent weight in the title bar, so no other amber element belongs in that region but one: the 5 px dot on the
@@ -8181,9 +8188,9 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Release-note category blocks — one drawing for What's new and the update card, measures per surface | `App/Views/ReleaseNoteBlocks.cs` |
 | Branch popover row (virtualized item container) | `App/Views/BranchRow.cs` |
 | Settings dialog (section rail + pages), layer/external-project drag-reorder | `App/Views/SettingsDialog.xaml(.cs)`, `App/Controls/DragReorderBehavior.cs` |
-| Shared modal shell (scrim, frame, head/tabs/body/footer slots, rounded clip, host clamp, entrance, focus trap, Esc and scrim dismissal, the `Opened` announcement) | `App/Controls/ModalDialog.cs`, `DialogSize.cs`, `App/Resources/Controls.xaml` (`Ds.ModalDialog`) |
+| Shared modal shell (scrim, frame, head/tabs/body/footer slots, rounded clip, host clamp, entrance, focus trap, Esc and scrim dismissal, the `Opened` announcement, scroll-edge fades) | `App/Controls/ModalDialog.cs`, `DialogSize.cs`, `App/Controls/EdgeFade.cs`, `App/Resources/Controls.xaml` (`Ds.ModalDialog`) |
 | About dialog (identity block, About / Environment / Shortcuts tabs, What's new hand-off) | `App/Views/AboutDialog.xaml(.cs)` |
-| What's new dialog (release-note list, two-column version blocks, sticky identity column, version and installed chips, top fade strip) | `App/Views/NotesDialog.xaml(.cs)`, `App/Controls/StickyColumn.cs`, `App/Controls/EdgeFade.cs` |
+| What's new dialog (release-note list, two-column version blocks, sticky identity column, version and installed chips) | `App/Views/NotesDialog.xaml(.cs)`, `App/Controls/StickyColumn.cs` |
 | Product mark · company wordmark | `App/Controls/AppMark.xaml(.cs)`, `BrandLogo.xaml(.cs)` |
 | Brand geometry and chevron gradient — one source, two consumers | `App/Resources/BrandGeometry.xaml` |
 | Raster icon generation (.exe, taskbar, tray) | `App/Assets/generate-app-icons.ps1` |

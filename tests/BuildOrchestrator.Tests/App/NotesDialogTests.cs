@@ -3,7 +3,6 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Media.Imaging;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 
@@ -31,47 +30,6 @@ public class NotesDialogTests
 
     private static double TopIn(FrameworkElement element, FrameworkElement root) =>
         element.TranslatePoint(new Point(0, 0), root).Y;
-
-    /// <summary>Gövde yuvasının (dialogun içeriği: kayan liste ve üstüne çizilen her şey) görülen hâli: önce dialog
-    /// çerçevesinin zemini, üstüne yuva — ekrandaki gibi tek geçişte, 96 DPI'da 1:1. <see cref="VisualBrush"/> yuvayı
-    /// kendi koordinatında boyar; ataların opaklığı ve dönüşümü (dialogun giriş animasyonu) ölçüye girmez. Gövde
-    /// yuvanın sol üst köşesindedir; satır ve sütunlar gövdenin koordinatıdır.</summary>
-    private static SeenBody RenderBody(BuildOrchestrator.App.Views.NotesDialog dialog)
-    {
-        var slot = (FrameworkElement)dialog.Content;
-        Assert.Equal(new Point(0, 0), dialog.Body.TranslatePoint(new Point(0, 0), slot));
-        var surface = DsResources.ColorOf(dialog.Frame.Background);
-        var area = new Rect(0, 0, slot.ActualWidth, slot.ActualHeight);
-        var visual = new DrawingVisual();
-        using (var dc = visual.RenderOpen())
-        {
-            dc.DrawRectangle(new SolidColorBrush(surface), null, area);
-            dc.DrawRectangle(new VisualBrush(slot)
-            {
-                Stretch = Stretch.None,
-                AlignmentX = AlignmentX.Left,
-                AlignmentY = AlignmentY.Top,
-                ViewboxUnits = BrushMappingMode.Absolute,
-                Viewbox = area,
-            }, null, area);
-        }
-        int width = (int)Math.Ceiling(area.Width), height = (int)Math.Ceiling(area.Height);
-        var bitmap = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
-        bitmap.Render(visual);
-        var pixels = new byte[width * height * 4];
-        bitmap.CopyPixels(pixels, width * 4, 0);
-        return new SeenBody(pixels, width, surface);
-    }
-
-    /// <param name="Surface">Dialog çerçevesinin zemini — yuva bunun üstünde görülür.</param>
-    private sealed record SeenBody(byte[] Pixels, int Width, Color Surface)
-    {
-        /// <summary>Bir pikselin görülen yeşil kanalı: yuvanın boş kaldığı yerde zemin, opak beyaz sondada 255.</summary>
-        public int GreenAt(int x, int y) => Pixels[(y * Width + x) * 4 + 1];
-
-        /// <summary>Opak beyaz bir sondanın o pikseldeki görünürlüğü: 0 = zemin, 1 = tam beyaz.</summary>
-        public double VisibilityAt(int x, int y) => (GreenAt(x, y) - Surface.G) / (255.0 - Surface.G);
-    }
 
     // ---------------------------------------------------------------- kabuk
 
@@ -331,12 +289,9 @@ public class NotesDialogTests
     /// viewport başlık çizgisinden başlar; yazı o boş şeridi tam görünür hâlde geçip başlık çizgisinde kesik
     /// duruyordu — kaybolma yazının başladığı çizgide değil, 22px yukarıda başlıyordu.</para>
     ///
-    /// <para>Ölçüm: listenin başına opak beyaz, 44px'lik bir sonda konur ve gövde yuvası dialog zemininin üstünde
-    /// çizilir; bir satırın görünürlüğü sondanın orada ne kadar beyaz göründüğüdür (0 = zemin, 1 = tam beyaz).
-    /// Durağanken sonda 22..66'dadır ve tam görünür olmalıdır; üstündeki boş şerit zeminden ayırt edilemez. 22px
-    /// kaydırınca sondanın üst yarısı şeridi doldurur: başlık çizgisinde (satır 0) neredeyse görünmez, yazının
-    /// çizgisinde (satır 21) neredeyse tam, ortada yarı yarıya ve aşağı doğru hiç azalmadan; çizginin altı
-    /// (22..44) dokunulmaz.</para>
+    /// <para>Ölçüm ve iddia ortak düzenektedir (<see cref="EdgeFadeProbe"/>): listenin başına alanı taşıran opak beyaz
+    /// bir sonda konur, gövde dialog zemininin üstünde çizilir. Scrollbar'ın solmaması ve şeridin işaretçiyi almaması
+    /// şeridin kendi kurallarıdır (EdgeFadeTests — buradan TAŞINDI).</para>
     /// </summary>
     [StaFact]
     public void Text_scrolled_above_the_lists_top_line_fades_out_toward_the_header_hairline()
@@ -344,85 +299,22 @@ public class NotesDialogTests
         var (dialog, scope) = NotesDialogHost.OpenRealized(configure: d => d.Releases = NotesDialogHost.SyntheticReleases(6));
         using (scope)
         {
-            var body = dialog.Body;
-            var probe = new Border { Height = 44, Background = Brushes.White };
-            dialog.BodyList.Children.Insert(0, probe);
-            dialog.UpdateLayout();
-            int x = (int)(DsResources.BoundsIn(probe, body).Left + probe.ActualWidth / 2);
-
-            Assert.Equal(22.0, TopIn(probe, body), precision: 3); // listenin durağan üst çizgisi
-            var rest = RenderBody(dialog);
-            int surface = rest.Surface.G;
-            for (int y = 0; y < 22; y++) // ±1: 8 bitlik karışımın yuvarlaması — gözle ayırt edilemez
-                Assert.True(Math.Abs(rest.GreenAt(x, y) - surface) <= 1, $"durağanken boş şerit zeminden ayrışıyor: satır {y} = {rest.GreenAt(x, y)}, zemin {surface}");
-            for (int y = 22; y < 66; y++)
-                Assert.True(rest.GreenAt(x, y) == 255, $"durağanken satır {y} solmuş: {rest.GreenAt(x, y)}");
-
-            body.ScrollToVerticalOffset(22);
-            dialog.UpdateLayout();
-            Assert.Equal(0.0, TopIn(probe, body), precision: 3); // sondanın üst yarısı şeritte
-            var scrolled = RenderBody(dialog);
-
-            for (int y = 22; y < 44; y++)
-                Assert.True(scrolled.GreenAt(x, y) == 255, $"çizginin altında satır {y} solmuş: {scrolled.GreenAt(x, y)}");
-            Assert.True(scrolled.VisibilityAt(x, 0) <= 0.1, $"başlık çizgisinde içerik hâlâ görünüyor: {scrolled.VisibilityAt(x, 0):0.000}");
-            Assert.True(scrolled.VisibilityAt(x, 21) >= 0.9, $"yazının çizgisinde solma fazla: {scrolled.VisibilityAt(x, 21):0.000}");
-            Assert.InRange(scrolled.VisibilityAt(x, 11), 0.3, 0.7); // yumuşak geçiş, sert kesik değil
-            for (int y = 1; y < 22; y++)
-                Assert.True(scrolled.GreenAt(x, y) >= scrolled.GreenAt(x, y - 1),
-                    $"solma aşağı doğru tekdüze artmıyor: satır {y - 1} = {scrolled.GreenAt(x, y - 1)} → satır {y} = {scrolled.GreenAt(x, y)}");
+            var probe = EdgeFadeProbe.InsertProbe(dialog.Body);
+            EdgeFadeProbe.AssertTopBandFades(dialog.Body, probe, DsResources.ColorOf(dialog.Frame.Background), 22);
         }
     }
 
-    /// <summary>Şerit işaretçiyi almaz: altından geçen içeriğe yapılan tıklama ve tekerlek o içeriğe ulaşır. Şerit
-    /// isabet alsaydı olay listenin değil şeridin atalarından yükselirdi — liste üst 22px'te tekerlekle kaymaz, oraya
-    /// kaymış bir düğme (Earlier versions) tıklanamazdı.</summary>
+    /// <summary>Alt kenar da aynı kuralla solar: footer çizgisinin üstündeki 24px (listenin alt iç boşluğu) bir solma
+    /// şerididir. Liste daha devam ederken çizgiye inen yazı orada kesik durmaz, zemine karışarak kaybolur; liste sona
+    /// kaydırılınca şeritte yalnız boşluk kalır ve son satır solmaz.</summary>
     [StaFact]
-    public void The_top_band_lets_the_pointer_through_to_the_list()
+    public void Text_running_under_the_footer_fades_out_toward_the_footer_hairline()
     {
         var (dialog, scope) = NotesDialogHost.OpenRealized(configure: d => d.Releases = NotesDialogHost.SyntheticReleases(6));
         using (scope)
         {
-            var body = dialog.Body;
-            var probe = new Border { Height = 44, Background = Brushes.White };
-            dialog.BodyList.Children.Insert(0, probe);
-            dialog.UpdateLayout();
-            body.ScrollToVerticalOffset(22);
-            dialog.UpdateLayout();
-            Assert.Equal(0.0, TopIn(probe, body), precision: 3); // sonda şeridin altında
-
-            // Fareyi yönlendiren isabet testi (Mouse.DirectlyOver'ın kaynağı) — IsHitTestVisible'ı yalnız bu uygular;
-            // VisualTreeHelper.HitTest bayrağa bakmaz ve şeridi her durumda döndürürdü (ölçüldü).
-            var slot = (FrameworkElement)dialog.Content;
-            var inBand = body.TranslatePoint(new Point(DsResources.BoundsIn(probe, body).Left + probe.ActualWidth / 2, 11), slot);
-            var hit = slot.InputHitTest(inBand) as DependencyObject;
-            Assert.NotNull(hit);
-            Assert.True(DsResources.IsSelfOrDescendantOf(hit!, probe), $"şerit isabeti aldı: {hit!.GetType().Name}");
-        }
-    }
-
-    /// <summary>Solma yalnız kayan İÇERİĞE uygulanır: scrollbar'ın hapı şeritten geçerken solmaz. Hap rayın en
-    /// üstündeyken (gövde başta) şeridin içinden geçer; şerit gövdenin tam genişliğini örtseydi hap başlık çizgisine
-    /// doğru zemine karışırdı.</summary>
-    [StaFact]
-    public void The_scrollbar_thumb_is_not_faded_by_the_top_band()
-    {
-        var (dialog, scope) = NotesDialogHost.OpenRealized(configure: d => d.Releases = NotesDialogHost.SyntheticReleases(6));
-        using (scope)
-        {
-            var body = dialog.Body;
-            Assert.Equal(0.0, body.VerticalOffset);
-            var bar = DsResources.Descendants(body).OfType<ScrollBar>().Single(b => b.Orientation == Orientation.Vertical);
-            var thumb = DsResources.Descendants(bar).OfType<Thumb>().Single();
-            var bounds = DsResources.BoundsIn(thumb, body);
-            Assert.True(bounds.Top < 1 && bounds.Height > 60, $"hap şeridi ölçecek yerde değil: {bounds}");
-
-            var seen = RenderBody(dialog);
-            int x = (int)(bounds.Left + bounds.Width / 2);
-            int inside = seen.GreenAt(x, (int)(bounds.Top + bounds.Height / 2)); // şeridin çok altı
-            Assert.True(inside != seen.Surface.G, "hap çizilmemiş");
-            for (int y = (int)bounds.Top + 6; y < 22; y++)
-                Assert.True(seen.GreenAt(x, y) == inside, $"hap satır {y}'de solmuş: {seen.GreenAt(x, y)}, hapın içi {inside}");
+            var probe = EdgeFadeProbe.InsertProbe(dialog.Body);
+            EdgeFadeProbe.AssertBottomBandFades(dialog.Body, probe, DsResources.ColorOf(dialog.Frame.Background), 24);
         }
     }
 

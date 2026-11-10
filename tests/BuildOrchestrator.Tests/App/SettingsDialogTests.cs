@@ -714,6 +714,28 @@ public class SettingsDialogTests
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class SettingsDialogViewTests
 {
+    /// <summary>Sayfa da What's new'in gövdesiyle aynı kuralla solar: içeriğin 20px üst boşluğu bir solma şerididir —
+    /// yukarı kayan satırlar başlık çizgisinde kesik durmaz, durağan üst çizgisinden itibaren zemine karışarak
+    /// kaybolur; durağan hâlde şerit zeminden ayırt edilemez. Ölçüm ve iddia ortak düzenektedir
+    /// (<see cref="EdgeFadeProbe"/>); sonda sayfaların üst üste bindiği ızgaranın en üstüne konur.</summary>
+    [StaFact]
+    public void The_page_fades_rows_scrolled_into_its_top_inset()
+    {
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
+        using (scope)
+            EdgeFadeProbe.AssertTopBandFades(dialog.Body, EdgeFadeProbe.InsertProbe(dialog.Body), DsResources.ColorOf(dialog.Frame.Background), 20);
+    }
+
+    /// <summary>Alt kenar: içeriğin 24px alt boşluğu solma şerididir — footer çizgisine inen satırlar orada kesik
+    /// durmaz, zemine karışarak kaybolur; sayfa sona kaydırılınca şeritte yalnız boşluk kalır.</summary>
+    [StaFact]
+    public void The_page_fades_rows_running_into_its_bottom_inset()
+    {
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
+        using (scope)
+            EdgeFadeProbe.AssertBottomBandFades(dialog.Body, EdgeFadeProbe.InsertProbe(dialog.Body), DsResources.ColorOf(dialog.Frame.Background), 24);
+    }
+
     /// <summary>[A13/T3a · a3] Boş-katman kesikli kutusunun metni BİREBİR ve görünürlüğü: kayıtlı katman yokken
     /// taze diyalogda GÖRÜNÜR, ilk satır eklenince gizlenir, son satır silinince geri gelir.
     /// <para><b>[DEĞİŞEN KURAL — design v1.19.0 §2.9]</b> ESKİ İDDİA

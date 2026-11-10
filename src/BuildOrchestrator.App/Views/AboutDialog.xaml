@@ -154,7 +154,7 @@
   <Grid x:Name="Body" Height="284">
 
     <!-- ABOUT: tanım paragrafı · hairline · Version/Engine/Copyright · What's new butonu -->
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" controls:EdgeFade.Insets="True">
       <ScrollViewer.Style>
         <Style TargetType="ScrollViewer">
           <Setter Property="Visibility" Value="Collapsed" />
@@ -196,7 +196,7 @@
     </ScrollViewer>
 
     <!-- ENVIRONMENT: RUNTIME · PATHS -->
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" controls:EdgeFade.Insets="True">
       <ScrollViewer.Style>
         <Style TargetType="ScrollViewer">
           <Setter Property="Visibility" Value="Collapsed" />
@@ -222,7 +222,7 @@
     </ScrollViewer>
 
     <!-- SHORTCUTS: BUILD · APPLICATION (grup bilgisi ShortcutCatalog'da) -->
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" controls:EdgeFade.Insets="True">
       <ScrollViewer.Style>
         <Style TargetType="ScrollViewer">
           <Setter Property="Visibility" Value="Collapsed" />

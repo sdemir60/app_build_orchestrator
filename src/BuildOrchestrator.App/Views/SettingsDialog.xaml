@@ -154,7 +154,7 @@
          VerticalScrollBarVisibility="Visible" (Auto DEĞİL): scrollbar sütunu HER ZAMAN ayrılır — bar gerektiğinde
          belirmesi içeriği daraltmaz. Kaydıracak şey yokken DS'in kendi IsEnabled=False tetikleyicisi track'i gizler
          (ScrollBarStyleTests — "restraint"). -->
-    <ScrollViewer x:Name="Body" Grid.Column="1" VerticalScrollBarVisibility="Visible">
+    <ScrollViewer x:Name="Body" Grid.Column="1" VerticalScrollBarVisibility="Visible" controls:EdgeFade.Insets="True">
       <Grid Margin="20,20,20,24">
 
         <!-- ============================ GENERAL ============================

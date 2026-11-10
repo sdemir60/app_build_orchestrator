@@ -268,6 +268,67 @@ public class DialogShellTests
         }
     }
 
+    // ---------------------------------------------------------------- kenar solması
+
+    /// <summary>
+    /// Kabuk kuralı: bir modalın KENDİ XAML'inde tanımlı her dikey kaydırıcısı (What's new'in gövdesi, About'un üç
+    /// sekme paneli, Settings'in sayfası) içeriğini kenar boşluklarında soldurur (<c>EdgeFade.Insets</c>) ve şeritlerin
+    /// rengi kabuğun çerçeve zeminidir — kabuk onu bir kez verir, şeritler kalıtımla alır. Kayan bir gövde eklenip
+    /// solması unutulursa ya da kabuk zemini vermezse (şerit çizilmez) burada kırar. Mantıksal ağaç gezilir: kontrol
+    /// şablonlarının iç kaydırıcıları (TextBox'ın içerik kutusu, şablonla doğan satırlar) dialogun gövdesi değildir.
+    /// Şeridin davranışı EdgeFadeTests'te, her dialogdaki çizimi kendi testlerindedir.
+    /// </summary>
+    private static void AssertEveryScrollingBodyFadesInTheFrameSurface(ModalDialog dialog)
+    {
+        var bodies = LogicalDescendants(dialog).OfType<ScrollViewer>()
+            .Where(s => s.VerticalScrollBarVisibility != ScrollBarVisibility.Disabled).ToList();
+        Assert.NotEmpty(bodies);
+        var surface = DsResources.ColorOf(dialog.Frame.Background);
+        foreach (var body in bodies)
+        {
+            Assert.True(EdgeFade.GetInsets(body), $"{dialog.GetType().Name}: kayan gövde kenar boşluklarında solmuyor");
+            Assert.True(EdgeFade.GetFill(body) is SolidColorBrush fill && fill.Color == surface,
+                $"{dialog.GetType().Name}: şerit rengi çerçeve zemini değil ({EdgeFade.GetFill(body)})");
+        }
+    }
+
+    private static IEnumerable<DependencyObject> LogicalDescendants(DependencyObject root)
+    {
+        foreach (var child in LogicalTreeHelper.GetChildren(root).OfType<DependencyObject>())
+        {
+            yield return child;
+            foreach (var grandChild in LogicalDescendants(child)) yield return grandChild;
+        }
+    }
+
+    [StaFact]
+    public void Whats_new_fades_its_scrolling_body_in_the_frame_surface()
+    {
+        var (dialog, scope) = NotesDialogHost.OpenRealized();
+        using (scope)
+            AssertEveryScrollingBodyFadesInTheFrameSurface(dialog);
+    }
+
+    [StaFact]
+    public void About_fades_every_tab_panel_in_the_frame_surface()
+    {
+        var (dialog, _, scope) = AboutDialogHost.OpenRealized();
+        using (scope)
+        {
+            Assert.Equal(3, LogicalDescendants(dialog).OfType<ScrollViewer>()
+                .Count(s => s.VerticalScrollBarVisibility != ScrollBarVisibility.Disabled)); // üç sekme paneli de sayıldı
+            AssertEveryScrollingBodyFadesInTheFrameSurface(dialog);
+        }
+    }
+
+    [StaFact]
+    public void Settings_fades_its_scrolling_page_in_the_frame_surface()
+    {
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
+        using (scope)
+            AssertEveryScrollingBodyFadesInTheFrameSurface(dialog);
+    }
+
     // ---------------------------------------------------------------- kaynak guard'ı (kopya YASAK)
 
     /// <summary>Kabuk davranışı (scrim tıklaması, dialog içi tıklamanın yutulması, Esc, odak tuzağı, giriş
