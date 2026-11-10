@@ -2,6 +2,12 @@
 
 Release notes for Build Orchestrator, newest version first. The What's new window in the app reads this file.
 
+## [1.14.2] - 2026-11-10
+
+### Fixed
+
+- In What's new, notes that scroll up fade out gently from the line where the list begins, instead of running up to the header's edge at full strength and being cut off there.
+
 ## [1.14.1] - 2026-11-10
 
 ### Fixed
