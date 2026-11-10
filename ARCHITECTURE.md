@@ -3321,8 +3321,15 @@ is empty and what lets clicks fall through the same pixels. Consequences that ha
   before the HWND exists — an event-driven correction would simply never run on the first launch. The same single application point is re-run on `DpiChanged`, because the correction is a
   device-pixel frame width whose DIP value depends on the scale, and moving a maximized window to a differently
   scaled monitor changes the scale without changing the state.
-- Windows 11 rounded corners come from `DWMWA_WINDOW_CORNER_PREFERENCE`; the 1 px frame from
-  `DWMWA_BORDER_COLOR`.
+- The DWM frame — dark caption, Windows 11 rounded corners (`DWMWA_WINDOW_CORNER_PREFERENCE`) and the 1 px frame
+  (`DWMWA_BORDER_COLOR`) — is written in one place, `Shell/WindowFrame.cs`, as soon as the window has a handle, and the
+  corners are **square while the window is maximized**. A maximized window's rectangle overhangs the work area by the
+  resize frame on every side (11 px at 150%). WPF's window region clips the content to the work area, but with rounded
+  corners requested DWM draws the Windows 11 frame — corner, border and shadow — along the rectangle, not the region:
+  on a neighbouring monitor the window's edge, corners and shadow showed, and came over that monitor's windows each time
+  this one came to the front. Square corners remove all three; suppressing the border colour alone left the shadow. The
+  corner preference follows the same `WindowState` watcher pattern as the padding, so a window that opens on its last
+  monitor — born normal, maximized at its source — is square from its first frame.
 - The maximize glyph swaps to a restore glyph when the window is maximized.
 - The Windows 11 **Snap Layouts** flyout is deliberately absent. Windows opens it only for a window that answers
   `WM_NCHITTEST` with `HTMAXBUTTON`, and that answer turns the button into a non-client region — the WPF button
@@ -7107,6 +7114,7 @@ A category of tests that assert properties of the *source*, not of a run:
 | Narrow worktree surface (`NoWorktreeSurfaceTests`) | the `worktree` git verb only in the writer and only as `add --detach` and `list`; no `BaseIntermediateOutputPath` in the source; no branch or worktree field on `startRun`; the contract's worktree types are the creation command and its result alone (§10.6) |
 | Active root (`WorktreeRootGuardTests`) | no engine command in the App is built from the repository root (`RootPath`) but the worktree's creation, and the HEAD watcher and the git-operation gate follow the active root (§10.6) |
 | Centred pickers (`CenteredPickerGuardTests`) | every system picker (folder, open file, save file) is built in `App/Shell/SystemPicker.cs`, whose one show call sits inside the `CenteredDialog` scope (§13.3) |
+| One window frame (`WindowFrameTests`) | the DWM window attributes — dark caption, corner preference, border colour — are written only in `App/Shell/WindowFrame.cs`, which knows the window state; `Dwm.cs` only declares the call (§12.2) |
 | No product name in code (`NoProductNameInCodeTests`) | no identifier under `src` — type, member, enum value, parameter or local — carries the name of the product the tool was first built for; comments and string literals are exempt, and the code inside an interpolation hole is still scanned |
 | Isolated test engines (`SupervisorIsolationGuardTests`) | every test that starts a real Supervisor gives it an isolated cache (`--logs`, or the shared sandbox), so no test reads or recovers the user's own `run-inflight.json` (§16); the engine a test starts comes only from the sandbox — a host built directly on the real executable takes no extra arguments, is never returned by a helper or kept in a non-private field or property, and is never started through a private one |
 | Ledger file access (`LedgerStreamingGuardTests`) | the two large ledgers (`evaluation-cache.json`, `source-hash-cache.json`) never turn their file into one string or byte array and never open, create or move it themselves — they read and write through the stream forms of `AtomicFile` (sharing delete on read, retried atomic rename on write); hashing a *source* file is the one exempt read; the rule is shown to catch each bypass and to ignore a comment |
@@ -7879,7 +7887,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Second instance that could not bring the window forward: balloon or not, and the distinct exit code | `App/Shell/SecondInstanceGate.cs` |
 | Argument parsing (`--font-ab`, `--autostart`), tray or window for a Windows start | `App/Shell/StartupArgs.cs` |
 | Window shell, layout wiring, shortcut binding | `App/MainWindow.xaml(.cs)`, `App/ShellRoot.xaml(.cs)` |
-| Maximize overflow fix · DWM corners/border · caption glyphs | `App/Shell/MaximizeFix.cs`, `Dwm.cs`, `CaptionGlyphs.cs` |
+| Maximize overflow fix · DWM frame (dark caption, corners square while maximized, border) · caption glyphs | `App/Shell/MaximizeFix.cs`, `WindowFrame.cs`, `Dwm.cs`, `CaptionGlyphs.cs` |
 | The monitor the window opens on: the remembered monitor's identity and its model-code fallback, the window born normal and placed on it before its first frame; the monitor recorded on a real close, only from a window shown this session | `App/Shell/WindowMonitor.cs`; `App/MainWindow.Monitor.cs` (`SetupMonitor`, `RememberMonitor` — called from `OnClosing` in `App/MainWindow.xaml.cs`) |
 | Single instance, tray icon, global hotkeys (table, show/hide decision), shutdown | `App/Shell/SingleInstance.cs`, `AppTrayIcon.cs`, `Hotkey.cs`, `App/Shell/AppShutdown.cs` |
 | Tray menu — opened by the application at the cursor's physical point instead of by the tray library, at the click and in front of the taskbar when the click is on it (§12.3); its items and their icons | `App/Shell/AppTrayIcon.cs` (`OpenMenuOurselves`, `OpenMenu`, `CreateMenu`) |

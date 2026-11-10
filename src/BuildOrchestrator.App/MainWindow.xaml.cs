@@ -159,6 +159,9 @@ public partial class MainWindow : Window
         // izleyicisidir (bkz. MaximizeFix.Bind): pencere DOĞUŞTAN maximized açıldığından StateChanged'e
         // dayanan bir kurulum ilk açılışta HİÇ koşmaz.
         MaximizeFix.Bind(this, RootShell);
+        // [pencere çerçevesi] Koyu başlık, Windows 11 köşeleri ve 1 px kenarlık; köşeler tam ekranda kare — yuvarlak tercihte DWM çerçeveyi
+        // taşan dikdörtgene çizer ve komşu monitöre düşer (bkz. WindowFrame). [T49] Kenarlık rengi TOKEN'dan (hardcode YASAK).
+        WindowFrame.Bind(this, Dwm.ColorRefFrom(((SolidColorBrush)FindResource("Brush.Border")).Color));
 
         // [T35] Kalıcı yerleşimi geri yükle; kullanıcı değişiklikleri (mod düğmesi / split sürükleme sonu) persist.
         // GraphView'ın MotionSettings'i Loaded'dan ÖNCE atanmalı (GraphView.xaml.cs:111-119 sözleşmesi).
@@ -1350,14 +1353,8 @@ public partial class MainWindow : Window
 
     protected override void OnSourceInitialized(EventArgs e)
     {
-        base.OnSourceInitialized(e);
+        base.OnSourceInitialized(e); // DWM çerçevesi bu olayda yazılır (WindowFrame.Bind, ctor)
         nint hwnd = new WindowInteropHelper(this).Handle;
-        // [T49] Pencere kenarlığı rengi TOKEN'dan gelir (hardcode YASAK): Brush.Border → COLORREF 0x00BBGGRR.
-        int on = 1, round = 2;
-        int border = Dwm.ColorRefFrom(((SolidColorBrush)FindResource("Brush.Border")).Color);
-        Dwm.DwmSetWindowAttribute(hwnd, Dwm.DWMWA_USE_IMMERSIVE_DARK_MODE, ref on, sizeof(int));
-        Dwm.DwmSetWindowAttribute(hwnd, Dwm.DWMWA_WINDOW_CORNER_PREFERENCE, ref round, sizeof(int));
-        Dwm.DwmSetWindowAttribute(hwnd, Dwm.DWMWA_BORDER_COLOR, ref border, sizeof(int));
 
         // [T62] Tepsi: Close to tray açıkken × pencereyi buraya gizler (K5) → uygulama tepsiden yönetilir. [P3 · Task 3 · Exit]
         // Exit title bar'ın Exit butonuyla aynı karardır — uçuşta iş varsa pencere öne gelir ve onay kartı açılır (ExitFromTray).
