@@ -66,6 +66,33 @@ public sealed class AntiSlopTests
     /// <summary>Markanın geometri + chevron gradyanının TEK tanım yeri (K-7). Muafiyet buna bağlıdır.</summary>
     private static readonly string BrandGeometryFile = Path.Combine("Resources", "BrandGeometry.xaml");
 
+    /// <summary>
+    /// Gradyan yasağının KOD tarafı: bir fırça C#'tan da kurulabilir, XAML taraması tek başına bunu görmezdi.
+    /// Tek istisna kayan içeriğin kenardaki solma şerididir (<c>Controls/EdgeFade.cs</c>, What's new — kullanıcı
+    /// kararı): kendi rengi yoktur, altındaki zeminin rengini opaktan saydama rampalar, yalnız alfa değişir; durağan
+    /// hâlde zeminden ayırt edilemez (<c>NotesDialogTests.Text_scrolled_above_the_lists_top_line_fades_out_toward_the_header_hairline</c>).
+    /// Yasağın hedefi bir yüzeyi süsleyen gradyandır; içeriğin kenarda solması değil.
+    /// </summary>
+    [Fact]
+    public void No_code_builds_a_gradient_except_the_edge_fade()
+    {
+        Assert.NotEmpty(SourceGuard.ScannedAppFiles("*.cs")); // non-vacuous
+        var offenders = SourceGuard.ScanApp("*.cs", Gradient, allowedFiles: [EdgeFadeFile], skipCommentLines: true);
+        Assert.Empty(offenders);
+    }
+
+    /// <summary>Solma şeridinin TEK tanım yeri — kod tarafındaki muafiyet buna bağlıdır.</summary>
+    private static readonly string EdgeFadeFile = Path.Combine("Controls", "EdgeFade.cs");
+
+    /// <summary>Kod muafiyeti de BOŞA DÜŞMESİN: solma şeridinin dosyası hâlâ var ve hâlâ bir gradyan kuruyor.</summary>
+    [Fact]
+    public void The_edge_fade_really_is_the_gradient_the_code_guard_exempts()
+    {
+        string path = Path.Combine(RepoPaths.AppSrcRoot, EdgeFadeFile);
+        Assert.True(File.Exists(path), "solma şeridi taşınmış — kod gradyanı muafiyeti bayatladı");
+        Assert.Matches(Gradient, File.ReadAllText(path));
+    }
+
     /// <summary>Muafiyet BOŞA DÜŞMESİN: markanın çizim dosyası hâlâ var ve hâlâ bir gradient taşıyor. Dosya
     /// taşınır ya da chevron düzleşirse yukarıdaki istisna sessizce ölü bir satıra dönerdi.</summary>
     [Fact]
