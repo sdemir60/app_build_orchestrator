@@ -2,6 +2,12 @@
 
 Release notes for Build Orchestrator, newest version first. The What's new window in the app reads this file.
 
+## [1.14.1] - 2026-11-10
+
+### Fixed
+
+- On two monitors, a maximised window no longer shows a thin edge, a rounded corner and a shadow on the neighbouring screen, which came over that screen's windows each time the app was clicked.
+
 ## [1.14.0] - 2026-11-09
 
 ### Added
