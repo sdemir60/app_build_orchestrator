@@ -5108,7 +5108,14 @@ it on the left, and on the right a single mono version chip — 20 px tall, `sur
 hairline, the installed version in 12 px `text-secondary`. Because the dialog's height is fixed, the body simply
 takes what the head and footer leave and scrolls inside itself, so an *Earlier versions* button that unfolds
 the whole history never pushes the dialog past the window; the scrolling list is inset 22 px top, 18 px sides and
-24 px bottom.
+24 px bottom. The top inset is also where the notes leave. A strip as tall as the inset lies over the content area —
+not over the scrollbar — and ramps the dialog's own surface colour from opaque at the head's hairline to clear at the
+line where the list starts (`EdgeFade`). Text scrolled up starts to fade the moment it crosses that line and is gone
+by the hairline, rather than running on at full strength and being cut against it; at rest the strip covers only the
+empty inset and cannot be told from the surface. The fade is a strip over the content, not an opacity mask on the
+scrolling presenter: a mask draws the content into a layer of its own, and the live composition bleeds that layer's
+edge pixels one pixel outward — a faint mark beside every version number, date and chip in the left column, which an
+off-screen render does not show.
 
 Each version is a **two-column block**: an 84 px identity column, a 26 px gap, and the notes. The identity column
 stacks the mono version number, the date 6 px below it in 11 px `text-faint`, and — on the running version — a
@@ -6540,9 +6547,11 @@ unchanged, only the file moved. The shared dictionary holds the source SVG's own
 folded-in ones the mark used to carry; each consumer shifts its own canvas instead, which is why a test measures
 the drawn box and not just the figure count.
 
-The chevron is the one gradient in the application, and it too is a single shared brush. Flat surfaces are the
-rule and a guard enforces it, with a single file-scoped exemption for the mark's dictionary: flattening a logo
-would mean redrawing it, and source artwork is transferred verbatim. The chevron is amber — the same accent the
+The chevron is the one gradient that carries a colour of its own, and it too is a single shared brush. Flat surfaces
+are the rule and a guard enforces it in markup and in code alike, with two file-scoped exemptions. One is the mark's
+dictionary: flattening a logo would mean redrawing it, and source artwork is transferred verbatim. The other is the
+scroll-edge fade of What's new (`EdgeFade`, §13.3), which ramps only the alpha of the surface it lies on — at rest it
+cannot be told from that surface, and in motion it is the text that fades, not a surface that is shaded. The chevron is amber — the same accent the
 interface uses — which is deliberate: the brand speaks the interface's palette. The cost is that the mark
 carries accent weight in the title bar, so no other amber element belongs in that region but one: the 5 px dot on the
 What's new button that marks an unread version (`UnseenNotesDot`, §13.3) — a status mark rather than decoration, gone
@@ -7104,7 +7113,7 @@ A category of tests that assert properties of the *source*, not of a run:
 | Product name literal (`AppIdentityTests`) | the quoted product name appears in no `.cs` or `.xaml` file of the four production projects; and no literal in them carries the name at all, quoted or embedded in a sentence: the name is read from the assembly, or arrives as a parameter. The second scan reads every production file — a file is covered the day it is added — and exempts only a list kept with its reasons (today the comment in the MSBuild file the engine writes to its cache, §3.3), which must equal the files that still carry the name, so an exemption cannot outlive its reason. Each rule is shown to catch a planted literal — the embedded one in a C# file and a XAML attribute that no list names, never in a comment — and the scan is shown to cover every production project |
 | One missing-value mark (`MissingValueTests`) | the em dash that stands for a missing value — an unknown duration, an unreadable strip value, an absent About value — is declared once (`Core/Formatting/MissingValue.cs`) and written as a whole literal nowhere else in the `.cs` and `.xaml` of the production projects; the other names bind to it. A dash inside a sentence is outside the rule. The rule is shown to catch a planted literal in C# and in XAML and to ignore a sentence and a comment |
 | Brand marks | the product mark's and the company wordmark's path data each live in exactly one source file |
-| Gradient prohibition | no XAML declares a gradient except the product mark — and that exemption still points at a file that really carries one |
+| Gradient prohibition | no XAML declares a gradient except the product mark, and no C# builds one except the scroll-edge fade (`Controls/EdgeFade.cs`) — and each exemption still points at a file that really carries one |
 | App icon provenance | the multi-size ICO is rendered from the product mark, not the company icon |
 | App icon background | every ICO frame's corners are transparent — the tile has not come back |
 | Modal shell | no dialog file (Settings, About, What's new) carries its own copy of the shared shell's behaviour — scrim and in-dialog clicks, Esc, focus trap, entrance, focus move, the `Ds.Dialog` frame |
@@ -8174,7 +8183,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Settings dialog (section rail + pages), layer/external-project drag-reorder | `App/Views/SettingsDialog.xaml(.cs)`, `App/Controls/DragReorderBehavior.cs` |
 | Shared modal shell (scrim, frame, head/tabs/body/footer slots, rounded clip, host clamp, entrance, focus trap, Esc and scrim dismissal, the `Opened` announcement) | `App/Controls/ModalDialog.cs`, `DialogSize.cs`, `App/Resources/Controls.xaml` (`Ds.ModalDialog`) |
 | About dialog (identity block, About / Environment / Shortcuts tabs, What's new hand-off) | `App/Views/AboutDialog.xaml(.cs)` |
-| What's new dialog (release-note list, two-column version blocks, sticky identity column, version and installed chips) | `App/Views/NotesDialog.xaml(.cs)`, `App/Controls/StickyColumn.cs` |
+| What's new dialog (release-note list, two-column version blocks, sticky identity column, version and installed chips, top fade strip) | `App/Views/NotesDialog.xaml(.cs)`, `App/Controls/StickyColumn.cs`, `App/Controls/EdgeFade.cs` |
 | Product mark · company wordmark | `App/Controls/AppMark.xaml(.cs)`, `BrandLogo.xaml(.cs)` |
 | Brand geometry and chevron gradient — one source, two consumers | `App/Resources/BrandGeometry.xaml` |
 | Raster icon generation (.exe, taskbar, tray) | `App/Assets/generate-app-icons.ps1` |
