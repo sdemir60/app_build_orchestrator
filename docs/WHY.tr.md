@@ -103,6 +103,15 @@ ve boş belleğe de kendini uydurur; varsayılan profilde editör ve diğer uygu
 ne kullandığı title bar'da görünür.\
 `makine payını sınırlayan JOB_OBJECT_CPU_RATE_CONTROL sert tavanı` · `sayfalamaya karşı çekirdeğe ve boş belleğe göre worker bütçesi` · `canlı CPU değeri için QueryInformationJobObject accounting'i`
 
+## Uygulaman açıkken derler — önce kapatmak yok
+
+**Yaygın pratik:** uygulama debugger'da ya da ekranda açık, düzeltme hazır; derleme "dosya başka bir işlem
+tarafından kullanılıyor" diye duruyor. Uygulama kapatılıyor, derleme yeniden başlatılıyor, uygulama yeniden açılıp
+aynı ekran yeniden bulunuyor — ya da kopya sessizce düşüyor ve bir sonraki açılış hâlâ eski kodu gösteriyor.\
+**Build Orchestrator'da:** derleme uygulama açıkken geçer; konsol uygulamanın hangi dosyayı tuttuğunu söyler,
+uygulamanın bir sonraki açılışı yeni derlemeyle çalışır.\
+`dosyayı tutan programın adı için Restart Manager` · `kenara taşı, tek yeniden deneme`
+
 ## Sakin ve erişilebilir tasarım — izlemesi keyifli, okuması kolay
 
 **Yaygın pratik:** derleme, sonuna kadar hiçbir şeyin öne çıkmadığı akan bir konsolda izlenir; birçok araç başarıyı

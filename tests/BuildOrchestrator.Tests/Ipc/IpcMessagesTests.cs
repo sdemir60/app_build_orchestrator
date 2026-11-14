@@ -152,6 +152,31 @@ public class IpcMessagesTests
         Assert.Equal(cmd, back);
     }
 
+    // [files-in-use] Kilitli kopya ayarı: alanı taşımayan (eski) satır KAPALI okunur; açık değer camelCase adıyla round-trip eder.
+    [Fact]
+    public void StartRunCommand_replace_files_in_use_is_off_unless_the_line_says_so()
+    {
+        Assert.False(new StartRunCommand("r1", RunMode.Build, @"D:\repo", "Debug", 6).ReplaceFilesInUse);
+        const string oldLine = """{"type":"startRun","runId":"r1","mode":"build","rootPath":"D:\\repo","configuration":"Debug","parallelism":4}""";
+        Assert.False(Assert.IsType<StartRunCommand>(JsonSerializer.Deserialize<IpcCommand>(oldLine, IpcJson.Options)).ReplaceFilesInUse);
+
+        var cmd = new StartRunCommand("r1", RunMode.Build, @"D:\repo", "Debug", 6, ReplaceFilesInUse: true);
+        string json = JsonSerializer.Serialize<IpcCommand>(cmd, IpcJson.Options);
+
+        Assert.Contains("\"replaceFilesInUse\":true", json);
+        Assert.Equal(cmd, JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
+    }
+
+    // [files-in-use] Bir projenin koşu ortasındaki notu (kilitli kopya): metin motorda yazılır, App onu konsola aynen basar.
+    [Fact]
+    public void ProjectNoteEvent_roundtrips_with_its_discriminator()
+    {
+        IpcEvent ev = new ProjectNoteEvent("r1", @"C:\p\a.csproj", @"warning: a: a.dll in C:\b is held by c.exe (PID 1) — note");
+        string json = JsonSerializer.Serialize(ev, IpcJson.Options);
+        Assert.Contains("\"type\":\"projectNote\"", json);
+        Assert.Equal(ev, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+    }
+
     [Fact]
     public void StartRunCommand_new_fields_default_to_safe_backward_compatible_shape()
     {

@@ -31,6 +31,8 @@ you follow the whole run live.
   switch between the two copies.
 - **Keeps the machine usable.** Performance profiles set how much of the machine a build may take, and the title bar
   shows what the tool costs right now.
+- **Builds while your app runs.** When the app you are debugging holds a DLL a post-build step copies, one switch
+  lets the build move the old file aside and copy again; with it off, the console names the program holding it.
 - **Safe by design.** No orphaned MSBuild processes, no git writes uninvited, output exactly where VS puts it, and a
   stopped run never counts a half-built project as built.
 

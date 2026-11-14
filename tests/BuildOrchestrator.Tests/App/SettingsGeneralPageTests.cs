@@ -71,7 +71,11 @@ public class SettingsGeneralPageTests
     /// <para><b>[DEĞİŞEN KURAL — idle-memory dalga 3 / karar 12]</b> Eski iddia: <c>Close to tray</c> açıklaması "Closing the window
     /// leaves the engine running in the tray." derdi. Gerekçe: motor artık tepside beş boşta dakikadan sonra kendiliğinden çıkabilir
     /// (<c>Stop the engine when idle</c>) — "motor çalışır kalır" cümlesi yanlışlaşırdı. Pencerenin kapanınca uygulamanın tepside
-    /// çalışmaya devam ettiği ise hep doğrudur: yeni metin "Closing the window leaves the app running in the tray."</para></summary>
+    /// çalışmaya devam ettiği ise hep doğrudur: yeni metin "Closing the window leaves the app running in the tray."</para>
+    /// <para><b>[DEĞİŞEN KURAL — files-in-use 2026-11-14, kullanıcı onayı]</b> Eski iddia: BUILD grubunun tek satırı <c>Pull before build</c>'di.
+    /// Kilitli kopya hedefini kenara taşıyıp kopyayı yeniden yaptırmak motora giden bir build tercihi oldu: BUILD'e ikinci satır
+    /// <c>Replace files in use</c> (varsayılan kapalı) eklendi; etiketi motorun notuyla tek tanımdan gelir (ayrıntı
+    /// <see cref="FilesInUseAppTests"/>).</para></summary>
     [Fact]
     public void The_catalog_carries_the_groups_and_their_rows_verbatim()
     {
@@ -86,7 +90,11 @@ public class SettingsGeneralPageTests
             ("Close to tray", "Closing the window leaves the app running in the tray."),
         ], actual[0].Rows);
         Assert.Equal(
-            [("Pull before build", "Update every external working copy first — a fast-forward-only git pull, one per copy.")],
+            [
+                ("Pull before build", "Update every external working copy first — a fast-forward-only git pull, one per copy."),
+                ("Replace files in use", "When a post-build copy finds its file held by a running program, move the old file aside and copy "
+                    + "again; the program keeps the old build until it restarts. Off: the copy stops there and the console names the program."),
+            ],
             actual[1].Rows);
         Assert.Equal(
             [("Stash and switch branches",
@@ -179,7 +187,10 @@ public class SettingsGeneralPageTests
     /// satırından NOTIFICATIONS başlığına 22, başlıktan satıra 5.</para>
     /// <para><b>[DEĞİŞEN KURAL — 2026-10-17]</b> Eski iddia: dokuz satır, BUILD'de iki satır (<c>Pull before build</c>,
     /// <c>Resolve cycles at full priority</c>). Ayar kalktı (gerekçe ve ölçüm: <see cref="ResolveFollowsProfileSettingsTests"/>) — sekiz
-    /// satır, altı başlık; BRANCHES ve sonraki grupların satırları bir indeks geri kaydı, aralık kuralı aynıdır.</para></summary>
+    /// satır, altı başlık; BRANCHES ve sonraki grupların satırları bir indeks geri kaydı, aralık kuralı aynıdır.</para>
+    /// <para><b>[DEĞİŞEN KURAL — files-in-use 2026-11-14]</b> Eski iddia: sekiz satır, BUILD'de tek satır. BUILD'e <c>Replace files in use</c>
+    /// girdi — dokuz satır, altı başlık; BRANCHES ve sonraki grupların satırları bir indeks ileri kaydı, aralık kuralı aynıdır (yeni satır aynı
+    /// <c>ToggleRow</c> şablonuyla realize olur, XAML'e dokunulmaz).</para></summary>
     [StaFact]
     public void The_general_page_realizes_its_groups_with_their_rows()
     {
@@ -199,11 +210,11 @@ public class SettingsGeneralPageTests
         });
 
         var rows = Rows(dialog);
-        Assert.Equal(["Start with Windows", "Start minimized to tray", "Close to tray", "Pull before build",
+        Assert.Equal(["Start with Windows", "Start minimized to tray", "Close to tray", "Pull before build", "Replace files in use",
                 "Stash and switch branches", "Compact console", "Stop the engine when idle", "Show notifications"],
             rows.Select(r => DsResources.Descendants(r).OfType<TextBlock>().First().Text));
         Assert.Equal(["Start with Windows", "Start minimized to tray", "Close to tray",
-                AccessibilityNames.PullExternalsBeforeBuild, "Stash and switch branches",
+                AccessibilityNames.PullExternalsBeforeBuild, "Replace files in use", "Stash and switch branches",
                 "Compact console", "Stop the engine when idle", "Show notifications"],
             rows.Select(r => AutomationProperties.GetName(SwitchOf(r))));
 
@@ -213,14 +224,14 @@ public class SettingsGeneralPageTests
         Assert.Equal(5.0, Top(rows[0]) - Bottom(headings[0]), precision: 1);
         Assert.Equal(5.0, Top(rows[3]) - Bottom(headings[1]), precision: 1);
         Assert.Equal(22.0, Top(headings[1]) - Bottom(rows[2]), precision: 1);
-        Assert.Equal(22.0, Top(headings[2]) - Bottom(rows[3]), precision: 1);
-        Assert.Equal(5.0, Top(rows[4]) - Bottom(headings[2]), precision: 1);
-        Assert.Equal(22.0, Top(headings[3]) - Bottom(rows[4]), precision: 1);
-        Assert.Equal(5.0, Top(rows[5]) - Bottom(headings[3]), precision: 1);
-        Assert.Equal(22.0, Top(headings[4]) - Bottom(rows[5]), precision: 1);
-        Assert.Equal(5.0, Top(rows[6]) - Bottom(headings[4]), precision: 1);
-        Assert.Equal(22.0, Top(headings[5]) - Bottom(rows[6]), precision: 1);
-        Assert.Equal(5.0, Top(rows[7]) - Bottom(headings[5]), precision: 1);
+        Assert.Equal(22.0, Top(headings[2]) - Bottom(rows[4]), precision: 1);
+        Assert.Equal(5.0, Top(rows[5]) - Bottom(headings[2]), precision: 1);
+        Assert.Equal(22.0, Top(headings[3]) - Bottom(rows[5]), precision: 1);
+        Assert.Equal(5.0, Top(rows[6]) - Bottom(headings[3]), precision: 1);
+        Assert.Equal(22.0, Top(headings[4]) - Bottom(rows[6]), precision: 1);
+        Assert.Equal(5.0, Top(rows[7]) - Bottom(headings[4]), precision: 1);
+        Assert.Equal(22.0, Top(headings[5]) - Bottom(rows[7]), precision: 1);
+        Assert.Equal(5.0, Top(rows[8]) - Bottom(headings[5]), precision: 1);
     }
 
     /// <summary>ToggleRow: padding <c>13 0</c>, satırlar arası 1px <c>border-subtle</c> (grubun ilk satırında yok);
@@ -242,7 +253,9 @@ public class SettingsGeneralPageTests
         // ResolveFollowsProfileSettingsTests): BUILD tek satırlı, hairline yalnız STARTUP'ın 2. ve 3. satırında kalır.
         // Satır sayısı da pinlenir: döngü yalnız gerçek satırlar kadar döner, bu yüzden dizi uzunluğuyla kıyaslanmadıkça
         // eksik bir satır (ENGINE satırı yokken yedi satır) sekiz uzunluklu dizide sessizce yeşil kalırdı.
-        var firstOfGroup = new[] { true, false, false, true, true, true, true, true };
+        // [DEĞİŞEN KURAL — files-in-use 2026-11-14] Eski: sekiz satır, BUILD tek satırlı. BUILD'in ikinci satırı (Replace files in use)
+        // hairline taşır; BRANCHES ve sonrakiler bir indeks ileri kaydı.
+        var firstOfGroup = new[] { true, false, false, true, false, true, true, true, true };
         Assert.Equal(firstOfGroup.Length, rows.Count);
         for (int i = 0; i < rows.Count; i++)
         {
@@ -282,14 +295,16 @@ public class SettingsGeneralPageTests
     /// (varsayılan açık) eklendi — Show notifications sekizinci indekse kaydı.</para>
     /// <para><b>[DEĞİŞEN KURAL — 2026-10-17]</b> Eski: dokuz switch; Resolve tam öncelik anahtarı kalktı (gerekçe ve ölçüm:
     /// <see cref="ResolveFollowsProfileSettingsTests"/>) — sekiz switch; Stash and switch branches ile sonraki üç switch bir indeks
-    /// geri kaydı.</para></summary>
+    /// geri kaydı.</para>
+    /// <para><b>[DEĞİŞEN KURAL — files-in-use 2026-11-14]</b> Eski: sekiz switch. BUILD'e Replace files in use (varsayılan kapalı, canlı
+    /// değerden) eklendi — dokuz switch; Stash and switch branches ile sonraki üç switch bir indeks ileri kaydı.</para></summary>
     [StaFact]
     public void The_switches_open_on_their_defaults()
     {
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(r => r.UpdateExternals = false);
         using var _scope = scope;
 
-        Assert.Equal([false, false, true, false, false, true, true, true],
+        Assert.Equal([false, false, true, false, false, false, true, true, true],
             Rows(dialog).Select(r => SwitchOf(r).IsChecked == true));
     }
 
@@ -333,7 +348,9 @@ public class SettingsGeneralPageTests
     /// <para><b>[DEĞİŞEN KURAL — idle-memory dalga 3 / spec §6.4]</b> Eski iddia: yeniden açılış sekiz switch gösterirdi. ENGINE grubu
     /// eklendi — Stop the engine when idle (açık) canlı değerinde kalır, Show notifications sekizinci indekse kaydı.</para>
     /// <para><b>[DEĞİŞEN KURAL — 2026-10-17]</b> Eski iddia: yeniden açılış dokuz switch gösterirdi (Resolve tam öncelik de, açık, canlı
-    /// değerinde kalırdı). Anahtar kalktı (gerekçe ve ölçüm: <see cref="ResolveFollowsProfileSettingsTests"/>) — sekiz switch.</para></summary>
+    /// değerinde kalırdı). Anahtar kalktı (gerekçe ve ölçüm: <see cref="ResolveFollowsProfileSettingsTests"/>) — sekiz switch.</para>
+    /// <para><b>[DEĞİŞEN KURAL — files-in-use 2026-11-14]</b> Eski iddia: sekiz switch. Replace files in use (kapalı) canlı değerinde kalır —
+    /// dokuz switch.</para></summary>
     [StaFact]
     public void The_four_shell_switches_are_saved_and_reopen_on_the_saved_value()
     {
@@ -348,7 +365,7 @@ public class SettingsGeneralPageTests
         dialog.Open(run, store, () => null);
         dialog.UpdateLayout();
         // Pull canlı (açık) değerinde kalır; [idle-memory dalga 2] Compact console da; [dalga 3] Stop the engine when idle da.
-        Assert.Equal([true, true, false, true, false, true, true, false], Rows(dialog).Select(r => SwitchOf(r).IsChecked == true));
+        Assert.Equal([true, true, false, true, false, false, true, true, false], Rows(dialog).Select(r => SwitchOf(r).IsChecked == true));
     }
 
     /// <summary>[P3] Close to tray ve Show notifications Save'de UiState'e yazılır ve yeniden açılışta KAYITLI değeri
@@ -391,7 +408,9 @@ public class SettingsGeneralPageTests
     /// <para><b>[DEĞİŞEN KURAL — idle-memory dalga 3 / spec §6.4]</b> Eski: sekiz switch; ENGINE grubundaki Stop the engine when idle
     /// (açık) yedinci indekste eklendi — Show notifications sekizinci indekse kaydı.</para>
     /// <para><b>[DEĞİŞEN KURAL — 2026-10-17]</b> Eski: dokuz switch; Resolve tam öncelik anahtarı kalktı (gerekçe ve ölçüm:
-    /// <see cref="ResolveFollowsProfileSettingsTests"/>) — sekiz switch.</para></summary>
+    /// <see cref="ResolveFollowsProfileSettingsTests"/>) — sekiz switch.</para>
+    /// <para><b>[DEĞİŞEN KURAL — files-in-use 2026-11-14]</b> Eski: sekiz switch; BUILD'e Replace files in use (kapalı) beşinci switch olarak
+    /// eklendi — dokuz switch.</para></summary>
     [StaFact]
     public void The_startup_switches_are_saved_and_reopen_on_the_saved_value()
     {
@@ -407,7 +426,7 @@ public class SettingsGeneralPageTests
 
         dialog.Open(run, store, () => null);
         dialog.UpdateLayout();
-        Assert.Equal([true, true, true, true, false, true, true, true], Rows(dialog).Select(r => SwitchOf(r).IsChecked == true));
+        Assert.Equal([true, true, true, true, false, false, true, true, true], Rows(dialog).Select(r => SwitchOf(r).IsChecked == true));
     }
 
     /// <summary>[P4] Uçtan uca: switch'e tıklayıp Save → diyaloğun servisi Windows'un başlangıç kaydını ANINDA yazar.</summary>

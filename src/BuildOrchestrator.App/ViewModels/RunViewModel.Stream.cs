@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
+using BuildOrchestrator.App.Console;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Core.Discovery;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -258,6 +259,13 @@ public sealed partial class RunViewModel
             case CycleMemberHeldEvent e:
                 _stream.FinishBuilding(e.ProjectId, _nowMs());
                 SyncActiveLine();
+                break;
+
+            // [files-in-use] Proje notu: uyarıysa Warn, değilse Info; akışın Warn satırı önek taşımaz — öneki koşu başı uyarılarının TEK kuralı
+            // düşürür (StreamText.RunStartWarning), uyarı tanıması da konsolunkiyle aynıdır (ConsoleLineClassifier.IsOwnWarning).
+            case ProjectNoteEvent e:
+                PushStream(ConsoleLineClassifier.IsOwnWarning(e.Text) ? StreamKind.Warn : StreamKind.Info, e.ProjectId,
+                    StreamText.RunStartWarning(e.Text));
                 break;
 
             case ProjectSucceededEvent e:

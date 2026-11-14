@@ -55,7 +55,9 @@ public static class Program
             inFlight: inFlight, // [§5.5] dispatch → Add, sonuç → Remove, koşu çıkışı → Clear
             // [dalga 3 · karar 37 · B1 fix 1 · O-2] Log kökünün koordinatöre TEK girişi: koşu klasörleri onun altında açılır ve kendi koşusu olmayan
             // motor isteğin klasörünü onunla doğrular — ayrı bir yazıcı fabrikası verilmez, bağlantı kopsa koşular da log yazamazdı.
-            logsRoot: logsRoot);
+            logsRoot: logsRoot,
+            // [files-in-use] Kilitli kopya hedeflerinin taşıyıcısı: kaydı durum klasöründe (ARCHITECTURE §16), taşıma klasörü hedefin içinde.
+            inUseStash: new InUseStash(Path.Combine(cacheRoot, InUseStash.RecordFileName)));
         var host = new SupervisorHost(writer, new NdjsonReader(stdin), innerJob, coordinator,
             // [A5/T69] sync/branch komutları · [optimize] restore invoker'ı koordinatörle AYNI memoize
             // edilmiş toolset çözümünden gelir (ikinci bir vswhere araması yok).

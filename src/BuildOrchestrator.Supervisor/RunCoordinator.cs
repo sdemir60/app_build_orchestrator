@@ -175,9 +175,14 @@ public sealed class RunCoordinator(
     Func<(int Cores, long FreeBytes)>? machine = null,
     Action? memoryTrim = null,
     string? logsRoot = null,
-    Func<DateTimeOffset, RunLogWriter>? logFactory = null) : IDisposable
+    Func<DateTimeOffset, RunLogWriter>? logFactory = null,
+    InUseStash? inUseStash = null) : IDisposable
 {
     private readonly object _gate = new();
+
+    /// <summary>[files-in-use] Kilitli kopya hedeflerinin taşıyıcısı (üretimde <c>Program</c>'ın durum klasöründeki kaydıyla). <c>null</c> ⇒
+    /// kilitli kopya kararı yok — zincir bugünküyle aynıdır (testlerin varsayılanı).</summary>
+    private readonly InUseStash? _inUseStash = inUseStash;
     private readonly ICpuGovernor _cpu = cpuGovernor ?? innerJob;
 
     /// <summary>[B1 fix 1 · O-2] Koşunun log yazıcısının fabrikası — üretimde log kökünden (kökün koordinatöre TEK girişi), testte dikişten. Hiçbiri
@@ -1164,6 +1169,11 @@ public sealed class RunCoordinator(
             foreach (var (projectId, reason, cycleUnconverged) in upToDateSkips)
                 DecideSkipped(projectId, reason, cycleUnconverged);
 
+            // [files-in-use] Önceki koşuların kenara taşıdığı kopya hedefleri: kilidi kalkanlar silinir, sonucu yazılamamış (.pending) ve yuvası
+            // boş olan geri konur. İşçiler başlamadan — hiçbir taşıma uçuşta değilken — koşar; bir şey olduysa decision.log'a tek satır.
+            if (_inUseStash is { } sweptStash && sweptStash.Sweep() is { } sweep && sweep.Removed + sweep.Restored + sweep.Kept > 0)
+                Decide(logs, FilesInUseNotes.SweepLine(sweep));
+
             // [seviyeli turlar] Slot sayısı worker sayısıyla AYNI kaynaktan (kırpılmış FİİLİ sayı, yukarıdaki bütçe) —
             // koşu bitiminde hiçbir bekleyen kalmaz (tüm worker'lar ve seviye görevleri await edilmiş olur), using
             // güvenlidir.
@@ -1175,10 +1185,11 @@ public sealed class RunCoordinator(
                 // Retry politikası Core'un [T8]; burada yalnız run'a bağlanır: onRetry hem decision.log'a hem konsola.
                 // [T20-b/P3] cpuFloor: contention penceresinde cap'i tabana yükseltir — cap'in TEK yazıcısı
                 // bu koordinatör olduğu için seam de buraya bağlanır (bkz. EnterCopyFloor/ExitCopyFloor).
-                new RetryingMsBuildInvoker(toolset.Invoker, RetryingMsBuildInvoker.DefaultBackoff,
+                // [files-in-use] Kilitli kopya kararı contention retry'ının DIŞINDADIR: yeniden denemesi de contention'a karşı korunur.
+                WithFilesInUse(new RetryingMsBuildInvoker(toolset.Invoker, RetryingMsBuildInvoker.DefaultBackoff,
                     retryDelay ?? ((delay, token) => Task.Delay(delay, token)),
                     onRetry: message => { Decide(logs, message); console(message); },
-                    cpuFloor: new CoordinatorCpuFloor(this)),
+                    cpuFloor: new CoordinatorCpuFloor(this)), cmd, nodeById, events, logs),
                 toolset.MsBuildExePath,
                 depIssuesById, // [T54]
                 stateStore, // [Task 19] projectSucceeded → BuildState persist (null ⇒ persist YOK, mevcut test davranışı)
@@ -1279,6 +1290,22 @@ public sealed class RunCoordinator(
     {
         try { logs.AppendDecision(line); }
         catch (IOException ex) { console("warning: decision.log could not be written: " + ex.Message); }
+    }
+
+    /// <summary>[files-in-use] Koşunun invoker'ını kilitli kopya kararıyla sarar (taşıyıcı yoksa aynen döner). Rapor projenin adıyla
+    /// <see cref="FilesInUseNotes.Line"/> olur: aynı satır <c>decision.log</c>'a ve <see cref="ProjectNoteEvent"/> olarak App'e gider —
+    /// rapor invoke'un içinden geldiği için projenin sonuç olayından önce.</summary>
+    private IMsBuildInvoker WithFilesInUse(IMsBuildInvoker invoker, StartRunCommand cmd,
+        IReadOnlyDictionary<string, ProjectNode> nodeById, ChannelWriter<IpcEvent> events, RunLogWriter logs)
+    {
+        if (_inUseStash is not { } stash) return invoker;
+        return new InUseCopyInvoker(invoker, stash, cmd.ReplaceFilesInUse, (req, report) =>
+        {
+            string name = nodeById.TryGetValue(req.ProjectId, out var node) ? node.Name : Path.GetFileNameWithoutExtension(req.ProjectId);
+            string line = FilesInUseNotes.Line(name, report);
+            Decide(logs, line);
+            events.TryWrite(new ProjectNoteEvent(cmd.RunId, req.ProjectId, line));
+        });
     }
 
     // ---------------------------------------------------------------- worker

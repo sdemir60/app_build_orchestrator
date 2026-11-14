@@ -30,6 +30,9 @@ izletir.
   branch geçişini iki kopya arasında taşır.
 - **Makineyi kullanılır tutar.** Perf profilleri derlemenin makineden ne kadar alacağını belirler, title bar aracın o
   anki maliyetini gösterir.
+- **Uygulaman açıkken derler.** Debug ettiğin uygulama bir post-build adımının kopyaladığı DLL'i tutuyorsa, tek bir
+  ayar derlemenin eski dosyayı kenara taşıyıp kopyayı yeniden yapmasını sağlar; ayar kapalıyken konsol dosyayı tutan
+  programın adını söyler.
 - **Tasarımı gereği güvenli.** Arkada MSBuild süreci kalmaz, git'e davetsiz yazılmaz, çıktı tam VS'nin koyduğu
   yerdedir, durdurulan koşu yarım projeyi derlenmiş saymaz.
 

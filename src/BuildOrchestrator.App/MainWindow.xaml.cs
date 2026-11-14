@@ -213,6 +213,7 @@ public partial class MainWindow : Window
         // bir dosya ya da bayat bir null token) ayar kataloğun varsayılanıyla açılır. Varsayılanın TEK tanımı kataloğun satırıdır
         // (onaylanmış değerler ve gerekçeleri orada); burada ikinci bir literal yazılmaz.
         _vm.UpdateExternals = saved.UpdateExternals ?? GeneralSettingsCatalog.DefaultOf(GeneralSetting.PullBeforeBuild);
+        _vm.ReplaceFilesInUse = saved.ReplaceFilesInUse ?? GeneralSettingsCatalog.DefaultOf(GeneralSetting.ReplaceFilesInUse);
         _vm.StashOnBranchSwitch = saved.StashOnBranchSwitch ?? GeneralSettingsCatalog.DefaultOf(GeneralSetting.StashOnBranchSwitch);
         _vm.CompactConsole = saved.CompactConsole ?? GeneralSettingsCatalog.DefaultOf(GeneralSetting.CompactConsole);
         _vm.StopEngineWhenIdle = saved.StopEngineWhenIdle ?? GeneralSettingsCatalog.DefaultOf(GeneralSetting.StopEngineWhenIdle);
@@ -1308,7 +1309,7 @@ public partial class MainWindow : Window
         SyncModeButtons(state.Mode);
     }
 
-    /// <summary>[D6 fold] İş akışı tercihi (RepositoryRoot/WorktreeFolder/açık kopya/Configuration/PerfMode/UpdateExternals/
+    /// <summary>[D6 fold] İş akışı tercihi (RepositoryRoot/WorktreeFolder/açık kopya/Configuration/PerfMode/UpdateExternals/ReplaceFilesInUse/
     /// StashOnBranchSwitch/CompactConsole/StopEngineWhenIdle) değişince kalıcı duruma yazar — yerleşim persist'iyle AYNI desen (Load → muta → Save; düşük frekans).
     /// [D7 M3] RootPath değişimi (Settings → Save ile uygulanan kök, ilk kurulum dahil)
     /// TEK noktadan buradan persist edilir; açılışta seed edilip hatırlanır.</summary>
@@ -1322,6 +1323,7 @@ public partial class MainWindow : Window
             case nameof(RunViewModel.Configuration):
             case nameof(RunViewModel.PerfMode):
             case nameof(RunViewModel.UpdateExternals):
+            case nameof(RunViewModel.ReplaceFilesInUse):
             case nameof(RunViewModel.StashOnBranchSwitch):
             case nameof(RunViewModel.CompactConsole):
             case nameof(RunViewModel.StopEngineWhenIdle):
@@ -1334,6 +1336,7 @@ public partial class MainWindow : Window
                 s.Configuration = _vm.Configuration;
                 s.PerfMode = _vm.PerfMode;
                 s.UpdateExternals = _vm.UpdateExternals;
+                s.ReplaceFilesInUse = _vm.ReplaceFilesInUse;
                 s.StashOnBranchSwitch = _vm.StashOnBranchSwitch;
                 s.CompactConsole = _vm.CompactConsole;
                 s.StopEngineWhenIdle = _vm.StopEngineWhenIdle;

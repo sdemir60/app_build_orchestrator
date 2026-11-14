@@ -579,6 +579,10 @@ copies at all — the Settings switch described in §13.3. It defaults to **true
 flag existed keeps updating; when it is false the engine runs no version-control command and applies no dirty
 gate.
 
+`startRun` also carries **`replaceFilesInUse`** — the *Replace files in use* switch (§13.3): whether the engine may
+move a file another program holds out of a post-build copy's way and run that project's build once more (§9.7). It
+defaults to **false**, so a line written before the flag existed reads as off, and the engine only notes such a file.
+
 `startRun` may also carry **`scopeProjectId`** — the identity of one project, sent when a run is started from
 a row (§13.2). It defaults to null, so a full run writes the same line it always did.
 When it is set the engine plans in full and then cuts the plan down to that one project (§8.1): dependencies
@@ -646,9 +650,15 @@ Sync: `syncStarted` · `syncProgress` · `syncDiscovery` · `syncStep` · `works
 `syncCompleted` · `pullCompleted` · `checkoutCompleted` · `worktreeCreated`.
 Clean: `cleanStarted` · `cleanProgress` · `cleanCompleted`.
 Optimize: `optimizeStarted` · `optimizeProgress` · `optimizeCompleted`.
-Run: `planProgress` · `runStarted` · `projectStarted` · `projectLog` · `projectSucceeded` · `projectFailed` ·
-`projectSkipped` · `cycleRoundStarted` · `cycleMemberHeld` · `cycleCompleted` · `runStopped` · `runCompleted`.
+Run: `planProgress` · `runStarted` · `projectStarted` · `projectLog` · `projectNote` · `projectSucceeded` ·
+`projectFailed` · `projectSkipped` · `cycleRoundStarted` · `cycleMemberHeld` · `cycleCompleted` · `runStopped` ·
+`runCompleted`.
 Queries: `branchList` · `projectLogChunk`.
+
+`projectNote` is a line the engine has already worded about one project in the middle of a run — today only the
+decision of §9.7 about a copy target another program holds. It is the same text the engine writes to `decision.log`,
+and it comes before that project's result. The App prints it to the console as it is, where a `warning: ` prefix
+paints it amber, and to the event stream without the prefix: a Warn line when it carries one, an Info line otherwise.
 
 `syncDiscovery` is the one count a Sync reports while it discovers the project set: how many projects it has
 found so far, as repository projects and external projects, cumulative rather than a delta, so a report
@@ -2476,6 +2486,14 @@ copies nothing. The one run that removes output there is a `-t:Clean` (§8.1): M
 deletes the files each project recorded as its own, wherever it wrote them, a shared `OutDir` included, exactly
 as Visual Studio's *Clean* does. No output path is passed for it either.
 
+**The one move the tool makes in an output folder is the user's to switch on.** With *Replace files in use* on
+(Settings → General, off by default), when a project's own post-build copy could not overwrite a file another program
+holds, the engine renames that one file into a hidden `.in-use` folder beside it and runs the same build once more, so
+the project's own command makes the copy (§9.7). The tool still copies nothing, and it deletes only the files it
+moved, once nothing holds them. With the switch off it only reads: when a step's output reports a sharing violation,
+the copy's targets are statted, and one that is older than its source is opened for writing and closed at once to
+learn whether it is held; nothing is moved.
+
 The intermediate directory is not redirected either. Every run builds the user's working tree, and every
 project keeps its default `obj` for Visual Studio parity — no output path of any kind is changed. That default
 `obj` can carry residue that breaks a build: a deleted sibling project's leftover `netstandard2.0` artefacts
@@ -2514,6 +2532,64 @@ backoff, and while a copy window is stuck the CPU cap and priority are temporari
 MSBuild's console output encoding is resolved explicitly so that non-ASCII output is not mangled on a Turkish
 Windows install. All number and duration formatting in the domain and the view models uses
 `InvariantCulture` — `4.2s`, never `4,2s`.
+
+### 9.7 Files in use
+
+A program that is running — the app being debugged, a service — holds the DLLs it loaded. Windows will not let
+anything write over such a file, but it lets the file be renamed within its volume, and the program goes on running
+from the renamed file. A project whose post-build step copies its output into the folder that program runs from
+therefore fails at its copy (`MSB3073`), and when that copy is not the step's last line it fails without any error at
+all: `cmd` reports only the last command's result, MSBuild sees success, and the folder keeps the old DLL while
+dependents compile against it. The decision below runs after every build attempt of every project, in
+`InUseCopyInvoker`, which wraps the copy-contention retry (§9.5), so its own retry is covered by that one too.
+
+**Which files.** Nothing is decided unless the attempt's own output reports a sharing or lock violation — the text
+Windows gives errors 32 and 33 in its own language, which `cmd` prints when a copy hits a held file, read from the
+same source inside the engine, with the English text always recognised too. MSBuild echoes every line of a step,
+including a copy inside an `if` block that never ran, so the echo alone is no proof that a copy was tried. The copy
+commands come from that output: at MSBuild's default verbosity `Exec` echoes each command under its target's heading,
+and when the step fails the `MSB3073` line carries it again — its localized wrapper is not read, only the quoted
+absolute paths after the verb. Only `cmd`'s `copy` and `xcopy` count, and only commands whose every path is absolute
+once its `%variables%` are expanded: a relative path's base depends on the target that ran it — MSBuild runs
+`PostBuildEvent` in `$(OutDir)` and a custom `Exec` in the project's folder — and a wrong base would point at a
+folder the command never touches. A command's targets are the destination names of the files it copies —
+`<destination>\<file name>` for a folder, the destination itself for a single file — so a file beside them whose name
+merely starts the same way, another project's output, is never one. A target *needs the copy* when it exists and is
+older than its source; a destination newer than its source — a newer version another project put there, a file
+`xcopy /d` skipped on purpose — is never touched, because moving it would let an older file replace it. A target has
+*arrived* when it has the source's length and exactly its last-write time, which `cmd`'s copy keeps; no tolerance is
+allowed, because two quick builds can produce DLLs of the same length well under a second apart. A target that needs
+the copy is opened for writing, with every kind of sharing, and closed at once: a sharing or lock violation means
+another program holds it. Restart Manager then names that program for the note, within a few seconds or not at all.
+
+**What happens.** With the switch off the engine notes the held files and the program and returns the attempt as it
+was. With it on, the project takes the engine's one decision gate — two projects that hit the same held file at once
+take it in turn — and reads its targets again under it, since the other project may have solved the same file in the
+meantime. Every target still held is renamed into `<folder>\.in-use\<name>~<16 hex>.pending` — a hidden folder in the
+destination itself, so the rename stays on its volume — and the same request runs once more: in an ordinary Build the
+compiler finds nothing to do and the copy runs again; a Rebuild from a row runs again in full, its restore included.
+The request also runs once more, with nothing moved, when the first attempt failed and nothing it copies is held any
+longer. When that attempt succeeds and every target that needed the copy has arrived, the parked files become `.old`;
+otherwise, and also when the attempt ends with an exception, each one whose slot is still empty is put back. If one
+held file cannot be moved — a handle that shares no delete, a permission — nothing is retried and the ones already
+moved go back. A timed-out or stopped attempt, a Clean and a restore are never touched. The project's duration is the
+sum of its attempts, and every line of both reaches its log.
+
+**Cleaning up.** Before a run dispatches anything the engine sweeps every folder it has parked files in: a parked
+file nobody holds is deleted, a `.pending` one whose slot is empty — the trace of an engine that died between the move
+and the copy — is put back, an `.old` one is never put back, and an emptied `.in-use` folder goes. The folders are
+listed in `in-use-folders.json` (§16), written before the first move into a folder. Files in the folder that do not
+follow the naming pattern are left alone.
+
+**What the user reads.** Each decision is one line per destination folder, written once (`FilesInUseNotes`): to
+`decision.log` and, as `projectNote` (§5.3), to the console and the event stream, before the project's result. A held
+file with the switch off, a file that cannot be moved and a retry that failed again are warnings; a replaced file is
+an informational line that also says the running program keeps the previous build until it restarts. Only the project
+that moved a file writes a line: one that found the file already solved retries without a note. The note with the
+switch off names the switch — the switch's label in Settings is that same constant — and, like the note for a file
+that cannot be moved, tells the user to build the project again from its row. A project whose step's last line
+succeeded is recorded as built, so a plain Build would skip it, while a row's Build compiles it whether or not it is
+current (§8.1).
 
 ---
 
@@ -4836,19 +4912,21 @@ The rail exists because settings grow. A single column put every section under t
 setting squeezed it further; a section list keeps each page short and gives the next settings a place to land
 without widening the dialog. **General** is that place. Its rows come from one catalog
 (`GeneralSettingsCatalog`) in six groups — *Startup* (*Start with Windows*, *Start minimized to tray*, *Close
-to tray*), *Build* (*Pull before build*), *Branches* (*Stash and switch
+to tray*), *Build* (*Pull before build*, *Replace files in use*, §9.7), *Branches* (*Stash and switch
 branches*, §10.3), *Console* (*Compact console*, §13.5), *Engine* (*Stop the engine when idle*, §4.7) and
 *Notifications* (*Show notifications*) — and every row is drawn by one template (`Ds.Settings.ToggleRow`): the name
 over a single line of description on the left, a switch on the right, a hairline between rows but not above a group's
 first. Adding a setting is adding a catalog row; there is no layout work. The row is also the setting's one default:
 the view model's field, the window's seed from a `ui-state.json` that has no key for it and the shell switches' reader
-all ask the catalog (`DefaultOf`), the dialog's draft opens on the row and *Clear* returns to it, and for the four
+all ask the catalog (`DefaultOf`), the dialog's draft opens on the row and *Clear* returns to it, and for the five
 workflow preferences — the ones that are not shell switches — the row carries the approved value together with the
 reason for it, so that neither is written twice in the source. A row that depends on another (*Start minimized to
 tray* on *Start with Windows*) fades to the switch's own disabled opacity and stops taking input while its parent is
 off, without moving anything. Every switch on the page drives behaviour. *Stash and switch branches* follows the pull
 switch's rules: saved with *Save*, carried to the engine on the next checkout, and a console note written only when
-its value actually changed. *Compact console* is saved and noted the same way — `Compact console on — errors, the
+its value actually changed. *Replace files in use* (off by default) follows them too and travels with every run —
+`Replace files in use on — a file a running program holds is moved aside and copied again`, or `Replace files in use
+off — a copy stops at a file a running program holds`; its label is the constant the engine's note names (§9.7). *Compact console* is saved and noted the same way — `Compact console on — errors, the
 first warnings of each project and a warning count from the next run`, or `Compact console off — every MSBuild line
 is shown from the next run` — but it never reaches the engine: it is the App's own choice of how the console writes
 each project's output (§13.5). The mode in effect follows the switch whenever no work is in flight — no run, Sync,
@@ -6911,10 +6989,16 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 | `source-hash-cache.json` | source content hashes keyed by path, size and modification time (§7.1) — this is what turns the content decision into one stat pass per run; while a long first index runs it is also written about every ten seconds, so an index cut short resumes from its last save | falls back to empty (the next run re-reads and rebuilds it) |
 | `run-inflight.json` | the ids of the projects the engine has dispatched and not yet reported — written at dispatch, erased at the result, emptied at the end of every run; left non-empty only by an engine that died mid-run, and read once at the next engine start (§8.7). Absent while no run is in flight | an unparsable file is deleted and nothing is recovered; an unreadable one stays for the next start |
 | `msbuild\wpf-temporary-assembly.targets`, `msbuild\wpf-temporary-assembly-friend.cs` | the two files behind `-p:CustomBeforeMicrosoftCommonTargets` (§9.2). An engine writes them the first time it resolves `MSBuild.exe` — on its first run or its first Optimize — and only when the content on disk differs from its own; both files carry a fixed, old modification time however they were written (§9.2); the path carries no version, and a missing or edited file is repaired the next time a new engine resolves MSBuild | rewritten from the engine's own copy the next time a new engine resolves MSBuild; if they cannot be written or pinned, builds run without the argument |
-| `ui-state.json` | layout mode + three splits, repository root, the worktree folder and whether the worktree was open (§10.6), configuration, perf mode, layer patterns, external roots (path) and whether to update them (§10.4), whether to stash before a branch switch (§10.3), whether the console is compact (§13.5) and whether an idle engine is stopped (§4.7) — the last two on when the field is absent —, the gestures of the two global hotkeys (show/hide and build, §12.3), *Start with Windows* (`Autostart`) and *Start minimized to tray*, whether closing the window hides to the tray and whether tray notifications are shown (§12.3), tray-balloon-shown, last-seen release-notes version. The branch is not stored: it is whatever is checked out. Fields older versions wrote and this one no longer reads are ignored | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
+| `in-use-folders.json` | the destination folders the engine has parked held copy targets in (§9.7) — written before the first move into a folder, read by the sweep at every run start, which drops a folder once its `.in-use` folder is gone; absent while no folder is listed | an unreadable or unparsable file counts as empty: the folders it listed are not swept until the engine parks a file there again |
+| `ui-state.json` | layout mode + three splits, repository root, the worktree folder and whether the worktree was open (§10.6), configuration, perf mode, layer patterns, external roots (path) and whether to update them (§10.4), whether a held copy target is moved aside (§9.7), whether to stash before a branch switch (§10.3), whether the console is compact (§13.5) and whether an idle engine is stopped (§4.7) — the last two on when the field is absent —, the gestures of the two global hotkeys (show/hide and build, §12.3), *Start with Windows* (`Autostart`) and *Start minimized to tray*, whether closing the window hides to the tray and whether tray notifications are shown (§12.3), tray-balloon-shown, last-seen release-notes version. The branch is not stored: it is whatever is checked out. Fields older versions wrote and this one no longer reads are ignored | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
 
 *Start with Windows* additionally writes one `HKCU\...\Run` value, and turning it on removes Task Manager's
 disabled mark for that value under `HKCU\...\Explorer\StartupApproved\Run` when there is one (§12.3).
+
+*Replace files in use* is the one setting that leaves something outside this folder: a hidden `.in-use` folder inside
+a project's post-build destination, holding the copies a running program still uses (§9.7). The sweep deletes them
+once nothing holds them and then removes the folder; with the program closed and every DLL back in its own place —
+no `.pending` file waiting for an empty slot — deleting the folder by hand loses nothing.
 
 The resource strip (§11.5) persists nothing: each sample lives in memory for one beat, and the file the
 `BO_PROBE_STRIP` probe appends to (§17.5) exists only when a developer names one.
@@ -7146,7 +7230,7 @@ A category of tests that assert properties of the *source*, not of a run:
 | One infinite bottom request (`ConsoleBottomRequestGuardTests`) | the console asks for an infinite bottom (`ScrollToEnd(`) only in the mode switch's pin, `PinAfterModeSwitch`; the follow's and End's request is finite and vertical (§13.4). The scan reads code only, proves first that the pin still asks for it, and is shown to see a request outside the pin and to ignore a comment, a literal and a brace inside the pin |
 | One busy list (`ExitWorkGuardTests`) | the workspace's busy list is written once (`WorkspaceBusy`, `NonSyncWorkspaceBusy`) and both chains that name the work read every member of it: the exit's (`ExitWork` falls to `None` only through `WorkspaceIdle`, and `ExitWorkInFlight` names each busy flag; §12.3) and the ribbon's (`WorkInFlight`, `SyncBusy` included; §13.2) — a job added to the list and forgotten in a chain fails the suite, since a job that does not exist yet cannot be tested by behaviour |
 | One IO degree (`IoParallelismGuardTests`) | file IO parallelism is spelled once (`IoParallelism.Degree`): no source file writes the degree as a literal in a `WithDegreeOfParallelism` or `MaxDegreeOfParallelism`, the content-hash cache and the run binder read the constant itself, and the scan is shown to catch code and ignore comments and text |
-| No literal default (`GeneralSettingChainTests.No_workflow_setting_starts_from_a_literal_default`) | none of the four workflow preferences starts from a literal in the source: not the view model's field (written with `true` or `false`, or left unset), not the draft's or the apply call's parameter, not the window's seed from a key-less state (`?? true`); the catalog row is the one default (§13.3). The wire records of the contracts keep their own field defaults, which only say how a line without the field reads, and lie outside the rule. The rule is shown to catch each form, and to ignore a comment, a string and a field that reads the catalog |
+| No literal default (`GeneralSettingChainTests.No_workflow_setting_starts_from_a_literal_default`) | none of the five workflow preferences starts from a literal in the source: not the view model's field (written with `true` or `false`, or left unset), not the draft's or the apply call's parameter, not the window's seed from a key-less state (`?? true`); the catalog row is the one default (§13.3). The wire records of the contracts keep their own field defaults, which only say how a line without the field reads, and lie outside the rule. The rule is shown to catch each form, and to ignore a comment, a string and a field that reads the catalog |
 
 **A guard's coverage claim has its own proof.** A whole-`src` guard that claims to read every production project asserts
 that its scan saw a file of each (`SourceGuard.AssertScansEveryProductionProject`). The real tree always passes that check, so
@@ -7624,6 +7708,18 @@ do, and how the interface works around each — useful to know before attempting
   that file imported: whatever it adds to the build is missing, and the project may build differently or not at
   all. The repository this tool is used on does not set the property, so there is no fallback and nothing
   detects the clash.
+- **A running program keeps the build it loaded.** *Replace files in use* (§9.7) lets the build finish and put the
+  new copy in place; the program that held the old one goes on running it until it restarts, and a screen it opens
+  from a DLL it already loaded still shows the old code.
+- **Only `cmd`'s `copy` and `xcopy` with absolute paths are watched for files in use.** A post-build step that copies
+  with another tool or through a relative path, MSBuild's own `Copy` task (`MSB302x`, retried only for contention,
+  §9.5) and a file held through a handle that shares no delete stay as they were, and so does a copy whose failure
+  printed no sharing violation. A project whose post-build step runs only when its output changed
+  (`RunPostBuildEvent=OnOutputUpdated`) does not copy on the retry, so its decision ends as a retry that failed again.
+  On a destination whose file system rounds times a replaced file does not read as arrived and the decision ends with
+  the same warning, though the new copy is in place. With minimal verbosity a failed copy is still found from its
+  `MSB3073` line; a copy that failed quietly under a successful last line is not, because the command was never
+  echoed. Such a quiet failure leaves the project recorded as built, so the note sends the user to the row's Build.
 - **A build does not restore an SDK-style project.** The build path's restore prologue is keyed to
   `packages.config`, so an SDK-style project whose `obj\project.assets.json` is missing — a fresh clone, a
   workspace Clean — fails with `NETSDK1004` until an Optimize restores it (§9.3).
@@ -7783,6 +7879,7 @@ execution; it only **contains** it (job object) and **throttles** it (CPU cap).
 | Layer regex | Settings editor | `Regex` constructor with a 100 ms match timeout | ReDoS closed |
 | Solution to open | row icon | `devenv "<sln>"` — hand-quoted | theoretical (below) |
 | External root path | Settings editor, or `ui-state.json` | resolved on every run (§10.4): the project files found under it become MSBuild arguments, escaped per MSVCRT rules; the working-copy root becomes the working directory of `git`/`tf` — never an argument | none |
+| Copy command of a post-build step | the project's own MSBuild output — the echoed `copy`/`xcopy` line or its `MSB3073` line, read only when the same output reports a sharing violation (§9.7) | absolute paths that are statted; a target older than its source is opened for writing and closed at once, and with *Replace files in use* on it is renamed beside itself into `.in-use`. A file is touched only when it is the destination name of a file the command copies, older than its source, and held by another program — never deleted unless the tool moved it | none beyond the project's own code, which already ran (§21.1) |
 | Run folder of a project-log request | the engine's own `runStarted.logDirectory`, echoed back by the App on `getProjectLog` (§5.2) | a read-only path: the Supervisor reads the project's log file in it (the file name comes from a hash of the project id) only when the folder is fully qualified, directly under its logs root and named like a run folder — otherwise the answer is no log | none |
 | Update feed entry | this repository's GitHub Releases, or `BO_UPDATE_SOURCE` (§12.5) | the version is compared as SemVer; the notes go through the release-note reader and are drawn as plain text; the package is checked for size and SHA, then installed by `Update.exe` | none beyond whoever can publish a release (§21.5) |
 
@@ -7963,6 +8060,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Does a command wake a sleeping engine — one table, a row per command type | `App/Services/EngineWakeRule.cs` |
 | The requests waiting at the engine gate — their tickets, the types they hold, the draining signal and its invariant | `App/Services/EngineGate.cs` |
 | The engine's lifecycle in the view model — the idle sleep (`EvaluateEngineIdle`, `StartSleep`), the gate and its pass (`EnsureEngineAwakeAsync`, `GatePass`), the one wake (`StartWake`, `WakeEngineAsync`) and the silent refresh after a recovering wake (`RefreshAfterRecoveringWakeAsync`), the one ready transition (`EnterEngineReady`), engine loss (`ReportEngineDead`, `ReleaseAfterEngineLoss`), the ribbon's engine flags, the send, the silence watchdog, the engine's events and *Restart engine*; the main file keeps only the tick (`TickElapsed`) and the event entry (`OnEvent`) | `App/ViewModels/RunViewModel.Engine.cs` |
+| *Replace files in use* — its catalog row (label from `FilesInUseNotes.SettingLabel`), the draft, the apply and its console note, the settings-file key, the `ui-state.json` field, the window's seed and persistence, the `startRun` field | `App/ViewModels/GeneralSettings.cs`, `SettingsDraftViewModel.cs`, `RunViewModel.ActionBar.cs` (`ApplyReplaceFilesInUse`), `RunViewModel.cs`, `SettingsFile.cs`, `App/Shell/UiStateStore.cs`, `App/MainWindow.xaml.cs` (`OnWorkflowPreferenceChanged`) |
 | *Stop the engine when idle* — its catalog row, the draft, the apply and its console note, the settings-file key, the `ui-state.json` field, the window's seed and persistence | `App/ViewModels/GeneralSettings.cs`, `SettingsDraftViewModel.cs`, `RunViewModel.ActionBar.cs` (`ApplyStopEngineWhenIdle`), `SettingsFile.cs`, `App/Shell/UiStateStore.cs`, `App/MainWindow.xaml.cs` (`OnWorkflowPreferenceChanged`) |
 | Engine events onto the UI thread: one ordered queue, drained in time slices that yield to input and rendering | `App/Services/EngineEventPump.cs` |
 | Every command's one route to the engine: every send asks the engine gate first (`EnsureEngineAwakeAsync`), holds its pass with `using` and gives it to the one send that is allowed (`SendWithFailureLineAsync`, whose pass is a required argument — `GatePass.None` says "nothing to hand over" openly), then the observer is told and the test seam or the engine takes the command (`SendToEngineAsync`) — the sends that write their failure to the console and the project-log request both go through it | `App/ViewModels/RunViewModel.Engine.cs` (`TrySendAsync`, `SendWithFailureLineAsync`, `SendToEngineAsync`), `RunViewModel.cs` (`BeginRunAsync`, `SyncCoreAsync`, `LoadProjectLogAsync`); the guard `EngineGateGuardTests` |
@@ -8049,6 +8147,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | The WPF temporary-assembly targets — their content, the friend source file, the write into the state folder and the fixed modification time of both files | `Core/MsBuild/WpfTemporaryAssemblyTargets.cs` |
 | Invocation, output pumping, per-project kill; the restore-only entry point Optimize uses | `Core/MsBuild/MsBuildInvoker.cs` (`InvokeAsync`, `RestoreAsync`) |
 | Copy-contention detection and retry decorator | `Core/MsBuild/CopyContention.cs`, `RetryingMsBuildInvoker.cs` |
+| Files in use (§9.7): copy commands read from MSBuild's output, their targets and the arrived check, the write probe, the holder lookup (Restart Manager), the one file mover of an output folder (park, settle, put back, sweep), the decorator and its note | `Core/MsBuild/CopyCommands.cs`, `CopyTargets.cs`, `FileHolders.cs`, `InUseStash.cs`, `InUseCopyInvoker.cs` (`FilesInUseNotes`); wired in `Supervisor/RunCoordinator.cs` (`WithFilesInUse`, the run-start sweep) and `Supervisor/Program.cs`; the App's console and stream lines in `RunViewModel.cs` and `RunViewModel.Stream.cs` |
 | Reference list read from the compiler's command line in MSBuild's output | `Core/MsBuild/CompilerReferences.cs` |
 | `SolutionDir` resolution for restore | `Core/MsBuild/SolutionDirResolver.cs` |
 | Restore evidence — whether a `packages.config` restore can be skipped — and its `decision.log` line | `Core/MsBuild/RestoreEvidence.cs` |
