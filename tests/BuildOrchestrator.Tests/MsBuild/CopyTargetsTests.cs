@@ -9,7 +9,7 @@ namespace BuildOrchestrator.Tests.MsBuild;
 /// <summary>
 /// [files-in-use · Task 2] Bir kopya komutunun hedefteki dosyaları (<see cref="CopyTargets.Resolve"/>), o dosyanın hedefe
 /// ulaşıp ulaşmadığı (<see cref="CopyTargets.Landed"/>: <c>cmd</c>'nin kopyası kaynağın değiştirilme zamanını korur; ulaşan
-/// kopya kaynakla aynı boyutta ve iki saniye içindedir) ve yazmak için açılıp açılamadığı (<see cref="FileLock.Probe"/>).
+/// kopya kaynakla aynı boyutta ve tam aynı zamandadır) ve yazmak için açılıp açılamadığı (<see cref="FileLock.Probe"/>).
 /// Görüntü olarak yüklenmiş bir DLL'in kilidini — üzerine yazılamaz ama yeniden adlandırılabilir — silme paylaşan, yazma
 /// paylaşmayan bir tutamaç birebir taklit eder (<c>FileShare.Read | FileShare.Delete</c>).
 /// </summary>
@@ -155,8 +155,16 @@ public sealed class CopyTargetsTests
         Assert.False(CopyTargets.Landed(new CopyTarget(source, destination)));
     }
 
+    /// <summary>
+    /// <para><b>[DEĞİŞEN KURAL — kabul testi bulgusu 2026-11-14]</b> Eski iddia (<c>…_more_than_two_seconds_off_…_and_one_within_has</c>):
+    /// kaynaktan iki saniye içinde kalan hedef ulaşmış sayılırdı (öğrenilen beslenen çıktıların toleransı, ARCHITECTURE §7.6). Ölçüm: arka
+    /// arkaya iki derleme aynı boyutta DLL üretti (3584 bayt) ve aralarında 0,35 sn vardı — kilit yüzünden yerinde kalan ESKİ kopya ulaşmış
+    /// sayıldı ve karar hiç verilmedi (<see cref="Integration.FilesInUseAcceptanceTests"/> kırmızıydı). <c>cmd</c>'nin kopyası değiştirilme
+    /// zamanını TAM korur; ulaşan kopya kaynakla aynı zamandadır. Tolerans gereksizdir: zamanı yuvarlayan bir hedefte (FAT) ulaşmış bir kopya
+    /// "ulaşmamış" okunur ve yalnız bir kilit yoklamasına mal olur — kilit yoksa hiçbir şey taşınmaz.</para>
+    /// </summary>
     [Fact]
-    public void A_target_more_than_two_seconds_off_its_source_has_not_landed_and_one_within_has()
+    public void A_target_off_its_source_by_any_time_has_not_landed_and_only_the_same_time_has()
     {
         using var temp = new TempDir();
         var (src, dst) = Folders(temp);
@@ -167,7 +175,10 @@ public sealed class CopyTargetsTests
         File.SetLastWriteTimeUtc(destination, built - TimeSpan.FromSeconds(3));
         Assert.False(CopyTargets.Landed(new CopyTarget(source, destination)));
 
-        File.SetLastWriteTimeUtc(destination, built - TimeSpan.FromSeconds(1));
+        File.SetLastWriteTimeUtc(destination, built - TimeSpan.FromMilliseconds(350));
+        Assert.False(CopyTargets.Landed(new CopyTarget(source, destination)));
+
+        File.SetLastWriteTimeUtc(destination, built);
         Assert.True(CopyTargets.Landed(new CopyTarget(source, destination)));
     }
 

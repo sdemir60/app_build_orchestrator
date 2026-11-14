@@ -13,10 +13,6 @@ public sealed record CopyTarget(string Source, string Destination);
 /// </summary>
 public static class CopyTargets
 {
-    /// <summary>Ulaşan bir kopyanın kaynağından en çok bu kadar sapabilir (<c>cmd</c>'nin kopyası zamanı korur; FAT gibi kaba
-    /// çözünürlüklü bir hedef iki saniyeye yuvarlar) — öğrenilen beslenen çıktılarınki ile aynı tolerans (ARCHITECTURE §7.6).</summary>
-    public static readonly TimeSpan TimeTolerance = TimeSpan.FromSeconds(2);
-
     /// <param name="workingDirectory">Komutun çalıştığı klasör — <c>Exec</c> projenin klasöründe koşar; göreli yollar ona göre
     /// çözülür. <c>%DEĞİŞKEN%</c> motorun ortamından açılır; açılamayan değişken taşıyan yol hedef üretmez.</param>
     public static IReadOnlyList<CopyTarget> Resolve(IEnumerable<CopyCommand> commands, string workingDirectory)
@@ -48,8 +44,10 @@ public static class CopyTargets
     }
 
     /// <summary>
-    /// Hedef kaynakla aynı boyutta ve <see cref="TimeTolerance"/> içinde mi. Hedef yoksa ulaşmamıştır. Kaynak yoksa yargılanacak bir
-    /// şey yoktur (ulaşmış sayılır — dokunulmaz).
+    /// Hedef kaynakla aynı boyutta ve TAM aynı değiştirilme zamanında mı — <c>cmd</c>'nin kopyası zamanı tam korur. Tolerans YOKTUR: arka
+    /// arkaya iki derleme aynı boyutta ve bir saniyeden kısa arayla iki DLL üretebilir (ölçüldü), kilit yüzünden yerinde kalan eski kopya
+    /// toleransla "ulaşmış" görünürdü. Zamanı yuvarlayan bir hedefte (FAT) ulaşmış bir kopya ulaşmamış okunur; bedeli yalnız bir kilit
+    /// yoklamasıdır, kilit yoksa hiçbir şey taşınmaz. Hedef yoksa ulaşmamıştır. Kaynak yoksa yargılanacak bir şey yoktur (ulaşmış sayılır).
     /// </summary>
     public static bool Landed(CopyTarget target)
     {
@@ -61,8 +59,7 @@ public static class CopyTargets
             if (!source.Exists) return true;
             destination = new FileInfo(target.Destination);
             if (!destination.Exists) return false;
-            return destination.Length == source.Length
-                && (destination.LastWriteTimeUtc - source.LastWriteTimeUtc).Duration() <= TimeTolerance;
+            return destination.Length == source.Length && destination.LastWriteTimeUtc == source.LastWriteTimeUtc;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
