@@ -40,7 +40,7 @@ public sealed class CopyTargetsTests
         foreach (string ext in new[] { "dll", "pdb", "xml" }) WriteFile(Path.Combine(src, "Acme.Types." + ext), ext);
         WriteFile(Path.Combine(src, "Other.dll"), "other");
 
-        var targets = CopyTargets.Resolve([new CopyCommand([Path.Combine(src, "Acme.Types.*")], dst + "\\")], temp.Path);
+        var targets = CopyTargets.Resolve([new CopyCommand([Path.Combine(src, "Acme.Types.*")], dst + "\\")]);
 
         Assert.Equal(["Acme.Types.dll", "Acme.Types.pdb", "Acme.Types.xml"], targets.Select(t => Path.GetFileName(t.Destination)).Order());
         Assert.All(targets, t => Assert.Equal(Path.Combine(dst, Path.GetFileName(t.Source)), t.Destination));
@@ -54,7 +54,7 @@ public sealed class CopyTargetsTests
         WriteFile(Path.Combine(src, "Acme.Types.dll"), "types");
         WriteFile(Path.Combine(dst, "Acme.Types.Common.dll"), "another project's output");
 
-        var targets = CopyTargets.Resolve([new CopyCommand([Path.Combine(src, "Acme.Types.*")], dst)], temp.Path);
+        var targets = CopyTargets.Resolve([new CopyCommand([Path.Combine(src, "Acme.Types.*")], dst)]);
 
         var target = Assert.Single(targets);
         Assert.Equal(Path.Combine(dst, "Acme.Types.dll"), target.Destination);
@@ -67,7 +67,7 @@ public sealed class CopyTargetsTests
         var (src, dst) = Folders(temp);
         string source = WriteFile(Path.Combine(src, "x.dll"), "x");
 
-        var targets = CopyTargets.Resolve([new CopyCommand([source], Path.Combine(dst, "renamed.dll"))], temp.Path);
+        var targets = CopyTargets.Resolve([new CopyCommand([source], Path.Combine(dst, "renamed.dll"))]);
 
         Assert.Equal([new CopyTarget(source, Path.Combine(dst, "renamed.dll"))], targets);
     }
@@ -83,7 +83,7 @@ public sealed class CopyTargetsTests
             new CopyCommand([Path.Combine(src, "missing.dll")], dst),
             new CopyCommand([Path.Combine(src, "nothing.*")], dst),
             new CopyCommand([src], dst),
-        ], temp.Path);
+        ]);
 
         Assert.Empty(targets);
     }
@@ -96,13 +96,20 @@ public sealed class CopyTargetsTests
         string source = WriteFile(Path.Combine(src, "x.dll"), "x");
 
         var targets = CopyTargets.Resolve(
-            [new CopyCommand([source], dst), new CopyCommand([Path.Combine(src, "x.*")], dst.ToUpperInvariant() + "\\")], temp.Path);
+            [new CopyCommand([source], dst), new CopyCommand([Path.Combine(src, "x.*")], dst.ToUpperInvariant() + "\\")]);
 
         Assert.Single(targets);
     }
 
+    /// <summary>
+    /// <para><b>[DEĞİŞEN KURAL — son inceleme I1, 2026-11-15]</b> Eski iddia (<c>A_relative_path_resolves_against_the_working_directory_…</c>):
+    /// göreli yol projenin klasörüne göre çözülürdü. Yanlıştı: MSBuild <c>PostBuildEvent</c>'i <c>$(OutDir)</c>'de koşturur
+    /// (<c>&lt;Exec WorkingDirectory="$(OutDir)" …/&gt;</c>), özel bir <c>Exec</c> hedefi ise projenin klasöründe — taban komutun hangi hedefte
+    /// koştuğuna bağlıdır ve yanlış taban, komutun hiç dokunmadığı bir klasördeki dosyayı hedef yapar. Göreli yollu komut artık hiç
+    /// okunmaz; tam yola açılan <c>%DEĞİŞKEN%</c> okunur.</para>
+    /// </summary>
     [Fact]
-    public void A_relative_path_resolves_against_the_working_directory_and_a_variable_expands()
+    public void A_relative_path_names_no_target_and_a_variable_that_expands_to_a_full_path_does()
     {
         using var temp = new TempDir();
         var (src, dst) = Folders(temp);
@@ -111,7 +118,10 @@ public sealed class CopyTargetsTests
         Environment.SetEnvironmentVariable(variable, dst);
         try
         {
-            var targets = CopyTargets.Resolve([new CopyCommand([@"src\x.dll"], $"%{variable}%\\")], temp.Path);
+            Assert.Empty(CopyTargets.Resolve([new CopyCommand([@"src\x.dll"], dst + "\\")]));
+            Assert.Empty(CopyTargets.Resolve([new CopyCommand([source], @"..\..\Client\bin\")]));
+
+            var targets = CopyTargets.Resolve([new CopyCommand([source], $"%{variable}%\\")]);
 
             Assert.Equal([new CopyTarget(source, Path.Combine(dst, "x.dll"))], targets);
         }
@@ -128,7 +138,32 @@ public sealed class CopyTargetsTests
         var (src, _) = Folders(temp);
         string source = WriteFile(Path.Combine(src, "x.dll"), "x");
 
-        Assert.Empty(CopyTargets.Resolve([new CopyCommand([source], "%ACME_FIU_NOT_SET_ANYWHERE%\\")], temp.Path));
+        Assert.Empty(CopyTargets.Resolve([new CopyCommand([source], "%ACME_FIU_NOT_SET_ANYWHERE%\\")]));
+    }
+
+    /// <summary>[son inceleme C1] Yalnız kaynaktan ESKİ bir hedef "kopya düşmüş olmalı" sayılır: <c>xcopy /d</c> kaynaktan yeni hedefi
+    /// bilerek atlar ve araç onu kenara alsa daha yeni DLL'in yerine eskisi konurdu. Aynı zaman (ulaşmış), yeni hedef ve olmayan hedef
+    /// eski değildir.</summary>
+    [Fact]
+    public void Only_a_destination_older_than_its_source_is_outdated()
+    {
+        using var temp = new TempDir();
+        var (src, dst) = Folders(temp);
+        string source = WriteFile(Path.Combine(src, "x.dll"), "build");
+        string destination = WriteFile(Path.Combine(dst, "x.dll"), "other");
+        var built = File.GetLastWriteTimeUtc(source);
+        var target = new CopyTarget(source, destination);
+
+        File.SetLastWriteTimeUtc(destination, built - TimeSpan.FromMilliseconds(350));
+        Assert.True(CopyTargets.Outdated(target));
+
+        File.SetLastWriteTimeUtc(destination, built + TimeSpan.FromSeconds(5));
+        Assert.False(CopyTargets.Outdated(target));
+
+        File.SetLastWriteTimeUtc(destination, built);
+        Assert.False(CopyTargets.Outdated(target));
+
+        Assert.False(CopyTargets.Outdated(new CopyTarget(source, Path.Combine(dst, "absent.dll"))));
     }
 
     [Fact]

@@ -2490,8 +2490,9 @@ as Visual Studio's *Clean* does. No output path is passed for it either.
 (Settings → General, off by default), when a project's own post-build copy could not overwrite a file another program
 holds, the engine renames that one file into a hidden `.in-use` folder beside it and runs the same build once more, so
 the project's own command makes the copy (§9.7). The tool still copies nothing, and it deletes only the files it
-moved, once nothing holds them. With the switch off it only reads: the copy's targets are statted, never opened for
-writing unless they did not arrive, and nothing is moved.
+moved, once nothing holds them. With the switch off it only reads: when a step's output reports a sharing violation,
+the copy's targets are statted, and one that is older than its source is opened for writing and closed at once to
+learn whether it is held; nothing is moved.
 
 The intermediate directory is not redirected either. Every run builds the user's working tree, and every
 project keeps its default `obj` for Visual Studio parity — no output path of any kind is changed. That default
@@ -2542,25 +2543,37 @@ all: `cmd` reports only the last command's result, MSBuild sees success, and the
 dependents compile against it. The decision below runs after every build attempt of every project, in
 `InUseCopyInvoker`, which wraps the copy-contention retry (§9.5), so its own retry is covered by that one too.
 
-**Which files.** The copy commands come from the attempt's output: at MSBuild's default verbosity `Exec` echoes each
-command under its target's heading, and when the step fails the `MSB3073` line carries it again — its localized
-wrapper is not read, only the quoted absolute paths after the verb. Only `cmd`'s `copy` and `xcopy` count. A command's
-targets are the destination names of the files it copies — `<destination>\<file name>` for a folder, the destination
-itself for a single file — so a file beside them whose name merely starts the same way, another project's output, is
-never one. A target has *arrived* when it has the source's length and exactly its last-write time, which `cmd`'s copy
-keeps; no tolerance is allowed, because two quick builds can produce DLLs of the same length well under a second
-apart. A target that did not arrive is opened for writing, with every kind of sharing, and closed at once: a sharing or
-lock violation means another program holds it. Restart Manager then names that program for the note, within a few
-seconds or not at all.
+**Which files.** Nothing is decided unless the attempt's own output reports a sharing or lock violation — the text
+Windows gives errors 32 and 33 in its own language, which `cmd` prints when a copy hits a held file, read from the
+same source inside the engine, with the English text always recognised too. MSBuild echoes every line of a step,
+including a copy inside an `if` block that never ran, so the echo alone is no proof that a copy was tried. The copy
+commands come from that output: at MSBuild's default verbosity `Exec` echoes each command under its target's heading,
+and when the step fails the `MSB3073` line carries it again — its localized wrapper is not read, only the quoted
+absolute paths after the verb. Only `cmd`'s `copy` and `xcopy` count, and only commands whose every path is absolute
+once its `%variables%` are expanded: a relative path's base depends on the target that ran it — MSBuild runs
+`PostBuildEvent` in `$(OutDir)` and a custom `Exec` in the project's folder — and a wrong base would point at a
+folder the command never touches. A command's targets are the destination names of the files it copies —
+`<destination>\<file name>` for a folder, the destination itself for a single file — so a file beside them whose name
+merely starts the same way, another project's output, is never one. A target *needs the copy* when it exists and is
+older than its source; a destination newer than its source — a newer version another project put there, a file
+`xcopy /d` skipped on purpose — is never touched, because moving it would let an older file replace it. A target has
+*arrived* when it has the source's length and exactly its last-write time, which `cmd`'s copy keeps; no tolerance is
+allowed, because two quick builds can produce DLLs of the same length well under a second apart. A target that needs
+the copy is opened for writing, with every kind of sharing, and closed at once: a sharing or lock violation means
+another program holds it. Restart Manager then names that program for the note, within a few seconds or not at all.
 
-**What happens.** With the switch off the engine notes the file and the program and returns the attempt as it was.
-With it on, every held target is renamed into `<folder>\.in-use\<name>~<16 hex>.pending` — a hidden folder in the
-destination itself, so the rename stays on its volume — and the same request runs once more: the compiler finds
-nothing to do and the copy runs again. When that attempt succeeds and every moved target has arrived, the parked files
-become `.old`; otherwise each one whose slot is still empty is put back. If one held file cannot be moved — a handle
-that shares no delete, a permission — nothing is retried and the ones already moved go back. A timed-out or stopped
-attempt, a Clean and a restore are never touched. The project's duration is the sum of its attempts, and every line of
-both reaches its log.
+**What happens.** With the switch off the engine notes the held files and the program and returns the attempt as it
+was. With it on, the project takes the engine's one decision gate — two projects that hit the same held file at once
+take it in turn — and reads its targets again under it, since the other project may have solved the same file in the
+meantime. Every target still held is renamed into `<folder>\.in-use\<name>~<16 hex>.pending` — a hidden folder in the
+destination itself, so the rename stays on its volume — and the same request runs once more: in an ordinary Build the
+compiler finds nothing to do and the copy runs again; a Rebuild from a row runs again in full, its restore included.
+The request also runs once more, with nothing moved, when the first attempt failed and nothing it copies is held any
+longer. When that attempt succeeds and every target that needed the copy has arrived, the parked files become `.old`;
+otherwise, and also when the attempt ends with an exception, each one whose slot is still empty is put back. If one
+held file cannot be moved — a handle that shares no delete, a permission — nothing is retried and the ones already
+moved go back. A timed-out or stopped attempt, a Clean and a restore are never touched. The project's duration is the
+sum of its attempts, and every line of both reaches its log.
 
 **Cleaning up.** Before a run dispatches anything the engine sweeps every folder it has parked files in: a parked
 file nobody holds is deleted, a `.pending` one whose slot is empty — the trace of an engine that died between the move
@@ -2571,8 +2584,12 @@ follow the naming pattern are left alone.
 **What the user reads.** Each decision is one line per destination folder, written once (`FilesInUseNotes`): to
 `decision.log` and, as `projectNote` (§5.3), to the console and the event stream, before the project's result. A held
 file with the switch off, a file that cannot be moved and a retry that failed again are warnings; a replaced file is
-an informational line that also says the running program keeps the previous build until it restarts. The note with
-the switch off names the switch, and the switch's label in Settings is that same constant.
+an informational line that also says the running program keeps the previous build until it restarts. Only the project
+that moved a file writes a line: one that found the file already solved retries without a note. The note with the
+switch off names the switch — the switch's label in Settings is that same constant — and, like the note for a file
+that cannot be moved, tells the user to build the project again from its row. A project whose step's last line
+succeeded is recorded as built, so a plain Build would skip it, while a row's Build compiles it whether or not it is
+current (§8.1).
 
 ---
 
@@ -6980,8 +6997,8 @@ disabled mark for that value under `HKCU\...\Explorer\StartupApproved\Run` when 
 
 *Replace files in use* is the one setting that leaves something outside this folder: a hidden `.in-use` folder inside
 a project's post-build destination, holding the copies a running program still uses (§9.7). The sweep deletes them
-once nothing holds them and then removes the folder; with the program closed, deleting the folder by hand loses
-nothing.
+once nothing holds them and then removes the folder; with the program closed and every DLL back in its own place —
+no `.pending` file waiting for an empty slot — deleting the folder by hand loses nothing.
 
 The resource strip (§11.5) persists nothing: each sample lives in memory for one beat, and the file the
 `BO_PROBE_STRIP` probe appends to (§17.5) exists only when a developer names one.
@@ -7694,11 +7711,15 @@ do, and how the interface works around each — useful to know before attempting
 - **A running program keeps the build it loaded.** *Replace files in use* (§9.7) lets the build finish and put the
   new copy in place; the program that held the old one goes on running it until it restarts, and a screen it opens
   from a DLL it already loaded still shows the old code.
-- **Only `cmd`'s `copy` and `xcopy` are watched for files in use.** A post-build step that copies with another tool,
-  MSBuild's own `Copy` task (`MSB302x`, retried only for contention, §9.5), a file held through a handle that shares no
-  delete, and a destination whose file system rounds times (it reads as not arrived, costs a write probe, moves
-  nothing) stay as they were. With minimal verbosity a failed copy is still found from its `MSB3073` line; a copy that
-  failed quietly under a successful last line is not, because the command was never echoed.
+- **Only `cmd`'s `copy` and `xcopy` with absolute paths are watched for files in use.** A post-build step that copies
+  with another tool or through a relative path, MSBuild's own `Copy` task (`MSB302x`, retried only for contention,
+  §9.5) and a file held through a handle that shares no delete stay as they were, and so does a copy whose failure
+  printed no sharing violation. A project whose post-build step runs only when its output changed
+  (`RunPostBuildEvent=OnOutputUpdated`) does not copy on the retry, so its decision ends as a retry that failed again.
+  On a destination whose file system rounds times a replaced file does not read as arrived and the decision ends with
+  the same warning, though the new copy is in place. With minimal verbosity a failed copy is still found from its
+  `MSB3073` line; a copy that failed quietly under a successful last line is not, because the command was never
+  echoed. Such a quiet failure leaves the project recorded as built, so the note sends the user to the row's Build.
 - **A build does not restore an SDK-style project.** The build path's restore prologue is keyed to
   `packages.config`, so an SDK-style project whose `obj\project.assets.json` is missing — a fresh clone, a
   workspace Clean — fails with `NETSDK1004` until an Optimize restores it (§9.3).
@@ -7858,7 +7879,7 @@ execution; it only **contains** it (job object) and **throttles** it (CPU cap).
 | Layer regex | Settings editor | `Regex` constructor with a 100 ms match timeout | ReDoS closed |
 | Solution to open | row icon | `devenv "<sln>"` — hand-quoted | theoretical (below) |
 | External root path | Settings editor, or `ui-state.json` | resolved on every run (§10.4): the project files found under it become MSBuild arguments, escaped per MSVCRT rules; the working-copy root becomes the working directory of `git`/`tf` — never an argument | none |
-| Copy command of a post-build step | the project's own MSBuild output — the echoed `copy`/`xcopy` line or its `MSB3073` line (§9.7) | paths that are statted; a target that did not arrive is opened for writing and closed at once, and with *Replace files in use* on it is renamed beside itself into `.in-use`. A file is touched only when it is the destination name of a file the command copies and another program holds it — never deleted unless the tool moved it | none beyond the project's own code, which already ran (§21.1) |
+| Copy command of a post-build step | the project's own MSBuild output — the echoed `copy`/`xcopy` line or its `MSB3073` line, read only when the same output reports a sharing violation (§9.7) | absolute paths that are statted; a target older than its source is opened for writing and closed at once, and with *Replace files in use* on it is renamed beside itself into `.in-use`. A file is touched only when it is the destination name of a file the command copies, older than its source, and held by another program — never deleted unless the tool moved it | none beyond the project's own code, which already ran (§21.1) |
 | Run folder of a project-log request | the engine's own `runStarted.logDirectory`, echoed back by the App on `getProjectLog` (§5.2) | a read-only path: the Supervisor reads the project's log file in it (the file name comes from a hash of the project id) only when the folder is fully qualified, directly under its logs root and named like a run folder — otherwise the answer is no log | none |
 | Update feed entry | this repository's GitHub Releases, or `BO_UPDATE_SOURCE` (§12.5) | the version is compared as SemVer; the notes go through the release-note reader and are drawn as plain text; the package is checked for size and SHA, then installed by `Update.exe` | none beyond whoever can publish a release (§21.5) |
 

@@ -110,7 +110,7 @@ tarafından kullanılıyor" diye duruyor. Uygulama kapatılıyor, derleme yenide
 aynı ekran yeniden bulunuyor — ya da kopya sessizce düşüyor ve bir sonraki açılış hâlâ eski kodu gösteriyor.\
 **Build Orchestrator'da:** derleme uygulama açıkken geçer; konsol uygulamanın hangi dosyayı tuttuğunu söyler,
 uygulamanın bir sonraki açılışı yeni derlemeyle çalışır.\
-`dosyayı tutan programın adı için Restart Manager` · `kenara taşı, yalnız kopyalayan tek yeniden deneme`
+`dosyayı tutan programın adı için Restart Manager` · `kenara taşı, tek yeniden deneme`
 
 ## Sakin ve erişilebilir tasarım — izlemesi keyifli, okuması kolay
 

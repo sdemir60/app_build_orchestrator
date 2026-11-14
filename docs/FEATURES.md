@@ -127,12 +127,13 @@ processes.\
 shared folder, the build no longer stops there: with *Replace files in use* on, the tool moves the held file aside
 and the copy is made again, so the build goes on and its dependents compile against the new copy. The running app
 keeps the old build until it restarts. With the setting off, the console names the file and the program holding it.\
-**How:** After a project builds, the tool reads the copy commands from MSBuild's output and checks that every file
-they copy reached its destination with the source's size and time, so a failed copy is caught even when the last
-line of the post-build step succeeds and MSBuild reports no error. A file that did not arrive and that another
+**How:** When a project's output reports that a file was in use, the tool reads the copy commands from MSBuild's
+output and checks every file they copy against its destination, so a failed copy is caught even when the last line
+of the post-build step succeeds and MSBuild reports no error. A destination older than its source that another
 program holds is renamed into a hidden `.in-use` folder beside it — Windows allows that for a loaded DLL — and the
-same build runs once more, copying only; the parked copies are deleted by a later run once nothing holds them.\
-`Restart Manager to name the program holding the file` · `rename beside the file, the move Windows allows a loaded DLL` · `one retry that only copies`
+same build runs once more; a newer destination is never moved, and the parked copies are deleted by a later run once
+nothing holds them.\
+`Restart Manager to name the program holding the file` · `rename beside the file, the move Windows allows a loaded DLL` · `one retry of the same build`
 
 ## Calm, accessible design
 

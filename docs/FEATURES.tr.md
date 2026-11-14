@@ -121,13 +121,13 @@ accounting sayaçlarından, belleği private bytes olarak okur; makinedeki süre
 kopyaladığı DLL'i tutuyorsa derleme artık orada durmaz: *Replace files in use* açıkken araç tutulan dosyayı kenara
 taşır ve kopya yeniden yapılır; derleme sürer, bağımlıları yeni kopyaya karşı derlenir. Çalışan uygulama yeniden
 başlayana kadar eski derlemeyle devam eder. Ayar kapalıyken konsol dosyayı ve onu tutan programı söyler.\
-**Nasıl:** Bir proje derlendikten sonra araç MSBuild çıktısından kopya komutlarını okur ve kopyalanan her dosyanın
-hedefe kaynağın boyutu ve zamanıyla ulaşıp ulaşmadığına bakar; post-build adımının son satırı başarılı olduğu için
-MSBuild'in hata vermediği başarısız bir kopya da böyle yakalanır. Ulaşmamış ve başka bir programın tuttuğu dosya
-yanındaki gizli `.in-use` klasörüne yeniden adlandırılır — Windows yüklü bir DLL için buna izin verir — ve aynı
-derleme bir kez daha, yalnız kopyalayarak koşar; kenara alınan kopyalar artık kimse tutmadığında sonraki bir koşuda
-silinir.\
-`dosyayı tutan programın adı için Restart Manager` · `dosyanın yanında yeniden adlandırma, Windows'un yüklü DLL'e izin verdiği taşıma` · `yalnız kopyalayan tek yeniden deneme`
+**Nasıl:** Bir projenin çıktısı bir dosyanın kullanımda olduğunu söylediğinde araç MSBuild çıktısından kopya
+komutlarını okur ve kopyalanan her dosyayı hedefiyle karşılaştırır; post-build adımının son satırı başarılı olduğu
+için MSBuild'in hata vermediği başarısız bir kopya da böyle yakalanır. Kaynağından eski olan ve başka bir programın
+tuttuğu hedef yanındaki gizli `.in-use` klasörüne yeniden adlandırılır — Windows yüklü bir DLL için buna izin verir —
+ve aynı derleme bir kez daha koşar; kaynağından yeni bir hedef asla taşınmaz, kenara alınan kopyalar da artık kimse
+tutmadığında sonraki bir koşuda silinir.\
+`dosyayı tutan programın adı için Restart Manager` · `dosyanın yanında yeniden adlandırma, Windows'un yüklü DLL'e izin verdiği taşıma` · `aynı derlemenin tek yeniden denemesi`
 
 ## Sakin ve erişilebilir tasarım
 

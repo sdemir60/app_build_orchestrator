@@ -109,7 +109,7 @@ process cannot access the file"; the app is closed, the build started again, the
 found again — or the copy fails quietly and the next start still shows the old code.\
 **In Build Orchestrator:** the build goes through with the app still open; the console says which file the app was
 holding, and the next start of the app runs the new build.\
-`Restart Manager to name the program holding the file` · `rename aside, one retry that only copies`
+`Restart Manager to name the program holding the file` · `rename aside, one retry`
 
 ## Calm, accessible design — pleasant to watch, easy to read
 

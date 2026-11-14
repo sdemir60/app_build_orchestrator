@@ -40,7 +40,7 @@ Solution: `BuildOrchestrator.slnx` (kökte).
   Clean'dir (satır menüsündeki ve Build menüsündeki `-t:Clean`): MSBuild projenin kendi kaydettiği çıktıları
   oradan da siler — Visual Studio'nun Clean'i gibi; bu kural ihlali değildir. İkinci istisna da kullanıcının açık
   kararıdır: Settings → General → *Replace files in use* açıksa (varsayılan kapalı), bir projenin kendi post-build
-  kopyası (`copy`/`xcopy`) hedefte başka bir programın tuttuğu dosyaya çarptığında motor YALNIZ o dosyayı hedefin
+  kopyası (`copy`/`xcopy`) hedefte başka bir programın tuttuğu, kaynağından eski dosyaya çarptığında motor YALNIZ o dosyayı hedefin
   içindeki gizli `.in-use` klasörüne taşır ve aynı derlemeyi bir kez daha koşturur; kopyayı yine projenin kendi komutu
   yapar, araç kopyalamaz ve yalnız kendi taşıdığını kilidi kalkınca siler. Çıktı klasöründeki tek mutasyon yeri
   `Core/MsBuild/InUseStash.cs`'tir. Araç kendi derlediği projede yalnız DİSKTEKİ kaynak İÇERİĞİNE bakar; başkasının (ör. VS'nin)

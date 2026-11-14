@@ -43,6 +43,12 @@ public sealed partial class InUseStash(string recordPath)
     private readonly string _recordPath = recordPath ?? throw new ArgumentNullException(nameof(recordPath));
     private readonly object _gate = new();
 
+    /// <summary>[son inceleme I3] Kilitli kopya kararlarının TEK kapısı: bir projenin "taşı → yeniden dene → oturt ya da geri koy" dizisi
+    /// bu kapıyı tutarak koşar. Paralel iki proje aynı tutulan dosyaya çarptığında ikincisi birincinin bitmesini bekler ve dosyayı yeniden
+    /// yoklar — birinin taşıdığını öbürü yok sanıp "taşınamaz" demez, birinin oturttuğu yeni kopyayı öbürü kenara almaz; taşıma klasörünün
+    /// açılıp kaldırılması da yarışmaz. Motor başına tek taşıyıcı olduğu için kapı da tektir.</summary>
+    internal SemaphoreSlim DecisionGate { get; } = new(1, 1);
+
     /// <summary>
     /// <paramref name="path"/>'i yanındaki taşıma klasörüne <c>.pending</c> olarak taşır. Taşınamazsa (silmeyi paylaşmayan bir tutamaç,
     /// izin) <c>null</c> döner ve dosya yerinde kalır; bu çağrının açtığı boş taşıma klasörü de kalmaz.

@@ -77,15 +77,21 @@ public sealed class InUseCopyInvokerTests
         public Func<int, MsBuildInvokeResult?> Forced { get; init; } = _ => null;
         /// <summary>Olay ÇALIŞTIKTAN sonra sonucu biçimler (ör. kopya düştü ama koşu zaman aşımıyla bitti).</summary>
         public Func<MsBuildInvokeResult, MsBuildInvokeResult> Shape { get; init; } = r => r;
+        /// <summary>Denemenin başında yankılanan ek satırlar (<see cref="Forced"/>'dan ÖNCE yazılır).</summary>
         public string[] ExtraLines { get; init; } = [];
+        /// <summary>Olay ÇALIŞTIKTAN sonra, sonuç dönmeden önce bunu bekler: iki projenin ilk denemesi de kopyasını denemiş (ve düşmüş)
+        /// olmadan hiçbir decorator karar veremesin diye.</summary>
+        public Func<int, Task> AfterAttempt { get; init; } = _ => Task.CompletedTask;
 
-        public Task<MsBuildInvokeResult> InvokeAsync(MsBuildInvokeRequest req, Action<string> onLine, CancellationToken ct)
+        public async Task<MsBuildInvokeResult> InvokeAsync(MsBuildInvokeRequest req, Action<string> onLine, CancellationToken ct)
         {
             int call = Interlocked.Increment(ref Calls);
-            if (Forced(call) is { } forced) return Task.FromResult(forced);
             foreach (string extra in ExtraLines) onLine(extra);
-            if (lines.Length == 0) return Task.FromResult(Shape(new MsBuildInvokeResult(0, 100, false, false)));
-            return Task.FromResult(Shape(PostBuildCopy.Run(project, lines, onLine)));
+            if (Forced(call) is { } forced) return forced;
+            if (lines.Length == 0) return Shape(new MsBuildInvokeResult(0, 100, false, false));
+            var result = PostBuildCopy.Run(project, lines, onLine);
+            await AfterAttempt(call);
+            return Shape(result);
         }
 
         public Task<MsBuildInvokeResult> RestoreAsync(MsBuildRestoreRequest req, Action<string> onLine, CancellationToken ct)
@@ -323,6 +329,122 @@ public sealed class InUseCopyInvokerTests
         Assert.Equal("old", File.ReadAllText(Path.Combine(w.Client, "Acme.Types.dll")));
     }
 
+    /// <summary>[son inceleme C1] Kaynaktan YENİ bir hedef (başka bir projenin koyduğu yeni sürüm; <c>xcopy /d</c>'nin bilerek atladığı)
+    /// tutuluyor olsa ve kopya ona çarpsa bile kenara alınmaz: alınsaydı yeniden deneme yeni DLL'in yerine eskisini koyar, süpürme de yeniyi
+    /// silerdi.</summary>
+    [Fact]
+    public async Task A_destination_newer_than_its_source_is_never_moved()
+    {
+        using var w = new Workspace();
+        w.Built("Acme.Types.dll");
+        string target = Path.Combine(w.Client, "Acme.Types.dll");
+        File.WriteAllText(target, "newer build from another project");
+        File.SetLastWriteTimeUtc(target, DateTime.UtcNow + TimeSpan.FromHours(1));
+        var inner = new PostBuildCopyInvoker(w.Project, (w.Pattern, w.Client));
+        var (invoker, reports) = Wrap(inner, w.Stash, replace: true);
+
+        using (HoldLikeALoadedDll(target))
+            await invoker.InvokeAsync(w.Request(), _ => { }, CancellationToken.None);
+
+        Assert.Equal(1, inner.Calls);
+        Assert.Empty(reports);
+        Assert.Equal("newer build from another project", File.ReadAllText(target));
+        Assert.False(Directory.Exists(w.Parked(w.Client)));
+    }
+
+    /// <summary>[son inceleme I2] MSBuild bir olayın bütün satırlarını yankılar: çalışmayan bir <c>if</c> bloğundaki kopya da yankıda
+    /// durur. Kopya hiç denenmediyse (çıktıda paylaşım ihlali yok) hedef tutuluyor ve eski olsa da dokunulmaz, not da yazılmaz.</summary>
+    [Fact]
+    public async Task A_copy_line_that_never_ran_is_left_alone()
+    {
+        using var w = new Workspace();
+        w.Built("Acme.Types.dll");
+        var inner = new PostBuildCopyInvoker(w.Project)
+        {
+            ExtraLines = ["PostBuildEvent:", "  if \"Debug\" == \"Release\" (", $"  copy /y \"{w.Pattern}\" \"{w.Client}\\\"", "  )"],
+            Forced = _ => new MsBuildInvokeResult(0, 100, false, false),
+        };
+        var (invoker, reports) = Wrap(inner, w.Stash, replace: true);
+        string target = Path.Combine(w.Client, "Acme.Types.dll");
+
+        using (HoldLikeALoadedDll(target))
+            await invoker.InvokeAsync(w.Request(), _ => { }, CancellationToken.None);
+
+        Assert.Equal(1, inner.Calls);
+        Assert.Empty(reports);
+        Assert.Equal("old", File.ReadAllText(target));
+    }
+
+    /// <summary>[son inceleme I3] İki proje aynı anda aynı tutulan dosyaya çarpar (ikisinin de kopyası onu yazar). Kararlar tek kapıdan
+    /// sırayla geçer ve dosya taşımadan önce yeniden yoklanır: birincisi eskiyi kenara alıp kopyasını oturtur, ikincisi artık kilitsiz
+    /// yuvaya kendi kopyasını yazar — ikisi de başarılı, kenarda tek bir eski kopya, yanlış "cannot be moved" yok.
+    /// <para>İki kaynağın zamanı iki yolu ayrı ayrı pinler: farklıysa ikinci proje yuvadaki kopyayı kendi kaynağından eski görür ve yeniden
+    /// dener; AYNIYSA (aynı paketten gelen aynı DLL) kopya ulaşmış görünür, ama ilk denemesi ihlalle düştüğü ve dosya artık tutulmadığı için
+    /// yine bir kez dener — ilk ölçüm bu ikinci yolu kaynakları aynı saat adımında yazarak, rastgele düşürüyordu.</para></summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Two_projects_that_hit_the_same_held_file_at_once_both_succeed(bool sameStamp)
+    {
+        using var w = new Workspace();
+        w.Built("Acme.Types.dll");
+        string otherOutput = Path.Combine(Path.GetDirectoryName(w.Output)!, "Other");
+        Directory.CreateDirectory(otherOutput);
+        string otherSource = Path.Combine(otherOutput, "Acme.Types.dll");
+        File.WriteAllText(otherSource, "new build");
+        var stamp = File.GetLastWriteTimeUtc(Path.Combine(w.Output, "Acme.Types.dll"));
+        File.SetLastWriteTimeUtc(otherSource, sameStamp ? stamp : stamp + TimeSpan.FromSeconds(1));
+        var bothFailed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int arrived = 0;
+        Task Together(int call)
+        {
+            if (call != 1) return Task.CompletedTask;
+            if (Interlocked.Increment(ref arrived) == 2) bothFailed.TrySetResult();
+            return bothFailed.Task;
+        }
+        var first = new PostBuildCopyInvoker(w.Project, (w.Pattern, w.Client)) { AfterAttempt = Together };
+        var second = new PostBuildCopyInvoker(w.Project, (Path.Combine(otherOutput, "Acme.Types.*"), w.Client)) { AfterAttempt = Together };
+        var reports = new ConcurrentQueue<FilesInUseReport>();
+        InUseCopyInvoker Decorate(IMsBuildInvoker inner) =>
+            new(inner, w.Stash, replace: true, (_, report) => reports.Enqueue(report), findHolders: _ => [Host]);
+        string target = Path.Combine(w.Client, "Acme.Types.dll");
+        MsBuildInvokeResult[] results;
+
+        using (HoldLikeALoadedDll(target))
+        {
+            results = await Task.WhenAll(
+                Task.Run(() => Decorate(first).InvokeAsync(w.Request(), _ => { }, CancellationToken.None)),
+                Task.Run(() => Decorate(second).InvokeAsync(w.Request(), _ => { }, CancellationToken.None)));
+        }
+
+        Assert.All(results, r => Assert.Equal(0, r.ExitCode));
+        Assert.Equal("new build", File.ReadAllText(target));
+        Assert.Equal("old", File.ReadAllText(Assert.Single(Directory.GetFiles(w.Parked(w.Client)))));
+        Assert.DoesNotContain(reports, r => r.Outcome is FilesInUseOutcome.CannotMove or FilesInUseOutcome.FailedAgain);
+        Assert.Equal(FilesInUseOutcome.Replaced, Assert.Single(reports).Outcome);
+    }
+
+    /// <summary>[son inceleme I5] İkinci deneme bir istisnayla biterse (ör. contention bekleyişinde hard Stop'un iptali) taşınan dosya yerine
+    /// konur ve istisna aynen yukarı çıkar — yuva bir sonraki koşunun süpürmesine kadar boş kalmaz.</summary>
+    [Fact]
+    public async Task An_exception_from_the_second_build_puts_the_moved_file_back()
+    {
+        using var w = new Workspace();
+        w.Built("Acme.Types.dll");
+        var inner = new PostBuildCopyInvoker(w.Project, (w.Pattern, w.Client))
+        {
+            Forced = call => call == 2 ? throw new OperationCanceledException() : null,
+        };
+        var (invoker, _) = Wrap(inner, w.Stash, replace: true);
+        string target = Path.Combine(w.Client, "Acme.Types.dll");
+
+        using (HoldLikeALoadedDll(target))
+            await Assert.ThrowsAsync<OperationCanceledException>(() => invoker.InvokeAsync(w.Request(), _ => { }, CancellationToken.None));
+
+        Assert.Equal("old", File.ReadAllText(target));
+        Assert.Empty(Directory.Exists(w.Parked(w.Client)) ? Directory.GetFiles(w.Parked(w.Client)) : []);
+    }
+
     [Fact]
     public async Task A_restore_goes_straight_to_the_inner_invoker()
     {
@@ -343,16 +465,20 @@ public sealed class InUseCopyInvokerTests
         FilesInUseReport Report(FilesInUseOutcome outcome, params FileHolder[] holders) =>
             new(folder, ["Acme.Types.dll"], holders, outcome);
 
+        // [DEĞİŞEN KURAL — son inceleme I4] Eski metin "Turn on Replace files in use in Settings to build while it runs" derdi. Son satırı
+        // başarılı bir olayda proje başarılı kaydedilir ve sıradan bir Build onu güncel sayıp atlar: ayarı açmak tek başına kopyayı yeniden
+        // yaptırmaz. Not artık işe yarayan yolu söyler — satırdan derleme, güncel olsa da derler. Aynı gerekçe CannotMove'da.
         Assert.Equal(
             @"warning: Acme.Types: Acme.Types.dll in C:\Acme\Client\bin is held by Acme.Host.exe (PID 42) — the copy kept the previous build. "
-            + "Turn on Replace files in use in Settings to build while it runs",
+            + "Turn on Replace files in use in Settings, then build this project again from its row",
             FilesInUseNotes.Line("Acme.Types", Report(FilesInUseOutcome.Held, Host)));
         Assert.Equal(
             @"Acme.Types: Acme.Types.dll, Acme.Types.pdb in C:\Acme\Client\bin were held by Acme.Host.exe (PID 42), devenv.exe (PID 7) — moved aside "
             + "and copied again; the running program keeps the previous build until it restarts",
             FilesInUseNotes.Line("Acme.Types", new(folder, ["Acme.Types.dll", "Acme.Types.pdb"], [Host, new(7, "devenv.exe")], FilesInUseOutcome.Replaced)));
         Assert.Equal(
-            @"warning: Acme.Types: Acme.Types.dll in C:\Acme\Client\bin is held by another program and cannot be moved aside — close it and build again",
+            @"warning: Acme.Types: Acme.Types.dll in C:\Acme\Client\bin is held by another program and cannot be moved aside — close it, "
+            + "then build this project again from its row",
             FilesInUseNotes.Line("Acme.Types", Report(FilesInUseOutcome.CannotMove)));
         Assert.Equal(
             @"warning: Acme.Types: Acme.Types.dll in C:\Acme\Client\bin was held by Acme.Host.exe (PID 42) — moved aside, but the copy failed again",

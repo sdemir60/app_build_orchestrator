@@ -105,18 +105,49 @@ public static partial class CopyCommandReader
 }
 
 /// <summary>
+/// [files-in-use · son inceleme I2] Bir kopyanın gerçekten DENENİP bir dosya kilidine çarptığının kanıtı: <c>cmd</c> (ve <c>xcopy</c>'nin
+/// "File creation error - …" satırı) hatayı sistemin kendi metniyle yazar — Win32'nin 32 (paylaşım ihlali) ve 33 (kilit ihlali) numaralı
+/// hatalarının Windows'un dilindeki iletisi. Metin motorun içinden aynı kaynaktan okunur (<see cref="System.ComponentModel.Win32Exception"/>);
+/// İngilizcesi de her zaman tanınır. Kanıt yoksa (yankılanan satır çalışmayan bir <c>if</c> bloğundaydı, <c>xcopy /d</c> dosyayı bilerek
+/// atladı) kilitli kopya kararı hiç verilmez.
+/// </summary>
+public static class SharingViolation
+{
+    private static readonly string[] Texts =
+    [
+        .. new[]
+        {
+            new System.ComponentModel.Win32Exception(32).Message,
+            new System.ComponentModel.Win32Exception(33).Message,
+            "The process cannot access the file because it is being used by another process",
+            "The process cannot access the file because another process has locked a portion of the file",
+        }
+        .Select(t => t.Trim().TrimEnd('.').Trim())
+        .Where(t => t.Length > 0)
+        .Distinct(StringComparer.OrdinalIgnoreCase),
+    ];
+
+    /// <summary>Satır bir paylaşım ya da kilit ihlali iletisi taşıyor mu.</summary>
+    public static bool IsReported(string line) =>
+        !string.IsNullOrEmpty(line) && Texts.Any(t => line.Contains(t, StringComparison.OrdinalIgnoreCase));
+}
+
+/// <summary>
 /// [files-in-use] Bir denemenin çıktısındaki kopya komutlarını toplar: her satırı önce yankı, sonra <c>MSB3073</c> olarak dener;
 /// aynı komut (kaynaklar + hedef, büyük/küçük harf duyarsız) bir kez ve ilk görüldüğü sırada kalır — yankı ile hata satırı aynı
-/// komutu iki kez söyler. Satırlar MSBuild'in stdout/stderr pompalarından gelir; toplayıcı kilitle korunur.
+/// komutu iki kez söyler. Çıktıda bir paylaşım ya da kilit ihlali görüldüyse onu da not eder (<see cref="SawSharingViolation"/>).
+/// Satırlar MSBuild'in stdout/stderr pompalarından gelir; toplayıcı kilitle korunur.
 /// </summary>
 public sealed class CopyCommandCollector
 {
     private readonly object _gate = new();
     private readonly List<CopyCommand> _commands = [];
     private readonly HashSet<string> _keys = new(StringComparer.OrdinalIgnoreCase);
+    private int _violation;
 
     public void Observe(string line)
     {
+        if (SharingViolation.IsReported(line)) Interlocked.Exchange(ref _violation, 1);
         if ((CopyCommandReader.FromEcho(line) ?? CopyCommandReader.FromMsb3073(line)) is not { } command) return;
         string key = string.Join('\u001f', command.Sources) + '\u001e' + command.Destination;
         lock (_gate)
@@ -124,6 +155,9 @@ public sealed class CopyCommandCollector
             if (_keys.Add(key)) _commands.Add(command);
         }
     }
+
+    /// <summary>Denemenin çıktısında bir paylaşım ya da kilit ihlali iletisi görüldü mü (<see cref="SharingViolation"/>).</summary>
+    public bool SawSharingViolation => Volatile.Read(ref _violation) == 1;
 
     /// <summary>Şimdiye kadar görülen komutlar (anlık kopya).</summary>
     public IReadOnlyList<CopyCommand> Commands

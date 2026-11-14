@@ -23,20 +23,24 @@ public sealed record FilesInUseReport(string Folder, IReadOnlyList<string> FileN
 /// [files-in-use] <see cref="IMsBuildInvoker"/>'ı saran decorator: projenin post-build kopyası (<c>copy</c>/<c>xcopy</c>) hedefte başka
 /// bir programın tuttuğu dosyaya çarptıysa —
 /// <list type="number">
-/// <item>denemenin çıktısından kopya komutlarını okur (<see cref="CopyCommandCollector"/>),</item>
-/// <item>komutun kopyaladığı ve hedefe ULAŞMAMIŞ dosyalardan yazmak için açılamayanları seçer (<see cref="CopyTargets.Landed"/>,
-/// <see cref="FileLock.Probe"/> = <see cref="FileLockState.Locked"/>) — exit kodu ne olursa olsun: iki satırlı bir olayın ilk satırı
-/// düşüp son satırı geçince MSBuild hata vermez,</item>
+/// <item>denemenin çıktısından kopya komutlarını okur ve bir paylaşım/kilit ihlali görüp görmediğini not eder
+/// (<see cref="CopyCommandCollector"/>) — ihlal yoksa hiçbir kopya bir kilide çarpmamıştır ve karar verilmez [son inceleme I2],</item>
+/// <item>komutun kopyaladığı dosyalardan hedefte kaynaktan ESKİ kalanları [C1] ve yazmak için açılamayanları seçer
+/// (<see cref="CopyTargets.Outdated"/>, <see cref="FileLock.Probe"/> = <see cref="FileLockState.Locked"/>) — exit kodu ne olursa olsun: iki
+/// satırlı bir olayın ilk satırı düşüp son satırı geçince MSBuild hata vermez,</item>
 /// <item>tutanları bulur (<see cref="FileHolders"/>, yalnız not için),</item>
-/// <item><paramref name="replace"/> kapalıysa raporlar (<see cref="FilesInUseOutcome.Held"/>) ve sonucu AYNEN döner; açıksa dosyaları
-/// <see cref="InUseStash"/> ile kenara taşır ve AYNI isteği BİR kez daha koşturur — derleyici atlanır, yalnız kopya yeniden yapılır.</item>
+/// <item><paramref name="replace"/> kapalıysa raporlar (<see cref="FilesInUseOutcome.Held"/>) ve sonucu AYNEN döner; açıksa taşıyıcının tek
+/// karar kapısını tutarak [I3] dosyaları yeniden yoklar, hâlâ tutulanları <see cref="InUseStash"/> ile kenara taşır ve AYNI isteği BİR kez
+/// daha koşturur — sıradan bir Build'de derleyici atlanır ve kopya yeniden yapılır; satırdan Rebuild'de istek yine Rebuild'dir.</item>
 /// </list>
-/// Yeniden deneme başarılı olup taşınan her dosya hedefe ulaştıysa taşınanlar <c>.old</c> olur (<see cref="FilesInUseOutcome.Replaced"/>);
-/// olmadıysa yuvası boş kalanlar geri konur (<see cref="FilesInUseOutcome.FailedAgain"/>). Bir dosya bile taşınamazsa yeniden deneme o
-/// dosyada yine düşeceği için yapılmaz, taşınanlar geri konur (<see cref="FilesInUseOutcome.CannotMove"/>).
-/// <para>Dokunulmayanlar: zaman aşımı ya da iptal ile biten deneme, <c>-t:Clean</c>, restore (doğrudan iç invoker'a gider), kilitsiz bir
-/// sebeple ulaşmamış kopya (salt okunur hedef, izin) ve komutun kopyalamadığı her dosya. Her denemenin her satırı çağırana akar; süre iki
-/// denemenin toplamıdır.</para>
+/// Yeniden deneme başarılı olup seçilen her dosya hedefe ulaştıysa taşınanlar <c>.old</c> olur (<see cref="FilesInUseOutcome.Replaced"/>);
+/// olmadıysa yuvası boş kalanlar geri konur (<see cref="FilesInUseOutcome.FailedAgain"/>); deneme bir istisnayla biterse de geri konur ve
+/// istisna yukarı çıkar [I5]. Bir dosya bile taşınamazsa yeniden deneme o dosyada yine düşeceği için yapılmaz, taşınanlar geri konur
+/// (<see cref="FilesInUseOutcome.CannotMove"/>). Kapının altında taşınacak bir şey bulamayan proje (başka bir proje çözmüş) rapor yazmadan
+/// yeniden dener.
+/// <para>Dokunulmayanlar: zaman aşımı ya da iptal ile biten deneme, <c>-t:Clean</c>, restore (doğrudan iç invoker'a gider), kaynaktan yeni
+/// ya da kilitsiz bir sebeple ulaşmamış hedef (salt okunur dosya, izin), göreli yollu komut (<see cref="CopyTargets.Resolve"/>) ve komutun
+/// kopyalamadığı her dosya. Her denemenin her satırı çağırana akar; süre iki denemenin toplamıdır.</para>
 /// </summary>
 /// <param name="onReport">Hedef klasör başına bir rapor — çağıran (koordinatör) onu <see cref="FilesInUseNotes.Line"/> ile yazar.</param>
 /// <param name="findHolders">[test dikişi] Tutanları bulan; varsayılan <see cref="FileHolders.Find"/> (<see cref="FileHolders.DefaultTimeout"/>).</param>
@@ -68,15 +72,20 @@ public sealed class InUseCopyInvoker(
             collector.Observe(line);
         }, ct);
         if (req.Target == MsBuildTarget.Clean || first.TimedOut || first.Killed || ct.IsCancellationRequested) return first;
+        // [son inceleme I2] Kanıt: denemenin kendi çıktısında bir paylaşım/kilit ihlali. Yoksa hiçbir kopya bir kilide çarpmamıştır —
+        // yankılanan ama çalışmayan bir satır, bilerek atlanan bir dosya karar tetiklemez.
+        if (!collector.SawSharingViolation || collector.Commands is not { Count: > 0 } commands) return first;
 
-        var commands = collector.Commands;
-        if (commands.Count == 0) return first;
-        string workingDirectory = Path.GetDirectoryName(Path.GetFullPath(req.ProjectId)) ?? "";
-        var locked = CopyTargets.Resolve(commands, workingDirectory)
-            .Where(t => !CopyTargets.Landed(t) && FileLock.Probe(t.Destination) == FileLockState.Locked)
-            .ToList();
-        if (locked.Count == 0) return first;
+        // Hedefe ulaşmamış kopyalar: kaynaktan ESKİ hedef [C1]. Kilitli olanlar şimdi tutulanlardır; kilitsiz ama eski bir hedef, kilidi
+        // denemeden sonra (başka bir proje onu çözdü, program kapandı) kalkmış bir kopyadır — o da yeniden denemeyle oturur.
+        var targets = CopyTargets.Resolve(commands);
+        var outdated = targets.Where(CopyTargets.Outdated).ToList();
+        var locked = outdated.Where(t => FileLock.Probe(t.Destination) == FileLockState.Locked).ToList();
+        // Ayar kapalıyken not yalnız şimdi tutulan bir dosya içindir. Açıkken kilidin çözülmüş olması da yeniden denemenin sebebidir: deneme
+        // ihlalle düştüyse (exit≠0) hedefler şimdi ulaşmış görünse bile — başka bir proje aynı dosyayı oturttu — bir kez daha denenir.
+        if (replace ? outdated.Count == 0 && first.ExitCode == 0 : locked.Count == 0) return first;
 
+        // Tutanlar yalnız not içindir; kapıdan ÖNCE sorulur ki kapı Restart Manager'ın süresini başka projelere bekletmesin.
         var holdersByFolder = locked.GroupBy(FolderOf, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => _findHolders([.. g.Select(t => t.Destination)]), StringComparer.OrdinalIgnoreCase);
         if (!replace)
@@ -85,30 +94,71 @@ public sealed class InUseCopyInvoker(
             return first;
         }
 
-        var moved = new List<(CopyTarget Target, StashedFile File)>();
-        var stuck = new List<CopyTarget>();
-        foreach (var target in locked)
+        try
         {
-            if (_stash.MoveAside(target.Destination) is { } file) moved.Add((target, file));
-            else stuck.Add(target);
+            await _stash.DecisionGate.WaitAsync(ct);
         }
-        if (stuck.Count > 0)
+        catch (OperationCanceledException)
         {
-            foreach (var (_, file) in moved) _stash.Restore(file);
-            Report(req, stuck, holdersByFolder, FilesInUseOutcome.CannotMove);
-            return first;
+            return first; // hiçbir şey taşınmadı
         }
+        try
+        {
+            // [son inceleme I3] Kapının altında YENİDEN oku: bekleyen sürede başka bir proje aynı dosyayı kenara alıp kendi kopyasını
+            // oturtmuş olabilir — o zaman taşınacak bir şey kalmamıştır ve yeniden deneme kendi kopyasını yazar. Hiçbir hedef eski değilse
+            // yeniden deneme yalnız ilk deneme düştüyse VE kopyalanan hiçbir dosya şimdi tutulmuyorsa (kilidi başkası çözdü) yapılır: hâlâ
+            // tutulan, kaynaktan yeni bir dosya [C1] yeniden denemeyi aynı kilide çarptırırdı.
+            outdated = [.. targets.Where(CopyTargets.Outdated)];
+            var held = HeldAndOutdated(outdated);
+            if (held.Count == 0 && outdated.Count == 0
+                && (first.ExitCode == 0 || targets.Any(t => FileLock.Probe(t.Destination) == FileLockState.Locked)))
+                return first;
+            var moved = new List<StashedFile>();
+            var stuck = new List<CopyTarget>();
+            foreach (var target in held)
+            {
+                if (_stash.MoveAside(target.Destination) is { } file) moved.Add(file);
+                else stuck.Add(target);
+            }
+            if (stuck.Count > 0)
+            {
+                foreach (var file in moved) _stash.Restore(file);
+                Report(req, stuck, holdersByFolder, FilesInUseOutcome.CannotMove);
+                return first;
+            }
 
-        var second = await _inner.InvokeAsync(req, onLine, ct);
-        bool replaced = second is { ExitCode: 0, TimedOut: false, Killed: false } && moved.All(m => CopyTargets.Landed(m.Target));
-        foreach (var (_, file) in moved)
-        {
-            if (replaced) _stash.Settle(file);
-            else _stash.Restore(file);
+            MsBuildInvokeResult second;
+            try
+            {
+                second = await _inner.InvokeAsync(req, onLine, ct);
+            }
+            catch
+            {
+                // [son inceleme I5] Yeniden deneme bir istisnayla bitti (ör. contention bekleyişinde hard Stop'un iptali): taşınan her dosya
+                // yuvası boşsa yerine konur — yuva bir sonraki koşunun süpürmesine kadar boş kalmaz. İstisna aynen yukarı çıkar.
+                foreach (var file in moved) _stash.Restore(file);
+                throw;
+            }
+            bool replaced = second is { ExitCode: 0, TimedOut: false, Killed: false } && outdated.All(CopyTargets.Landed);
+            foreach (var file in moved)
+            {
+                if (replaced) _stash.Settle(file);
+                else _stash.Restore(file);
+            }
+            // Rapor yalnız bu projenin taşıdığı dosyalar içindir: taşınacak bir şey bulamayan proje (başkası çözmüş) sessizce yeniden dener.
+            if (moved.Count > 0)
+                Report(req, held, holdersByFolder, replaced ? FilesInUseOutcome.Replaced : FilesInUseOutcome.FailedAgain);
+            return second with { DurationMs = first.DurationMs + second.DurationMs };
         }
-        Report(req, locked, holdersByFolder, replaced ? FilesInUseOutcome.Replaced : FilesInUseOutcome.FailedAgain);
-        return second with { DurationMs = first.DurationMs + second.DurationMs };
+        finally
+        {
+            _stash.DecisionGate.Release();
+        }
     }
+
+    /// <summary>Hâlâ kaynaktan eski [son inceleme C1] ve başka bir programın tuttuğu hedefler.</summary>
+    private static List<CopyTarget> HeldAndOutdated(IEnumerable<CopyTarget> targets) =>
+        [.. targets.Where(t => CopyTargets.Outdated(t) && FileLock.Probe(t.Destination) == FileLockState.Locked)];
 
     private void Report(MsBuildInvokeRequest req, IEnumerable<CopyTarget> targets,
         IReadOnlyDictionary<string, IReadOnlyList<FileHolder>> holdersByFolder, FilesInUseOutcome outcome)
@@ -154,12 +204,14 @@ public static class FilesInUseNotes
         string subject = $"{projectName}: {files} in {report.Folder}";
         return report.Outcome switch
         {
+            // [son inceleme I4] "build this project again from its row": son satırı başarılı bir olayda proje başarılı kaydedilir ve
+            // sıradan bir Build onu güncel sayıp atlar; satırdan derleme güncel olsa da derler.
             FilesInUseOutcome.Held => WarningPrefix + $"{subject} {(one ? "is" : "are")} held by {holders} — the copy kept the previous build. "
-                + $"Turn on {SettingLabel} in Settings to build while it runs",
+                + $"Turn on {SettingLabel} in Settings, then build this project again from its row",
             FilesInUseOutcome.Replaced => $"{subject} {(one ? "was" : "were")} held by {holders} — moved aside and copied again; "
                 + "the running program keeps the previous build until it restarts",
             FilesInUseOutcome.CannotMove => WarningPrefix + $"{subject} {(one ? "is" : "are")} held by {holders} and cannot be moved aside "
-                + "— close it and build again",
+                + "— close it, then build this project again from its row",
             FilesInUseOutcome.FailedAgain => WarningPrefix + $"{subject} {(one ? "was" : "were")} held by {holders} — moved aside, "
                 + "but the copy failed again",
             _ => throw new ArgumentOutOfRangeException(nameof(report), report.Outcome, null),

@@ -150,6 +150,32 @@ public sealed class CopyCommandsTests
         Assert.Equal([Server, Client], collector.Commands.Select(c => c.Destination));
     }
 
+    /// <summary>[son inceleme I2] Karar yalnız denemenin çıktısında bir paylaşım ya da kilit ihlali GÖRÜLDÜYSE verilir: MSBuild bir olayın
+    /// bütün satırlarını yankılar, çalışmayan bir <c>if</c> bloğundaki kopya da yankıda durur. <c>cmd</c> ihlali sistemin kendi metniyle
+    /// yazar (Windows'un dili); metin Win32'nin 32 ve 33 numaralı hatasından okunur, İngilizcesi de tanınır.</summary>
+    [Fact]
+    public void The_collector_notices_a_sharing_or_lock_violation_and_nothing_else()
+    {
+        foreach (string line in new[]
+        {
+            "  The process cannot access the file because it is being used by another process.",
+            "File creation error - The process cannot access the file because another process has locked a portion of the file.",
+            "  " + new System.ComponentModel.Win32Exception(32).Message,
+            "  " + new System.ComponentModel.Win32Exception(33).Message,
+        })
+        {
+            var collector = new CopyCommandCollector();
+            collector.Observe($"  copy /y \"{Source}\" \"{Client}\"");
+            Assert.False(collector.SawSharingViolation);
+            collector.Observe(line);
+            Assert.True(collector.SawSharingViolation, line);
+        }
+
+        var quiet = new CopyCommandCollector();
+        foreach (string line in new[] { "        1 file(s) copied.", "Access is denied.", "PostBuildEvent:" }) quiet.Observe(line);
+        Assert.False(quiet.SawSharingViolation);
+    }
+
     [Fact]
     public void The_collector_takes_lines_from_two_pumps_at_once()
     {
