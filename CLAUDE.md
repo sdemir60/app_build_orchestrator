@@ -38,7 +38,12 @@ Solution: `BuildOrchestrator.slnx` (kökte).
 - **OutDir'e dokunulmaz.** Hiçbir çıktı yolu değiştirilmez (ne `OutDir` ne `obj`); her koşu çalışma ağacında
   derlenir. Araç OutDir'e kendisi hiçbir şey yazmaz, kopyalamaz, silmez. Tek istisna kullanıcının bastığı
   Clean'dir (satır menüsündeki ve Build menüsündeki `-t:Clean`): MSBuild projenin kendi kaydettiği çıktıları
-  oradan da siler — Visual Studio'nun Clean'i gibi; bu kural ihlali değildir. Araç kendi derlediği projede yalnız DİSKTEKİ kaynak İÇERİĞİNE bakar; başkasının (ör. VS'nin)
+  oradan da siler — Visual Studio'nun Clean'i gibi; bu kural ihlali değildir. İkinci istisna da kullanıcının açık
+  kararıdır: Settings → General → *Replace files in use* açıksa (varsayılan kapalı), bir projenin kendi post-build
+  kopyası (`copy`/`xcopy`) hedefte başka bir programın tuttuğu dosyaya çarptığında motor YALNIZ o dosyayı hedefin
+  içindeki gizli `.in-use` klasörüne taşır ve aynı derlemeyi bir kez daha koşturur; kopyayı yine projenin kendi komutu
+  yapar, araç kopyalamaz ve yalnız kendi taşıdığını kilidi kalkınca siler. Çıktı klasöründeki tek mutasyon yeri
+  `Core/MsBuild/InUseStash.cs`'tir. Araç kendi derlediği projede yalnız DİSKTEKİ kaynak İÇERİĞİNE bakar; başkasının (ör. VS'nin)
   derlediği çıktıda tarihlere bakılır; çıktının tarihi tek başına "güncel" demeye asla yetmez. Sürüm kontrolü
   karara girmez (git yalnız fetch, branch, checkout ve harici güncelleme içindir); kaynak dosyanın boyut+mtime
   bilgisi içerik kararında yalnız özet önbelleğinin anahtarıdır. Harici köklerden gelen projeler sıradan
@@ -147,7 +152,7 @@ kadarki tüm değişiklikler dokümanlara işlenir.
   FEATURES listeler, USER-GUIDE ve ARCHITECTURE ayrıntılandırır; aynı şey iki yerde ayrıntısıyla tekrarlanmaz.
 - **FEATURES / WHY kalıbı:** iki doküman da grup başlığı olmayan düz bir `##` listesidir, en önemliden
   başlayarak — sıradan bir günde hissedilen maddeler (yalnız değişeni derler, paralel, döngüler, graf keşfi, tek
-  ekran, satır eylemleri, hep elinin altında, kendiliğinden Sync, worktree, makine) önde, sonra tasarım ve uygulamanın
+  ekran, satır eylemleri, hep elinin altında, kendiliğinden Sync, worktree, makine, uygulama açıkken derleme) önde, sonra tasarım ve uygulamanın
   kendisi, sonra karar, güvenlik, ekran ve depo maddeleri. FEATURES madde başlığı ≤5 kelime; WHY başlığı = aynı
   ad + ` — ` + kazanım (≤6 kelime; `Builds only what changed — less waiting`), okuyan "neden kullanayım" sorusunu
   başlıkları tarayarak cevaplar. FEATURES'ta `**What:**` + `**How:**`, WHY'da `**Common practice:**` +

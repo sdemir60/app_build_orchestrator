@@ -102,6 +102,15 @@ and fits itself to the cores and free memory it finds; on the default profile th
 usable, and the title bar shows what the tool is using at that moment.\
 `JOB_OBJECT_CPU_RATE_CONTROL hard cap to limit the machine share` · `worker budget by cores and free memory against paging` · `QueryInformationJobObject accounting for the live CPU figure`
 
+## Builds while your app runs — no closing it first
+
+**Common practice:** the app is open in the debugger or on screen, a fix is ready, and the build stops on "the
+process cannot access the file"; the app is closed, the build started again, the app opened again and the screen
+found again — or the copy fails quietly and the next start still shows the old code.\
+**In Build Orchestrator:** the build goes through with the app still open; the console says which file the app was
+holding, and the next start of the app runs the new build.\
+`Restart Manager to name the program holding the file` · `rename aside, one retry that only copies`
+
 ## Calm, accessible design — pleasant to watch, easy to read
 
 **Common practice:** a build is followed in a scrolling console where nothing stands out until the end; many tools

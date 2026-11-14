@@ -121,6 +121,19 @@ processor time from the job's own accounting and the memory as private bytes, wi
 processes.\
 `JOB_OBJECT_CPU_RATE_CONTROL hard cap to limit the machine share` · `worker budget by cores and free memory against paging` · `QueryInformationJobObject accounting for the live CPU figure` · `GetProcessMemoryInfo private bytes for the live RAM figure`
 
+## Builds while your app runs
+
+**What:** When the app you are running or debugging holds a DLL that a project's post-build step copies into a
+shared folder, the build no longer stops there: with *Replace files in use* on, the tool moves the held file aside
+and the copy is made again, so the build goes on and its dependents compile against the new copy. The running app
+keeps the old build until it restarts. With the setting off, the console names the file and the program holding it.\
+**How:** After a project builds, the tool reads the copy commands from MSBuild's output and checks that every file
+they copy reached its destination with the source's size and time, so a failed copy is caught even when the last
+line of the post-build step succeeds and MSBuild reports no error. A file that did not arrive and that another
+program holds is renamed into a hidden `.in-use` folder beside it — Windows allows that for a loaded DLL — and the
+same build runs once more, copying only; the parked copies are deleted by a later run once nothing holds them.\
+`Restart Manager to name the program holding the file` · `rename beside the file, the move Windows allows a loaded DLL` · `one retry that only copies`
+
 ## Calm, accessible design
 
 **What:** The interface uses one dark theme with amber as its only accent; colour speaks only about state and every
@@ -236,11 +249,12 @@ and a rename.\
 ## Leaves output folders alone
 
 **What:** Build output lands exactly where Visual Studio would put it: the tool changes no output path and never
-writes, copies or deletes anything in OutDir itself, and every run builds the one working tree that is checked
+writes or copies anything into an output folder itself, and every run builds the one working tree that is checked
 out.\
 **How:** No OutDir, OutputPath or obj path is passed to MSBuild, and outputs are only read to make decisions; the
-projects' own post-build steps distribute output as they do in Visual Studio. The one exception is a Clean you ask
-for, where MSBuild removes the outputs the project itself recorded.\
+projects' own post-build steps distribute output as they do in Visual Studio. Two exceptions are yours to choose: a
+Clean you ask for, where MSBuild removes the outputs the project itself recorded, and *Replace files in use*, which
+moves a file a running program holds aside so the project's own copy can land, and deletes only what it moved.\
 `untouched output paths, same layout as VS` · `one working tree, no copies` · `read-only use of outputs`
 
 ## Never writes to git uninvited

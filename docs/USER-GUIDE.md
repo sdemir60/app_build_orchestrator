@@ -65,7 +65,8 @@ remove it too.
    window.
 
    **General** holds switches in six groups — Startup, Build, Branches, Console, Engine and Notifications. *Pull
-   before build* (see step 4), *Stash and switch branches* (see step 3), *Compact console* (on by default; see the
+   before build* (see step 4), *Replace files in use* (off by default; see [Building while your app is
+   running](#building-while-your-app-is-running)), *Stash and switch branches* (see step 3), *Compact console* (on by default; see the
    console, further down), *Stop the engine when idle* (on by default; see below), *Start with Windows*, *Start
    minimized to tray*, *Close to tray* and *Show notifications* all work, and *Save* keeps them. *Close to tray* and
    *Show notifications* are on by default; what they change is described with the tray, further down.
@@ -511,6 +512,27 @@ idle, or cannot be started again when work arrives, says so in red — *Engine s
 *(idle shutdown failed)* or *(wake failed)* — and the same button appears, its arrow red. When the supervisor file
 itself is missing there is no button: a restart would not bring the file back, and the ribbon asks for a reinstall.
 
+## Building while your app is running
+
+If a project's post-build step copies its output into a folder an app runs from — the app you are debugging, a
+local service — that app holds the DLLs it loaded, and Windows will not let the copy overwrite them. The project
+then fails at its copy, or, when that copy is not the last line of the step, the build reports success while the
+folder keeps the old DLL and the projects that use it compile against it.
+
+- **With *Replace files in use* off** (the default), the console names the file and the program holding it, for
+  example `warning: Acme.Types: Acme.Types.dll in C:\Acme\Client\bin is held by Acme.Host.exe (PID 4120) — the copy
+  kept the previous build. Turn on Replace files in use in Settings to build while it runs`. Nothing is moved.
+- **With it on** (Settings → General → Build), the held file is moved aside into a hidden `.in-use` folder in the
+  same place and the project's build runs once more; this time only the copy runs, so it takes a second or so. The
+  project ends green, the projects that use it compile against the new copy, and the console says what happened:
+  `Acme.Types: Acme.Types.dll in C:\Acme\Client\bin was held by Acme.Host.exe (PID 4120) — moved aside and copied
+  again; the running program keeps the previous build until it restarts`.
+
+The running app keeps the old build: restart it to run the new one. The files in `.in-use` are deleted at the start
+of a later run, once the app has let go of them, and the folder goes with them; with the app closed you can also
+delete the folder yourself. Only `copy` and `xcopy` in a post-build step are watched — a step that copies another
+way, and MSBuild's own Copy task, behave as before.
+
 ## Keyboard shortcuts
 
 | Key | Where | Action |
@@ -635,6 +657,10 @@ never taken for a finished one. *Start with Windows*, when on, writes one value 
 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` — no admin rights, no HKLM, no service — and turning it on
 also clears Task Manager's *disabled* mark for that value, if it has one.
 
+With *Replace files in use* on, the app can also leave a hidden `.in-use` folder in a project's post-build
+destination: the old copies a running app still uses. A later run deletes them once they are free, and
+`in-use-folders.json` in the state folder lists the places to look.
+
 The installation itself lives apart, in `%LOCALAPPDATA%\BuildOrchestrator.App\`: an update replaces only the
 program there, and uninstalling removes that folder and the *Start with Windows* value but never touches
 `%LOCALAPPDATA%\BuildOrchestrator\`.
@@ -716,6 +742,10 @@ parallelism cell follows the run at once. The strip only reads: the mode is chan
 - **A brand-new repository is not watched until its first commit.** The HEAD watcher needs git's reflog, which
   appears with the first commit; until then, switching back to the window keeps the list current. (A repository in
   git's newer reftable format is watched from the start.)
+- **A running app keeps the build it loaded.** With *Replace files in use* on the build finishes and the new copy
+  is in place, but the app that held the old DLL runs it until you restart it. Only `copy` and `xcopy` post-build
+  steps are covered; another copy tool and MSBuild's Copy task are not, and a file held so that it cannot even be
+  renamed still stops the copy, with the program named in the console.
 - **`UseSharedCompilation=false` and `nodeReuse:false` are kept.** A compiler server with a private pipe could
   live inside the job, but measured on a real repository it saves about a tenth of a run while holding
   gigabytes of memory, so the flags stay off; a server *outside* the job would also bring back the risk of a
