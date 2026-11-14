@@ -200,7 +200,7 @@ public sealed class CopyTargetsTests
         string path = WriteFile(Path.Combine(temp.Path, "x.dll"), "loaded");
         var before = File.GetLastWriteTimeUtc(path);
 
-        using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete))
+        using (PostBuildCopy.HoldLikeALoadedDll(path))
             Assert.Equal(FileLockState.Locked, FileLock.Probe(path));
 
         Assert.Equal(FileLockState.Free, FileLock.Probe(path));

@@ -135,6 +135,14 @@ public static class FilesInUseNotes
 
     private const string WarningPrefix = "warning: ";
 
+    /// <summary>Koşu başı süpürmesinin <c>decision.log</c> satırı (<see cref="InUseStash.Sweep"/>).</summary>
+    public static string SweepLine(StashSweep sweep)
+    {
+        ArgumentNullException.ThrowIfNull(sweep);
+        return string.Format(CultureInfo.InvariantCulture,
+            "files in use: {0} removed, {1} put back, {2} still held", sweep.Removed, sweep.Restored, sweep.Kept);
+    }
+
     public static string Line(string projectName, FilesInUseReport report)
     {
         ArgumentNullException.ThrowIfNull(report);

@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using BuildOrchestrator.Core.MsBuild;
 using Xunit;
+using static BuildOrchestrator.Tests.MsBuild.PostBuildCopy;
 
 namespace BuildOrchestrator.Tests.MsBuild;
 
@@ -62,12 +63,6 @@ public sealed class InUseStashTests
 
         public void Dispose() => _temp.Dispose();
     }
-
-    private static FileStream HoldLikeALoadedDll(string path) =>
-        new(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
-
-    private static FileStream HoldWithoutDeleteSharing(string path) =>
-        new(path, FileMode.Open, FileAccess.Read, FileShare.Read);
 
     [Fact]
     public void A_held_file_moves_into_a_hidden_folder_beside_it_and_the_folder_is_recorded()

@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using BuildOrchestrator.Core.MsBuild;
 using Xunit;
+using static BuildOrchestrator.Tests.MsBuild.PostBuildCopy;
 
 namespace BuildOrchestrator.Tests.MsBuild;
 
@@ -83,34 +84,8 @@ public sealed class InUseCopyInvokerTests
             int call = Interlocked.Increment(ref Calls);
             if (Forced(call) is { } forced) return Task.FromResult(forced);
             foreach (string extra in ExtraLines) onLine(extra);
-            onLine("PostBuildEvent:");
-            foreach (var (pattern, folder) in lines) onLine($"  copy /y \"{pattern}\" \"{folder}\\\"");
-            bool lastFailed = false;
-            foreach (var (pattern, folder) in lines)
-            {
-                lastFailed = false;
-                foreach (string file in Directory.GetFiles(Path.GetDirectoryName(pattern)!, Path.GetFileName(pattern)))
-                {
-                    onLine("  " + file);
-                    try
-                    {
-                        File.Copy(file, Path.Combine(folder, Path.GetFileName(file)), overwrite: true);
-                    }
-                    catch (IOException)
-                    {
-                        onLine("  The process cannot access the file because it is being used by another process.");
-                        lastFailed = true;
-                    }
-                    catch (UnauthorizedAccessException)
-                    {
-                        onLine("  Access is denied.");
-                        lastFailed = true;
-                    }
-                }
-            }
-            if (lastFailed)
-                onLine($"C:\\MSBuild\\Microsoft.Common.CurrentVersion.targets(6155,5): error MSB3073: The command \"copy /y \"{lines[^1].Pattern}\" \"{lines[^1].Folder}\\\"\" exited with code 1. [{project}]");
-            return Task.FromResult(Shape(new MsBuildInvokeResult(lastFailed ? 1 : 0, DurationMs: 100, TimedOut: false, Killed: false)));
+            if (lines.Length == 0) return Task.FromResult(Shape(new MsBuildInvokeResult(0, 100, false, false)));
+            return Task.FromResult(Shape(PostBuildCopy.Run(project, lines, onLine)));
         }
 
         public Task<MsBuildInvokeResult> RestoreAsync(MsBuildRestoreRequest req, Action<string> onLine, CancellationToken ct)
@@ -119,9 +94,6 @@ public sealed class InUseCopyInvokerTests
             return Task.FromResult(new MsBuildInvokeResult(0, 5, false, false));
         }
     }
-
-    private static FileStream HoldLikeALoadedDll(string path) =>
-        new(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
 
     /// <summary>Rapor alan alan (kayıt eşitliği listeleri referansla karşılaştırır).</summary>
     private static void AssertReport(string folder, string[] files, FilesInUseOutcome outcome, FilesInUseReport report)
@@ -274,7 +246,7 @@ public sealed class InUseCopyInvokerTests
         string target = Path.Combine(w.Client, "Acme.Types.dll");
         MsBuildInvokeResult result;
 
-        using (new FileStream(target, FileMode.Open, FileAccess.Read, FileShare.Read))
+        using (HoldWithoutDeleteSharing(target))
             result = await invoker.InvokeAsync(w.Request(), _ => { }, CancellationToken.None);
 
         Assert.Equal(1, inner.Calls);

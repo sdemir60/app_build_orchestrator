@@ -20,7 +20,7 @@ public sealed class FileHoldersTests
         string path = Path.Combine(temp.Path, "Acme.Types.dll");
         File.WriteAllText(path, "loaded");
 
-        using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete))
+        using (PostBuildCopy.HoldLikeALoadedDll(path))
         {
             var holders = FileHolders.Find([path], FileHolders.DefaultTimeout);
 
@@ -48,7 +48,7 @@ public sealed class FileHoldersTests
 
         Assert.Empty(FileHolders.Find([Path.Combine(temp.Path, "absent.dll")], FileHolders.DefaultTimeout));
         Assert.Empty(FileHolders.Find([], FileHolders.DefaultTimeout));
-        using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete))
+        using (PostBuildCopy.HoldLikeALoadedDll(path))
             Assert.Empty(FileHolders.Find([path], TimeSpan.Zero));
     }
 }
