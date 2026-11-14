@@ -116,6 +116,10 @@ public sealed class UiState
     /// dosya kataloğun varsayılanıyla açılmalıdır, <c>false</c>'la değil.</para></summary>
     public bool? UpdateExternals { get; set; }
 
+    /// <summary>[files-in-use] Settings → General → BUILD → <c>Replace files in use</c>. <see cref="UpdateExternals"/> ile AYNI gerekçeyle
+    /// NULLABLE; yok ⇒ kataloğun varsayılanı (<see cref="ViewModels.GeneralSettingsCatalog.DefaultOf"/>; MainWindow seed'i).</summary>
+    public bool? ReplaceFilesInUse { get; set; }
+
     /// <summary>[spec 2026-09-18 §6.3] Branch chip'inden checkout'ta kirli ağaç stash'lenip geçilsin mi.
     /// <see cref="UpdateExternals"/> ile AYNI gerekçeyle NULLABLE (bayat bir <c>null</c> token'ı yerleşimi
     /// sıfırlamasın); yok ⇒ kataloğun varsayılanı (<see cref="ViewModels.GeneralSettingsCatalog.DefaultOf"/>; MainWindow seed'i).</summary>

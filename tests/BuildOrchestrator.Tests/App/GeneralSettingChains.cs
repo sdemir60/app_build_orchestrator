@@ -50,6 +50,17 @@ internal static class GeneralSettingChains
                 (r, v) => r.ApplySettingsAsync([], Root, [Mail], pullExternalsBeforeBuild: v),
                 OnNote: "Pull before build on — external working copies update first",
                 OffNote: "Pull before build off — external working copies are used as they are")),
+        // [files-in-use] Varsayılan KAPALI (kullanıcı kararı 2026-11-14): araç bir çıktı klasöründe kendiliğinden dosya taşımaz; kapalıyken
+        // kilitli kopya yalnız konsolda adıyla görünür. Değer her StartRunCommand ile motora gider.
+        new(GeneralSetting.ReplaceFilesInUse, "Replace files in use", ApprovedDefault: false,
+            "replaceFilesInUse", f => f.ReplaceFilesInUse, s => s.ReplaceFilesInUse, (s, v) => s.ReplaceFilesInUse = v,
+            Workflow: new(nameof(SettingsDraftViewModel.ReplaceFilesInUse),
+                d => d.ReplaceFilesInUse, (d, v) => d.ReplaceFilesInUse = v,
+                v => new(null, Root, replaceFilesInUse: v),
+                r => r.ReplaceFilesInUse, (r, v) => r.ReplaceFilesInUse = v,
+                (r, v) => r.ApplySettingsAsync([], Root, [], replaceFilesInUse: v),
+                OnNote: "Replace files in use on — a file a running program holds is moved aside and copied again",
+                OffNote: "Replace files in use off — a copy stops at a file a running program holds")),
         // Varsayılan KAPALI: araç kullanıcının commit'lenmemiş işini kendiliğinden kenara koymaz.
         new(GeneralSetting.StashOnBranchSwitch, "Stash and switch branches", ApprovedDefault: false,
             "stashOnBranchSwitch", f => f.StashOnBranchSwitch, s => s.StashOnBranchSwitch, (s, v) => s.StashOnBranchSwitch = v,

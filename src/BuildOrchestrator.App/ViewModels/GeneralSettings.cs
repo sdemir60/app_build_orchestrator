@@ -1,4 +1,5 @@
 using BuildOrchestrator.App.Shell;
+using BuildOrchestrator.Core.MsBuild;
 using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace BuildOrchestrator.App.ViewModels;
@@ -30,6 +31,9 @@ public enum GeneralSetting
     CloseToTray,
     /// <summary>Gerçek bayrak: <see cref="SettingsDraftViewModel.PullExternalsBeforeBuild"/>.</summary>
     PullBeforeBuild,
+    /// <summary>[files-in-use] Gerçek bayrak: <see cref="SettingsDraftViewModel.ReplaceFilesInUse"/> — post-build kopyası başka bir programın
+    /// tuttuğu dosyaya çarparsa motor o dosyayı kenara taşıyıp derlemeyi bir kez daha koştursun mu. Her <c>StartRunCommand</c> ile motora gider.</summary>
+    ReplaceFilesInUse,
     /// <summary>[P3] Kalıcı kabuk anahtarı (<see cref="ShellSwitches.ShowNotifications"/>) — kapalıyken tepsi hiçbir
     /// OS balonu göstermez.</summary>
     ShowNotifications,
@@ -85,6 +89,11 @@ public static class GeneralSettingsCatalog
             new(GeneralSetting.PullBeforeBuild, "Pull before build",
                 "Update every external working copy first — a fast-forward-only git pull, one per copy.", Default: true,
                 AutomationName: AccessibilityNames.PullExternalsBeforeBuild),
+            // Kapalı (kullanıcı kararı 2026-11-14): araç bir çıktı klasöründe kendiliğinden dosya taşımaz. Etiket motorun notuyla TEK
+            // tanımdan gelir (FilesInUseNotes.SettingLabel) — kapalıyken not kullanıcıya bu satırın adını söyler.
+            new(GeneralSetting.ReplaceFilesInUse, FilesInUseNotes.SettingLabel,
+                "When a post-build copy finds its file held by a running program, move the old file aside and copy again; the program "
+                + "keeps the old build until it restarts. Off: the copy stops there and the console names the program.", Default: false),
         ]),
         new("BRANCHES",
         [
