@@ -64,6 +64,9 @@ public sealed class RunCoordinatorFilesInUseTests
         Assert.StartsWith($"A: Acme.Types.dll in {s.Folder} was held by ", note.Text);
         Assert.Contains($"(PID {Environment.ProcessId})", note.Text);
         Assert.EndsWith("until it restarts", note.Text);
+        // [akış kısa satırı] Aynı rapor olay akışı için kısa hâliyle de gider (FilesInUseNotes.Brief): proje, tutan program, sonuç.
+        Assert.StartsWith("A in use by ", note.Brief);
+        Assert.EndsWith(" — replaced", note.Brief);
         var succeeded = Assert.Single(events.OfType<ProjectSucceededEvent>());
         Assert.True(events.ToList().IndexOf(note) < events.ToList().IndexOf(succeeded), "the note comes before the project's result");
         AssertDecided(h, note.Text);
@@ -87,6 +90,9 @@ public sealed class RunCoordinatorFilesInUseTests
         var note = Assert.Single(h.Events.OfType<ProjectNoteEvent>());
         Assert.StartsWith($"warning: A: Acme.Types.dll in {s.Folder} is held by ", note.Text);
         Assert.Contains(FilesInUseNotes.SettingLabel, note.Text);
+        // [akış kısa satırı] Kısa hâl de ayarın adını söyler — akışta okunan satır odur.
+        Assert.StartsWith("A in use by ", note.Brief);
+        Assert.Contains(FilesInUseNotes.SettingLabel, note.Brief);
         AssertDecided(h, note.Text);
     }
 

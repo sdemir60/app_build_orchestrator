@@ -1294,7 +1294,8 @@ public sealed class RunCoordinator(
 
     /// <summary>[files-in-use] Koşunun invoker'ını kilitli kopya kararıyla sarar (taşıyıcı yoksa aynen döner). Rapor projenin adıyla
     /// <see cref="FilesInUseNotes.Line"/> olur: aynı satır <c>decision.log</c>'a ve <see cref="ProjectNoteEvent"/> olarak App'e gider —
-    /// rapor invoke'un içinden geldiği için projenin sonuç olayından önce.</summary>
+    /// rapor invoke'un içinden geldiği için projenin sonuç olayından önce. Olay, akışın kısa satırını da taşır
+    /// (<see cref="FilesInUseNotes.Brief"/>).</summary>
     private IMsBuildInvoker WithFilesInUse(IMsBuildInvoker invoker, StartRunCommand cmd,
         IReadOnlyDictionary<string, ProjectNode> nodeById, ChannelWriter<IpcEvent> events, RunLogWriter logs)
     {
@@ -1304,7 +1305,7 @@ public sealed class RunCoordinator(
             string name = nodeById.TryGetValue(req.ProjectId, out var node) ? node.Name : Path.GetFileNameWithoutExtension(req.ProjectId);
             string line = FilesInUseNotes.Line(name, report);
             Decide(logs, line);
-            events.TryWrite(new ProjectNoteEvent(cmd.RunId, req.ProjectId, line));
+            events.TryWrite(new ProjectNoteEvent(cmd.RunId, req.ProjectId, line, FilesInUseNotes.Brief(name, report)));
         });
     }
 

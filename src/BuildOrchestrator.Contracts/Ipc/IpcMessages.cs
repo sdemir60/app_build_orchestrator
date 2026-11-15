@@ -391,8 +391,11 @@ public sealed record ProjectFailedEvent(string RunId, string ProjectId, long Dur
 public sealed record ProjectSkippedEvent(string RunId, string ProjectId, string Reason, bool CycleUnconverged = false) : IpcEvent;
 /// <summary>[files-in-use] Bir projenin koşu ortasındaki notu — bugün tek kaynağı kilitli kopya kararıdır
 /// (<c>Core.MsBuild.FilesInUseNotes.Line</c>). Metin motorda yazılır ve <c>decision.log</c>'daki satırın AYNISIDIR; App onu konsola
-/// AYNEN basar (<c>warning: </c> öneki satırı amber boyar), akışa öneksiz yazar. Projenin sonuç olayından ÖNCE gelir.</summary>
-public sealed record ProjectNoteEvent(string RunId, string ProjectId, string Text) : IpcEvent;
+/// AYNEN basar (<c>warning: </c> öneki satırı amber boyar). Projenin sonuç olayından ÖNCE gelir.</summary>
+/// <param name="Brief">Aynı notun olay akışı için KISA hâli (<c>FilesInUseNotes.Brief</c>) — akış dar bir panelde okunan bir zaman
+/// çizelgesidir, ayrıntı konsoldadır. Öneksizdir; satırın türünü (uyarı mı) yine <paramref name="Text"/>'in öneki söyler. <c>null</c>
+/// (alanı bilmeyen bir motorun satırı) ise akış <paramref name="Text"/>'i öneksiz yazar.</param>
+public sealed record ProjectNoteEvent(string RunId, string ProjectId, string Text, string? Brief = null) : IpcEvent;
 /// <param name="DepIssueCount">Run genelinde depIssues taşıyan proje-sonucu sayısı. [It-3]</param>
 public sealed record RunCompletedEvent(string RunId, RunOutcome Outcome, int Succeeded, int Failed, int Skipped,
     int Queued, long DurationMs, int DepIssueCount = 0) : IpcEvent;

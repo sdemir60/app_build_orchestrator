@@ -485,4 +485,29 @@ public sealed class InUseCopyInvokerTests
             FilesInUseNotes.Line("Acme.Types", Report(FilesInUseOutcome.FailedAgain, Host)));
         Assert.Contains(FilesInUseNotes.SettingLabel, FilesInUseNotes.Line("Acme.Types", Report(FilesInUseOutcome.Held, Host)));
     }
+
+    /// <summary>
+    /// Olay akışının satırı notun KISA hâlidir: proje, tutan programın adı ve sonuç. Klasör, dosya adları ve PID konsol satırında kalır
+    /// (<see cref="FilesInUseNotes.Line"/>). Sahada görülen (2026-11-15, gerçek istemci): akış uzun satırı sağdan kesiyordu ve notun en işe yarar
+    /// kısmı — ayar kapalıyken "ayarı aç" — hiç okunamıyordu. Uyarı öneki de yoktur: akışta satırın türü rengi söyler.
+    /// </summary>
+    [Fact]
+    public void The_brief_note_for_each_outcome_names_the_project_who_holds_it_and_the_result()
+    {
+        FilesInUseReport Report(FilesInUseOutcome outcome, params FileHolder[] holders) =>
+            new(@"C:\Acme\Client\bin", ["Acme.Types.dll", "Acme.Types.pdb"], holders, outcome);
+
+        Assert.Equal("Acme.Types in use by Acme.Host.exe — replaced",
+            FilesInUseNotes.Brief("Acme.Types", Report(FilesInUseOutcome.Replaced, Host)));
+        Assert.Equal("Acme.Types in use by Acme.Host.exe — not replaced; turn on Replace files in use",
+            FilesInUseNotes.Brief("Acme.Types", Report(FilesInUseOutcome.Held, Host)));
+        Assert.Equal("Acme.Types in use by another program — cannot be replaced; close it, then build again",
+            FilesInUseNotes.Brief("Acme.Types", Report(FilesInUseOutcome.CannotMove)));
+        Assert.Equal("Acme.Types in use by Acme.Host.exe, devenv.exe — not replaced; the copy failed again",
+            FilesInUseNotes.Brief("Acme.Types", Report(FilesInUseOutcome.FailedAgain, Host, new(7, "devenv.exe"))));
+        // Aynı programın iki örneği (iki PID) kısa satırda TEK ad yazar; PID'ler konsol satırındadır.
+        Assert.Equal("Acme.Types in use by Acme.Host.exe — replaced",
+            FilesInUseNotes.Brief("Acme.Types", Report(FilesInUseOutcome.Replaced, Host, new(43, "acme.host.exe"))));
+        Assert.Contains(FilesInUseNotes.SettingLabel, FilesInUseNotes.Brief("Acme.Types", Report(FilesInUseOutcome.Held, Host)));
+    }
 }

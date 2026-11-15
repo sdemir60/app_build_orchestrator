@@ -177,6 +177,20 @@ public class IpcMessagesTests
         Assert.Equal(ev, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
     }
 
+    // [files-in-use · akış kısa satırı] Not, olay akışı için KISA bir hâl de taşır; alanı taşımayan (eski) satır kısa hâlsiz okunur — App o
+    // durumda akışa tam metni yazar.
+    [Fact]
+    public void ProjectNoteEvent_carries_a_brief_for_the_stream_and_reads_a_line_without_one()
+    {
+        IpcEvent ev = new ProjectNoteEvent("r1", @"C:\p\a.csproj", @"a: a.dll in C:\b was held by c.exe (PID 1) — note", Brief: "a in use by c.exe — replaced");
+        string json = JsonSerializer.Serialize(ev, IpcJson.Options);
+        Assert.Contains("\"brief\":", json); // camelCase alan adı
+        Assert.Equal(ev, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+
+        const string oldLine = """{"type":"projectNote","runId":"r1","projectId":"C:\\p\\a.csproj","text":"a: note"}""";
+        Assert.Null(Assert.IsType<ProjectNoteEvent>(JsonSerializer.Deserialize<IpcEvent>(oldLine, IpcJson.Options)).Brief);
+    }
+
     [Fact]
     public void StartRunCommand_new_fields_default_to_safe_backward_compatible_shape()
     {
