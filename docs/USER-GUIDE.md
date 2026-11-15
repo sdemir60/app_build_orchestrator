@@ -532,9 +532,9 @@ folder keeps the old DLL and the projects that use it compile against it.
   C:\Acme\Client\bin was held by Acme.Host.exe (PID 4120) — moved aside and copied again; the running program keeps
   the previous build until it restarts`.
 
-The event stream carries the same note in short, on the project's own line: `Acme.Types in use by Acme.Host.exe —
-replaced`, or, with the setting off, `Acme.Types in use by Acme.Host.exe — not replaced; turn on Replace files in
-use`. The folder, the file and the process id are in the console line.
+The event stream carries the same note in short, as a line of its own just before the project's result:
+`Acme.Types in use by Acme.Host.exe — replaced`, or, with the setting off, `Acme.Types in use by Acme.Host.exe — not
+replaced; turn on Replace files in use`. The folder, the file and the process id are in the console line.
 
 The running app keeps the old build: restart it to run the new one. The files in `.in-use` are deleted at the start
 of a later run, once the app has let go of them, and the folder goes with them; with the app closed and its DLLs in
