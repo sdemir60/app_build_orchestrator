@@ -174,9 +174,10 @@ public sealed class InUseCopyInvoker(
 }
 
 /// <summary>
-/// [files-in-use] Kilitli kopya notunun TEK metin kaynağı: motor <c>decision.log</c>'a ve App'in konsoluna giden satırı buradan yazar;
-/// ayarın etiketi (<see cref="SettingLabel"/>) Settings → General kataloğunun satırının da etiketidir (kopya YASAK). Uyarı satırları
-/// konsolun amber kuralı için <c>warning: </c> ile başlar.
+/// [files-in-use] Kilitli kopya notunun TEK metin kaynağı: motor <c>decision.log</c>'a ve App'in konsoluna giden ayrıntılı satırı
+/// (<see cref="Line"/>) ve olay akışının kısa satırını (<see cref="Brief"/>) buradan yazar; ayarın etiketi (<see cref="SettingLabel"/>)
+/// Settings → General kataloğunun satırının da etiketidir (kopya YASAK). Ayrıntılı uyarı satırları konsolun amber kuralı için
+/// <c>warning: </c> ile başlar.
 /// </summary>
 public static class FilesInUseNotes
 {
@@ -193,13 +194,39 @@ public static class FilesInUseNotes
             "files in use: {0} removed, {1} put back, {2} still held", sweep.Removed, sweep.Restored, sweep.Kept);
     }
 
+    /// <summary>Tutan program bulunamadığında (Restart Manager cevap vermedi) notun söylediği ad — iki satırın ortak sözcüğü.</summary>
+    private const string UnknownHolder = "another program";
+
+    /// <summary>
+    /// Notun olay akışındaki KISA hâli: proje, tutan program(lar)ın adı ve sonuç — <c>{project} in use by {holders} — {result}</c>. Akış bir
+    /// zaman çizelgesidir ve satırı dar bir panelde okunur; klasör, dosya adları ve PID ayrıntıdır, <see cref="Line"/>'da (konsol ve
+    /// <c>decision.log</c>) durur. İkisi aynı raporu anlatır, ayrıntı seviyeleri farklıdır. Uyarı öneki taşımaz (akışta satırın türü rengi
+    /// söyler); aynı programın birden çok örneği tek ad yazar.
+    /// </summary>
+    public static string Brief(string projectName, FilesInUseReport report)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        string holders = report.Holders.Count == 0
+            ? UnknownHolder
+            : string.Join(", ", report.Holders.Select(h => h.Name).Distinct(StringComparer.OrdinalIgnoreCase));
+        string result = report.Outcome switch
+        {
+            FilesInUseOutcome.Held => $"not replaced; turn on {SettingLabel}",
+            FilesInUseOutcome.Replaced => "replaced",
+            FilesInUseOutcome.CannotMove => "cannot be replaced; close it, then build again",
+            FilesInUseOutcome.FailedAgain => "not replaced; the copy failed again",
+            _ => throw new ArgumentOutOfRangeException(nameof(report), report.Outcome, null),
+        };
+        return $"{projectName} in use by {holders} — {result}";
+    }
+
     public static string Line(string projectName, FilesInUseReport report)
     {
         ArgumentNullException.ThrowIfNull(report);
         string files = string.Join(", ", report.FileNames);
         bool one = report.FileNames.Count == 1;
         string holders = report.Holders.Count == 0
-            ? "another program"
+            ? UnknownHolder
             : string.Join(", ", report.Holders.Select(h => string.Format(CultureInfo.InvariantCulture, "{0} (PID {1})", h.Name, h.ProcessId)));
         string subject = $"{projectName}: {files} in {report.Folder}";
         return report.Outcome switch

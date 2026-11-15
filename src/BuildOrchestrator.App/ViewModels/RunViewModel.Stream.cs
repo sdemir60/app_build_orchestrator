@@ -261,11 +261,13 @@ public sealed partial class RunViewModel
                 SyncActiveLine();
                 break;
 
-            // [files-in-use] Proje notu: uyarıysa Warn, değilse Info; akışın Warn satırı önek taşımaz — öneki koşu başı uyarılarının TEK kuralı
-            // düşürür (StreamText.RunStartWarning), uyarı tanıması da konsolunkiyle aynıdır (ConsoleLineClassifier.IsOwnWarning).
+            // [files-in-use] Proje notu: uyarıysa Warn, değilse Info — uyarı tanıması konsolunkiyle aynıdır (ConsoleLineClassifier.IsOwnWarning)
+            // ve ayrıntılı satırdan (Text) okunur. Akış notun KISA hâlini yazar (Brief — motor yazar, ayrıntı konsoldadır); kısa hâl
+            // taşımayan notta ayrıntılı satırın öneksiz hâlini: akışın Warn satırı önek taşımaz, öneki koşu başı uyarılarının TEK kuralı
+            // düşürür (StreamText.RunStartWarning).
             case ProjectNoteEvent e:
                 PushStream(ConsoleLineClassifier.IsOwnWarning(e.Text) ? StreamKind.Warn : StreamKind.Info, e.ProjectId,
-                    StreamText.RunStartWarning(e.Text));
+                    e.Brief ?? StreamText.RunStartWarning(e.Text));
                 break;
 
             case ProjectSucceededEvent e:

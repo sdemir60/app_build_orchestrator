@@ -329,7 +329,8 @@ memory stays bounded however long the run.\
 ## Says where the build stands
 
 **What:** The ribbon under the title bar always shows what was asked last, the current phase, progress, the time
-left and the error state; the event stream lists the run's events one line each, in order.\
+left and the error state; the event stream lists the run's events in order, one entry each, and wraps the ones too
+long for the panel.\
 **How:** A persistent operation label (SYNC, BUILD, REBUILD, CLEAN, DEEP CLEAN, OPTIMIZE, RESOLVE, SWITCHING BRANCH,
 CREATING WORKTREE) is amber while work runs and neutral after. Next to it sit the phase line — during a Sync, the
 step it is on and, while a first index runs, the files counted so far —, chips for the projects building now (and,

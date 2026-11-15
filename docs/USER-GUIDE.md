@@ -422,7 +422,8 @@ returns to the bottom and picks the stream back up. Reading sideways does not ta
 follows the output keeps following; while the panel is yours, reading sideways counts as touching it and holds off
 the return. Nothing is deleted from the top while you are reading, either, so the text you are looking at holds
 still. The event stream behaves the same way and keeps a caret of its own on a timestamped line from the
-moment you open the app, whether or not anything has happened yet.
+moment you open the app, whether or not anything has happened yet. An event too long for the panel wraps instead of
+being cut off, and its next lines start under its text, not under its time.
 
 **The console is compact by default.** For each project it shows a `building <name>` line, the project's errors in
 full, its first three distinct warnings and, once the project is done, one amber line that counts the rest by code —
@@ -530,6 +531,10 @@ folder keeps the old DLL and the projects that use it compile against it.
   use it compile against the new copy, and the console says what happened: `Acme.Types: Acme.Types.dll in
   C:\Acme\Client\bin was held by Acme.Host.exe (PID 4120) — moved aside and copied again; the running program keeps
   the previous build until it restarts`.
+
+The event stream carries the same note in short, as a line of its own just before the project's result:
+`Acme.Types in use by Acme.Host.exe — replaced`, or, with the setting off, `Acme.Types in use by Acme.Host.exe — not
+replaced; turn on Replace files in use`. The folder, the file and the process id are in the console line.
 
 The running app keeps the old build: restart it to run the new one. The files in `.in-use` are deleted at the start
 of a later run, once the app has let go of them, and the folder goes with them; with the app closed and its DLLs in
