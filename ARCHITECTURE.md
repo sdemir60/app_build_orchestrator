@@ -655,10 +655,12 @@ Run: `planProgress` · `runStarted` · `projectStarted` · `projectLog` · `proj
 `runCompleted`.
 Queries: `branchList` · `projectLogChunk`.
 
-`projectNote` is a line the engine has already worded about one project in the middle of a run — today only the
-decision of §9.7 about a copy target another program holds. It is the same text the engine writes to `decision.log`,
-and it comes before that project's result. The App prints it to the console as it is, where a `warning: ` prefix
-paints it amber, and to the event stream without the prefix: a Warn line when it carries one, an Info line otherwise.
+`projectNote` is a note the engine has already worded about one project in the middle of a run — today only the
+decision of §9.7 about a copy target another program holds. It carries the note twice: the line the engine also
+writes to `decision.log`, and a short wording for the event stream. It comes before that project's result. The App
+prints the line to the console as it is, where a `warning: ` prefix paints it amber, and the short wording to the
+event stream — a Warn line when the console line carries the prefix, an Info line otherwise. A note that carries no
+short wording goes to the stream as its console line without the prefix.
 
 `syncDiscovery` is the one count a Sync reports while it discovers the project set: how many projects it has
 found so far, as repository projects and external projects, cumulative rather than a delta, so a report
@@ -2581,15 +2583,19 @@ and the copy — is put back, an `.old` one is never put back, and an emptied `.
 listed in `in-use-folders.json` (§16), written before the first move into a folder. Files in the folder that do not
 follow the naming pattern are left alone.
 
-**What the user reads.** Each decision is one line per destination folder, written once (`FilesInUseNotes`): to
-`decision.log` and, as `projectNote` (§5.3), to the console and the event stream, before the project's result. A held
-file with the switch off, a file that cannot be moved and a retry that failed again are warnings; a replaced file is
-an informational line that also says the running program keeps the previous build until it restarts. Only the project
-that moved a file writes a line: one that found the file already solved retries without a note. The note with the
-switch off names the switch — the switch's label in Settings is that same constant — and, like the note for a file
-that cannot be moved, tells the user to build the project again from its row. A project whose step's last line
-succeeded is recorded as built, so a plain Build would skip it, while a row's Build compiles it whether or not it is
-current (§8.1).
+**What the user reads.** Each decision is one note per destination folder, worded in one place (`FilesInUseNotes`)
+at two levels of detail, and sent as `projectNote` (§5.3) before the project's result. The full line — the files, the
+folder, the programs holding them and their process ids — goes to `decision.log` and the console. The event stream
+gets the short one, `{project} in use by {program} — {result}`, with no folder, file or process id: the stream is a
+timeline read in a narrow panel, and the detail is one glance away in the console. The result reads `replaced`,
+`not replaced; turn on Replace files in use`, `cannot be replaced; close it, then build again` or `not replaced; the
+copy failed again`. A held file with the switch off, a file that cannot be moved and a retry that failed again are
+warnings; a replaced file is an informational note whose full line also says the running program keeps the previous
+build until it restarts. Only the project that moved a file writes a note: one that found the file already solved
+retries without one. The note with the switch off names the switch at both levels — the switch's label in Settings is
+that same constant — and its full line, like the one for a file that cannot be moved, tells the user to build the
+project again from its row. A project whose step's last line succeeded is recorded as built, so a plain Build would
+skip it, while a row's Build compiles it whether or not it is current (§8.1).
 
 ---
 
@@ -4326,7 +4332,7 @@ politely. One gesture cannot behave two ways depending on where it happens, so t
 
 **Console.** See §13.5.
 
-**Event stream.** A capped list of chronological one-line events, cleared — like the console — whenever a new
+**Event stream.** A capped list of chronological events, one row each, cleared — like the console — whenever a new
 section begins (§10.2): everything on screen belongs to the operation that is running. What decides the clear
 is not the operation's kind but whether it opens a section — Sync from the ribbon button clears both panels,
 since nothing precedes it, and so does a branch change, whose section starts with the switch line; a Sync that
@@ -4354,6 +4360,15 @@ once), and recycling containers would swap the model underneath a running animat
 participate in the shared selection. A run that finishes with zero failures glows its done line once
 (`success-soft` → transparent over 1.1 s) — that is the *entire* success flourish; there is no green wave
 through the list or the graph.
+
+**A row that does not fit wraps under its own text.** The panel has no horizontal scroll, and the end of a long line
+is often the part that says what to do, so a row is never cut at the panel's edge. A row is three columns — the time,
+a 12 px glyph column, and the text in the width that is left — and the text wraps inside its own column: the
+continuation lines start where the text starts, not under the time. The time and the glyph stay on the first line,
+each centred in a band one text line high at the top of the row. A row that fits is 24 px with everything on one
+centre line; a wrapped row grows by one text line per wrap, with a 2 px inset above and below, and goes back to one
+line when the panel is wide enough. The prompt line at the foot of the panel does not wrap: a line is typed there for
+a fraction of a second, and takes its final shape when it is released into the buffer.
 
 **Every row answers hover, one step apart — but the once-only flourish always wins first.** A clickable row (one
 carrying a project id — `ok`/`fail`/`skip` lines, and a cycle-round `info` line) steps to `surface-hover` and swaps in
@@ -8266,7 +8281,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Progressive row realization (visible window first, idle slices after; rows are never recycled) with an exact (never estimated) extent | `App/Controls/FixedHeightVirtualizingPanel.cs` |
 | In-place reconciliation of the list's entries (no reset on a topology or filter refresh) | `App/Controls/ListReconciler.cs` |
 | Automation roles of the app's user controls (never the custom type; source guard) | `App/Controls/UserControlRolePeer.cs` |
-| Event stream rows, glow-once | `App/Views/EventStreamView.xaml(.cs)` |
+| Event stream rows, wrapping, glow-once | `App/Views/EventStreamView.xaml(.cs)` |
 | Action bar: sync, counters, chips (the branch chip's amber git-operation dot included), segment, build split button | `App/Views/ActionBar.xaml(.cs)` |
 | *Restart engine* beside Build: its one gate and its icon in the colour of the ribbon line that explains it | `App/ViewModels/RunViewModel.Engine.cs` (`OffersEngineRestart`), `App/Views/ActionBar.xaml.cs` (`RefreshRestartEngine`) |
 | Build menu (Build / Rebuild / Clean) and the shared icon family | `App/Views/BuildMenu.xaml(.cs)` |

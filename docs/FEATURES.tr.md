@@ -318,7 +318,8 @@ konsolun belleği sınırlı kalır.\
 ## Derlemenin neresinde olduğunu hep söyler
 
 **Ne yapar:** Title bar'ın altındaki şerit en son ne istendiğini, o anki fazı, ilerlemeyi, kalan süreyi ve hata
-durumunu her zaman gösterir; olay akışı koşunun olaylarını sırayla, her biri tek satır listeler.\
+durumunu her zaman gösterir; olay akışı koşunun olaylarını sırayla, her biri tek kayıt olarak listeler ve panele
+sığmayanı alt satıra kırar.\
 **Nasıl:** Kalıcı işlem etiketi (SYNC, BUILD, REBUILD, CLEAN, DEEP CLEAN, OPTIMIZE, RESOLVE, SWITCHING BRANCH,
 CREATING WORKTREE) iş sürerken amber, bitince nötrdür. Yanında faz satırı — Sync sürerken hangi adımda olduğu ve ilk
 indeksleme sürerken o ana dek sayılan dosyalar —, o an derlenen projelerin (koşu bitince hatalıların) chip'leri ve
