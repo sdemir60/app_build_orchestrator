@@ -537,6 +537,12 @@ public sealed class EventStreamRow : Border
     private const double RowMinHeight = 24;  // BuildApp.jsx:645 minHeight 24
     private const double SlotGap = 8;         // BuildApp.jsx:645 gap 8
     private const double StripeWidth = 2;     // BuildApp.jsx:651 width 2
+    /// <summary>Metnin satır yüksekliği token'ı — kırılan satırda saatin ve ikonun ortalandığı İLK satır bandının da yüksekliği
+    /// (iki yer aynı anahtarı okur; bant metnin ilk satırıyla aynı kutudur).</summary>
+    private const string FirstLineHeightKey = "LineHeight.Mono12";
+    /// <summary>Kırılan satırın metninin üstündeki ve altındaki pay. Tek satırlık satırı büyütmeyen en büyük tam piksel: satır en az
+    /// <see cref="RowMinHeight"/> (24), metin satırı 18,6 px — kalan 5,4 px'in yarısından küçük kalmalı ki tek satırlık satır 24'te dursun.</summary>
+    private const double WrapInset = 2;
     // [A13/B3 · k3] Üçüncü kopyaydı — tek tanım TypewriterScheduler.CursorHoldMs (derleme-zamanı alias).
     internal const double CursorHoldMs = TypewriterScheduler.CursorHoldMs;
 
@@ -579,6 +585,9 @@ public sealed class EventStreamRow : Border
     /// <c>TabularFiguresTests</c> sınıfına işaret ediyordu (o sınıf artık YOK) ve satır referansı da bayattı.
     /// Satır numarası yerine üye adı yazılır — sürüklenmesi olanaksız.</para></summary>
     internal TextBlock Text => _text;
+    /// <summary>Satırın saat damgası — kırılan satırda da İLK satırda durduğunu ölçen testlerin yüzeyi
+    /// (<c>EventStreamRowWrapTests</c>).</summary>
+    internal TextBlock Time => _time;
     /// <summary>[A13/T3b · b8] Glyph kolonunun host'u (12px genişlik, BuildApp.jsx:653) — dış testlerin
     /// ölçüm iddiasını gerçek bir realize üzerinde doğrulayabilmesi için (kural 5) SelectionStripe deseniyle
     /// AYNI gerekçeyle dışa açılır.</summary>
@@ -598,27 +607,44 @@ public sealed class EventStreamRow : Border
         _stripe.SetResourceReference(Shape.FillProperty, "Brush.Amber");
 
         _time.VerticalAlignment = VerticalAlignment.Center;
-        _time.Margin = new Thickness(0, 0, SlotGap, 0);
         _time.FontFamily = AppFonts.Mono;
         _time.SetResourceReference(TextBlock.FontSizeProperty, "FontSize.Xs");
         _time.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextFaint");
 
+        // [DEĞİŞEN KURAL — 2026-11-15, kullanıcı kararı] Sığmayan metin KIRILIR ve devamı metnin başladığı hizadan sürer (asılı girinti).
+        // Eski kural (prototip BuildApp.jsx:645): tek satır, sığmayan sağdan kesilir. Uygulamada kesme üç nokta da göstermiyordu — içerik
+        // yatay bir StackPanel'di, metne sınırsız genişlik veriliyor ve taşan kısım panelin kenarında kırpılıyordu; yatay kaydırma da
+        // olmadığından uzun bir satırın sonu hiç okunamıyordu (sahada: kilitli dosya notu). İçerik artık üç kolondur — saat · ikon · metin
+        // (kalan genişlik): metin kendi kolonunda kırılır, yani devam satırları saatin ve ikonun altına GİRMEZ.
+        //
+        // Saat ve ikon metnin İLK satırında durur: ikisi de o satırın kutusu kadar (aynı token, FirstLineHeightKey) yüksek, tepeye
+        // hizalı bir bantta ortalanır. Tek satırlık satırda bant = metnin tamamıdır ve içerik satırın ortasındadır — geometri eskisiyle
+        // aynıdır (EventStreamRowWrapTests.A_row_that_fits_keeps_its_one_line_geometry).
+        var timeBand = new Border { Child = _time, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 0, SlotGap, 0) };
+        timeBand.SetResourceReference(HeightProperty, FirstLineHeightKey);
+
         _glyphHost.Width = GlyphColumn;
         _glyphHost.Margin = new Thickness(0, 0, SlotGap, 0);
-        _glyphHost.VerticalAlignment = VerticalAlignment.Center;
+        _glyphHost.VerticalAlignment = VerticalAlignment.Top;
+        _glyphHost.SetResourceReference(HeightProperty, FirstLineHeightKey);
 
-        _text.VerticalAlignment = VerticalAlignment.Center;
+        _text.VerticalAlignment = VerticalAlignment.Top;
         _text.FontFamily = AppFonts.Mono;
-        _text.TextTrimming = TextTrimming.CharacterEllipsis;
-        _text.TextWrapping = TextWrapping.NoWrap;
+        _text.TextWrapping = TextWrapping.Wrap;
         _text.SetValue(System.Windows.Documents.Typography.NumeralAlignmentProperty, FontNumeralAlignment.Tabular);
         _text.SetResourceReference(TextBlock.FontSizeProperty, "FontSize.Xs");
-        _text.SetResourceReference(TextBlock.LineHeightProperty, "LineHeight.Mono12"); // [D3 §7] prototip lineHeight var(--leading-mono), BuildApp.jsx:646
+        _text.SetResourceReference(TextBlock.LineHeightProperty, FirstLineHeightKey); // [D3 §7] prototip lineHeight var(--leading-mono), BuildApp.jsx:646
 
-        // [D3 §6] içerik iki-yan 10px padding (prototip padding '0 10px', BuildApp.jsx:645) — sağ nefes (NoWrap+
-        // ellipsis metin sağ kenara dayanmasın); aktif satır zaten Margin='10,0' ile doğru.
-        var content = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(10, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center };
-        content.Children.Add(_time);
+        // [D3 §6] içerik iki-yan 10px padding (prototip padding '0 10px', BuildApp.jsx:645) — metin sağ kenara dayanmasın; aktif satır
+        // zaten Margin='10,0' ile doğru. Dikey pay (WrapInset) yalnız kırılan satırda görünür: tek satırlık satır MinHeight'ta kalır.
+        var content = new Grid { Margin = new Thickness(10, WrapInset, 10, WrapInset), VerticalAlignment = VerticalAlignment.Center };
+        content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        Grid.SetColumn(timeBand, 0);
+        Grid.SetColumn(_glyphHost, 1);
+        Grid.SetColumn(_text, 2);
+        content.Children.Add(timeBand);
         content.Children.Add(_glyphHost);
         content.Children.Add(_text);
 
