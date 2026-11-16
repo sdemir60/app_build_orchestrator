@@ -2,6 +2,17 @@
 
 Release notes for Build Orchestrator, newest version first. The What's new window in the app reads this file.
 
+## [1.15.0] - 2026-11-16
+
+### Added
+
+- New setting Replace files in use (Settings, General, Build; off by default): when a running app holds a DLL that a project's post-build step copies, the old file is moved aside and the copy runs again, so the project ends green and the projects that use it build against the new copy. The running app keeps the previous build until you restart it, and a later build removes the old files once they are free.
+- When a copy hits a file in use, the console names the file and the program holding it, and the event stream shows a short line saying whether it was replaced. With the setting off nothing is moved, and the line says to turn the setting on.
+
+### Fixed
+
+- Event stream lines too long for the panel wrap onto the next line instead of being cut off at the right edge; the wrapped part lines up under the start of the text, and the time and icon stay on the first line.
+
 ## [1.14.3] - 2026-11-11
 
 ### Fixed
