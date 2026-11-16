@@ -170,6 +170,21 @@ public sealed partial class RunViewModel
     }
 
     /// <summary>
+    /// [files-in-use] Settings Save: "Replace files in use" switch'ini uygular. Değer bir sonraki <see cref="StartRunCommand"/> ile motora
+    /// gider; not yalnız değer GERÇEKTEN değiştiyse yazılır (<see cref="ApplyStashOnBranchSwitch"/> deseni) — bu ayar her repoda anlamlıdır
+    /// (harici proje koşulu yoktur). Etiket KATALOGDAN gelir (<see cref="ApplyCompactConsole"/> deseni).
+    /// </summary>
+    private void ApplyReplaceFilesInUse(bool replace)
+    {
+        if (replace == ReplaceFilesInUse) return;
+        ReplaceFilesInUse = replace;
+        string label = GeneralSettingsCatalog.Definition(GeneralSetting.ReplaceFilesInUse).Label;
+        AppendSaveNote(replace
+            ? $"{label} on — a file a running program holds is moved aside and copied again"
+            : $"{label} off — a copy stops at a file a running program holds");
+    }
+
+    /// <summary>
     /// [spec 2026-09-18 §6.3] Settings Save: "Stash and switch branches" switch'ini uygular. Değer bir sonraki
     /// <see cref="CheckoutBranchCommand"/> ile motora gider. Not yalnız değer GERÇEKTEN değiştiyse yazılır
     /// (<see cref="ApplyPullExternals"/> deseni) — değişmeyen bir ayar her Save'de gürültü olurdu. Harici proje
@@ -270,7 +285,7 @@ public sealed partial class RunViewModel
     /// <param name="settingNotes">[P3 · P4] <see cref="BuildOrchestrator.App.Shell.ShellSwitches"/>'in <c>Commit</c>'inin
     /// ürettiği, DEĞİŞEN kabuk anahtarlarının (Start with Windows, Start minimized to tray, Close to tray, Show
     /// notifications) konsol notları —
-    /// <see cref="ApplyStopEngineWhenIdle"/>'dan HEMEN SONRA (sıra: Pull → Stash → Compact → Stop engine → bu notlar), idle kapısından
+    /// <see cref="ApplyStopEngineWhenIdle"/>'dan HEMEN SONRA (sıra: Pull → Replace files in use → Stash → Compact → Stop engine → bu notlar), idle kapısından
     /// ÖNCE <see cref="AppendRunLine"/> ile
     /// sırayla yazılır (bu yüzden motor/workspace durumundan ETKİLENMEZ — <see cref="ApplyPullExternals"/>/
     /// <see cref="ApplyStashOnBranchSwitch"/>'in kendi notlarıyla AYNI konum).</param>
@@ -285,10 +300,13 @@ public sealed partial class RunViewModel
     /// Save'in Sync'i kurulumun cevabından SONRA gider; aktif worktree'nin klasörü değiştiyse kopya repo'ya döner.</param>
     /// <param name="switchToWorktree">[worktree] Settings alt bardaki Worktree düğmesinden (ya da branch kartından) açıldı: worktree hazırsa (ya
     /// da kurulum başarılı olunca) Save'in Sync'i worktree'ye geçişin Sync'idir ve bölüm Save'in notlarıyla başlar.</param>
+    /// <param name="replaceFilesInUse">[files-in-use] General'ın "Replace files in use" switch'i — değer bir sonraki koşuyla motora gider;
+    /// değiştiyse konsola not düşer. <c>null</c> ⇒ dokunulmaz.</param>
     public async Task ApplySettingsAsync(IReadOnlyList<LayerPattern> patterns, string? repositoryRoot,
         IReadOnlyList<ExternalProject> externals, bool? pullExternalsBeforeBuild = null, bool? stashOnBranchSwitch = null,
         IReadOnlyList<string>? settingNotes = null, bool? compactConsole = null,
-        bool? stopEngineWhenIdle = null, string? worktreeFolder = null, bool switchToWorktree = false)
+        bool? stopEngineWhenIdle = null, string? worktreeFolder = null, bool switchToWorktree = false,
+        bool? replaceFilesInUse = null)
     {
         string root = RootOf(repositoryRoot);
         // [worktree] Kökü olmayan bir worktree yoktur: boş kök (workspace kapanıyor) worktree tanımını da düşürür — saklansaydı yeni bir kök
@@ -305,6 +323,7 @@ public sealed partial class RunViewModel
             // SIRA: bayrağın notu listeyi TANIMLI görmeli — "harici proje varsa yaz" kuralı yeni listeye bakar.
             ApplyExternalProjects(externals);
             if (pullExternalsBeforeBuild is { } pull) ApplyPullExternals(pull);
+            if (replaceFilesInUse is { } replace) ApplyReplaceFilesInUse(replace);
             if (stashOnBranchSwitch is { } stash) ApplyStashOnBranchSwitch(stash);
             if (compactConsole is { } compact) ApplyCompactConsole(compact);
             if (stopEngineWhenIdle is { } stopIdle) ApplyStopEngineWhenIdle(stopIdle);

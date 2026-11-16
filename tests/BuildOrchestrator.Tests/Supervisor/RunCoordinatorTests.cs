@@ -201,7 +201,8 @@ public class RunCoordinatorTests
             string? customBeforeTargetsPath = null,
             bool productionMachine = false,
             Action? memoryTrim = null,
-            Func<TimeSpan, CancellationToken, Task>? retryDelay = null)
+            Func<TimeSpan, CancellationToken, Task>? retryDelay = null,
+            InUseStash? inUseStash = null)
         {
             _out = output ?? new MemoryStream(); // [Fix round 2] testler pump'ı duraklatan bir stdout verebilir
             Sut = new RunCoordinator(
@@ -235,7 +236,9 @@ public class RunCoordinatorTests
                 machine: productionMachine ? null : () => Machine,
                 // [bellek trimi] Varsayılan "toplama yok": üretim varsayılanı bloklayan bir GC'dir ve bu harness'i kuran her test
                 // koşu bitişinde bütün test sürecini durdurur. Toplamayı gözleyen testler sayaç/kayıtçı verir.
-                memoryTrim: memoryTrim ?? NoRealGc.Collection);
+                memoryTrim: memoryTrim ?? NoRealGc.Collection,
+                // [files-in-use] null ⇒ kilitli kopya kararı yok: mevcut testlerin zinciri bugünküyle aynıdır.
+                inUseStash: inUseStash);
         }
 
         /// <summary>Bol işlemci ve bellek: işçi bütçesi hiçbir istek için devreye girmez.</summary>

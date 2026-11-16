@@ -158,6 +158,10 @@ public enum DependentMode { Safe, Fast }
 /// olarak hedefe yapışır: bir sonraki Build hedefi yeniden derler, aksi halde taze imzası onu bayat bir
 /// DLL'e kalıcı olarak link'li bırakırdı. Döngü üyesi bir hedef tek başına, döngü dışıymış gibi derlenir;
 /// döngüdeki bağımlılıkları her koşulda bayat sayılır.</para></param>
+/// <param name="ReplaceFilesInUse">[files-in-use] Settings → General "Replace files in use": bir projenin post-build kopyası hedefte
+/// başka bir programın tuttuğu dosyaya çarparsa motor o dosyayı hedefin gizli <c>.in-use</c> klasörüne taşıyıp derlemeyi bir kez daha
+/// koştursun mu (<c>Core.MsBuild.InUseCopyInvoker</c>). Kapalıyken (varsayılan) motor yalnız dosyayı ve tutanı not eder. Alanı
+/// taşımayan eski NDJSON satırları kapalı okunur.</param>
 /// <remarks>[spec 2026-09-18 §1-1] Koşu daima <see cref="RootPath"/>'teki çalışma ağacında derlenir: branch ve
 /// worktree alanları kalktı. Onları taşıyan eski NDJSON satırları fazla alanlar yok sayılarak çözülür; kalkan her
 /// alan için aynı tolerans geçerlidir.</remarks>
@@ -165,7 +169,7 @@ public sealed record StartRunCommand(string RunId, RunMode Mode, string RootPath
     DependentMode DependentMode = DependentMode.Safe,
     IReadOnlyList<LayerPattern>? LayerPatterns = null, string? PerfMode = null,
     IReadOnlyList<ExternalProject>? ExternalProjects = null, bool UpdateExternals = true,
-    string? ScopeProjectId = null) : IpcCommand;
+    string? ScopeProjectId = null, bool ReplaceFilesInUse = false) : IpcCommand;
 
 /// <summary>
 /// [T20-b/K11] KOŞARKEN perf profilini değiştir. <b>Canlı değişen YALNIZ CPU cap + priority'dir</b>: worker'lar
@@ -280,6 +284,7 @@ public sealed record ListBranchesCommand(string RootPath) : IpcCommand;
 [JsonDerivedType(typeof(ProjectSucceededEvent), "projectSucceeded")]
 [JsonDerivedType(typeof(ProjectFailedEvent), "projectFailed")]
 [JsonDerivedType(typeof(ProjectSkippedEvent), "projectSkipped")]
+[JsonDerivedType(typeof(ProjectNoteEvent), "projectNote")]
 [JsonDerivedType(typeof(RunCompletedEvent), "runCompleted")]
 [JsonDerivedType(typeof(SyncStartedEvent), "syncStarted")]
 [JsonDerivedType(typeof(SyncProgressEvent), "syncProgress")]
@@ -384,6 +389,13 @@ public sealed record ProjectFailedEvent(string RunId, string ProjectId, long Dur
 /// (<see cref="CycleCompletedEvent"/>). Motor geçmişte yakınsamamış bir grubu pre-skip ETMEZ (yakınsamama hafızası
 /// yalnız RAPORLAR). Varsayılan <c>false</c>: bu alandan ÖNCE yazılmış NDJSON satırları aynen çözülmeye devam eder.</param>
 public sealed record ProjectSkippedEvent(string RunId, string ProjectId, string Reason, bool CycleUnconverged = false) : IpcEvent;
+/// <summary>[files-in-use] Bir projenin koşu ortasındaki notu — bugün tek kaynağı kilitli kopya kararıdır
+/// (<c>Core.MsBuild.FilesInUseNotes.Line</c>). Metin motorda yazılır ve <c>decision.log</c>'daki satırın AYNISIDIR; App onu konsola
+/// AYNEN basar (<c>warning: </c> öneki satırı amber boyar). Projenin sonuç olayından ÖNCE gelir.</summary>
+/// <param name="Brief">Aynı notun olay akışı için KISA hâli (<c>FilesInUseNotes.Brief</c>) — akış dar bir panelde okunan bir zaman
+/// çizelgesidir, ayrıntı konsoldadır. Öneksizdir; satırın türünü (uyarı mı) yine <paramref name="Text"/>'in öneki söyler. <c>null</c>
+/// (alanı bilmeyen bir motorun satırı) ise akış <paramref name="Text"/>'i öneksiz yazar.</param>
+public sealed record ProjectNoteEvent(string RunId, string ProjectId, string Text, string? Brief = null) : IpcEvent;
 /// <param name="DepIssueCount">Run genelinde depIssues taşıyan proje-sonucu sayısı. [It-3]</param>
 public sealed record RunCompletedEvent(string RunId, RunOutcome Outcome, int Succeeded, int Failed, int Skipped,
     int Queued, long DurationMs, int DepIssueCount = 0) : IpcEvent;

@@ -54,6 +54,10 @@ public sealed class SettingsFile
     /// ZORUNDADIR — <see cref="SettingsDraftViewModel.LoadFrom"/> yalnız BİRİNCİSİNDE taslağı korur.</summary>
     [JsonPropertyName("pullExternalBeforeBuild")] public bool? PullExternalBeforeBuild { get; set; }
 
+    /// <summary>[files-in-use] Kilitli kopya hedefi kenara taşınıp kopya yeniden yapılsın mı. <see cref="PullExternalBeforeBuild"/> gibi
+    /// KASITLI OLARAK nullable: anahtarı taşımayan (eski) bir dosya taslaktaki değeri sıfırlamaz (<see cref="SettingsDraftViewModel.LoadFrom"/>).</summary>
+    [JsonPropertyName("replaceFilesInUse")] public bool? ReplaceFilesInUse { get; set; }
+
     /// <summary>[spec 2026-09-18 §6.3] Branch chip'inden checkout'ta kirli ağaç stash'lenip geçilsin mi.
     /// <see cref="PullExternalBeforeBuild"/> gibi KASITLI OLARAK nullable: anahtarı taşımayan (eski) bir dosya
     /// taslaktaki değeri sıfırlamaz (<see cref="SettingsDraftViewModel.LoadFrom"/>).</summary>
@@ -106,13 +110,14 @@ public sealed class SettingsFile
     public static SettingsFile From(string? repositoryRoot, IReadOnlyList<LayerPattern> layers,
         IReadOnlyList<ExternalProject>? externals = null, bool? pullExternalBeforeBuild = null,
         bool? stashOnBranchSwitch = null, bool? compactConsole = null,
-        bool? stopEngineWhenIdle = null)
+        bool? stopEngineWhenIdle = null, bool? replaceFilesInUse = null)
     {
         ArgumentNullException.ThrowIfNull(layers);
         return new SettingsFile
         {
             RepositoryRoot = repositoryRoot,
             PullExternalBeforeBuild = pullExternalBeforeBuild,
+            ReplaceFilesInUse = replaceFilesInUse,
             StashOnBranchSwitch = stashOnBranchSwitch,
             CompactConsole = compactConsole,
             StopEngineWhenIdle = stopEngineWhenIdle,

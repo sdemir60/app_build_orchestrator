@@ -152,6 +152,7 @@ public class GeneralSettingChainTests
         new Dictionary<GeneralSetting, (string, string, string)>
         {
             [GeneralSetting.PullBeforeBuild] = ("_updateExternals", "pullExternalsBeforeBuild", nameof(UiState.UpdateExternals)),
+            [GeneralSetting.ReplaceFilesInUse] = ("_replaceFilesInUse", "replaceFilesInUse", nameof(UiState.ReplaceFilesInUse)),
             [GeneralSetting.StashOnBranchSwitch] = ("_stashOnBranchSwitch", "stashOnBranchSwitch", nameof(UiState.StashOnBranchSwitch)),
             [GeneralSetting.CompactConsole] = ("_compactConsole", "compactConsole", nameof(UiState.CompactConsole)),
             [GeneralSetting.StopEngineWhenIdle] = ("_stopEngineWhenIdle", "stopEngineWhenIdle", nameof(UiState.StopEngineWhenIdle)),

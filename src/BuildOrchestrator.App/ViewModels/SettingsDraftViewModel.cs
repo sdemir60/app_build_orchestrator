@@ -125,6 +125,15 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         set => GeneralRow(GeneralSetting.PullBeforeBuild).IsOn = value;
     }
 
+    /// <summary>[files-in-use] Kilitli kopya hedefi kenara taşınıp kopya yeniden yapılsın mı — General sayfasının BUILD grubundaki
+    /// <c>Replace files in use</c> satırının KENDİSİ (<see cref="PullExternalsBeforeBuild"/> deseni). Varsayılanı kataloğun satırıdır
+    /// (<see cref="GeneralSettingsCatalog.DefaultOf"/>); Save'e kadar yalnız taslaktır.</summary>
+    public bool ReplaceFilesInUse
+    {
+        get => GeneralRow(GeneralSetting.ReplaceFilesInUse).IsOn;
+        set => GeneralRow(GeneralSetting.ReplaceFilesInUse).IsOn = value;
+    }
+
     /// <summary>[spec 2026-09-18 §6.3] Branch chip'inden checkout'ta kirli ağaç stash'lenip geçilsin mi — General
     /// sayfasının BRANCHES grubundaki <c>Stash and switch branches</c> satırının KENDİSİ (iki yüz tek değer,
     /// <see cref="PullExternalsBeforeBuild"/> deseni). Varsayılanı kataloğun satırıdır (<see cref="GeneralSettingsCatalog.DefaultOf"/>); Save'e
@@ -226,16 +235,19 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// Windows'un gerçek durumundan (<see cref="AutostartService.State"/>) tohumlanır ve <see cref="CommitAsync"/> kaydı
     /// anında yazar.</param>
     /// <param name="worktreeFolder">[worktree] Canlı worktree klasörünün taslak kopyası; <c>null</c> ⇒ boş.</param>
+    /// <param name="replaceFilesInUse">[files-in-use] Canlı Replace files in use ayarının taslak kopyası; <c>null</c> ⇒ kataloğun varsayılanı.</param>
     public SettingsDraftViewModel(IReadOnlyList<LayerPattern>? initial, string? repositoryRoot,
         IReadOnlyList<ExternalProject>? initialExternals = null, bool? pullExternalsBeforeBuild = null,
         bool? stashOnBranchSwitch = null, UiState? saved = null, AutostartService? autostart = null,
-        bool? compactConsole = null, bool? stopEngineWhenIdle = null, string? worktreeFolder = null)
+        bool? compactConsole = null, bool? stopEngineWhenIdle = null, string? worktreeFolder = null,
+        bool? replaceFilesInUse = null)
     {
         _repositoryRoot = repositoryRoot;
         _worktreeFolder = worktreeFolder;
         _openedWithoutWorkspace = string.IsNullOrWhiteSpace(repositoryRoot);
         GeneralGroups = BuildGeneralGroups();
         if (pullExternalsBeforeBuild is { } pull) PullExternalsBeforeBuild = pull;
+        if (replaceFilesInUse is { } replace) ReplaceFilesInUse = replace;
         if (stashOnBranchSwitch is { } stash) StashOnBranchSwitch = stash;
         if (compactConsole is { } compact) CompactConsole = compact;
         if (stopEngineWhenIdle is { } stopIdle) StopEngineWhenIdle = stopIdle;
@@ -329,7 +341,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     public SettingsFile ToFile()
     {
         var file = SettingsFile.From(RepositoryRoot, BuildPatterns(), BuildExternals(), PullExternalsBeforeBuild, StashOnBranchSwitch,
-            CompactConsole, StopEngineWhenIdle);
+            CompactConsole, StopEngineWhenIdle, replaceFilesInUse: ReplaceFilesInUse);
         foreach (var s in ShellSwitches.All) s.WriteFile(file, GeneralRow(s.Setting).IsOn);
         return file;
     }
@@ -358,6 +370,8 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         // [design v1.15.0] Bayrak dosyada YOKSA (eski/yalnız-katman dosyası) taslaktaki değer KORUNUR — harici
         // liste kuralının aynısı: bir dosyanın taşımadığı ayarı sıfırlamak sessiz bir karar olurdu.
         if (file.PullExternalBeforeBuild is { } pull) PullExternalsBeforeBuild = pull;
+        // [files-in-use] Replace files in use AYNI kural: anahtar yoksa taslaktaki değer korunur.
+        if (file.ReplaceFilesInUse is { } replace) ReplaceFilesInUse = replace;
         // [spec 2026-09-18 §6.3] Stash ayarı AYNI kural: anahtar yoksa taslaktaki değer korunur.
         if (file.StashOnBranchSwitch is { } stash) StashOnBranchSwitch = stash;
         // [idle-memory · dalga 2] Compact console AYNI kural: anahtar yoksa taslaktaki değer korunur.
@@ -424,6 +438,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         state.LayerPatterns = patterns.ToList();
         state.ExternalProjects = externals.ToList();
         state.UpdateExternals = PullExternalsBeforeBuild;
+        state.ReplaceFilesInUse = ReplaceFilesInUse;
         state.StashOnBranchSwitch = StashOnBranchSwitch;
         state.CompactConsole = CompactConsole;
         state.StopEngineWhenIdle = StopEngineWhenIdle;
@@ -444,7 +459,8 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
             ? ShellSwitches.StartWithWindows(state) : GeneralRow(s).IsOn));
         store.Save(state);
         await run.ApplySettingsAsync(patterns, RepositoryRoot, externals, PullExternalsBeforeBuild, StashOnBranchSwitch, settingNotes,
-            CompactConsole, StopEngineWhenIdle, worktreeFolder: WorktreeFolder?.Trim() ?? "", switchToWorktree: SwitchToWorktreeOnSave);
+            CompactConsole, StopEngineWhenIdle, worktreeFolder: WorktreeFolder?.Trim() ?? "", switchToWorktree: SwitchToWorktreeOnSave,
+            replaceFilesInUse: ReplaceFilesInUse);
     }
 
     /// <summary>Katalogdan satırları kurar; bağımlı satırın etkinliğini üst anahtara, pull satırını
@@ -469,6 +485,10 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         _generalRows[GeneralSetting.PullBeforeBuild].PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(GeneralSettingRowViewModel.IsOn)) OnPropertyChanged(nameof(PullExternalsBeforeBuild));
+        };
+        _generalRows[GeneralSetting.ReplaceFilesInUse].PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(GeneralSettingRowViewModel.IsOn)) OnPropertyChanged(nameof(ReplaceFilesInUse));
         };
         _generalRows[GeneralSetting.StashOnBranchSwitch].PropertyChanged += (_, e) =>
         {

@@ -154,7 +154,8 @@ public partial class SettingsDialog : ModalDialog
         _openedForWorktree = forWorktree;
         _draft = new SettingsDraftViewModel(
             run.LayerPatterns, run.RootPath, run.ExternalProjects, run.UpdateExternals, run.StashOnBranchSwitch,
-            store.Load(), Autostart, run.CompactConsole, run.StopEngineWhenIdle, run.WorktreeFolder)
+            store.Load(), Autostart, run.CompactConsole, run.StopEngineWhenIdle, run.WorktreeFolder,
+            replaceFilesInUse: run.ReplaceFilesInUse)
         {
             SwitchToWorktreeOnSave = forWorktree,
         };

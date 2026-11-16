@@ -824,6 +824,13 @@ public sealed partial class RunViewModel : ObservableObject
     /// kontrolü doğrudan buna bağlanabilir.</para></summary>
     [ObservableProperty] private bool _updateExternals = GeneralSettingsCatalog.DefaultOf(GeneralSetting.PullBeforeBuild);
 
+    /// <summary>[files-in-use] Settings → General → BUILD "Replace files in use": bir projenin post-build kopyası hedefte başka bir programın
+    /// tuttuğu dosyaya çarparsa motor o dosyayı kenara taşıyıp derlemeyi bir kez daha koştursun mu — kapalıyken motor yalnız dosyayı ve tutanı
+    /// not eder. Varsayılanın TEK tanımı kataloğun satırıdır (<see cref="GeneralSettingsCatalog.DefaultOf"/>). Değer her
+    /// <see cref="StartRunCommand"/> ile motora gider.
+    /// <para><see cref="ObservablePropertyAttribute"/>: kalıcılık bu bildirimden sürer (MainWindow).</para></summary>
+    [ObservableProperty] private bool _replaceFilesInUse = GeneralSettingsCatalog.DefaultOf(GeneralSetting.ReplaceFilesInUse);
+
     /// <summary>[spec 2026-09-18 §6.3] Settings → General "Stash and switch branches": branch chip'inden checkout'ta
     /// ağaç kirliyse değişiklikler (izlenmeyenler dahil) stash'lenip geçilsin mi — kapalıyken checkout durur ve kullanıcıdan önce commit/stash
     /// ister. Varsayılanın TEK tanımı kataloğun satırıdır (<see cref="GeneralSettingsCatalog.DefaultOf"/> — onaylanmış değer ve gerekçesi orada).
@@ -1027,7 +1034,7 @@ public sealed partial class RunViewModel : ObservableObject
             // chip'inin komutu uyanık olmayan motora gönderilmez).
             var cmd = new StartRunCommand(runId, mode, ActiveRoot, Configuration, Parallelism,
                 DependentMode.Safe, LayerPatterns, PerfMode,
-                ExternalProjectsForWire, UpdateExternals, scopeProjectId);
+                ExternalProjectsForWire, UpdateExternals, scopeProjectId, ReplaceFilesInUse: ReplaceFilesInUse);
             // [kaynak şeridi · R2] Koşunun perf modu, motora giden metin olarak, komutun kurulduğu yerde yakalanır; runStarted'ta koşu hücresine devredilir.
             CaptureStripRunMode(cmd);
             if (await SendWithFailureLineAsync(cmd, SendFailedLine(RunModeLabel(mode)), pass)) return;
@@ -1919,6 +1926,9 @@ public sealed partial class RunViewModel : ObservableObject
                 OnProjectDone(e.ProjectId, ProjectRowState.Failed, e.DurationMs, e.DepIssues, evidence: e.Evidence);
                 break;
             case ProjectSkippedEvent e: OnProjectSkipped(e); break;
+            // [files-in-use] Motorun proje notu (kilitli kopya kararı): metin motorda yazılır ve decision.log'daki satırın aynısıdır — konsola
+            // AYNEN, her not bir kez ("warning: " öneki satırı amber boyar). Akıştaki eşi AppendStreamFor'dadır.
+            case ProjectNoteEvent e: AppendRunLine(e.Text); break;
             case CycleMemberHeldEvent e: OnCycleMemberHeld(e); break;
             case CycleCompletedEvent e: OnCycleCompleted(e); break;
             case RunCompletedEvent e: OnRunCompleted(e); break;

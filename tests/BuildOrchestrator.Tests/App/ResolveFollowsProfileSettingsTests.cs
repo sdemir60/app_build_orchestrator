@@ -19,15 +19,18 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 public class ResolveFollowsProfileSettingsTests
 {
-    /// <summary>Katalogda Resolve'a özgü bir satır yok; BUILD grubu yalnız <c>Pull before build</c> taşır. Satıra ETİKETLE bakılır, enum
-    /// üyesiyle değil: etiket kataloğun kullanıcıya görünen kimliğidir ve üye kalksa da kalkmasa da derlenen bir test kırmızıyı da gösterir.</summary>
+    /// <summary>Katalogda Resolve'a özgü bir satır yok; BUILD grubu <c>Pull before build</c> ve <c>Replace files in use</c> taşır. Satıra
+    /// ETİKETLE bakılır, enum üyesiyle değil: etiket kataloğun kullanıcıya görünen kimliğidir ve üye kalksa da kalkmasa da derlenen bir test
+    /// kırmızıyı da gösterir.
+    /// <para><b>[DEĞİŞEN KURAL — files-in-use 2026-11-14]</b> Eski iddia: BUILD yalnız <c>Pull before build</c> taşır. BUILD'e motora giden ikinci
+    /// bir build tercihi, <c>Replace files in use</c> eklendi (<see cref="FilesInUseAppTests"/>); Resolve satırının yokluğu aynen pinli.</para></summary>
     [Fact]
     public void The_general_catalog_has_no_resolve_priority_row()
     {
         Assert.DoesNotContain(GeneralSettingsCatalog.Groups.SelectMany(g => g.Rows), r => r.Label == "Resolve cycles at full priority");
 
         var build = Assert.Single(GeneralSettingsCatalog.Groups, g => g.Title == "BUILD");
-        Assert.Equal([GeneralSetting.PullBeforeBuild], build.Rows.Select(r => r.Setting));
+        Assert.Equal([GeneralSetting.PullBeforeBuild, GeneralSetting.ReplaceFilesInUse], build.Rows.Select(r => r.Setting));
     }
 
     /// <summary>Kalkan anahtarı yazmış eski bir <c>ui-state.json</c> yüklenir: fazla alan yok sayılır, dosyadaki öteki değerler korunur

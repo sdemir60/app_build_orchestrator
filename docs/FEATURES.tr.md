@@ -115,6 +115,20 @@ belleğe göre ayarlanır, makinenin geri kalanına bir pay bırakılır. Kaynak
 accounting sayaçlarından, belleği private bytes olarak okur; makinedeki süreçleri listelemez.\
 `makine payını sınırlayan JOB_OBJECT_CPU_RATE_CONTROL sert tavanı` · `sayfalamaya karşı çekirdeğe ve boş belleğe göre worker bütçesi` · `canlı CPU değeri için QueryInformationJobObject accounting'i` · `canlı RAM değeri için GetProcessMemoryInfo private bytes`
 
+## Uygulaman açıkken derler
+
+**Ne yapar:** Çalıştırdığın ya da debug ettiğin uygulama, bir projenin post-build adımının paylaşılan bir klasöre
+kopyaladığı DLL'i tutuyorsa derleme artık orada durmaz: *Replace files in use* açıkken araç tutulan dosyayı kenara
+taşır ve kopya yeniden yapılır; derleme sürer, bağımlıları yeni kopyaya karşı derlenir. Çalışan uygulama yeniden
+başlayana kadar eski derlemeyle devam eder. Ayar kapalıyken konsol dosyayı ve onu tutan programı söyler.\
+**Nasıl:** Bir projenin çıktısı bir dosyanın kullanımda olduğunu söylediğinde araç MSBuild çıktısından kopya
+komutlarını okur ve kopyalanan her dosyayı hedefiyle karşılaştırır; post-build adımının son satırı başarılı olduğu
+için MSBuild'in hata vermediği başarısız bir kopya da böyle yakalanır. Kaynağından eski olan ve başka bir programın
+tuttuğu hedef yanındaki gizli `.in-use` klasörüne yeniden adlandırılır — Windows yüklü bir DLL için buna izin verir —
+ve aynı derleme bir kez daha koşar; kaynağından yeni bir hedef asla taşınmaz, kenara alınan kopyalar da artık kimse
+tutmadığında sonraki bir koşuda silinir.\
+`dosyayı tutan programın adı için Restart Manager` · `dosyanın yanında yeniden adlandırma, Windows'un yüklü DLL'e izin verdiği taşıma` · `aynı derlemenin tek yeniden denemesi`
+
 ## Sakin ve erişilebilir tasarım
 
 **Ne yapar:** Arayüz tek koyu temayı ve tek vurgu rengi olarak amber'i kullanır; renk yalnız durum anlatır ve her
@@ -227,10 +241,11 @@ yazılır.\
 ## Çıktı klasörlerine dokunmaz
 
 **Ne yapar:** Derleme çıktısı tam Visual Studio'nun koyacağı yere düşer: araç hiçbir çıktı yolunu değiştirmez,
-OutDir'e kendisi bir şey yazmaz, kopyalamaz, silmez; her koşu o an checkout'lu tek çalışma ağacını derler.\
+bir çıktı klasörüne kendisi bir şey yazmaz ya da kopyalamaz; her koşu o an checkout'lu tek çalışma ağacını derler.\
 **Nasıl:** MSBuild'e OutDir, OutputPath ya da obj yolu geçilmez, çıktılar yalnız karar için okunur; projelerin
-kendi post-build adımları çıktıyı Visual Studio'daki gibi dağıtır. Tek istisna senin istediğin Clean'dir: MSBuild
-projenin kendi kaydettiği çıktıları siler.\
+kendi post-build adımları çıktıyı Visual Studio'daki gibi dağıtır. İki istisnayı sen seçersin: istediğin Clean'de
+MSBuild projenin kendi kaydettiği çıktıları siler; *Replace files in use* ise çalışan bir programın tuttuğu dosyayı,
+projenin kendi kopyası yerine oturabilsin diye kenara taşır ve yalnız kendi taşıdığını siler.\
 `değişmeyen çıktı yolu, VS ile aynı düzen` · `tek çalışma ağacı, kopya yok` · `çıktıyı yalnız okuma`
 
 ## Git'e kendiliğinden yazmaz
@@ -303,7 +318,8 @@ konsolun belleği sınırlı kalır.\
 ## Derlemenin neresinde olduğunu hep söyler
 
 **Ne yapar:** Title bar'ın altındaki şerit en son ne istendiğini, o anki fazı, ilerlemeyi, kalan süreyi ve hata
-durumunu her zaman gösterir; olay akışı koşunun olaylarını sırayla, her biri tek satır listeler.\
+durumunu her zaman gösterir; olay akışı koşunun olaylarını sırayla, her biri tek kayıt olarak listeler ve panele
+sığmayanı alt satıra kırar.\
 **Nasıl:** Kalıcı işlem etiketi (SYNC, BUILD, REBUILD, CLEAN, DEEP CLEAN, OPTIMIZE, RESOLVE, SWITCHING BRANCH,
 CREATING WORKTREE) iş sürerken amber, bitince nötrdür. Yanında faz satırı — Sync sürerken hangi adımda olduğu ve ilk
 indeksleme sürerken o ana dek sayılan dosyalar —, o an derlenen projelerin (koşu bitince hatalıların) chip'leri ve
