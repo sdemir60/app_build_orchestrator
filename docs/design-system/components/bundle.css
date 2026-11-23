@@ -1,0 +1,21 @@
+/* Delta Build Orchestrator — global styles loaded with the components (fonts, base, reduced motion). Token values live in tokens.json. */
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@300;400;500;600;700&display=swap');
+
+body {
+  margin: 0;
+  background: var(--surface-base);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+code, pre, kbd, samp { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+::selection { background: var(--amber-soft-hover); color: var(--text-primary); }
+:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: 1px; }
+
+/* OS "animasyonları göster" kapalıysa tüm motion anlık'a düşer (uygulama-içi toggle yok) */
+@media (prefers-reduced-motion: reduce) {
+  :root { --duration-instant: 0ms; --duration-fast: 0ms; --duration-base: 0ms; --duration-slow: 0ms; }
+}

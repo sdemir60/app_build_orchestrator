@@ -1,0 +1,9 @@
+<!-- @dsCard group="Shell" height=80 -->
+<!doctype html>
+<html><head><meta charset="utf-8"><style>body{margin:0;padding:16px;background:var(--surface-base);color:var(--text-primary);font-family:var(--font-sans)}</style></head>
+<body><div id="root"></div>
+<script>
+const DS = window.DeltaBuildOrchestratorDS_eb0bd1; const h = React.createElement;
+
+ReactDOM.createRoot(document.getElementById('root')).render(h('div',{style:{border:'1px solid var(--border)',borderRadius:'var(--radius-md)',overflow:'hidden'}},h(DS.Toolbar,null,h(DS.Button,{variant:'primary'},'Build'),h(DS.Button,null,'Sync'),h(DS.ToolbarSep),h(DS.Segment,{options:['Debug','Release'],value:'Release'}),h(DS.ToolbarSpacer),h(DS.Button,{variant:'ghost'},'Settings'))));
+</script></body></html>

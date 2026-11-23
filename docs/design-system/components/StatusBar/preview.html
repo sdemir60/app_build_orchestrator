@@ -1,0 +1,9 @@
+<!-- @dsCard group="Shell" height=64 -->
+<!doctype html>
+<html><head><meta charset="utf-8"><style>body{margin:0;padding:16px;background:var(--surface-base);color:var(--text-primary);font-family:var(--font-sans)}</style></head>
+<body><div id="root"></div>
+<script>
+const DS = window.DeltaBuildOrchestratorDS_eb0bd1; const h = React.createElement;
+
+ReactDOM.createRoot(document.getElementById('root')).render(h('div',{style:{border:'1px solid var(--border)',borderRadius:'var(--radius-md)',overflow:'hidden'}},h(DS.StatusBar,{right:h(DS.StatusBarItem,{label:'Duration',value:'1m 12s'})},h(DS.StatusBarItem,{label:'Built',value:'14/38',color:'var(--amber-text)'}),h(DS.StatusBarItem,{label:'Failed',value:'3',color:'var(--status-fail-text)'}),h(DS.StatusBarItem,{label:'Branch',value:'main'}))));
+</script></body></html>

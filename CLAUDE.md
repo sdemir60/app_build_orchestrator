@@ -12,6 +12,8 @@
 | [docs/WHY.md](docs/WHY.md) | Kazanımlar: FEATURES'ın kazanım olan maddeleri, aynı sırayla; başlık = özellik adı + ` — ` + kazanım, altında **Common practice / In Build Orchestrator**. |
 | [docs/USER-GUIDE.md](docs/USER-GUIDE.md) | Kullanım kılavuzu: gereksinim, kurulum, ekran ekran kullanım, kısayollar, güncelleme, diskte durum, performans modları, bilinen sınırlar. |
 | [CHANGELOG.md](CHANGELOG.md) | Sürüm notları — What's new ekranının TEK kaynağı (exe'ye gömülür). Yalnız sürüm çıkarılırken yazılır. |
+| [docs/design/README.md](docs/design/README.md) | Tasarım: yaşayan prototip ve sürüm sürüm spesifikasyon (`VERSIONS.md`, `packages/`); hangi tasarım sürümünün uygulandığı. |
+| [docs/design-system/README.md](docs/design-system/README.md) | Design system: token'lar, marka kitabı, bileşenler; `Resources/*.xaml` değerlerinin kaynağı. |
 
 **Bir kusur veya davranış sorusu geldiğinde önce bunları oku.** ARCHITECTURE.md §22 kod haritasıdır (hangi
 davranış hangi dosyada), §13-§14 UI ve design system'i — renk, ölçü, tipografi, motion ve bileşen davranışları
@@ -167,6 +169,21 @@ kadarki tüm değişiklikler dokümanlara işlenir.
   İç ürünün adı `DocumentationTests` ile pinlidir; müşteri adları guard'a yazılmaz (yazmak onları yayınlamak olur),
   onlara elle dikkat edilir. Ekran görüntüleri de nötr bir deneme reposundan çekilir.
 - `.claude/outputs/` ve `.claude/summaries/` **tarihseldir** — geriye dönük düzeltilmez.
+
+## Tasarım
+
+Tasarım `docs/design` (prototip + spesifikasyon, sürüm sürüm) ve `docs/design-system`'dadır; Claude'daki *Build Orchestrator - Design* ve
+*Build Orchestrator - Design System* artifact'leri bunların kopyasıdır. **Tasarım 2.0.0 ve design system 2.0.0 milattır:** ikisi de
+uygulamanın kodundan (1.15.0) yeniden kuruldu. `.claude/outputs/<tarih>-design-v1.x/` paketleri arşivdir; koddaki eski `design v1.x §…`
+yorumları onlara bakar.
+
+- **Tasarım sürümünü uygulamak:** `docs/design/VERSIONS.md`'de `Uygulandı: —` olan en eski sürümden başla; o sürümün paketindeki
+  README (spesifikasyon) ve `prototype/` (davranış ve kopya) referanstır, sürümler sırayla uygulanır. Design system sürümü
+  `Resources/*.xaml` değerlerine aynı yoldan geçer (`docs/design-system/VERSIONS.md`). Commit ve merge mesajları sürümü anar
+  (`design v2.1.0 §2.4`). Sürüm çıkarılınca uygulanan kayıtların `Uygulandı:` satırı uygulamanın sürümüyle doldurulur.
+- **Tasarımda olmayan UI değişikliği** (sahada düzeltme, yeni ayar): aynı işte `docs/design/requests/` altına kısa bir kayıt düşülür;
+  bir sonraki tasarım sürümü prototipi koddan eşitler. Kaynak her zaman koddur, tasarım geride bırakılmaz.
+- `docs/design` ve `docs/design-system` de herkese açıktır: örnekler temsili adlarla yazılır (`ACME.*`, `Acme.sln`, `D:\src\ACME`).
 
 ## Sürüm çıkarma
 
