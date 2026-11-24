@@ -6,7 +6,7 @@
              Focusable="False" IsHitTestVisible="True"
              Visibility="Collapsed">
   <!-- [T59] `⌄ latest` pill (design-v1 §2.5/§2.6 + Ek A-15) — panel alt-ortasında; bg surface-overlay,
-       border-strong, radius-md (=overlay 8), popover gölgesi. Hover'da yüzey/metin bir adım açılır
+       border-strong, radius-lg (Radius.Overlay, 8), popover gölgesi. Hover'da yüzey/metin bir adım açılır
        (surface-overlay→surface-raised, text-secondary→text-primary). Host (ConsoleView vb.) Visibility'yi
        BottomAnchorBehavior.PillShown'a (duyurulan değer) bağlar; Click → JumpToBottom (bkz. LatestPill.xaml.cs). -->
   <!-- [T60] Style="{x:Null}": Controls.xaml artık stilsiz HER Button'a DS secondary görünümünü verir; bu

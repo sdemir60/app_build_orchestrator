@@ -88,8 +88,6 @@ public partial class GraphView : UserControl
         GraphBeads.MaxOrbitGapPx + GraphBeads.StrokeThickness / 2);
     /// <summary>Glyph, düğüm kenarının bu kadarıdır (§2.3: "node'un %52'si").</summary>
     public const double IconFactor = 0.52;
-    /// <summary>Glyph kalem kalınlığı (§2.3: "1.8px stroke").</summary>
-    public const double IconStroke = 1.8;
     /// <summary>Hover büyütmesi.
     ///
     /// <para><b>§2.3'ün sayısı 1.7'ydi; kullanıcı kararıyla 1.5.</b> Aritmetik neden: düğüm kenarı pitch'in

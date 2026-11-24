@@ -8,7 +8,7 @@ namespace BuildOrchestrator.App.ViewModels;
 
 /// <summary>
 /// [design v1.10.0 §2.9 · K5] Settings'in <b>dışa/içe aktarılan</b> dosya biçimi:
-/// <c>{ app, version, repositoryRoot, externalProjects[{ path }], pullExternalBeforeBuild, stashOnBranchSwitch,
+/// <c>{ app, version, repositoryRoot, externalProjects[{ path }], pullExternalBeforeBuild, replaceFilesInUse, stashOnBranchSwitch,
 /// compactConsole, stopEngineWhenIdle, startWithWindows, startMinimizedToTray, closeToTray,
 /// showNotifications, layers[{ name, pattern }] }</c> —
 /// <c>externalProjects</c> BİLEREK <c>repositoryRoot</c> ile <c>layers</c> ARASINDADIR (design v1.14.0/§9),

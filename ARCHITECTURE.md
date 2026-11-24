@@ -5030,7 +5030,7 @@ then the pending repository root (which resets the project rows to hollow), then
 order is load-bearing, because the Sync command carries the layer patterns and the external list — sent before
 they were applied, it would carry stale ones: the grouping would be wrong for a whole Sync and the external rows
 would describe the previous list. The Sync itself is unconditional: Save does not compare old and new state to
-decide whether to run it. The four workflow preferences ride along as optional values: *Save* gives all four, and a
+decide whether to run it. The five workflow preferences ride along as optional values: *Save* gives all five, and a
 caller that leaves one out leaves that setting as it was, without a note.
 
 The pull switch has a note of its own, and it is quieter still: it prints only when the value actually changed
@@ -5090,7 +5090,7 @@ change deferred — …`. A root entered afterwards is a first setup again: sile
 
 **Export · Import · Clear.** The footer carries three icon buttons on its left. Export writes
 `build-orchestrator-settings.json` — `{ app, version, repositoryRoot, externalProjects[{ path }],
-pullExternalBeforeBuild, stashOnBranchSwitch, compactConsole, stopEngineWhenIdle,
+pullExternalBeforeBuild, replaceFilesInUse, stashOnBranchSwitch, compactConsole, stopEngineWhenIdle,
 startWithWindows, startMinimizedToTray, closeToTray, showNotifications, layers[{ name, pattern }] }`, the external
 array sitting between the root and the layers (the field order the file is written in, not just a key that happens to
 be present) and holding only cards with a non-blank path; import reads one back **into the form**; clear empties the
@@ -5125,8 +5125,8 @@ highlighted pattern`, in that order of priority. The draft derives the reason fr
 conditions that gate *Save* (`SaveBlockedReason`, with `CanSave` defined as "no reason"), so the button and the
 line cannot disagree.
 
-A file that omits a switch's key (`pullExternalBeforeBuild`, `stashOnBranchSwitch`, `compactConsole`,
-`stopEngineWhenIdle`, `startWithWindows`, `startMinimizedToTray`, `closeToTray` or
+A file that omits a switch's key (`pullExternalBeforeBuild`, `replaceFilesInUse`, `stashOnBranchSwitch`,
+`compactConsole`, `stopEngineWhenIdle`, `startWithWindows`, `startMinimizedToTray`, `closeToTray` or
 `showNotifications`) leaves that switch where it is, the same rule the external list already follows: a file cannot
 silently reset a setting it does not carry.
 
@@ -6383,15 +6383,16 @@ counters, paths — always with tabular figures. Scale: 11 / 12 / **13 (base)** 
 Weights: 400 body, 500 emphasis, 600 headings. Caps labels (panel headers) are 11 px / 500 / uppercase with
 0.07 em tracking in `text-faint`.
 
-Fonts are **embedded static OTF** (Regular / Medium / SemiBold in both families) taken from the upstream GitHub
-release. Variable fonts are unusable — WPF has no axis support — and the CDN build was rejected because its
+Fonts are **embedded static OTF** (Regular / Medium / SemiBold in both families, plus Geist Mono Light for the console
+body) taken from the upstream GitHub release. Variable fonts are unusable — WPF has no axis support — and the CDN build was rejected because its
 OpenType tables can be subset. The application therefore works air-gapped. Letter spacing does not exist in
 WPF, so 0.07 em tracking is implemented by `TrackedTextBlock`, which lays out a `GlyphRun` with explicit
 advance widths; inserting hair spaces is prohibited.
 
 `LineHeight` in WPF is absolute, not a ratio, so the CSS ratios are pre-multiplied into named tokens
 (`LineHeight.Snug13` = 1.35 × 13, and so on). The console's 1.55 line height comes from a `CompositeFont`
-`LineSpacing` wrapper and does hold: 20.15 DIP at 13 px, measured in a realized window. A `CompositeFont` is
+`LineSpacing` wrapper and does hold: measured in a realized window at 13 px it gives 13 × 1.55 = 20.15 DIP, and the
+console itself, at 12 px, runs 18.6 DIP lines. A `CompositeFont` is
 parsed only under its own XML namespace; written under the presentation namespace the file is rejected whole
 at its root element and the family silently falls back to a proportional system face, which is what the
 console rendered for a long time. Nothing about the family name or the weight is checked at load, so the guard
@@ -6596,7 +6597,8 @@ brush. The mapping lives in one place so the two menus cannot drift; the ⋯ tha
 the same family of filled marks as the drag grip. The tray menu draws no mark of its own: *Stop* carries the stop
 square the Stop button and the row's stop icon draw (`Icon.Stop` in `status-fail-text`), and *Exit* the title bar
 *Exit* button's Lucide *power* (`Icon.Power`) in the `text-dim` of menu-row icons. The application icon is a multi-size ICO with the 16 and 24 px rasters hand-corrected;
-carets and chevrons are drawn, not typed.
+carets and chevrons are drawn, not typed — the one typed chevron is the `⌄ latest` pill's U+2304, set in the
+*Geist Mono Console* composite family, whose map sends the symbol to Segoe UI Symbol (Geist Mono has none).
 
 One icon has no literal counterpart in the design source and is marked *derived* in the dictionary, with the
 reasoning written beside it: the caption restore glyph, drawn on the same grid and at the same stroke weight as the
