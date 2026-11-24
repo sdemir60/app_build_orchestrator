@@ -11,6 +11,8 @@ Uygulandı: app 1.15.0 (sistem uygulamaya eşitlendi; uygulamaya düşen bir de�
 **Ne değişti**
 - Kaldırıldı: `MainWindow` kiti (`PROJECTS` ve `GraphView` ile), `Toast`, `WillBuildDot`: bundle, `index.d.ts`, README'ler ve önizlemeler.
 - `ProjectRow`: şerit ve nokta uygulamanın tablosuyla boyanır (işaretli, kuyrukta ve derleniyor amber, güncel yeşil, başarısız kırmızı, gerisi gri; döngü üyeliği listede renk taşımaz); başlangıç modunda (`discovered`) nokta yerine dört yaylı kesikli halka; `willBuild` prop'u kalktı.
+- `tokens.json`: toast'ı anan kullanım notları uygulamadaki kullanımla yazıldı (`surface-overlay`, `radius-lg`, `elevation-overlay`, `text-xs`, `leading-snug`); değerler değişmedi.
+- README'deki sürüm satırı kalktı; sürümler yalnız bu dosyadadır.
 
 ## 2.0.1 — 2026-11-24 · Spinner, building glyph'i ve varsayılan adlar uygulamadaki gibi
 
