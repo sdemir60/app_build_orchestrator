@@ -24,13 +24,13 @@ Build Orchestrator'ın UI tasarımı **yaşayan bir prototiptir**: uygulamanın 
 
 1. Değişikliği prototipte (`prototype/app/BuildApp.jsx`, simülasyon `prototype/app/build-data.js`) ve [SPEC.md](SPEC.md)'de (ilgili bölümler yerinde yeniden yazılır) yap. Görünüş değişiyorsa önce [design system](../design-system/README.md)'de bir sürüm yapılır.
 2. Sürümü artır: yeni özellik, davranış veya ekran **minor**; küçük düzeltme **patch**; **major** yalnız proje sahibinin kararıyla (milat). Prototipteki `DESIGN_VERSION` aynı değere çekilir (UI'da görünmez; About ve What's new uygulamanın sürümünü gösterir).
-3. [VERSIONS.md](VERSIONS.md)'nin en üstüne kaydı yaz: başlık; commit · design system satırı; neden; ne değişti (§ referanslarıyla); **uygulamaya ne düşüyor**; altına `Uygulandı: —`. Sürümün commit'i kayda bir sonraki commit'le yazılır.
+3. [VERSIONS.md](VERSIONS.md)'nin en üstüne kaydı yaz: başlık; commit · design system satırı; neden; ne değişti (§ referanslarıyla); **uygulamaya ne düşüyor**; altına `Uygulandı: —`. Tablonun en üstüne de satırını ekle (`Uygulandı` hücresi `—`). Sürümün commit'i kayda bir sonraki commit'le yazılır.
 4. Tek dosyayı üret, aç ve sahneleri gez.
 5. Claude'daki iki artifact'i (Design, Design System) aynı sürümle güncelle.
 
 ## Koda geçirmek
 
 - Kod tarafı (Claude Code, `develop`'tan açılan branch) [VERSIONS.md](VERSIONS.md)'de `Uygulandı: —` olan en eski sürümden başlar; o sürümün commit'indeki SPEC.md ve `prototype/` kaynağını referans alır (değişen, o commit'in farkıdır), sürümleri sırayla uygular.
-- Commit ve merge mesajları uygulanan sürümü anar (`design v2.1.0 §2.4`); bitince kaydın `Uygulandı:` satırı uygulamanın sürümüyle doldurulur (`Uygulandı: app 1.16.0`).
+- Commit ve merge mesajları uygulanan sürümü anar (`design v2.1.0 §2.4`). Uygulayan branch kaydın `Uygulandı:` satırını ve tablodaki hücresini `develop` yapar: sonraki kod oturumu `—` olanlardan devam eder. Sürüm çıkarılırken release script'i `develop`'ları uygulamanın sürümüne çevirir (`Uygulandı: app 1.16.0`).
 - Uygulama tasarımda olmayan bir şey eklerse ya da değiştirirse (sahada düzeltme, yeni ayar), bir sonraki tasarım sürümü önce prototipi koddan eşitler; kaynak her zaman koddur, tasarım geride kalmaz.
 - Repo dışında yapılan bir tasarım değişikliği (başka bir hesaptaki artifact, bir taslak, kullanım sonrası not) [requests/](requests/README.md) altına girer.

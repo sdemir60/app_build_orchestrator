@@ -18,7 +18,7 @@ Build Orchestrator'ın görsel dili: token'lar, marka kitabı, bileşenler ve lo
 
 1. Klasörü değiştir (`tokens.json` ve ondan `tokens.css`, bileşenin README'si ve önizlemesi, gerekirse `bundle.js`) ve [VERSIONS.md](VERSIONS.md)'nin en üstüne sürümün kaydını yaz: numara, tarih, başlık; neden; ne değişti; **uygulamaya ne düşüyor** (hangi XAML kaynağı, hangi değer). Bir bileşen, token, varlık ya da marka kitabı kuralı eklenir ya da değişirse minor; düzeltme patch; major yalnız proje sahibinin kararıyla (milat).
 2. Artifact'i bu klasörden yeniden yayınla; tasarım artifact'indeki kopyasını aynı işte güncelle (repodaki prototip sistemi doğrudan bu klasörden yükler).
-3. Kod tarafı sürümü uygular: `Resources/*.xaml` değerleri burayla eşitlenir, commit ve CHANGELOG işi `design-system X.Y.Z` adıyla anılır; VERSIONS kaydının altına `Uygulandı: app X.Y.Z` satırı eklenir.
+3. Kod tarafı sürümü uygular: `Resources/*.xaml` değerleri burayla eşitlenir, commit ve CHANGELOG işi `design-system X.Y.Z` adıyla anılır; uygulayan branch kaydın `Uygulandı:` satırını `develop` yapar, sürüm çıkarılırken release script'i onu `app X.Y.Z`'ye çevirir.
 
 ---
 

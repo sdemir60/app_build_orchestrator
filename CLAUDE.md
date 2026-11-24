@@ -180,7 +180,8 @@ yorumları onlara bakar.
 - **Tasarım sürümünü uygulamak:** `docs/design/VERSIONS.md`'de `Uygulandı: —` olan en eski sürümden başla; o sürümün commit'indeki
   `docs/design/SPEC.md` (spesifikasyon) ve `docs/design/prototype/` (davranış ve kopya) referanstır, sürümler sırayla uygulanır. Design system sürümü
   `Resources/*.xaml` değerlerine aynı yoldan geçer (`docs/design-system/VERSIONS.md`). Commit ve merge mesajları sürümü anar
-  (`design v2.1.0 §2.4`). Sürüm çıkarılınca uygulanan kayıtların `Uygulandı:` satırı uygulamanın sürümüyle doldurulur.
+  (`design v2.1.0 §2.4`). Uygulayan branch kaydın `Uygulandı:` satırını (tasarım tablosundaki hücresiyle) `develop` yapar;
+  sürüm çıkarılırken `release.ps1` bunları uygulamanın sürümüne çevirir (`app 1.16.0`).
 - **Tasarımda olmayan UI değişikliği** (sahada düzeltme, yeni ayar): aynı işte `docs/design/requests/` altına kısa bir kayıt düşülür;
   bir sonraki tasarım sürümü prototipi koddan eşitler. Kaynak her zaman koddur, tasarım geride bırakılmaz.
 - `docs/design` ve `docs/design-system` de herkese açıktır: örnekler temsili adlarla yazılır (`ACME.*`, `Acme.sln`, `D:\src\ACME`).
@@ -200,7 +201,8 @@ bir şey dediğinde yazılır. Sıradan işlerde `CHANGELOG.md`'ye ve `Directory
 4. **Numara tek yerde:** `Version` aynı değere çekilir (guard: CHANGELOG'daki en üst sürüm = `Version`).
 5. **Yayın:** `/release` (ya da elle `scripts/release.ps1 -Version X.Y.Z`), ana proje checkout'unda `develop`
    üzerinde: guard'lar (develop push'lu ve `origin/develop`'la eşit, **develop HEAD'inin `ci.yml` koşusu yeşil**,
-   `origin/main` develop'un atası, `vX.Y.Z` tag'i yok, yayınlanacak bir şey var) → build → `develop`'ta
+   `origin/main` develop'un atası, `vX.Y.Z` tag'i yok, yayınlanacak bir şey var) → build → tasarım kayıtlarındaki
+   `Uygulandı: develop`'lar bu sürüme çevrilir → `develop`'ta
    `release: vX.Y.Z` commit'i (bu commit için ayrı branch açılmaz — tek istisna) → `main`'e `--no-ff` merge
    (`merge: release vX.Y.Z`) → `develop` `main`'e ff (develop = main) → `main` ve `develop` tek atomik push. **Tag'i
    script atmaz, testleri lokal koşmaz:** `main`'e push GitHub'da `release.yml`'i başlatır — testler (`ci.yml`) → paket
