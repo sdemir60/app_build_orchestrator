@@ -2,7 +2,7 @@
 
 Build Orchestrator'ın UI tasarımı yaşayan bir prototiptir: Claude'daki *Build Orchestrator - Design* artifact'i ve buradaki paketler. Her sürüm burada, en yenisi en üstte: ne değişti, neden, uygulamaya ne düşüyor ve uygulamaya geçip geçmediği. Tasarıma devam eden önce bu dosyayı ve son paketin spesifikasyonunu okur, yeni sürümü bir öncekinin üzerine kurar; kod tarafı `Uygulandı: —` olan en eski sürümden başlar ([tasarım paketi](README.md#koda-geçirmek)).
 
-Numaralama: yeni özellik, davranış veya ekran **minor**; küçük düzeltme **patch**; **major** yalnız Sinan'ın kararıyla ve bir milatı işaretler. Metindeki `§` numaraları o sürümün paketindeki README'nin bölümleridir.
+Numaralama: yeni özellik, davranış veya ekran **minor**; küçük düzeltme **patch**; **major** yalnız proje sahibinin kararıyla ve bir milatı işaretler. Metindeki `§` numaraları o sürümün paketindeki README'nin bölümleridir.
 
 | Sürüm | Tarih | Konu | Uygulandı |
 |---|---|---|---|

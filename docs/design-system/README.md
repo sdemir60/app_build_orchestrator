@@ -16,7 +16,7 @@ Build Orchestrator'ın görsel dili: token'lar, marka kitabı, bileşenler ve lo
 
 ## Sürüm yapmak ve koda geçirmek
 
-1. Klasörü değiştir (`tokens.json` ve ondan `tokens.css`, bileşenin README'si ve önizlemesi, gerekirse `bundle.js`) ve [VERSIONS.md](VERSIONS.md)'nin en üstüne sürümün kaydını yaz: numara, tarih, başlık; neden; ne değişti; **uygulamaya ne düşüyor** (hangi XAML kaynağı, hangi değer). Bir bileşen, token, varlık ya da marka kitabı kuralı eklenir ya da değişirse minor; düzeltme patch; major yalnız Sinan'ın kararıyla (milat).
+1. Klasörü değiştir (`tokens.json` ve ondan `tokens.css`, bileşenin README'si ve önizlemesi, gerekirse `bundle.js`) ve [VERSIONS.md](VERSIONS.md)'nin en üstüne sürümün kaydını yaz: numara, tarih, başlık; neden; ne değişti; **uygulamaya ne düşüyor** (hangi XAML kaynağı, hangi değer). Bir bileşen, token, varlık ya da marka kitabı kuralı eklenir ya da değişirse minor; düzeltme patch; major yalnız proje sahibinin kararıyla (milat).
 2. Artifact'i bu klasörden yeniden yayınla; prototipteki kopyasını (`docs/design` paketinin `prototype/ds/` klasörü ve tasarım artifact'i) aynı işte güncelle.
 3. Kod tarafı sürümü uygular: `Resources/*.xaml` değerleri burayla eşitlenir, commit ve CHANGELOG işi `design-system X.Y.Z` adıyla anılır; VERSIONS kaydının altına `Uygulandı: app X.Y.Z` satırı eklenir.
 
@@ -116,9 +116,9 @@ Statü daima **renk + glyph + metin**; her metin tonu (dim dahil) 4.5:1'i karş�
 - **Statü glyph'leri:** ince halkalı daire içinde ✓ / ✗ / saat; başlangıç modunda kesikli daire. **Building spinner ayrı bir çizim değildir:** aynı kesikli halkanın amber, 1.4s lineer dönen hali.
 - **Ortak aileler:** Build menüsü ve satır menüsü tek ikon ailesini paylaşır (play, rotate-cw, brush). Title bar küme ikonları (layout seçicileri, dişli, What's new yıldızı, info, *power*) aynı 16px kutuda, 1.7 stroke ile çizilir. Uygulamaya özgü ikonlar: *power* (Exit), *folders* (worktree anahtarı), *arrow-down-to-line* (`N behind`), *rotate-ccw* (motoru yeniden başlat), *circle-arrow-up* (güncelleme hapı).
 - **Büyük ikon tek yerde:** boş görünüm ve keşif blokları — Lucide *network* (graf) ve *list* (proje listesi), 28px, 1.4 stroke, `text-faint` %70 — kontrol değil, boş durum resmi.
-- **Caret ve chevron'lar çizilir,** yazılmaz.
+- **Caret ve chevron'lar çizilir,** yazılmaz; tek istisna `⌄ latest` hapının ⌄'sidir (U+2304, metin glifi).
 - **Yasak:** emoji, dekoratif dolu renkli daire-rozet ikonlar, çok renkli ikonlar. İkon daima tek renk ve işlevseldir.
-- **Unicode:** yalnız console `▸` (cmd öneki) ve tipografik `—` / `·` ayraçları.
+- **Unicode:** yalnız `▸` öneki (konsolun komut satırları ve ribbon'un anlatı satırları), latest hapının `⌄`'si ve tipografik `—` / `·` ayraçları.
 - **Ürün logosu (Build Orchestrator)** — `assets/Logos/`. Beş şerit + gradyanlı chevron; üç varyant, üç ayrı iş için, birbirinin yerine kullanılmaz:
   - `app-mark.svg` — uygulama içi: title bar (19px), About (30px). Tile yok (şeffaf); şeritler nötr rampadan ve `brand-strip-dim`'den, chevron amber gradyanı (`amber-bright → brand-chevron-deep`).
   - `app-mark-mono.svg` — tray, tek renk bağlamlar, devre dışı durumlar. Tek mürekkep `#EDEDEE` (`text-primary`); hiyerarşi opaklıkla.
@@ -168,4 +168,4 @@ Uygulama Geist ve Geist Mono'yu **gömülü statik OTF** olarak taşır (resmî 
 
 ## Kaynak
 
-Design system **2.0.0** bir milattır: yayındaki uygulamanın (**app 1.15.0**) kodundan yeniden kuruldu — renk, ölçü ve tipografi `src/BuildOrchestrator.App/Resources/Tokens.xaml`'den, motion `Motion.xaml`'den, ikonlar `Icons.xaml`'den okundu. Token adları ve değerleri `tokens.json` / `tokens.css`'tedir; uygulamada olup eski sistemde karşılığı olmayan değerler (`status-queued-border`, `brand-strip-dim`, `brand-chevron-deep`, pencere iskeleti ölçüleri, pencere minimumu, reading line height, console weight) token olarak girdi. `components/bundle.js` tasarım paketinin bundle'ıdır; kodu değişmedi, yalnız örnek verisindeki adlar nötrleştirildi (`ACME.*`, `Acme.sln`). Bundan sonra sistemdeki bir değişiklik, onu getiren tasarım sürümünün notunda yazılır.
+Design system **2.0.0** bir milattır: yayındaki uygulamanın (**app 1.15.0**) kodundan yeniden kuruldu — renk, ölçü ve tipografi `src/BuildOrchestrator.App/Resources/Tokens.xaml`'den, motion `Motion.xaml`'den, ikonlar `Icons.xaml`'den okundu. Token adları ve değerleri `tokens.json` / `tokens.css`'tedir; uygulamada olup eski sistemde karşılığı olmayan değerler (`status-queued-border`, `brand-strip-dim`, `brand-chevron-deep`, pencere iskeleti ölçüleri, pencere minimumu, reading line height, console weight) token olarak girdi. `components/bundle.js` 1.x tasarım paketinin bundle'ından gelir, örnek verisindeki adlar nötrleştirildi (`ACME.*`, `Acme.sln`); `Spinner` ve `StatusGlyph`'in building çizimi uygulamanın `BuildingSpinner`'ına göredir. Sistemdeki her değişiklik repodaki `docs/design-system/VERSIONS.md`'de bir sürümdür.

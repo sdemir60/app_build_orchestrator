@@ -24,7 +24,7 @@ Build Orchestrator'ın UI tasarımı **yaşayan bir prototiptir**: uygulamanın 
 ## Tasarım sürümü yapmak
 
 1. Değişikliği prototipte (`app/BuildApp.jsx`, simülasyon `app/build-data.js`) ve spesifikasyonda (ilgili bölümler yerinde yeniden yazılır) yap. Görünüş değişiyorsa önce [design system](../design-system/README.md)'de bir sürüm yapılır.
-2. Sürümü artır: yeni özellik, davranış veya ekran **minor**; küçük düzeltme **patch**; **major** yalnız Sinan'ın kararıyla (milat). Prototipteki `DESIGN_VERSION` aynı değere çekilir (UI'da görünmez; About ve What's new uygulamanın sürümünü gösterir).
+2. Sürümü artır: yeni özellik, davranış veya ekran **minor**; küçük düzeltme **patch**; **major** yalnız proje sahibinin kararıyla (milat). Prototipteki `DESIGN_VERSION` aynı değere çekilir (UI'da görünmez; About ve What's new uygulamanın sürümünü gösterir).
 3. Paketi yaz: `packages/<YYYY-MM-DD-HH-MM>-design-v<sürüm>/` (`README.md` = spesifikasyon, `prototype/` = kaynak) ve `prototype/BuildOrchestrator-prototype-<sürüm>.html` (tek dosya). Yazılmış bir paket değiştirilmez; düzeltme yeni bir sürümdür.
 4. [VERSIONS.md](VERSIONS.md)'nin en üstüne kaydı yaz: başlık; paket · prototip satırı; neden; ne değişti (§ referanslarıyla); **uygulamaya ne düşüyor**; altına `Uygulandı: —`.
 5. Claude'daki iki artifact'i (Design, Design System) aynı sürümle güncelle.

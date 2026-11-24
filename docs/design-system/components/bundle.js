@@ -1356,17 +1356,18 @@ if (typeof document !== 'undefined' && !document.getElementById('ds-spinner-css'
   s.id = 'ds-spinner-css';
   s.textContent = `
 @media (prefers-reduced-motion: no-preference) {
-  .ds-spinner-rot { animation: ds-spinner-rot 900ms linear infinite; transform-origin: center; transform-box: fill-box; }
+  .ds-spinner-rot { animation: ds-spinner-rot 1.4s linear infinite; transform-origin: center; transform-box: fill-box; }
 }
 @keyframes ds-spinner-rot { to { transform: rotate(360deg); } }`;
   document.head.appendChild(s);
 }
 
-/* Genel aktivite spinner'ı — 270° arc, currentColor. Sakin, sabit hız. */
+/* Genel aktivite spinner'ı — başlangıç modundaki kesikli halkanın dönen hâli (uygulamanın BuildingSpinner'ı):
+   r 6.7, desen 2.3 2.5, opaklık 0.9, 1.5 kontur, amber, 1.4s lineer. Ayrı bir çizim değildir. */
 function Spinner({
   size = 14,
   color,
-  title = 'Yükleniyor',
+  title = 'Loading',
   style
 }) {
   return /*#__PURE__*/React.createElement("span", {
@@ -1374,7 +1375,7 @@ function Spinner({
     "aria-label": title,
     style: {
       display: 'inline-flex',
-      color: color || 'var(--text-secondary)',
+      color: color || 'var(--amber-text)',
       flex: 'none',
       ...style
     }
@@ -1388,8 +1389,12 @@ function Spinner({
     strokeLinecap: "round"
   }, /*#__PURE__*/React.createElement("g", {
     className: "ds-spinner-rot"
-  }, /*#__PURE__*/React.createElement("path", {
-    d: "M8 1.3a6.7 6.7 0 1 1-6.7 6.7"
+  }, /*#__PURE__*/React.createElement("circle", {
+    cx: 8,
+    cy: 8,
+    r: 6.7,
+    strokeDasharray: "2.3 2.5",
+    opacity: 0.9
   }))));
 }
 Object.assign(__ds_scope, { Spinner });
@@ -1436,11 +1441,9 @@ if (typeof document !== 'undefined' && !document.getElementById('ds-status-glyph
   s.id = 'ds-status-glyph-css';
   s.textContent = `
 @media (prefers-reduced-motion: no-preference) {
-  .ds-spin { animation: ds-spin 900ms linear infinite; transform-origin: center; transform-box: fill-box; }
-  .ds-pulse { animation: ds-pulse 1.6s var(--ease-in-out) infinite; }
+  .ds-spin { animation: ds-spin 1.4s linear infinite; transform-origin: center; transform-box: fill-box; }
 }
-@keyframes ds-spin { to { transform: rotate(360deg); } }
-@keyframes ds-pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }`;
+@keyframes ds-spin { to { transform: rotate(360deg); } }`;
   document.head.appendChild(s);
 }
 const RING = {
@@ -1499,11 +1502,14 @@ function StatusGlyph({
   };
   let body;
   if (status === 'building') {
+    /* Başlangıç modundaki kesikli halkanın dönen hâli (uygulamanın BuildingSpinner'ı): 1.5 kontur, 1.4s; nabız yok. */
     body = /*#__PURE__*/React.createElement("g", {
       className: "ds-spin"
-    }, /*#__PURE__*/React.createElement("path", {
-      d: "M8 1.3a6.7 6.7 0 1 1-6.7 6.7"
-    }));
+    }, /*#__PURE__*/React.createElement("circle", _extends({}, RING, {
+      strokeWidth: 1.5,
+      strokeDasharray: "2.3 2.5",
+      opacity: 0.9
+    })));
   } else if (status === 'cycle') {
     body = /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("path", {
       d: "M8 2.7 14.4 13.2H1.6Z"
@@ -1524,7 +1530,6 @@ function StatusGlyph({
     role: "img",
     "aria-label": title || meta.label,
     title: title,
-    className: status === 'building' ? 'ds-pulse' : undefined,
     style: {
       display: 'inline-flex',
       color: meta.color,
