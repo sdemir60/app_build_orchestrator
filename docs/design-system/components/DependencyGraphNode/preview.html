@@ -1,0 +1,10 @@
+<!-- @dsCard group="Graph" height=110 -->
+<!doctype html>
+<html><head><meta charset="utf-8"><style>body{margin:0;padding:16px;background:var(--surface-base);color:var(--text-primary);font-family:var(--font-sans)}</style></head>
+<body><div id="root"></div>
+<script>
+const DS = window.DeltaBuildOrchestratorDS_eb0bd1; const h = React.createElement;
+const EN={discovered:'Not synced',queued:'Queued',building:'Building',succeeded:'Up to date',failed:'Failed',skipped:'Skipped',cycle:'Cycle'};
+
+ReactDOM.createRoot(document.getElementById('root')).render(h('div',{style:{display:'flex',gap:12,alignItems:'center',flexWrap:'wrap',gap:28,alignItems:'flex-start'}},...['discovered','queued','building','succeeded','failed','skipped','cycle'].map(s=>h(DS.DependencyGraphNode,{key:s,status:s,label:EN[s],selected:s==='failed'}))));
+</script></body></html>

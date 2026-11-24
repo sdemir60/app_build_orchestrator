@@ -1,0 +1,11 @@
+<!-- @dsCard group="Controls" height=72 -->
+<!doctype html>
+<html><head><meta charset="utf-8"><style>body{margin:0;padding:16px;background:var(--surface-base);color:var(--text-primary);font-family:var(--font-sans)}</style></head>
+<body><div id="root"></div>
+<script>
+const DS = window.DeltaBuildOrchestratorDS_eb0bd1; const h = React.createElement;
+const svg=(...c)=>h('svg',{width:14,height:14,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:1.8,strokeLinecap:'round',strokeLinejoin:'round'},...c);
+const gear=()=>svg(h('circle',{cx:12,cy:12,r:3}),h('path',{d:'M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1'}));
+const search=()=>svg(h('circle',{cx:11,cy:11,r:7}),h('path',{d:'m20 20-3.5-3.5'}));
+ReactDOM.createRoot(document.getElementById('root')).render(h('div',{style:{display:'flex',gap:12,alignItems:'center',flexWrap:'wrap'}},h(DS.IconButton,{title:'Settings'},gear()),h(DS.IconButton,{title:'Filter projects',active:true},search()),h(DS.IconButton,{title:'Disabled',disabled:true},gear())));
+</script></body></html>

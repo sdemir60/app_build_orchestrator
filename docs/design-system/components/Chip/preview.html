@@ -1,0 +1,9 @@
+<!-- @dsCard group="Controls" height=72 -->
+<!doctype html>
+<html><head><meta charset="utf-8"><style>body{margin:0;padding:16px;background:var(--surface-base);color:var(--text-primary);font-family:var(--font-sans)}</style></head>
+<body><div id="root"></div>
+<script>
+const DS = window.DeltaBuildOrchestratorDS_eb0bd1; const h = React.createElement;
+
+ReactDOM.createRoot(document.getElementById('root')).render(h('div',{style:{display:'flex',gap:12,alignItems:'center',flexWrap:'wrap'}},h(DS.Chip,{label:'Config',value:'Release',chevron:true}),h(DS.Chip,{label:'Branch',value:'main',active:true,chevron:true}),h(DS.Chip,{label:'Filter',value:'ACME.Parts',onRemove:()=>{}})));
+</script></body></html>

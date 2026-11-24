@@ -1,0 +1,143 @@
+/* Delta Build Orchestrator — generated from tokens.json */
+:root, [data-theme="dark"] {
+  --black: #08080a;
+  --neutral-1000: #0a0a0c;
+  --neutral-950: #0e0e10;
+  --neutral-900: #141417;
+  --neutral-850: #1a1a1e;
+  --neutral-800: #202024;
+  --neutral-700: #2a2a30;
+  --neutral-600: #3a3a42;
+  --neutral-500: #54545c;
+  --neutral-400: #76767e;
+  --neutral-300: #a9a9b0;
+  --neutral-200: #cdcdd2;
+  --neutral-100: #ededee;
+  --white: #ffffff;
+  --surface-sunken: var(--neutral-1000);
+  --surface-base: var(--neutral-950);
+  --surface: var(--neutral-900);
+  --surface-raised: var(--neutral-850);
+  --surface-overlay: var(--neutral-800);
+  --console-bg: #060608;
+  --surface-hover: var(--neutral-850);
+  --surface-active: var(--neutral-800);
+  --scrim: rgba(4,4,6,0.60);
+  --border-subtle: #1c1c20;
+  --border: #2a2a30;
+  --border-strong: #3a3a42;
+  --text-primary: #ededee;
+  --text-secondary: #a9a9b0;
+  --text-dim: #76767e;
+  --text-faint: #54545c;
+  --text-on-accent: #1c1304;
+  --amber: #eda10f;
+  --amber-bright: #ffb52e;
+  --amber-dim: #b87a0b;
+  --amber-text: #f1ab2e;
+  --amber-soft: rgba(237,161,15,0.12);
+  --amber-soft-hover: rgba(237,161,15,0.18);
+  --amber-border: rgba(237,161,15,0.32);
+  --status-success: #43b16b;
+  --status-success-text: #58cb80;
+  --status-success-soft: rgba(67,177,107,0.12);
+  --status-success-border: rgba(67,177,107,0.30);
+  --status-fail: #ee5a52;
+  --status-fail-text: #ff706a;
+  --status-fail-soft: rgba(238,90,82,0.12);
+  --status-fail-border: rgba(238,90,82,0.32);
+  --status-building: var(--amber);
+  --status-building-text: var(--amber-text);
+  --status-building-soft: var(--amber-soft);
+  --status-building-border: var(--amber-border);
+  --status-skipped: #6a6a73;
+  --status-skipped-text: #888890;
+  --status-skipped-soft: rgba(120,120,128,0.10);
+  --status-skipped-border: rgba(120,120,128,0.24);
+  --status-cycle: #df6f2b;
+  --status-cycle-text: #f0853f;
+  --status-cycle-soft: rgba(223,111,43,0.12);
+  --status-cycle-border: rgba(223,111,43,0.32);
+  --status-queued: #7c7c84;
+  --status-queued-text: #9a9aa2;
+  --status-queued-soft: rgba(124,124,132,0.10);
+  --status-queued-border: rgba(124,124,132,0.24);
+  --dot-dirty: var(--amber);
+  --dot-clean: var(--neutral-600);
+  --dot-unknown: #00000000;
+  --dot-outline-color: var(--border-subtle);
+  --focus-ring: rgba(237,161,15,0.50);
+  --brand-strip-dim: #44444b;
+  --brand-chevron-deep: #c9860c;
+  --elevation-overlay: 0 10px 28px -10px rgba(0,0,0,.66), 0 2px 6px -2px rgba(0,0,0,.5);
+  --elevation-popover: 0 6px 18px -8px rgba(0,0,0,.6);
+}
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --radius-none: 0px;
+  --radius-xs: 3px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-full: 999px;
+  --titlebar-height: 40px;
+  --toolbar-height: 44px;
+  --statusbar-height: 28px;
+  --ribbon-height: 32px;
+  --progress-height: 2px;
+  --action-bar-height: 42px;
+  --panel-header-height: 28px;
+  --layer-header-height: 24px;
+  --row-height: 36px;
+  --row-height-compact: 30px;
+  --dot-size: 8px;
+  --dot-outline-width: 1px;
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 1px;
+  --window-min-width: 1240px;
+  --window-min-height: 620px;
+  --resource-strip-icon: 12px;
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --text-2xl: 26px;
+  --text-3xl: 34px;
+  --leading-tight: 1.2;
+  --leading-snug: 1.35;
+  --leading-normal: 1.5;
+  --leading-mono: 1.55;
+  --leading-reading: 1.62;
+  --tracking-tight: -0.01em;
+  --tracking-wide: 0.02em;
+  --tracking-caps: 0.07em;
+  --duration-instant: 80ms;
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --duration-slow: 280ms;
+  --ease-out: cubic-bezier(.22,1,.36,1);
+  --ease-standard: cubic-bezier(.4,0,.2,1);
+  --ease-in-out: cubic-bezier(.65,0,.35,1);
+  --font-sans: 'Geist','Segoe UI',system-ui,sans-serif;
+  --font-mono: 'Geist Mono',ui-monospace,'Cascadia Code',monospace;
+}
+.body { font-family: var(--font-sans); font-size: 13px; font-weight: 400; line-height: 1.5; }
+.body-medium { font-family: var(--font-sans); font-size: 13px; font-weight: 500; line-height: 1.35; }
+.dialog-title { font-family: var(--font-sans); font-size: 14px; font-weight: 600; }
+.small { font-family: var(--font-sans); font-size: 12px; font-weight: 400; line-height: 1.35; }
+.caps-label { font-family: var(--font-sans); font-size: 11px; font-weight: 500; line-height: 1.2; letter-spacing: 0.07em; }
+.console { font-family: var(--font-mono); font-size: 12px; font-weight: 300; line-height: 1.55; }
+.metric { font-family: var(--font-mono); font-size: 16px; font-weight: 500; line-height: 1.2; }
+.metric-lg { font-family: var(--font-mono); font-size: 26px; font-weight: 400; line-height: 1.2; }
+.mono-tag { font-family: var(--font-mono); font-size: 11px; font-weight: 400; line-height: 1; }

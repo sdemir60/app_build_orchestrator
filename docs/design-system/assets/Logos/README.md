@@ -1,0 +1,1 @@
+Ürün markası ve örnek firma logosu. `app-mark.svg` uygulama içi (title bar 19px, About 30px, splash); `app-mark-mono.svg` tray ve tek renk bağlamlar — mürekkebi `#EDEDEE` (`text-primary`); `delta-logo-dark.svg` dark UI firma wordmark'ı (`#ededee` harfler + amber yay), title bar'da 10px / %55 opaklık. Hepsi koyu zemin içindir.

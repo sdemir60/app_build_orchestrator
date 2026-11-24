@@ -1,0 +1,9 @@
+<!-- @dsCard group="Forms" height=150 -->
+<!doctype html>
+<html><head><meta charset="utf-8"><style>body{margin:0;padding:16px;background:var(--surface-base);color:var(--text-primary);font-family:var(--font-sans)}</style></head>
+<body><div id="root"></div>
+<script>
+const DS = window.DeltaBuildOrchestratorDS_eb0bd1; const h = React.createElement;
+
+ReactDOM.createRoot(document.getElementById('root')).render(h('div',{style:{display:'grid',gap:14,maxWidth:360}},h(DS.Field,{label:'Repository root',hint:'Folder that holds Acme.sln'},h(DS.Input,{mono:true,defaultValue:'D:\\src\\ACME'})),h(DS.Field,{label:'Parallelism',error:'Must be between 1 and 16'},h(DS.Input,{mono:true,invalid:true,defaultValue:'32'}))));
+</script></body></html>

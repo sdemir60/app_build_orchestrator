@@ -1,0 +1,38 @@
+<!-- @dsCard height=320 -->
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+  html,body{margin:0;background:var(--surface-base)}
+  .cv{position:relative;width:960px;height:320px;background:var(--surface-base);overflow:hidden}
+  .band{position:absolute;left:0;top:0}
+  .amber{fill:var(--amber)} .ink{fill:var(--text-primary)} .tint{fill:var(--text-secondary)}
+  .steel{fill:var(--border-strong)} .ok{fill:var(--status-success)}
+  .r{rx:var(--radius-sm)}
+  .rule{stroke:var(--border);stroke-width:1}
+  .txt{position:absolute;left:32px;top:136px;width:900px}
+  .name{font-family:var(--font-sans);font-weight:600;font-size:64px;line-height:.95;letter-spacing:var(--tracking-tight);color:var(--text-primary);margin:0}
+  .tag{font-family:var(--font-sans);font-size:14px;color:var(--text-dim);margin:16px 0 0}
+</style></head>
+<body><div class="cv">
+<!--
+  blocks: amber (--amber) 636×36 slab bleeding right · border-strong 312×36 · text-secondary 180×30 · text-primary 228×30 · status-success 60×30 (small: a state colour) · border-strong 456×30 bleeding right
+  arrangement: full-width top band of unequal strips, like project rows (row-height 36, row-height-compact 30), gaps space-3 (12px)
+  pattern: hairline rules — README: structure is carried by hairline borders, not shadows; three --border rules on the row dividers, crossing the blocks
+  steps/radii: space-2 8, space-3 12, space-8 32 insets; radius-sm 4 on every block
+-->
+<svg class="band" width="960" height="120" viewBox="0 0 960 120" aria-hidden="true">
+  <rect class="steel r" x="-8" y="16" width="320" height="36"/>
+  <rect class="amber r" x="324" y="16" width="644" height="36"/>
+  <rect class="tint r" x="-8" y="64" width="188" height="30"/>
+  <rect class="ink r" x="192" y="64" width="228" height="30"/>
+  <rect class="ok r" x="432" y="64" width="60" height="30"/>
+  <rect class="steel r" x="504" y="64" width="464" height="30"/>
+  <line class="rule" x1="0" y1="8.5" x2="960" y2="8.5"/>
+  <line class="rule" x1="0" y1="58.5" x2="960" y2="58.5"/>
+  <line class="rule" x1="0" y1="102.5" x2="960" y2="102.5"/>
+</svg>
+<div class="txt">
+  <h1 class="name">Delta Build<br>Orchestrator</h1>
+  <p class="tag">Calm, precise, engineering — exact numbers, exact state.</p>
+</div>
+</div></body></html>

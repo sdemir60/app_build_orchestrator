@@ -1,0 +1,80 @@
+<!-- @dsCard group="Brand" height=340 -->
+<!doctype html>
+<html><head><meta charset="utf-8">
+<title>Tray build indicator</title>
+<style>
+/* Uygulamanın TrayBuildIndicator.xaml storyboard'u (TrayLoop, 3 s) birebir: KeyTime → %, KeySpline → cubic-bezier.
+   Spline, WPF'te BİTTİĞİ keyframe'in segmentine; CSS'te BAŞLADIĞI keyframe'e yazılır. Taban değerler = duruş karesi. */
+body{margin:0;padding:16px;background:var(--surface-base,#0e0e10);color:var(--text-secondary,#a9a9b0);font-family:var(--font-sans,system-ui,sans-serif)}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
+.tile{display:flex;flex-direction:column;gap:6px}
+.desk{position:relative;display:flex;align-items:center;justify-content:center;border-radius:6px;border:1px solid var(--border,#26262b)}
+.desk.dark{background:var(--surface-raised,#1a1a1e)}
+.desk.light{background:#dfe3ea}
+.cap{font-size:11px;color:var(--text-faint,#6e6e76)}
+.tbi{display:block;overflow:hidden}
+.tbi-chev{animation:tbi-chev-x 3s infinite,tbi-chev-o 3s infinite}
+.tbi-sweep{animation:tbi-sweep-x 3s infinite}
+.tbi-unmask{animation:tbi-unmask 3s infinite}
+.tbi-amber{animation:tbi-amber-x 3s infinite,tbi-amber-o 3s infinite}
+.tbi-white{animation:tbi-white-x 3s infinite,tbi-white-o 3s infinite}
+.tbi-top{animation:tbi-top-x 3s infinite,tbi-top-o 3s infinite}
+.tbi-silver{animation:tbi-silver-x 3s infinite,tbi-silver-o 3s infinite}
+.tbi-mid{animation:tbi-mid-x 3s infinite,tbi-mid-o 3s infinite}
+/* Reduced motion: döngü HİÇ başlamaz — taban değerler zaten duruş karesidir (uygulamada ShowStaticFrame = Stop). */
+@media (prefers-reduced-motion: reduce){.tbi *{animation:none!important}}
+.tbi.static *{animation:none!important}
+@keyframes tbi-chev-x { 0% { transform: translateX(-170px); animation-timing-function: linear; } 3.333% { transform: translateX(-170px); animation-timing-function: cubic-bezier(.14, .62, .2, 1); } 38.333% { transform: translateX(0px); animation-timing-function: linear; } 70% { transform: translateX(0px); animation-timing-function: cubic-bezier(.34, 0, .68, .6); } 93.333% { transform: translateX(110px); } 100% { transform: translateX(110px); } }
+@keyframes tbi-chev-o { 0% { opacity: 0; animation-timing-function: cubic-bezier(.32, .5, .4, 1); } 10% { opacity: 1; animation-timing-function: linear; } 82% { opacity: 1; animation-timing-function: cubic-bezier(.45, .15, .6, 1); } 93.333% { opacity: 0; } 100% { opacity: 0; } }
+@keyframes tbi-sweep-x { 0% { transform: translateX(-170px); animation-timing-function: linear; } 3.333% { transform: translateX(-170px); animation-timing-function: cubic-bezier(.14, .62, .2, 1); } 38.333% { transform: translateX(0px); animation-timing-function: linear; } 70% { transform: translateX(0px); animation-timing-function: cubic-bezier(.34, 0, .68, .6); } 93.333% { transform: translateX(260px); } 100% { transform: translateX(260px); } }
+@keyframes tbi-amber-x { 0% { transform: translateX(-89px); animation-timing-function: linear; } 6.667% { transform: translateX(-89px); animation-timing-function: cubic-bezier(.16, .7, .22, 1); } 39.333% { transform: translateX(0px); animation-timing-function: linear; } 71% { transform: translateX(0px); animation-timing-function: cubic-bezier(.42, 0, .75, .5); } 92.667% { transform: translateX(80px); } 100% { transform: translateX(80px); } }
+@keyframes tbi-amber-o { 0% { opacity: 1; animation-timing-function: linear; } 81.333% { opacity: 1; animation-timing-function: cubic-bezier(.45, .15, .6, 1); } 92.667% { opacity: 0; } 100% { opacity: 0; } }
+@keyframes tbi-white-x { 0% { transform: translateX(-72px); animation-timing-function: linear; } 8.667% { transform: translateX(-72px); animation-timing-function: cubic-bezier(.12, .66, .18, 1); } 40.667% { transform: translateX(0px); animation-timing-function: linear; } 72.5% { transform: translateX(0px); animation-timing-function: cubic-bezier(.42, 0, .75, .5); } 94.667% { transform: translateX(88px); } 100% { transform: translateX(88px); } }
+@keyframes tbi-white-o { 0% { opacity: 1; animation-timing-function: linear; } 83.333% { opacity: 1; animation-timing-function: cubic-bezier(.45, .15, .6, 1); } 94.667% { opacity: 0; } 100% { opacity: 0; } }
+@keyframes tbi-top-x { 0% { transform: translateX(-43px); animation-timing-function: linear; } 10% { transform: translateX(-43px); animation-timing-function: cubic-bezier(.16, .7, .22, 1); } 42% { transform: translateX(0px); animation-timing-function: linear; } 74.167% { transform: translateX(0px); animation-timing-function: cubic-bezier(.45, 0, .78, .52); } 96.333% { transform: translateX(142px); } 100% { transform: translateX(142px); } }
+@keyframes tbi-top-o { 0% { opacity: 1; animation-timing-function: linear; } 85% { opacity: 1; animation-timing-function: cubic-bezier(.45, .15, .6, 1); } 96.333% { opacity: 0; } 100% { opacity: 0; } }
+@keyframes tbi-silver-x { 0% { transform: translateX(-35px); animation-timing-function: linear; } 12% { transform: translateX(-35px); animation-timing-function: cubic-bezier(.12, .66, .18, 1); } 43.333% { transform: translateX(0px); animation-timing-function: linear; } 75.833% { transform: translateX(0px); animation-timing-function: cubic-bezier(.45, 0, .78, .52); } 98% { transform: translateX(128px); } 100% { transform: translateX(128px); } }
+@keyframes tbi-silver-o { 0% { opacity: 1; animation-timing-function: linear; } 86.667% { opacity: 1; animation-timing-function: cubic-bezier(.45, .15, .6, 1); } 98% { opacity: 0; } 100% { opacity: 0; } }
+@keyframes tbi-mid-x { 0% { transform: translateX(-21px); animation-timing-function: linear; } 13.333% { transform: translateX(-21px); animation-timing-function: cubic-bezier(.16, .7, .22, 1); } 44.667% { transform: translateX(0px); animation-timing-function: linear; } 77.5% { transform: translateX(0px); animation-timing-function: cubic-bezier(.42, 0, .75, .5); } 100% { transform: translateX(160px); } }
+@keyframes tbi-mid-o { 0% { opacity: 1; animation-timing-function: linear; } 88.667% { opacity: 1; animation-timing-function: cubic-bezier(.45, .15, .6, 1); } 100% { opacity: 0; } }
+@keyframes tbi-unmask { 0% { transform: translateX(-100000px); animation-timing-function: step-end; } 38.333% { transform: none; } 100% { transform: none; } }
+</style></head>
+<body>
+<div class="row" id="row"></div>
+<script>
+/* İşaretin geometrisi uygulamanın BrandGeometry.xaml'i (= app-mark.svg, translate(5.5 0) katlanmış). viewBox = gösterge bandı
+   (TrayBuildIndicator.StageWidth × StageHeight = 375 × 134, iç koordinatta x −30..345, y 76..210). */
+function mark(id, w, cls) {
+  const h = w * 134 / 375;
+  return '<svg class="tbi ' + (cls || '') + '" width="' + w + '" height="' + h + '" viewBox="-30 76 375 134" role="img" aria-label="Build Orchestrator — build running">'
+  + '<defs>'
+  + '<linearGradient id="' + id + 'g" gradientUnits="userSpaceOnUse" x1="161.5" y1="82" x2="182.5" y2="204">'
+  + '<stop offset="0" stop-color="var(--amber-bright,#ffb52e)"/><stop offset=".5" stop-color="var(--amber,#eda10f)"/><stop offset="1" stop-color="var(--brand-chevron-deep,#c9860c)"/></linearGradient>'
+  + '<filter id="' + id + 's" x="-20%" y="-40%" width="140%" height="200%"><feDropShadow dx="0" dy="2" stdDeviation="1.6" flood-color="#000" flood-opacity=".30"/></filter>'
+  + '<filter id="' + id + 'c" x="-30%" y="-20%" width="160%" height="150%"><feDropShadow dx="0" dy="2.6" stdDeviation="1.87" flood-color="#000" flood-opacity=".32"/></filter>'
+  + '<clipPath id="' + id + 'm" clipPathUnits="userSpaceOnUse">'
+  + '<path class="tbi-sweep" d="M -600 -30 L 158.5 -30 L 158.5 83 L 147 95 L 152 104 L 186 140 L 186 148 L 151 184 L 148 196 L 158.5 203 L 158.5 320 L -600 320 Z"/>'
+  + '<rect class="tbi-unmask" x="-1000" y="-1000" width="3000" height="3000"/></clipPath>'
+  + '</defs>'
+  + '<g clip-path="url(#' + id + 'm)"><g filter="url(#' + id + 's)">'
+  + '<rect class="tbi-top" x="73.5" y="83" width="35" height="21" rx="10.5" fill="var(--brand-strip-dim,#44444b)"/>'
+  + '<rect class="tbi-amber" x="119.5" y="83" width="51" height="21" rx="10.5" fill="var(--amber,#eda10f)"/>'
+  + '<rect class="tbi-mid" x="51.5" y="131" width="39" height="21" rx="10.5" fill="var(--neutral-700,#2a2a30)"/>'
+  + '<rect class="tbi-white" x="102.5" y="131" width="60" height="22" rx="11" fill="var(--text-primary,#ededee)"/>'
+  + '<rect class="tbi-silver" x="65.5" y="178" width="57" height="21" rx="10.5" fill="var(--text-secondary,#a9a9b0)"/>'
+  + '</g></g>'
+  + '<path class="tbi-chev" filter="url(#' + id + 'c)" fill="url(#' + id + 'g)" d="M156.5 83 L177 83 C181.6 83 184.7 85.1 187.8 88.5 L225.3 131.5 C228.2 134.9 229.5 138.3 229.5 142.4 C229.5 146.5 228.2 149.8 225.3 153.2 L184.6 198.3 C181.5 201.6 177.8 203 173.5 203 L156.5 203 C151.3 203 147.6 200.4 146 196.4 C144.3 192.1 145.7 187.8 149 184.2 L183.3 146.2 C186.1 143.2 186.3 140.8 183.7 137.8 L150.2 103.7 C147.3 100.7 145.9 96.9 145.9 93 C145.9 87.5 150.6 83 156.5 83 Z"/>'
+  + '</svg>';
+}
+const tiles = [
+  ['b', 187.5, 'dark', '', 'App size · 187.5 × 67 DIP'],
+  ['c', 187.5, 'light', '', 'Over a light desktop'],
+  ['d', 187.5, 'dark', 'static', 'Static frame · reduced motion'],
+  ['a', 375, 'dark', '', 'Loop at 2× · the band, 375 × 134'],
+];
+document.getElementById('row').innerHTML = tiles.map(function (t) {
+  return '<div class="tile"><div class="desk ' + t[2] + '" style="width:' + (t[1] + 24) + 'px;height:' + (t[1] * 134 / 375 + 24) + 'px">'
+    + mark('tbi' + t[0], t[1], t[3]) + '</div><span class="cap">' + t[4] + '</span></div>';
+}).join('');
+</script>
+</body></html>

@@ -1,0 +1,9 @@
+<!-- @dsCard group="Shell" height=300 -->
+<!doctype html>
+<html><head><meta charset="utf-8"><style>body{margin:0;padding:16px;background:var(--surface-base);color:var(--text-primary);font-family:var(--font-sans)}</style></head>
+<body><div id="root"></div>
+<script>
+const DS = window.DeltaBuildOrchestratorDS_eb0bd1; const h = React.createElement;
+
+ReactDOM.createRoot(document.getElementById('root')).render(h('div',{style:{position:'relative',height:268,margin:-16}},h(DS.Dialog,{open:true,title:'Stop build',onClose:()=>{},footer:h(React.Fragment,null,h(DS.Button,{variant:'ghost'},'Cancel'),h(DS.Button,{variant:'danger'},'Stop'))},h('div',{style:{fontSize:13,color:'var(--text-secondary)'}},'3 running projects are cancelled. Finished projects keep their output.'))));
+</script></body></html>
