@@ -427,7 +427,7 @@ Ortak `DialogShell` (§2.9). Yükseklik içeriğe göre; **gövde sabit 284px** 
 
 Title bar'daki **sparkle** ikonundan ya da About'taki `What's new in <sürüm>` butonundan açılır; kısayolu yok. Ortak `DialogShell`, zIndex 101 (About 100).
 
-**Veri kaynağı = uygulamanın `CHANGELOG.md`'si** (exe'ye gömülü, tek kaynak). Notlar **uygulama sürümleridir** (prototipte 33 sürüm, `1.15.0` → `0.1.0`); biçim `## [x.y.z] - yyyy-MM-dd` + `### Added|Changed|Fixed|Performance|Removed` + düz metin `- ` maddeler (sarılı satır maddeye devam eder). Prototipte `app/release-notes.js` bu dosyadan üretilir (Added→feature, Changed→change, Fixed→fix, Performance→perf, Removed→removed; tarih yazıldığı gibi).
+**Veri kaynağı = uygulamanın `CHANGELOG.md`'si** (exe'ye gömülü, tek kaynak). Notlar **uygulama sürümleridir** (prototipte CHANGELOG'daki bütün sürümler, en yenisi en üstte); biçim `## [x.y.z] - yyyy-MM-dd` + `### Added|Changed|Fixed|Performance|Removed` + düz metin `- ` maddeler (sarılı satır maddeye devam eder). Prototipte `app/release-notes.js`'i `npm run build` bu dosyadan, uygulamanın ayrıştırıcısıyla aynı kurallarla üretir (Added→feature, Changed→change, Fixed→fix, Performance→perf, Removed→removed; tarih yazıldığı gibi).
 
 - **Başlık satırı** (`20px 18px 16px`, altta `border-subtle`): solda `What's new` (15px/600) + `Release notes for Build Orchestrator.` (12px `text-dim`); sağda mono sürüm çipi (20px yüksek, `surface` zemin + `border-strong`). Sağ kenar sabit — scrollbar'a göre hizalanan blok yok.
 - **Gövde:** `bo-scroll`, padding `22px 18px 24px`, flex (dialog yüksekliği sabit), kenar sönümü 22 / 24 (§2.9).
@@ -712,7 +712,7 @@ Kaynak ve spesifikasyon tek kopyadır: her tasarım sürümü bu dosyalarda yeri
 - `prototype/Main.dc.html` — Claude'un tasarım tuvalindeki giriş sayfası (sahne şeridi + Demo anahtarları + uygulama çerçevesi); yalnız tuvalde çalışır, sahne listesi tek dosyaya da buradan gider. Tarayıcıda görmek için tek dosyayı üret.
 - `prototype/app/BuildApp.jsx` — tüm UI davranışının referans kodu (panel yerleşimi, animasyon süreleri, kopya metinleri buradan doğrulanabilir). `ABOUT_VERSION` = gösterilen **uygulama** sürümü (`1.15.0`); `DESIGN_VERSION` = tasarım sürümü (`2.0.1`), UI'da görünmez. Sahnelerin adı ve açıklaması `Main.dc.html`'in listesindedir (tek dosya da onu kullanır); `SCENES` yalnız ekran etiketi için adı taşır.
 - `prototype/app/build-data.js` — simülasyon motoru + 36 projelik örnek grafı (`ACME.*` projeleri; solution'lar `Acme.sln`, `Acme.Sales.sln` …); **scheduler kuralları (§3.2) burada kodlanmıştır** — Core implementasyonunda birebir bu semantik hedeflenir.
-- `prototype/app/release-notes.js` — What's new verisi; uygulamanın `CHANGELOG.md`'sinden üretilir (§2.11), elle yazılmaz.
+- `prototype/app/release-notes.js` — What's new verisi; `npm run build` uygulamanın `CHANGELOG.md`'sinden üretir (§2.11), elle yazılmaz.
 - `prototype/standalone.html`, `build.mjs`, `package.json` — tek dosyanın kabuğu ve onu üreten betik; logolar `docs/design-system/assets/`'tedir (§6).
 
 **`docs/design-system/`** — design system **2.1.0**: token'lar (`tokens.css` / `tokens.json` — renk, tipografi, boşluk, efekt), bileşen stilleri (`components/`), README. WPF ResourceDictionary'ye çevrilecek tek doğruluk kaynağıdır.
