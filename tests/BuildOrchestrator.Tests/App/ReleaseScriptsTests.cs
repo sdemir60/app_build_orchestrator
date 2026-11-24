@@ -858,6 +858,98 @@ public class ReleaseScriptsTests
         Assert.Contains("https://github.com/sdemir60/app_build_orchestrator/actions", r.Output, StringComparison.Ordinal);
     }
 
+    /// <summary>Tasarım kayıtları (<c>docs/design/VERSIONS.md</c>): tabloda ve kayıtlarda birer sürüm — develop'ta uygulanmış
+    /// (<c>develop</c>), henüz uygulanmamış (<c>—</c>) ve önceki bir yayınla çıkmış (<c>app 1.7.0</c>). Konu hücresindeki ve düz
+    /// metindeki "develop" sözcüğü işaret değildir.</summary>
+    private const string DesignRecords =
+        "# Design versions\n\n"
+        + "| Sürüm | Tarih | Konu | Uygulandı |\n"
+        + "|---|---|---|---|\n"
+        + "| **2.2.0** | 2026-12-02 | Not applied yet | — |\n"
+        + "| **2.1.0** | 2026-12-01 | Applied on develop | develop |\n"
+        + "| **2.0.0** | 2026-11-23 | Released before | app 1.7.0 |\n\n"
+        + "## 2.2.0 — 2026-12-02 · Not applied yet\n\nUygulandı: —\n\n"
+        + "## 2.1.0 — 2026-12-01 · Applied on develop\n\nUygulandı: develop\n\n"
+        + "## 2.0.0 — 2026-11-23 · Released before\n\nUygulandı: app 1.7.0 — merged to develop first\n";
+
+    /// <summary><see cref="DesignRecords"/>, 1.8.0 yayınından sonra: yalnız develop'ta uygulanmış sürümün satırı ve hücresi.</summary>
+    private const string DesignRecordsReleased =
+        "# Design versions\n\n"
+        + "| Sürüm | Tarih | Konu | Uygulandı |\n"
+        + "|---|---|---|---|\n"
+        + "| **2.2.0** | 2026-12-02 | Not applied yet | — |\n"
+        + "| **2.1.0** | 2026-12-01 | Applied on develop | app 1.8.0 |\n"
+        + "| **2.0.0** | 2026-11-23 | Released before | app 1.7.0 |\n\n"
+        + "## 2.2.0 — 2026-12-02 · Not applied yet\n\nUygulandı: —\n\n"
+        + "## 2.1.0 — 2026-12-01 · Applied on develop\n\nUygulandı: app 1.8.0\n\n"
+        + "## 2.0.0 — 2026-11-23 · Released before\n\nUygulandı: app 1.7.0 — merged to develop first\n";
+
+    /// <summary>Design system kayıtları (<c>docs/design-system/VERSIONS.md</c>, tablosuz): develop'ta uygulanmış bir sürüm ve
+    /// önceki bir yayınla çıkmış bir sürüm.</summary>
+    private const string DesignSystemRecords =
+        "# Design system versions\n\n"
+        + "## 2.2.0 — 2026-12-01 · Applied on develop\n\nUygulandı: develop\n\n"
+        + "## 2.1.0 — 2026-11-24 · Released before\n\nUygulandı: app 1.7.0 — merged to develop first\n";
+
+    /// <summary><see cref="DesignSystemRecords"/>, 1.8.0 yayınından sonra.</summary>
+    private const string DesignSystemRecordsReleased =
+        "# Design system versions\n\n"
+        + "## 2.2.0 — 2026-12-01 · Applied on develop\n\nUygulandı: app 1.8.0\n\n"
+        + "## 2.1.0 — 2026-11-24 · Released before\n\nUygulandı: app 1.7.0 — merged to develop first\n";
+
+    /// <summary>Tasarımın ve design system'in sürüm kayıtları: kod tarafı bir sürümü uygulayıp develop'a alırken kaydın
+    /// <c>Uygulandı:</c> satırını (tasarım tablosunda o sürümün son hücresiyle) <c>develop</c> yapar; yayın o sürümü kendisiyle
+    /// çıkarır — release commit'i işareti uygulamanın sürümüne çevirir (<c>app 1.8.0</c>). Henüz uygulanmamış (<c>—</c>) ve önceki
+    /// bir yayınla çıkmış kayıtlar, konu hücresindeki ve düz metindeki "develop" sözcüğü olduğu gibi kalır; release commit'i
+    /// CHANGELOG ve <c>Version</c> dışında yalnız bu iki dosyayı değiştirir.
+    /// <para>Kusur: CLAUDE.md "sürüm çıkarılınca doldurulur" diyordu ama script ağaçta CHANGELOG/props dışındaki değişikliği reddediyor
+    /// ve yalnız o ikisini commit'liyordu — satırın yazılabileceği bir an yoktu; uygulama ile yayın arasında kayıt <c>—</c> kaldığından
+    /// sonraki kod oturumu aynı sürümü yeniden uygulamaya kalkabilirdi.</para></summary>
+    [SkippableFact]
+    public void A_release_writes_its_version_into_the_design_records_applied_on_develop()
+    {
+        RequirePowerShell();
+        using var box = new ReleaseSandbox("1.8.0");
+        box.CommitDesignRecordsOnDevelop(DesignRecords, DesignSystemRecords);
+
+        var r = RunRelease(box);
+
+        Assert.True(r.ExitCode == 0, r.Output);
+        Assert.Equal(DesignRecordsReleased, File.ReadAllText(box.DesignRecordsPath));
+        Assert.Equal(DesignSystemRecordsReleased, File.ReadAllText(box.DesignSystemRecordsPath));
+        Assert.Empty(box.StatusLines()); // ağaçta değişiklik kalmadı: hepsi release commit'inde
+        Assert.Equal(
+            new[] { "CHANGELOG.md", "Directory.Build.props", "docs/design-system/VERSIONS.md", "docs/design/VERSIONS.md" },
+            box.Git(box.Origin, "diff", "--name-only", "main^2^1", "main^2").Split('\n')
+                .Select(l => l.TrimEnd('\r')).Where(l => l.Length > 0).Order(StringComparer.Ordinal).ToArray());
+    }
+
+    /// <summary>Yayın release commit'inden sonra durursa (push reddi) son satırdaki kurtarma, işaretlenen tasarım kayıtlarını da geri
+    /// alır: ağaç yayının başladığı hale döner — CHANGELOG bölümü ve <c>Version</c> değişiklik olarak kalır, kayıtlar commit'lendikleri
+    /// gibi <c>develop</c> der. Yoksa ikinci koşu, ağacı CHANGELOG/props dışında temiz isteyen guard'da dururdu. Kurtarmadan önce
+    /// kayıtlar release commit'indedir (yarış main'i ilerletir; atomik push reddedilir).</summary>
+    [SkippableFact]
+    public void The_printed_undo_also_puts_back_the_design_records_the_release_marked()
+    {
+        RequirePowerShell();
+        using var box = new ReleaseSandbox("1.8.0");
+        box.CommitDesignRecordsOnDevelop(DesignRecords, DesignSystemRecords);
+        box.AdvanceOriginRightAfterTheNextCommit("main");
+
+        var r = RunRelease(box);
+
+        Assert.Equal(1, r.ExitCode);
+        Assert.Contains(NothingReachedOrigin, r.Output, StringComparison.Ordinal);
+        Assert.Equal(DesignRecordsReleased, File.ReadAllText(box.DesignRecordsPath)); // release commit'i işaretledi
+        Assert.Equal(DesignSystemRecordsReleased, File.ReadAllText(box.DesignSystemRecordsPath));
+        var undo = RunCommand(UndoCommands(r.Output), box.Work);
+
+        Assert.True(box.CurrentBranch == "develop", undo.Output);
+        Assert.Equal(new[] { " M CHANGELOG.md", " M Directory.Build.props" }, box.StatusLines());
+        Assert.Equal(DesignRecords, File.ReadAllText(box.DesignRecordsPath));
+        Assert.Equal(DesignSystemRecords, File.ReadAllText(box.DesignSystemRecordsPath));
+    }
+
     /// <summary>Önceki deneme GitHub'da düştüyse tag yoktur ama main develop'u zaten taşır. Aynı sürümle yeniden koşu ne commit ne
     /// merge üretir ve push boş geçer — script "pushed" deyip hiçbir şey başlatmazdı (GitHub değişmeyen bir ref için koşu açmaz).
     /// develop main'in önünde değilse ve ağaçta yayının değişikliği (CHANGELOG/props) yoksa script yazmadan durur ve yolu söyler:
@@ -1247,6 +1339,10 @@ public class ReleaseScriptsTests
         public string Scratch(string name) => Path.Combine(_temp.Path, name);
         public string PropsPath => Path.Combine(Work, "Directory.Build.props");
         public string ChangelogPath => Path.Combine(Work, "CHANGELOG.md");
+        /// <summary>Tasarımın sürüm kayıtları (tablo + kayıtlar).</summary>
+        public string DesignRecordsPath => Path.Combine(Work, "docs", "design", "VERSIONS.md");
+        /// <summary>Design system'in sürüm kayıtları.</summary>
+        public string DesignSystemRecordsPath => Path.Combine(Work, "docs", "design-system", "VERSIONS.md");
         /// <summary>CHANGELOG'un en üstüne (commit'siz) yazılan yeni sürüm.</summary>
         public string NextVersion { get; }
         public string OriginMain => Git(Origin, "rev-parse", "main").Trim();
@@ -1321,6 +1417,20 @@ public class ReleaseScriptsTests
             File.WriteAllText(PropsPath, System.Text.RegularExpressions.Regex.Replace(
                 File.ReadAllText(PropsPath), "<Version>[^<]*</Version>", $"<Version>{NextVersion}</Version>"));
             Git(Work, "commit", "-q", "-a", "-m", "release: v" + NextVersion);
+        }
+
+        /// <summary>Tasarım ve design system kayıtlarını yazar, develop'a commit'leyip push'lar: kod tarafı bir sürümü uygulayıp
+        /// develop'a almıştır (yayın develop'un CI'ı yeşil ucundan çıkar). CHANGELOG'un bekleyen bölümüne dokunmaz.</summary>
+        public void CommitDesignRecordsOnDevelop(string design, string designSystem)
+        {
+            foreach (var (path, text) in new[] { (DesignRecordsPath, design), (DesignSystemRecordsPath, designSystem) })
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.WriteAllText(path, text);
+            }
+            Git(Work, "add", "docs");
+            Git(Work, "commit", "-q", "-m", "feat: design v2.1.0 applied");
+            Git(Work, "push", "-q", "origin", "develop");
         }
 
         /// <summary>Origin'e, hiçbir branch'ten erişilemeyen (parent'sız) bir commit'i gösteren tag koyar: çalışma klonunun
