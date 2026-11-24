@@ -3,7 +3,8 @@
    script ATMAZ: main'e push GitHub'da release.yml'i baslatir, testler ve paket gecince tag'i orada release-tag.ps1 koyar
    (kullanici karari 2026-10-13) - tag yalniz testleri ve paketi gecmis surume konur; kirmizi bir test ya da dusen paket ne tag ne
    Release birakir, o deneme main'de tag'siz bir merge olarak kalir. Notu Claude yazmis olmali (CHANGELOG en ustte "## [X.Y.Z] - <bugun>"). Akis:
-     guard'lar (hicbir yazmadan once) -> Version'i yazar -> build -> develop'ta "release: vX.Y.Z" commit'i ->
+     guard'lar (hicbir yazmadan once) -> Version'i yazar -> build -> tasarim kayitlarinda "Uygulandi: develop" ->
+     "app X.Y.Z" -> develop'ta "release: vX.Y.Z" commit'i ->
      main'e --no-ff merge ("merge: release vX.Y.Z") -> develop main'e ff (develop == main)
      -> tek atomik push: main + develop ya birlikte gider ya hicbiri.
    Guard'lar: CHANGELOG'un en ust bolumu bu surum ve bugun; branch develop; agacta CHANGELOG/props disinda degisiklik yok;
@@ -16,7 +17,8 @@
    once yine test eder; kirmizi bir test orada durur - main origin'de kalir, tag ve Release olmaz; release-retry.yml kosuyu bir
    kez yeniden dener (SKILL adim 6).
    Build'de durursa hicbir sey commit/push edilmemistir. Release commit'inden sonra durursa (en olasi: push reddi - bu
-   arada origin/develop ya da origin/main ilerledi) son satir yerel kurtarma komutlarini yazar. Push hata dondugunde once
+   arada origin/develop ya da origin/main ilerledi) son satir yerel kurtarma komutlarini yazar (isaretlenen tasarim
+   kayitlarini da geri alir). Push hata dondugunde once
    origin'in main'i sorulur: yayinin merge'uyse push uygulanmistir ve kurtarma basilmaz; origin okunamazsa kurtarma once
    origin'e bakmayi ister.
      release.ps1 -Version 1.8.0              (tam akis)
@@ -96,7 +98,8 @@ if ($develop -eq $main -and -not (git status --porcelain)) { Fail "nothing to re
 # degismis bir Directory.Build.props birakirdi.
 $running = @(Get-RunningApp -UnderPath $RepoRoot)
 if ($running.Count -gt 0) { Fail "Build Orchestrator is running from this checkout or from a location that could not be read (pid $($running.Id -join ', ')); close it first (tray icon > Exit) - a copy running from this checkout keeps its binaries locked and the build would fail." }
-# develop'un CI'i: yayin, CI'in yesil gordugu commit'ten cikar (release commit'i yalniz CHANGELOG + Version ekler; release.yml
+# develop'un CI'i: yayin, CI'in yesil gordugu commit'ten cikar (release commit'i CHANGELOG, Version ve tasarim kayitlarinin
+# Uygulandi satirlarini ekler - derlenen hicbir seyi degil; release.yml
 # main'in push'unu tag'den once yine derleyip test eder). Kosu yoksa, bitmediyse ya da basarisizsa durur; sorulamazsa da
 # (dogrulanamayan yayin cikmaz).
 if ($SkipCiCheck) {
@@ -123,8 +126,30 @@ if ($LASTEXITCODE -ne 0) { exit 1 }
 if ($LASTEXITCODE -ne 0) { Fail 'build failed - nothing was committed or pushed.' }
 
 # --- develop'ta release commit'i -> main'e merge -> develop = main -> atomik push (tag'i GitHub koyar: release.yml)
-$script:Undo = "git switch develop; git reset --soft $develop; git restore --staged .; git branch -f main $main"
-Invoke-Git add CHANGELOG.md Directory.Build.props
+# Tasarim kayitlari (CLAUDE.md "Tasarim"): kod tarafi bir tasarim ya da design system surumunu uygulayip develop'a alirken
+# kaydin "Uygulandi:" satirini (tasarim tablosunda o surumun son hucresini) "develop" yapar; o surum bu yayinla cikar - isaret
+# uygulamanin surumu olur ("app X.Y.Z") ve release commit'ine girer. Kayit ya da isaret yoksa hicbir sey yazilmaz. Kurtarma satiri
+# bu dosyalari da geri alir: agac yayinin basladigi hale doner, ikinci kosu guard'dan gecer. Script ASCII kalir (Windows
+# PowerShell BOM'suz dosyayi ANSI okur): etiketin noktasiz i'si (U+0131) kod noktasiyla yazilir.
+$appliedLabel = 'Uygulan' + 'd' + [char]0x0131 + ':'
+$appliedLine = [regex]('(?m)^' + [regex]::Escape($appliedLabel) + ' develop(?=\s|$)')
+$appliedCell = [regex]'(?m)\|[ \t]*develop[ \t]*\|(?=[ \t]*\r?$)'
+$records = [ordered]@{}
+foreach ($record in 'docs/design/VERSIONS.md', 'docs/design-system/VERSIONS.md') {
+    $recordPath = Join-Path $RepoRoot $record
+    if (-not (Test-Path -LiteralPath $recordPath)) { continue }
+    $text = [System.IO.File]::ReadAllText($recordPath)
+    $marked = $appliedCell.Replace($appliedLine.Replace($text, "$appliedLabel app $Version"), "| app $Version |")
+    if ($marked -ne $text) { $records[$record] = $marked }
+}
+$recordPaths = @($records.Keys)
+$restore = if ($recordPaths.Count -gt 0) { " git restore -- $($recordPaths -join ' ');" } else { '' }
+$script:Undo = "git switch develop; git reset --soft $develop; git restore --staged .;$restore git branch -f main $main"
+foreach ($record in $recordPaths) {
+    try { [System.IO.File]::WriteAllText((Join-Path $RepoRoot $record), $records[$record], (New-Object System.Text.UTF8Encoding($false))) }
+    catch { Fail "cannot write $record ($($_.Exception.Message))." }
+}
+Invoke-Git add CHANGELOG.md Directory.Build.props @recordPaths
 if (git status --porcelain) { Invoke-Git commit -q -m "release: $tag" }
 if (-not $localMain) { Invoke-Git branch -q --track main origin/main }
 Invoke-Git switch -q main

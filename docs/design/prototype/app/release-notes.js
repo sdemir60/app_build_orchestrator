@@ -1,5 +1,5 @@
-/* Build Orchestrator — sürüm notları (What's new). Uygulamanın CHANGELOG.md'sinden üretilir (uygulama sürümleri);
-   Added→feature · Changed→change · Fixed→fix · Performance→perf · Removed→removed. En yeni sürüm en üstte. */
+/* Build Orchestrator — sürüm notları (What's new; uygulama sürümleri). build.mjs uygulamanın CHANGELOG.md'sinden
+   üretir, elle değiştirilmez: Added→feature · Changed→change · Fixed→fix · Performance→perf · Removed→removed. En yeni sürüm en üstte. */
 window.DELTA_BO_NOTES = [
   {
     v: "1.15.0", date: "2026-11-16", items: [

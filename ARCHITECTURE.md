@@ -7574,19 +7574,24 @@ the notes is scripted. The branches split the work: daily work lands on `develop
   `ci.yml` run of `develop`'s commit and wants it `completed` with
   `success`; no run, an unfinished or red one, and an API that cannot be read all stop the release. `-SkipCiCheck`
   skips that one check, for an offline machine or an emergency, and says so; the release workflow still builds and
-  tests `main` before it tags it. Then it writes `Version`, runs `release-guard.ps1`, builds, commits
+  tests `main` before it tags it. Then it writes `Version`, runs `release-guard.ps1`, builds, marks the design records —
+  a design or design-system version the code side applied on `develop` carries `Uygulandı: develop` in
+  `docs/design/VERSIONS.md` (and in its row of the design table) or `docs/design-system/VERSIONS.md`, and ships with this
+  release, so the mark becomes `Uygulandı: app X.Y.Z` — commits
   `release: vX.Y.Z` on `develop` — the one commit made directly rather than through a work branch — merges `develop`
   into `main` with `--no-ff` (`merge: release vX.Y.Z`), fast-forwards `develop` to `main` and pushes `main` and
   `develop` in one `--atomic` push. It tags nothing: the push to `main` starts the release workflow, which tags the
   merge only after the tests and the package (below), so a red test or a failed package leaves no tag and uses up no
   version number (an upload that fails after the tag is the one exception, below). The script runs no tests itself: the CI run it requires green tested the very commit it
-  releases — the release commit changes `CHANGELOG.md` and `Version` and nothing else — and the release workflow tests
+  releases — the release commit changes `CHANGELOG.md`, `Version` and the design records' applied lines, nothing that is
+  built — and the release workflow tests
   `main` again before it tags anything. The `Acceptance` and `LocalOnly` categories, which CI leaves out, are not part
   of a release. The build takes time; should `origin/develop` or `origin/main` move meanwhile, both refs are refused
   together, so `origin` never gets a release its `develop` does not contain. When a step after the release commit
   stops — the refused push above, most likely — the script's last line prints the commands that undo the local commit
   and merge, with the commit ids the release started from, so a fetch in between does not move them; `develop` goes
-  back with a soft reset, and the `CHANGELOG.md` section and `Version` stay in the working tree as changes. A failed
+  back with a soft reset, the design records it marked are restored, and the `CHANGELOG.md` section and `Version` stay in the
+  working tree as changes — the tree the guard wants for a second run. A failed
   push is not taken at its word: before it says nothing reached `origin`, the script asks `origin` for its `main`. A
   connection lost after the server applied the push leaves the release under way, so when `origin`'s `main` is the
   release merge the script says so and prints no undo — it would take the local branches back from a release GitHub
@@ -8396,7 +8401,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | What the release scripts and `verify-publish.ps1` share: property reader, `CHANGELOG.md` heading pattern and reader, repository URL, running-instance probe (`Get-RunningApp`, optionally scoped to a folder), removal of a version's earlier packages (`Remove-PackagedVersion`), the three-way ancestry check (`Test-GitAncestor`), a version's tag name and its agreement with `Version` and `CHANGELOG.md` (`Get-VersionTag`, `Get-VersionProblems`), what `origin` holds for a version (`Get-OriginRelease`), the release workflow's check (`Get-MainRelease`), the GitHub API call (`Invoke-GitHubApi`) with the release count (`Get-ReleaseCount`) and a commit's newest workflow run (`Get-CiConclusion`) | `scripts/release-common.ps1` |
 | Tag = `Version` = top `CHANGELOG.md` version (`-Tag`); in the release workflow (`-OnMain`) the tag from `Version`, the pushed commit the head of `origin`'s `main`, no tag on another commit, the tag handed on as the step's output | `scripts/release-guard.ps1` |
 | The version's annotated tag on the head of `main`, after the tests and the package — the release check first (`Get-MainRelease`), tagged as GitHub's bot, a tag already on the commit left alone | `scripts/release-tag.ps1` |
-| One-command release from `develop`: guards (`develop`'s CI run green and something to release included), `Version`, build, release commit, `--no-ff` merge into `main`, `develop` fast-forwarded to `main`, one atomic push of `main` and `develop` — no tag; the undo line when it stops after the release commit, withheld when a push that reported an error left the release merge on `origin`'s `main` | `scripts/release.ps1` |
+| One-command release from `develop`: guards (`develop`'s CI run green and something to release included), `Version`, build, design records marked with the version, release commit, `--no-ff` merge into `main`, `develop` fast-forwarded to `main`, one atomic push of `main` and `develop` — no tag; the undo line when it stops after the release commit, withheld when a push that reported an error left the release merge on `origin`'s `main` | `scripts/release.ps1` |
 | The `/release` request: order and commands; the note rules stay in `CLAUDE.md` | `.claude/skills/release/SKILL.md` |
 | End-to-end check of a publish output | `scripts/verify-publish.ps1` |
 | CI build and suite on every branch but `main` (a work branch's run is the full suite's gate), its failed tests as one annotation; the release workflow on `main` (guard → CI → package → tag → GitHub Release); one automatic re-run of a failed release | `.github/workflows/ci.yml`, `scripts/ci-failed-tests.ps1`, `.github/workflows/release.yml`, `.github/workflows/release-retry.yml` |

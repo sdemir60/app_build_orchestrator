@@ -30,7 +30,8 @@ GitHub'da düşmüş denemedir (adım 6).
    `Version`'ı script yazar. Ön koşullardan emin değilsen önce `-DryRun`: bütün guard'lar koşar; dosyaya ve branch'e
    dokunulmaz.
 3. `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release.ps1 -Version X.Y.Z`
-   — guard'lar → `Version` → build → `develop`'ta `release: vX.Y.Z` commit'i → `main`'e `--no-ff` merge
+   — guard'lar → `Version` → build → tasarım kayıtlarında (`docs/design/VERSIONS.md`, `docs/design-system/VERSIONS.md`)
+   `Uygulandı: develop` → `app X.Y.Z` → `develop`'ta `release: vX.Y.Z` commit'i → `main`'e `--no-ff` merge
    (`merge: release vX.Y.Z`) → `develop` `main`'e ff (develop = main) → `git push --atomic origin main develop`
    (ikisi birlikte gider ya da hiçbiri). Script **tag atmaz ve testleri lokal koşmaz**: develop HEAD'inin CI koşusu
    yukarıdaki ön koşuldur; `main`'e push GitHub'da `release` workflow'unu başlatır — kontrol → testler → paket → tag →
