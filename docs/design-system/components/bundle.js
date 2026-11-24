@@ -986,7 +986,7 @@ function Dialog({
     }
   }, title), onClose && /*#__PURE__*/React.createElement(__ds_scope.IconButton, {
     size: "sm",
-    title: "Kapat",
+    title: "Close",
     onClick: onClose
   }, /*#__PURE__*/React.createElement(XIcon, null))), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -1137,7 +1137,7 @@ const WinBtn = ({
   const danger = kind === 'close';
   return /*#__PURE__*/React.createElement("button", {
     type: "button",
-    "aria-label": kind === 'close' ? 'Kapat' : kind === 'max' ? 'Ekranı kapla' : 'Simge durumuna küçült',
+    "aria-label": kind === 'close' ? 'Close' : kind === 'max' ? 'Maximize' : 'Minimize',
     onClick: onClick,
     onMouseEnter: () => setHover(true),
     onMouseLeave: () => setHover(false),
@@ -1407,31 +1407,31 @@ function _extends() { return _extends = Object.assign ? Object.assign.bind() : f
 const STATUS_META = {
   discovered: {
     color: 'var(--text-faint)',
-    label: 'Keşfedildi'
+    label: 'Not synced'
   },
   queued: {
     color: 'var(--status-queued-text)',
-    label: 'Sırada'
+    label: 'Queued'
   },
   building: {
     color: 'var(--amber-text)',
-    label: 'Derleniyor'
+    label: 'Building'
   },
   succeeded: {
     color: 'var(--status-success-text)',
-    label: 'Başarılı'
+    label: 'Up to date'
   },
   failed: {
     color: 'var(--status-fail-text)',
-    label: 'Başarısız'
+    label: 'Failed'
   },
   skipped: {
     color: 'var(--status-skipped-text)',
-    label: 'Atlandı'
+    label: 'Skipped'
   },
   cycle: {
     color: 'var(--status-cycle-text)',
-    label: 'Döngü'
+    label: 'In a dependency cycle'
   }
 };
 
@@ -1727,7 +1727,7 @@ function Toast({
     }
   }, action)), onClose && /*#__PURE__*/React.createElement("button", {
     type: "button",
-    "aria-label": "Kapat",
+    "aria-label": "Close",
     onClick: onClose,
     style: {
       background: 'none',

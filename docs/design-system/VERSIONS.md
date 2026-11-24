@@ -2,14 +2,15 @@
 
 Design system (bu klasör) prototipin ve uygulamanın görsel kaynağıdır; *Build Orchestrator - Design System* artifact'i gezilebilir kopyasıdır. Klasördeki her değişiklik burada bir sürümdür, en yenisi en üstte: ne değişti, neden, uygulamaya ne düşüyor. Numaralama: bir bileşen, token, varlık veya marka kitabı kuralı eklenir ya da değişirse **minor**; bir şey düzeltilir ve sistem aynı şeyi söylemeye devam ederse **patch**; **major** proje sahibinin kararıdır ve bir milatı işaretler. Prototipin sürümlerinden ([docs/design/VERSIONS.md](../design/VERSIONS.md)) ayrı numaralanır. Bir sürüm uygulamaya geçince kaydın altına `Uygulandı: app X.Y.Z` satırı eklenir.
 
-## 2.0.1 — 2026-11-24 · Spinner ve building glyph'i uygulamadaki gibi
+## 2.0.1 — 2026-11-24 · Spinner, building glyph'i ve varsayılan adlar uygulamadaki gibi
 
 Uygulandı: app 1.15.0 (sistem uygulamaya eşitlendi; uygulamaya düşen bir değişiklik yok).
 
-**Neden**: `bundle.js` 1.x'ten geldiği için `Spinner` ve `StatusGlyph status="building"` 270°'lik bir yayı 900 ms'de döndürüyordu (building'de ayrıca opaklık nabzıyla); uygulama başlangıç modundaki kesikli halkayı döndürür.
+**Neden**: `bundle.js` 1.x'ten geldiği için `Spinner` ve `StatusGlyph status="building"` 270°'lik bir yayı 900 ms'de döndürüyordu (building'de ayrıca opaklık nabzıyla); uygulama başlangıç modundaki kesikli halkayı döndürür. Varsayılan adlar Türkçeydi; uygulamanın UI metinleri İngilizcedir.
 
 **Ne değişti**
 - `Spinner` ve `StatusGlyph status="building"`: kesikli halka (r 6.7, desen 2.3 2.5, opaklık 0.9), 1.5 kontur, 1.4s lineer; building'de nabız yok. `Spinner`'ın varsayılan rengi `amber-text`, varsayılan adı `Loading`.
+- Varsayılan adlar uygulamadaki İngilizce adlar: `STATUS_META` (`Not synced`, `Queued`, `Building`, `Up to date`, `Failed`, `Skipped`, `In a dependency cycle`), pencere düğmeleri (`Minimize`, `Maximize`, `Close`), `Dialog` ve `Toast`'un kapat düğmesi (`Close`). `MainWindow` kitinin ve kullanılmayan `WillBuildDot`'un metinleri 1.x'teki gibi kalır.
 - Marka kitabı: tek yazılı chevron `⌄ latest` hapınınki; `▸` öneki konsolun komut satırlarında ve ribbon'un anlatı satırlarında.
 
 ## 2.0.0 — 2026-11-23 · Milat: uygulamanın kodundan yeniden kuruldu

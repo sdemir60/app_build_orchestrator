@@ -158,7 +158,7 @@ Data: `ProjectRow`, `Console`, `ConsoleLine`, `ProgressBar`, `Metric`, `Tag`
 Graph: `DependencyGraphNode`
 Shell: `TitleBar`, `Toolbar`, `ToolbarSep`, `ToolbarSpacer`, `Tabs`, `StatusBar`, `StatusBarItem`, `Tooltip`, `Dialog`, `Toast`
 
-Her bileşenin `components/<Ad>/README.md` kılavuzu ve canlı önizlemesi var; props sözleşmeleri `components/index.d.ts`. Runtime: `components/bundle.js` yüklendikten sonra `window.DeltaBuildOrchestratorDS_eb0bd1` (ayrıca `STATUS_META`). UI kiti: `MainWindow`. Bundle'ın kendi varsayılan etiketleri (`STATUS_META` etiketleri, bazı `title` varsayılanları, `MainWindow` kitinin arayüz metinleri) paketten geldiği gibi Türkçedir; önizlemeler uygulamanın İngilizce kelimelerini açıkça verir — sen de öyle yap.
+Her bileşenin `components/<Ad>/README.md` kılavuzu ve canlı önizlemesi var; props sözleşmeleri `components/index.d.ts`. Runtime: `components/bundle.js` yüklendikten sonra `window.DeltaBuildOrchestratorDS_eb0bd1` (ayrıca `STATUS_META`). UI kiti: `MainWindow`. Bundle'ın varsayılan adları (`STATUS_META`, pencere ve kapat düğmeleri, `Spinner`) uygulamadaki İngilizce adlardır; yalnız `MainWindow` kitinin ve `WillBuildDot`'un metinleri 1.x paketinden geldiği gibi Türkçedir. Önizlemeler uygulamanın İngilizce kelimelerini açıkça verir — sen de öyle yap.
 
 ## Fontlar
 
