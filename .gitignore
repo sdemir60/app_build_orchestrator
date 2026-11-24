@@ -85,3 +85,7 @@ $RECYCLE.BIN/
 *.bak
 *.swp
 *~
+
+# Tasarım prototipinin lokal üretimi (docs/design/prototype/README.md)
+docs/design/prototype/node_modules/
+docs/design/prototype/release/

@@ -24,11 +24,9 @@ namespace BuildOrchestrator.App.Controls;
 /// <para>Geometriler kodda parse EDİLMEZ, <c>Icons.xaml</c>'den çözülür (IconGeometryTests bunu pinler);
 /// renkler Tokens.xaml'den.</para>
 ///
-/// <para><b>Kontrolün KENDİ animasyonu yoktur.</b> DS bundle'ının genel <c>StatusGlyph</c>'i
-/// <c>building</c>'de 1.6s'lik bir opaklık nabzı (<c>ds-pulse</c>, _ds_bundle.js:1440/:1527) taşır; bu
-/// uygulama onu <c>building</c> için HİÇ çizmez — kendi sarmalayıcısı araya girip her seferinde dönen
-/// halkayı koyar (BuildApp.jsx:172-175) ve o halkanın tek animasyonu DÖNÜŞtür. Nabız burada da yoktur:
-/// tek hareketli yüzey <see cref="BuildingSpinner"/>'dır ve motion kapısı ONUN üzerindedir.</para>
+/// <para><b>Kontrolün KENDİ animasyonu yoktur.</b> <c>building</c>'in tek hareketi halkanın DÖNÜŞüdür (DS
+/// <c>StatusGlyph</c> ve prototip de böyle çizer); nabız yoktur: tek hareketli yüzey <see cref="BuildingSpinner"/>'dır
+/// ve motion kapısı ONUN üzerindedir.</para>
 /// </summary>
 [TemplatePart(Name = RingPart, Type = typeof(Path))]
 [TemplatePart(Name = InnerPart, Type = typeof(Path))]
@@ -148,7 +146,7 @@ public class StatusGlyph : Control
         SetResourceReference(ForegroundProperty, brushKey);
 
         bool building = Status == VisualStatus.Building;
-        // building: halka yerine dönen yay.
+        // building: duran halka yerine onun dönen hâli (BuildingSpinner).
         bool hasRing = !building;
 
         _spinner.Visibility = building ? Visibility.Visible : Visibility.Collapsed;

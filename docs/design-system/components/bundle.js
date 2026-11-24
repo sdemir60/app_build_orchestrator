@@ -1,4 +1,4 @@
-/* @ds-bundle: {"format":4,"namespace":"DeltaBuildOrchestratorDS_eb0bd1","components":[{"name":"Button"},{"name":"IconButton"},{"name":"Chip"},{"name":"Segment"},{"name":"Kbd"},{"name":"Field"},{"name":"Input"},{"name":"Select"},{"name":"Checkbox"},{"name":"Switch"},{"name":"StatusGlyph"},{"name":"StatusBadge"},{"name":"WillBuildDot"},{"name":"Spinner"},{"name":"ProjectRow"},{"name":"Console"},{"name":"ProgressBar"},{"name":"Metric"},{"name":"Tag"},{"name":"DependencyGraphNode"},{"name":"TitleBar"},{"name":"Toolbar"},{"name":"Tabs"},{"name":"StatusBar"},{"name":"Tooltip"},{"name":"Dialog"},{"name":"Toast"},{"name":"MainWindow"}]} */
+/* @ds-bundle: {"format":4,"namespace":"DeltaBuildOrchestratorDS_eb0bd1","components":[{"name":"Button"},{"name":"IconButton"},{"name":"Chip"},{"name":"Segment"},{"name":"Kbd"},{"name":"Field"},{"name":"Input"},{"name":"Select"},{"name":"Checkbox"},{"name":"Switch"},{"name":"StatusGlyph"},{"name":"StatusBadge"},{"name":"Spinner"},{"name":"ProjectRow"},{"name":"Console"},{"name":"ProgressBar"},{"name":"Metric"},{"name":"Tag"},{"name":"DependencyGraphNode"},{"name":"TitleBar"},{"name":"Toolbar"},{"name":"Tabs"},{"name":"StatusBar"},{"name":"Tooltip"},{"name":"Dialog"}]} */
 
 (() => {
 
@@ -986,7 +986,7 @@ function Dialog({
     }
   }, title), onClose && /*#__PURE__*/React.createElement(__ds_scope.IconButton, {
     size: "sm",
-    title: "Kapat",
+    title: "Close",
     onClick: onClose
   }, /*#__PURE__*/React.createElement(XIcon, null))), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -1137,7 +1137,7 @@ const WinBtn = ({
   const danger = kind === 'close';
   return /*#__PURE__*/React.createElement("button", {
     type: "button",
-    "aria-label": kind === 'close' ? 'Kapat' : kind === 'max' ? 'Ekranı kapla' : 'Simge durumuna küçült',
+    "aria-label": kind === 'close' ? 'Close' : kind === 'max' ? 'Maximize' : 'Minimize',
     onClick: onClick,
     onMouseEnter: () => setHover(true),
     onMouseLeave: () => setHover(false),
@@ -1356,17 +1356,18 @@ if (typeof document !== 'undefined' && !document.getElementById('ds-spinner-css'
   s.id = 'ds-spinner-css';
   s.textContent = `
 @media (prefers-reduced-motion: no-preference) {
-  .ds-spinner-rot { animation: ds-spinner-rot 900ms linear infinite; transform-origin: center; transform-box: fill-box; }
+  .ds-spinner-rot { animation: ds-spinner-rot 1.4s linear infinite; transform-origin: center; transform-box: fill-box; }
 }
 @keyframes ds-spinner-rot { to { transform: rotate(360deg); } }`;
   document.head.appendChild(s);
 }
 
-/* Genel aktivite spinner'ı — 270° arc, currentColor. Sakin, sabit hız. */
+/* Genel aktivite spinner'ı — başlangıç modundaki kesikli halkanın dönen hâli (uygulamanın BuildingSpinner'ı):
+   r 6.7, desen 2.3 2.5, opaklık 0.9, 1.5 kontur, amber, 1.4s lineer. Ayrı bir çizim değildir. */
 function Spinner({
   size = 14,
   color,
-  title = 'Yükleniyor',
+  title = 'Loading',
   style
 }) {
   return /*#__PURE__*/React.createElement("span", {
@@ -1374,7 +1375,7 @@ function Spinner({
     "aria-label": title,
     style: {
       display: 'inline-flex',
-      color: color || 'var(--text-secondary)',
+      color: color || 'var(--amber-text)',
       flex: 'none',
       ...style
     }
@@ -1388,8 +1389,12 @@ function Spinner({
     strokeLinecap: "round"
   }, /*#__PURE__*/React.createElement("g", {
     className: "ds-spinner-rot"
-  }, /*#__PURE__*/React.createElement("path", {
-    d: "M8 1.3a6.7 6.7 0 1 1-6.7 6.7"
+  }, /*#__PURE__*/React.createElement("circle", {
+    cx: 8,
+    cy: 8,
+    r: 6.7,
+    strokeDasharray: "2.3 2.5",
+    opacity: 0.9
   }))));
 }
 Object.assign(__ds_scope, { Spinner });
@@ -1402,31 +1407,31 @@ function _extends() { return _extends = Object.assign ? Object.assign.bind() : f
 const STATUS_META = {
   discovered: {
     color: 'var(--text-faint)',
-    label: 'Keşfedildi'
+    label: 'Not synced'
   },
   queued: {
     color: 'var(--status-queued-text)',
-    label: 'Sırada'
+    label: 'Queued'
   },
   building: {
     color: 'var(--amber-text)',
-    label: 'Derleniyor'
+    label: 'Building'
   },
   succeeded: {
     color: 'var(--status-success-text)',
-    label: 'Başarılı'
+    label: 'Up to date'
   },
   failed: {
     color: 'var(--status-fail-text)',
-    label: 'Başarısız'
+    label: 'Failed'
   },
   skipped: {
     color: 'var(--status-skipped-text)',
-    label: 'Atlandı'
+    label: 'Skipped'
   },
   cycle: {
     color: 'var(--status-cycle-text)',
-    label: 'Döngü'
+    label: 'In a dependency cycle'
   }
 };
 
@@ -1436,11 +1441,9 @@ if (typeof document !== 'undefined' && !document.getElementById('ds-status-glyph
   s.id = 'ds-status-glyph-css';
   s.textContent = `
 @media (prefers-reduced-motion: no-preference) {
-  .ds-spin { animation: ds-spin 900ms linear infinite; transform-origin: center; transform-box: fill-box; }
-  .ds-pulse { animation: ds-pulse 1.6s var(--ease-in-out) infinite; }
+  .ds-spin { animation: ds-spin 1.4s linear infinite; transform-origin: center; transform-box: fill-box; }
 }
-@keyframes ds-spin { to { transform: rotate(360deg); } }
-@keyframes ds-pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }`;
+@keyframes ds-spin { to { transform: rotate(360deg); } }`;
   document.head.appendChild(s);
 }
 const RING = {
@@ -1499,11 +1502,14 @@ function StatusGlyph({
   };
   let body;
   if (status === 'building') {
+    /* Başlangıç modundaki kesikli halkanın dönen hâli (uygulamanın BuildingSpinner'ı): 1.5 kontur, 1.4s; nabız yok. */
     body = /*#__PURE__*/React.createElement("g", {
       className: "ds-spin"
-    }, /*#__PURE__*/React.createElement("path", {
-      d: "M8 1.3a6.7 6.7 0 1 1-6.7 6.7"
-    }));
+    }, /*#__PURE__*/React.createElement("circle", _extends({}, RING, {
+      strokeWidth: 1.5,
+      strokeDasharray: "2.3 2.5",
+      opacity: 0.9
+    })));
   } else if (status === 'cycle') {
     body = /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("path", {
       d: "M8 2.7 14.4 13.2H1.6Z"
@@ -1524,7 +1530,6 @@ function StatusGlyph({
     role: "img",
     "aria-label": title || meta.label,
     title: title,
-    className: status === 'building' ? 'ds-pulse' : undefined,
     style: {
       display: 'inline-flex',
       color: meta.color,
@@ -1655,99 +1660,6 @@ function DependencyGraphNode({
 Object.assign(__ds_scope, { DependencyGraphNode });
 })(); } catch (e) { __ds_ns.__errors.push({ path: "components/graph/DependencyGraphNode.jsx", error: String((e && e.message) || e) }); }
 
-// components/shell/Toast.jsx
-try { (() => {
-const TONE_TO_STATUS = {
-  success: 'succeeded',
-  fail: 'failed',
-  warn: 'cycle',
-  info: null,
-  building: 'building'
-};
-function Toast({
-  tone = 'info',
-  title,
-  description,
-  action,
-  onClose,
-  style
-}) {
-  const status = TONE_TO_STATUS[tone];
-  return /*#__PURE__*/React.createElement("div", {
-    role: "status",
-    style: {
-      display: 'flex',
-      alignItems: 'flex-start',
-      gap: 10,
-      width: 340,
-      boxSizing: 'border-box',
-      padding: '10px 12px',
-      background: 'var(--surface-overlay)',
-      border: '1px solid var(--border-strong)',
-      borderRadius: 'var(--radius-lg)',
-      boxShadow: 'var(--elevation-overlay)',
-      fontFamily: 'var(--font-sans)',
-      ...style
-    }
-  }, status && /*#__PURE__*/React.createElement(__ds_scope.StatusGlyph, {
-    status: status,
-    size: 15,
-    style: {
-      marginTop: 1
-    }
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1,
-      minWidth: 0
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 'var(--text-sm)',
-      fontWeight: 500,
-      color: 'var(--text-primary)',
-      lineHeight: 'var(--leading-snug)'
-    }
-  }, title), description && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 'var(--text-xs)',
-      color: 'var(--text-secondary)',
-      marginTop: 2,
-      lineHeight: 'var(--leading-snug)'
-    }
-  }, description), action && /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: 8,
-      display: 'flex',
-      gap: 8
-    }
-  }, action)), onClose && /*#__PURE__*/React.createElement("button", {
-    type: "button",
-    "aria-label": "Kapat",
-    onClick: onClose,
-    style: {
-      background: 'none',
-      border: 'none',
-      padding: 2,
-      cursor: 'pointer',
-      color: 'var(--text-dim)',
-      display: 'inline-flex',
-      flex: 'none'
-    }
-  }, /*#__PURE__*/React.createElement("svg", {
-    width: "12",
-    height: "12",
-    viewBox: "0 0 16 16",
-    fill: "none",
-    stroke: "currentColor",
-    strokeWidth: "1.5",
-    strokeLinecap: "round"
-  }, /*#__PURE__*/React.createElement("path", {
-    d: "M4 4l8 8M12 4l-8 8"
-  }))));
-}
-Object.assign(__ds_scope, { Toast });
-})(); } catch (e) { __ds_ns.__errors.push({ path: "components/shell/Toast.jsx", error: String((e && e.message) || e) }); }
-
 // components/status/StatusBadge.jsx
 try { (() => {
 const TONE = {
@@ -1825,68 +1737,18 @@ function StatusBadge({
 Object.assign(__ds_scope, { StatusBadge });
 })(); } catch (e) { __ds_ns.__errors.push({ path: "components/status/StatusBadge.jsx", error: String((e && e.message) || e) }); }
 
-// components/status/WillBuildDot.jsx
-try { (() => {
-const STATES = {
-  dirty: {
-    title: 'Değişti — derlenecek'
-  },
-  clean: {
-    title: 'Güncel — atlanacak'
-  },
-  unknown: {
-    title: 'Bilinmiyor — Sync bekleniyor'
-  }
-};
-
-/* Will-build noktası: statü accent'inden AYRI, ortogonal semantik. */
-function WillBuildDot({
-  state = 'unknown',
-  size,
-  title,
-  style
-}) {
-  const s = size || 'var(--dot-size)';
-  const base = {
-    display: 'inline-block',
-    width: s,
-    height: s,
-    borderRadius: '50%',
-    flex: 'none',
-    boxSizing: 'border-box',
-    ...style
-  };
-  const look = state === 'dirty' ? {
-    background: 'var(--dot-dirty)'
-  } : state === 'clean' ? {
-    background: 'var(--dot-clean)'
-  } : {
-    background: 'var(--dot-unknown)',
-    border: 'var(--dot-outline-width) solid var(--text-faint)'
-  };
-  return /*#__PURE__*/React.createElement("span", {
-    role: "img",
-    "aria-label": title || STATES[state].title,
-    title: title || STATES[state].title,
-    style: {
-      ...base,
-      ...look
-    }
-  });
-}
-Object.assign(__ds_scope, { WillBuildDot });
-})(); } catch (e) { __ds_ns.__errors.push({ path: "components/status/WillBuildDot.jsx", error: String((e && e.message) || e) }); }
-
 // components/data/ProjectRow.jsx
 try { (() => {
+/* Uygulamanın şerit tablosu (VisualStatus.StripeBrushKey): şerit ve nokta AYNI rengi taşır; işaretli, kuyrukta ve
+   derleniyor amber, güncel yeşil, başarısız kırmızı, gerisi gri. Döngü üyeliği listede renk taşımaz. */
 const STRIP = {
-  discovered: 'transparent',
-  queued: 'var(--status-queued)',
-  building: 'var(--status-building)',
+  discovered: 'var(--status-skipped-border)',
+  queued: 'var(--amber)',
+  building: 'var(--amber)',
   succeeded: 'var(--status-success)',
   failed: 'var(--status-fail)',
-  skipped: 'var(--status-skipped)',
-  cycle: 'var(--status-cycle)'
+  skipped: 'var(--status-skipped-border)',
+  cycle: 'var(--status-skipped-border)'
 };
 const BoxGlyph = () => /*#__PURE__*/React.createElement("svg", {
   width: "14",
@@ -1937,7 +1799,6 @@ function ProjectRow({
   name,
   solution,
   status = 'discovered',
-  willBuild = 'unknown',
   duration,
   selected,
   compact,
@@ -1982,13 +1843,35 @@ function ProjectRow({
     style: {
       width: 2,
       alignSelf: 'stretch',
-      background: STRIP[status] || 'transparent',
+      background: STRIP[status] || STRIP.discovered,
       flex: 'none'
     }
-  }), /*#__PURE__*/React.createElement(__ds_scope.WillBuildDot, {
-    state: willBuild,
+  }), status === 'discovered' ? /*#__PURE__*/React.createElement("svg", {
+    "aria-hidden": "true",
+    width: 8,
+    height: 8,
+    viewBox: "0 0 8 8",
     style: {
-      marginLeft: 6
+      marginLeft: 6,
+      flex: 'none'
+    }
+  }, /*#__PURE__*/React.createElement("circle", {
+    cx: 4,
+    cy: 4,
+    r: 3.2,
+    fill: "none",
+    stroke: STRIP.discovered,
+    strokeWidth: 1.1,
+    strokeDasharray: "2.93 2.1"
+  })) : /*#__PURE__*/React.createElement("span", {
+    "aria-hidden": "true",
+    style: {
+      width: 'var(--dot-size)',
+      height: 'var(--dot-size)',
+      borderRadius: '50%',
+      background: STRIP[status] || STRIP.discovered,
+      marginLeft: 6,
+      flex: 'none'
     }
   }), /*#__PURE__*/React.createElement("span", {
     style: {
@@ -2059,806 +1942,6 @@ function ProjectRow({
 Object.assign(__ds_scope, { ProjectRow });
 })(); } catch (e) { __ds_ns.__errors.push({ path: "components/data/ProjectRow.jsx", error: String((e && e.message) || e) }); }
 
-// ui_kits/build-orchestrator/BuildData.jsx
-try { (() => {
-// Nötr örnek proje verisi (ACME) + bağımlılık yardımcıları (UI kit simülasyonu için)
-const PROJECTS = [{
-  name: 'ACME.Core',
-  solution: 'Acme.sln',
-  deps: [],
-  dur: 2100,
-  pos: {
-    x: 30,
-    y: 150
-  }
-}, {
-  name: 'ACME.Data',
-  solution: 'Acme.sln',
-  deps: ['ACME.Core'],
-  dur: 2600,
-  pos: {
-    x: 220,
-    y: 60
-  }
-}, {
-  name: 'ACME.Shared.UI',
-  solution: 'Acme.sln',
-  deps: ['ACME.Core'],
-  dur: 1900,
-  pos: {
-    x: 220,
-    y: 240
-  }
-}, {
-  name: 'ACME.Integration',
-  solution: 'Acme.sln',
-  deps: ['ACME.Core'],
-  dur: 1400,
-  pos: {
-    x: 220,
-    y: 400
-  }
-}, {
-  name: 'ACME.Sales.Vehicles',
-  solution: 'Acme.Sales.sln',
-  deps: ['ACME.Data', 'ACME.Shared.UI'],
-  dur: 2900,
-  pos: {
-    x: 470,
-    y: 20
-  }
-}, {
-  name: 'ACME.Sales.Used',
-  solution: 'Acme.Sales.sln',
-  deps: ['ACME.Data', 'ACME.Shared.UI'],
-  dur: 2300,
-  pos: {
-    x: 470,
-    y: 130
-  }
-}, {
-  name: 'ACME.Service.Core',
-  solution: 'Acme.Service.sln',
-  deps: ['ACME.Data'],
-  dur: 2400,
-  pos: {
-    x: 470,
-    y: 250
-  }
-}, {
-  name: 'ACME.Parts.Core',
-  solution: 'Acme.Parts.sln',
-  deps: ['ACME.Data'],
-  dur: 1700,
-  pos: {
-    x: 470,
-    y: 370
-  }
-}, {
-  name: 'ACME.Reporting',
-  solution: 'Acme.sln',
-  deps: ['ACME.Data'],
-  dur: 2000,
-  pos: {
-    x: 470,
-    y: 480
-  }
-}, {
-  name: 'ACME.Accounting',
-  solution: 'Acme.sln',
-  deps: ['ACME.Data', 'ACME.Integration'],
-  dur: 2200,
-  pos: {
-    x: 700,
-    y: 440
-  }
-}, {
-  name: 'ACME.Service.Scheduling',
-  solution: 'Acme.Service.sln',
-  deps: ['ACME.Service.Core'],
-  dur: 1600,
-  pos: {
-    x: 700,
-    y: 250
-  }
-}, {
-  name: 'ACME.Parts.Api',
-  solution: 'Acme.Parts.sln',
-  deps: ['ACME.Parts.Core'],
-  dur: 2500,
-  pos: {
-    x: 700,
-    y: 350
-  },
-  fails: true
-}, {
-  name: 'ACME.Notifications',
-  solution: 'Acme.sln',
-  deps: ['ACME.Core'],
-  dur: 1200,
-  pos: {
-    x: 700,
-    y: 120
-  }
-}, {
-  name: 'ACME.Mobile.Client',
-  solution: 'Acme.Mobile.sln',
-  deps: ['ACME.Parts.Api', 'ACME.Service.Core'],
-  dur: 3100,
-  pos: {
-    x: 930,
-    y: 300
-  }
-}];
-
-/* Sync'te "değişmiş" bulunan projeler */
-const DIRTY_ROOTS = ['ACME.Service.Core', 'ACME.Parts.Core'];
-const byName = Object.fromEntries(PROJECTS.map(p => [p.name, p]));
-
-/* name -> onu doğrudan kullanan projeler */
-const dependents = {};
-PROJECTS.forEach(p => p.deps.forEach(d => {
-  (dependents[d] = dependents[d] || []).push(p.name);
-}));
-
-/* Dirty kökler + tüm aşağı-akış bağımlıları = derlenecekler */
-function computeWillBuild() {
-  const dirty = new Set(DIRTY_ROOTS);
-  let grew = true;
-  while (grew) {
-    grew = false;
-    PROJECTS.forEach(p => {
-      if (!dirty.has(p.name) && p.deps.some(d => dirty.has(d))) {
-        dirty.add(p.name);
-        grew = true;
-      }
-    });
-  }
-  const map = {};
-  PROJECTS.forEach(p => {
-    map[p.name] = dirty.has(p.name) ? 'dirty' : 'clean';
-  });
-  return map;
-}
-
-/* Bir kökten ulaşılabilen tüm aşağı-akış projeleri (kendisi hariç) */
-function downstreamOf(root) {
-  const out = new Set();
-  const walk = n => (dependents[n] || []).forEach(m => {
-    if (!out.has(m)) {
-      out.add(m);
-      walk(m);
-    }
-  });
-  walk(root);
-  return out;
-}
-Object.assign(__ds_scope, { PROJECTS, DIRTY_ROOTS, byName, dependents, computeWillBuild, downstreamOf });
-})(); } catch (e) { __ds_ns.__errors.push({ path: "ui_kits/build-orchestrator/BuildData.jsx", error: String((e && e.message) || e) }); }
-
-// ui_kits/build-orchestrator/GraphView.jsx
-try { (() => {
-const NODE = 34; // DependencyGraphNode size
-
-function GraphView({
-  statuses,
-  selected,
-  onSelect
-}) {
-  const center = p => ({
-    x: p.pos.x + NODE / 2,
-    y: p.pos.y + NODE / 2
-  });
-  return /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1,
-      overflow: 'auto',
-      background: 'var(--surface-base)',
-      position: 'relative'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: 'relative',
-      width: 1010,
-      height: 560,
-      margin: '12px auto'
-    }
-  }, /*#__PURE__*/React.createElement("svg", {
-    width: "1010",
-    height: "560",
-    style: {
-      position: 'absolute',
-      inset: 0
-    },
-    "aria-hidden": "true"
-  }, __ds_scope.PROJECTS.map(p => p.deps.map(d => {
-    const a = center(__ds_scope.byName[d]);
-    const b = center(p);
-    const hot = selected === p.name || selected === d;
-    return /*#__PURE__*/React.createElement("line", {
-      key: `${d}->${p.name}`,
-      x1: a.x,
-      y1: a.y,
-      x2: b.x,
-      y2: b.y,
-      stroke: hot ? 'var(--amber-border)' : 'var(--border-strong)',
-      strokeWidth: hot ? 2 : 1
-    });
-  }))), __ds_scope.PROJECTS.map(p => /*#__PURE__*/React.createElement("div", {
-    key: p.name,
-    style: {
-      position: 'absolute',
-      left: p.pos.x,
-      top: p.pos.y
-    }
-  }, /*#__PURE__*/React.createElement(__ds_scope.DependencyGraphNode, {
-    label: p.name.replace('ACME.', ''),
-    status: statuses[p.name] || 'discovered',
-    selected: selected === p.name,
-    size: NODE,
-    onClick: () => onSelect && onSelect(p.name)
-  })))));
-}
-Object.assign(__ds_scope, { GraphView });
-})(); } catch (e) { __ds_ns.__errors.push({ path: "ui_kits/build-orchestrator/GraphView.jsx", error: String((e && e.message) || e) }); }
-
-// ui_kits/build-orchestrator/MainWindow.jsx
-try { (() => {
-const BranchIcon = () => /*#__PURE__*/React.createElement("svg", {
-  width: "12",
-  height: "12",
-  viewBox: "0 0 24 24",
-  fill: "none",
-  stroke: "currentColor",
-  strokeWidth: "2",
-  strokeLinecap: "round",
-  strokeLinejoin: "round"
-}, /*#__PURE__*/React.createElement("line", {
-  x1: "6",
-  x2: "6",
-  y1: "3",
-  y2: "15"
-}), /*#__PURE__*/React.createElement("circle", {
-  cx: "18",
-  cy: "6",
-  r: "3"
-}), /*#__PURE__*/React.createElement("circle", {
-  cx: "6",
-  cy: "18",
-  r: "3"
-}), /*#__PURE__*/React.createElement("path", {
-  d: "M18 9a9 9 0 0 1-9 9"
-}));
-const TreeIcon = () => /*#__PURE__*/React.createElement("svg", {
-  width: "12",
-  height: "12",
-  viewBox: "0 0 24 24",
-  fill: "none",
-  stroke: "currentColor",
-  strokeWidth: "2",
-  strokeLinecap: "round",
-  strokeLinejoin: "round"
-}, /*#__PURE__*/React.createElement("path", {
-  d: "M3 3v18h18"
-}), /*#__PURE__*/React.createElement("path", {
-  d: "M7 12h10"
-}), /*#__PURE__*/React.createElement("path", {
-  d: "M7 7h4"
-}), /*#__PURE__*/React.createElement("path", {
-  d: "M7 17h7"
-}));
-const PlayIcon = () => /*#__PURE__*/React.createElement("svg", {
-  width: "12",
-  height: "12",
-  viewBox: "0 0 24 24",
-  fill: "currentColor",
-  stroke: "none"
-}, /*#__PURE__*/React.createElement("polygon", {
-  points: "6 3 20 12 6 21 6 3"
-}));
-const SyncIcon = () => /*#__PURE__*/React.createElement("svg", {
-  width: "12",
-  height: "12",
-  viewBox: "0 0 24 24",
-  fill: "none",
-  stroke: "currentColor",
-  strokeWidth: "2",
-  strokeLinecap: "round",
-  strokeLinejoin: "round"
-}, /*#__PURE__*/React.createElement("path", {
-  d: "M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"
-}), /*#__PURE__*/React.createElement("path", {
-  d: "M3 3v5h5"
-}), /*#__PURE__*/React.createElement("path", {
-  d: "M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"
-}), /*#__PURE__*/React.createElement("path", {
-  d: "M21 21v-5h-5"
-}));
-const GearIcon = () => /*#__PURE__*/React.createElement("svg", {
-  width: "14",
-  height: "14",
-  viewBox: "0 0 24 24",
-  fill: "none",
-  stroke: "currentColor",
-  strokeWidth: "1.8",
-  strokeLinecap: "round",
-  strokeLinejoin: "round"
-}, /*#__PURE__*/React.createElement("path", {
-  d: "M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
-}), /*#__PURE__*/React.createElement("circle", {
-  cx: "12",
-  cy: "12",
-  r: "3"
-}));
-const SearchIcon = () => /*#__PURE__*/React.createElement("svg", {
-  width: "12",
-  height: "12",
-  viewBox: "0 0 24 24",
-  fill: "none",
-  stroke: "currentColor",
-  strokeWidth: "2",
-  strokeLinecap: "round",
-  strokeLinejoin: "round"
-}, /*#__PURE__*/React.createElement("circle", {
-  cx: "11",
-  cy: "11",
-  r: "8"
-}), /*#__PURE__*/React.createElement("path", {
-  d: "m21 21-4.3-4.3"
-}));
-const now = () => new Date().toTimeString().slice(0, 8);
-const fmt = ms => `${(ms / 1000).toFixed(1)}s`;
-function MainWindow({
-  logoBase = '../../assets'
-}) {
-  const [statuses, setStatuses] = React.useState({});
-  const [willBuild, setWillBuild] = React.useState({});
-  const [durations, setDurations] = React.useState({});
-  const [lines, setLines] = React.useState([{
-    type: 'dim',
-    time: now(),
-    text: 'Build Orchestrator 2.4.1 — Acme.sln yüklendi (14 proje)'
-  }, {
-    type: 'info',
-    time: now(),
-    text: 'Proje durumları Sync sonrası görünür.'
-  }]);
-  const [phase, setPhase] = React.useState('idle'); // idle | synced | building | done
-  const [tab, setTab] = React.useState('projects');
-  const [selected, setSelected] = React.useState(null);
-  const [filter, setFilter] = React.useState('');
-  const [cfg, setCfg] = React.useState('Release');
-  const [perf, setPerf] = React.useState('Balanced');
-  const [toast, setToast] = React.useState(null);
-  const [settingsOpen, setSettingsOpen] = React.useState(false);
-  const [syncedAgo, setSyncedAgo] = React.useState(null);
-  const timers = React.useRef([]);
-  React.useEffect(() => () => timers.current.forEach(clearTimeout), []);
-  const later = (fn, ms) => timers.current.push(setTimeout(fn, ms));
-  const addLine = (type, text) => setLines(ls => [...ls.slice(-160), {
-    type,
-    time: now(),
-    text
-  }]);
-  const errorCount = Object.values(statuses).filter(s => s === 'failed').length;
-  const builtCount = Object.values(statuses).filter(s => s === 'succeeded').length;
-  const skipCount = Object.values(statuses).filter(s => s === 'skipped').length;
-  const toBuildNames = __ds_scope.PROJECTS.filter(p => willBuild[p.name] === 'dirty').map(p => p.name);
-  const finishedOfBuild = __ds_scope.PROJECTS.filter(p => willBuild[p.name] === 'dirty' && ['succeeded', 'failed', 'skipped'].includes(statuses[p.name])).length;
-  const totalMs = Object.values(durations).reduce((a, b) => a + b, 0);
-  function doSync() {
-    if (phase === 'building') return;
-    const wb = __ds_scope.computeWillBuild();
-    setWillBuild(wb);
-    setStatuses({});
-    setDurations({});
-    setSyncedAgo('şimdi');
-    const n = Object.values(wb).filter(v => v === 'dirty').length;
-    addLine('cmd', 'git fetch origin && build-state diff');
-    later(() => {
-      addLine('info', `Sync tamamlandı — 2 değişen proje, ${n} derlenecek`);
-      addLine('dim', `${14 - n} proje güncel (atlanacak)`);
-      setPhase('synced');
-    }, 450);
-  }
-  function doBuild() {
-    if (phase === 'building') return;
-    const wb = Object.keys(willBuild).length ? willBuild : __ds_scope.computeWillBuild();
-    if (!Object.keys(willBuild).length) setWillBuild(wb);
-    const queue = new Set(__ds_scope.PROJECTS.filter(p => wb[p.name] === 'dirty').map(p => p.name));
-    setPhase('building');
-    setToast(null);
-    setDurations({});
-    const init = {};
-    __ds_scope.PROJECTS.forEach(p => {
-      init[p.name] = queue.has(p.name) ? 'queued' : 'skipped';
-    });
-    setStatuses(init);
-    addLine('cmd', `msbuild Acme.sln /m /p:Configuration=${cfg} — ${queue.size} proje, ${14 - queue.size} atlandı`);
-    const done = new Set(); // succeeded
-    const dead = new Set(); // failed or cascade-skipped
-    const running = new Set();
-    const durMap = {};
-    const finished = () => {
-      const fails = __ds_scope.PROJECTS.filter(p => queue.has(p.name)).filter(p => p.fails).length;
-      const total = Object.values(durMap).reduce((a, b) => a + b, 0);
-      addLine(fails ? 'error' : 'success', fails ? `Derleme başarısız — ${fails} hata, ${done.size} başarılı (${fmt(total)})` : `Derleme tamamlandı — ${done.size} proje (${fmt(total)})`);
-      setPhase('done');
-      setToast(fails ? {
-        tone: 'fail',
-        title: 'Derleme başarısız',
-        description: `${fails} hata — ACME.Parts.Api. ${done.size} proje derlendi.`
-      } : {
-        tone: 'success',
-        title: 'Derleme tamamlandı',
-        description: `${done.size} proje · ${fmt(total)}`
-      });
-    };
-    const pump = () => {
-      const ready = [...queue].filter(n => !running.has(n) && !done.has(n) && !dead.has(n) && __ds_scope.PROJECTS.find(p => p.name === n).deps.every(d => !queue.has(d) || done.has(d)));
-      ready.slice(0, Math.max(0, 2 - running.size)).forEach(name => {
-        const proj = __ds_scope.PROJECTS.find(p => p.name === name);
-        running.add(name);
-        setStatuses(s => ({
-          ...s,
-          [name]: 'building'
-        }));
-        addLine('info', `${name} derleniyor…`);
-        later(() => {
-          running.delete(name);
-          durMap[name] = proj.dur;
-          setDurations(d => ({
-            ...d,
-            [name]: proj.dur
-          }));
-          if (proj.fails) {
-            dead.add(name);
-            setStatuses(s => ({
-              ...s,
-              [name]: 'failed'
-            }));
-            addLine('error', `CS0246: 'AcmeDbContext' türü bulunamadı — ${name} (${fmt(proj.dur)})`);
-            __ds_scope.downstreamOf(name).forEach(dn => {
-              if (queue.has(dn) && !done.has(dn) && !dead.has(dn)) {
-                dead.add(dn);
-                setStatuses(s => ({
-                  ...s,
-                  [dn]: 'skipped'
-                }));
-                addLine('warn', `${dn} atlandı (bağımlılık hatası: ${name})`);
-              }
-            });
-          } else {
-            done.add(name);
-            setStatuses(s => ({
-              ...s,
-              [name]: 'succeeded'
-            }));
-            addLine('success', `${name} → bin/${cfg}/net8.0 (${fmt(proj.dur)})`);
-          }
-          if (done.size + dead.size >= queue.size) finished();else pump();
-        }, Math.round(proj.dur * 0.55));
-      });
-    };
-    later(pump, 350);
-  }
-  const visible = __ds_scope.PROJECTS.filter(p => p.name.toLowerCase().includes(filter.toLowerCase()));
-  return /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      flexDirection: 'column',
-      height: '100%',
-      position: 'relative',
-      background: 'var(--surface-base)',
-      border: '1px solid var(--border)',
-      borderRadius: 'var(--radius-lg)',
-      overflow: 'hidden',
-      fontFamily: 'var(--font-sans)',
-      fontSize: 'var(--text-sm)',
-      color: 'var(--text-primary)'
-    }
-  }, /*#__PURE__*/React.createElement(__ds_scope.TitleBar, {
-    logoSrc: `${logoBase}/delta-logo-dark.svg`,
-    title: "Build Orchestrator"
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontFamily: 'var(--font-mono)',
-      fontSize: 'var(--text-2xs)',
-      color: 'var(--text-faint)'
-    }
-  }, "Acme.sln \u2014 Release x64")), /*#__PURE__*/React.createElement(__ds_scope.Toolbar, null, /*#__PURE__*/React.createElement(__ds_scope.Chip, {
-    icon: /*#__PURE__*/React.createElement(BranchIcon, null),
-    label: "branch",
-    value: "release/2024.2",
-    chevron: true
-  }), /*#__PURE__*/React.createElement(__ds_scope.Chip, {
-    icon: /*#__PURE__*/React.createElement(TreeIcon, null),
-    label: "worktree",
-    value: "wt-ana",
-    chevron: true
-  }), /*#__PURE__*/React.createElement(__ds_scope.ToolbarSep, null), /*#__PURE__*/React.createElement(__ds_scope.Segment, {
-    options: ['Debug', 'Release'],
-    value: cfg,
-    onChange: setCfg
-  }), /*#__PURE__*/React.createElement(__ds_scope.Segment, {
-    options: ['Full', 'Balanced', 'Light'],
-    value: perf,
-    onChange: setPerf
-  }), /*#__PURE__*/React.createElement(__ds_scope.ToolbarSep, null), /*#__PURE__*/React.createElement(__ds_scope.Button, {
-    variant: "secondary",
-    size: "md",
-    icon: /*#__PURE__*/React.createElement(SyncIcon, null),
-    onClick: doSync,
-    disabled: phase === 'building'
-  }, "Sync"), /*#__PURE__*/React.createElement(__ds_scope.ToolbarSpacer, null), /*#__PURE__*/React.createElement("div", {
-    style: {
-      width: 200
-    }
-  }, /*#__PURE__*/React.createElement(__ds_scope.Input, {
-    placeholder: "Proje filtrele\u2026",
-    prefix: /*#__PURE__*/React.createElement(SearchIcon, null),
-    value: filter,
-    onChange: e => setFilter(e.target.value)
-  })), /*#__PURE__*/React.createElement(__ds_scope.Tooltip, {
-    content: "Ayarlar",
-    side: "bottom"
-  }, /*#__PURE__*/React.createElement(__ds_scope.IconButton, {
-    title: "Ayarlar",
-    onClick: () => setSettingsOpen(true)
-  }, /*#__PURE__*/React.createElement(GearIcon, null))), phase === 'building' ? /*#__PURE__*/React.createElement(__ds_scope.Button, {
-    variant: "danger",
-    onClick: () => {}
-  }, "Durdur") : /*#__PURE__*/React.createElement(__ds_scope.Tooltip, {
-    content: "Yaln\u0131zca de\u011Fi\u015Fenleri derle",
-    kbd: "F5",
-    side: "bottom"
-  }, /*#__PURE__*/React.createElement(__ds_scope.Button, {
-    variant: "primary",
-    icon: /*#__PURE__*/React.createElement(PlayIcon, null),
-    onClick: doBuild
-  }, "Derle"))), /*#__PURE__*/React.createElement(__ds_scope.Tabs, {
-    active: tab,
-    onChange: setTab,
-    tabs: [{
-      id: 'projects',
-      label: 'Projeler',
-      count: 14
-    }, {
-      id: 'graph',
-      label: 'Bağımlılık Grafiği'
-    }, {
-      id: 'output',
-      label: 'Çıktı',
-      count: errorCount || undefined
-    }]
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 28,
-      padding: '10px 16px',
-      borderBottom: '1px solid var(--border-subtle)',
-      background: 'var(--surface)'
-    }
-  }, /*#__PURE__*/React.createElement(__ds_scope.Metric, {
-    label: "Derlenecek",
-    value: phase === 'idle' ? '—' : toBuildNames.length,
-    unit: phase === 'idle' ? '' : '/ 14'
-  }), /*#__PURE__*/React.createElement(__ds_scope.Metric, {
-    label: "Ba\u015Far\u0131l\u0131",
-    value: builtCount,
-    tone: builtCount ? 'success' : 'default'
-  }), /*#__PURE__*/React.createElement(__ds_scope.Metric, {
-    label: "Hata",
-    value: errorCount,
-    tone: errorCount ? 'fail' : 'default'
-  }), /*#__PURE__*/React.createElement(__ds_scope.Metric, {
-    label: "Atland\u0131",
-    value: skipCount
-  }), /*#__PURE__*/React.createElement(__ds_scope.Metric, {
-    label: "Toplam s\xFCre",
-    value: totalMs ? (totalMs / 1000).toFixed(1) : '—',
-    unit: "s"
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1
-    }
-  }, /*#__PURE__*/React.createElement(__ds_scope.ProgressBar, {
-    value: toBuildNames.length ? finishedOfBuild / toBuildNames.length * 100 : 0,
-    status: errorCount ? 'failed' : phase === 'done' ? 'succeeded' : 'building',
-    indeterminate: phase === 'building' && finishedOfBuild === 0
-  })), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontFamily: 'var(--font-mono)',
-      fontSize: 'var(--text-xs)',
-      color: 'var(--text-dim)',
-      fontVariantNumeric: 'tabular-nums'
-    }
-  }, toBuildNames.length ? `${finishedOfBuild}/${toBuildNames.length}` : '0/0')), tab === 'projects' && /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1,
-      minHeight: 0,
-      display: 'flex',
-      flexDirection: 'column'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1,
-      overflowY: 'auto'
-    }
-  }, visible.map(p => /*#__PURE__*/React.createElement(__ds_scope.ProjectRow, {
-    key: p.name,
-    name: p.name,
-    solution: p.solution,
-    status: statuses[p.name] || 'discovered',
-    willBuild: willBuild[p.name] || 'unknown',
-    duration: durations[p.name] ? fmt(durations[p.name]) : undefined,
-    selected: selected === p.name,
-    onClick: () => setSelected(p.name),
-    onOpenFile: () => addLine('dim', `${p.name}.csproj Explorer'da açıldı`),
-    onOpenVS: () => addLine('dim', `${p.name} Visual Studio'da açıldı`)
-  })), !visible.length && /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: 24,
-      fontSize: 'var(--text-xs)',
-      color: 'var(--text-dim)'
-    }
-  }, "\"", filter, "\" ile e\u015Fle\u015Fen proje yok.")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 'none',
-      display: 'flex',
-      alignItems: 'center',
-      gap: 8,
-      height: 28,
-      padding: '0 12px',
-      background: 'var(--console-bg)',
-      borderTop: '1px solid var(--border-subtle)'
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 'var(--text-2xs)',
-      fontWeight: 500,
-      letterSpacing: 'var(--tracking-caps)',
-      textTransform: 'uppercase',
-      color: 'var(--text-faint)'
-    }
-  }, "\xC7\u0131kt\u0131"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontFamily: 'var(--font-mono)',
-      fontSize: 'var(--text-2xs)',
-      color: 'var(--text-faint)'
-    }
-  }, lines.length, " sat\u0131r")), /*#__PURE__*/React.createElement(__ds_scope.Console, {
-    height: 168,
-    lines: lines,
-    style: {
-      flex: 'none',
-      borderTop: 'none'
-    }
-  })), tab === 'graph' && /*#__PURE__*/React.createElement(__ds_scope.GraphView, {
-    statuses: statuses,
-    selected: selected,
-    onSelect: setSelected
-  }), tab === 'output' && /*#__PURE__*/React.createElement(__ds_scope.Console, {
-    lines: lines,
-    style: {
-      flex: 1,
-      minHeight: 0
-    }
-  }), /*#__PURE__*/React.createElement(__ds_scope.StatusBar, {
-    right: /*#__PURE__*/React.createElement("span", {
-      style: {
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 10
-      }
-    }, /*#__PURE__*/React.createElement(__ds_scope.StatusBarItem, {
-      label: "perf",
-      value: perf
-    }), /*#__PURE__*/React.createElement(__ds_scope.StatusBarItem, {
-      label: "v",
-      value: "2.4.1"
-    }))
-  }, /*#__PURE__*/React.createElement(__ds_scope.StatusBarItem, {
-    label: "Sync",
-    value: syncedAgo || 'yapılmadı'
-  }), /*#__PURE__*/React.createElement(__ds_scope.StatusBarItem, {
-    value: `${builtCount + skipCount + errorCount}/14`
-  }), errorCount > 0 && /*#__PURE__*/React.createElement(__ds_scope.StatusBarItem, {
-    label: "hata",
-    value: errorCount,
-    color: "var(--status-fail-text)"
-  }), /*#__PURE__*/React.createElement("span", {
-    style: {
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: 4
-    }
-  }, /*#__PURE__*/React.createElement(__ds_scope.Kbd, null, "F5"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: 'var(--text-faint)'
-    }
-  }, "Derle"))), toast && /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: 'absolute',
-      right: 16,
-      bottom: 40,
-      zIndex: 60
-    }
-  }, /*#__PURE__*/React.createElement(__ds_scope.Toast, {
-    tone: toast.tone,
-    title: toast.title,
-    description: toast.description,
-    onClose: () => setToast(null),
-    action: toast.tone === 'fail' ? /*#__PURE__*/React.createElement(__ds_scope.Button, {
-      size: "sm",
-      variant: "secondary",
-      onClick: () => {
-        setTab('output');
-        setToast(null);
-      }
-    }, "Konsolu A\xE7") : undefined
-  })), /*#__PURE__*/React.createElement(__ds_scope.Dialog, {
-    open: settingsOpen,
-    title: "Derleme Ayarlar\u0131",
-    onClose: () => setSettingsOpen(false),
-    footer: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(__ds_scope.Button, {
-      variant: "ghost",
-      onClick: () => setSettingsOpen(false)
-    }, "Vazge\xE7"), /*#__PURE__*/React.createElement(__ds_scope.Button, {
-      variant: "primary",
-      onClick: () => setSettingsOpen(false)
-    }, "Kaydet"))
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      flexDirection: 'column',
-      gap: 14
-    }
-  }, /*#__PURE__*/React.createElement(__ds_scope.Field, {
-    label: "Solution yolu",
-    hint: "ACME k\xF6k\xFCnden g\xF6recel"
-  }, /*#__PURE__*/React.createElement(__ds_scope.Input, {
-    mono: true,
-    defaultValue: "src/Acme.sln"
-  })), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'grid',
-      gridTemplateColumns: '1fr 1fr',
-      gap: 12
-    }
-  }, /*#__PURE__*/React.createElement(__ds_scope.Field, {
-    label: "Paralellik"
-  }, /*#__PURE__*/React.createElement(__ds_scope.Input, {
-    mono: true,
-    defaultValue: "8"
-  })), /*#__PURE__*/React.createElement(__ds_scope.Field, {
-    label: "MSBuild verbosity"
-  }, /*#__PURE__*/React.createElement(__ds_scope.Select, {
-    defaultValue: "minimal"
-  }, /*#__PURE__*/React.createElement("option", null, "quiet"), /*#__PURE__*/React.createElement("option", null, "minimal"), /*#__PURE__*/React.createElement("option", null, "normal"), /*#__PURE__*/React.createElement("option", null, "detailed")))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      flexDirection: 'column',
-      gap: 8,
-      paddingTop: 2
-    }
-  }, /*#__PURE__*/React.createElement(__ds_scope.Switch, {
-    checked: true,
-    label: "Yaln\u0131zca de\u011Fi\u015Fenleri derle",
-    onChange: () => {}
-  }), /*#__PURE__*/React.createElement(__ds_scope.Switch, {
-    checked: true,
-    label: "NuGet restore (gerekliyse)",
-    onChange: () => {}
-  }), /*#__PURE__*/React.createElement(__ds_scope.Switch, {
-    label: "Ba\u015Far\u0131da bildirim",
-    onChange: () => {}
-  })))));
-}
-Object.assign(__ds_scope, { MainWindow });
-})(); } catch (e) { __ds_ns.__errors.push({ path: "ui_kits/build-orchestrator/MainWindow.jsx", error: String((e && e.message) || e) }); }
-
 __ds_ns.Button = __ds_scope.Button;
 
 __ds_ns.Chip = __ds_scope.Chip;
@@ -2903,8 +1986,6 @@ __ds_ns.Tabs = __ds_scope.Tabs;
 
 __ds_ns.TitleBar = __ds_scope.TitleBar;
 
-__ds_ns.Toast = __ds_scope.Toast;
-
 __ds_ns.Toolbar = __ds_scope.Toolbar;
 
 __ds_ns.ToolbarSep = __ds_scope.ToolbarSep;
@@ -2920,15 +2001,5 @@ __ds_ns.StatusBadge = __ds_scope.StatusBadge;
 __ds_ns.STATUS_META = __ds_scope.STATUS_META;
 
 __ds_ns.StatusGlyph = __ds_scope.StatusGlyph;
-
-__ds_ns.WillBuildDot = __ds_scope.WillBuildDot;
-
-__ds_ns.PROJECTS = __ds_scope.PROJECTS;
-
-__ds_ns.DIRTY_ROOTS = __ds_scope.DIRTY_ROOTS;
-
-__ds_ns.GraphView = __ds_scope.GraphView;
-
-__ds_ns.MainWindow = __ds_scope.MainWindow;
 
 })();

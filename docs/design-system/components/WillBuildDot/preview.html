@@ -1,9 +1,0 @@
-<!-- @dsCard group="Status" height=64 -->
-<!doctype html>
-<html><head><meta charset="utf-8"><style>body{margin:0;padding:16px;background:var(--surface-base);color:var(--text-primary);font-family:var(--font-sans)}</style></head>
-<body><div id="root"></div>
-<script>
-const DS = window.DeltaBuildOrchestratorDS_eb0bd1; const h = React.createElement;
-
-ReactDOM.createRoot(document.getElementById('root')).render(h('div',{style:{display:'flex',gap:12,alignItems:'center',flexWrap:'wrap',gap:20,fontSize:12,color:'var(--text-secondary)'}},...['dirty','clean','unknown'].map(s=>h('span',{key:s,style:{display:'inline-flex',gap:8,alignItems:'center'}},h(DS.WillBuildDot,{state:s}),s))));
-</script></body></html>

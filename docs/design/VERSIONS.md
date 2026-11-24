@@ -1,16 +1,32 @@
 # Prototip sürümleri
 
-Build Orchestrator'ın UI tasarımı yaşayan bir prototiptir: Claude'daki *Build Orchestrator - Design* artifact'i ve buradaki paketler. Her sürüm burada, en yenisi en üstte: ne değişti, neden, uygulamaya ne düşüyor ve uygulamaya geçip geçmediği. Tasarıma devam eden önce bu dosyayı ve son paketin spesifikasyonunu okur, yeni sürümü bir öncekinin üzerine kurar; kod tarafı `Uygulandı: —` olan en eski sürümden başlar ([tasarım paketi](README.md#koda-geçirmek)).
+Build Orchestrator'ın UI tasarımı yaşayan bir prototiptir: kaynağı [prototype/](prototype/README.md), spesifikasyonu [SPEC.md](SPEC.md); Claude'daki *Build Orchestrator - Design* artifact'i en güncelini gösterir. Her sürüm burada bir kayıt ve `develop`'ta bir commit'tir, en yenisi en üstte: ne değişti, neden, uygulamaya ne düşüyor ve uygulamaya geçip geçmediği. Tasarıma devam eden önce bu dosyayı ve SPEC.md'yi okur, yeni sürümü bir öncekinin üzerine kurar; kod tarafı `Uygulandı: —` olan en eski sürümden başlar ([README](README.md#koda-geçirmek)).
 
-Numaralama: yeni özellik, davranış veya ekran **minor**; küçük düzeltme **patch**; **major** yalnız Sinan'ın kararıyla ve bir milatı işaretler. Metindeki `§` numaraları o sürümün paketindeki README'nin bölümleridir.
+Numaralama: yeni özellik, davranış veya ekran **minor**; küçük düzeltme **patch**; **major** yalnız proje sahibinin kararıyla ve bir milatı işaretler. Metindeki `§` numaraları [SPEC.md](SPEC.md)'nin, o sürümün commit'indeki hâliyle, bölümleridir.
 
 | Sürüm | Tarih | Konu | Uygulandı |
 |---|---|---|---|
+| **2.0.1** | 2026-11-24 | Prototip ve spesifikasyon repoda tek kopya, tek dosya lokalde üretilir; design system 2.1.0 | app 1.15.0 (koda eşitlendi) |
 | **2.0.0** | 2026-11-23 | Milat: tasarım ve design system uygulamanın kodundan (app 1.15.0) yeniden kuruldu | app 1.15.0 (koddan alındı) |
+
+## 2.0.1 — 2026-11-24 · Prototip repoda tek kopya; design system 2.1.0
+
+Commit: `c03d1dc` · Design system: [2.0.1 ve 2.1.0](../design-system/VERSIONS.md).
+
+Uygulandı: app 1.15.0 — tasarım koda eşitlendi; uygulamaya düşen bir değişiklik yok.
+
+**Neden.** Prototip ve spesifikasyon her sürümde bir paket olarak kopyalanıyordu (sürüm başına ~1,3 MB, çoğu bir öncekiyle aynı) ve paket klasörü `.gitignore`'daki `**/[Pp]ackages/` kuralı yüzünden repoya hiç girmemişti. Design system'de de uygulamayla tutmayan yerler vardı.
+
+**Ne değişti**
+- Prototipin kaynağı [prototype/](prototype/README.md)'de, spesifikasyon [SPEC.md](SPEC.md)'de tek kopyadır; her sürüm bu dosyalarda yerinde yapılır ve `develop`'ta bir commit'tir. Kaynak 2.0.0 paketininkiyle aynıdır: bu kaynaktan üretilen 2.0.0 tek dosyası repodakiyle bayt bayt aynı çıktı (React çekirdeği ve sahne listesinin JSON yazımı dışında). Sahnelerin açıklaması artık yalnız `Main.dc.html`'dedir; `BuildApp.jsx`'teki kullanılmayan ve bir yerde eskimiş kopyası kalktı.
+- Tek dosyalık prototip repoda tutulmaz: `prototype/` klasöründe `npm install` ve `npm run build` onu `release/` altına üretir (git-ignore'lu). Eski bir sürüm kendi commit'inden üretilir; 2.0.0'ın dosyası `255d711`'dedir.
+- Design system [2.0.1 ve 2.1.0](../design-system/VERSIONS.md) kuruldu: spinner ve building glyph'i uygulamadaki kesikli halka, varsayılan adlar uygulamadaki İngilizce adlar, `ProjectRow`'un şerit ve noktası uygulamanın tablosuyla; `MainWindow` kiti, `Toast` ve `WillBuildDot` kalktı.
+- 2.0.0'da listelenen doküman–kod uyuşmazlıkları kod esas alınarak kapandı (ARCHITECTURE §13.3, §14.2, §14.4 ve kod yorumları).
+- `DESIGN_VERSION` 2.0.1.
 
 ## 2.0.0 — 2026-11-23 · Milat: uygulamanın kodundan yeniden kuruldu
 
-Paket: [`packages/2026-11-23-16-07-design-v2.0.0/`](packages/2026-11-23-16-07-design-v2.0.0/README.md) · Prototip: [`prototype/BuildOrchestrator-prototype-2.0.0.html`](prototype/BuildOrchestrator-prototype-2.0.0.html) · Design system: [2.0.0](../design-system/VERSIONS.md).
+Commit: `255d711` (tek dosyalık prototip o commit'te `prototype/BuildOrchestrator-prototype-2.0.0.html`) · Design system: [2.0.0](../design-system/VERSIONS.md).
 
 Uygulandı: app 1.15.0 — tasarım uygulamadan alındı; uygulamaya düşen bir değişiklik yok (yalnız spesifikasyonda listelenen doküman–kod uyuşmazlıkları karar bekliyor).
 

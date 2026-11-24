@@ -1,5 +1,22 @@
-# Prototip sürümleri
+# Prototip
 
-Prototipin her sürümü tek bir dosya olarak: `BuildOrchestrator-prototype-<sürüm>.html`. İndir ve çift tıkla aç (Edge veya Chrome): kurulum, sunucu ve ağ gerekmez; React, design system, simülasyon, örnek graf ve logolar dosyanın içindedir. Üstte sahne şeridi ve Demo anahtarları (auto-play, update pill, reduced parallelism) durur. [VERSIONS.md](../VERSIONS.md) her sürümün ne değiştirdiğini söyler; [tasarım paketi](../README.md) bir sürümün nasıl yapıldığını.
+Prototipin kaynağı bu klasördedir; tek dosyalık hâli buradan, lokalde üretilir ve repoya girmez.
 
-Dosyalar paketle birlikte üretilir ve bir kez commit edildikten sonra değiştirilmez; her dosya gösterildiği hâliyle kalır. Seri 2.0.0 (milat) ile başlar; 1.x prototipleri `.claude/outputs/<tarih>-design-v1.x/` arşivindedir.
+| Dosya | Ne |
+|---|---|
+| `app/BuildApp.jsx` | bütün UI davranışının referans kodu; `DESIGN_VERSION` tasarım sürümüdür |
+| `app/build-data.js` | simülasyon motoru ve örnek graf (`ACME.*`) |
+| `app/release-notes.js` | What's new verisi, uygulamanın `CHANGELOG.md`'sinden üretilir |
+| `Main.dc.html` | Claude'un tasarım tuvalindeki giriş sayfası (sahne şeridi, Demo anahtarları); sahne listesi tek dosyaya da buradan gider |
+| `standalone.html`, `build.mjs`, `package.json` | tek dosyanın kabuğu ve onu üreten betik |
+
+## Üretmek
+
+Node gerekir. Bu klasörde:
+
+```powershell
+npm install
+npm run build
+```
+
+Çıkan `release/BuildOrchestrator-prototype-<sürüm>.html` (git-ignore'lu) çift tıklanınca açılır (Edge veya Chrome): kurulum, sunucu ve ağ gerekmez; React, [design system](../../design-system/README.md) (doğrudan `docs/design-system`'dan), simülasyon, örnek graf ve logolar dosyanın içindedir (Geist fontları çevrimdışıyken sistem fontuna düşer). Üstte sahne şeridi ve Demo anahtarları (auto-play, update pill, reduced parallelism) durur. Eski bir sürüm, [VERSIONS.md](../VERSIONS.md)'deki commit açılıp aynı komutla üretilir.

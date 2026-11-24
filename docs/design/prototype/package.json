@@ -1,0 +1,14 @@
+{
+  "name": "build-orchestrator-design-prototype",
+  "private": true,
+  "type": "module",
+  "description": "Builds the single-file UI prototype locally (release/, git-ignored).",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  }
+}

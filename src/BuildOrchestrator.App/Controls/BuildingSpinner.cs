@@ -6,16 +6,9 @@ using System.Windows.Media.Animation;
 namespace BuildOrchestrator.App.Controls;
 
 /// <summary>
-/// [T60] DS <c>Spinner</c> (_ds_bundle.js:1358-1396): 270°'lik yay, <c>currentColor</c>, 900ms lineer sonsuz
-/// dönüş — "sakin, sabit hız". Aynı yay <c>StatusGlyph status='building'</c>'in de gövdesidir
-/// (_ds_bundle.js:1505 ile :1392 BİREBİR aynı path), bu yüzden <see cref="StatusGlyph"/> ayrı bir çizim
-/// tutmaz, BU kontrolü barındırır (kopya YASAK, CLAUDE.md).
-///
-/// <para><b>SAPMA — hakemlik bekliyor:</b> design-v1 README:66 building spinner'ını "discovered'ın KESİKLİ
-/// halkasının dönen hali, <c>stroke-dasharray 2.3 2.5</c>, 1.4s" diye tarif eder; bundle'ın kodu ise 270°'lik
-/// bir YAY'ı 900ms'de döndürür. Bunlar farklı çizimler ve farklı hızlardır. T60'ın brief'inde kayıtlı tek
-/// çelişki çözümü ("kod kazanır", Dialog yüzeyi örneği) uygulandı: bundle esas alındı. Karar gözden
-/// geçirilmelidir.</para>
+/// [T60] Building spinner: başlangıç modundaki kesikli halkanın (<c>Icon.StatusRing</c>) amber, dönen hâli —
+/// 1.4s lineer sonsuz dönüş, 1.5 kontur (ARCHITECTURE §14.4). DS <c>Spinner</c> ve <c>StatusGlyph status='building'</c>
+/// aynı çizimdir; <see cref="StatusGlyph"/> ayrı bir çizim tutmaz, BU kontrolü barındırır (kopya YASAK, CLAUDE.md).
 ///
 /// <para>Reduced-motion: dönüş HİÇ kurulmaz (DS'te de kural <c>@media (prefers-reduced-motion: no-preference)</c>
 /// içindedir) ve sinyal CANLI izlenir — kapanınca durur, açılınca başlar.</para>
