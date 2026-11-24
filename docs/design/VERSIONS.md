@@ -11,7 +11,7 @@ Numaralama: yeni özellik, davranış veya ekran **minor**; küçük düzeltme *
 
 ## 2.0.1 — 2026-11-24 · Prototip repoda tek kopya; design system 2.1.0
 
-Commit: — · Design system: [2.0.1 ve 2.1.0](../design-system/VERSIONS.md).
+Commit: `c03d1dc` · Design system: [2.0.1 ve 2.1.0](../design-system/VERSIONS.md).
 
 Uygulandı: app 1.15.0 — tasarım koda eşitlendi; uygulamaya düşen bir değişiklik yok.
 
