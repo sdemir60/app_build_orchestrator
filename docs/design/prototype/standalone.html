@@ -1,0 +1,23 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Build Orchestrator — UI prototype v{{VERSION}}</title>
+<style>{{TOKENS_CSS}}</style><style>{{BUNDLE_CSS}}</style>
+<style>html,body{height:100%;margin:0;background:var(--surface-sunken)}#shell{height:100vh;min-width:1240px;min-height:620px;display:flex;flex-direction:column;font-family:var(--font-sans)}
+#bar{flex:none;display:flex;align-items:center;gap:10px;height:44px;padding:0 14px;user-select:none}#bar .t{font-size:11px;font-weight:500;letter-spacing:.07em;text-transform:uppercase;color:var(--text-faint);white-space:nowrap}
+#bar button{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;background:var(--surface-raised);border:1px solid var(--border);border-radius:4px;color:var(--text-secondary);font:500 12px var(--font-sans);cursor:pointer;white-space:nowrap}
+#bar button.on{background:var(--amber-soft);border-color:var(--amber-border);color:var(--amber-text)}#bar button span{font-family:var(--font-mono);font-size:11px;opacity:.75}
+#desc{font-size:12px;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1}#bar label{font-size:11px;color:var(--text-dim);display:inline-flex;gap:4px;align-items:center;white-space:nowrap}
+#root{flex:1;min-height:0;padding:0 12px 12px;box-sizing:border-box}</style>
+<script>{{REACT}}</script>
+<script>{{DS_BUNDLE}}</script>
+<script>{{BUILD_DATA}}</script>
+<script>{{RELEASE_NOTES}}</script>
+<script>{{BUILD_APP}}</script>
+</head><body><div id="shell"><div id="bar"><img src="{{APP_ICON}}" width="18" height="18" style="border-radius:4px"><span class="t">Build Orchestrator · UI prototype v{{VERSION}}</span><div id="scenes" style="display:flex;gap:4px;margin-left:12px"></div><span id="desc"></span>
+<label><input type="checkbox" id="auto" checked>auto-play</label><label><input type="checkbox" id="upd" checked>update pill</label><label><input type="checkbox" id="red">reduced parallelism</label></div><div id="root"></div></div>
+<script>
+const SA_SCENES={{SCENES}};let scene=1;const saRoot=ReactDOM.createRoot(document.getElementById('root'));
+function render(){document.querySelectorAll('#scenes button').forEach((b,i)=>b.className=(i+1===scene?'on':''));document.getElementById('desc').textContent=SA_SCENES[scene-1].desc;
+saRoot.render(React.createElement(window.BuildApp,{key:scene+'-'+Date.now(),scene,autoPlay:auto.checked,simSpeed:1,updateAvailable:upd.checked,reducedParallelism:red.checked,logoBase:'assets'}));}
+SA_SCENES.forEach(s=>{const b=document.createElement('button');b.title=s.desc;b.innerHTML='<span>'+s.id+'</span>'+s.label;b.onclick=()=>{scene=s.id;render();};document.getElementById('scenes').appendChild(b);});
+['auto','upd','red'].forEach(id=>document.getElementById(id).onchange=render);render();
+</script></body></html>

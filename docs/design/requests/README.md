@@ -16,5 +16,5 @@ Repo dışında yapılan bir tasarım değişikliği (başka bir Claude hesabın
 
 1. Açık istekleri en eskiden başlayarak okur; bir kararı açık bırakan istek için işe başlamadan soru sorar.
 2. Tasarımın yaşadığı yerde yapar: görünüş [docs/design-system](../../design-system/README.md)'de, ekranlar ve davranışlar prototipte ve spesifikasyonda.
-3. [Tasarım paketinin](../README.md#tasarım-üzerinde-çalışmak) söylediği gibi bir sürüm yapar; VERSIONS.md kaydı isteği anar, isteğin durumu `<sürüm>'de yapıldı` olur.
+3. [Tasarım README'sinin](../README.md#sürüm-yapmak) söylediği gibi bir sürüm yapar; VERSIONS.md kaydı isteği anar, isteğin durumu `<sürüm>'de yapıldı` olur.
 4. Değişikliğin yanlış bıraktığını günceller (ARCHITECTURE, docs/FEATURES.md) ve davranışı sabitleyen testleri, repo kurallarıyla (CLAUDE.md), `develop`'tan açılan bir branch'te.
