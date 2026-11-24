@@ -2,6 +2,16 @@
 
 Design system (bu klasör) prototipin ve uygulamanın görsel kaynağıdır; *Build Orchestrator - Design System* artifact'i gezilebilir kopyasıdır. Klasördeki her değişiklik burada bir sürümdür, en yenisi en üstte: ne değişti, neden, uygulamaya ne düşüyor. Numaralama: bir bileşen, token, varlık veya marka kitabı kuralı eklenir ya da değişirse **minor**; bir şey düzeltilir ve sistem aynı şeyi söylemeye devam ederse **patch**; **major** proje sahibinin kararıdır ve bir milatı işaretler. Prototipin sürümlerinden ([docs/design/VERSIONS.md](../design/VERSIONS.md)) ayrı numaralanır. Bir sürüm uygulamaya geçince kaydın altına `Uygulandı: app X.Y.Z` satırı eklenir.
 
+## 2.1.0 — 2026-11-24 · Uygulamada olmayan bileşenler kaldırıldı; ProjectRow uygulamadaki gibi
+
+Uygulandı: app 1.15.0 (sistem uygulamaya eşitlendi; uygulamaya düşen bir değişiklik yok).
+
+**Neden**: `MainWindow` kiti 1.x'ten kalma, bugünkü uygulamayla tutmayan bir pencere taklidiydi; `Toast` ve `WillBuildDot` uygulamada yok. Güncel pencereyi tasarım prototipi gösterir. `ProjectRow`'un şerit tablosu ve will-build noktası da 1.x'ten kalmıştı.
+
+**Ne değişti**
+- Kaldırıldı: `MainWindow` kiti (`PROJECTS` ve `GraphView` ile), `Toast`, `WillBuildDot`: bundle, `index.d.ts`, README'ler ve önizlemeler.
+- `ProjectRow`: şerit ve nokta uygulamanın tablosuyla boyanır (işaretli, kuyrukta ve derleniyor amber, güncel yeşil, başarısız kırmızı, gerisi gri; döngü üyeliği listede renk taşımaz); başlangıç modunda (`discovered`) nokta yerine dört yaylı kesikli halka; `willBuild` prop'u kalktı.
+
 ## 2.0.1 — 2026-11-24 · Spinner, building glyph'i ve varsayılan adlar uygulamadaki gibi
 
 Uygulandı: app 1.15.0 (sistem uygulamaya eşitlendi; uygulamaya düşen bir değişiklik yok).

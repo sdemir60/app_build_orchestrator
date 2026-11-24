@@ -17,12 +17,12 @@ Build Orchestrator'ın görsel dili: token'lar, marka kitabı, bileşenler ve lo
 ## Sürüm yapmak ve koda geçirmek
 
 1. Klasörü değiştir (`tokens.json` ve ondan `tokens.css`, bileşenin README'si ve önizlemesi, gerekirse `bundle.js`) ve [VERSIONS.md](VERSIONS.md)'nin en üstüne sürümün kaydını yaz: numara, tarih, başlık; neden; ne değişti; **uygulamaya ne düşüyor** (hangi XAML kaynağı, hangi değer). Bir bileşen, token, varlık ya da marka kitabı kuralı eklenir ya da değişirse minor; düzeltme patch; major yalnız proje sahibinin kararıyla (milat).
-2. Artifact'i bu klasörden yeniden yayınla; prototipteki kopyasını (`docs/design` paketinin `prototype/ds/` klasörü ve tasarım artifact'i) aynı işte güncelle.
+2. Artifact'i bu klasörden yeniden yayınla; tasarım artifact'indeki kopyasını aynı işte güncelle (repodaki prototip sistemi doğrudan bu klasörden yükler).
 3. Kod tarafı sürümü uygular: `Resources/*.xaml` değerleri burayla eşitlenir, commit ve CHANGELOG işi `design-system X.Y.Z` adıyla anılır; VERSIONS kaydının altına `Uygulandı: app X.Y.Z` satırı eklenir.
 
 ---
 
-Delta Yazılım'ın dahili geliştirici aracı **Build Orchestrator** için tasarım sistemi — sürüm **2.0.0**.
+Delta Yazılım'ın dahili geliştirici aracı **Build Orchestrator** için tasarım sistemi; sürümleri repodaki `docs/design-system/VERSIONS.md`'dedir.
 
 ## Bağlam
 
@@ -106,7 +106,7 @@ Statü daima **renk + glyph + metin**; her metin tonu (dim dahil) 4.5:1'i karş�
 - **Kırmızı yalnız kanıttır:** derleyici hatası. Timeout, Stop ya da çağrı hatası kırmızı yazmaz; proje gri `To build`'e döner.
 - **Atlanmak bir renk değildir.** `—` yalnız event stream'in atlama satırında görünür; liste satırı, graf node'u ve sayaç taşımaz — atlanan proje kendi durumunun rengini korur. `N skipped` ribbon özetinde sayılır.
 - **Uyarı üçgeni:** satırın sabit 14px slotunda, statüsüz, her zaman amber (`--amber-text`), konturlu Lucide *alert-triangle*. Tooltip tek satır: `In a dependency cycle` ya da `Dependency issue: ACME.Sales.Core +2`. Kırmızı dolu üçgen kullanılmaz; gerekçe proje logundadır. Grafta üçgen yoktur — döngü üyesinin içindeki **küp her durumda amber**dır.
-- **Kaldırılan iki kanal:** turuncu döngü rengi ve ayrı will-build noktası uygulamada artık kullanılmaz. `--status-cycle*` ve `--dot-*` token'ları **uyumluluk için** durur; `StatusGlyph`/`DependencyGraphNode`'un `cycle` ve `skipped` değerleri ile `WillBuildDot` bileşeni de aynı sebeple sistemdedir. 8px nokta artık görsel durumun rengini taşır.
+- **Kaldırılan iki kanal:** turuncu döngü rengi ve ayrı will-build noktası uygulamada artık kullanılmaz. `--status-cycle*` ve `--dot-*` token'ları **uyumluluk için** durur; `StatusGlyph`/`DependencyGraphNode`'un `cycle` ve `skipped` değerleri de aynı sebeple sistemdedir. 8px nokta şeritle aynı rengi, görsel durumun rengini taşır.
 
 ---
 
@@ -145,20 +145,20 @@ Statü daima **renk + glyph + metin**; her metin tonu (dim dahil) 4.5:1'i karş�
 
 ## YASAKLAR
 
-Genel SaaS kart ızgaraları, üç sütunlu özellik ızgaraları, mor/indigo gradyanlar, şişik radius, dekoratif blob'lar, pazarlama hero'ları, her şeyi ortalamak, dekoratif gölgeler, tasarım öğesi olarak emoji, dolu çok renkli rozet ikonlar ve dönen dekoratif küre. Bilinçli, ince halkalı, statü renkli daire-içi glyph'ler bunun tersidir ve teşvik edilir. **Uygulamada toast ve uygulama içi popup yoktur;** `Toast` bileşeni sistemde durur ama uygulama kullanmaz.
+Genel SaaS kart ızgaraları, üç sütunlu özellik ızgaraları, mor/indigo gradyanlar, şişik radius, dekoratif blob'lar, pazarlama hero'ları, her şeyi ortalamak, dekoratif gölgeler, tasarım öğesi olarak emoji, dolu çok renkli rozet ikonlar ve dönen dekoratif küre. Bilinçli, ince halkalı, statü renkli daire-içi glyph'ler bunun tersidir ve teşvik edilir. **Uygulamada toast ve uygulama içi popup yoktur.**
 
 ---
 
 ## Components
 
-Status: `StatusGlyph`, `StatusBadge`, `WillBuildDot` (uyumluluk), `Spinner`
+Status: `StatusGlyph`, `StatusBadge`, `Spinner`
 Controls: `Button`, `IconButton`, `Chip`, `Segment`, `Kbd`
 Forms: `Field`, `Input`, `Select`, `Checkbox`, `Switch`
 Data: `ProjectRow`, `Console`, `ConsoleLine`, `ProgressBar`, `Metric`, `Tag`
 Graph: `DependencyGraphNode`
-Shell: `TitleBar`, `Toolbar`, `ToolbarSep`, `ToolbarSpacer`, `Tabs`, `StatusBar`, `StatusBarItem`, `Tooltip`, `Dialog`, `Toast`
+Shell: `TitleBar`, `Toolbar`, `ToolbarSep`, `ToolbarSpacer`, `Tabs`, `StatusBar`, `StatusBarItem`, `Tooltip`, `Dialog`
 
-Her bileşenin `components/<Ad>/README.md` kılavuzu ve canlı önizlemesi var; props sözleşmeleri `components/index.d.ts`. Runtime: `components/bundle.js` yüklendikten sonra `window.DeltaBuildOrchestratorDS_eb0bd1` (ayrıca `STATUS_META`). UI kiti: `MainWindow`. Bundle'ın varsayılan adları (`STATUS_META`, pencere ve kapat düğmeleri, `Spinner`) uygulamadaki İngilizce adlardır; yalnız `MainWindow` kitinin ve `WillBuildDot`'un metinleri 1.x paketinden geldiği gibi Türkçedir. Önizlemeler uygulamanın İngilizce kelimelerini açıkça verir — sen de öyle yap.
+Her bileşenin `components/<Ad>/README.md` kılavuzu ve canlı önizlemesi var; props sözleşmeleri `components/index.d.ts`. Runtime: `components/bundle.js` yüklendikten sonra `window.DeltaBuildOrchestratorDS_eb0bd1` (ayrıca `STATUS_META`). Bundle'ın varsayılan adları (`STATUS_META`, pencere ve kapat düğmeleri, `Spinner`) uygulamadaki İngilizce adlardır. Önizlemeler uygulamanın İngilizce kelimelerini açıkça verir — sen de öyle yap.
 
 ## Fontlar
 
@@ -168,4 +168,4 @@ Uygulama Geist ve Geist Mono'yu **gömülü statik OTF** olarak taşır (resmî 
 
 ## Kaynak
 
-Design system **2.0.0** bir milattır: yayındaki uygulamanın (**app 1.15.0**) kodundan yeniden kuruldu — renk, ölçü ve tipografi `src/BuildOrchestrator.App/Resources/Tokens.xaml`'den, motion `Motion.xaml`'den, ikonlar `Icons.xaml`'den okundu. Token adları ve değerleri `tokens.json` / `tokens.css`'tedir; uygulamada olup eski sistemde karşılığı olmayan değerler (`status-queued-border`, `brand-strip-dim`, `brand-chevron-deep`, pencere iskeleti ölçüleri, pencere minimumu, reading line height, console weight) token olarak girdi. `components/bundle.js` 1.x tasarım paketinin bundle'ından gelir, örnek verisindeki adlar nötrleştirildi (`ACME.*`, `Acme.sln`); `Spinner` ve `StatusGlyph`'in building çizimi uygulamanın `BuildingSpinner`'ına göredir. Sistemdeki her değişiklik repodaki `docs/design-system/VERSIONS.md`'de bir sürümdür.
+Design system **2.0.0** bir milattır: yayındaki uygulamanın (**app 1.15.0**) kodundan yeniden kuruldu — renk, ölçü ve tipografi `src/BuildOrchestrator.App/Resources/Tokens.xaml`'den, motion `Motion.xaml`'den, ikonlar `Icons.xaml`'den okundu. Token adları ve değerleri `tokens.json` / `tokens.css`'tedir; uygulamada olup eski sistemde karşılığı olmayan değerler (`status-queued-border`, `brand-strip-dim`, `brand-chevron-deep`, pencere iskeleti ölçüleri, pencere minimumu, reading line height, console weight) token olarak girdi. `components/bundle.js` 1.x tasarım paketinin bundle'ından gelir, örnek verisindeki adlar nötrleştirildi (`ACME.*`, `Acme.sln`); `Spinner` ve `StatusGlyph`'in building çizimi uygulamanın `BuildingSpinner`'ına, `ProjectRow`'un şerit ve noktası uygulamanın şerit tablosuna göredir. Sistemdeki her değişiklik repodaki `docs/design-system/VERSIONS.md`'de bir sürümdür.

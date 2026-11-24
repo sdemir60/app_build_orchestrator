@@ -1,5 +1,5 @@
 // Delta Build Orchestrator — component props (documentation; not type-checked).
-// Runtime: window.DeltaBuildOrchestratorDS_eb0bd1 — also exports STATUS_META, PROJECTS, DIRTY_ROOTS, GraphView.
+// Runtime: window.DeltaBuildOrchestratorDS_eb0bd1 — also exports STATUS_META.
 import * as React from 'react';
 
 export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> { variant?: 'primary'|'secondary'|'ghost'|'danger'; size?: 'sm'|'md'|'lg'; icon?: React.ReactNode; disabled?: boolean; style?: React.CSSProperties; }
@@ -15,9 +15,8 @@ export interface SwitchProps { checked?: boolean; onChange?: (checked: boolean) 
 export type Status = 'discovered'|'queued'|'building'|'succeeded'|'failed'|'skipped'|'cycle';
 export interface StatusGlyphProps { status?: Status; size?: number; title?: string; style?: React.CSSProperties; }
 export interface StatusBadgeProps { status?: Status; label?: React.ReactNode; size?: 'sm'|'md'; detail?: React.ReactNode; style?: React.CSSProperties; }
-export interface WillBuildDotProps { state?: 'dirty'|'clean'|'unknown'; size?: number; title?: string; style?: React.CSSProperties; }
 export interface SpinnerProps { size?: number; color?: string; title?: string; style?: React.CSSProperties; }
-export interface ProjectRowProps { name: string; solution?: string; status?: Status; willBuild?: 'dirty'|'clean'|'unknown'; duration?: React.ReactNode; selected?: boolean; compact?: boolean; onOpenFile?: () => void; onOpenVS?: () => void; onClick?: () => void; style?: React.CSSProperties; }
+export interface ProjectRowProps { name: string; solution?: string; status?: Status; duration?: React.ReactNode; selected?: boolean; compact?: boolean; onOpenFile?: () => void; onOpenVS?: () => void; onClick?: () => void; style?: React.CSSProperties; }
 export interface ConsoleLineData { type?: 'info'|'success'|'warn'|'error'|'cmd'|'dim'; time?: string; text: React.ReactNode; }
 export interface ConsoleProps { lines?: ConsoleLineData[]; height?: number|string; autoScroll?: boolean; children?: React.ReactNode; style?: React.CSSProperties; }
 export interface ConsoleLineProps { type?: ConsoleLineData['type']; time?: string; children?: React.ReactNode; style?: React.CSSProperties; }
@@ -33,7 +32,5 @@ export interface StatusBarProps { children?: React.ReactNode; right?: React.Reac
 export interface StatusBarItemProps { label?: React.ReactNode; value?: React.ReactNode; color?: string; style?: React.CSSProperties; }
 export interface TooltipProps { content: React.ReactNode; kbd?: React.ReactNode; side?: 'top'|'bottom'|'right'|'left'; children?: React.ReactNode; style?: React.CSSProperties; }
 export interface DialogProps { open?: boolean; title?: React.ReactNode; width?: number; onClose?: () => void; footer?: React.ReactNode; children?: React.ReactNode; style?: React.CSSProperties; }
-export interface ToastProps { tone?: 'info'|'success'|'fail'|'warn'|'building'; title: React.ReactNode; description?: React.ReactNode; action?: React.ReactNode; onClose?: () => void; style?: React.CSSProperties; }
-export interface MainWindowProps { logoBase?: string; }
 export interface StatusMetaEntry { color: string; label: string; }
 export declare const STATUS_META: Record<Status, StatusMetaEntry>;
